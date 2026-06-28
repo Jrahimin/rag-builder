@@ -1,0 +1,12 @@
+# ===========================================================================
+# Convenience entrypoint for the default (base) dependency set.
+#
+# Dependencies are organized under requirements/:
+#   - requirements/base.txt   -> runtime dependencies
+#   - requirements/dev.txt    -> base + development tooling
+#   - requirements/prod.txt   -> base + production extras
+#
+# For local development, install the dev set:
+#   pip install -r requirements/dev.txt
+# ===========================================================================
+-r requirements/base.txt

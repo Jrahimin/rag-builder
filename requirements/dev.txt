@@ -1,0 +1,20 @@
+# ===========================================================================
+# Development dependencies - linting, testing, type-checking, git hooks.
+# Install with: pip install -r requirements/dev.txt
+# ===========================================================================
+-r base.txt
+
+# --- Lint & format ---
+ruff==0.15.20
+
+# --- Testing ---
+pytest==9.1.1
+pytest-asyncio==1.4.0
+pytest-cov==7.1.0
+asgi-lifespan==2.1.0
+
+# --- Type checking ---
+mypy==2.1.0
+
+# --- Git hooks ---
+pre-commit==4.6.0

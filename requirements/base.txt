@@ -1,0 +1,29 @@
+# ===========================================================================
+# Base runtime dependencies - required to run the AI Platform Engine API.
+# Pinned for reproducible builds. Update deliberately, never silently.
+# ===========================================================================
+
+# --- Web framework & ASGI server ---
+fastapi==0.138.1
+uvicorn[standard]==0.49.0
+
+# --- Configuration & validation ---
+pydantic==2.13.4
+pydantic-settings==2.14.2
+
+# --- Database (async PostgreSQL) ---
+sqlalchemy[asyncio]==2.0.51
+asyncpg==0.31.0
+alembic==1.18.5
+
+# --- Cache / queue backend ---
+redis==8.0.1
+
+# --- Vector database client ---
+qdrant-client==1.18.0
+
+# --- Structured logging ---
+structlog==26.1.0
+
+# --- HTTP client (readiness checks, future connectors) ---
+httpx==0.28.1

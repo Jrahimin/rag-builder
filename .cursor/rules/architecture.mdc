@@ -1,0 +1,953 @@
+---
+description: Engineering standards, layered architecture, provider abstraction, project-scoped isolation, AI data lifecycle, and forbidden practices for the AI Platform Engine (APE) backend. Apply when writing or reviewing any backend / Python code, providers, connectors, services, repositories, routers, or workflows.
+globs: **/*.py
+alwaysApply: false
+---
+
+# AI Platform Engine (APE)
+
+## Architecture & Development Rules
+
+> Product vision, scope, deployment model, domain model, and roadmap live in `project-context.mdc`.
+> This document defines the engineering standards and architecture that implement that vision.
+
+## Backend Rules
+
+* Use async throughout the application (API, database, background tasks, and external providers where supported).
+* Use SQLAlchemy ORM for database access; avoid raw SQL except for performance-critical or database-specific operations.
+* Manage database sessions through centralized dependencies while keeping transaction boundaries explicit in services.
+* Validate all request and response payloads using Pydantic schemas.
+* Use enums instead of magic strings whenever values are predefined.
+* Use standardized API response models and centralized response helpers for consistent success and error responses.
+* Use centralized exception handlers for logging and client-safe error responses.
+* Inject services into routers and repositories/providers into services using FastAPI dependency injection.
+* Keep routers thin; business logic belongs in services.
+* Keep services focused on orchestration and domain logic; infrastructure access belongs to repositories and providers.
+* Keep repositories responsible only for relational database persistence.
+* Keep provider implementations responsible only for external systems (LLMs, Vector DBs, Storage, OCR, APIs, etc.).
+* Never expose vendor SDK models outside provider implementations.
+* Return domain models or schemas from services; routers are responsible for HTTP response formatting.
+* Use `response_model` consistently for OpenAPI documentation and response validation.
+* Use `from_attributes=True` in response schemas that serialize ORM models.
+* Centralize shared pagination, filtering, sorting, and query utilities instead of duplicating them across repositories.
+* Use deterministic ordering for all list queries.
+* Keep authentication and authorization centralized; routers should not perform authentication logic.
+* Store shared constants, enums, and configuration in centralized modules. Avoid scattered magic values.
+* Prefer configuration over hardcoded values wherever possible.
+* Keep functions and classes small, focused, and easy to test.
+* Favor composition over inheritance unless inheritance provides clear value.
+* Minimize coupling between modules and maximize reusability.
+* Write modular, testable, production-ready code following Clean Architecture principles.
+* Long-running operations (OCR, parsing, embedding generation, indexing, evaluations, etc.) must execute asynchronously through background workers, never within synchronous HTTP requests.
+* Add appropriate logging, tracing, and error handling for all infrastructure interactions.
+* Write code that is provider-agnostic and supports future replacement of infrastructure components without changing business logic.
+
+---
+
+# 🎯 Philosophy & Core Principles
+
+## Platform over Chatbot
+
+Build a modular, reusable AI platform rather than a single-purpose chatbot.
+
+---
+
+## Project-Scoped by Default
+
+**Project** is the central domain entity and the primary isolation boundary.
+
+Every entity, query, job, and artifact is scoped by `project_id`. There is no global, unscoped data path. An optional `organization_id` may group Projects, but `project_id` is always mandatory.
+
+---
+
+## Infrastructure Abstraction
+
+Never bind the application directly to external services.
+
+Every external dependency must be accessed through abstract interfaces.
+
+Examples:
+
+* LLMs
+* Embeddings
+* Rerankers
+* OCR
+* Document Parsers
+* Vector Stores
+* Object Storage
+* Connectors (data sources)
+* Speech
+* Evaluation
+* Tracing
+
+---
+
+## Vector DB Agnosticism
+
+The application core must remain completely unaware of the underlying Vector Database.
+
+All vector operations must go through a generic interface:
+
+```text
+BaseVectorStoreProvider
+```
+
+Switching engines should only require replacing the provider implementation.
+
+Example:
+
+```
+Qdrant
+↓
+pgvector
+↓
+Milvus
+↓
+Pinecone
+```
+
+No business logic should change.
+
+---
+
+## Separation of Concerns
+
+Strict layer boundaries.
+
+```text
+Router
+    ↓
+Service
+    ↓
+Provider / Repository
+```
+
+---
+
+## AI as Infrastructure
+
+Treat AI capabilities as infrastructure services.
+
+Examples:
+
+* Text Generation
+* Embeddings
+* OCR
+* Extraction
+
+Business logic orchestrates these services instead of depending on vendor SDKs.
+
+---
+
+## Configuration Driven Design
+
+Nothing AI-related should be hardcoded.
+
+Runtime configurable (resolvable per Project):
+
+* Models
+* Temperature
+* Chunk Size
+* Chunk Overlap
+* Prompts
+* Retrieval Top-K
+* Reranker Thresholds
+* Pipeline Settings
+
+---
+
+## Version Everything
+
+Never overwrite AI-generated artifacts.
+
+Version:
+
+* Documents
+* Chunks
+* Embeddings
+* Prompt Templates
+* Retrieval Configurations
+* Evaluation Results
+* Datasets
+* Models
+
+Everything should be reproducible and auditable.
+
+---
+
+## Workflows > Agents
+
+Prefer deterministic execution.
+
+Examples:
+
+* LangGraph
+* State Machines
+* Tool Calling
+
+Avoid autonomous agents unless absolutely necessary.
+
+---
+
+## RAG > Fine-Tuning
+
+Before considering fine-tuning:
+
+* Improve Retrieval
+* Improve Chunking
+* Improve Reranking
+* Improve Context Selection
+
+Fine-tuning should be the last option.
+
+---
+
+## Explicit Naming
+
+Always use domain-specific filenames.
+
+✅ Good
+
+```text
+document_router.py
+qdrant_provider.py
+prompt_repository.py
+```
+
+❌ Bad
+
+```text
+router.py
+service.py
+helper.py
+```
+
+---
+
+# 🏗️ System Stack
+
+| Component       | Technology                          |
+| --------------- | ----------------------------------- |
+| Backend         | Python + FastAPI                    |
+| Database        | PostgreSQL                          |
+| Vector DB       | Qdrant                              |
+| Cache           | Redis                               |
+| Background Jobs | Arq (default; Celery/Taskiq optional) |
+| Object Storage  | S3 / MinIO / Local                  |
+| Observability   | Langfuse                            |
+| Local LLM       | Ollama                              |
+| Production LLM  | vLLM                                |
+
+Background jobs default to **Arq** (Redis-native, async-first, minimal infra). Celery or Taskiq are acceptable alternatives where their feature sets are required, but a deployment should pick exactly one.
+
+---
+
+# 🧱 Backend Architecture
+
+```text
+                 Client
+                    │
+                    ▼
+            Router Layer
+                    │
+                    ▼
+            Service Layer
+             │         │
+             │         ▼
+             │   Repository Layer
+             │
+             ▼
+      Infrastructure Providers
+      ├── LLM
+      ├── Vector Store
+      ├── Storage
+      ├── Connectors
+      ├── OCR
+      └── External APIs
+```
+
+---
+
+# 1. Router Layer (`api/`)
+
+## Responsibility
+
+* HTTP validation
+* Serialization
+* Authentication
+* Dependency Injection
+
+### Rules
+
+* Validate request using Pydantic
+* Validate response using Pydantic
+* Inject services with `Depends()`
+* Resolve and enforce `project_id` scope
+* Return standardized `ApiResponse`
+
+### Forbidden
+
+* Business Logic
+* Database Queries
+* AI Calls
+* Vector Search
+
+---
+
+# 2. Service Layer (`services/`)
+
+## Responsibility
+
+Business orchestration.
+
+### Rules
+
+* Receives repositories through Dependency Injection
+* Receives providers through Dependency Injection
+* Controls database transactions
+* Coordinates AI services
+* Propagates `project_id` to every repository, provider, and job
+
+Standard CRUD stays here.
+
+---
+
+# 3. Provider Layer (`providers/`)
+
+## Responsibility
+
+External infrastructure implementations.
+
+Examples
+
+```text
+providers/
+    llm/
+    embeddings/
+    reranker/
+    vector_store/
+    storage/
+    connectors/
+    ocr/
+```
+
+Every provider must implement an abstract interface.
+
+Examples
+
+```python
+BaseLLMProvider
+BaseEmbeddingProvider
+BaseVectorStoreProvider
+BaseStorageProvider
+BaseSourceConnector
+BaseOCRProvider
+```
+
+---
+
+## SDK Leakage is Forbidden
+
+Vendor SDKs must never escape provider boundaries.
+
+❌ Wrong
+
+```python
+PointStruct
+Filter
+MatchText
+```
+
+inside services.
+
+Instead:
+
+```
+Service
+      ↓
+VectorChunk
+SearchFilter
+MetadataFilter
+      ↓
+Provider
+      ↓
+Vendor SDK
+```
+
+Providers translate between domain models and vendor-specific SDKs.
+
+---
+
+# 4. Repository Layer (`repositories/`)
+
+## Responsibility
+
+Relational database persistence.
+
+Repositories extend:
+
+```text
+BaseRepository
+```
+
+Examples
+
+```text
+document_repository.py
+
+project_repository.py
+
+prompt_repository.py
+```
+
+Repositories only handle:
+
+* CRUD
+* Transactions
+* Entity Mapping
+* `project_id` filtering on every query
+
+Never:
+
+* Call LLMs
+* Access Vector DB
+* Contain Business Logic
+
+---
+
+# ⚙️ Workflow Layer (Optional)
+
+Use workflows only for complex AI orchestration.
+
+Examples
+
+* Recursive Document Processing
+* Batch Embeddings
+* Hybrid Retrieval Pipelines
+* Agent Loops
+* Evaluations
+
+Simple CRUD should never require workflow files.
+
+Recommended:
+
+* LangGraph
+* State Machines
+
+---
+
+# 🔌 Connectors (First-Class)
+
+Connectors are a first-class provider category that bring external data into a Project.
+
+Every connector implements `BaseSourceConnector` and supports:
+
+* Authentication / credential handling
+* Listing available items
+* Fetching content + metadata
+* Incremental sync (change detection)
+* Health / status reporting
+
+Connectors feed the data lifecycle through Storage; they never bypass it or write directly to the Vector DB.
+
+Concrete connectors (File Upload, SQL, API, Website, SharePoint, Google Drive, S3) are interchangeable implementations behind this interface.
+
+---
+
+# 🧬 AI Data Lifecycle
+
+```text
+Connector / Source
+    │
+    ▼
+Storage
+    │
+    ▼
+Parsing / OCR
+    │
+    ▼
+Normalization
+    │
+    ▼
+Chunking
+    │
+    ▼
+Embedding / Indexing
+    │
+    ▼
+Retrieval
+    │
+    ▼
+Context Building
+    │
+    ▼
+Generation
+    │
+    ▼
+Evaluation
+    │
+    ▼
+User Feedback
+```
+
+Every stage is Project-scoped, independently replaceable, and testable.
+
+---
+
+# Storage
+
+Persist raw files through `BaseStorageProvider`.
+
+Examples
+
+* S3
+* MinIO
+* Local Storage
+
+---
+
+# Parsing / OCR
+
+Preferred order
+
+1. PyMuPDF
+2. Surya OCR
+3. PaddleOCR
+
+---
+
+# Normalization
+
+* Clean Text
+* Metadata Extraction
+* Structure Detection
+
+---
+
+# Chunking
+
+Use strategy pattern.
+
+Examples
+
+* Fixed
+* Recursive
+* Semantic
+* Markdown-aware
+
+Never hardcode chunk sizes.
+
+---
+
+# Embedding / Indexing
+
+```
+Chunk
+    ↓
+Embedding Model
+    ↓
+Vector Store Provider
+```
+
+---
+
+# Context Building
+
+Responsible for:
+
+* Deduplication
+* Ordering
+* Trimming
+
+---
+
+# Generation
+
+Generated through abstract LLM Provider.
+
+Never directly call OpenAI.
+
+---
+
+# Evaluation
+
+Evaluate:
+
+* Faithfulness
+* Relevance
+* Toxicity
+
+Recommended
+
+* Langfuse
+* RAGAS
+
+---
+
+# Feedback
+
+Capture:
+
+* 👍
+* 👎
+* Corrections
+* Human Review
+
+---
+
+# 🧠 AI Engineering Standards
+
+## Background Processing
+
+Long-running AI tasks must never block HTTP requests.
+
+Examples
+
+* OCR
+* Embeddings
+* Parsing
+* Evaluation
+
+Pattern
+
+```
+HTTP Request
+      ↓
+Redis Queue
+      ↓
+202 Accepted
+      ↓
+Worker
+```
+
+---
+
+## Hybrid Retrieval
+
+Vector-only search is forbidden. This is the canonical retrieval pipeline.
+
+```
+Query
+   │
+   ├── BM25
+   └── Vector Search
+            │
+            ▼
+      Reciprocal Rank Fusion
+            │
+            ▼
+         Reranker
+            │
+            ▼
+     Context Selection
+            │
+            ▼
+            LLM
+```
+
+---
+
+## Prompt Management
+
+Never hardcode prompts.
+
+Store prompts in:
+
+* Langfuse
+* Database
+* Configuration Files
+
+Version every prompt.
+
+---
+
+## Structured Outputs
+
+Prefer:
+
+* JSON Schema
+* Pydantic Models
+* Tool Calling
+
+Avoid parsing free-form text.
+
+---
+
+# 👁️ Observability
+
+Track every execution stage.
+
+## Tracing
+
+Use Langfuse.
+
+Trace:
+
+* LLM Calls
+* Retrieval
+* Tool Calls
+* Workflow Nodes
+
+---
+
+## Logging
+
+Structured JSON logs.
+
+Include
+
+* trace_id
+* span_id
+* project_id
+* model_name
+
+---
+
+## Metrics
+
+Monitor
+
+* API Latency
+* Queue Lag
+* Indexing Throughput
+* Worker Health
+
+---
+
+## Cost Tracking
+
+Track
+
+* Input Tokens
+* Output Tokens
+* Cached Tokens
+
+Calculate per-Project cost.
+
+---
+
+## Retries
+
+Implement
+
+* Exponential Backoff
+* Rate Limit Handling
+* Graceful Degradation
+
+---
+
+# 🔒 Security
+
+## Project Isolation
+
+Every query, job, and stored artifact must be scoped by `project_id`. Retrieval queries must always include the Project (and any required metadata) as filters; providers translate these into vendor-specific syntax. No cross-Project data access is permitted.
+
+---
+
+## Prompt Injection Defense
+
+Never allow user input to override system prompts.
+
+---
+
+## Validation
+
+Validate:
+
+* Inputs
+* Outputs
+* JSON Structure
+* Toxic Content
+
+---
+
+## RBAC
+
+Protect:
+
+* Prompt Editing
+* Reindexing
+* Administrative Actions
+
+---
+
+## Secret Management
+
+Never commit API keys.
+
+Use environment variables.
+
+---
+
+## PII Redaction
+
+Detect and mask PII during:
+
+* Ingestion
+* Context Building
+
+---
+
+## Audit Logging
+
+Log:
+
+* Model Changes
+* Prompt Updates
+* Document Deletion
+* Exports
+* Evaluations
+
+---
+
+## Rate Limiting
+
+Apply limits by:
+
+* User
+* Project
+* API Key
+
+---
+
+# 🏭 Production & Enterprise Standards
+
+## API Versioning
+
+All public routes are versioned under `/api/v1/...`. Breaking changes require a new version, never a silent change to an existing one.
+
+---
+
+## Database Migrations
+
+All schema changes go through Alembic migrations. Never auto-create or mutate tables at runtime in production.
+
+---
+
+## Standard Error Model
+
+Errors return a consistent envelope: `code`, `message`, `trace_id`, and optional `details`. No raw stack traces leak to clients.
+
+---
+
+## Idempotency
+
+Ingestion and job submission must be idempotent via idempotency keys or content hashes, so retries never cause duplicate processing.
+
+---
+
+## Health & Readiness
+
+Expose:
+
+* `/health` — liveness
+* `/ready` — dependency checks (PostgreSQL, Redis, Vector DB, providers)
+
+---
+
+## Data Deletion
+
+Deleting a Project or Document cascades across PostgreSQL, the Vector Store, and Object Storage to support right-to-be-forgotten.
+
+---
+
+## Configuration Precedence
+
+Resolution order:
+
+```
+defaults → environment → database → per-Project overrides
+```
+
+---
+
+## Testing
+
+* Unit-test services with faked providers and repositories.
+* Contract-test each provider against its abstract interface.
+* Integration-test full pipelines end-to-end.
+
+---
+
+## Containerization
+
+Ship as Docker images. Provide a docker-compose stack for the full self-hosted deployment (API, worker, PostgreSQL, Qdrant, Redis, object storage).
+
+---
+
+# 📦 Feature Modules
+
+```text
+modules/
+│
+├── projects/
+├── connectors/
+├── storage/
+├── documents/
+├── ocr_parsing/
+├── chunking/
+├── embeddings/
+├── retrieval/
+├── chat/
+├── evaluation/
+├── feedback/
+├── jobs/
+├── providers/
+└── observability/
+```
+
+---
+
+# 🚫 Forbidden Practices
+
+## ❌ Unscoped Data Access
+
+Never read or write data without a `project_id` scope.
+
+---
+
+## ❌ Vendor Lock-in
+
+Never call vendor SDKs directly from services.
+
+---
+
+## ❌ SDK Leakage
+
+Never expose vendor models outside providers.
+
+---
+
+## ❌ Blocking AI Calls
+
+Never execute OCR or embedding generation inside HTTP requests.
+
+---
+
+## ❌ Prompt Spaghetti
+
+Never embed prompts directly inside business logic.
+
+---
+
+## ❌ Vector-only Retrieval
+
+Always use Hybrid Retrieval.
+
+---
+
+## ❌ No Retry Policies
+
+Every provider should support retries and graceful fallback.
+
+---
+
+## ❌ Silent Exceptions
+
+Never swallow exceptions.
+
+Always:
+
+* Log Traceback
+* Attach Trace ID
+* Return Meaningful Errors

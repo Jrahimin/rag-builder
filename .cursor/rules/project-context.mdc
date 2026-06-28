@@ -1,0 +1,428 @@
+---
+description: Product vision, scope, deployment model, core domain model, roadmap, and development philosophy for the AI Platform Engine (APE). Read to understand WHAT we are building and WHY before making product or scoping decisions.
+alwaysApply: true
+---
+
+# Project Context – AI Platform Engine (APE)
+
+> Engineering standards, architecture, layering, and implementation rules live in `architecture.mdc`.
+> This document defines the product vision and scope; that one defines how we build it.
+
+# 📌 Overview
+
+AI Platform Engine (APE) is a production-grade, modular AI Platform designed to integrate with enterprise applications as an independent, self-hosted microservice.
+
+Rather than building AI capabilities directly into business applications, APE provides reusable AI infrastructure through well-defined APIs.
+
+Each customer deploys their own APE instance alongside their application, with complete ownership of their infrastructure, data, models, and configurations.
+
+Typical deployments include:
+
+* Document Management Systems (DMS)
+* Tax Audit Systems
+* ERP Systems
+* HRMS
+* Legal Platforms
+* Financial Research Platforms
+* Internal Enterprise Knowledge Bases
+
+The platform is completely domain-agnostic. It does not contain business-specific logic and can be reused across different industries.
+
+---
+
+# 🎯 Vision
+
+Build a deployable, provider-agnostic AI Platform that enables enterprise applications to add modern AI capabilities without implementing AI infrastructure themselves.
+
+The platform should expose reusable APIs for:
+
+* Project Management
+* Connectors & Ingestion
+* Storage
+* OCR & Parsing
+* Chunking
+* Embeddings
+* Vector Search & Hybrid Retrieval
+* Chat
+* Voice
+* Evaluation
+* Observability
+* Agent Workflows
+
+Applications interact only with the platform APIs while the platform manages the complete AI lifecycle internally.
+
+---
+
+# 🚀 Deployment Model
+
+APE is designed to run as an independent, self-hosted microservice.
+
+Each customer deploys their own isolated instance.
+
+```text
+Business Application
+        │
+ REST / API
+        │
+        ▼
+AI Platform Engine (APE)
+        │
+        ├── PostgreSQL
+        ├── Vector Database
+        ├── Redis
+        ├── Object Storage
+        └── LLM Providers
+```
+
+Every deployment owns its:
+
+* Database
+* Vector Database
+* Object Storage
+* AI Models
+* Configuration
+* Documents
+* Prompts
+* Evaluations
+
+No shared cloud platform is required. The deployment itself is the trust boundary; **within a deployment, the Project is the isolation boundary** (see Core Domain Model).
+
+---
+
+# 🧱 Core Domain Model
+
+**Project** is the central domain entity of the platform and the primary unit of isolation.
+
+Everything is owned by and scoped to a Project:
+
+* Documents & Collections
+* Connectors (data sources)
+* Prompts
+* Chats & Conversations
+* Evaluations & Datasets
+* Configurations
+* Embeddings & Vector Namespaces
+* API Keys & Access Control
+
+A single deployment may host many Projects. Every API call, retrieval query, background job, and stored artifact is scoped by `project_id`, keeping data, configuration, and cost isolated per Project even within one customer deployment.
+
+An optional `organization_id` may group multiple Projects for larger deployments, but `project_id` is always the mandatory scoping key.
+
+---
+
+# 🎯 Primary Goals
+
+The project aims to:
+
+* Build reusable AI infrastructure.
+* Master modern AI Engineering.
+* Design production-grade AI systems.
+* Support multiple AI providers.
+* Remain deployment-independent.
+* Remain vendor-independent.
+* Enable seamless integration with future applications.
+
+---
+
+# 🧠 Learning Philosophy
+
+This project is learning-first.
+
+Every major feature should explain:
+
+* Why it exists
+* How it works
+* Internal request flow
+* Architecture
+* Trade-offs
+* Production considerations
+* Alternatives
+* Common implementation mistakes
+
+Understanding the engineering principles is considered as important as implementing the feature itself.
+
+---
+
+# 🏗️ Architecture Principles
+
+Every implementation should follow these principles (see `architecture.mdc` for how each is enforced):
+
+* Modular Architecture
+* Provider Abstraction
+* Configuration-Driven Design
+* Separation of Concerns
+* Dependency Injection
+* Project-Scoped Isolation
+* Version Everything
+* Background Processing
+* Observability First
+* Security by Design
+* Scalability
+* Testability
+* Reusability
+
+Business applications should never depend directly on AI vendors or AI infrastructure.
+
+---
+
+# 🧩 Core Platform Capabilities
+
+The platform provides reusable, Project-scoped services.
+
+## Project Management
+
+* Projects (central entity)
+* Workspaces & Collections
+* Members & Access Control
+* Per-Project Configuration
+* Metadata & Versioning
+
+---
+
+## Connectors (Data Sources)
+
+A first-class, pluggable framework for bringing data into a Project.
+
+* File Upload
+* SQL / API / Website
+* SharePoint / Google Drive / S3
+* Incremental Sync & Scheduling
+* Connector Health & Status
+
+---
+
+## Storage
+
+A first-class abstraction for persisting raw files and artifacts.
+
+* Object Storage Abstraction
+* Raw File Persistence
+* S3 / MinIO / Local backends
+* Retention & Lifecycle
+
+---
+
+## Document Intelligence
+
+* Parsing
+* OCR
+* Metadata Extraction
+* Content Normalization
+
+---
+
+## Knowledge Processing
+
+* Chunking
+* Embeddings
+* Indexing
+* Vector Storage
+
+---
+
+## Retrieval
+
+* Semantic Search
+* Keyword Search
+* Hybrid Search
+* Metadata Filtering
+* Reranking
+* Context Building
+* Citations
+
+---
+
+## AI Services
+
+* Chat
+* Question Answering
+* Prompt Management
+* Conversation Memory
+* Structured Outputs
+* Tool Calling
+* Multi-Provider LLM Support
+
+---
+
+## Platform Services
+
+* Background Jobs
+* Configuration Management
+* Authentication
+* Authorization
+* Audit Logs
+* Evaluation
+* Observability
+* Feedback
+* Health Monitoring
+
+---
+
+# 🛣️ Development Roadmap
+
+The platform will evolve in three major phases.
+
+## Phase 1 — Core AI Platform
+
+Build the reusable AI infrastructure and the deployable foundation.
+
+* Project Management (central entity)
+* Connector Framework + File Upload
+* Object Storage Abstraction
+* OCR & Parsing
+* Chunking
+* Embeddings
+* Vector Storage
+* Hybrid Retrieval
+* Chat
+* Configuration
+* Background Jobs
+* Authentication
+* Database Migrations
+* Containerization (Docker + docker-compose)
+* Evaluation Foundation
+* Observability Foundation
+
+---
+
+## Phase 2 — Enterprise AI Platform
+
+Expand enterprise capabilities, building concrete connectors on the Phase 1 framework.
+
+* SQL Connector
+* API Connector
+* Website Connector
+* SharePoint Connector
+* Google Drive Connector
+* S3 Connector
+* Voice
+* Streaming
+* Multi-modal Processing
+* Model Registry
+* Prompt Library
+* Usage Analytics
+* Cost Tracking
+* Evaluation Dashboard
+
+---
+
+## Phase 3 — Advanced AI Platform
+
+Introduce advanced AI capabilities.
+
+* GraphRAG
+* Knowledge Graphs
+* Entity Extraction
+* Query Planning
+* Query Rewriting
+* Multi-hop Retrieval
+* Memory Layer
+* Agent Workflows
+* MCP Integration
+* Fine-tuning Experiments
+* Benchmarking
+* Distributed Inference
+* Kubernetes Deployment
+
+---
+
+# 📖 Documentation Expectations
+
+Every completed feature should include concise documentation under `docs/features/` covering:
+
+* Purpose
+* Architecture
+* Data Flow
+* Configuration
+* Dependencies
+* Design Decisions
+* Production Considerations
+* Testing Strategy
+* Future Improvements
+
+Documentation should be concise, visual, and easy to navigate. It should evolve alongside the implementation and serve as the long-term technical reference for the platform.
+
+Maintain learning-focused documentation under `docs/learning/`.
+
+These documents should explain concepts, request flow, architecture, internal mechanics, trade-offs, and production considerations using diagrams, flowcharts, sequence diagrams, comparison tables, and practical examples.
+
+The goal is to build a comprehensive AI Engineering knowledge base alongside the platform.
+
+---
+
+# ⚠️ Current Project Status
+
+Current phase:
+
+**Platform Foundation — Sprint Complete**
+
+The foundation sprint is done. The repository is a production-grade backend
+baseline ready for Phase 1 feature work. **No business features** (Projects,
+Documents, Connectors, RAG, Chat, etc.) are implemented yet.
+
+## What exists today
+
+| Area | Status | Key locations |
+| ---- | ------ | ------------- |
+| Layered backend structure | ✅ | `backend/app/{api,core,services,repositories,providers,db,models,schemas,dependencies}` |
+| Application factory + lifespan | ✅ | `backend/app/main.py` (`create_app`, infrastructure lifecycle) |
+| API versioning (`/api/v1`) | ✅ | `backend/app/api/v1/router.py` (empty, ready for features) |
+| System health probes | ✅ | `GET /health`, `GET /ready` |
+| Environment-driven config | ✅ | `backend/app/core/config.py` (`APE_*` env vars, Pydantic Settings) |
+| Structured logging | ✅ | `backend/app/core/logging.py` (structlog, `request_id`, `trace_id`) |
+| Standard API envelopes | ✅ | `backend/app/schemas/common.py` (`ApiResponse`, `ErrorResponse`) |
+| Global exception handling | ✅ | `backend/app/core/exception_handlers.py` |
+| Async PostgreSQL + SQLAlchemy 2.x | ✅ | `backend/app/db/session.py`, `backend/app/db/base.py` |
+| Alembic migrations (baseline) | ✅ | `backend/app/db/migrations/`, `alembic.ini` |
+| Redis + Qdrant connectivity | ✅ | `backend/app/db/redis.py`, `backend/app/db/qdrant.py` |
+| ORM mixins (no business entities) | ✅ | `backend/app/models/base.py` |
+| Base repository pattern | ✅ | `backend/app/repositories/base_repository.py` |
+| Docker local stack | ✅ | `docker-compose.yml`, `backend/Dockerfile` |
+| Dev tooling (Ruff, Pytest, Mypy, pre-commit) | ✅ | `pyproject.toml`, `.pre-commit-config.yaml` |
+| Documentation | ✅ | `README.md`, `docs/architecture/`, `docs/learning/` |
+
+## Repository layout
+
+```text
+backend/app/     # Application code (layered)
+docs/            # Architecture + learning + feature docs
+requirements/    # Pinned dependencies (base, dev, prod)
+tests/           # unit/ + integration/
+infra/           # Future IaC; compose lives at repo root
+scripts/         # Operational scripts
+```
+
+## Documentation map
+
+* **Architecture guide** — `docs/architecture/system-architecture.md` (request flow, layering, cross-cutting concerns).
+* **Foundation learning** — `docs/learning/` (configuration, logging, database, Docker, testing, application factory).
+* **Feature docs** — `docs/features/` (populated as modules ship).
+
+## Next up (Phase 1)
+
+First business capability: **Project Management** (central domain entity and
+isolation boundary). All subsequent modules depend on `project_id` scoping.
+
+---
+
+
+# 🔑 Guiding Principles
+
+Every architectural decision should maximize:
+
+* Learning Value
+* Reusability
+* Provider Independence
+* Deployability
+* Data Isolation
+* Production Readiness
+* Scalability
+* Maintainability
+* Observability
+* Security
+* Cost Transparency
+* Engineering Quality
+
+The objective is not to build another chatbot or a single RAG application.
+
+The objective is to build a deployable AI Platform that can be integrated into enterprise systems as reusable AI infrastructure.

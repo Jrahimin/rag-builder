@@ -1,0 +1,55 @@
+"""Integration tests for the system health endpoints.
+
+These exercise the full ASGI stack (middleware, DI, handlers) but do NOT
+require external services to be running: readiness reports dependencies as
+"down" rather than failing the request.
+"""
+
+from __future__ import annotations
+
+from httpx import AsyncClient
+
+from app.core.middleware import REQUEST_ID_HEADER, TRACE_ID_HEADER
+
+
+async def test_health_returns_ok(client: AsyncClient) -> None:
+    response = await client.get("/health")
+    assert response.status_code == 200
+
+    body = response.json()
+    assert body["success"] is True
+    assert body["data"]["status"] == "ok"
+    assert body["data"]["environment"] == "testing"
+    assert body["data"]["service"]
+    assert body["data"]["version"]
+
+
+async def test_health_sets_correlation_headers(client: AsyncClient) -> None:
+    response = await client.get("/health")
+    assert response.headers.get(REQUEST_ID_HEADER)
+    assert response.headers.get(TRACE_ID_HEADER)
+
+
+async def test_health_honors_inbound_request_id(client: AsyncClient) -> None:
+    response = await client.get("/health", headers={REQUEST_ID_HEADER: "abc-123"})
+    assert response.headers.get(REQUEST_ID_HEADER) == "abc-123"
+
+
+async def test_ready_reports_dependency_breakdown(client: AsyncClient) -> None:
+    response = await client.get("/ready")
+    # 200 when every dependency is reachable, 503 otherwise - both are valid.
+    assert response.status_code in (200, 503)
+
+    body = response.json()
+    assert body["success"] is True
+    names = {dep["name"] for dep in body["data"]["dependencies"]}
+    assert {"postgresql", "redis", "qdrant", "minio"} <= names
+
+
+async def test_unknown_route_returns_standard_error(client: AsyncClient) -> None:
+    response = await client.get("/api/v1/does-not-exist")
+    assert response.status_code == 404
+
+    body = response.json()
+    assert body["success"] is False
+    assert body["error"]["code"] == "not_found"

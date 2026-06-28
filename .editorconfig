@@ -1,0 +1,43 @@
+# EditorConfig - https://editorconfig.org
+# Top-most EditorConfig file
+root = true
+
+# ---------------------------------------------------------------------------
+# Defaults for every file
+# ---------------------------------------------------------------------------
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 4
+max_line_length = 100
+
+# ---------------------------------------------------------------------------
+# Python
+# ---------------------------------------------------------------------------
+[*.py]
+indent_size = 4
+
+# ---------------------------------------------------------------------------
+# Web / config formats
+# ---------------------------------------------------------------------------
+[*.{json,jsonc,yml,yaml,toml,js,ts,tsx,html,css}]
+indent_size = 2
+
+[*.{md,markdown}]
+trim_trailing_whitespace = false
+
+# ---------------------------------------------------------------------------
+# Make & shell
+# ---------------------------------------------------------------------------
+[Makefile]
+indent_style = tab
+
+[*.{sh,bash}]
+indent_size = 2
+
+# Windows batch files require CRLF
+[*.{bat,cmd,ps1}]
+end_of_line = crlf
