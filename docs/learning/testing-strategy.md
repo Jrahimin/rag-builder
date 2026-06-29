@@ -79,6 +79,27 @@ Tests exercise middleware, DI, handlers, and exception paths end-to-end.
 
 ---
 
+## PostgreSQL integration tests (`db_client`)
+
+Integration tests that hit the database require an **explicit disposable database**:
+
+```text
+APE_DATABASE__NAME=ape_test
+APE_TEST_DATABASE__NAME=ape_test
+APE_TEST_DATABASE__ALLOW_MIGRATIONS=true
+```
+
+`tests/conftest.py` defaults `APE_DATABASE__NAME` to `ape_test` in the test
+process, but refuses to migrate when:
+
+- `APE_DATABASE__NAME` does not match `APE_TEST_DATABASE__NAME`, or
+- `APE_TEST_DATABASE__ALLOW_MIGRATIONS` is not `true`.
+
+This prevents accidentally running `alembic upgrade head` against a developer or
+production database.
+
+---
+
 ## Running without external services
 
 Integration tests **do not require** PostgreSQL, Redis, Qdrant, or MinIO:

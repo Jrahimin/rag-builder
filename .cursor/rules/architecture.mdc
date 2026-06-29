@@ -298,17 +298,36 @@ Background jobs default to **Arq** (Redis-native, async-first, minimal infra). C
 
 ## Responsibility
 
-Business orchestration.
+Business orchestration. Services live in `modules/<feature>/services/`.
 
 ### Rules
 
-* Receives repositories through Dependency Injection
-* Receives providers through Dependency Injection
-* Controls database transactions
-* Coordinates AI services
+* Receives repositories and providers through Dependency Injection
+* **Owns transactions** — `commit()` / `rollback()` only here, never in repositories
+* Coordinates AI services and background job enqueue
 * Propagates `project_id` to every repository, provider, and job
+* Returns ORM models; routers map to `ApiResponse` and response schemas
 
-Standard CRUD stays here.
+### What stays in the concrete service
+
+* `create` / `update` — field mapping, validation, uniqueness rules, side effects
+* Module-specific orchestration (storage, providers, jobs)
+
+Do **not** build a generic CRUD base class; reuse shared helpers via composition.
+
+### Shared service helpers (`platform/domain/`)
+
+| Helper | Purpose |
+| ------ | ------- |
+| `transactions.commit_refresh` | commit → refresh |
+| `transactions.flush_commit_refresh` | flush → commit → refresh; optional `IntegrityError` → `ConflictError` |
+| `lifecycle_service.get_or_raise` | `get_by_id` + `NotFoundError` |
+| `lifecycle_service.list_paginated` | `ListParams` → `PaginatedResult` |
+| `lifecycle_service.require_not_deleted` | block mutations on soft-deleted rows |
+| `lifecycle_service.soft_delete` | idempotent soft delete + persist |
+| `lifecycle_service.update_active_status` | toggle `is_active` on mutable entities |
+
+Pair with repository bases: `AsyncRepository` for aggregate roots, `ProjectScopedRepository` for Project-owned entities.
 
 ---
 
@@ -382,36 +401,69 @@ Providers translate between domain models and vendor-specific SDKs.
 
 ## Responsibility
 
-Relational database persistence.
+Relational database persistence. Repositories live inside feature modules
+(`modules/<feature>/repositories/`); shared query logic lives in `platform/persistence/`.
 
-Repositories extend:
+## Repository bases (choose one per entity)
 
-```text
-ProjectScopedRepository
-```
+| Entity type | Base class | Scoping |
+| ----------- | ---------- | ------- |
+| **Aggregate root** (e.g. `Project`) | `AsyncRepository` | Unscoped — the entity *is* the isolation boundary |
+| **Project-owned** (documents, prompts, …) | `ProjectScopedRepository` | Mandatory `project_id` on every query |
 
-Examples
+Module repositories are thin subclasses: add only domain-specific methods
+(e.g. `exists_by_name`); reuse platform helpers for list filters, soft delete,
+and deterministic ordering.
 
-```text
-document_repository.py
+## Shared persistence primitives (`platform/persistence/`)
 
-project_repository.py
+| Primitive | Purpose |
+| --------- | ------- |
+| `AsyncRepository` | `get_by_id`, `list_page`, `count`, `exists_by_field`, `add`, `flush` |
+| `LifecycleListFilters` / `build_lifecycle_filters` | `include_deleted`, `is_active` query filters |
+| `apply_deterministic_order` | `ORDER BY created_at, id` for all list queries |
+| `mark_soft_deleted` / `is_soft_deleted` | Soft-delete semantics (`deleted_at` is source of truth) |
 
-prompt_repository.py
-```
+Services own `commit()` / `rollback()`; repositories stage changes only.
+
+## ORM models (`app/models/`)
+
+All SQLAlchemy entities live in **`app/models/`**, not inside feature modules.
+Models are shared across modules (joins, FKs, Alembic discovery). Register every
+model in `composition/orm_registry.py`.
+
+Compose column mixins from `platform/domain/mixins.py`:
+
+| Mixin | Columns |
+| ----- | ------- |
+| `UUIDPrimaryKeyMixin` | `id` |
+| `TimestampMixin` | `created_at`, `updated_at` |
+| `ActiveStatusMixin` | `is_active` |
+| `SoftDeleteMixin` | `deleted_at`, `deleted_by` |
+| `ProjectScopedMixin` | `project_id` (Project-owned entities only — **not** on `Project`) |
+
+## Shared list/pagination schemas (`platform/http/pagination.py`)
+
+| Schema | Purpose |
+| ------ | ------- |
+| `PaginationParams` | `limit`, `offset` |
+| `ListParams` | extends `PaginationParams` with `include_deleted`, `is_active` |
+| `PaginatedResult[T]` | Standard list response wrapper |
+
+Module schemas hold request/response shapes only (e.g. `ProjectCreate`, `ProjectResponse`).
 
 Repositories only handle:
 
-* CRUD
-* Transactions
-* Entity Mapping
-* `project_id` filtering on every query
+* CRUD and query staging
+* Entity mapping
+* `project_id` filtering (Project-owned entities)
 
 Never:
 
 * Call LLMs
 * Access Vector DB
-* Contain Business Logic
+* Contain business logic
+* Call `commit()` / `rollback()` (service layer owns transactions)
 
 ---
 
@@ -818,6 +870,18 @@ All public routes are versioned under `/api/v1/...`. Breaking changes require a 
 
 ---
 
+## API reference documentation (`docs/api/`)
+
+Maintain a **module-grouped API collection** under `docs/api/` — concise reference
+for Postman import, not tutorials.
+
+* `docs/api/README.md` — base URL, response envelope, module index
+* One file per module: `docs/api/projects.md`, `docs/api/knowledge.md`, …
+* Per endpoint: method, path, one-line purpose, sample request/response JSON
+* Update when routes ship or change; OpenAPI (`/docs`) remains the live contract
+
+---
+
 ## Database Migrations
 
 All schema changes go through Alembic migrations. Never auto-create or mutate tables at runtime in production.
@@ -883,13 +947,14 @@ the application root.
 
 ```text
 backend/app/
-├── composition/    # ORM registry for Alembic (may import modules)
+├── composition/    # ORM registry for Alembic (imports app.models)
+├── models/         # All SQLAlchemy ORM entities (shared across modules)
 ├── api/            # HTTP composition (mount routers)
 │   └── v1/routes/  # Per-feature routers + Depends() wiring
 ├── dependencies/   # FastAPI DI factories (composition only)
 ├── core/           # Cross-cutting (config, logging, exceptions)
 ├── platform/       # Shared kernel (db, infra, persistence, jobs, http)
-└── modules/        # Feature vertical slices (no HTTP wiring)
+└── modules/        # Feature vertical slices (no HTTP wiring, no ORM models)
 ```
 
 **Full specification:** `docs/architecture/module-architecture.md`
@@ -898,19 +963,23 @@ backend/app/
 
 ```text
 modules/<feature>/
-    services/ repositories/ schemas/ models/ [workflows/]
+    services/       # Business orchestration + transaction control
+    repositories/   # AsyncRepository or ProjectScopedRepository subclasses
+    schemas/        # Module-specific Pydantic request/response models
+    workflows/      # Optional — complex pipelines only
 ```
 
-HTTP routes live in `api/v1/routes/`, not inside modules.
+ORM models belong in `app/models/`, not inside modules. HTTP routes live in
+`api/v1/routes/`, not inside modules.
 
 ## Dependency rules
 
 | Package | May import | Forbidden |
 | ------- | ---------- | --------- |
-| `core/` | stdlib, third-party | `platform`, `modules`, `api`, `dependencies`, `composition` |
-| `platform/` | `core` | `modules`, `api`, `dependencies`, `composition` |
-| `modules/<A>/` | `core`, `platform`, own package | `dependencies`, `api`, `composition`, `modules/<B>/` internals |
-| `api/`, `dependencies/` | `core`, `platform`, `modules` | business logic |
+| `core/` | stdlib, third-party | `platform`, `modules`, `models`, `api`, `dependencies`, `composition` |
+| `platform/` | `core` | `modules`, `models`, `api`, `dependencies`, `composition` |
+| `modules/<A>/` | `core`, `platform`, `app.models`, own package | `dependencies`, `api`, `composition`, `modules/<B>/` internals |
+| `api/`, `dependencies/` | `core`, `platform`, `modules`, `app.models` | business logic |
 | `composition/` | anywhere needed for ORM registry | — |
 
 Enforced by `tests/architecture/test_import_boundaries.py`.

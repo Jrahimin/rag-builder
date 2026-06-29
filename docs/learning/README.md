@@ -30,6 +30,7 @@ Documents explaining what was built in the platform foundation:
 | [Configuration System](./configuration-system.md) | Pydantic Settings, `APE_*` env vars, Docker vs local |
 | [Structured Logging](./structured-logging.md) | structlog, `request_id` / `trace_id`, JSON vs console |
 | [Database and Migrations](./database-and-migrations.md) | Async SQLAlchemy, sessions, Alembic, repositories |
+| [Entity Lifecycle and Reusability](./entity-lifecycle-and-reusability.md) | Mixins, repositories, service helpers, request walkthroughs |
 | [Docker Local Development](./docker-local-development.md) | Compose stack, health checks, volumes, hybrid workflow |
 | [Testing Strategy](./testing-strategy.md) | Pytest layout, fixtures, unit vs integration |
 

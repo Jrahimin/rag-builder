@@ -30,12 +30,12 @@ services `await` queries without thread pools.
                             │ parent of
                             ▼
 ┌─────────────────────────────────────────────────────────┐
-│  ORM Models (models/) — mixins today, entities later    │
+│  ORM Models (app/models/) — registered via composition/orm_registry     │
 └───────────────────────────┬─────────────────────────────┘
                             │ accessed via
                             ▼
 ┌─────────────────────────────────────────────────────────┐
-│  BaseRepository (repositories/)                         │
+│  AsyncRepository / ProjectScopedRepository              │
 └───────────────────────────┬─────────────────────────────┘
                             │ used by
                             ▼
@@ -121,22 +121,17 @@ when the Project table exists.
 
 ---
 
-## BaseRepository → ProjectScopedRepository
+## Repository bases
 
-Module-facing persistence uses `ProjectScopedRepository` in
-`platform/persistence/project_scoped_repository.py`:
+| Base | Use when |
+| ---- | -------- |
+| `AsyncRepository` | Aggregate roots (e.g. `Project`) — unscoped |
+| `ProjectScopedRepository` | Project-owned entities — mandatory `project_id` |
 
-| Method | Behavior |
-| ------ | -------- |
-| `get(id)` | Primary key lookup **scoped by `project_id`** |
-| `list(limit, offset)` | Paginated fetch, deterministic `order_by` |
-| `count()` | Rows for this project |
-| `add(entity)` | Validates entity `project_id` matches repository |
-| `delete(entity)` | Validates entity `project_id` matches repository |
-| `flush()` | Push pending changes (get generated IDs) |
+Module repositories are thin subclasses adding domain-specific queries only.
 
-`project_id` is required at repository construction — fail-closed by design.
-An internal unscoped `_base_repository.py` exists but is not exported.
+`get_by_id` excludes soft-deleted rows by default; pass `include_deleted=True`
+for administration, idempotent delete, or mutation conflict paths.
 
 ---
 
