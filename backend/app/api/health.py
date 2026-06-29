@@ -10,8 +10,8 @@ from __future__ import annotations
 from fastapi import APIRouter, Response, status
 
 from app.dependencies.common import HealthServiceDep
-from app.schemas.common import ApiResponse
-from app.schemas.health import LivenessStatus, ReadinessStatus
+from app.platform.http.envelopes import ApiResponse
+from app.platform.system.schemas import LivenessStatus, ReadinessStatus
 
 router = APIRouter(tags=["system"])
 

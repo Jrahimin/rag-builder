@@ -354,29 +354,33 @@ The goal is to build a comprehensive AI Engineering knowledge base alongside the
 
 Current phase:
 
-**Platform Foundation — Sprint Complete**
+**Platform Foundation — Refined**
 
-The foundation sprint is done. The repository is a production-grade backend
-baseline ready for Phase 1 feature work. **No business features** (Projects,
-Documents, Connectors, RAG, Chat, etc.) are implemented yet.
+Foundation sprint complete; architectural remediation applied. The repository
+is a production-grade backend baseline ready for Phase 1 feature work. **No
+business features** (Projects, Knowledge, Retrieval, Chat, etc.) are implemented
+yet.
 
 ## What exists today
 
 | Area | Status | Key locations |
 | ---- | ------ | ------------- |
-| Layered backend structure | ✅ | `backend/app/{api,core,services,repositories,providers,db,models,schemas,dependencies}` |
-| Application factory + lifespan | ✅ | `backend/app/main.py` (`create_app`, infrastructure lifecycle) |
-| API versioning (`/api/v1`) | ✅ | `backend/app/api/v1/router.py` (empty, ready for features) |
+| Layered backend + composition root | ✅ | `backend/app/{api,composition,dependencies,core,platform,modules}` |
+| Application factory + lifespan | ✅ | `backend/app/main.py` |
+| API versioning (`/api/v1`) | ✅ | `backend/app/api/v1/router.py`, `api/v1/routes/` |
 | System health probes | ✅ | `GET /health`, `GET /ready` |
-| Environment-driven config | ✅ | `backend/app/core/config.py` (`APE_*` env vars, Pydantic Settings) |
-| Structured logging | ✅ | `backend/app/core/logging.py` (structlog, `request_id`, `trace_id`) |
-| Standard API envelopes | ✅ | `backend/app/schemas/common.py` (`ApiResponse`, `ErrorResponse`) |
+| Environment-driven config | ✅ | `backend/app/core/config.py` |
+| Structured logging | ✅ | `backend/app/core/logging.py` |
+| Standard API envelopes | ✅ | `backend/app/platform/http/envelopes.py` |
 | Global exception handling | ✅ | `backend/app/core/exception_handlers.py` |
-| Async PostgreSQL + SQLAlchemy 2.x | ✅ | `backend/app/db/session.py`, `backend/app/db/base.py` |
-| Alembic migrations (baseline) | ✅ | `backend/app/db/migrations/`, `alembic.ini` |
-| Redis + Qdrant connectivity | ✅ | `backend/app/db/redis.py`, `backend/app/db/qdrant.py` |
-| ORM mixins (no business entities) | ✅ | `backend/app/models/base.py` |
-| Base repository pattern | ✅ | `backend/app/repositories/base_repository.py` |
+| Async PostgreSQL + SQLAlchemy 2.x | ✅ | `backend/app/platform/db/` |
+| Alembic + composition ORM registry | ✅ | `composition/orm_registry.py`, `composition/migrations/` |
+| Redis + Qdrant connectivity (isolated) | ✅ | `platform/infra/connectivity/` |
+| Provider foundation (errors + capability ref) | ✅ | `platform/providers/` |
+| Job enqueue contract | ✅ | `platform/jobs/contracts.py` |
+| Config layer precedence model | ✅ | `platform/config/contracts.py` |
+| Project-scoped persistence (fail-closed) | ✅ | `platform/persistence/project_scoped_repository.py` |
+| Import boundary tests | ✅ | `tests/architecture/test_import_boundaries.py` |
 | Docker local stack | ✅ | `docker-compose.yml`, `backend/Dockerfile` |
 | Dev tooling (Ruff, Pytest, Mypy, pre-commit) | ✅ | `pyproject.toml`, `.pre-commit-config.yaml` |
 | Documentation | ✅ | `README.md`, `docs/architecture/`, `docs/learning/` |
@@ -384,19 +388,24 @@ Documents, Connectors, RAG, Chat, etc.) are implemented yet.
 ## Repository layout
 
 ```text
-backend/app/     # Application code (layered)
-docs/            # Architecture + learning + feature docs
-requirements/    # Pinned dependencies (base, dev, prod)
-tests/           # unit/ + integration/
-infra/           # Future IaC; compose lives at repo root
-scripts/         # Operational scripts
+backend/app/
+  composition/  ORM registry (Alembic model discovery)
+  api/          HTTP composition (routes + router mounting)
+  dependencies/ FastAPI DI (composition only — modules must not import)
+  core/         Cross-cutting kernel
+  platform/     Shared infrastructure (db, infra, persistence, jobs, http)
+  modules/      Feature vertical slices (bounded contexts)
 ```
 
 ## Documentation map
 
-* **Architecture guide** — `docs/architecture/system-architecture.md` (request flow, layering, cross-cutting concerns).
-* **Foundation learning** — `docs/learning/` (configuration, logging, database, Docker, testing, application factory).
-* **Feature docs** — `docs/features/` (populated as modules ship).
+* **Module architecture (canonical)** — `docs/architecture/module-architecture.md`
+* **System overview** — `docs/architecture/system-architecture.md`
+* **Domain ownership** — `docs/architecture/domain-ownership.md`
+* **Provider / config / jobs / deployment** — `docs/architecture/`
+* **ADRs** — `docs/architecture/adr/`
+* **Foundation learning** — `docs/learning/`
+* **Feature docs** — `docs/features/` (populated as modules ship)
 
 ## Next up (Phase 1)
 

@@ -1,7 +1,5 @@
-"""Workflow layer: deterministic multi-step AI orchestration.
+"""Complex AI orchestration belongs inside feature modules.
 
-Used only for complex flows (recursive processing, batch embeddings, hybrid
-retrieval pipelines, evaluations). Prefer deterministic workflows
-(LangGraph / state machines) over autonomous agents. Simple CRUD never needs
-a workflow. Empty during the foundation sprint.
+Use ``modules/<feature>/workflows/`` for LangGraph/state-machine pipelines
+(e.g. hybrid retrieval, batch indexing). Simple CRUD never needs workflows.
 """

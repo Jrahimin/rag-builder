@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.schemas.common import ErrorDetail
+from app.core.http.envelopes import ErrorDetail
 
 
 class APEError(Exception):

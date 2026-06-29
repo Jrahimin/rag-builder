@@ -14,8 +14,8 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.core.exceptions import APEError
+from app.core.http.envelopes import ErrorDetail, ErrorInfo, ErrorResponse
 from app.core.logging import get_logger
-from app.schemas.common import ErrorDetail, ErrorInfo, ErrorResponse
 
 log = get_logger(__name__)
 

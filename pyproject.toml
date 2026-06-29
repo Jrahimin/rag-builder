@@ -37,7 +37,7 @@ include = ["app*"]
 line-length = 100
 target-version = "py312"
 src = ["backend", "tests"]
-extend-exclude = [".venv", "backend/app/db/migrations/versions"]
+extend-exclude = [".venv", "backend/app/composition/migrations/versions"]
 
 [tool.ruff.lint]
 select = [
@@ -61,7 +61,7 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*.py" = ["T20"]
-"backend/app/db/migrations/env.py" = ["E402"]
+"backend/app/composition/migrations/env.py" = ["E402"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["app"]
@@ -83,6 +83,7 @@ addopts = "-ra -q --strict-markers --strict-config"
 markers = [
     "unit: fast, isolated tests with no external dependencies",
     "integration: tests that require external services (db, redis, qdrant)",
+    "architecture: import boundary and structural enforcement tests",
 ]
 
 # ---------------------------------------------------------------------------

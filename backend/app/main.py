@@ -23,9 +23,9 @@ from app.core.config import Settings, get_settings
 from app.core.exception_handlers import register_exception_handlers
 from app.core.logging import configure_logging, get_logger
 from app.core.middleware import RequestContextMiddleware
-from app.db.qdrant import QdrantConnection
-from app.db.redis import RedisClient
-from app.db.session import Database
+from app.platform.db.session import Database
+from app.platform.infra.connectivity.qdrant import QdrantConnectivity
+from app.platform.infra.connectivity.redis import RedisConnectivity
 
 log = get_logger(__name__)
 
@@ -47,8 +47,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # Instantiating clients does not open network connections yet.
     app.state.db = Database(settings)
-    app.state.redis = RedisClient(settings)
-    app.state.qdrant = QdrantConnection(settings)
+    app.state.redis = RedisConnectivity(settings)
+    app.state.qdrant = QdrantConnectivity(settings)
 
     await _probe_dependencies(app)
     log.info("application_started")

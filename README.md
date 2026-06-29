@@ -23,9 +23,8 @@ is **domain-agnostic** — there is no business-specific logic — so it can be
 reused across DMS, tax/audit, ERP, HRMS, legal, financial research, and
 internal knowledge-base systems.
 
-> **Status:** Foundation sprint. This repository currently contains the
-> production-grade *foundation* only — no business/AI features are implemented
-> yet (see [Future Roadmap](#future-roadmap)).
+> **Status:** Platform foundation refined. Production-grade infrastructure only —
+> no business/AI features yet (see [Future Roadmap](#future-roadmap)).
 
 ## Vision
 
@@ -47,37 +46,34 @@ APE follows a strict, layered architecture with clear separation of concerns:
                 Client
                   │
                   ▼
-            Router Layer (api/)          HTTP validation, serialization, DI
+     Router Layer (api/v1/routes/)     HTTP validation, serialization, DI
                   │
                   ▼
-           Service Layer (services/)     business orchestration, transactions
+     Service Layer (modules/.../services/)   orchestration, transactions
              │            │
              │            ▼
-             │     Repository Layer       relational persistence (CRUD only)
-             │     (repositories/)
+             │     Repository Layer (ProjectScopedRepository)
+             │
              ▼
-      Infrastructure Providers (providers/)
-      ├── LLM            ├── Vector Store
-      ├── Embeddings     ├── Object Storage
-      ├── Reranker       ├── OCR / Parsing
-      └── Connectors     └── External APIs
+      Infrastructure Providers (future implementations/)
+      └── Vector Store, Storage, LLM, OCR, Connectors, ...
 ```
 
-Key cross-cutting foundations implemented in this sprint:
+Key foundations:
 
+- **Composition root** — `api/`, `dependencies/`, `composition/` wire HTTP and ORM discovery; modules do not import `dependencies/`.
 - **Application factory** (`create_app`) + ASGI entrypoint (`app.main:app`).
 - **API versioning** under `/api/v1` (system probes stay unversioned).
-- **Environment-driven configuration** via Pydantic Settings (no hardcoded values).
-- **Structured logging** (structlog) with per-request `request_id` / `trace_id`.
-- **Lifespan-managed infrastructure** (PostgreSQL, Redis, Qdrant) with graceful startup.
-- **Global exception handling** with a standard error envelope (`code`, `message`, `trace_id`, `details`).
-- **Standard API response model** (`ApiResponse` / `ErrorResponse`).
-- **Async SQLAlchemy 2.x + Alembic** migration infrastructure.
-- **Health & readiness** endpoints reporting downstream dependency status.
+- **Environment-driven configuration** via Pydantic Settings.
+- **Structured logging** with per-request `request_id` / `trace_id`.
+- **Lifespan-managed infrastructure** (PostgreSQL, Redis, Qdrant connectivity adapters).
+- **Global exception handling** with standard error envelope.
+- **Async SQLAlchemy 2.x + Alembic** with composition-level ORM registry.
+- **Health & readiness** endpoints.
+- **Import boundary tests** enforcing documented dependency rules.
 
-Core principle: **Project is the unit of isolation.** Every entity, query,
-job, and artifact is scoped by `project_id` (introduced with the Project module
-in a later sprint).
+Core principle: **Project is the unit of isolation.** `ProjectScopedRepository`
+requires `project_id` on every query (business entities ship with the Projects module).
 
 ## Technology Stack
 
@@ -101,32 +97,20 @@ in a later sprint).
 .
 ├── backend/
 │   ├── app/
-│   │   ├── api/            # Routers (system health + /api/v1)
+│   │   ├── composition/    # ORM registry (Alembic model discovery)
+│   │   ├── api/            # HTTP composition (health + /api/v1 + routes/)
+│   │   ├── dependencies/   # FastAPI DI (composition only)
 │   │   ├── core/           # Config, logging, middleware, exceptions
-│   │   ├── db/             # Engine, sessions, base, infra clients, migrations
-│   │   ├── models/         # ORM base & reusable mixins
-│   │   ├── schemas/        # Pydantic request/response contracts
-│   │   ├── services/       # Business orchestration (health_service)
-│   │   ├── repositories/   # Relational persistence (BaseRepository)
-│   │   ├── providers/      # External infrastructure behind interfaces
-│   │   ├── workflows/      # Deterministic AI orchestration (future)
-│   │   ├── dependencies/   # FastAPI DI wiring
-│   │   ├── utils/          # Small shared helpers
+│   │   ├── platform/       # Shared kernel (db, infra, persistence, jobs)
+│   │   ├── modules/        # Feature vertical slices (bounded contexts)
 │   │   └── main.py         # Application factory + ASGI entrypoint
-│   └── Dockerfile          # Multi-stage backend image
+│   └── Dockerfile
+├── tests/
+│   └── architecture/       # Import boundary enforcement
 ├── docs/
-│   ├── architecture/       # How the platform is built
+│   ├── architecture/       # Canonical architecture guides + ADRs
 │   ├── features/           # Per-feature reference docs
-│   └── learning/           # AI-engineering knowledge base
-├── requirements/           # base.txt / dev.txt / prod.txt (pinned)
-├── tests/                  # unit/ + integration/
-├── scripts/                # Operational & dev scripts
-├── infra/                  # Infrastructure assets
-├── alembic.ini             # Migration config (URL injected from settings)
-├── docker-compose.yml      # Full local stack (single command)
-├── Makefile                # Developer task runner (make help)
-├── pyproject.toml          # Metadata + tool config (ruff/pytest/mypy/coverage)
-└── .env.example            # Environment template
+│   └── learning/           # Foundation deep-dives
 ```
 
 ## Prerequisites
@@ -232,6 +216,7 @@ pytest                       # run the suite
 pytest --cov --cov-report=term-missing   # with coverage
 pytest -m unit               # only unit tests
 pytest -m integration        # only integration tests
+pytest -m architecture         # import boundary tests
 ```
 
 Tests run without any external services — the readiness checks report

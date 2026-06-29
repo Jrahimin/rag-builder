@@ -3,7 +3,7 @@
 Feature routers (projects, documents, connectors, retrieval, chat, ...) will
 be registered here in later sprints, e.g.::
 
-    from app.api.v1.routes.projects import router as projects_router
+    from app.modules.projects.api.project_router import router as projects_router
     api_v1_router.include_router(projects_router)
 
 It is intentionally empty for the foundation sprint - no business endpoints

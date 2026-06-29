@@ -98,8 +98,10 @@ async def health(service: HealthServiceDep) -> ApiResponse[LivenessStatus]:
     return ApiResponse.ok(service.liveness())
 ```
 
-**Rule:** Routers inject services and schemas only. They never construct
-repositories or open DB connections directly.
+**Rule:** Only `api/` and `dependencies/` use these factories. Feature modules
+must not import `app.dependencies` — route wiring lives in `api/v1/routes/`.
+Routers inject services and schemas only; they never construct repositories or
+open DB connections directly.
 
 ---
 
@@ -173,4 +175,4 @@ outbound payload against Pydantic, catching serialization bugs early.
 | `backend/app/api/health.py` | System health routes |
 | `backend/app/api/v1/router.py` | Versioned API aggregator |
 | `backend/app/core/exception_handlers.py` | Global error envelope |
-| `backend/app/schemas/common.py` | `ApiResponse`, `ErrorResponse` |
+| `backend/app/platform/http/envelopes.py` | `ApiResponse`, `ErrorResponse` |

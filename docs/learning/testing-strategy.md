@@ -23,6 +23,8 @@ services.
 ```text
 tests/
 ├── conftest.py              # Shared fixtures, test env setup
+├── architecture/
+│   └── test_import_boundaries.py   # Package import rules
 ├── unit/
 │   ├── test_config.py       # Settings, DSNs, CORS parsing
 │   ├── test_logging.py      # structlog configuration
@@ -35,7 +37,7 @@ Configuration lives in `pyproject.toml` under `[tool.pytest.ini_options]`:
 
 - `pythonpath = ["backend"]` — import `app` without installing the package.
 - `asyncio_mode = "auto"` — async tests run without explicit markers.
-- Markers: `unit`, `integration`.
+- Markers: `unit`, `integration`, `architecture`.
 
 ---
 

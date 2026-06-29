@@ -1,17 +1,9 @@
-"""FastAPI dependency wiring (settings, sessions, clients, services)."""
+"""Composition-root dependency aliases — for ``api/`` routers only."""
 
-from app.dependencies.common import (
-    DbSessionDep,
-    HealthServiceDep,
-    QdrantDep,
-    RedisDep,
-    SettingsDep,
-)
+from app.dependencies.common import DbSessionDep, HealthServiceDep, SettingsDep
 
 __all__ = [
     "DbSessionDep",
     "HealthServiceDep",
-    "QdrantDep",
-    "RedisDep",
     "SettingsDep",
 ]

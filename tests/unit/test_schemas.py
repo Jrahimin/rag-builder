@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.schemas.common import ApiResponse, ErrorInfo, ErrorResponse, ResponseMeta
+from app.platform.http.envelopes import ApiResponse, ErrorInfo, ErrorResponse, ResponseMeta
 
 pytestmark = pytest.mark.unit
 

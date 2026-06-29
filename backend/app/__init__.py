@@ -1,18 +1,12 @@
 """AI Platform Engine (APE) application package.
 
-Layered architecture (see .cursor/rules/architecture.mdc):
+Canonical layout (see ``docs/architecture/module-architecture.md``):
 
-    api/          -> HTTP routers (validation, serialization, DI)
-    services/     -> business orchestration & transaction control
-    repositories/ -> relational persistence (CRUD only)
-    providers/    -> external infrastructure behind abstract interfaces
-    workflows/    -> deterministic multi-step AI orchestration
-    db/           -> engine, sessions, declarative base, migrations
-    models/       -> ORM models / reusable mixins
-    schemas/      -> Pydantic request/response contracts
-    core/         -> config, logging, middleware, exceptions
-    dependencies/ -> FastAPI dependency wiring
-    utils/        -> small, dependency-free helpers
+    api/          Composition root — mounts routers only
+    core/         Cross-cutting kernel (config, logging, exceptions)
+    platform/     Shared technical infrastructure (db, providers, jobs, http)
+    modules/      Feature vertical slices (business capabilities)
+    dependencies/ DI wiring
 """
 
 __version__ = "0.1.0"

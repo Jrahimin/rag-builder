@@ -33,8 +33,8 @@ Documents explaining what was built in the platform foundation:
 | [Docker Local Development](./docker-local-development.md) | Compose stack, health checks, volumes, hybrid workflow |
 | [Testing Strategy](./testing-strategy.md) | Pytest layout, fixtures, unit vs integration |
 
-For request flow and layering diagrams, see
-[docs/architecture/system-architecture.md](../architecture/system-architecture.md).
+For request flow and layering, see
+[docs/architecture/module-architecture.md](../architecture/module-architecture.md).
 
 ---
 

@@ -39,18 +39,23 @@ logic**.
 ### Backend layers (`backend/app/`)
 
 ```text
-api/            HTTP routers (health + empty /api/v1)
+composition/    ORM registry for Alembic
+api/            HTTP composition (health + /api/v1 + routes/)
+dependencies/   FastAPI DI (composition only — modules must not import)
 core/           Config, logging, middleware, exceptions
-db/             Engine, sessions, Redis/Qdrant clients, migrations
-dependencies/   FastAPI DI wiring
-models/         ORM mixins (no business entities yet)
-repositories/   BaseRepository generic CRUD
-schemas/        ApiResponse, ErrorResponse, health schemas
-services/       HealthService (readiness orchestration)
-providers/      Empty — ready for vendor abstractions
-workflows/      Empty — ready for LangGraph / state machines
+platform/       db, infra/connectivity, persistence, domain, http, jobs, config
+modules/        Feature vertical slices (bounded contexts — empty)
 main.py         Application factory + lifespan
 ```
+
+### Architectural remediation (post-sprint)
+
+- **Composition ORM registry** — Alembic discovers models via `composition/orm_registry.py`; `platform/` never imports `modules/`.
+- **Dependency direction** — modules must not import `dependencies/`; HTTP wiring lives in `api/v1/routes/`.
+- **SDK isolation** — Redis/Qdrant connectivity in `platform/infra/connectivity/`; not exposed via general DI.
+- **Fail-closed persistence** — `ProjectScopedRepository` requires `project_id`.
+- **Trimmed contracts** — provider interfaces, config resolver, and job models deferred until first consumer.
+- **Import boundary tests** — `tests/architecture/test_import_boundaries.py`.
 
 ### Infrastructure connectivity
 
@@ -140,7 +145,7 @@ flowchart TB
 ## Reading order for new contributors
 
 1. This document (overview).
-2. `docs/architecture/system-architecture.md` (request flow and layering).
+2. `docs/architecture/module-architecture.md` (canonical layout and dependency rules).
 3. Topic deep-dives in `docs/learning/`:
    - `application-factory-and-fastapi.md`
    - `configuration-system.md`

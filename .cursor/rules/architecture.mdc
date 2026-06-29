@@ -387,7 +387,7 @@ Relational database persistence.
 Repositories extend:
 
 ```text
-BaseRepository
+ProjectScopedRepository
 ```
 
 Examples
@@ -875,26 +875,55 @@ Ship as Docker images. Provide a docker-compose stack for the full self-hosted d
 
 ---
 
-# 📦 Feature Modules
+# 📦 Module Architecture (Canonical)
+
+APE is a **modular monolith**. The canonical layout supersedes any earlier
+description of global `services/`, `repositories/`, or `providers/` packages at
+the application root.
 
 ```text
-modules/
-│
-├── projects/
-├── connectors/
-├── storage/
-├── documents/
-├── ocr_parsing/
-├── chunking/
-├── embeddings/
-├── retrieval/
-├── chat/
-├── evaluation/
-├── feedback/
-├── jobs/
-├── providers/
-└── observability/
+backend/app/
+├── composition/    # ORM registry for Alembic (may import modules)
+├── api/            # HTTP composition (mount routers)
+│   └── v1/routes/  # Per-feature routers + Depends() wiring
+├── dependencies/   # FastAPI DI factories (composition only)
+├── core/           # Cross-cutting (config, logging, exceptions)
+├── platform/       # Shared kernel (db, infra, persistence, jobs, http)
+└── modules/        # Feature vertical slices (no HTTP wiring)
 ```
+
+**Full specification:** `docs/architecture/module-architecture.md`
+
+## Module internal structure
+
+```text
+modules/<feature>/
+    services/ repositories/ schemas/ models/ [workflows/]
+```
+
+HTTP routes live in `api/v1/routes/`, not inside modules.
+
+## Dependency rules
+
+| Package | May import | Forbidden |
+| ------- | ---------- | --------- |
+| `core/` | stdlib, third-party | `platform`, `modules`, `api`, `dependencies`, `composition` |
+| `platform/` | `core` | `modules`, `api`, `dependencies`, `composition` |
+| `modules/<A>/` | `core`, `platform`, own package | `dependencies`, `api`, `composition`, `modules/<B>/` internals |
+| `api/`, `dependencies/` | `core`, `platform`, `modules` | business logic |
+| `composition/` | anywhere needed for ORM registry | — |
+
+Enforced by `tests/architecture/test_import_boundaries.py`.
+
+## Planned modules (bounded contexts)
+
+```text
+modules/projects/ modules/knowledge/ modules/retrieval/
+modules/conversations/ modules/evaluation/
+```
+
+Provider **implementations** live in `platform/providers/implementations/`, not
+inside feature modules.
 
 ---
 
