@@ -8,10 +8,12 @@ from app.core.config import (
     AppConfig,
     CORSConfig,
     DatabaseConfig,
+    DisposableDatabaseConfig,
     Environment,
     MinioConfig,
     QdrantConfig,
     RedisConfig,
+    get_settings,
 )
 
 pytestmark = pytest.mark.unit
@@ -58,3 +60,20 @@ def test_app_environment_flags() -> None:
     assert AppConfig(env=Environment.PRODUCTION).is_production is True
     assert AppConfig(env=Environment.TESTING).is_testing is True
     assert AppConfig(env=Environment.DEVELOPMENT).is_development is True
+
+
+def test_disposable_database_defaults() -> None:
+    cfg = DisposableDatabaseConfig()
+    assert cfg.name == "ape_test"
+    assert cfg.allow_migrations is False
+
+
+def test_integration_db_guard_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("APE_APP__ENV", "testing")
+    monkeypatch.setenv("APE_DATABASE__NAME", "ape")
+    monkeypatch.setenv("APE_TEST_DATABASE__NAME", "ape_test")
+    monkeypatch.delenv("APE_TEST_DATABASE__ALLOW_MIGRATIONS", raising=False)
+    get_settings.cache_clear()
+    settings = get_settings()
+    assert settings.database.name != settings.test_database.name
+    get_settings.cache_clear()

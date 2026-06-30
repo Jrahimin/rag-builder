@@ -1,11 +1,11 @@
-"""Reusable ORM mixins — building blocks for module-owned entities."""
+"""Reusable ORM mixins — building blocks for all entities in ``app.models``."""
 
 from __future__ import annotations
 
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, Uuid, func
+from sqlalchemy import Boolean, DateTime, Uuid, func, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 
@@ -35,11 +35,35 @@ class TimestampMixin:
     )
 
 
+class ActiveStatusMixin:
+    """Adds ``is_active`` for operational enable/disable without soft delete."""
+
+    is_active: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        server_default=text("true"),
+    )
+
+
+class SoftDeleteMixin:
+    """Adds soft-delete columns; ``deleted_at`` is the persistence source of truth."""
+
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    deleted_by: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+
+    @property
+    def is_deleted(self) -> bool:
+        return self.deleted_at is not None
+
+
 class ProjectScopedMixin:
     """Adds an indexed ``project_id`` — mandatory for Project-owned entities.
 
     Every query, job, and deletion on Project-owned data must filter by this
-    column. Foreign keys to ``projects`` are declared on concrete module models.
+    column. Foreign keys to ``projects`` are declared on concrete models.
     """
 
     project_id: Mapped[uuid.UUID] = mapped_column(

@@ -23,8 +23,8 @@ is **domain-agnostic** — there is no business-specific logic — so it can be
 reused across DMS, tax/audit, ERP, HRMS, legal, financial research, and
 internal knowledge-base systems.
 
-> **Status:** Platform foundation refined. Production-grade infrastructure only —
-> no business/AI features yet (see [Future Roadmap](#future-roadmap)).
+> **Status:** Phase 1 in progress — platform foundation plus **Project Management**
+> module. See [docs/features/projects.md](docs/features/projects.md).
 
 ## Vision
 

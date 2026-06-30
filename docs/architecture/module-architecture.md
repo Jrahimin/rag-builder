@@ -14,6 +14,7 @@ slices + `api/` / `dependencies/` / `composition/` as the composition root.
 backend/app/
 ├── main.py                 # ASGI entry + lifespan
 ├── composition/            # ORM registry + Alembic migrations
+├── models/                 # All SQLAlchemy ORM entities (shared across modules)
 ├── api/                    # HTTP composition (mount routers)
 │   ├── health.py           # Deployment-level probes
 │   └── v1/
@@ -24,16 +25,16 @@ backend/app/
 ├── platform/               # Shared kernel (no feature imports)
 │   ├── db/                 # PostgreSQL engine + session management
 │   ├── infra/connectivity/ # Redis/Qdrant adapters (health only)
-│   ├── persistence/        # ProjectScopedRepository
-│   ├── domain/             # ORM mixins, OwnershipScope
-│   ├── http/               # ApiResponse / ErrorResponse
+│   ├── persistence/        # AsyncRepository, ProjectScopedRepository
+│   ├── domain/             # ORM mixins, lifecycle service helpers
+│   ├── http/               # ApiResponse / ErrorResponse, pagination
 │   ├── system/             # HealthService
 │   ├── providers/          # Errors + capability reference
 │   ├── jobs/               # JobQueue.enqueue contract
 │   └── config/             # ConfigLayer precedence model
-└── modules/                # Feature vertical slices (no HTTP wiring)
+└── modules/                # Feature vertical slices (no HTTP wiring, no ORM)
     └── <feature>/
-        services/ repositories/ schemas/ models/ [workflows/]
+        services/ repositories/ schemas/ [workflows/]
 ```
 
 ---
@@ -51,8 +52,8 @@ composition/ ──► modules/ (ORM registry)
 | ------- | ---------- | --------- |
 | `core/` | stdlib, third-party | `platform`, `modules`, `api`, `dependencies`, `composition` |
 | `platform/` | `core` | `modules`, `api`, `dependencies`, `composition` |
-| `modules/<x>/` | `core`, `platform`, own package | `dependencies`, `api`, `composition`, other modules |
-| `api/`, `dependencies/` | `core`, `platform`, `modules` | — |
+| `modules/<x>/` | `core`, `platform`, `app.models`, own package | `dependencies`, `api`, `composition`, other modules |
+| `api/`, `dependencies/` | `core`, `platform`, `modules`, `app.models` | — |
 | `composition/` | anywhere needed for registry | — |
 
 **Modules must not import `dependencies/`.** HTTP routes and `Depends()` live in
@@ -71,9 +72,9 @@ Register models in `app/composition/orm_registry.py`. Alembic imports that file;
 
 ## Project isolation (fail-closed)
 
-- ORM: `ProjectScopedMixin` on every Project-owned entity
-- Persistence: `ProjectScopedRepository` — requires `project_id`, scopes every query, deterministic `order_by`
-- Unscoped `BaseRepository` is internal (`_base_repository.py`), not exported
+- ORM: `ProjectScopedMixin` on Project-owned entities (pick mixins per entity)
+- Persistence: `ProjectScopedRepository` — requires `project_id`, scopes every query
+- Aggregate roots (e.g. `Project`): `AsyncRepository` — unscoped by design
 
 ---
 
@@ -91,7 +92,7 @@ Concrete provider interfaces are added with the first implementation.
 
 | Module | Scope |
 | ------ | ----- |
-| `projects` | Central aggregate |
+| `projects` | Central aggregate (shipped) |
 | `knowledge` | Ingestion (connectors, documents, parsing, chunking, embeddings) |
 | `retrieval` | Hybrid search + reranking |
 | `conversations` | Chat + prompts |

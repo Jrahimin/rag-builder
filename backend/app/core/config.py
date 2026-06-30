@@ -18,6 +18,7 @@ Access settings through :func:`get_settings`, which caches a single
 
 from __future__ import annotations
 
+import os
 from enum import StrEnum
 from functools import lru_cache
 
@@ -140,6 +141,13 @@ class DatabaseConfig(BaseModel):
         return self._url("postgresql+psycopg")
 
 
+class DisposableDatabaseConfig(BaseModel):
+    """Guards integration tests so they only migrate a disposable database."""
+
+    name: str = "ape_test"
+    allow_migrations: bool = False
+
+
 class RedisConfig(BaseModel):
     """Redis connection configuration (cache + background queue backend)."""
 
@@ -197,7 +205,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="APE_",
         env_nested_delimiter="__",
-        env_file=(".env",),
+        env_file=(".env",) if os.environ.get("APE_APP__ENV") != "testing" else None,
         env_file_encoding="utf-8",
         extra="ignore",
         case_sensitive=False,
@@ -208,6 +216,7 @@ class Settings(BaseSettings):
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
     cors: CORSConfig = Field(default_factory=CORSConfig)
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)
+    test_database: DisposableDatabaseConfig = Field(default_factory=DisposableDatabaseConfig)
     redis: RedisConfig = Field(default_factory=RedisConfig)
     qdrant: QdrantConfig = Field(default_factory=QdrantConfig)
     minio: MinioConfig = Field(default_factory=MinioConfig)

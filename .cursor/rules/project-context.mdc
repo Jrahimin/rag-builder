@@ -344,6 +344,11 @@ Documentation should be concise, visual, and easy to navigate. It should evolve 
 
 Maintain learning-focused documentation under `docs/learning/`.
 
+Maintain a concise **API reference** under `docs/api/` — one file per module
+(`projects.md`, `knowledge.md`, …) collected in `docs/api/README.md`. Each entry:
+method, path, short description, sample request/response JSON. Intended for
+quick Postman collection preparation; OpenAPI (`/docs`) remains the live contract.
+
 These documents should explain concepts, request flow, architecture, internal mechanics, trade-offs, and production considerations using diagrams, flowcharts, sequence diagrams, comparison tables, and practical examples.
 
 The goal is to build a comprehensive AI Engineering knowledge base alongside the platform.
@@ -354,20 +359,25 @@ The goal is to build a comprehensive AI Engineering knowledge base alongside the
 
 Current phase:
 
-**Platform Foundation — Refined**
+**Phase 1 — In progress** (Project Management module shipped)
 
-Foundation sprint complete; architectural remediation applied. The repository
-is a production-grade backend baseline ready for Phase 1 feature work. **No
-business features** (Projects, Knowledge, Retrieval, Chat, etc.) are implemented
-yet.
+Foundation sprint and architectural remediation are complete. The first business
+module — **Project Management** — is implemented. Subsequent Phase 1 modules build
+on `project_id` scoping and the shared persistence/service helper patterns.
 
 ## What exists today
 
 | Area | Status | Key locations |
 | ---- | ------ | ------------- |
-| Layered backend + composition root | ✅ | `backend/app/{api,composition,dependencies,core,platform,modules}` |
+| Layered backend + composition root | ✅ | `backend/app/{api,composition,dependencies,core,platform,models,modules}` |
+| Central ORM models | ✅ | `backend/app/models/` |
+| Shared persistence primitives | ✅ | `platform/persistence/` (`AsyncRepository`, lifecycle filters) |
+| Shared service helpers | ✅ | `platform/domain/{lifecycle_service,transactions}.py` |
+| Shared list/pagination schemas | ✅ | `platform/http/pagination.py` |
+| **Project Management module** | ✅ | `modules/projects/`, `api/v1/routes/projects.py`, `docs/features/projects.md` |
 | Application factory + lifespan | ✅ | `backend/app/main.py` |
 | API versioning (`/api/v1`) | ✅ | `backend/app/api/v1/router.py`, `api/v1/routes/` |
+| API reference (Postman-oriented) | ✅ | `docs/api/` |
 | System health probes | ✅ | `GET /health`, `GET /ready` |
 | Environment-driven config | ✅ | `backend/app/core/config.py` |
 | Structured logging | ✅ | `backend/app/core/logging.py` |
@@ -379,22 +389,22 @@ yet.
 | Provider foundation (errors + capability ref) | ✅ | `platform/providers/` |
 | Job enqueue contract | ✅ | `platform/jobs/contracts.py` |
 | Config layer precedence model | ✅ | `platform/config/contracts.py` |
-| Project-scoped persistence (fail-closed) | ✅ | `platform/persistence/project_scoped_repository.py` |
 | Import boundary tests | ✅ | `tests/architecture/test_import_boundaries.py` |
 | Docker local stack | ✅ | `docker-compose.yml`, `backend/Dockerfile` |
 | Dev tooling (Ruff, Pytest, Mypy, pre-commit) | ✅ | `pyproject.toml`, `.pre-commit-config.yaml` |
-| Documentation | ✅ | `README.md`, `docs/architecture/`, `docs/learning/` |
+| Documentation | ✅ | `README.md`, `docs/architecture/`, `docs/learning/`, `docs/features/` |
 
 ## Repository layout
 
 ```text
 backend/app/
-  composition/  ORM registry (Alembic model discovery)
+  models/       All ORM entities (shared; registered in composition/orm_registry.py)
+  composition/  ORM registry + Alembic migrations
   api/          HTTP composition (routes + router mounting)
   dependencies/ FastAPI DI (composition only — modules must not import)
   core/         Cross-cutting kernel
-  platform/     Shared infrastructure (db, infra, persistence, jobs, http)
-  modules/      Feature vertical slices (bounded contexts)
+  platform/     Shared infrastructure (db, persistence, domain helpers, http, jobs)
+  modules/      Feature slices (services, repositories, schemas only)
 ```
 
 ## Documentation map
@@ -405,12 +415,13 @@ backend/app/
 * **Provider / config / jobs / deployment** — `docs/architecture/`
 * **ADRs** — `docs/architecture/adr/`
 * **Foundation learning** — `docs/learning/`
-* **Feature docs** — `docs/features/` (populated as modules ship)
+* **Feature docs** — `docs/features/` (e.g. `projects.md`)
+* **API reference (Postman-oriented)** — `docs/api/`
 
 ## Next up (Phase 1)
 
-First business capability: **Project Management** (central domain entity and
-isolation boundary). All subsequent modules depend on `project_id` scoping.
+Knowledge ingestion: file upload, storage provider, `Document` model under
+`app/models/`, scoped by `project_id`. Arq worker skeleton for async processing.
 
 ---
 

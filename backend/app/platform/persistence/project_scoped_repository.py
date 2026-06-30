@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import InstrumentedAttribute
 
 from app.platform.db.base import Base
+from app.platform.persistence.filters import apply_deterministic_order
 
 
 class ProjectScopedRepository[ModelT: Base]:
@@ -48,13 +49,8 @@ class ProjectScopedRepository[ModelT: Base]:
 
     async def list(self, *, limit: int = 100, offset: int = 0) -> list[ModelT]:
         """Return a page ordered by ``created_at``, then ``id`` (deterministic)."""
-        created_at = getattr(self.model, "created_at", None)
-        entity_id = getattr(self.model, "id", None)
         stmt = self._scoped().limit(limit).offset(offset)
-        if created_at is not None and entity_id is not None:
-            stmt = stmt.order_by(created_at, entity_id)
-        elif entity_id is not None:
-            stmt = stmt.order_by(entity_id)
+        stmt = apply_deterministic_order(stmt, self.model)
         result = await self._session.execute(stmt)
         return list(result.scalars().all())
 

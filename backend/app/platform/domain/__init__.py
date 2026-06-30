@@ -1,6 +1,6 @@
-"""Shared domain primitives — ORM mixins and ownership scope.
+"""Shared domain primitives — ORM mixins, ownership scope, service helpers.
 
-Concrete ORM models live in feature modules. Register them in
+Concrete ORM models live in ``app.models``. Register them in
 ``app.composition.orm_registry`` for Alembic — not here.
 """
 
