@@ -60,7 +60,7 @@ main.py         Application factory + lifespan
 ### Infrastructure connectivity
 
 - **PostgreSQL** — async SQLAlchemy 2.x with connection pooling.
-- **Redis** — async client for future cache and job queue (Arq).
+- **Redis** — async client for cache, health checks, and job queue (Taskiq).
 - **Qdrant** — async client for health checks; vector ops deferred to providers.
 - **MinIO** — probed via HTTP in readiness checks; storage provider deferred.
 
@@ -90,7 +90,7 @@ Per sprint scope, these are **out of scope** until Phase 1 feature work:
 - Project, Document, Connector modules
 - OCR, parsing, chunking, embeddings, retrieval, chat
 - Authentication / authorization
-- Background job workers (Arq)
+- Background job workers (Taskiq)
 - Concrete LLM, storage, or vector store providers
 - Business ORM entities and tables (beyond mixins)
 

@@ -56,6 +56,14 @@ def test_cors_accepts_list() -> None:
     assert cfg.allow_origins == ["http://a.com"]
 
 
+def test_cors_accepts_wildcard_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("APE_CORS__ALLOW_ORIGINS", "*")
+    get_settings.cache_clear()
+    settings = get_settings()
+    assert settings.cors.allow_origins == ["*"]
+    get_settings.cache_clear()
+
+
 def test_app_environment_flags() -> None:
     assert AppConfig(env=Environment.PRODUCTION).is_production is True
     assert AppConfig(env=Environment.TESTING).is_testing is True

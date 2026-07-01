@@ -374,7 +374,7 @@ on `project_id` scoping and the shared persistence/service helper patterns.
 | Shared persistence primitives | ✅ | `platform/persistence/` (`AsyncRepository`, lifecycle filters) |
 | Shared service helpers | ✅ | `platform/domain/{lifecycle_service,transactions}.py` |
 | Shared list/pagination schemas | ✅ | `platform/http/pagination.py` |
-| **Project Management module** | ✅ | `modules/projects/`, `api/v1/routes/projects.py`, `docs/features/projects.md` |
+| **Project Management module** | ✅ | `modules/projects/`, `api/v1/routes/projects_router.py`, `docs/features/projects.md` |
 | Application factory + lifespan | ✅ | `backend/app/main.py` |
 | API versioning (`/api/v1`) | ✅ | `backend/app/api/v1/router.py`, `api/v1/routes/` |
 | API reference (Postman-oriented) | ✅ | `docs/api/` |
@@ -421,7 +421,7 @@ backend/app/
 ## Next up (Phase 1)
 
 Knowledge ingestion: file upload, storage provider, `Document` model under
-`app/models/`, scoped by `project_id`. Arq worker skeleton for async processing.
+`app/models/`, scoped by `project_id`. Taskiq worker for async processing.
 
 ---
 

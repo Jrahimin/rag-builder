@@ -58,7 +58,7 @@ Infrastructure in Docker, API on host with venv — see `docs/learning/docker-lo
 ┌──────────────── AI Platform Engine ──────────────────┐
 │  ┌─────────────┐         ┌─────────────┐             │
 │  │ API (×N)    │         │ Worker (×M) │             │
-│  │ gunicorn +  │         │ Arq worker  │             │
+│  │ gunicorn +  │         │ Taskiq worker│             │
 │  │ uvicorn     │         │             │             │
 │  └──────┬──────┘         └──────┬──────┘             │
 │         └──────────┬────────────┘                    │

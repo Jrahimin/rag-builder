@@ -1,6 +1,6 @@
 """Background job foundation — minimal application-facing contract.
 
-Worker handler registration and Arq wiring are introduced with the first real
+Worker handler registration and Taskiq wiring are introduced with the first real
 background job. See ``docs/architecture/background-processing.md``.
 """
 

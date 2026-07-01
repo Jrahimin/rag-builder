@@ -11,7 +11,9 @@ database (``APE_DATABASE__NAME`` must match ``APE_TEST_DATABASE__NAME`` and
 from __future__ import annotations
 
 import os
+import tempfile
 from collections.abc import AsyncIterator
+from pathlib import Path
 
 import pytest
 import pytest_asyncio
@@ -25,11 +27,28 @@ os.environ.setdefault("APE_DATABASE__NAME", "ape_test")
 os.environ.setdefault("APE_TEST_DATABASE__NAME", "ape_test")
 os.environ.setdefault("APE_TEST_DATABASE__ALLOW_MIGRATIONS", "true")
 os.environ.setdefault("APE_LOGGING__RENDER_JSON", "false")
+_test_storage_root = Path(tempfile.mkdtemp(prefix="ape_test_storage_"))
+os.environ.setdefault("APE_STORAGE__BACKEND", "local")
+os.environ.setdefault("APE_STORAGE__LOCAL_ROOT", str(_test_storage_root))
 
 from app.core.config import Settings, get_settings
 from app.dependencies.common import get_db_session
 from app.main import create_app
 from app.platform.db.session import Database
+from app.platform.jobs.contracts import JobDefinition, JobQueue
+
+_test_connection: AsyncConnection | None = None
+
+
+class CapturingJobQueue(JobQueue):
+    """Records enqueued jobs without executing them (integration tests)."""
+
+    def __init__(self, captured: list[JobDefinition]) -> None:
+        self._captured = captured
+
+    async def enqueue(self, job: JobDefinition) -> str:
+        self._captured.append(job)
+        return job.idempotency_key or "test-job"
 
 
 def _integration_db_allowed(settings: Settings) -> tuple[bool, str]:
@@ -111,8 +130,21 @@ def apply_migrations(require_postgres: None, settings: Settings) -> None:
     from alembic.config import Config
 
     get_settings.cache_clear()
-    cfg = Config("alembic.ini")
+    cfg = Config("backend/alembic.ini")
     command.upgrade(cfg, "head")
+
+
+@pytest.fixture
+def captured_jobs() -> list[JobDefinition]:
+    return []
+
+
+@pytest.fixture
+def integration_connection() -> AsyncConnection:
+    if _test_connection is None:
+        msg = "integration_connection requires the db_client fixture"
+        raise RuntimeError(msg)
+    return _test_connection
 
 
 @pytest_asyncio.fixture
@@ -120,13 +152,22 @@ async def db_client(
     require_postgres: None,
     apply_migrations: None,
     settings: Settings,
+    captured_jobs: list[JobDefinition],
 ) -> AsyncIterator[AsyncClient]:
     """HTTP client with DB session override (rolled back after each test)."""
+    global _test_connection
     get_settings.cache_clear()
+    from app.dependencies.knowledge import get_job_queue_dep
+    from app.platform.jobs.implementations.job_queue_factory import get_job_queue
+    from app.platform.providers.implementations.storage_factory import get_storage_provider
+
+    get_storage_provider.cache_clear()
+    get_job_queue.cache_clear()
     app = create_app()
     database = Database(settings)
     connection: AsyncConnection = await database.engine.connect()
     transaction = await connection.begin()
+    _test_connection = connection
 
     async def override_get_db_session() -> AsyncIterator[AsyncSession]:
         session = AsyncSession(bind=connection, expire_on_commit=False)
@@ -139,6 +180,7 @@ async def db_client(
             await session.close()
 
     app.dependency_overrides[get_db_session] = override_get_db_session
+    app.dependency_overrides[get_job_queue_dep] = lambda: CapturingJobQueue(captured_jobs)
 
     async with LifespanManager(app):
         transport = ASGITransport(app=app)
@@ -146,6 +188,7 @@ async def db_client(
             yield ac
 
     app.dependency_overrides.clear()
+    _test_connection = None
     await transaction.rollback()
     await connection.close()
     await database.dispose()

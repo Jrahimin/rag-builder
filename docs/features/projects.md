@@ -12,7 +12,7 @@ isolation anchor.
 ## Architecture
 
 ```text
-api/v1/routes/projects.py
+api/v1/routes/projects_router.py
         │
         ▼
 dependencies/projects.py  →  ProjectService
@@ -54,7 +54,7 @@ sequenceDiagram
 | `GET` | `/api/v1/projects` | Paginated list |
 | `GET` | `/api/v1/projects/{id}` | Get by id |
 | `PATCH` | `/api/v1/projects/{id}` | Update name/description |
-| `PATCH` | `/api/v1/projects/{id}/status` | Toggle `is_active` |
+| `PATCH` | `/api/v1/projects/{id}/status` | Toggle `is_active` (no body; flips current value) |
 | `DELETE` | `/api/v1/projects/{id}` | Soft delete |
 
 **Soft delete:** `deleted_at` is set (source of truth); `is_active` becomes `false`.

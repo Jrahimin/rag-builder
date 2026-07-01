@@ -1,12 +1,21 @@
-"""Provider layer contracts — isolation rules and error taxonomy.
-
-Concrete interfaces and vendor implementations are added alongside the first
-real consumer (see ``implementations/``). SDK types must not leave this package.
-"""
+"""Provider layer contracts — capability reference and concrete interfaces."""
 
 from __future__ import annotations
 
 from enum import StrEnum
+
+from app.platform.providers.contracts.document_parser import (
+    BaseDocumentParserProvider,
+    ParsedDocument,
+)
+from app.platform.providers.contracts.storage import BaseStorageProvider
+
+__all__ = [
+    "BaseDocumentParserProvider",
+    "BaseStorageProvider",
+    "ParsedDocument",
+    "ProviderCapability",
+]
 
 
 class ProviderCapability(StrEnum):

@@ -5,6 +5,9 @@ Not a business provider. The ``redis`` SDK is used only inside this module.
 
 from __future__ import annotations
 
+from collections.abc import Awaitable
+from typing import cast
+
 from redis.asyncio import Redis
 
 from app.core.config import Settings
@@ -25,7 +28,7 @@ class RedisConnectivity:
 
     async def check(self) -> None:
         """Ping Redis to verify connectivity (raises on failure)."""
-        await self._client.ping()
+        await cast(Awaitable[bool], self._client.ping())
 
     async def dispose(self) -> None:
         """Close the connection pool on shutdown."""

@@ -38,7 +38,9 @@ ENV/
 # ---------------------------------------------------------------------------
 .env
 .env.*
-!.env.example
+!.env.docker.example
+backend/.env
+!backend/.env.example
 *.pem
 *.key
 secrets/

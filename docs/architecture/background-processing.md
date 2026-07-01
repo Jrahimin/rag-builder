@@ -7,7 +7,7 @@
 ```text
 HTTP API  →  JobQueue.enqueue(JobDefinition)  →  202 Accepted
                         ↓
-                 Redis + Arq worker (future)
+                 Redis + Taskiq worker
                         ↓
               module job handler
 ```
@@ -18,13 +18,18 @@ HTTP API  →  JobQueue.enqueue(JobDefinition)  →  202 Accepted
 - `JobQueue.enqueue(job) -> job_id` — single application-facing method
 - `RetryPolicy` — single source for retry settings (no duplicate `max_attempts`)
 
-Worker handler registration belongs in the Arq adapter, not the application queue interface.
+Worker handler registration belongs in the Taskiq adapter and worker modules, not the application queue interface.
+
+## Implemented
+
+- `TaskiqJobQueue` — enqueues via Redis list broker (`ListQueueBroker`)
+- Worker process — `taskiq worker app.worker.broker:broker app.worker.handlers.document`
+- `document.process` job — parse + chunk workflow
 
 ## Deferred
 
-- Arq implementation
-- Worker process / container
 - Job status tracking API
 - Cancellation
+- Retry middleware wiring from `RetryPolicy`
 
 See ADR-005 and ADR-006.

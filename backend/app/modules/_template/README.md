@@ -36,7 +36,7 @@ Register every new model in `app/composition/orm_registry.py`.
 
 Shared list filters: `LifecycleListFilters` / `ListParams` (`include_deleted`, `is_active`).
 Shared lifecycle helpers: `mark_soft_deleted`, `is_soft_deleted`.
-Shared service helpers (`platform/domain/`): `get_or_raise`, `list_paginated`, `soft_delete`, `update_active_status`, `flush_commit_refresh`. Keep `create` / `update` in the concrete service.
+Shared service helpers (`platform/domain/`): `get_or_raise`, `list_paginated`, `soft_delete`, `toggle_active_status`, `flush_commit_refresh`. Keep `create` / `update` in the concrete service.
 
 ## Checklist
 

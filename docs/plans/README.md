@@ -6,6 +6,7 @@ design document written before implementation begins.
 | Plan | Status | Description |
 | ---- | ------ | ----------- |
 | [projects-module.md](./projects-module.md) | Pending | Phase 1 — Project Management (CRUD, `is_active` toggle, soft-delete via `deleted_at`) |
+| [knowledge-module.md](./knowledge-module.md) | Complete | Knowledge — upload → parse → chunk (v1 at `chunked`) |
 
 Plans are superseded by `docs/features/` once a capability ships.
 

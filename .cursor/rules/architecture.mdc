@@ -204,23 +204,38 @@ Fine-tuning should be the last option.
 
 ## Explicit Naming
 
-Always use domain-specific filenames.
+Always use domain-specific filenames **with a role suffix** so files are easy to
+find by symbol and responsibility.
+
+| Layer / artifact | Suffix | Example |
+| ---------------- | ------ | ------- |
+| HTTP route module | `_router` | `projects_router.py`, `documents_router.py` |
+| Service | `_service` | `project_service.py` |
+| Repository | `_repository` | `project_repository.py` |
+| Provider implementation | `_provider` | `qdrant_provider.py` |
+| Pydantic schemas | (module `schemas/`) | `schemas/project.py` |
 
 ✅ Good
 
 ```text
-document_router.py
+api/v1/routes/projects_router.py
+modules/projects/services/project_service.py
+modules/projects/repositories/project_repository.py
 qdrant_provider.py
-prompt_repository.py
 ```
 
 ❌ Bad
 
 ```text
+api/v1/routes/projects.py      # ambiguous vs model/schema
 router.py
 service.py
 helper.py
 ```
+
+Import routers with an explicit alias in `api/v1/router.py`::
+
+    from app.api.v1.routes.projects_router import router as projects_router
 
 ---
 
@@ -232,13 +247,13 @@ helper.py
 | Database        | PostgreSQL                          |
 | Vector DB       | Qdrant                              |
 | Cache           | Redis                               |
-| Background Jobs | Arq (default; Celery/Taskiq optional) |
+| Background Jobs | Taskiq (default; Celery optional) |
 | Object Storage  | S3 / MinIO / Local                  |
 | Observability   | Langfuse                            |
 | Local LLM       | Ollama                              |
 | Production LLM  | vLLM                                |
 
-Background jobs default to **Arq** (Redis-native, async-first, minimal infra). Celery or Taskiq are acceptable alternatives where their feature sets are required, but a deployment should pick exactly one.
+Background jobs default to **Taskiq** (Redis-native, async-first, actively maintained). Celery is an acceptable alternative where its feature set is required, but a deployment should pick exactly one.
 
 ---
 
@@ -325,7 +340,11 @@ Do **not** build a generic CRUD base class; reuse shared helpers via composition
 | `lifecycle_service.list_paginated` | `ListParams` → `PaginatedResult` |
 | `lifecycle_service.require_not_deleted` | block mutations on soft-deleted rows |
 | `lifecycle_service.soft_delete` | idempotent soft delete + persist |
-| `lifecycle_service.update_active_status` | toggle `is_active` on mutable entities |
+| `lifecycle_service.toggle_active_status` | flip `is_active` on mutable entities |
+
+**Active-status API:** expose `PATCH /{id}/status` with **no request body**; each
+call toggles the stored `is_active` value. Do not accept `is_active` in the
+payload — clients call the endpoint again to flip back.
 
 Pair with repository bases: `AsyncRepository` for aggregate roots, `ProjectScopedRepository` for Project-owned entities.
 

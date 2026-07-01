@@ -11,6 +11,6 @@ All SQLAlchemy models live under ``app.models``::
 
 from __future__ import annotations
 
+from app.models.document import Document  # noqa: F401
+from app.models.document_chunk import DocumentChunk  # noqa: F401
 from app.models.project import Project  # noqa: F401
-
-# Additional models are imported here as they are added.

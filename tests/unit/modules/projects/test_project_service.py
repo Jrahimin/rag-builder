@@ -179,41 +179,43 @@ async def test_update_duplicate_name_raises_conflict(
     assert exc_info.value.code == "project_name_conflict"
 
 
-async def test_update_status_on_deleted_raises_conflict(
+async def test_toggle_status_on_deleted_raises_conflict(
     service: ProjectService, repository: AsyncMock
 ) -> None:
     deleted = _project(deleted_at=datetime.now(UTC))
     repository.get_by_id.return_value = deleted
 
     with pytest.raises(ConflictError) as exc_info:
-        await service.update_status(deleted.id, True)
+        await service.toggle_status(deleted.id)
 
     assert exc_info.value.code == "project_deleted"
     repository.get_by_id.assert_awaited_with(deleted.id, include_deleted=True)
 
 
-async def test_update_status_idempotent_skips_commit(
-    service: ProjectService, session: AsyncMock, repository: AsyncMock
-) -> None:
-    project = _project(is_active=True)
-    repository.get_by_id.return_value = project
-
-    result = await service.update_status(project.id, True)
-
-    assert result.is_active is True
-    session.commit.assert_not_awaited()
-
-
-async def test_update_status_toggles_and_commits(
+async def test_toggle_status_flips_true_to_false(
     service: ProjectService, session: AsyncMock, repository: AsyncMock
 ) -> None:
     project = _project(is_active=True)
     repository.get_by_id.return_value = project
     repository.flush = AsyncMock()
 
-    result = await service.update_status(project.id, False)
+    result = await service.toggle_status(project.id)
 
     assert result.is_active is False
+    repository.flush.assert_awaited_once()
+    session.commit.assert_awaited_once()
+
+
+async def test_toggle_status_flips_false_to_true(
+    service: ProjectService, session: AsyncMock, repository: AsyncMock
+) -> None:
+    project = _project(is_active=False)
+    repository.get_by_id.return_value = project
+    repository.flush = AsyncMock()
+
+    result = await service.toggle_status(project.id)
+
+    assert result.is_active is True
     repository.flush.assert_awaited_once()
     session.commit.assert_awaited_once()
 
