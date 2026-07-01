@@ -1,0 +1,276 @@
+"""Integration tests for document upload API."""
+
+from __future__ import annotations
+
+import uuid
+from pathlib import Path
+
+import pytest
+from httpx import AsyncClient
+from sqlalchemy.ext.asyncio import AsyncConnection
+
+from app.core.config import get_settings
+from app.platform.jobs.contracts import JobDefinition
+from tests.integration.knowledge_helpers import run_captured_document_jobs
+
+pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
+
+
+async def _create_project(client: AsyncClient, name: str | None = None) -> str:
+    response = await client.post(
+        "/api/v1/projects",
+        json={"name": name or f"Docs Project {uuid.uuid4().hex[:8]}"},
+    )
+    assert response.status_code == 201
+    return response.json()["data"]["id"]
+
+
+async def _upload_and_process(
+    db_client: AsyncClient,
+    integration_connection: AsyncConnection,
+    captured_jobs: list[JobDefinition],
+    project_id: str,
+    *,
+    filename: str,
+    content: bytes,
+    content_type: str = "text/plain",
+) -> dict[str, object]:
+    upload = await db_client.post(
+        f"/api/v1/projects/{project_id}/documents",
+        files={"file": (filename, content, content_type)},
+    )
+    assert upload.status_code == 201
+    assert len(captured_jobs) == 1
+    document_id = upload.json()["data"]["id"]
+    await run_captured_document_jobs(integration_connection, captured_jobs)
+    fetched = await db_client.get(
+        f"/api/v1/projects/{project_id}/documents/{document_id}",
+    )
+    assert fetched.status_code == 200
+    return fetched.json()["data"]
+
+
+async def test_upload_list_get_delete_document(
+    db_client: AsyncClient,
+    integration_connection: AsyncConnection,
+    captured_jobs: list[JobDefinition],
+) -> None:
+    project_id = await _create_project(db_client)
+    content = b"Phase 1 knowledge upload"
+    body = await _upload_and_process(
+        db_client,
+        integration_connection,
+        captured_jobs,
+        project_id,
+        filename="sample.txt",
+        content=content,
+    )
+    assert body["status"] == "chunked"
+    assert body["version"] == 1
+    assert body["size_bytes"] == len(content)
+    assert body["page_count"] == 1
+    document_id = body["id"]
+
+    settings = get_settings()
+    storage_path = Path(settings.storage.local_root) / str(body["storage_key"])
+    assert storage_path.is_file()
+    parsed_path = Path(settings.storage.local_root) / str(body["parsed_text_storage_key"])
+    assert parsed_path.is_file()
+
+    listed = await db_client.get(f"/api/v1/projects/{project_id}/documents")
+    assert listed.status_code == 200
+    ids = {item["id"] for item in listed.json()["data"]["items"]}
+    assert document_id in ids
+
+    fetched = await db_client.get(f"/api/v1/projects/{project_id}/documents/{document_id}")
+    assert fetched.status_code == 200
+    assert fetched.json()["data"]["filename"] == "sample.txt"
+    assert fetched.json()["data"]["status"] == "chunked"
+
+    deleted = await db_client.delete(f"/api/v1/projects/{project_id}/documents/{document_id}")
+    assert deleted.status_code == 200
+    assert deleted.json()["data"]["deleted_at"] is not None
+    assert not storage_path.is_file()
+
+    list_after = await db_client.get(f"/api/v1/projects/{project_id}/documents")
+    assert document_id not in {item["id"] for item in list_after.json()["data"]["items"]}
+
+
+async def test_upload_duplicate_content_returns_conflict(
+    db_client: AsyncClient,
+    integration_connection: AsyncConnection,
+    captured_jobs: list[JobDefinition],
+) -> None:
+    project_id = await _create_project(db_client)
+    files = {"file": ("a.txt", b"duplicate-me", "text/plain")}
+
+    first = await db_client.post(f"/api/v1/projects/{project_id}/documents", files=files)
+    assert first.status_code == 201
+    await run_captured_document_jobs(integration_connection, captured_jobs)
+
+    second = await db_client.post(f"/api/v1/projects/{project_id}/documents", files=files)
+    assert second.status_code == 409
+    assert second.json()["error"]["code"] == "document_content_duplicate"
+
+
+async def test_document_isolated_by_project(
+    db_client: AsyncClient,
+    integration_connection: AsyncConnection,
+    captured_jobs: list[JobDefinition],
+) -> None:
+    project_a = await _create_project(db_client)
+    project_b = await _create_project(db_client)
+    body = await _upload_and_process(
+        db_client,
+        integration_connection,
+        captured_jobs,
+        project_a,
+        filename="iso.txt",
+        content=b"isolated",
+    )
+    document_id = body["id"]
+
+    cross = await db_client.get(f"/api/v1/projects/{project_b}/documents/{document_id}")
+    assert cross.status_code == 404
+    assert cross.json()["error"]["code"] == "document_not_found"
+
+
+async def test_upload_to_missing_project_returns_not_found(db_client: AsyncClient) -> None:
+    missing = uuid.uuid4()
+    response = await db_client.post(
+        f"/api/v1/projects/{missing}/documents",
+        files={"file": ("x.txt", b"x", "text/plain")},
+    )
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "project_not_found"
+
+
+async def test_upload_returns_queued_before_worker(
+    db_client: AsyncClient,
+    captured_jobs: list[JobDefinition],
+) -> None:
+    project_id = await _create_project(db_client)
+    upload = await db_client.post(
+        f"/api/v1/projects/{project_id}/documents",
+        files={"file": ("queued.txt", b"queued", "text/plain")},
+    )
+    assert upload.status_code == 201
+    assert upload.json()["data"]["status"] == "queued"
+    assert len(captured_jobs) == 1
+
+
+async def test_parse_text_document_via_workflow(
+    db_client: AsyncClient,
+    integration_connection: AsyncConnection,
+    captured_jobs: list[JobDefinition],
+) -> None:
+    project_id = await _create_project(db_client)
+    body = await _upload_and_process(
+        db_client,
+        integration_connection,
+        captured_jobs,
+        project_id,
+        filename="notes.md",
+        content=b"# Title\n\nBody text",
+        content_type="text/markdown",
+    )
+    assert body["status"] == "chunked"
+    assert body["parser_name"] == "plain_text"
+    assert body["parsed_text_storage_key"] is not None
+
+
+async def test_unsupported_file_marks_failed(
+    db_client: AsyncClient,
+    integration_connection: AsyncConnection,
+    captured_jobs: list[JobDefinition],
+) -> None:
+    project_id = await _create_project(db_client)
+    body = await _upload_and_process(
+        db_client,
+        integration_connection,
+        captured_jobs,
+        project_id,
+        filename="data.bin",
+        content=b"\x00\x01\x02",
+        content_type="application/octet-stream",
+    )
+    assert body["status"] == "failed"
+    assert body["error_message"]
+    assert "traceback" not in body["error_message"].lower()
+
+
+async def test_reprocess_deleted_document_returns_conflict(
+    db_client: AsyncClient,
+    integration_connection: AsyncConnection,
+    captured_jobs: list[JobDefinition],
+) -> None:
+    project_id = await _create_project(db_client)
+    body = await _upload_and_process(
+        db_client,
+        integration_connection,
+        captured_jobs,
+        project_id,
+        filename="reprocess.txt",
+        content=b"reprocess me",
+    )
+    document_id = body["id"]
+    await db_client.delete(f"/api/v1/projects/{project_id}/documents/{document_id}")
+
+    response = await db_client.post(
+        f"/api/v1/projects/{project_id}/documents/{document_id}/reprocess",
+    )
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "document_deleted"
+
+
+async def test_list_document_chunks(
+    db_client: AsyncClient,
+    integration_connection: AsyncConnection,
+    captured_jobs: list[JobDefinition],
+) -> None:
+    project_id = await _create_project(db_client)
+    content = b"chunking test " * 80
+    body = await _upload_and_process(
+        db_client,
+        integration_connection,
+        captured_jobs,
+        project_id,
+        filename="chunks.txt",
+        content=content,
+    )
+    document_id = body["id"]
+
+    response = await db_client.get(
+        f"/api/v1/projects/{project_id}/documents/{document_id}/chunks",
+    )
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["total"] >= 1
+    assert len(data["items"]) >= 1
+    assert data["items"][0]["chunk_index"] == 0
+    assert data["items"][0]["content"]
+    assert data["items"][0]["token_count"] is not None
+
+
+async def test_chunks_isolated_by_project(
+    db_client: AsyncClient,
+    integration_connection: AsyncConnection,
+    captured_jobs: list[JobDefinition],
+) -> None:
+    project_a = await _create_project(db_client)
+    project_b = await _create_project(db_client)
+    body = await _upload_and_process(
+        db_client,
+        integration_connection,
+        captured_jobs,
+        project_a,
+        filename="iso-chunks.txt",
+        content=b"isolated chunks",
+    )
+    document_id = body["id"]
+
+    cross = await db_client.get(
+        f"/api/v1/projects/{project_b}/documents/{document_id}/chunks",
+    )
+    assert cross.status_code == 404
+    assert cross.json()["error"]["code"] == "document_not_found"

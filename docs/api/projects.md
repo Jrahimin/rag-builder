@@ -103,15 +103,8 @@ Update name and/or description (partial).
 
 ## PATCH /api/v1/projects/{project_id}/status
 
-Toggle operational status.
-
-**Request**
-
-```json
-{
-  "is_active": false
-}
-```
+Flip operational status (`is_active`). No request body — each call toggles the
+current value (`true` → `false` → `true`, …).
 
 **Response** `200` — updated `ProjectResponse` in `data`
 

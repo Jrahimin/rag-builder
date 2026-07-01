@@ -10,7 +10,6 @@ from app.dependencies.projects import ProjectServiceDep
 from app.modules.projects.schemas.project import (
     ProjectCreate,
     ProjectResponse,
-    ProjectStatusUpdate,
     ProjectUpdate,
 )
 from app.platform.http.envelopes import ApiResponse
@@ -94,12 +93,11 @@ async def update_project(
     response_model=ApiResponse[ProjectResponse],
     summary="Toggle project active status",
 )
-async def update_project_status(
+async def toggle_project_status(
     project_id: uuid.UUID,
-    body: ProjectStatusUpdate,
     service: ProjectServiceDep,
 ) -> ApiResponse[ProjectResponse]:
-    project = await service.update_status(project_id, body.is_active)
+    project = await service.toggle_status(project_id)
     return ApiResponse.ok(ProjectResponse.model_validate(project))
 
 

@@ -2,11 +2,15 @@
 # AI Platform Engine - local development stack.
 # Start everything with a single command:
 #
-#     docker compose up --build
+#     docker compose --env-file .env.docker up --build
 #
 # Services: backend (FastAPI) + PostgreSQL + Redis + Qdrant + MinIO.
-# Credentials and tunables come from the root .env file (see .env.example);
-# every value has a sensible default so the stack runs out of the box.
+# Credentials and tunables come from the root `.env.docker` file
+# (see `.env.docker.example`); every value has a sensible default so the
+# stack runs out of the box. Start with:
+#
+#     cp .env.docker.example .env.docker
+#     docker compose --env-file .env.docker up --build
 # ===========================================================================
 
 name: ape
@@ -17,8 +21,8 @@ services:
   # -------------------------------------------------------------------------
   backend:
     build:
-      context: .
-      dockerfile: backend/Dockerfile
+      context: ./backend
+      dockerfile: Dockerfile
       args:
         INSTALL_DEV: "true"
     image: ape-backend:dev
@@ -50,18 +54,67 @@ services:
       APE_MINIO__ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
       APE_MINIO__SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
       APE_MINIO__BUCKET: ${MINIO_BUCKET:-ape-artifacts}
+      APE_STORAGE__BACKEND: ${APE_STORAGE__BACKEND:-minio}
+      APE_STORAGE__LOCAL_ROOT: /data/storage
     ports:
       - "${BACKEND_PORT:-8000}:8000"
     volumes:
       # Live-reload for local development.
-      - ./backend:/app/backend
-      - ./alembic.ini:/app/alembic.ini
+      - ./backend:/app
     command:
       - sh
       - -c
       - |
         alembic upgrade head &&
-        uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir backend
+        uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir app
+    networks:
+      - ape_network
+
+  # -------------------------------------------------------------------------
+  # Taskiq background worker
+  # -------------------------------------------------------------------------
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      args:
+        INSTALL_DEV: "true"
+    image: ape-backend:dev
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    environment:
+      APE_APP__ENV: ${APE_APP__ENV:-development}
+      APE_LOGGING__LEVEL: ${APE_LOGGING__LEVEL:-INFO}
+      APE_LOGGING__RENDER_JSON: ${APE_LOGGING__RENDER_JSON:-false}
+      APE_DATABASE__HOST: postgres
+      APE_DATABASE__PORT: "5432"
+      APE_DATABASE__USER: ${POSTGRES_USER:-ape}
+      APE_DATABASE__PASSWORD: ${POSTGRES_PASSWORD:-ape}
+      APE_DATABASE__NAME: ${POSTGRES_DB:-ape}
+      APE_REDIS__HOST: redis
+      APE_REDIS__PORT: "6379"
+      APE_MINIO__ENDPOINT: minio:9000
+      APE_MINIO__ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
+      APE_MINIO__SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      APE_MINIO__BUCKET: ${MINIO_BUCKET:-ape-artifacts}
+      APE_STORAGE__BACKEND: ${APE_STORAGE__BACKEND:-minio}
+      APE_STORAGE__LOCAL_ROOT: /data/storage
+      APE_JOBS__BACKEND: taskiq
+    volumes:
+      - ./backend:/app
+    command:
+      [
+        "taskiq",
+        "worker",
+        "app.worker.broker:broker",
+        "app.worker.handlers.document",
+      ]
     networks:
       - ape_network
 

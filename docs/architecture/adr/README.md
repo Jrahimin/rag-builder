@@ -10,7 +10,7 @@ guides in this folder elaborate on implementation.
 | [ADR-002](./002-project-centric-ownership.md) | Project as central aggregate | Accepted |
 | [ADR-003](./003-provider-abstraction.md) | Provider abstraction layer | Accepted |
 | [ADR-004](./004-configuration-hierarchy.md) | Three-tier configuration model | Accepted |
-| [ADR-005](./005-background-processing-arq.md) | Arq for background jobs | Accepted |
+| [ADR-005](./005-background-processing-arq.md) | Taskiq for background jobs | Accepted |
 | [ADR-006](./006-deployment-topology.md) | API + worker process separation | Accepted |
 
 ## When to add an ADR

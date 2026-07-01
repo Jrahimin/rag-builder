@@ -95,7 +95,7 @@ requires `project_id` on every query (business entities ship with the Projects m
 
 ```text
 .
-├── backend/
+├── backend/                # Self-contained Python API service
 │   ├── app/
 │   │   ├── composition/    # ORM registry (Alembic model discovery)
 │   │   ├── api/            # HTTP composition (health + /api/v1 + routes/)
@@ -104,7 +104,12 @@ requires `project_id` on every query (business entities ship with the Projects m
 │   │   ├── platform/       # Shared kernel (db, infra, persistence, jobs)
 │   │   ├── modules/        # Feature vertical slices (bounded contexts)
 │   │   └── main.py         # Application factory + ASGI entrypoint
-│   └── Dockerfile
+│   ├── requirements/       # Pinned dependencies (base, dev, prod)
+│   ├── alembic.ini
+│   ├── .env.example        # Local venv config template (copy to .env)
+│   ├── Dockerfile
+│   └── venv/               # Local virtual environment (gitignored)
+├── .env.docker.example     # Docker / full-stack config template (copy to .env.docker)
 ├── tests/
 │   └── architecture/       # Import boundary enforcement
 ├── docs/
@@ -118,52 +123,62 @@ requires `project_id` on every query (business entities ship with the Projects m
 - **Python 3.12+**
 - **Docker** & **Docker Compose v2** (for the full local stack)
 - **Git**
-- Optional: **make** (developer task runner; otherwise run commands directly)
 
 ## Installation
 
 ```bash
 # 1. Clone
 git clone <repository-url> rag-builder
-cd rag-builder
+cd rag-builder/backend
 
 # 2. Create & activate a virtual environment
-python -m venv .venv
+python -m venv venv
 # macOS / Linux:
-source .venv/bin/activate
+source venv/bin/activate
 # Windows (PowerShell):
-.\.venv\Scripts\Activate.ps1
+.\venv\Scripts\Activate.ps1
 
 # 3. Install development dependencies
 pip install -r requirements/dev.txt
 
-# 4. Create your local env file
+# 4. Create your local env file (from backend/)
 cp .env.example .env          # macOS/Linux
 # Copy-Item .env.example .env  # Windows PowerShell
 ```
 
 ## Local Development
 
-Run the supporting services with Docker and the API locally for the fastest
-edit/reload loop:
+Run the API from `backend/` after migrations. Two equivalent ways to start
+uvicorn — pick whichever fits your workflow:
 
 ```bash
-# Start only the infrastructure (db, redis, qdrant, minio)
-docker compose up -d postgres redis qdrant minio
-
-# Apply migrations
+cd backend
 alembic upgrade head
 
-# Run the API with autoreload (from the repo root)
-cd backend && uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+# Option A — shortcut; reads APE_SERVER__HOST, APE_SERVER__PORT, APE_SERVER__RELOAD
+#            from backend/.env (default port 8088 in .env.example)
+python -m app
+
+# Option B — explicit uvicorn; host and port on the command line
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8088 --reload-dir app
 ```
 
-Or use the Make targets:
+**Without Docker:** use your own local PostgreSQL (and optionally Redis/Qdrant).
+The API starts even when Redis/Qdrant are down; `/ready` reports degraded until
+they are available.
+
+**With Docker for infrastructure only** (API still in venv), from repo root:
 
 ```bash
-make up        # start the full stack in Docker
-make migrate   # alembic upgrade head
-make run       # run the API locally with reload
+cp .env.docker.example .env.docker   # first time only
+docker compose --env-file .env.docker up -d postgres redis qdrant minio
+```
+
+**Full stack in Docker** (from repo root):
+
+```bash
+cp .env.docker.example .env.docker   # first time only
+docker compose --env-file .env.docker up --build -d
 ```
 
 ## Docker Setup
@@ -172,38 +187,44 @@ The entire stack — **FastAPI + PostgreSQL + Redis + Qdrant + MinIO** — start
 with a single command. Migrations run automatically before the API boots.
 
 ```bash
-docker compose up --build
+cp .env.docker.example .env.docker   # first time only
+docker compose --env-file .env.docker up --build
 ```
 
-| Service        | URL / Endpoint                          |
-| -------------- | --------------------------------------- |
-| API            | http://localhost:8000                   |
-| API docs       | http://localhost:8000/docs              |
-| Liveness       | http://localhost:8000/health            |
-| Readiness      | http://localhost:8000/ready             |
+| Service        | URL / Endpoint (host port from `.env.docker`; default 8088) |
+| -------------- | ----------------------------------------------------------- |
+| API            | http://localhost:8088                                       |
+| API docs       | http://localhost:8088/docs                                  |
+| Liveness       | http://localhost:8088/health                                |
+| Readiness      | http://localhost:8088/ready                                 |
 | Qdrant         | http://localhost:6333/dashboard         |
 | MinIO console  | http://localhost:9001                   |
 
 Useful commands:
 
 ```bash
-docker compose ps           # service status & health
-docker compose logs -f backend
-docker compose down         # stop
-docker compose down -v      # stop and remove named volumes
+docker compose --env-file .env.docker ps
+docker compose --env-file .env.docker logs -f backend
+docker compose --env-file .env.docker down
+docker compose --env-file .env.docker down -v
 ```
 
 ## Running the Application
 
-- **API base:** `http://localhost:8000`
-- **Interactive docs (Swagger):** `/docs` (disabled in production)
+**Local venv** (default port `8088` in `backend/.env` / `.env.example`):
+
+- **API base:** `http://localhost:8088`
+- **Interactive docs (Swagger):** `http://localhost:8088/docs`
 - **OpenAPI schema:** `/openapi.json`
 
-Health probes:
+**Docker stack** — host port comes from `BACKEND_PORT` in `.env.docker`
+(default `8088` in `.env.docker.example`; container listens on 8000 internally).
+
+Health probes (adjust port if you overrode it):
 
 ```bash
-curl http://localhost:8000/health   # liveness (always 200 while running)
-curl http://localhost:8000/ready    # readiness (200 healthy / 503 degraded)
+curl http://localhost:8088/health   # liveness (always 200 while running)
+curl http://localhost:8088/ready    # readiness (200 healthy / 503 degraded)
 ```
 
 Every response carries `X-Request-ID` and `X-Trace-ID` headers for end-to-end
@@ -225,13 +246,24 @@ as healthy.
 
 ## Development Workflow
 
+Run from the **repo root** (with `backend/venv` activated or tools on your PATH):
+
 ```bash
-make lint        # ruff check .
-make format      # ruff format + autofix
-make typecheck   # mypy
-make test        # pytest
-make check       # lint + typecheck + test
-make hooks       # install pre-commit git hooks
+ruff check .
+ruff format .
+ruff check . --fix
+mypy
+pytest
+pre-commit install          # one-time: install git hooks
+pre-commit run --all-files
+```
+
+Create a new database migration (from `backend/`):
+
+```bash
+cd backend
+alembic revision --autogenerate -m "describe your change"
+alembic upgrade head
 ```
 
 Conventions:
@@ -240,7 +272,7 @@ Conventions:
 - **No SDK leakage** — vendor SDKs stay inside `providers/`.
 - **Configuration-driven** — nothing AI- or infra-related is hardcoded.
 - **Project-scoped by default** — all data access is scoped by `project_id`.
-- Create database changes via Alembic migrations (`make migration m="..."`).
+- Create database changes via Alembic migrations (see above).
 
 ## Documentation Structure
 

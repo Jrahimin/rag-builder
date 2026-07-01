@@ -11,7 +11,7 @@ processing.
 ## Decision
 
 - **API process:** FastAPI + uvicorn (dev) / gunicorn + uvicorn workers (prod)
-- **Worker process:** Arq worker consuming Redis queue (Phase 1)
+- **Worker process:** Taskiq worker consuming Redis queue (Phase 1)
 - Both share `platform/` and `modules/` code; different entrypoints
 - Local dev: API in Docker compose today; worker container added in Phase 1
 

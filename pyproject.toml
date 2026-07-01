@@ -1,8 +1,8 @@
 # ===========================================================================
 # AI Platform Engine (APE) - Project metadata & tooling configuration
 # ---------------------------------------------------------------------------
-# Runtime/dev dependencies are managed with pip via the `requirements/`
-# directory (see requirements/base.txt, dev.txt, prod.txt). This file holds
+# Runtime/dev dependencies are managed with pip via `backend/requirements/`
+# (see backend/requirements/base.txt, dev.txt, prod.txt). This file holds
 # project metadata and the configuration for all developer tooling
 # (Ruff, Pytest, Mypy, Coverage) so every tool reads from one place.
 # ===========================================================================
@@ -21,7 +21,7 @@ license = { text = "Proprietary" }
 authors = [{ name = "AI Platform Engine Team" }]
 keywords = ["ai", "platform", "rag", "fastapi", "llm", "vector-search"]
 
-# Runtime dependencies are intentionally managed in requirements/ (pip workflow).
+# Runtime dependencies are intentionally managed in backend/requirements/ (pip workflow).
 # Keeping them out of [project.dependencies] avoids version drift between the
 # two sources of truth.
 dependencies = []
@@ -37,7 +37,7 @@ include = ["app*"]
 line-length = 100
 target-version = "py312"
 src = ["backend", "tests"]
-extend-exclude = [".venv", "backend/app/composition/migrations/versions"]
+extend-exclude = ["backend/venv", "backend/app/composition/migrations/versions"]
 
 [tool.ruff.lint]
 select = [
@@ -124,7 +124,7 @@ show_error_codes = true
 pretty = true
 
 [[tool.mypy.overrides]]
-module = ["qdrant_client.*"]
+module = ["qdrant_client.*", "boto3.*", "botocore.*", "aiofiles.*", "fitz", "pymupdf.*", "docx.*"]
 ignore_missing_imports = true
 
 [tool.pydantic-mypy]

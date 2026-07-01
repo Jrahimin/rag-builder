@@ -37,3 +37,4 @@ Error:
 | ------ | ---- | ------ |
 | System | [system.md](system.md) | `/health`, `/ready` |
 | Projects | [projects.md](projects.md) | `/api/v1/projects` |
+| Knowledge | [knowledge.md](knowledge.md) | `/api/v1/projects/{project_id}/documents` |

@@ -21,9 +21,10 @@ from __future__ import annotations
 import os
 from enum import StrEnum
 from functools import lru_cache
+from typing import Annotated
 
 from pydantic import BaseModel, Field, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 from sqlalchemy import URL
 
 
@@ -88,10 +89,10 @@ class LoggingConfig(BaseModel):
 class CORSConfig(BaseModel):
     """Cross-Origin Resource Sharing configuration."""
 
-    allow_origins: list[str] = Field(default_factory=lambda: ["*"])
+    allow_origins: Annotated[list[str], NoDecode] = Field(default_factory=lambda: ["*"])
     allow_credentials: bool = True
-    allow_methods: list[str] = Field(default_factory=lambda: ["*"])
-    allow_headers: list[str] = Field(default_factory=lambda: ["*"])
+    allow_methods: Annotated[list[str], NoDecode] = Field(default_factory=lambda: ["*"])
+    allow_headers: Annotated[list[str], NoDecode] = Field(default_factory=lambda: ["*"])
 
     @field_validator("allow_origins", "allow_methods", "allow_headers", mode="before")
     @classmethod
@@ -199,6 +200,40 @@ class MinioConfig(BaseModel):
         return f"{scheme}://{self.endpoint}"
 
 
+class StorageBackend(StrEnum):
+    """Supported object storage backends."""
+
+    LOCAL = "local"
+    MINIO = "minio"
+
+
+class StorageConfig(BaseModel):
+    """Object storage backend selection and local filesystem root."""
+
+    backend: StorageBackend = StorageBackend.LOCAL
+    local_root: str = "./storage"
+
+
+class JobQueueBackend(StrEnum):
+    """Supported background job queue backends."""
+
+    TASKIQ = "taskiq"
+    INLINE = "inline"
+
+
+class JobsConfig(BaseModel):
+    """Background job queue configuration."""
+
+    backend: JobQueueBackend = JobQueueBackend.TASKIQ
+
+
+class ChunkingConfig(BaseModel):
+    """Text chunking defaults for the knowledge ingestion pipeline."""
+
+    chunk_size: int = Field(default=1000, ge=100, le=16_000)
+    chunk_overlap: int = Field(default=200, ge=0, le=4000)
+
+
 class Settings(BaseSettings):
     """Root settings object aggregating all configuration sections."""
 
@@ -220,6 +255,9 @@ class Settings(BaseSettings):
     redis: RedisConfig = Field(default_factory=RedisConfig)
     qdrant: QdrantConfig = Field(default_factory=QdrantConfig)
     minio: MinioConfig = Field(default_factory=MinioConfig)
+    storage: StorageConfig = Field(default_factory=StorageConfig)
+    jobs: JobsConfig = Field(default_factory=JobsConfig)
+    chunking: ChunkingConfig = Field(default_factory=ChunkingConfig)
 
 
 @lru_cache

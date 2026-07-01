@@ -4,9 +4,15 @@
 configuration, structured logging, middleware, exception handlers, routers,
 and lifespan-managed infrastructure (database, Redis, Qdrant).
 
-The module-level ``app`` is the ASGI target used by uvicorn/gunicorn::
+The module-level ``app`` is the ASGI target used by uvicorn/gunicorn. From
+``backend/``, either::
 
-    uvicorn app.main:app --reload
+    python -m app
+    uvicorn app.main:app --reload --host 0.0.0.0 --port 8088
+
+``python -m app`` reads host, port, and reload from ``backend/.env``
+(``APE_SERVER__*``). The uvicorn command sets those values explicitly on the
+CLI (useful when you want to override without editing ``.env``).
 """
 
 from __future__ import annotations

@@ -2,9 +2,8 @@
 
 Operational and developer-convenience scripts for the AI Platform Engine.
 
-Most day-to-day tasks are exposed through the root [`Makefile`](../Makefile)
-(`make help`). This directory is reserved for standalone scripts that don't
-fit a Make target, for example:
+This directory is for standalone scripts that do not belong in the main app
+package, for example:
 
 - database seeding / fixtures
 - one-off maintenance and backfill jobs

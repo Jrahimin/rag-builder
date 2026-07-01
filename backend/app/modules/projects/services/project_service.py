@@ -14,7 +14,7 @@ from app.platform.domain.lifecycle_service import (
     get_or_raise,
     list_paginated,
     require_not_deleted,
-    update_active_status,
+    toggle_active_status,
 )
 from app.platform.domain.lifecycle_service import (
     soft_delete as soft_delete_entity,
@@ -92,12 +92,11 @@ class ProjectService:
             on_integrity=_name_conflict,
         )
 
-    async def update_status(self, project_id: uuid.UUID, is_active: bool) -> Project:
-        return await update_active_status(
+    async def toggle_status(self, project_id: uuid.UUID) -> Project:
+        return await toggle_active_status(
             self._session,
             self._repository,
             project_id,
-            is_active,
             not_found_message=_NOT_FOUND["message"],
             not_found_code=_NOT_FOUND["code"],
             deleted_message=_DELETED["message"],

@@ -65,7 +65,7 @@ async def test_list_include_deleted(db_client: AsyncClient) -> None:
 async def test_list_filter_is_active(db_client: AsyncClient) -> None:
     create = await db_client.post("/api/v1/projects", json={"name": "Inactive Filter"})
     project_id = create.json()["data"]["id"]
-    await db_client.patch(f"/api/v1/projects/{project_id}/status", json={"is_active": False})
+    await db_client.patch(f"/api/v1/projects/{project_id}/status")
 
     response = await db_client.get("/api/v1/projects", params={"is_active": False})
     ids = {item["id"] for item in response.json()["data"]["items"]}
@@ -148,27 +148,25 @@ async def test_update_deleted_project(db_client: AsyncClient) -> None:
     assert response.json()["error"]["code"] == "project_deleted"
 
 
-async def test_set_active_status(db_client: AsyncClient) -> None:
+async def test_toggle_active_status(db_client: AsyncClient) -> None:
     create = await db_client.post("/api/v1/projects", json={"name": "Toggle"})
     project_id = create.json()["data"]["id"]
 
-    response = await db_client.patch(
-        f"/api/v1/projects/{project_id}/status",
-        json={"is_active": False},
-    )
+    response = await db_client.patch(f"/api/v1/projects/{project_id}/status")
     assert response.status_code == 200
     assert response.json()["data"]["is_active"] is False
 
+    again = await db_client.patch(f"/api/v1/projects/{project_id}/status")
+    assert again.status_code == 200
+    assert again.json()["data"]["is_active"] is True
 
-async def test_set_active_on_deleted_project(db_client: AsyncClient) -> None:
+
+async def test_toggle_active_on_deleted_project(db_client: AsyncClient) -> None:
     create = await db_client.post("/api/v1/projects", json={"name": "No Toggle"})
     project_id = create.json()["data"]["id"]
     await db_client.delete(f"/api/v1/projects/{project_id}")
 
-    response = await db_client.patch(
-        f"/api/v1/projects/{project_id}/status",
-        json={"is_active": True},
-    )
+    response = await db_client.patch(f"/api/v1/projects/{project_id}/status")
     assert response.status_code == 409
     assert response.json()["error"]["code"] == "project_deleted"
 

@@ -1,8 +1,7 @@
 # syntax=docker/dockerfile:1
 # ===========================================================================
 # AI Platform Engine - backend image (multi-stage).
-# Build context is the repository ROOT so both backend/ and alembic.ini are
-# available, keeping migration paths identical to local development.
+# Build context is backend/ so this folder is a self-contained service.
 # ===========================================================================
 ARG PYTHON_VERSION=3.12
 
@@ -36,9 +35,8 @@ FROM base AS runtime
 RUN groupadd --system ape && useradd --system --gid ape --create-home ape
 COPY --from=builder /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH" \
-    PYTHONPATH=/app/backend
-COPY backend/ backend/
-COPY alembic.ini ./
+    PYTHONPATH=/app
+COPY . .
 RUN chown -R ape:ape /app
 USER ape
 

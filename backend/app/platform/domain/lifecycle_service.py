@@ -112,18 +112,17 @@ async def soft_delete[ModelT: Base](
     return await flush_commit_refresh(session, repository, entity)
 
 
-async def update_active_status[ModelT: Base](
+async def toggle_active_status[ModelT: Base](
     session: AsyncSession,
     repository: _LifecycleRepository[ModelT],
     entity_id: uuid.UUID,
-    is_active: bool,
     *,
     not_found_message: str,
     not_found_code: str,
     deleted_message: str,
     deleted_code: str,
 ) -> ModelT:
-    """Toggle ``is_active`` on a non-deleted entity (no-op when unchanged)."""
+    """Flip ``is_active`` on a non-deleted entity."""
     entity = await get_or_raise(
         repository,
         entity_id,
@@ -133,8 +132,5 @@ async def update_active_status[ModelT: Base](
     )
     require_not_deleted(entity, message=deleted_message, code=deleted_code)
 
-    if entity.is_active == is_active:  # type: ignore[attr-defined]
-        return entity
-
-    entity.is_active = is_active  # type: ignore[attr-defined]
+    entity.is_active = not entity.is_active  # type: ignore[attr-defined]
     return await flush_commit_refresh(session, repository, entity)

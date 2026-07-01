@@ -55,14 +55,6 @@ class ProjectUpdate(BaseModel):
         return stripped
 
 
-class ProjectStatusUpdate(BaseModel):
-    """Toggle operational status of a Project."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    is_active: bool
-
-
 class ProjectResponse(BaseModel):
     """Serialized Project entity returned by the API."""
 
