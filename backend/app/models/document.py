@@ -22,11 +22,11 @@ class DocumentStatus(StrEnum):
     UPLOADED = "uploaded"
     QUEUED = "queued"
     PARSING = "parsing"
-    PARSED = "parsed"
     CHUNKING = "chunking"
     CHUNKED = "chunked"
     FAILED = "failed"
     EMBEDDING = "embedding"
+    EMBEDDED = "embedded"
     INDEXING = "indexing"
     READY = "ready"
 

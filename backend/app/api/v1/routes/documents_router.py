@@ -8,6 +8,7 @@ from collections.abc import AsyncIterator
 from fastapi import APIRouter, Query, UploadFile, status
 
 from app.dependencies.knowledge import DocumentServiceDep
+from app.dependencies.retrieval import IndexingServiceDep
 from app.modules.knowledge.schemas.chunk import ChunkListParams, ChunkResponse
 from app.modules.knowledge.schemas.document import (
     DocumentIngestInput,
@@ -145,4 +146,34 @@ async def reprocess_document(
 ) -> ApiResponse[DocumentResponse]:
     del project_id
     document = await service.reprocess(document_id)
+    return ApiResponse.ok(DocumentResponse.model_validate(document))
+
+
+@router.post(
+    "/{document_id}/embed",
+    response_model=ApiResponse[DocumentResponse],
+    summary="Enqueue document embedding",
+)
+async def embed_document(
+    project_id: uuid.UUID,
+    document_id: uuid.UUID,
+    service: IndexingServiceDep,
+) -> ApiResponse[DocumentResponse]:
+    del project_id
+    document = await service.enqueue_embed(document_id)
+    return ApiResponse.ok(DocumentResponse.model_validate(document))
+
+
+@router.post(
+    "/{document_id}/index",
+    response_model=ApiResponse[DocumentResponse],
+    summary="Enqueue vector indexing",
+)
+async def index_document(
+    project_id: uuid.UUID,
+    document_id: uuid.UUID,
+    service: IndexingServiceDep,
+) -> ApiResponse[DocumentResponse]:
+    del project_id
+    document = await service.enqueue_index(document_id)
     return ApiResponse.ok(DocumentResponse.model_validate(document))

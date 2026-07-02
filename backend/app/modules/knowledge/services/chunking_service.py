@@ -5,7 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_text_splitters import RecursiveCharacterTextSplitter, TextSplitter
+
+from app.core.config import ChunkingConfig, ChunkingStrategy, Settings
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,14 +31,47 @@ def estimate_token_count(text: str) -> int:
     return len(stripped.split())
 
 
-class ChunkingService:
-    """Split normalized document text using recursive character boundaries."""
-
-    def __init__(self, *, chunk_size: int, chunk_overlap: int) -> None:
-        self._chunk_overlap = chunk_overlap
-        self._splitter = RecursiveCharacterTextSplitter(
+def _build_splitter(
+    strategy: ChunkingStrategy,
+    *,
+    chunk_size: int,
+    chunk_overlap: int,
+) -> TextSplitter:
+    """Map the configured strategy to a concrete splitter."""
+    if strategy is ChunkingStrategy.RECURSIVE_CHARACTER:
+        return RecursiveCharacterTextSplitter(
             chunk_size=chunk_size,
             chunk_overlap=chunk_overlap,
+        )
+    msg = f"Unsupported chunking strategy: {strategy!r}"
+    raise ValueError(msg)
+
+
+class ChunkingService:
+    """Split normalized document text using the configured strategy."""
+
+    def __init__(
+        self,
+        *,
+        chunk_size: int,
+        chunk_overlap: int,
+        strategy: ChunkingStrategy = ChunkingStrategy.RECURSIVE_CHARACTER,
+    ) -> None:
+        self._chunk_overlap = chunk_overlap
+        self._strategy = strategy
+        self._splitter = _build_splitter(
+            strategy,
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+        )
+
+    @classmethod
+    def from_settings(cls, settings: Settings) -> ChunkingService:
+        config: ChunkingConfig = settings.chunking
+        return cls(
+            chunk_size=config.chunk_size,
+            chunk_overlap=config.chunk_overlap,
+            strategy=config.strategy,
         )
 
     def split(self, text: str, *, page_count: int | None = None) -> list[TextChunk]:
@@ -63,7 +98,7 @@ class ChunkingService:
                     char_end=end,
                     page_number=default_page,
                     token_count=estimate_token_count(part),
-                    chunk_metadata={"splitter": "recursive_character"},
+                    chunk_metadata={"splitter": self._strategy.value},
                 )
             )
 

@@ -74,10 +74,21 @@ async def _handle_ape_error(request: Request, exc: APEError) -> JSONResponse:
     )
 
 
+def _validation_field_path(loc: tuple[object, ...]) -> str:
+    """Map a Pydantic error location to a client-friendly field path."""
+    parts = [str(part) for part in loc]
+    if not parts:
+        return ""
+    if parts[0] == "body":
+        remainder = parts[1:]
+        return ".".join(remainder) if remainder else "body"
+    return ".".join(parts)
+
+
 async def _handle_validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
     details = [
         ErrorDetail(
-            field=".".join(str(part) for part in error.get("loc", []) if part != "body"),
+            field=_validation_field_path(tuple(error.get("loc", ()))),
             message=error.get("msg", "Invalid value."),
             type=error.get("type"),
         )

@@ -75,6 +75,12 @@ class ConflictError(APEError):
     message = "The request conflicts with the current state of the resource."
 
 
+class PayloadTooLargeError(APEError):
+    status_code = 413
+    code = "payload_too_large"
+    message = "The request payload exceeds the allowed size."
+
+
 class ValidationError(APEError):
     status_code = 422
     code = "validation_error"

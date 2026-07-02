@@ -77,6 +77,15 @@ class DocumentProcessingWorkflow:
             )
             return None
 
+        if document.status is not DocumentStatus.QUEUED:
+            logger.info(
+                "document_process_skipped_status",
+                project_id=str(self._project_id),
+                document_id=str(document_id),
+                status=document.status.value,
+            )
+            return document
+
         document.status = DocumentStatus.PARSING
         document.error_message = None
         await flush_commit_refresh(self._session, self._repository, document)
@@ -133,8 +142,9 @@ class DocumentProcessingWorkflow:
                     warnings=list(parsed.warnings),
                 )
 
+            # Stage marker only — persisted in the single final commit below so a
+            # worker crash leaves the document in PARSING (recoverable via reprocess).
             document.status = DocumentStatus.CHUNKING
-            await flush_commit_refresh(self._session, self._repository, document)
 
             await self._chunk_repository.delete_by_document(document.id)
             text_chunks = self._chunking.split(parsed.text, page_count=parsed.page_count)

@@ -8,7 +8,7 @@ from taskiq.abc.broker import AsyncBroker
 
 from app.platform.jobs.contracts import JobDefinition, JobQueue
 from app.platform.jobs.errors import JobEnqueueError
-from app.platform.jobs.names import DOCUMENT_PROCESS
+from app.platform.jobs.registry import get_job_registry
 
 
 class TaskiqJobQueue(JobQueue):
@@ -24,28 +24,25 @@ class TaskiqJobQueue(JobQueue):
             self._started = True
 
     async def enqueue(self, job: JobDefinition) -> str:
-        if job.name != DOCUMENT_PROCESS:
+        registry = get_job_registry()
+        spec = registry.get(job.name)
+        if spec is None:
             msg = f"Unknown job name: {job.name!r}"
             raise JobEnqueueError(msg)
 
-        from app.worker.handlers.document import document_process_task
-
         job_id = job.idempotency_key or str(uuid.uuid4())
-        document_id = job.payload.get("document_id")
-        if document_id is None:
-            msg = "document.process payload requires document_id"
-            raise JobEnqueueError(msg)
+        document_id, _ = spec.validate_payload(job.payload)
 
         try:
             await self._ensure_started()
-            task = await (
-                document_process_task.kicker()
-                .with_task_id(job_id)
-                .kiq(
-                    project_id=str(job.project_id),
-                    document_id=str(document_id),
-                )
+            task = await spec.enqueue(
+                job_id=job_id,
+                project_id=job.project_id,
+                document_id=document_id,
+                retry=job.retry,
             )
+        except JobEnqueueError:
+            raise
         except Exception as exc:
             msg = f"Failed to enqueue job {job.name!r}"
             raise JobEnqueueError(msg, context={"job_name": job.name}) from exc
