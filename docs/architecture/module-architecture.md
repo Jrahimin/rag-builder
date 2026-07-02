@@ -93,10 +93,21 @@ Concrete provider interfaces are added with the first implementation.
 | Module | Scope |
 | ------ | ----- |
 | `projects` | Central aggregate (shipped) |
-| `knowledge` | Ingestion (connectors, documents, parsing, chunking, embeddings) |
-| `retrieval` | Hybrid search + reranking |
+| `knowledge` | Ingestion — upload, parse, chunk; ends at `status=chunked` (shipped) |
+| `retrieval` | Embed → index → search (`chunked` → `embedded` → `ready`); hybrid + rerank in v2 |
 | `conversations` | Chat + prompts |
 | `evaluation` | Quality measurement + feedback |
+
+### Knowledge vs retrieval boundary
+
+```text
+modules/knowledge/     upload → parse → chunk     ends at status=chunked
+modules/retrieval/     embed → index → search      chunked → embedded → ready → search API
+```
+
+- **Knowledge** does not import retrieval.
+- **Retrieval** reads shared ORM (`Document`, `DocumentChunk`) via its own thin repos — never imports `modules/knowledge/`.
+- **Composition layer** (`dependencies/`) wires delete cascade and cross-module worker handoffs.
 
 ---
 

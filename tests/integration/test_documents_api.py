@@ -223,6 +223,67 @@ async def test_reprocess_deleted_document_returns_conflict(
     assert response.json()["error"]["code"] == "document_deleted"
 
 
+async def test_reprocess_bumps_version_and_rechunks(
+    db_client: AsyncClient,
+    integration_connection: AsyncConnection,
+    captured_jobs: list[JobDefinition],
+) -> None:
+    project_id = await _create_project(db_client)
+    body = await _upload_and_process(
+        db_client,
+        integration_connection,
+        captured_jobs,
+        project_id,
+        filename="versioned.txt",
+        content=b"reprocess version bump",
+    )
+    document_id = body["id"]
+    assert body["version"] == 1
+
+    reprocess = await db_client.post(
+        f"/api/v1/projects/{project_id}/documents/{document_id}/reprocess",
+    )
+    assert reprocess.status_code == 200
+    assert reprocess.json()["data"]["status"] == "queued"
+    assert reprocess.json()["data"]["version"] == 2
+    assert len(captured_jobs) == 1
+
+    await run_captured_document_jobs(integration_connection, captured_jobs)
+    fetched = await db_client.get(
+        f"/api/v1/projects/{project_id}/documents/{document_id}",
+    )
+    data = fetched.json()["data"]
+    assert data["status"] == "chunked"
+    assert data["version"] == 2
+    assert "v2" in data["parsed_text_storage_key"]
+
+    chunks = await db_client.get(
+        f"/api/v1/projects/{project_id}/documents/{document_id}/chunks",
+    )
+    assert chunks.json()["data"]["total"] >= 1
+
+
+async def test_upload_exceeding_size_limit_returns_413(
+    db_client: AsyncClient,
+    captured_jobs: list[JobDefinition],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_id = await _create_project(db_client)
+    monkeypatch.setenv("APE_KNOWLEDGE__MAX_UPLOAD_BYTES", "16")
+    get_settings.cache_clear()
+    try:
+        response = await db_client.post(
+            f"/api/v1/projects/{project_id}/documents",
+            files={"file": ("big.txt", b"x" * 64, "text/plain")},
+        )
+        assert response.status_code == 413
+        assert response.json()["error"]["code"] == "document_too_large"
+        assert captured_jobs == []
+    finally:
+        monkeypatch.undo()
+        get_settings.cache_clear()
+
+
 async def test_list_document_chunks(
     db_client: AsyncClient,
     integration_connection: AsyncConnection,

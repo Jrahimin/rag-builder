@@ -2,10 +2,13 @@
 
 Concise, per-feature reference documentation for the AI Platform Engine.
 
-## Purpose
+## Shipped features
 
-Each shipped feature gets a short, visual document so the platform's
-capabilities stay discoverable and well understood over time.
+| Feature | Doc | Scope |
+| ------- | --- | ----- |
+| Project Management | [projects.md](./projects.md) | CRUD, `is_active` toggle, soft-delete |
+| Knowledge | [knowledge.md](./knowledge.md) | Upload → parse → chunk (`status=chunked`) |
+| Retrieval | [retrieval.md](./retrieval.md) | Embed → index → semantic search (`ready`, ADR-007 baseline) |
 
 ## Template
 
@@ -21,8 +24,4 @@ Every feature document should cover:
 - **Testing strategy** — how the feature is verified.
 - **Future improvements** — known gaps and next steps.
 
-## Status
-
-No business features have been implemented yet — this is the foundation
-sprint. Feature documents will be added here as modules land (projects,
-connectors, ingestion, retrieval, chat, ...).
+Implementation plans live in [docs/plans/](../plans/) until superseded by feature docs here.

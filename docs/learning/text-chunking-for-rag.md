@@ -4,7 +4,7 @@
 
 Embedding models and LLMs have **limited context windows**. You cannot stuff a 200-page PDF into one vector. **Chunking** splits long text into smaller segments that can be:
 
-1. Embedded individually (future `retrieval` module)
+1. Embedded individually (`modules/retrieval/`)
 2. Retrieved by similarity at query time
 3. Cited with position metadata (`chunk_index`, `char_start`, `page_number`)
 
@@ -56,7 +56,7 @@ Chunking runs inside `workflows/document_processing.py` — not a separate job o
 | 8 | `document_service.py` | `list_chunks()` verifies document exists, delegates to repository |
 | 9 | `repositories/document_chunk_repository.py` | `list_by_document()` ordered by `chunk_index` |
 
-Worker wiring: `worker/handlers/document.py` builds `ChunkingService` from `settings.chunking` and passes it into the workflow.
+Worker wiring: `worker/handlers/document.py` builds `ChunkingService.from_settings(settings)` and passes it into the workflow.
 
 ---
 
@@ -81,6 +81,7 @@ Migration: `composition/migrations/versions/20260630_0006-add_document_chunks_ta
 
 | Env var | Default | Effect |
 | ------- | ------- | ------ |
+| `APE_CHUNKING__STRATEGY` | `recursive_character` | Splitter selection (`ChunkingStrategy` enum) |
 | `APE_CHUNKING__CHUNK_SIZE` | `1000` | Max characters per chunk (splitter target) |
 | `APE_CHUNKING__CHUNK_OVERLAP` | `200` | Characters repeated between adjacent chunks |
 

@@ -1,6 +1,6 @@
 # Project Management Module — Implementation Plan
 
-**Status:** Pending  
+**Status:** Complete — shipped; see `docs/features/projects.md` for the as-built reference.  
 **Phase:** 1 (first business module)  
 **Overview:** Implement `modules/projects` with CRUD, `is_active` status toggle, and
 soft-delete (`deleted_at` as source of truth). `ProjectRepository` uses
@@ -12,13 +12,13 @@ feature documentation.
 
 | ID | Task | Status |
 | -- | ---- | ------ |
-| platform-primitives | Add `PaginationParams` / `PaginatedResult`; update template README; fix stale `api/v1/router.py` example | Pending |
-| domain-migration | Implement Project ORM, register in `orm_registry`, create `0002` Alembic migration | Pending |
-| repo-service | Build `ProjectRepository` (direct `AsyncSession`) + `ProjectService` with soft-delete and transaction boundaries | Pending |
-| http-wiring | Add `dependencies/projects.py`, `api/v1/routes/projects.py`, mount on `api/v1/router.py` | Pending |
-| unit-tests | Unit tests for `ProjectService` (mocked repo/session) | Pending |
-| integration-tests | DB fixtures in `conftest` + integration tests for full API flow | Pending |
-| feature-docs | Write `docs/features/projects.md` and run `make check` | Pending |
+| platform-primitives | Add `PaginationParams` / `PaginatedResult`; update template README; fix stale `api/v1/router.py` example | Complete |
+| domain-migration | Implement Project ORM, register in `orm_registry`, create `0002` Alembic migration | Complete |
+| repo-service | Build `ProjectRepository` (direct `AsyncSession`) + `ProjectService` with soft-delete and transaction boundaries | Complete |
+| http-wiring | Add `dependencies/projects.py`, `api/v1/routes/projects_router.py`, mount on `api/v1/router.py` | Complete |
+| unit-tests | Unit tests for `ProjectService` (mocked repo/session) | Complete |
+| integration-tests | DB fixtures in `conftest` + integration tests for full API flow | Complete |
+| feature-docs | Write `docs/features/projects.md` and run `make check` | Complete |
 
 ---
 
@@ -118,9 +118,10 @@ All success responses use `ApiResponse[T]` from `backend/app/platform/http/envel
 - `name`: optional, same rules as create
 - `description`: optional; explicit `null` clears description
 
-**`ProjectStatusUpdate`**
+**Status toggle** (as shipped)
 
-- `is_active`: `bool` (required)
+- `PATCH /{project_id}/status` takes **no request body**; each call flips the
+  stored `is_active` value (call again to flip back).
 
 **`ProjectResponse`** (`from_attributes=True`)
 
@@ -141,8 +142,7 @@ All success responses use `ApiResponse[T]` from `backend/app/platform/http/envel
 // POST /api/v1/projects
 { "name": "Tax Audit 2026", "description": "Q1 engagement" }
 
-// PATCH /api/v1/projects/{id}/status
-{ "is_active": false }
+// PATCH /api/v1/projects/{id}/status — no request body; toggles is_active
 
 // GET /api/v1/projects?limit=20&offset=0&is_active=true
 {

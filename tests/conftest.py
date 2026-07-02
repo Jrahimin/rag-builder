@@ -30,6 +30,11 @@ os.environ.setdefault("APE_LOGGING__RENDER_JSON", "false")
 _test_storage_root = Path(tempfile.mkdtemp(prefix="ape_test_storage_"))
 os.environ.setdefault("APE_STORAGE__BACKEND", "local")
 os.environ.setdefault("APE_STORAGE__LOCAL_ROOT", str(_test_storage_root))
+os.environ.setdefault("APE_EMBEDDING__BACKEND", "hash")
+os.environ.setdefault("APE_EMBEDDING__DIMENSIONS", "384")
+os.environ.setdefault("APE_VECTOR_STORE__BACKEND", "memory")
+os.environ.setdefault("APE_RETRIEVAL__AUTO_EMBED", "false")
+os.environ.setdefault("APE_RETRIEVAL__AUTO_INDEX", "false")
 
 from app.core.config import Settings, get_settings
 from app.dependencies.common import get_db_session
@@ -163,6 +168,13 @@ async def db_client(
 
     get_storage_provider.cache_clear()
     get_job_queue.cache_clear()
+    from app.platform.providers.implementations.embedding_factory import get_embedding_provider
+    from app.platform.providers.implementations.vector_store_factory import (
+        get_vector_store_provider,
+    )
+
+    get_embedding_provider.cache_clear()
+    get_vector_store_provider.cache_clear()
     app = create_app()
     database = Database(settings)
     connection: AsyncConnection = await database.engine.connect()

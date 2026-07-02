@@ -38,3 +38,4 @@ Error:
 | System | [system.md](system.md) | `/health`, `/ready` |
 | Projects | [projects.md](projects.md) | `/api/v1/projects` |
 | Knowledge | [knowledge.md](knowledge.md) | `/api/v1/projects/{project_id}/documents` |
+| Retrieval | [retrieval.md](retrieval.md) | `/api/v1/projects/{project_id}` (search, embed, index on documents prefix) |

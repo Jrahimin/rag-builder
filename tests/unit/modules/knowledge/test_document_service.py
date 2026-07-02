@@ -80,6 +80,7 @@ def service(
         storage=storage,
         job_queue=job_queue,
         ensure_project=_noop_ensure_project,
+        max_upload_bytes=50 * 1024 * 1024,
     )
 
 
@@ -98,7 +99,9 @@ async def test_upload_persists_and_stores_bytes(
         return entity
 
     repository.add.side_effect = _add
-    repository.get_by_id = AsyncMock(side_effect=lambda *_a, **_k: documents[-1] if documents else None)
+    repository.get_by_id = AsyncMock(
+        side_effect=lambda *_a, **_k: documents[-1] if documents else None
+    )
 
     result = await service.upload(
         DocumentIngestInput(
@@ -132,6 +135,7 @@ async def test_upload_unknown_project_raises_not_found(
         storage=storage,
         job_queue=AsyncMock(spec=JobQueue),
         ensure_project=missing_project,
+        max_upload_bytes=50 * 1024 * 1024,
     )
 
     with pytest.raises(NotFoundError) as exc_info:

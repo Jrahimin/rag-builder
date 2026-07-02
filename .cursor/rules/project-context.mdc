@@ -213,10 +213,11 @@ A first-class abstraction for persisting raw files and artifacts.
 
 ## Knowledge Processing
 
-* Chunking
-* Embeddings
-* Indexing
-* Vector Storage
+Platform capabilities (not a single module):
+
+* Chunking — **`modules/knowledge/`** (through `status=chunked`)
+* Embeddings, indexing, vector storage — **`modules/retrieval/`**
+* Hybrid search and reranking — **`modules/retrieval/`** v2 (see ADR-007)
 
 ---
 
@@ -359,11 +360,11 @@ The goal is to build a comprehensive AI Engineering knowledge base alongside the
 
 Current phase:
 
-**Phase 1 — In progress** (Project Management module shipped)
+**Phase 1 — In progress** (Knowledge + Retrieval baseline shipped)
 
-Foundation sprint and architectural remediation are complete. The first business
-module — **Project Management** — is implemented. Subsequent Phase 1 modules build
-on `project_id` scoping and the shared persistence/service helper patterns.
+Foundation sprint and architectural remediation are complete. **Project Management**,
+**Knowledge** (through `chunked`), and **Retrieval** (embed → index → semantic search
+baseline) are implemented.
 
 ## What exists today
 
@@ -375,6 +376,8 @@ on `project_id` scoping and the shared persistence/service helper patterns.
 | Shared service helpers | ✅ | `platform/domain/{lifecycle_service,transactions}.py` |
 | Shared list/pagination schemas | ✅ | `platform/http/pagination.py` |
 | **Project Management module** | ✅ | `modules/projects/`, `api/v1/routes/projects_router.py`, `docs/features/projects.md` |
+| **Knowledge module** | ✅ | `modules/knowledge/` — upload → parse → chunk; streaming upload + size limit; `docs/features/knowledge.md` |
+| **Retrieval module (semantic baseline)** | ✅ | `modules/retrieval/` — embed → index → semantic search; `embedding_set_version` filtering; `docs/features/retrieval.md`, ADR-007 |
 | Application factory + lifespan | ✅ | `backend/app/main.py` |
 | API versioning (`/api/v1`) | ✅ | `backend/app/api/v1/router.py`, `api/v1/routes/` |
 | API reference (Postman-oriented) | ✅ | `docs/api/` |
@@ -420,8 +423,8 @@ backend/app/
 
 ## Next up (Phase 1)
 
-Knowledge ingestion: file upload, storage provider, `Document` model under
-`app/models/`, scoped by `project_id`. Taskiq worker for async processing.
+Connector framework hardening, hybrid retrieval (Retrieval v2 per ADR-007), or Chat
+module — depending on roadmap priority. See `docs/plans/`.
 
 ---
 
