@@ -157,4 +157,4 @@ Response items include `chunk_index`, `content`, `token_count`, `char_start`, `c
 
 - [Knowledge ingestion journey](./knowledge-ingestion-journey.md) — where chunking sits in the full pipeline
 - [Document parsing](./document-parsing-and-extraction.md) — produces the text that gets split
-- [Feature doc](../features/knowledge.md)
+- [Feature doc](../features/knowledge_module.md)

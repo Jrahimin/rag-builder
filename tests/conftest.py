@@ -175,6 +175,9 @@ async def db_client(
 
     get_embedding_provider.cache_clear()
     get_vector_store_provider.cache_clear()
+    from app.platform.providers.implementations.llm_factory import get_llm_provider
+
+    get_llm_provider.cache_clear()
     app = create_app()
     database = Database(settings)
     connection: AsyncConnection = await database.engine.connect()

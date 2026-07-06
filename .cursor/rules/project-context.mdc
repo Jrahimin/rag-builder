@@ -346,7 +346,7 @@ Documentation should be concise, visual, and easy to navigate. It should evolve 
 Maintain learning-focused documentation under `docs/learning/`.
 
 Maintain a concise **API reference** under `docs/api/` — one file per module
-(`projects.md`, `knowledge.md`, …) collected in `docs/api/README.md`. Each entry:
+(`project_api.md`, `knowledge_api.md`, …) collected in `docs/api/README.md`. Each entry:
 method, path, short description, sample request/response JSON. Intended for
 quick Postman collection preparation; OpenAPI (`/docs`) remains the live contract.
 
@@ -360,11 +360,11 @@ The goal is to build a comprehensive AI Engineering knowledge base alongside the
 
 Current phase:
 
-**Phase 1 — In progress** (Knowledge + Retrieval baseline shipped)
+**Phase 1 — In progress** (Knowledge + Retrieval + Conversations baseline shipped)
 
 Foundation sprint and architectural remediation are complete. **Project Management**,
-**Knowledge** (through `chunked`), and **Retrieval** (embed → index → semantic search
-baseline) are implemented.
+**Knowledge** (through `chunked`), **Retrieval** (embed → index → semantic search
+baseline), and **Conversations** (RAG chat on semantic baseline, ADR-008) are implemented.
 
 ## What exists today
 
@@ -375,9 +375,10 @@ baseline) are implemented.
 | Shared persistence primitives | ✅ | `platform/persistence/` (`AsyncRepository`, lifecycle filters) |
 | Shared service helpers | ✅ | `platform/domain/{lifecycle_service,transactions}.py` |
 | Shared list/pagination schemas | ✅ | `platform/http/pagination.py` |
-| **Project Management module** | ✅ | `modules/projects/`, `api/v1/routes/projects_router.py`, `docs/features/projects.md` |
-| **Knowledge module** | ✅ | `modules/knowledge/` — upload → parse → chunk; streaming upload + size limit; `docs/features/knowledge.md` |
-| **Retrieval module (semantic baseline)** | ✅ | `modules/retrieval/` — embed → index → semantic search; `embedding_set_version` filtering; `docs/features/retrieval.md`, ADR-007 |
+| **Project Management module** | ✅ | `modules/projects/`, `api/v1/routes/projects_router.py`, `docs/features/project_module.md` |
+| **Knowledge module** | ✅ | `modules/knowledge/` — upload → parse → chunk; streaming upload + size limit; `docs/features/knowledge_module.md` |
+| **Retrieval module (semantic baseline)** | ✅ | `modules/retrieval/` — embed → index → semantic search; `embedding_set_version` filtering; `docs/features/retrieval_module.md`, ADR-007 |
+| **Conversations module (Chat)** | ✅ | `modules/conversations/` — RAG chat, stateful conversations, SSE; `docs/features/conversation_module.md`, ADR-008 |
 | Application factory + lifespan | ✅ | `backend/app/main.py` |
 | API versioning (`/api/v1`) | ✅ | `backend/app/api/v1/router.py`, `api/v1/routes/` |
 | API reference (Postman-oriented) | ✅ | `docs/api/` |
@@ -418,13 +419,13 @@ backend/app/
 * **Provider / config / jobs / deployment** — `docs/architecture/`
 * **ADRs** — `docs/architecture/adr/`
 * **Foundation learning** — `docs/learning/`
-* **Feature docs** — `docs/features/` (e.g. `projects.md`)
+* **Feature docs** — `docs/features/` (e.g. `project_module.md`)
 * **API reference (Postman-oriented)** — `docs/api/`
 
 ## Next up (Phase 1)
 
-Connector framework hardening, hybrid retrieval (Retrieval v2 per ADR-007), or Chat
-module — depending on roadmap priority. See `docs/plans/`.
+Hybrid retrieval (Retrieval v2 per ADR-007), connector framework hardening, or
+evaluation/observability foundations — depending on roadmap priority. See `docs/plans/`.
 
 ---
 

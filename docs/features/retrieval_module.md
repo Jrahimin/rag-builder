@@ -77,11 +77,11 @@ Job retries: `RetryPolicy` on each `JobDefinition` is translated to Taskiq `Smar
 
 ## Production note
 
-Phase 1 ships **semantic retrieval baseline** only. Hybrid BM25 + RRF + reranker is **Retrieval v2** (ADR-007) — required before Chat in production RAG paths.
+Phase 1 ships **semantic retrieval baseline** only. Hybrid BM25 + RRF + reranker is **Retrieval v2** (ADR-007) — the production upgrade path. **Chat v1** integrates on the semantic baseline via `RetrievalPort` (ADR-008).
 
 ## Related
 
-- [Knowledge](./knowledge.md) — ingestion through `chunked`
-- [Plan](../plans/retrieval-module.md)
-- [API reference](../api/retrieval.md)
+- [Knowledge](./knowledge_module.md) — ingestion through `chunked`
+- [Plan](../plans/retrieval_module_plan.md)
+- [API reference](../api/retrieval_api.md)
 - [ADR-007](../architecture/adr/007-staged-retrieval-delivery.md)

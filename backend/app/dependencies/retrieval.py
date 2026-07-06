@@ -9,8 +9,8 @@ from fastapi import Depends, Path
 
 from app.core.config import get_settings
 from app.dependencies.common import DbSessionDep
-from app.dependencies.knowledge import _ensure_project_exists, get_job_queue_dep
-from app.dependencies.projects import get_project_repository
+from app.dependencies.knowledge import get_job_queue_dep
+from app.dependencies.projects import ensure_project_exists, get_project_repository
 from app.modules.projects.repositories.project_repository import ProjectRepository
 from app.modules.retrieval.services.indexing_service import IndexingService
 from app.modules.retrieval.services.search_service import SearchService
@@ -26,7 +26,7 @@ def get_indexing_service(
     job_queue: Annotated[JobQueue, Depends(get_job_queue_dep)],
 ) -> IndexingService:
     async def ensure_project() -> None:
-        await _ensure_project_exists(project_repository, project_id)
+        await ensure_project_exists(project_repository, project_id)
 
     return IndexingService.from_settings(
         session=session,
@@ -45,7 +45,7 @@ def get_search_service(
     settings = get_settings()
 
     async def ensure_project() -> None:
-        await _ensure_project_exists(project_repository, project_id)
+        await ensure_project_exists(project_repository, project_id)
 
     return SearchService(
         session=session,

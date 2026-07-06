@@ -33,6 +33,13 @@ Worker handler registration belongs in the Taskiq adapter and worker modules, no
 ## Deferred
 
 - Job status tracking API
-- Cancellation
+- Cancellation (worker jobs)
 
 See ADR-005 and ADR-006.
+
+## Not background-processed
+
+Interactive **chat generation** (non-stream and SSE) runs synchronously inside the
+HTTP request. Services commit the user message before retrieval/LLM I/O and persist
+the assistant message after generation (ADR-008). This is distinct from ingestion
+and indexing workloads that must use the job queue.

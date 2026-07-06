@@ -2,7 +2,7 @@
 
 Three gated phases: **Phase 1** (embeddings), **Phase 2** (vector indexing), **Phase 3** (semantic search baseline). Each phase ships code, tests, docs, and a manual gate checklist before the next phase starts.
 
-**Prerequisite:** Knowledge v1 complete at `status=chunked` ([knowledge-module.md](./knowledge-module.md)).
+**Prerequisite:** Knowledge v1 complete at `status=chunked` ([knowledge_module_plan.md](./knowledge_module_plan.md)).
 
 ---
 
@@ -289,7 +289,7 @@ Prometheus/Langfuse deferred.
 ## Implementation order
 
 ```text
-Phase 0: module-architecture + project-context + ADR-007 + sync docs/plans/retrieval-module.md
+Phase 0: module-architecture + project-context + ADR-007 + sync docs/plans/retrieval_module_plan.md
 Phase 1: job registry → config → providers → BYTEA model → IndexingService + workflows → workers + worker handoff → tests → docs → GATE
 Phase 2: vector provider → indexing workflow → delete cascade → tests → docs → GATE
 Phase 3: SemanticRetriever + SearchService + search router → tests → docs → GATE

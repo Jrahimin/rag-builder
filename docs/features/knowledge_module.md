@@ -77,6 +77,6 @@ python worker.py
 
 ## Related
 
-- [Retrieval](./retrieval.md) — embed → index → search (`chunked` → `ready`)
-- [API reference](../api/knowledge.md)
-- [Plan](../plans/knowledge-module.md)
+- [Retrieval](./retrieval_module.md) — embed → index → search (`chunked` → `ready`)
+- [API reference](../api/knowledge_api.md)
+- [Plan](../plans/knowledge_module_plan.md)

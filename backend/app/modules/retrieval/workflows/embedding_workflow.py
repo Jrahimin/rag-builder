@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import time
 import uuid
 
@@ -17,14 +16,11 @@ from app.modules.retrieval.repositories.retrieval_document_repository import (
     RetrievalDocumentRepository,
 )
 from app.modules.retrieval.workflows.stage_runner import StageFailure, run_document_stage
+from app.platform.domain.content_hash import content_hash
 from app.platform.persistence.vector_codec import pack_vector
 from app.platform.providers.contracts.embedding import BaseEmbeddingProvider
 
 logger = structlog.get_logger(__name__)
-
-
-def content_hash(text: str) -> str:
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 class EmbeddingWorkflow:
