@@ -597,16 +597,16 @@ Preferred order
 
 # Chunking
 
-Use strategy pattern.
+Use strategy pattern — select via `APE_CHUNKING__STRATEGY` (`ChunkingStrategy` enum).
 
 Examples
 
 * Fixed
-* Recursive
+* Recursive (`recursive_character` — shipped)
 * Semantic
 * Markdown-aware
 
-Never hardcode chunk sizes.
+Never hardcode chunk sizes (`APE_CHUNKING__CHUNK_SIZE`, `APE_CHUNKING__CHUNK_OVERLAP`).
 
 ---
 
@@ -695,19 +695,24 @@ Worker
 
 ## Hybrid Retrieval
 
-Vector-only search is forbidden. This is the canonical retrieval pipeline.
+**Target (production RAG):** vector-only search is not sufficient. The canonical
+pipeline is BM25 + vector search → RRF → reranker → context selection → LLM.
+
+**Phase 1 baseline (ADR-007):** `modules/retrieval/` ships **semantic search only**
+(`SemanticRetriever` + `POST /search`) for integration and learning. Hybrid BM25,
+RRF, and reranker are **Retrieval v2** — required before Chat in production paths.
 
 ```
 Query
    │
-   ├── BM25
-   └── Vector Search
+   ├── BM25                    ← Retrieval v2
+   └── Vector Search           ← Phase 1 baseline
             │
             ▼
-      Reciprocal Rank Fusion
+      Reciprocal Rank Fusion    ← Retrieval v2
             │
             ▼
-         Reranker
+         Reranker               ← Retrieval v2
             │
             ▼
      Context Selection
@@ -715,6 +720,9 @@ Query
             ▼
             LLM
 ```
+
+Search results are scoped by `project_id` and the active `embedding_set_version`
+so stale vectors from prior embedding runs are excluded.
 
 ---
 
@@ -932,6 +940,10 @@ Expose:
 
 Deleting a Project or Document cascades across PostgreSQL, the Vector Store, and Object Storage to support right-to-be-forgotten.
 
+Cross-module delete: the knowledge delete path invokes `RetrievalCleanupService`
+(composition layer) to purge `chunk_embeddings` rows and best-effort vector points
+without wiring the full embedding/indexing stack into knowledge DI.
+
 ---
 
 ## Configuration Precedence
@@ -1047,9 +1059,11 @@ Never embed prompts directly inside business logic.
 
 ---
 
-## ❌ Vector-only Retrieval
+## ❌ Vector-only Retrieval (production RAG)
 
-Always use Hybrid Retrieval.
+Production RAG paths (e.g. Chat) must use hybrid retrieval (BM25 + vector + RRF +
+reranker). Phase 1 ships a **semantic baseline** only (ADR-007); do not treat it
+as the final production search path.
 
 ---
 

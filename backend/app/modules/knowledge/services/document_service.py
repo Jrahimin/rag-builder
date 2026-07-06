@@ -5,13 +5,14 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+import tempfile
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import ConflictError, ServiceUnavailableError
+from app.core.exceptions import ConflictError, PayloadTooLargeError, ServiceUnavailableError
 from app.models.document import Document, DocumentStatus
 from app.models.document_chunk import DocumentChunk
 from app.modules.knowledge.repositories.document_chunk_repository import DocumentChunkRepository
@@ -35,10 +36,15 @@ from app.platform.providers.errors import ProviderError
 logger = structlog.get_logger(__name__)
 
 type EnsureProjectFn = Callable[[], Awaitable[None]]
+type OnDocumentDeleteFn = Callable[[Document], Awaitable[None]]
 
 _UNSAFE_FILENAME = re.compile(r"[^\w.\-]+")
 _NOT_FOUND = {"message": "Document not found.", "code": "document_not_found"}
 _DELETED = {"message": "Cannot process a deleted document.", "code": "document_deleted"}
+
+# Uploads larger than this spill from memory to a temp file while hashing.
+_SPOOL_MAX_MEMORY_BYTES = 4 * 1024 * 1024
+_REPLAY_CHUNK_BYTES = 64 * 1024
 
 
 def safe_filename(name: str) -> str:
@@ -70,12 +76,16 @@ class DocumentService:
         job_queue: JobQueue,
         *,
         ensure_project: EnsureProjectFn,
+        max_upload_bytes: int,
+        on_document_delete: OnDocumentDeleteFn | None = None,
     ) -> None:
         self._session = session
         self._repository = repository
         self._storage = storage
         self._job_queue = job_queue
         self._ensure_project = ensure_project
+        self._max_upload_bytes = max_upload_bytes
+        self._on_document_delete = on_document_delete
 
     async def upload(self, data: DocumentIngestInput) -> Document:
         await self._ensure_project()
@@ -217,6 +227,14 @@ class DocumentService:
         )
 
     async def soft_delete(self, document_id: uuid.UUID) -> Document:
+        document = await get_or_raise(
+            self._repository,
+            document_id,
+            message=_NOT_FOUND["message"],
+            code=_NOT_FOUND["code"],
+        )
+        if self._on_document_delete is not None:
+            await self._on_document_delete(document)
         document = await soft_delete(
             self._session,
             self._repository,
@@ -242,21 +260,44 @@ class DocumentService:
             )
         return document
 
-    @staticmethod
     async def _hash_stream(
+        self,
         stream: AsyncIterator[bytes],
     ) -> tuple[str, int, AsyncIterator[bytes]]:
+        """Hash the upload while spooling it to a temp file (bounded memory)."""
         hasher = hashlib.sha256()
-        chunks: list[bytes] = []
+        # Not a context manager: the spool outlives this method and is closed by
+        # the replay generator (or the except branch below on failure).
+        spool = tempfile.SpooledTemporaryFile(max_size=_SPOOL_MAX_MEMORY_BYTES)  # noqa: SIM115
         size_bytes = 0
 
-        async for chunk in stream:
-            hasher.update(chunk)
-            chunks.append(chunk)
-            size_bytes += len(chunk)
+        try:
+            async for chunk in stream:
+                size_bytes += len(chunk)
+                if size_bytes > self._max_upload_bytes:
+                    raise PayloadTooLargeError(
+                        message=(
+                            f"Upload exceeds the maximum allowed size of "
+                            f"{self._max_upload_bytes} bytes."
+                        ),
+                        code="document_too_large",
+                    )
+                hasher.update(chunk)
+                spool.write(chunk)
+        except BaseException:
+            spool.close()
+            raise
+
+        spool.seek(0)
 
         async def replay() -> AsyncIterator[bytes]:
-            for chunk in chunks:
-                yield chunk
+            try:
+                while True:
+                    data = spool.read(_REPLAY_CHUNK_BYTES)
+                    if not data:
+                        break
+                    yield data
+            finally:
+                spool.close()
 
         return hasher.hexdigest(), size_bytes, replay()

@@ -114,6 +114,30 @@ Code lives under `backend/app/modules/knowledge/`, `platform/providers/`, `worke
 
 
 
+## Retrieval pipeline (after `chunked`)
+
+
+
+| # | Document | What you learn |
+
+| - | -------- | -------------- |
+
+| 1 | [Embeddings fundamentals](./embeddings-fundamentals.md) | Providers, `chunk_embeddings`, `embedding_set_version` |
+
+| 2 | [Vector storage and Qdrant](./vector-storage-and-qdrant.md) | Dual storage, payloads, project scoping |
+
+| 3 | [Retrieval feature doc](../features/retrieval.md) | Embed → index → search API, workers, config |
+
+
+
+Code lives under `backend/app/modules/retrieval/`, `worker/handlers/{embedding,indexing}.py`.
+
+
+
+---
+
+
+
 ## Planned topics (Phase 1+)
 
 
@@ -122,15 +146,9 @@ AI and platform capabilities as they are implemented:
 
 
 
-- RAG fundamentals and the ingestion → retrieval → generation lifecycle
-
-- Embeddings and vector indexing
-
-- Hybrid retrieval (BM25 + vector + RRF + reranking)
+- Hybrid retrieval (BM25 + vector + RRF + reranking) — Retrieval v2 (ADR-007)
 
 - Provider abstraction and vendor independence
-
-- Background processing and job queues (Taskiq)
 
 - Observability, tracing, and cost tracking (Langfuse)
 

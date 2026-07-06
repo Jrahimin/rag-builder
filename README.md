@@ -23,8 +23,9 @@ is **domain-agnostic** — there is no business-specific logic — so it can be
 reused across DMS, tax/audit, ERP, HRMS, legal, financial research, and
 internal knowledge-base systems.
 
-> **Status:** Phase 1 in progress — platform foundation plus **Project Management**
-> module. See [docs/features/projects.md](docs/features/projects.md).
+> **Status:** Phase 1 in progress — **Project Management**, **Knowledge** (upload →
+> parse → chunk), and **Retrieval** (embed → index → semantic search baseline) are
+> shipped. See [docs/features/](docs/features/).
 
 ## Vision
 
@@ -55,8 +56,8 @@ APE follows a strict, layered architecture with clear separation of concerns:
              │     Repository Layer (ProjectScopedRepository)
              │
              ▼
-      Infrastructure Providers (future implementations/)
-      └── Vector Store, Storage, LLM, OCR, Connectors, ...
+      Infrastructure Providers (platform/providers/implementations/)
+      └── Vector Store, Storage, Embeddings, Document Parsers, ...
 ```
 
 Key foundations:
@@ -280,7 +281,8 @@ Conventions:
 | ---- | -------- |
 | `docs/architecture/` | How the platform is built — start with [system-architecture.md](docs/architecture/system-architecture.md) |
 | `docs/learning/` | Foundation deep-dives (config, logging, DB, Docker, testing, FastAPI factory) |
-| `docs/features/` | Per-feature reference documentation (populated as modules ship) |
+| `docs/features/` | Per-feature reference ([projects](docs/features/projects.md), [knowledge](docs/features/knowledge.md), [retrieval](docs/features/retrieval.md)) |
+| `docs/api/` | Postman-oriented API reference |
 
 The binding rules live in `.cursor/rules/` (`project-context.mdc` for vision,
 scope, and current status; `architecture.mdc` for engineering standards).

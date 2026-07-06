@@ -12,6 +12,7 @@ guides in this folder elaborate on implementation.
 | [ADR-004](./004-configuration-hierarchy.md) | Three-tier configuration model | Accepted |
 | [ADR-005](./005-background-processing-arq.md) | Taskiq for background jobs | Accepted |
 | [ADR-006](./006-deployment-topology.md) | API + worker process separation | Accepted |
+| [ADR-007](./007-staged-retrieval-delivery.md) | Staged retrieval delivery (semantic baseline → hybrid v2) | Accepted |
 
 ## When to add an ADR
 

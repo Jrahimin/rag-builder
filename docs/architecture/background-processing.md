@@ -23,13 +23,16 @@ Worker handler registration belongs in the Taskiq adapter and worker modules, no
 ## Implemented
 
 - `TaskiqJobQueue` — enqueues via Redis list broker (`ListQueueBroker`)
-- Worker process — `taskiq worker app.worker.broker:broker app.worker.handlers.document`
-- `document.process` job — parse + chunk workflow
+- Worker process — `python worker.py` (document + embedding + indexing handlers)
+- `document.process` / `document.embed` / `document.index` jobs
+- Retries — `RetryPolicy` (`max_attempts`, `initial_delay_seconds`) is translated to
+  Taskiq `SmartRetryMiddleware` labels at dispatch (`platform/jobs/registry.py`);
+  backoff shape (exponent, jitter, max delay) is configured on the broker in
+  `app/worker/broker.py`
 
 ## Deferred
 
 - Job status tracking API
 - Cancellation
-- Retry middleware wiring from `RetryPolicy`
 
 See ADR-005 and ADR-006.

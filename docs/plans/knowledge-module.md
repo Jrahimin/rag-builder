@@ -17,19 +17,19 @@ Three gated phases: **Phase 1** (upload + storage), **Phase 2** (async parsing),
 
 - `StorageConfig` + `BaseStorageProvider` (local filesystem, MinIO via boto3)
 - `Document` model + migration `0004_add_documents`
-- Upload, list, get, soft-delete (storage object removed on delete)
+- Upload (spooled streaming hash + `APE_KNOWLEDGE__MAX_UPLOAD_BYTES`), list, get, soft-delete (storage object removed on delete)
 - Duplicate `content_sha256` per project → `409`
 
 ## Phase 2 — Shipped scope
 
 - `TaskiqJobQueue` + `worker` Docker service + `document.process` job
-- `DocumentProcessingWorkflow` (parse-only, stops at `parsed`)
+- `DocumentProcessingWorkflow` (parse + chunk; ends at `chunked`)
 - `CompositeDocumentParserProvider` (plain text + PyMuPDF)
 - Upload enqueues parsing; `POST .../reprocess`; processing columns migration `0005`
 
 ## Phase 3 — Shipped scope
 
-- `ChunkingConfig` (`APE_CHUNKING__CHUNK_SIZE`, `APE_CHUNKING__CHUNK_OVERLAP`)
+- `ChunkingConfig` (`APE_CHUNKING__STRATEGY`, `APE_CHUNKING__CHUNK_SIZE`, `APE_CHUNKING__CHUNK_OVERLAP`)
 - `DocumentChunk` model + migration `0006_add_document_chunks`
 - `DocumentChunkRepository` + `ChunkingService` (langchain `RecursiveCharacterTextSplitter`)
 - Workflow ends at `status=chunked`; `GET /documents/{id}/chunks`

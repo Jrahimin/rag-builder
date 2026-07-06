@@ -19,7 +19,7 @@
 - `ProjectScopedMixin` on ORM entities
 - `ProjectScopedRepository` on every Project-owned repository
 - `project_id` on every provider call and background job (when implemented)
-- API routes under `/api/v1/projects/{project_id}/...` (future)
+- API routes under `/api/v1/projects/{project_id}/...` (documents, search, embed, index)
 
 No resource-catalog enums in code — ownership is documented here and enforced
 through mixins and repositories.

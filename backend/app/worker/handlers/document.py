@@ -7,8 +7,10 @@ import uuid
 import structlog
 
 from app.core.config import get_settings
+from app.models.document import DocumentStatus
 from app.modules.knowledge.services.chunking_service import ChunkingService
 from app.modules.knowledge.workflows.document_processing import DocumentProcessingWorkflow
+from app.modules.retrieval.services.indexing_service import IndexingService
 from app.platform.db.session import Database
 from app.platform.jobs.names import DOCUMENT_PROCESS
 from app.platform.providers.implementations.document_parser_factory import get_document_parser
@@ -16,6 +18,10 @@ from app.platform.providers.implementations.storage_factory import create_storag
 from app.worker.broker import broker
 
 logger = structlog.get_logger(__name__)
+
+
+async def _noop_ensure_project() -> None:
+    return None
 
 
 async def run_document_process(
@@ -28,10 +34,7 @@ async def run_document_process(
     database = Database(settings)
     project_uuid = uuid.UUID(str(project_id))
     document_uuid = uuid.UUID(str(document_id))
-    chunking = ChunkingService(
-        chunk_size=settings.chunking.chunk_size,
-        chunk_overlap=settings.chunking.chunk_overlap,
-    )
+    chunking = ChunkingService.from_settings(settings)
 
     try:
         async with database.session_factory() as session:
@@ -42,7 +45,15 @@ async def run_document_process(
                 parser=get_document_parser(),
                 chunking=chunking,
             )
-            await workflow.run(document_uuid)
+            document = await workflow.run(document_uuid)
+            if document is not None and document.status is DocumentStatus.CHUNKED:
+                indexing = IndexingService.from_settings(
+                    session=session,
+                    project_id=project_uuid,
+                    settings=settings,
+                    ensure_project=_noop_ensure_project,
+                )
+                await indexing.enqueue_embed_if_enabled(document.id)
     finally:
         await database.dispose()
 

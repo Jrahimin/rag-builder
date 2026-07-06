@@ -24,16 +24,14 @@ class JobStatus(StrEnum):
 
 
 class RetryPolicy(BaseModel):
-    """Retry behaviour for enqueue (single source of truth)."""
+    """Retry behaviour for enqueue — translated to queue labels at dispatch.
+
+    Backoff shape (exponent, jitter, max delay) is configured once on the
+    worker broker middleware; see ``app/worker/broker.py``.
+    """
 
     max_attempts: int = Field(default=3, ge=1)
     initial_delay_seconds: float = Field(default=1.0, ge=0)
-    max_delay_seconds: float = Field(default=300.0, ge=0)
-    exponential_base: float = Field(default=2.0, ge=1)
-
-    def delay_for_attempt(self, attempt: int) -> float:
-        delay = self.initial_delay_seconds * (self.exponential_base ** (attempt - 1))
-        return min(delay, self.max_delay_seconds)
 
 
 class JobDefinition(BaseModel):

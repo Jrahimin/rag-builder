@@ -114,6 +114,8 @@ services:
         "worker",
         "app.worker.broker:broker",
         "app.worker.handlers.document",
+        "app.worker.handlers.embedding",
+        "app.worker.handlers.indexing",
       ]
     networks:
       - ape_network

@@ -227,11 +227,85 @@ class JobsConfig(BaseModel):
     backend: JobQueueBackend = JobQueueBackend.TASKIQ
 
 
+class KnowledgeConfig(BaseModel):
+    """Knowledge ingestion limits."""
+
+    max_upload_bytes: int = Field(default=50 * 1024 * 1024, ge=1)
+
+
+class ChunkingStrategy(StrEnum):
+    """Supported text chunking strategies."""
+
+    RECURSIVE_CHARACTER = "recursive_character"
+
+
 class ChunkingConfig(BaseModel):
     """Text chunking defaults for the knowledge ingestion pipeline."""
 
+    strategy: ChunkingStrategy = ChunkingStrategy.RECURSIVE_CHARACTER
     chunk_size: int = Field(default=1000, ge=100, le=16_000)
     chunk_overlap: int = Field(default=200, ge=0, le=4000)
+
+
+class EmbeddingBackend(StrEnum):
+    """Supported embedding provider backends."""
+
+    HASH = "hash"
+    OLLAMA = "ollama"
+    OPENAI = "openai"
+    GEMINI = "gemini"
+
+
+class EmbeddingConfig(BaseModel):
+    """Embedding provider configuration."""
+
+    backend: EmbeddingBackend = EmbeddingBackend.HASH
+    model: str = "nomic-embed-text"
+    dimensions: int = Field(default=384, ge=1, le=4096)
+    batch_size: int = Field(default=32, ge=1, le=256)
+    ollama_base_url: str = "http://localhost:11434"
+    openai_api_key: str | None = None
+    openai_base_url: str = "https://api.openai.com"
+    gemini_api_key: str | None = None
+    gemini_base_url: str = "https://generativelanguage.googleapis.com/v1beta"
+    provider_version: str = "1"
+
+
+class VectorStoreBackend(StrEnum):
+    """Supported vector store backends."""
+
+    QDRANT = "qdrant"
+    MEMORY = "memory"
+
+
+class VectorStoreConfig(BaseModel):
+    """Vector store collection configuration (connectivity via QdrantConfig)."""
+
+    backend: VectorStoreBackend = VectorStoreBackend.QDRANT
+    collection_name: str = "ape_chunks"
+
+
+class RetrievalConfig(BaseModel):
+    """Retrieval pipeline and search defaults."""
+
+    auto_embed: bool = True
+    auto_index: bool = True
+    default_top_k: int = Field(default=10, ge=1, le=100)
+    score_threshold: float | None = Field(default=None, ge=0.0, le=1.0)
+    embedding_set_version: int = Field(default=1, ge=1)
+    filterable_metadata_keys: Annotated[list[str], NoDecode] = Field(
+        default_factory=lambda: ["source", "tags"]
+    )
+
+    @field_validator("filterable_metadata_keys", mode="before")
+    @classmethod
+    def _split_filterable_keys(cls, value: object) -> object:
+        if isinstance(value, str):
+            stripped = value.strip()
+            if not stripped or stripped.startswith("["):
+                return value
+            return [item.strip() for item in stripped.split(",") if item.strip()]
+        return value
 
 
 class Settings(BaseSettings):
@@ -257,7 +331,11 @@ class Settings(BaseSettings):
     minio: MinioConfig = Field(default_factory=MinioConfig)
     storage: StorageConfig = Field(default_factory=StorageConfig)
     jobs: JobsConfig = Field(default_factory=JobsConfig)
+    knowledge: KnowledgeConfig = Field(default_factory=KnowledgeConfig)
     chunking: ChunkingConfig = Field(default_factory=ChunkingConfig)
+    embedding: EmbeddingConfig = Field(default_factory=EmbeddingConfig)
+    vector_store: VectorStoreConfig = Field(default_factory=VectorStoreConfig)
+    retrieval: RetrievalConfig = Field(default_factory=RetrievalConfig)
 
 
 @lru_cache

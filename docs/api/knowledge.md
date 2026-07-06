@@ -2,11 +2,16 @@
 
 **Prefix:** `/api/v1/projects/{project_id}/documents`
 
+> The `/embed` and `/index` endpoints under this prefix are owned by the
+> **retrieval** module — see [retrieval.md](./retrieval.md).
+
 ## POST ``
 
 Upload a file (multipart field `file`). Enqueues `document.process` (`status=queued`).
 
 Poll `GET /{document_id}` until `status=chunked` (or `failed`).
+
+**413** — upload exceeds `APE_KNOWLEDGE__MAX_UPLOAD_BYTES` (default 50 MB).
 
 ## GET ``
 
@@ -59,4 +64,6 @@ Re-enqueue full pipeline (parse + chunk). Bumps `document.version`; replaces exi
 
 ## DELETE `/{document_id}`
 
-Soft-delete document, remove storage artifacts, delete chunk rows.
+Soft-delete document, remove storage artifacts, delete chunk rows, and purge
+retrieval artifacts (`chunk_embeddings` + best-effort vector points via
+`RetrievalCleanupService`).
