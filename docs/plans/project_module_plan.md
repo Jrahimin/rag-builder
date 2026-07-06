@@ -1,6 +1,6 @@
 # Project Management Module — Implementation Plan
 
-**Status:** Complete — shipped; see `docs/features/projects.md` for the as-built reference.  
+**Status:** Complete — shipped; see `docs/features/project_module.md` for the as-built reference.  
 **Phase:** 1 (first business module)  
 **Overview:** Implement `modules/projects` with CRUD, `is_active` status toggle, and
 soft-delete (`deleted_at` as source of truth). `ProjectRepository` uses
@@ -18,7 +18,7 @@ feature documentation.
 | http-wiring | Add `dependencies/projects.py`, `api/v1/routes/projects_router.py`, mount on `api/v1/router.py` | Complete |
 | unit-tests | Unit tests for `ProjectService` (mocked repo/session) | Complete |
 | integration-tests | DB fixtures in `conftest` + integration tests for full API flow | Complete |
-| feature-docs | Write `docs/features/projects.md` and run `make check` | Complete |
+| feature-docs | Write `docs/features/project_module.md` and run `make check` | Complete |
 
 ---
 
@@ -232,7 +232,7 @@ Errors: `ConflictError` (duplicate name, mutation on soft-deleted project); `Not
 | File | Action |
 | ---- | ------ |
 | `backend/app/modules/_template/README.md` | Aggregate-root repository guidance (direct `AsyncSession`; no unscoped platform export) |
-| `docs/features/projects.md` | **Create** — full feature doc per `docs/features/README.md` template |
+| `docs/features/project_module.md` | **Create** — full feature doc per `docs/features/README.md` template |
 
 ---
 
@@ -401,7 +401,7 @@ Mark: `@pytest.mark.integration` on all DB-dependent tests.
 
 ### Step 6 — Documentation
 
-- `docs/features/projects.md`
+- `docs/features/project_module.md`
 
 **Acceptance:** Documents `deleted_at` semantics, `is_active` toggle, no hard delete, `deleted_by` deferral.
 

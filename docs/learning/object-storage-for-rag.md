@@ -139,4 +139,4 @@ If storage delete fails, the DB row is still soft-deleted; a warning is logged (
 
 - [Knowledge ingestion journey](./knowledge-ingestion-journey.md) — full E2E
 - [Document parsing](./document-parsing-and-extraction.md) — what happens after `get(storage_key)`
-- [Feature doc](../features/knowledge.md)
+- [Feature doc](../features/knowledge_module.md)

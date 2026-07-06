@@ -700,7 +700,9 @@ pipeline is BM25 + vector search → RRF → reranker → context selection → 
 
 **Phase 1 baseline (ADR-007):** `modules/retrieval/` ships **semantic search only**
 (`SemanticRetriever` + `POST /search`) for integration and learning. Hybrid BM25,
-RRF, and reranker are **Retrieval v2** — required before Chat in production paths.
+RRF, and reranker are **Retrieval v2** — the production upgrade path. Chat v1 may
+ship on the semantic baseline behind `RetrievalPort` (ADR-008); hybrid remains
+required for production-grade RAG quality.
 
 ```
 Query
@@ -903,7 +905,7 @@ Maintain a **module-grouped API collection** under `docs/api/` — concise refer
 for Postman import, not tutorials.
 
 * `docs/api/README.md` — base URL, response envelope, module index
-* One file per module: `docs/api/projects.md`, `docs/api/knowledge.md`, …
+* One file per module: `docs/api/project_api.md`, `docs/api/knowledge_api.md`, …
 * Per endpoint: method, path, one-line purpose, sample request/response JSON
 * Update when routes ship or change; OpenAPI (`/docs`) remains the live contract
 

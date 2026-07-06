@@ -13,6 +13,7 @@ guides in this folder elaborate on implementation.
 | [ADR-005](./005-background-processing-arq.md) | Taskiq for background jobs | Accepted |
 | [ADR-006](./006-deployment-topology.md) | API + worker process separation | Accepted |
 | [ADR-007](./007-staged-retrieval-delivery.md) | Staged retrieval delivery (semantic baseline → hybrid v2) | Accepted |
+| [ADR-008](./008-chat-on-semantic-baseline.md) | Chat v1 on semantic baseline; split transactions; RetrievalPort | Accepted |
 
 ## When to add an ADR
 

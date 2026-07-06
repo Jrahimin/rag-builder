@@ -8,9 +8,8 @@ from typing import Annotated
 from fastapi import Depends, Path
 
 from app.core.config import get_settings
-from app.core.exceptions import NotFoundError
 from app.dependencies.common import DbSessionDep
-from app.dependencies.projects import get_project_repository
+from app.dependencies.projects import ensure_project_exists, get_project_repository
 from app.models.document import Document
 from app.modules.knowledge.repositories.document_repository import DocumentRepository
 from app.modules.knowledge.services.document_service import DocumentService
@@ -34,18 +33,6 @@ def get_storage() -> BaseStorageProvider:
     return get_storage_provider()
 
 
-async def _ensure_project_exists(
-    project_repository: ProjectRepository,
-    project_id: uuid.UUID,
-) -> None:
-    project = await project_repository.get_by_id(project_id)
-    if project is None:
-        raise NotFoundError(
-            message="Project not found.",
-            code="project_not_found",
-        )
-
-
 def get_job_queue_dep() -> JobQueue:
     return get_job_queue()
 
@@ -61,7 +48,7 @@ def get_document_service(
     project_id = repository.project_id
 
     async def ensure_project() -> None:
-        await _ensure_project_exists(project_repository, project_id)
+        await ensure_project_exists(project_repository, project_id)
 
     cleanup = RetrievalCleanupService(
         session=session,

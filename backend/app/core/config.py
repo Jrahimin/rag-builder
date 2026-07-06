@@ -308,6 +308,45 @@ class RetrievalConfig(BaseModel):
         return value
 
 
+class LLMBackend(StrEnum):
+    """Supported LLM provider backends."""
+
+    ECHO = "echo"
+    OPENAI = "openai"
+    OPENAI_COMPATIBLE = "openai_compatible"
+    OLLAMA = "ollama"
+    GEMINI = "gemini"
+
+
+class LLMConfig(BaseModel):
+    """LLM provider configuration."""
+
+    backend: LLMBackend = LLMBackend.ECHO
+    model: str = "gpt-4o-mini"
+    temperature: float = Field(default=0.7, ge=0.0, le=2.0)
+    max_tokens: int = Field(default=2048, ge=1, le=128_000)
+    request_timeout_seconds: float = Field(default=120.0, ge=1.0, le=600.0)
+    ollama_base_url: str = "http://localhost:11434"
+    openai_api_key: str | None = None
+    openai_base_url: str = "https://api.openai.com"
+    gemini_api_key: str | None = None
+    gemini_base_url: str = "https://generativelanguage.googleapis.com/v1beta"
+    provider_version: str = "1"
+
+
+class ChatConfig(BaseModel):
+    """Chat / RAG orchestration defaults."""
+
+    retrieval_top_k: int = Field(default=10, ge=1, le=100)
+    max_context_chunks: int = Field(default=8, ge=1, le=50)
+    context_char_budget: int = Field(default=12_000, ge=500, le=200_000)
+    max_history_messages: int = Field(default=20, ge=0, le=200)
+    system_prompt_version: str = "v1"
+    include_citations: bool = True
+    citation_excerpt_max_chars: int = Field(default=200, ge=0, le=2000)
+    auto_title_max_chars: int = Field(default=80, ge=10, le=255)
+
+
 class Settings(BaseSettings):
     """Root settings object aggregating all configuration sections."""
 
@@ -336,6 +375,8 @@ class Settings(BaseSettings):
     embedding: EmbeddingConfig = Field(default_factory=EmbeddingConfig)
     vector_store: VectorStoreConfig = Field(default_factory=VectorStoreConfig)
     retrieval: RetrievalConfig = Field(default_factory=RetrievalConfig)
+    llm: LLMConfig = Field(default_factory=LLMConfig)
+    chat: ChatConfig = Field(default_factory=ChatConfig)
 
 
 @lru_cache

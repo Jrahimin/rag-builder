@@ -94,20 +94,22 @@ Concrete provider interfaces are added with the first implementation.
 | ------ | ----- |
 | `projects` | Central aggregate (shipped) |
 | `knowledge` | Ingestion — upload, parse, chunk; ends at `status=chunked` (shipped) |
-| `retrieval` | Embed → index → search (`chunked` → `embedded` → `ready`); hybrid + rerank in v2 |
-| `conversations` | Chat + prompts |
+| `retrieval` | Embed → index → search (`chunked` → `embedded` → `ready`); hybrid + rerank in v2 (shipped baseline) |
+| `conversations` | Chat — retrieve → prompt → LLM → answer + citations; stateful conversations (shipped) |
 | `evaluation` | Quality measurement + feedback |
 
-### Knowledge vs retrieval boundary
+### Knowledge vs retrieval vs conversations boundary
 
 ```text
-modules/knowledge/     upload → parse → chunk     ends at status=chunked
-modules/retrieval/     embed → index → search      chunked → embedded → ready → search API
+modules/knowledge/       upload → parse → chunk       ends at status=chunked
+modules/retrieval/       embed → index → search        chunked → ready → POST /search
+modules/conversations/   chat (RAG generation)         uses RetrievalPort + BaseLLMProvider
 ```
 
 - **Knowledge** does not import retrieval.
 - **Retrieval** reads shared ORM (`Document`, `DocumentChunk`) via its own thin repos — never imports `modules/knowledge/`.
-- **Composition layer** (`dependencies/`) wires delete cascade and cross-module worker handoffs.
+- **Conversations** does not import `modules/retrieval/` internals; composition layer wires `RetrievalPort` adapter.
+- **Composition layer** (`dependencies/`) wires delete cascade, worker handoffs, and cross-module adapters.
 
 ---
 

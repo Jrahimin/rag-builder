@@ -3,7 +3,7 @@
 **Prefix:** `/api/v1/projects/{project_id}/documents`
 
 > The `/embed` and `/index` endpoints under this prefix are owned by the
-> **retrieval** module — see [retrieval.md](./retrieval.md).
+> **retrieval** module — see [retrieval_api.md](./retrieval_api.md).
 
 ## POST ``
 

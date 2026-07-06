@@ -35,7 +35,8 @@ Error:
 
 | Module | File | Prefix |
 | ------ | ---- | ------ |
-| System | [system.md](system.md) | `/health`, `/ready` |
-| Projects | [projects.md](projects.md) | `/api/v1/projects` |
-| Knowledge | [knowledge.md](knowledge.md) | `/api/v1/projects/{project_id}/documents` |
-| Retrieval | [retrieval.md](retrieval.md) | `/api/v1/projects/{project_id}` (search, embed, index on documents prefix) |
+| System | [system_api.md](system_api.md) | `/health`, `/ready` |
+| Projects | [project_api.md](project_api.md) | `/api/v1/projects` |
+| Knowledge | [knowledge_api.md](knowledge_api.md) | `/api/v1/projects/{project_id}/documents` |
+| Retrieval | [retrieval_api.md](retrieval_api.md) | `/api/v1/projects/{project_id}` (search, embed, index on documents prefix) |
+| Conversations | [conversation_api.md](conversation_api.md) | `/api/v1/projects/{project_id}/conversations` |

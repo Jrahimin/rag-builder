@@ -446,7 +446,7 @@ repository and `commit` in the service operate on the **same transaction**.
 | `platform/domain/transactions.py` | flush / commit / refresh |
 | `platform/http/pagination.py` | `ListParams`, `PaginatedResult` |
 | `modules/projects/` | reference implementation |
-| `docs/api/projects.md` | HTTP samples for Postman |
+| `docs/api/project_api.md` | HTTP samples for Postman |
 
 ---
 

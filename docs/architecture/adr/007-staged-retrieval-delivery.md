@@ -20,7 +20,7 @@ Deliver retrieval in **staged phases** with explicit completion wording:
 | Milestone | Scope | Production-grade? |
 | --------- | ----- | ----------------- |
 | **Retrieval Phase 3 baseline** | Semantic search API E2E (`ready` → `POST /search`) | No — learning + integration baseline |
-| **Retrieval v2** | Hybrid BM25 + vector + RRF + reranker | Yes — required before Chat |
+| **Retrieval v2** | Hybrid BM25 + vector + RRF + reranker | Yes — required for **production** RAG upgrade paths |
 
 Phase 3 ships **semantic retrieval baseline only**:
 
@@ -36,10 +36,16 @@ documented.
 
 - ADR-007 and feature docs must state hybrid is the **next** milestone after
   semantic baseline.
-- Chat module should depend on Retrieval v2 for production RAG, not Phase 3
-  baseline alone.
-- `docs/plans/retrieval-module.md` is the implementation plan; module-architecture
+- **Chat v1** may ship on the semantic baseline behind `RetrievalPort` (see
+  **ADR-008**); hybrid retrieval remains the production upgrade path.
+- `docs/plans/retrieval_module_plan.md` is the implementation plan; module-architecture
   reflects the knowledge/retrieval split.
+
+## Amendment (ADR-008)
+
+Chat v1 on the semantic baseline does not revoke the production requirement for
+hybrid retrieval. It sequences delivery: learning E2E chat now, hybrid adapter
+swap later without changing `modules/conversations/` internals.
 
 ## Alternatives considered
 

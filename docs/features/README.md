@@ -6,9 +6,10 @@ Concise, per-feature reference documentation for the AI Platform Engine.
 
 | Feature | Doc | Scope |
 | ------- | --- | ----- |
-| Project Management | [projects.md](./projects.md) | CRUD, `is_active` toggle, soft-delete |
-| Knowledge | [knowledge.md](./knowledge.md) | Upload → parse → chunk (`status=chunked`) |
-| Retrieval | [retrieval.md](./retrieval.md) | Embed → index → semantic search (`ready`, ADR-007 baseline) |
+| Project Management | [project_module.md](./project_module.md) | CRUD, `is_active` toggle, soft-delete |
+| Knowledge | [knowledge_module.md](./knowledge_module.md) | Upload → parse → chunk (`status=chunked`) |
+| Retrieval | [retrieval_module.md](./retrieval_module.md) | Embed → index → semantic search (`ready`, ADR-007 baseline) |
+| Conversations | [conversation_module.md](./conversation_module.md) | RAG chat, stateful conversations, SSE streaming (ADR-008) |
 
 ## Template
 

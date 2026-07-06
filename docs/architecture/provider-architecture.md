@@ -13,10 +13,11 @@
 
 - `ProviderCapability` reference enum (`providers/contracts.py`)
 - `ProviderError` hierarchy
-- Empty `implementations/` package
-
-Interfaces and neutral types are introduced when the first provider ships (likely
-storage or vector store during knowledge ingestion).
+- **Embeddings** — `BaseEmbeddingProvider` + Ollama / OpenAI / Gemini / hash implementations
+- **Vector store** — `BaseVectorStoreProvider` + Qdrant / memory implementations
+- **Storage** — `BaseStorageProvider` + local / MinIO implementations
+- **Document parsers** — `BaseDocumentParserProvider` + PyMuPDF / plain text / docx
+- **LLM** — `BaseLLMProvider` + echo / OpenAI-compatible / Ollama / Gemini implementations (Chat module)
 
 ## SDK boundary
 
@@ -25,3 +26,17 @@ Module service → provider interface → implementation → vendor SDK
 ```
 
 Forbidden: `Redis`, `AsyncQdrantClient`, `PointStruct`, etc. in modules or `dependencies/`.
+
+## LLM integration pattern (provider-agnostic)
+
+All consumers use the **same call surface** regardless of backend:
+
+```text
+get_llm_provider()  →  BaseLLMProvider
+  .generate(messages, temperature=..., max_tokens=...)  → ChatCompletionResult
+  .stream(messages, ...)  → AsyncIterator[ChatCompletionChunk]
+```
+
+Switch backend via `APE_LLM__BACKEND` only — never import vendor implementations from modules. Full guide: [conversation_provider_integration.md](../learning/conversation_provider_integration.md).
+
+Same pattern for embeddings (`get_embedding_provider`), vector store (`get_vector_store_provider`), and storage (`get_storage_provider`).

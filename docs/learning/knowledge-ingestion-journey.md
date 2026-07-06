@@ -12,7 +12,7 @@ Start here for the **full picture**: how a file uploaded through the API becomes
 2. API enqueues a background job (`document.process`) and returns immediately (`status=queued`).
 3. **Taskiq worker** picks up the job and runs `DocumentProcessingWorkflow`.
 4. Workflow **parses** the file into plain text, saves text to storage, **chunks** it, saves chunks to `document_chunks`.
-5. Final state: `status=chunked` — ready for the **retrieval** module (`embed` → `index` → `ready` → search). See [Retrieval feature doc](../features/retrieval.md).
+5. Final state: `status=chunked` — ready for the **retrieval** module (`embed` → `index` → `ready` → search). See [Retrieval feature doc](../features/retrieval_module.md).
 
 **OCR is not implemented yet.** Scanned PDFs may finish with empty text and a log warning. See [OCR fundamentals](./ocr-fundamentals.md).
 
@@ -71,7 +71,7 @@ sequenceDiagram
 | `chunked` | same workflow | **Knowledge complete** — chunks in DB |
 | `failed` | same workflow | Safe `error_message` on document row |
 
-Retrieval-owned statuses (`embedding` → `ready`) are documented in [retrieval.md](../features/retrieval.md).
+Retrieval-owned statuses (`embedding` → `ready`) are documented in [retrieval_module.md](../features/retrieval_module.md).
 
 Poll: `GET /api/v1/projects/{project_id}/documents/{document_id}`
 
@@ -166,8 +166,8 @@ Both are scoped by `project_id` (isolation boundary).
 ## What Knowledge does **not** do
 
 - **OCR** — no `BaseOCRProvider` implementation yet ([planned](./ocr-fundamentals.md))
-- **Embeddings / vector search** — owned by `modules/retrieval/` ([feature doc](../features/retrieval.md))
-- **Chat** — future module; depends on Retrieval v2 for production RAG (ADR-007)
+- **Embeddings / vector search** — owned by `modules/retrieval/` ([feature doc](../features/retrieval_module.md))
+- **Chat (Conversations)** — shipped module; uses semantic baseline via `RetrievalPort` today; hybrid retrieval is the production upgrade (ADR-008 amends ADR-007 sequencing)
 
 ---
 

@@ -126,11 +126,49 @@ Code lives under `backend/app/modules/knowledge/`, `platform/providers/`, `worke
 
 | 2 | [Vector storage and Qdrant](./vector-storage-and-qdrant.md) | Dual storage, payloads, project scoping |
 
-| 3 | [Retrieval feature doc](../features/retrieval.md) | Embed → index → search API, workers, config |
+| 3 | [Retrieval feature doc](../features/retrieval_module.md) | Embed → index → search API, workers, config |
 
 
 
 Code lives under `backend/app/modules/retrieval/`, `worker/handlers/{embedding,indexing}.py`.
+
+
+
+---
+
+
+
+## Conversation / RAG chat pipeline
+
+
+
+**Read in this order** for question → retrieve → prompt → LLM → cited answer:
+
+
+
+| # | Document | What you learn |
+
+| - | -------- | -------------- |
+
+| 1 | [**Conversation RAG journey**](./conversation_rag_journey.md) | **Start here** — E2E flow, glossary, architectural choices, key files |
+
+| 2 | [Provider integration](./conversation_provider_integration.md) | One pattern for OpenAI / Gemini / Ollama / echo — no vendor branches in services |
+
+| 3 | [Conversation LLM providers](./conversation_llm_providers.md) | Backends table and SDK boundary |
+
+| 4 | [RAG prompting](./conversation_rag_prompting.md) | ContextBuilder vs PromptBuilder vs citations |
+
+| 5 | [Conversation memory](./conversation_memory.md) | History window, auto-title, citation snapshots |
+
+| 6 | [SSE streaming](./conversation_sse_streaming.md) | Token stream, Tx1/Tx2, client disconnect |
+
+
+
+Code lives under `backend/app/modules/conversations/`, `dependencies/conversations.py`, `platform/providers/contracts/llm.py`.
+
+
+
+Feature doc: [conversation_module.md](../features/conversation_module.md) · API: [conversation_api.md](../api/conversation_api.md)
 
 
 

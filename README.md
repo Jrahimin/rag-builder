@@ -24,8 +24,9 @@ reused across DMS, tax/audit, ERP, HRMS, legal, financial research, and
 internal knowledge-base systems.
 
 > **Status:** Phase 1 in progress — **Project Management**, **Knowledge** (upload →
-> parse → chunk), and **Retrieval** (embed → index → semantic search baseline) are
-> shipped. See [docs/features/](docs/features/).
+> parse → chunk), **Retrieval** (embed → index → semantic search baseline), and
+> **Conversations** (RAG chat on semantic baseline, ADR-008) are shipped. See
+> [docs/features/](docs/features/).
 
 ## Vision
 
@@ -281,7 +282,7 @@ Conventions:
 | ---- | -------- |
 | `docs/architecture/` | How the platform is built — start with [system-architecture.md](docs/architecture/system-architecture.md) |
 | `docs/learning/` | Foundation deep-dives (config, logging, DB, Docker, testing, FastAPI factory) |
-| `docs/features/` | Per-feature reference ([projects](docs/features/projects.md), [knowledge](docs/features/knowledge.md), [retrieval](docs/features/retrieval.md)) |
+| `docs/features/` | Per-feature reference ([projects](docs/features/project_module.md), [knowledge](docs/features/knowledge_module.md), [retrieval](docs/features/retrieval_module.md), [conversations](docs/features/conversation_module.md)) |
 | `docs/api/` | Postman-oriented API reference |
 
 The binding rules live in `.cursor/rules/` (`project-context.mdc` for vision,
