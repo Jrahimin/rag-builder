@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
 from typing import BinaryIO
@@ -32,6 +33,15 @@ class BaseStorageProvider(ABC):
     @abstractmethod
     async def delete(self, key: str) -> None:
         """Remove object at ``key``; idempotent when already absent."""
+
+    async def delete_document_tree(
+        self,
+        *,
+        project_id: uuid.UUID,
+        document_id: uuid.UUID,
+    ) -> None:
+        """Remove provider-native containers for ``{project_id}/{document_id}`` after object deletes."""
+        del project_id, document_id
 
     async def get_download_url(self, key: str, *, expires_seconds: int = 3600) -> str | None:
         """Optional presigned URL for direct client download (MinIO/S3)."""

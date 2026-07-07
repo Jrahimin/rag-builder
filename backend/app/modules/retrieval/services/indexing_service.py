@@ -199,6 +199,7 @@ class IndexingService:
             vector_store=self._vector_store,
             embedding_set_version=self._config.embedding_set_version,
             filterable_metadata_keys=self._filterable_metadata_keys,
+            fts_regconfig=self._config.fts_regconfig,
         )
         return await workflow.run(document_id)
 

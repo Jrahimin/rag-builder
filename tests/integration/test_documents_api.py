@@ -76,6 +76,8 @@ async def test_upload_list_get_delete_document(
     assert storage_path.is_file()
     parsed_path = Path(settings.storage.local_root) / str(body["parsed_text_storage_key"])
     assert parsed_path.is_file()
+    parsed_json_path = parsed_path.with_suffix(".json")
+    assert parsed_json_path.is_file()
 
     listed = await db_client.get(f"/api/v1/projects/{project_id}/documents")
     assert listed.status_code == 200
@@ -91,6 +93,9 @@ async def test_upload_list_get_delete_document(
     assert deleted.status_code == 200
     assert deleted.json()["data"]["deleted_at"] is not None
     assert not storage_path.is_file()
+    assert not parsed_path.is_file()
+    assert not parsed_json_path.is_file()
+    assert not storage_path.parent.exists()
 
     list_after = await db_client.get(f"/api/v1/projects/{project_id}/documents")
     assert document_id not in {item["id"] for item in list_after.json()["data"]["items"]}

@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from collections.abc import AsyncIterator
 
-from fastapi import APIRouter, Query, UploadFile, status
+from fastapi import APIRouter, Form, Query, UploadFile, status
 
 from app.dependencies.knowledge import DocumentServiceDep
 from app.dependencies.retrieval import IndexingServiceDep
@@ -39,12 +39,14 @@ async def upload_document(
     project_id: uuid.UUID,
     file: UploadFile,
     service: DocumentServiceDep,
+    ocr_lang: str | None = Form(default=None),
 ) -> ApiResponse[DocumentResponse]:
     del project_id
     ingest = DocumentIngestInput(
         filename=file.filename or "upload",
         content_type=file.content_type,
         stream=_file_stream(file),
+        ocr_lang=ocr_lang,
     )
     document = await service.upload(ingest)
     return ApiResponse.ok(DocumentResponse.model_validate(document))
@@ -143,9 +145,10 @@ async def reprocess_document(
     project_id: uuid.UUID,
     document_id: uuid.UUID,
     service: DocumentServiceDep,
+    ocr_lang: str | None = Query(default=None),
 ) -> ApiResponse[DocumentResponse]:
     del project_id
-    document = await service.reprocess(document_id)
+    document = await service.reprocess(document_id, ocr_lang=ocr_lang)
     return ApiResponse.ok(DocumentResponse.model_validate(document))
 
 

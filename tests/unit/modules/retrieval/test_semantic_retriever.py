@@ -1,14 +1,16 @@
-"""Unit tests for SemanticRetriever hydration and search filters."""
+"""Unit tests for SemanticRetriever candidate output."""
 
 from __future__ import annotations
+
+from dataclasses import replace
 
 import uuid
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from app.models.document import Document, DocumentStatus
-from app.models.document_chunk import DocumentChunk
+from app.core.config import RetrievalStrategy
+from app.modules.retrieval.retrievers.models import CandidateSource, RetrievalContext, RetrievalFilters
 from app.modules.retrieval.retrievers.semantic_retriever import SemanticRetriever
 from app.platform.providers.contracts.vector_store import VectorPoint
 from app.platform.providers.implementations.hash_embedding import HashEmbeddingProvider
@@ -23,32 +25,30 @@ def _embedder() -> HashEmbeddingProvider:
     return HashEmbeddingProvider(model="m", dimensions=_DIMENSIONS, provider_version="1")
 
 
-def _chunk(project_id: uuid.UUID, document_id: uuid.UUID) -> DocumentChunk:
-    return DocumentChunk(
-        id=uuid.uuid4(),
+def _context(
+    project_id: uuid.UUID,
+    *,
+    embedding_set_version: int = 1,
+    strategy: RetrievalStrategy = RetrievalStrategy.SEMANTIC,
+    top_k: int = 10,
+) -> RetrievalContext:
+    return RetrievalContext(
         project_id=project_id,
-        document_id=document_id,
-        chunk_index=0,
-        content="chunk content",
-        page_number=1,
-        char_start=0,
-        char_end=13,
-        token_count=2,
-        chunk_metadata={"source": "handbook"},
-    )
-
-
-def _document(project_id: uuid.UUID) -> Document:
-    return Document(
-        id=uuid.uuid4(),
-        project_id=project_id,
-        filename="doc.txt",
-        content_type="text/plain",
-        size_bytes=10,
-        storage_key="k",
-        content_sha256="abc",
-        status=DocumentStatus.READY,
-        version=1,
+        query="chunk content",
+        embedding_set_version=embedding_set_version,
+        filters=RetrievalFilters(),
+        top_k=top_k,
+        strategy=strategy,
+        semantic_candidate_top_k=50,
+        keyword_candidate_top_k=50,
+        rrf_k=60,
+        semantic_weight=1.0,
+        keyword_weight=1.0,
+        rerank_enabled=False,
+        rerank_top_n=20,
+        rerank_score_threshold=None,
+        score_threshold=None,
+        filterable_metadata_keys=("source",),
     )
 
 
@@ -78,143 +78,108 @@ async def _seed_point(
     )
 
 
-def _retriever(
-    project_id: uuid.UUID,
-    store: MemoryVectorStoreProvider,
-    *,
-    embedding_set_version: int = 1,
-    filterable_metadata_keys: list[str] | None = None,
-) -> SemanticRetriever:
-    retriever = SemanticRetriever(
-        session=AsyncMock(),
-        project_id=project_id,
-        embedder=_embedder(),
-        vector_store=store,
-        default_top_k=10,
-        score_threshold=None,
-        filterable_metadata_keys=(
-            filterable_metadata_keys if filterable_metadata_keys is not None else ["source"]
-        ),
-        embedding_set_version=embedding_set_version,
-    )
-    return retriever
-
-
-def _wire_repositories(
-    retriever: SemanticRetriever,
-    chunks: list[DocumentChunk],
-    documents: list[Document],
-) -> None:
-    chunk_repository = MagicMock()
-    chunk_repository.map_by_ids = AsyncMock(return_value={chunk.id: chunk for chunk in chunks})
-    document_repository = MagicMock()
-    document_repository.map_by_ids = AsyncMock(
-        return_value={document.id: document for document in documents}
-    )
-    retriever._chunk_repository = chunk_repository
-    retriever._document_repository = document_repository
-
-
-async def test_search_hydrates_chunks_and_documents() -> None:
-    project_id = uuid.uuid4()
-    store = MemoryVectorStoreProvider()
-    document = _document(project_id)
-    chunk = _chunk(project_id, document.id)
-    await _seed_point(
-        store,
-        point_id=str(chunk.id),
-        project_id=project_id,
-        document_id=document.id,
-        embedding_set_version=1,
-    )
-
-    retriever = _retriever(project_id, store)
-    _wire_repositories(retriever, [chunk], [document])
-
-    results = await retriever.search(query="chunk content")
-
-    assert len(results) == 1
-    assert results[0].chunk_id == chunk.id
-    assert results[0].document_id == document.id
-    assert results[0].content == "chunk content"
-    assert results[0].filename == "doc.txt"
-
-
-async def test_search_filters_by_embedding_set_version() -> None:
-    project_id = uuid.uuid4()
-    store = MemoryVectorStoreProvider()
-    document = _document(project_id)
-    current = _chunk(project_id, document.id)
-    stale = _chunk(project_id, document.id)
-    await _seed_point(
-        store,
-        point_id=str(current.id),
-        project_id=project_id,
-        document_id=document.id,
-        embedding_set_version=2,
-    )
-    await _seed_point(
-        store,
-        point_id=str(stale.id),
-        project_id=project_id,
-        document_id=document.id,
-        embedding_set_version=1,
-    )
-
-    retriever = _retriever(project_id, store, embedding_set_version=2)
-    _wire_repositories(retriever, [current, stale], [document])
-
-    results = await retriever.search(query="chunk content")
-
-    assert [result.chunk_id for result in results] == [current.id]
-
-
-async def test_search_drops_hits_without_chunk_rows() -> None:
+async def test_semantic_retriever_returns_candidate_hits_only() -> None:
     project_id = uuid.uuid4()
     store = MemoryVectorStoreProvider()
     document_id = uuid.uuid4()
+    chunk_id = uuid.uuid4()
     await _seed_point(
         store,
-        point_id=str(uuid.uuid4()),
+        point_id=str(chunk_id),
         project_id=project_id,
         document_id=document_id,
         embedding_set_version=1,
     )
 
-    retriever = _retriever(project_id, store)
-    _wire_repositories(retriever, [], [])
+    retriever = SemanticRetriever(
+        session=AsyncMock(),
+        project_id=project_id,
+        embedder=_embedder(),
+        vector_store=store,
+    )
+    hits = await retriever.retrieve(_context(project_id))
 
-    results = await retriever.search(query="chunk content")
+    assert len(hits) == 1
+    assert hits[0].chunk_id == chunk_id
+    assert hits[0].source is CandidateSource.SEMANTIC
+    assert hits[0].score > 0
 
-    assert results == []
 
-
-async def test_search_ignores_unfilterable_metadata_keys() -> None:
+async def test_semantic_retriever_filters_by_embedding_set_version() -> None:
     project_id = uuid.uuid4()
     store = MemoryVectorStoreProvider()
-    document = _document(project_id)
-    chunk = _chunk(project_id, document.id)
+    document_id = uuid.uuid4()
+    current = uuid.uuid4()
+    stale = uuid.uuid4()
     await _seed_point(
         store,
-        point_id=str(chunk.id),
+        point_id=str(current),
         project_id=project_id,
-        document_id=document.id,
+        document_id=document_id,
+        embedding_set_version=2,
+    )
+    await _seed_point(
+        store,
+        point_id=str(stale),
+        project_id=project_id,
+        document_id=document_id,
         embedding_set_version=1,
     )
 
-    retriever = _retriever(project_id, store, filterable_metadata_keys=["source"])
-    _wire_repositories(retriever, [chunk], [document])
-
-    # "secret" is not filterable, so it must be stripped rather than excluding hits.
-    results = await retriever.search(
-        query="chunk content",
-        metadata_filter={"secret": "nope"},
+    retriever = SemanticRetriever(
+        session=AsyncMock(),
+        project_id=project_id,
+        embedder=_embedder(),
+        vector_store=store,
     )
-    assert len(results) == 1
+    hits = await retriever.retrieve(_context(project_id, embedding_set_version=2))
 
-    # "source" is filterable, so a non-matching value excludes the hit.
-    results = await retriever.search(
-        query="chunk content",
-        metadata_filter={"source": "other"},
+    assert [hit.chunk_id for hit in hits] == [current]
+
+
+async def test_semantic_retriever_strips_unfilterable_metadata() -> None:
+    project_id = uuid.uuid4()
+    store = MemoryVectorStoreProvider()
+    document_id = uuid.uuid4()
+    chunk_id = uuid.uuid4()
+    await _seed_point(
+        store,
+        point_id=str(chunk_id),
+        project_id=project_id,
+        document_id=document_id,
+        embedding_set_version=1,
     )
-    assert results == []
+
+    retriever = SemanticRetriever(
+        session=AsyncMock(),
+        project_id=project_id,
+        embedder=_embedder(),
+        vector_store=store,
+    )
+    context = RetrievalContext(
+        project_id=project_id,
+        query="chunk content",
+        embedding_set_version=1,
+        filters=RetrievalFilters(metadata={"secret": "nope"}),
+        top_k=10,
+        strategy=RetrievalStrategy.SEMANTIC,
+        semantic_candidate_top_k=50,
+        keyword_candidate_top_k=50,
+        rrf_k=60,
+        semantic_weight=1.0,
+        keyword_weight=1.0,
+        rerank_enabled=False,
+        rerank_top_n=20,
+        rerank_score_threshold=None,
+        score_threshold=None,
+        filterable_metadata_keys=("source",),
+    )
+    hits = await retriever.retrieve(context)
+    assert len(hits) == 1
+
+    context_filtered = replace(
+        context,
+        filters=RetrievalFilters(metadata={"source": "other"}),
+    )
+    hits_filtered = await retriever.retrieve(context_filtered)
+    assert hits_filtered == []

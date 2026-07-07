@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.exceptions import ConflictError, PayloadTooLargeError, ServiceUnavailableError
 from app.models.document import Document, DocumentStatus
 from app.models.document_chunk import DocumentChunk
+from app.modules.knowledge.domain.document_storage_keys import iter_document_storage_keys
 from app.modules.knowledge.repositories.document_chunk_repository import DocumentChunkRepository
 from app.modules.knowledge.repositories.document_repository import DocumentRepository
 from app.modules.knowledge.schemas.chunk import ChunkListParams
@@ -28,6 +29,7 @@ from app.platform.domain.lifecycle_service import (
 from app.platform.domain.transactions import flush_commit_refresh
 from app.platform.http.pagination import ListParams, PaginatedResult
 from app.platform.jobs.contracts import JobDefinition, JobQueue
+from app.platform.providers.implementations.ocr_factory import normalize_stored_ocr_lang
 from app.platform.jobs.errors import JobEnqueueError
 from app.platform.jobs.names import DOCUMENT_PROCESS
 from app.platform.providers.contracts.storage import BaseStorageProvider
@@ -107,6 +109,7 @@ class DocumentService:
             content_sha256=digest,
             status=DocumentStatus.UPLOADED,
             version=1,
+            ocr_lang=normalize_stored_ocr_lang(data.ocr_lang),
         )
         self._repository.add(document)
 
@@ -137,7 +140,12 @@ class DocumentService:
 
         return await self._enqueue_processing(document)
 
-    async def reprocess(self, document_id: uuid.UUID) -> Document:
+    async def reprocess(
+        self,
+        document_id: uuid.UUID,
+        *,
+        ocr_lang: str | None = None,
+    ) -> Document:
         document = await get_or_raise(
             self._repository,
             document_id,
@@ -155,8 +163,14 @@ class DocumentService:
         document.error_message = None
         document.parser_name = None
         document.parser_version = None
+        document.accepted_parser = None
+        document.parse_quality_score = None
+        document.extraction_method = None
         document.page_count = None
         document.language = None
+        document.language_confidence = None
+        if ocr_lang is not None:
+            document.ocr_lang = normalize_stored_ocr_lang(ocr_lang)
 
         return await self._enqueue_processing(document)
 
@@ -235,6 +249,11 @@ class DocumentService:
         )
         if self._on_document_delete is not None:
             await self._on_document_delete(document)
+        chunk_repository = DocumentChunkRepository(
+            self._session,
+            self._repository.project_id,
+        )
+        await chunk_repository.delete_by_document(document.id)
         document = await soft_delete(
             self._session,
             self._repository,
@@ -242,23 +261,32 @@ class DocumentService:
             not_found_message=_NOT_FOUND["message"],
             not_found_code=_NOT_FOUND["code"],
         )
-        chunk_repository = DocumentChunkRepository(
-            self._session,
-            self._repository.project_id,
-        )
-        await chunk_repository.delete_by_document(document.id)
+        await self._delete_document_storage(document)
+        return document
+
+    async def _delete_document_storage(self, document: Document) -> None:
+        for storage_key in iter_document_storage_keys(document):
+            try:
+                await self._storage.delete(storage_key)
+            except ProviderError as exc:
+                logger.warning(
+                    "storage_delete_failed",
+                    document_id=str(document.id),
+                    storage_key=storage_key,
+                    error=str(exc),
+                )
         try:
-            await self._storage.delete(document.storage_key)
-            if document.parsed_text_storage_key:
-                await self._storage.delete(document.parsed_text_storage_key)
+            await self._storage.delete_document_tree(
+                project_id=document.project_id,
+                document_id=document.id,
+            )
         except ProviderError as exc:
             logger.warning(
-                "storage_delete_failed",
+                "storage_delete_tree_failed",
                 document_id=str(document.id),
-                storage_key=document.storage_key,
+                project_id=str(document.project_id),
                 error=str(exc),
             )
-        return document
 
     async def _hash_stream(
         self,

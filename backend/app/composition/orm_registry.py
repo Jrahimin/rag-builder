@@ -12,8 +12,10 @@ All SQLAlchemy models live under ``app.models``::
 from __future__ import annotations
 
 from app.models.chunk_embedding import ChunkEmbedding  # noqa: F401
+from app.models.chunk_keyword_index import ChunkKeywordIndex  # noqa: F401
 from app.models.conversation import Conversation  # noqa: F401
 from app.models.document import Document  # noqa: F401
 from app.models.document_chunk import DocumentChunk  # noqa: F401
+from app.models.keyword_term_stats import KeywordCollectionStats, KeywordTermStats  # noqa: F401
 from app.models.message import Message  # noqa: F401
 from app.models.project import Project  # noqa: F401

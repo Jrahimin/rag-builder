@@ -244,6 +244,38 @@ async def test_search_isolated_by_project(
     assert search.json()["data"]["results"] == []
 
 
+async def test_search_hybrid_prefers_exact_keyword_match(
+    db_client: AsyncClient,
+    integration_connection: AsyncConnection,
+    captured_jobs: list[JobDefinition],
+) -> None:
+    """Hybrid strategy should rank exact keyword token above semantic-only neighbors."""
+    project_id = await _create_project(db_client)
+    rare_token = "kwzraretoken987654"
+    filler = "semantic filler content about general workplace topics " * 5
+    document_id = await _upload_chunked(
+        db_client,
+        integration_connection,
+        captured_jobs,
+        project_id,
+        content=f"{filler}\n\nSection {rare_token} details.".encode(),
+    )
+
+    await db_client.post(f"/api/v1/projects/{project_id}/documents/{document_id}/embed")
+    await run_captured_embed_jobs(integration_connection, captured_jobs)
+    await db_client.post(f"/api/v1/projects/{project_id}/documents/{document_id}/index")
+    await run_captured_index_jobs(integration_connection, captured_jobs)
+
+    search = await db_client.post(
+        f"/api/v1/projects/{project_id}/search",
+        json={"query": rare_token, "top_k": 5, "strategy": "hybrid", "rerank": False},
+    )
+    assert search.status_code == 200
+    results = search.json()["data"]["results"]
+    assert len(results) >= 1
+    assert rare_token in results[0]["content"]
+
+
 async def test_deleted_document_not_in_search(
     db_client: AsyncClient,
     integration_connection: AsyncConnection,

@@ -39,20 +39,36 @@ Owned by the retrieval module: `embedding`, `embedded`, `indexing`, `ready`.
 | `APE_STORAGE__BACKEND` | `local` | Object storage backend |
 | `APE_JOBS__BACKEND` | `taskiq` | `taskiq` or `inline` (tests) |
 | `APE_KNOWLEDGE__MAX_UPLOAD_BYTES` | `52428800` (50 MB) | Upload size limit (413 when exceeded) |
-| `APE_CHUNKING__STRATEGY` | `recursive_character` | Chunking strategy (only option today) |
-| `APE_CHUNKING__CHUNK_SIZE` | `1000` | Target characters per chunk |
-| `APE_CHUNKING__CHUNK_OVERLAP` | `200` | Overlap between chunks |
+| `APE_CHUNKING__STRATEGY` | `auto` | Chunking strategy (`auto`, `markdown`, `heading`, `structure`, `semantic`, `recursive_fallback`) |
+| `APE_CHUNKING__TARGET_TOKENS` | `250` | Approximate target tokens per chunk |
+| `APE_CHUNKING__MAX_TOKENS` | `400` | Approximate maximum tokens per chunk |
+| `APE_CHUNKING__MIN_TOKENS` | `50` | Minimum tokens before adjacent merge |
+| `APE_CHUNKING__OVERLAP_TOKENS` | `50` | Approximate overlap for recursive fallback splits |
+| `APE_CHUNKING__STRUCTURE_SCORE_THRESHOLD` | `0.55` | Minimum structure score for structure-first chunking |
+| `APE_CHUNKING__SIMILARITY_DROP_THRESHOLD` | `0.35` | Semantic boundary threshold for weakly structured docs |
+| `APE_CHUNKING__TOKEN_COUNT_METHOD` | `unicode_property_v1` | Unicode-property token counting |
+| `APE_OCR__ENABLED` | `false` | Enable OCR for image uploads and scanned PDF pages |
+| `APE_OCR__LANG` | `en` | Deployment-default PaddleOCR language; overridable per document via `ocr_lang` on upload/reprocess |
+| `APE_PARSING__PDF_TEXT_PARSERS` | `pymupdf,pdfium` | PDF text parser order before OCR fallback |
+| `APE_PARSING__MIN_PAGE_QUALITY_SCORE` | `0.55` | Minimum Unicode parse quality score to accept a page |
+| `APE_PARSING__MIN_DOCUMENT_SUCCESS_RATIO` | `0.2` | Minimum accepted-page ratio before failing a document |
+
+See [multilingual_support.md](multilingual_support.md) for Bangla/multilingual processing and OCR language overrides.
+
+### Known limitation: Bangla OCR
+
+The ingestion pipeline (parse quality gate → PDFium → PaddleOCR fallback) is implemented, but **Bangla OCR is not production-ready in Phase 1**. PaddleOCR 3.7 has no stock `bn` models; English OCR on Bangla pages produces unreliable text. Unicode Bengali in the PDF text layer or non-PDF uploads still ingest correctly. Details: [multilingual_support.md — Bangla OCR limitation](multilingual_support.md#known-limitation-bangla-bengali-ocr).
 
 ## API
 
 | Method | Path | Description |
 | ------ | ---- | ----------- |
-| `POST` | `/documents` | Upload + enqueue processing |
+| `POST` | `/documents` | Upload + enqueue processing (optional `ocr_lang` form field) |
 | `GET` | `/documents` | List documents |
 | `GET` | `/documents/{id}` | Document metadata |
 | `GET` | `/documents/{id}/chunks` | Paginated chunks |
-| `POST` | `/documents/{id}/reprocess` | Re-run pipeline (bumps `version`) |
-| `DELETE` | `/documents/{id}` | Soft-delete + remove storage + chunks + retrieval artifacts |
+| `POST` | `/documents/{id}/reprocess` | Re-run pipeline (bumps `version`; optional `ocr_lang` query) |
+| `DELETE` | `/documents/{id}` | Soft-delete + remove raw/parsed storage + chunks + retrieval artifacts |
 
 ## Design decisions
 
@@ -61,7 +77,7 @@ Owned by the retrieval module: `embedding`, `embedded`, `indexing`, `ready`.
 | Worker entry guard (`status=queued` only) | Duplicate or stale job delivery is a no-op instead of re-running parse/chunk |
 | `parsing` committed; `chunking` is a stage marker | Crash mid-parse leaves a recoverable state; reprocess re-enqueues from any non-terminal status |
 | `RetrievalCleanupService` on delete | Knowledge owns the delete API; retrieval artifacts are purged via a lightweight composition callback — no full `IndexingService` wiring |
-| `ChunkingStrategy` config seam | Only `recursive_character` today; enum + factory ready for future strategies without API changes |
+| `ChunkingStrategy` config seam | Auto-selects markdown/heading/structure/semantic strategies from parser elements and structure signals; recursive fallback for oversized sections |
 
 ## Worker
 

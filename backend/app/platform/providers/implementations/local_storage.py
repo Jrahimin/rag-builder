@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from pathlib import Path
+import asyncio
+import shutil
+import uuid
 
 import aiofiles
 import aiofiles.os
@@ -58,3 +61,14 @@ class LocalFilesystemStorageProvider(BaseStorageProvider):
         path = self._path_for(key)
         if path.is_file():
             await aiofiles.os.remove(path)
+
+    async def delete_document_tree(
+        self,
+        *,
+        project_id: uuid.UUID,
+        document_id: uuid.UUID,
+    ) -> None:
+        document_dir = self._path_for(f"{project_id}/{document_id}")
+        if not document_dir.exists():
+            return
+        await asyncio.to_thread(shutil.rmtree, document_dir, True)

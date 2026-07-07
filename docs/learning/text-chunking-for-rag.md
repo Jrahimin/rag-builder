@@ -81,16 +81,20 @@ Migration: `composition/migrations/versions/20260630_0006-add_document_chunks_ta
 
 | Env var | Default | Effect |
 | ------- | ------- | ------ |
-| `APE_CHUNKING__STRATEGY` | `recursive_character` | Splitter selection (`ChunkingStrategy` enum) |
-| `APE_CHUNKING__CHUNK_SIZE` | `1000` | Max characters per chunk (splitter target) |
-| `APE_CHUNKING__CHUNK_OVERLAP` | `200` | Characters repeated between adjacent chunks |
+| `APE_CHUNKING__STRATEGY` | `auto` | Strategy selection (`ChunkingStrategy` enum) |
+| `APE_CHUNKING__TARGET_TOKENS` | `250` | Target tokens per chunk |
+| `APE_CHUNKING__MAX_TOKENS` | `400` | Hard max before validation split |
+| `APE_CHUNKING__MIN_TOKENS` | `50` | Merge threshold for tiny chunks |
+| `APE_CHUNKING__OVERLAP_TOKENS` | `50` | Token overlap between adjacent chunks |
+| `APE_CHUNKING__TOKEN_COUNT_METHOD` | `unicode_property_v1` | Unicode-property token counting |
 
-Defined in `core/config.py` (`ChunkingConfig`).
+Defined in `core/config.py` (`ChunkingConfig`). See [multilingual-text-processing.md](multilingual-text-processing.md).
 
 **Intuition:**
 
-- **Larger `chunk_size`** → fewer chunks, more context per hit, risk of noisy retrieval.
-- **Higher `chunk_overlap`** → less lost context at boundaries, more storage/embedding cost.
+- **Higher `target_tokens`** → fewer chunks, more context per hit, risk of noisy retrieval.
+- **Higher `overlap_tokens`** → less lost context at boundaries, more storage/embedding cost.
+- **`auto` strategy** → structure analysis selects markdown / heading / structure / semantic paths.
 
 Changing env vars and reprocessing the same file should change `GET .../chunks` `total`.
 
@@ -100,8 +104,10 @@ Changing env vars and reprocessing the same file should change `GET .../chunks` 
 
 | Term | Meaning |
 | ---- | ------- |
-| **Recursive character splitting** | Try big separators first (`\n\n`), then smaller (`\n`, space) — keeps paragraphs intact when possible |
-| **Overlap** | Last N chars of chunk *i* appear again at start of chunk *i+1* — helps queries that span a boundary |
+| **Structure-aware chunking** | Analyze → select strategy → chunk → validate pipeline |
+| **Semantic chunking** | Sentence similarity boundaries via `SentenceSimilarityService` |
+| **Unicode-property tokens** | `regex` `\p{Letter}` etc. — multilingual token counting |
+| **Overlap** | Last N tokens of chunk *i* appear at start of chunk *i+1* |
 | **Chunk vs document** | Document = one uploaded file; chunks = many searchable pieces |
 | **`chunked` status** | Ingestion handoff — embeddings/Qdrant are **out of scope** for Knowledge v1 |
 

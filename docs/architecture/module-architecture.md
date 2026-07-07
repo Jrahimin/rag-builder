@@ -21,12 +21,13 @@ backend/app/
 │       ├── router.py       # Aggregates versioned routes
 │       └── routes/         # Per-feature routers + Depends() wiring
 ├── dependencies/           # FastAPI DI factories (composition only)
+├── cli/                    # Operational CLIs (e.g. reindex_cli)
 ├── core/                   # Config, logging, exceptions, middleware
 ├── platform/               # Shared kernel (no feature imports)
 │   ├── db/                 # PostgreSQL engine + session management
 │   ├── infra/connectivity/ # Redis/Qdrant adapters (health only)
 │   ├── persistence/        # AsyncRepository, ProjectScopedRepository
-│   ├── domain/             # ORM mixins, lifecycle service helpers
+│   ├── domain/             # ORM mixins, lifecycle helpers, text_normalizer, tokenization
 │   ├── http/               # ApiResponse / ErrorResponse, pagination
 │   ├── system/             # HealthService
 │   ├── providers/          # Errors + capability reference
@@ -94,7 +95,7 @@ Concrete provider interfaces are added with the first implementation.
 | ------ | ----- |
 | `projects` | Central aggregate (shipped) |
 | `knowledge` | Ingestion — upload, parse, chunk; ends at `status=chunked` (shipped) |
-| `retrieval` | Embed → index → search (`chunked` → `embedded` → `ready`); hybrid + rerank in v2 (shipped baseline) |
+| `retrieval` | Embed → index → search (`chunked` → `embedded` → `ready`); hybrid + rerank shipped (ADR-009) |
 | `conversations` | Chat — retrieve → prompt → LLM → answer + citations; stateful conversations (shipped) |
 | `evaluation` | Quality measurement + feedback |
 

@@ -17,7 +17,7 @@ router = APIRouter()
     "/search",
     response_model=ApiResponse[SearchResponse],
     status_code=status.HTTP_200_OK,
-    summary="Semantic search over indexed documents",
+    summary="Search over indexed documents (semantic or hybrid)",
 )
 async def search_project(
     project_id: uuid.UUID,

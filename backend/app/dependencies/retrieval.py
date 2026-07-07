@@ -16,6 +16,7 @@ from app.modules.retrieval.services.indexing_service import IndexingService
 from app.modules.retrieval.services.search_service import SearchService
 from app.platform.jobs.contracts import JobQueue
 from app.platform.providers.implementations.embedding_factory import get_embedding_provider
+from app.platform.providers.implementations.reranker_factory import get_reranker_provider
 from app.platform.providers.implementations.vector_store_factory import get_vector_store_provider
 
 
@@ -52,6 +53,7 @@ def get_search_service(
         project_id=project_id,
         embedder=get_embedding_provider(),
         vector_store=get_vector_store_provider(),
+        reranker=get_reranker_provider(),
         retrieval_config=settings.retrieval,
         ensure_project=ensure_project,
     )

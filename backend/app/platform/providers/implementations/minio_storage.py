@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import uuid
 from collections.abc import AsyncIterator, Callable
 from typing import Any, TypeVar
 
@@ -103,6 +104,36 @@ class MinioStorageProvider(BaseStorageProvider):
                 f"Failed to delete object: {key}",
                 provider_name="minio",
             ) from exc
+
+    async def delete_document_tree(
+        self,
+        *,
+        project_id: uuid.UUID,
+        document_id: uuid.UUID,
+    ) -> None:
+        prefix = f"{project_id}/{document_id}/"
+        continuation_token: str | None = None
+        while True:
+            kwargs: dict[str, str] = {
+                "Bucket": self._config.bucket,
+                "Prefix": prefix,
+            }
+            if continuation_token is not None:
+                kwargs["ContinuationToken"] = continuation_token
+            response = await self._run(self._client.list_objects_v2, **kwargs)
+            contents = response.get("Contents") or []
+            if contents:
+                await self._run(
+                    self._client.delete_objects,
+                    Bucket=self._config.bucket,
+                    Delete={
+                        "Objects": [{"Key": item["Key"]} for item in contents],
+                        "Quiet": True,
+                    },
+                )
+            if not response.get("IsTruncated"):
+                break
+            continuation_token = response.get("NextContinuationToken")
 
     async def get_download_url(self, key: str, *, expires_seconds: int = 3600) -> str | None:
         try:

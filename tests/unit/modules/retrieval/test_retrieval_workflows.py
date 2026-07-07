@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -255,7 +255,12 @@ async def test_indexing_happy_path_upserts_points_with_version_payload() -> None
     workflow._chunk_repository = _repo(map_by_ids=AsyncMock(return_value={chunk.id: chunk}))
     workflow._embedding_repository = _repo(list_by_document=AsyncMock(return_value=[embedding]))
 
-    result = await workflow.run(document.id)
+    with patch(
+        "app.modules.retrieval.workflows.vector_indexing_workflow.KeywordIndexingWorkflow.index_document",
+        new_callable=AsyncMock,
+    ) as keyword_index:
+        result = await workflow.run(document.id)
+        keyword_index.assert_awaited_once()
 
     assert result is not None
     assert result.status is DocumentStatus.READY

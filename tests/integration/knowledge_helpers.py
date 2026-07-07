@@ -7,6 +7,7 @@ import uuid
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession
 
 from app.core.config import get_settings
+from app.modules.knowledge.services.chunking.sentence_similarity_service import HashSentenceSimilarityService
 from app.modules.knowledge.services.chunking_service import ChunkingService
 from app.modules.knowledge.workflows.document_processing import DocumentProcessingWorkflow
 from app.modules.retrieval.services.indexing_service import IndexingService
@@ -31,7 +32,10 @@ async def run_captured_document_jobs(
     settings = get_settings()
     storage = create_storage_provider(settings)
     parser = get_document_parser()
-    chunking = ChunkingService.from_settings(settings)
+    chunking = ChunkingService.from_settings(
+        settings,
+        similarity_service=HashSentenceSimilarityService(),
+    )
 
     pending = list(jobs)
     jobs.clear()

@@ -15,6 +15,7 @@ from app.modules.retrieval.repositories.retrieval_chunk_repository import Retrie
 from app.modules.retrieval.repositories.retrieval_document_repository import (
     RetrievalDocumentRepository,
 )
+from app.modules.retrieval.workflows.keyword_indexing_workflow import KeywordIndexingWorkflow
 from app.modules.retrieval.workflows.stage_runner import StageFailure, run_document_stage
 from app.platform.persistence.vector_codec import unpack_vector
 from app.platform.providers.contracts.embedding import BaseEmbeddingProvider
@@ -35,6 +36,7 @@ class VectorIndexingWorkflow:
         *,
         embedding_set_version: int,
         filterable_metadata_keys: list[str],
+        fts_regconfig: str = "simple",
     ) -> None:
         self._session = session
         self._project_id = project_id
@@ -42,6 +44,7 @@ class VectorIndexingWorkflow:
         self._vector_store = vector_store
         self._embedding_set_version = embedding_set_version
         self._filterable_metadata_keys = filterable_metadata_keys
+        self._fts_regconfig = fts_regconfig
         self._document_repository = RetrievalDocumentRepository(session, project_id)
         self._chunk_repository = RetrievalChunkRepository(session, project_id)
         self._embedding_repository = ChunkEmbeddingRepository(session, project_id)
@@ -89,6 +92,15 @@ class VectorIndexingWorkflow:
             if chunk_map.get(embedding.chunk_id) is not None
         ]
         await self._vector_store.upsert_points(points)
+
+        keyword_workflow = KeywordIndexingWorkflow(
+            session=self._session,
+            project_id=self._project_id,
+            embedding_set_version=self._embedding_set_version,
+            filterable_metadata_keys=self._filterable_metadata_keys,
+            fts_regconfig=self._fts_regconfig,
+        )
+        await keyword_workflow.index_document(document)
 
         document.status = DocumentStatus.READY
         document.error_message = None

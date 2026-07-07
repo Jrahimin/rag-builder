@@ -579,34 +579,68 @@ Examples
 
 # Parsing / OCR
 
-Preferred order
+Preferred order for digital PDFs (page-level, lazy fallback):
 
-1. PyMuPDF
-2. Surya OCR
-3. PaddleOCR
+1. PyMuPDF (native text extraction for all pages)
+2. Unicode parse quality assessment per page
+3. PDFium (`pypdfium2`) for degraded pages only
+4. `OCRProvider` for pages still below quality threshold (optional; worker-only)
+
+`PdfExtractionWorkflow` orchestrates parser candidates and keeps the highest-quality extraction per page. OCR output is not an automatic replacement — it must beat the best parser candidate. Partial extraction is supported; fail the document only when accepted pages fall below `APE_PARSING__MIN_DOCUMENT_SUCCESS_RATIO`.
+
+`OCRProvider` is the contract (`providers/contracts/ocr.py`). PaddleOCR is one implementation via `requirements/ocr.txt` — disabled by default (`APE_OCR__ENABLED=false`). Image uploads route to `ImageOcrParserProvider` when OCR is enabled.
+
+Parse quality scoring lives in `platform/domain/parse_quality.py`. Persist `accepted_parser`, `parse_quality_score`, and `extraction_method` on `documents`; store parser attempts, page quality, timings, warnings, and OCR provenance in the parsed JSON sidecar.
+
+Deployment default OCR language: `APE_OCR__LANG` (`en`). Optional per-document override: `documents.ocr_lang` (upload form field / reprocess query). `ocr_factory.get_ocr_provider(lang=...)` resolves override → default and reuses providers from a bounded in-process pool keyed by `(backend, lang, use_gpu)`.
+
+**Phase 1 Bangla OCR limitation:** PaddleOCR 3.7 has no stock Bengali (`bn`) models — `ocr_lang=bn` fails at provider init. English OCR on Bangla script is unreliable. Unicode Bengali in the PDF text layer still parses correctly. See `docs/features/multilingual_support.md#known-limitation-bangla-bengali-ocr`.
+
+Never call OCR SDKs from services; parsers delegate to `OCRProvider`.
 
 ---
 
 # Normalization
 
-* Clean Text
-* Metadata Extraction
-* Structure Detection
+Single path: `platform/domain/text_normalizer.py`
+
+* `normalize_for_storage` — parser output cleanup
+* `normalize_for_indexing` — BM25 / FTS input
+* `normalize_for_query` — search queries (same rules as indexing)
+
+Steps: Unicode NFC, OCR line-break cleanup, punctuation unification, mixed-script spacing, whitespace collapse.
+
+Parsers, chunking, keyword indexing, and retrieval must all use this module — no inline `lower().split()`.
+
+---
+
+# Tokenization
+
+Use the `regex` package with Unicode properties — **not** stdlib `\w`:
+
+* `\p{Letter}`, `\p{Number}`, `\p{Mark}` via `platform/domain/text_tokenization.py`
+* Method id: `unicode_property_v1` (`APE_CHUNKING__TOKEN_COUNT_METHOD`)
+* Lowercase only tokens containing Latin letters
+
+Consumers: `TokenCountingService`, BM25, `KeywordRetriever`, `LexicalReranker`.
 
 ---
 
 # Chunking
 
-Use strategy pattern — select via `APE_CHUNKING__STRATEGY` (`ChunkingStrategy` enum).
+Structure-aware pipeline — select via `APE_CHUNKING__STRATEGY` (`ChunkingStrategy` enum; default `auto`).
 
-Examples
+Strategies: `markdown`, `heading`, `structure`, `semantic`, `recursive_fallback`.
 
-* Fixed
-* Recursive (`recursive_character` — shipped)
-* Semantic
-* Markdown-aware
+Token-based sizing: `APE_CHUNKING__TARGET_TOKENS`, `MAX_TOKENS`, `MIN_TOKENS`, `OVERLAP_TOKENS`.
 
-Never hardcode chunk sizes (`APE_CHUNKING__CHUNK_SIZE`, `APE_CHUNKING__CHUNK_OVERLAP`).
+Semantic boundaries via `SentenceSimilarityService` (embedding-backed or hash for tests).
+
+Multilingual sentence terminators: `.!?।॥。！？…`
+
+OCR-aware selector: low `ocr_quality` or mixed language → prefer `semantic`.
+
+Never hardcode character chunk sizes (`CHUNK_SIZE` / `CHUNK_OVERLAP` are deprecated).
 
 ---
 
@@ -725,6 +759,12 @@ Query
 
 Search results are scoped by `project_id` and the active `embedding_set_version`
 so stale vectors from prior embedding runs are excluded.
+
+**Multilingual processing (ADR-010):** Unicode-property tokenization (`regex` +
+`unicode_property_v1`), shared `text_normalizer`, configurable FTS
+(`APE_RETRIEVAL__FTS_REGCONFIG`, default `simple`), query normalization symmetry,
+optional `APE_RETRIEVAL__MIN_OCR_CONFIDENCE` filter. Reindex via
+`python -m app.cli.reindex_cli` after tokenizer upgrades.
 
 ---
 

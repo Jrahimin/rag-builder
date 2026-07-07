@@ -47,6 +47,12 @@ Chat v1 on the semantic baseline does not revoke the production requirement for
 hybrid retrieval. It sequences delivery: learning E2E chat now, hybrid adapter
 swap later without changing `modules/conversations/` internals.
 
+## Amendment (ADR-009)
+
+Retrieval v2 (hybrid BM25 + vector + RRF + reranker) is implemented per
+**ADR-009**. Semantic baseline remains available via `APE_RETRIEVAL__STRATEGY=semantic`
+for rollback and learning comparisons.
+
 ## Alternatives considered
 
 | Alternative | Rejected because |

@@ -24,10 +24,12 @@ taskiq-redis==1.2.2
 
 # --- Document parsing ---
 pymupdf==1.26.3
+pypdfium2==4.30.0
 python-docx==1.1.2
 
 # --- Text chunking ---
 langchain-text-splitters==0.3.11
+regex==2025.11.3
 
 # --- Vector database client ---
 qdrant-client==1.18.0

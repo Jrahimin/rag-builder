@@ -20,6 +20,8 @@ class ChunkResponse(BaseModel):
     chunk_index: int
     content: str
     page_number: int | None
+    page_start: int | None = None
+    page_end: int | None = None
     char_start: int | None
     char_end: int | None
     token_count: int | None
