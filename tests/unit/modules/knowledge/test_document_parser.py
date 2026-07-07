@@ -23,6 +23,22 @@ def test_plain_text_parser_extracts_utf8() -> None:
     assert result.text == "Hello parser"
     assert result.page_count == 1
     assert result.parser_name == "plain_text"
+    assert result.parsed_document_version
+    assert result.elements
+    assert result.elements[0].element_type.value == "paragraph"
+
+
+def test_markdown_parser_emits_headings_and_paragraphs() -> None:
+    markdown = b"# Title\n\nBody paragraph.\n\n- item one\n- item two"
+    result = PlainTextParserProvider().parse(
+        data=markdown,
+        filename="notes.md",
+        content_type="text/markdown",
+    )
+    assert result.source_format.value == "markdown"
+    element_types = [element.element_type.value for element in result.elements]
+    assert "heading" in element_types
+    assert "list" in element_types
 
 
 def test_composite_rejects_unknown_type() -> None:
@@ -49,6 +65,8 @@ def test_pymupdf_parser_reads_minimal_pdf() -> None:
     assert result.page_count == 1
     assert "PDF text" in result.text
     assert result.parser_name == "pymupdf"
+    assert result.elements
+    assert result.parsed_document_version
 
 
 def test_docx_parser_extracts_paragraphs() -> None:
@@ -71,6 +89,7 @@ def test_docx_parser_extracts_paragraphs() -> None:
     assert "Hello docx" in result.text
     assert "Second paragraph" in result.text
     assert result.parser_name == "python_docx"
+    assert result.elements
 
 
 def test_composite_routes_docx() -> None:

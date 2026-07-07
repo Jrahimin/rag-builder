@@ -1,10 +1,13 @@
 # Retrieval Module
 
-Project-scoped embedding, vector indexing, and semantic search. Extends the knowledge pipeline from `chunked` through `ready`, and exposes the search API.
+Project-scoped embedding, vector indexing, keyword indexing, and hybrid search.
+Extends the knowledge pipeline from `chunked` through `ready`, and exposes the
+search API.
 
 ## Purpose
 
-Turn parsed document chunks into searchable vectors while keeping knowledge ingestion and retrieval concerns separate (ADR-007).
+Turn parsed document chunks into searchable vectors and keyword index rows while
+keeping knowledge ingestion and retrieval concerns separate (ADR-007, ADR-009).
 
 ## Architecture
 
@@ -15,18 +18,27 @@ modules/retrieval/     embed → index → search      chunked → ready → POS
 
 ```text
 documents_router (embed/index) ──► IndexingService ──► JobQueue
-search_router ──► SearchService ──► SemanticRetriever ──► BaseEmbeddingProvider
-                                                    └──► BaseVectorStoreProvider
-Worker handlers ──► EmbeddingWorkflow / VectorIndexingWorkflow (stage_runner)
-                 └──► chunk_embeddings (PostgreSQL) + Qdrant points
+search_router ──► SearchService ──► RetrievalContext ──► Retriever strategy
+                                                    ├── SemanticRetriever
+                                                    └── HybridRetriever
+                                                          ├── KeywordRetriever (BM25)
+                                                          ├── SemanticRetriever
+                                                          ├── RRF fusion
+                                                          └── RerankerProvider
+                                                    └── ResultHydrator (once)
+Worker handlers ──► EmbeddingWorkflow / VectorIndexingWorkflow + KeywordIndexingWorkflow
+                 └──► chunk_embeddings + chunk_keyword_index (PostgreSQL) + Qdrant points
 ```
 
 | Component | Role |
 | --------- | ---- |
 | **IndexingService** | Status validation, job enqueue (built via `IndexingService.from_settings`) |
 | **EmbeddingWorkflow** / **VectorIndexingWorkflow** | Stage work only; shared skeleton in `workflows/stage_runner.py` |
-| **SemanticRetriever** | Query embedding + vector search + chunk hydration; results filtered to active `embedding_set_version` |
-| **RetrievalCleanupService** | Lightweight delete cascade (PG embeddings + best-effort vector purge) used by the knowledge delete path |
+| **KeywordIndexingWorkflow** | BM25/FTS rows in `chunk_keyword_index`; invoked during `document.index` |
+| **SemanticRetriever** / **KeywordRetriever** | Candidate-only retrievers (`chunk_id`, `score`, `source`) |
+| **HybridRetriever** | Concurrent semantic + keyword → RRF → optional rerank |
+| **ResultHydrator** | Single hydration point for chunk/document ORM rows |
+| **RetrievalCleanupService** | PG embeddings + keyword rows + best-effort vector purge on delete |
 | **Worker handoff** | After `document.process` reaches `chunked`, worker calls `IndexingService.enqueue_embed_if_enabled` |
 
 ## Document lifecycle (retrieval-owned statuses)
@@ -35,10 +47,12 @@ Worker handlers ──► EmbeddingWorkflow / VectorIndexingWorkflow (stage_runn
 | ------ | ------- |
 | `embedding` | Embed job enqueued or worker running `EmbeddingWorkflow` |
 | `embedded` | Vectors persisted in `chunk_embeddings` (PostgreSQL) |
-| `indexing` | Index job enqueued or worker running `VectorIndexingWorkflow` |
-| `ready` | Points in vector store; document is searchable |
+| `indexing` | Index job enqueued or worker running vector + keyword indexing |
+| `ready` | Vector points and keyword rows indexed; document is searchable |
 
 Poll `GET /documents/{id}` until `ready` (or `failed`). Manual triggers: `POST .../embed`, `POST .../index`.
+
+**Reindex after v2 upgrade:** existing `ready` documents need `POST .../index` once to populate keyword rows.
 
 ## Configuration
 
@@ -46,19 +60,21 @@ Poll `GET /documents/{id}` until `ready` (or `failed`). Manual triggers: `POST .
 | ------- | -------- | ---- |
 | `EmbeddingConfig` | `APE_EMBEDDING__*` | Backend (`hash`, `ollama`, `openai`, `gemini`), model, dimensions, API keys |
 | `VectorStoreConfig` | `APE_VECTOR_STORE__*` | Qdrant collection name |
-| `RetrievalConfig` | `APE_RETRIEVAL__*` | `auto_embed`, `auto_index`, `default_top_k`, `score_threshold`, `embedding_set_version`, `filterable_metadata_keys` |
+| `RetrievalConfig` | `APE_RETRIEVAL__*` | `strategy`, candidate pools, RRF weights, reranker, `embedding_set_version`, `filterable_metadata_keys` |
 
-`embedding_set_version` is a deployment-level int, independent of `Document.version`. Bump it after a model change to re-embed; search and Qdrant payloads filter to the active version so stale vectors are excluded.
+`embedding_set_version` is a deployment-level int, independent of `Document.version`. Bump it after a model change to re-embed; search and index rows filter to the active version.
 
 ## Data model
 
-`chunk_embeddings` stores packed float32 vectors (`BYTEA`) with metadata and unique key `(chunk_id, embedding_set_version, provider, model)`.
+- `chunk_embeddings` — packed float32 vectors (`BYTEA`)
+- `chunk_keyword_index` — normalized text, `search_vector` (GIN), term frequencies, metadata snapshot
+- `keyword_term_stats` / `keyword_collection_stats` — BM25 document frequencies and collection stats
 
 Qdrant payload includes `project_id`, `document_id`, `chunk_index`, `embedding_set_version`, plus allowlisted chunk metadata keys.
 
 ## Delete policy
 
-On document soft-delete: remove PG embeddings + chunks, best-effort Qdrant purge via `RetrievalCleanupService` (wired in `dependencies/knowledge.py` — composition layer only).
+On document soft-delete: remove PG embeddings + keyword rows + chunks, best-effort Qdrant purge via `RetrievalCleanupService` (wired in `dependencies/knowledge.py`).
 
 ## Workers
 
@@ -66,22 +82,21 @@ On document soft-delete: remove PG embeddings + chunks, best-effort Qdrant purge
 python worker.py
 ```
 
-`worker.py` registers document, embedding, and indexing handlers in one process.
-
-Job retries: `RetryPolicy` on each `JobDefinition` is translated to Taskiq `SmartRetryMiddleware` labels at dispatch (`platform/jobs/registry.py`).
-
 ## Testing
 
-- Unit: `tests/unit/modules/retrieval/` (`IndexingService`, `SemanticRetriever`, workflows, job registry)
-- Integration: `tests/integration/test_retrieval_api.py` (search, metadata filter, auto embed→index chain)
+- Unit: `tests/unit/modules/retrieval/` (retrievers, RRF, hydrator, BM25, config, workflows)
+- Integration: `tests/integration/test_retrieval_api.py` (semantic + hybrid search, isolation, metadata filters)
 
 ## Production note
 
-Phase 1 ships **semantic retrieval baseline** only. Hybrid BM25 + RRF + reranker is **Retrieval v2** (ADR-007) — the production upgrade path. **Chat v1** integrates on the semantic baseline via `RetrievalPort` (ADR-008).
+Retrieval v2 ships **hybrid BM25 + vector + RRF + reranker** as the production path (ADR-009). Set `APE_RETRIEVAL__STRATEGY=hybrid` in production. Semantic-only rollback remains via `strategy=semantic` on the request or deployment config.
+
+Chat integrates through `RetrievalPort` without module coupling (ADR-008).
 
 ## Related
 
 - [Knowledge](./knowledge_module.md) — ingestion through `chunked`
-- [Plan](../plans/retrieval_module_plan.md)
 - [API reference](../api/retrieval_api.md)
 - [ADR-007](../architecture/adr/007-staged-retrieval-delivery.md)
+- [ADR-009](../architecture/adr/009-retrieval-v2-hybrid-search.md)
+- [Hybrid retrieval journey](../learning/hybrid-retrieval-journey.md)

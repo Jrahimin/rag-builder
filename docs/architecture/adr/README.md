@@ -14,6 +14,8 @@ guides in this folder elaborate on implementation.
 | [ADR-006](./006-deployment-topology.md) | API + worker process separation | Accepted |
 | [ADR-007](./007-staged-retrieval-delivery.md) | Staged retrieval delivery (semantic baseline → hybrid v2) | Accepted |
 | [ADR-008](./008-chat-on-semantic-baseline.md) | Chat v1 on semantic baseline; split transactions; RetrievalPort | Accepted |
+| [ADR-009](./009-retrieval-v2-hybrid-search.md) | Retrieval v2 hybrid search; RetrievalContext; RRF; RerankRequest | Accepted |
+| [ADR-010](./010-multilingual-document-processing.md) | Multilingual document processing; Unicode tokenization; OCR; reindex CLI | Accepted |
 
 ## When to add an ADR
 

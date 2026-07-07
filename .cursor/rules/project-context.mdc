@@ -215,9 +215,10 @@ A first-class abstraction for persisting raw files and artifacts.
 
 Platform capabilities (not a single module):
 
-* Chunking — **`modules/knowledge/`** (through `status=chunked`)
+* Chunking — **`modules/knowledge/`** — structure-aware, multilingual-ready pipeline (auto strategy, token-based config, ADR-010)
+* Optional OCR — **`OCRProvider`** (PaddleOCR optional; disabled by default). **Bangla OCR not supported in Phase 1** — see `docs/features/multilingual_support.md`
 * Embeddings, indexing, vector storage — **`modules/retrieval/`**
-* Hybrid search and reranking — **`modules/retrieval/`** v2 (see ADR-007)
+* Hybrid search and reranking — **`modules/retrieval/`** (ADR-007/009)
 
 ---
 
@@ -376,8 +377,8 @@ baseline), and **Conversations** (RAG chat on semantic baseline, ADR-008) are im
 | Shared service helpers | ✅ | `platform/domain/{lifecycle_service,transactions}.py` |
 | Shared list/pagination schemas | ✅ | `platform/http/pagination.py` |
 | **Project Management module** | ✅ | `modules/projects/`, `api/v1/routes/projects_router.py`, `docs/features/project_module.md` |
-| **Knowledge module** | ✅ | `modules/knowledge/` — upload → parse → chunk; streaming upload + size limit; `docs/features/knowledge_module.md` |
-| **Retrieval module (semantic baseline)** | ✅ | `modules/retrieval/` — embed → index → semantic search; `embedding_set_version` filtering; `docs/features/retrieval_module.md`, ADR-007 |
+| **Knowledge module** | ✅ | `modules/knowledge/` — upload → parse → chunk; structure-aware + multilingual chunking; optional OCR (**Bangla OCR not supported** — see `multilingual_support.md`); `docs/features/knowledge_module.md`, `docs/features/multilingual_support.md` |
+| **Retrieval module** | ✅ | `modules/retrieval/` — embed → index → semantic + hybrid search; Unicode BM25; configurable FTS; `docs/features/retrieval_module.md`, ADR-007/009 |
 | **Conversations module (Chat)** | ✅ | `modules/conversations/` — RAG chat, stateful conversations, SSE; `docs/features/conversation_module.md`, ADR-008 |
 | Application factory + lifespan | ✅ | `backend/app/main.py` |
 | API versioning (`/api/v1`) | ✅ | `backend/app/api/v1/router.py`, `api/v1/routes/` |
@@ -424,8 +425,17 @@ backend/app/
 
 ## Next up (Phase 1)
 
-Hybrid retrieval (Retrieval v2 per ADR-007), connector framework hardening, or
-evaluation/observability foundations — depending on roadmap priority. See `docs/plans/`.
+Connector framework hardening, evaluation/observability foundations, or advanced
+OCR providers — depending on roadmap priority. See `docs/plans/`.
+
+## Known Phase 1 limitations
+
+| Limitation | Impact | Workaround / future |
+| ---------- | ------ | ------------------- |
+| **Bangla OCR** | Scanned or custom-font Bangla PDFs cannot be reliably OCR'd. PaddleOCR 3.7 has no stock `bn` models; `ocr_lang=bn` fails; default English OCR misreads Bengali script | Use PDFs with valid Unicode Bengali text layer, `.txt`/`.docx`, or wait for Bengali-capable `OCRProvider` (Tesseract, cloud, custom Paddle model) |
+| Stale `parsing` after worker crash | Document stuck until manual reprocess | Call `POST .../reprocess` |
+
+Canonical detail: `docs/features/multilingual_support.md` (Bangla OCR section), ADR-010/011.
 
 ---
 

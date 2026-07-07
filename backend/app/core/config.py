@@ -233,18 +233,57 @@ class KnowledgeConfig(BaseModel):
     max_upload_bytes: int = Field(default=50 * 1024 * 1024, ge=1)
 
 
+class ParsingConfig(BaseModel):
+    """PDF text extraction and parse-quality configuration."""
+
+    min_page_quality_score: float = Field(default=0.55, ge=0.0, le=1.0)
+    min_document_success_ratio: float = Field(default=0.2, ge=0.0, le=1.0)
+    min_text_chars: int = Field(default=20, ge=1, le=10_000)
+    pdf_text_parsers: Annotated[list[str], NoDecode] = Field(
+        default_factory=lambda: ["pymupdf", "pdfium"]
+    )
+
+    @field_validator("pdf_text_parsers", mode="before")
+    @classmethod
+    def _split_pdf_text_parsers(cls, value: object) -> object:
+        if isinstance(value, str):
+            stripped = value.strip()
+            if not stripped or stripped.startswith("["):
+                return value
+            return [item.strip() for item in stripped.split(",") if item.strip()]
+        return value
+
+
 class ChunkingStrategy(StrEnum):
     """Supported text chunking strategies."""
 
+    AUTO = "auto"
+    MARKDOWN = "markdown"
+    HEADING = "heading"
+    STRUCTURE = "structure"
+    SEMANTIC = "semantic"
+    RECURSIVE_FALLBACK = "recursive_fallback"
     RECURSIVE_CHARACTER = "recursive_character"
 
 
 class ChunkingConfig(BaseModel):
-    """Text chunking defaults for the knowledge ingestion pipeline."""
+    """Approximate token-based chunking defaults for the knowledge ingestion pipeline.
 
-    strategy: ChunkingStrategy = ChunkingStrategy.RECURSIVE_CHARACTER
-    chunk_size: int = Field(default=1000, ge=100, le=16_000)
-    chunk_overlap: int = Field(default=200, ge=0, le=4000)
+    Token counts are approximate because embedding models tokenize differently.
+    """
+
+    strategy: ChunkingStrategy = ChunkingStrategy.AUTO
+    target_tokens: int = Field(default=250, ge=50, le=4096)
+    max_tokens: int = Field(default=400, ge=100, le=8192)
+    min_tokens: int = Field(default=50, ge=1, le=2048)
+    overlap_tokens: int = Field(default=50, ge=0, le=1024)
+    structure_score_threshold: float = Field(default=0.55, ge=0.0, le=1.0)
+    long_block_token_threshold: int = Field(default=600, ge=100, le=8192)
+    similarity_drop_threshold: float = Field(default=0.35, ge=0.0, le=1.0)
+    semantic_batch_size: int = Field(default=32, ge=1, le=256)
+    chunker_version: str = "2.0.0"
+    token_count_method: str = "unicode_property_v1"
+    ocr_confidence_threshold: float = Field(default=0.5, ge=0.0, le=1.0)
 
 
 class EmbeddingBackend(StrEnum):
@@ -285,6 +324,45 @@ class VectorStoreConfig(BaseModel):
     collection_name: str = "ape_chunks"
 
 
+class OcrBackend(StrEnum):
+    """Supported OCR provider backends."""
+
+    NOOP = "noop"
+    PADDLE = "paddle"
+
+
+class OcrConfig(BaseModel):
+    """OCR provider configuration — disabled by default."""
+
+    enabled: bool = False
+    backend: OcrBackend = OcrBackend.NOOP
+    lang: str = "en"
+    use_gpu: bool = False
+    min_text_chars: int = Field(default=20, ge=1, le=10_000)
+    min_image_area_ratio: float = Field(
+        default=0.08,
+        ge=0.01,
+        le=1.0,
+        description="Minimum image area (fraction of page) for per-image OCR",
+    )
+    dpi: int = Field(default=200, ge=72, le=600)
+    min_page_confidence: float = Field(default=0.3, ge=0.0, le=1.0)
+
+
+class RetrievalStrategy(StrEnum):
+    """Active retrieval pipeline strategy."""
+
+    SEMANTIC = "semantic"
+    HYBRID = "hybrid"
+
+
+class RerankerBackend(StrEnum):
+    """Supported reranker provider backends."""
+
+    NOOP = "noop"
+    LEXICAL = "lexical"
+
+
 class RetrievalConfig(BaseModel):
     """Retrieval pipeline and search defaults."""
 
@@ -294,8 +372,20 @@ class RetrievalConfig(BaseModel):
     score_threshold: float | None = Field(default=None, ge=0.0, le=1.0)
     embedding_set_version: int = Field(default=1, ge=1)
     filterable_metadata_keys: Annotated[list[str], NoDecode] = Field(
-        default_factory=lambda: ["source", "tags"]
+        default_factory=lambda: ["source", "tags", "ocr_confidence"]
     )
+    strategy: RetrievalStrategy = RetrievalStrategy.SEMANTIC
+    semantic_candidate_top_k: int = Field(default=50, ge=1, le=200)
+    keyword_candidate_top_k: int = Field(default=50, ge=1, le=200)
+    rrf_k: int = Field(default=60, ge=1, le=500)
+    semantic_weight: float = Field(default=1.0, ge=0.0, le=10.0)
+    keyword_weight: float = Field(default=1.0, ge=0.0, le=10.0)
+    rerank_enabled: bool = True
+    rerank_top_n: int = Field(default=20, ge=1, le=100)
+    rerank_score_threshold: float | None = Field(default=None, ge=0.0, le=1.0)
+    reranker_backend: RerankerBackend = RerankerBackend.LEXICAL
+    fts_regconfig: str = "simple"
+    min_ocr_confidence: float | None = Field(default=None, ge=0.0, le=1.0)
 
     @field_validator("filterable_metadata_keys", mode="before")
     @classmethod
@@ -371,7 +461,9 @@ class Settings(BaseSettings):
     storage: StorageConfig = Field(default_factory=StorageConfig)
     jobs: JobsConfig = Field(default_factory=JobsConfig)
     knowledge: KnowledgeConfig = Field(default_factory=KnowledgeConfig)
+    parsing: ParsingConfig = Field(default_factory=ParsingConfig)
     chunking: ChunkingConfig = Field(default_factory=ChunkingConfig)
+    ocr: OcrConfig = Field(default_factory=OcrConfig)
     embedding: EmbeddingConfig = Field(default_factory=EmbeddingConfig)
     vector_store: VectorStoreConfig = Field(default_factory=VectorStoreConfig)
     retrieval: RetrievalConfig = Field(default_factory=RetrievalConfig)

@@ -7,14 +7,18 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from app.core.config import RetrievalStrategy
+
 
 class SearchRequest(BaseModel):
-    """Semantic search request body."""
+    """Search request body."""
 
     query: str = Field(min_length=1, max_length=4096)
     top_k: int | None = Field(default=None, ge=1, le=100)
     document_id: uuid.UUID | None = None
     metadata_filter: dict[str, str] = Field(default_factory=dict)
+    strategy: RetrievalStrategy | None = None
+    rerank: bool | None = None
 
 
 class RetrievalResult(BaseModel):

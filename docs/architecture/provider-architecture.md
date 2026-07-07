@@ -16,7 +16,8 @@
 - **Embeddings** — `BaseEmbeddingProvider` + Ollama / OpenAI / Gemini / hash implementations
 - **Vector store** — `BaseVectorStoreProvider` + Qdrant / memory implementations
 - **Storage** — `BaseStorageProvider` + local / MinIO implementations
-- **Document parsers** — `BaseDocumentParserProvider` + PyMuPDF / plain text / docx
+- **Document parsers** — `BaseDocumentParserProvider` + PyMuPDF / plain text / docx / image OCR
+- **OCR** — `OCRProvider` + optional PaddleOCR (`ocr_factory.py`); SDK boundary same as other providers. **Bangla (`bn`) is not supported** on the Paddle backend in Phase 1 — see [multilingual_support.md](../features/multilingual_support.md#known-limitation-bangla-bengali-ocr).
 - **LLM** — `BaseLLMProvider` + echo / OpenAI-compatible / Ollama / Gemini implementations (Chat module)
 
 ## SDK boundary

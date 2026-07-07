@@ -204,5 +204,9 @@ async def test_soft_delete_removes_storage(
     result = await service.soft_delete(document.id)
 
     assert result.deleted_at is not None
-    storage.delete.assert_awaited_once_with("p/d/gone.txt")
+    deleted_keys = [call.args[0] for call in storage.delete.await_args_list]
+    assert "p/d/gone.txt" in deleted_keys
+    assert f"{repository.project_id}/{document.id}/parsed/v1.json" in deleted_keys
+    storage.delete.assert_awaited()
+    storage.delete_document_tree.assert_awaited_once()
     session.commit.assert_awaited_once()

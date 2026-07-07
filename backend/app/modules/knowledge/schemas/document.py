@@ -19,6 +19,7 @@ class DocumentIngestInput:
     filename: str
     content_type: str | None
     stream: AsyncIterator[bytes]
+    ocr_lang: str | None = None
 
 
 class DocumentResponse(BaseModel):
@@ -38,8 +39,12 @@ class DocumentResponse(BaseModel):
     error_message: str | None = None
     parser_name: str | None = None
     parser_version: str | None = None
+    accepted_parser: str | None = None
+    parse_quality_score: float | None = None
+    extraction_method: str | None = None
     page_count: int | None = None
     language: str | None = None
+    ocr_lang: str | None = None
     parsed_text_storage_key: str | None = None
     deleted_at: datetime | None
     created_at: datetime

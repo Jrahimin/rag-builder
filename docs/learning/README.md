@@ -102,7 +102,8 @@ For request flow and layering, see
 
 | 4 | [Text chunking for RAG](./text-chunking-for-rag.md) | `ChunkingService`, `document_chunks`, chunks API |
 
-| 5 | [OCR fundamentals](./ocr-fundamentals.md) | Concepts + **what is not built yet** and where OCR will plug in |
+| 5 | [OCR fundamentals](./ocr-fundamentals.md) | `OCRProvider`, optional PaddleOCR, image uploads |
+| 6 | [Multilingual text processing](./multilingual-text-processing.md) | Unicode tokenization, normalizer, reindex CLI |
 
 
 

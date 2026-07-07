@@ -12,27 +12,91 @@
 
 ---
 
-## What APE does today (Knowledge v1)
+## What APE does today
 
-**OCR is not implemented.** There is no `BaseOCRProvider`, no OCR worker step, and no image upload path.
+**OCR is optional** via `OCRProvider` (`providers/contracts/ocr.py`):
 
-What exists instead:
+| Component | Role |
+| --------- | ---- |
+| `OcrConfig` | `APE_OCR__ENABLED`, `APE_OCR__BACKEND`, `APE_OCR__LANG` (default `en`) |
+| `ocr_factory` | Language-keyed provider pool; `get_ocr_provider(lang=...)` resolves document `ocr_lang` → deployment default |
+| `PaddleOCRProvider` | Optional implementation — `pip install -r backend/requirements/ocr.txt` |
+| `ImageOcrParserProvider` | Image uploads (PNG, JPEG, …) when OCR enabled |
+| `PyMuPDFParserProvider` | OCR fallback for image-only PDF pages |
 
-1. **PyMuPDF parsing** (`pymupdf_parser.py`) calls `page.get_text()` — reads the PDF **text layer** only.
-2. If a page has images but **no extractable text**, the parser adds a warning:
+When OCR is **disabled** (default):
 
-   ```text
-   Page N contains images only; OCR is not enabled.
-   ```
+1. **PyMuPDF parsing** reads the PDF text layer only.
+2. Image-only pages log: `Page N contains images only; OCR is not enabled.`
+3. Image uploads fail with a clear error unless OCR is enabled.
 
-3. Warnings are logged in `document_processing.py`; they are **not** returned in the API body.
-4. The document may still reach `status=chunked` with **empty** `document_chunks` if no text was extracted.
+When OCR is **enabled**:
 
-So for a scanned PDF today: upload works → worker runs → parse returns empty text → chunking produces nothing useful. You need to inspect `page_count`, chunk count, or worker logs.
+- Scanned pages produce `ParsedElement` rows with `ocr_confidence` metadata.
+- Per-page confidence stored in `structure_hints.ocr_pages`.
+- **Language**: deployment default `APE_OCR__LANG` (`en`); optional per-document `ocr_lang` on upload/reprocess (stored on `documents.ocr_lang`). Worker passes `ocr_lang` into parsers; `ocr_factory` caches one Paddle instance per language (bounded pool).
+- **Mixed pages**: native text is extracted first; only **large** embedded images (default ≥ 8% of page area) are OCR'd separately — small logos are skipped.
+- **`min_text_chars`** (default 20): OCR output shorter than this is discarded (reduces logo noise).
+- **`min_page_confidence`**: OCR below this confidence is discarded.
+- **Layout analysis**: magazine/brochure pages with interleaved text and figures use reading-order block extraction.
+- Optional retrieval filter: `APE_RETRIEVAL__MIN_OCR_CONFIDENCE`.
+
+See [multilingual-text-processing.md](multilingual-text-processing.md) and ADR-010.
 
 ---
 
-## Where OCR would start (future)
+## OCR language resolution
+
+```text
+upload ocr_lang (optional)  →  documents.ocr_lang
+                                    ↓
+worker document_processing  →  parser.parse(ocr_lang=...)
+                                    ↓
+get_ocr_provider(lang=...)  →  resolve: document ocr_lang ?? APE_OCR__LANG
+                                    ↓
+_OcrProviderPool          →  reuse PaddleOCR per (backend, lang, use_gpu)
+```
+
+| Upload / env value | Resolved Paddle `lang` |
+| ------------------ | ---------------------- |
+| (omit) + `APE_OCR__LANG=en` | `en` |
+| `ocr_lang=bn` | **Not supported** — `ProviderError` at worker (no stock Paddle model) |
+| `ocr_lang=eng` | `en` (alias) |
+
+---
+
+## Known limitation: Bangla (Bengali)
+
+Phase 1 ships PaddleOCR as the optional OCR backend. **Bangla is not a supported OCR language today.**
+
+```text
+Legacy Bangla PDF (broken ToUnicode)
+        │
+        ▼
+PyMuPDF / PDFium → Latin glyph soup → parse quality scorer rejects
+        │
+        ▼
+OCR fallback (Paddle, lang=en by default)
+        │
+        ▼
+Wrong script output (CJK fragments, numbers, English blocks only)
+        │
+        ▼
+May still index as "successful" — retrieval quality poor for Bangla queries
+```
+
+| If you need… | Phase 1 status |
+| ------------ | -------------- |
+| Unicode Bengali in PDF text layer | ✅ Native parsing |
+| Scanned / image-only Bangla | ❌ No reliable OCR backend |
+| `ocr_lang=bn` | ❌ Blocked by `ensure_paddle_ocr_lang_supported()` |
+| Bangla `.png` upload | ❌ Same OCR limitation |
+
+Canonical write-up: [multilingual_support.md](../features/multilingual_support.md#known-limitation-bangla-bengali-ocr). Planned fix: alternate `OCRProvider` (Tesseract `ben`, cloud API, or custom Paddle model).
+
+---
+
+## Where OCR runs (implemented)
 
 Same entry as parsing — **not a separate upload endpoint**:
 
@@ -40,49 +104,51 @@ Same entry as parsing — **not a separate upload endpoint**:
 POST upload  →  enqueue document.process  →  worker  →  workflow
 ```
 
-OCR would be a **branch inside** `DocumentProcessingWorkflow`, after or alongside parsing:
+OCR is a **branch inside** parsers invoked by `DocumentProcessingWorkflow`:
 
 ```mermaid
 flowchart TB
-    A[Read raw bytes from storage_key] --> B{Parser text sufficient?}
-    B -->|yes digital PDF / txt| C[Use parsed text]
-    B -->|no scanned / image pages| D[BaseOCRProvider per page/image]
-    D --> E[Merge page text]
-    C --> F[parsed_text_storage_key]
-    E --> F
-    F --> G[ChunkingService]
+    A[Read raw bytes from storage_key] --> B{Parser route}
+    B -->|image upload| C[ImageOcrParserProvider + get_ocr_provider]
+    B -->|PDF| D[PyMuPDFParserProvider]
+    D --> E{Page has text layer?}
+    E -->|yes| F[Native text + optional large-image OCR]
+    E -->|no / sparse| C
+    F --> G[parsed_text_storage_key]
+    C --> G
+    G --> H[ChunkingService]
 ```
 
-### Likely hook points in the codebase
+### Hook points in the codebase
 
-| Location | Future change |
-| -------- | ------------- |
-| `platform/providers/contracts/` | New `ocr.py` — `BaseOCRProvider`, `OcrResult` DTO |
-| `platform/providers/implementations/` | e.g. `tesseract_ocr.py`, `paddle_ocr.py` — SDKs stay here |
-| `workflows/document_processing.py` | After `parser.parse()`: if low text density → call OCR → merge into `parsed.text` |
-| `pymupdf_parser.py` | Optionally export per-page images for OCR input |
-| `models/document.py` | May reuse `language` column as OCR hint |
+| Location | Role |
+| -------- | ---- |
+| `platform/providers/contracts/ocr.py` | `OCRProvider`, `OcrPageResult` DTO |
+| `platform/providers/implementations/ocr_factory.py` | Pool + `resolve_ocr_lang`, `get_ocr_provider` |
+| `platform/providers/implementations/paddle_ocr_provider.py` | PaddleOCR adapter |
+| `pymupdf_parser.py` / `image_ocr_parser.py` | OCR branches; accept `ocr_lang` on `parse()` |
+| `workflows/document_processing.py` | Passes `document.ocr_lang` into `parser.parse()` |
+| `models/document.py` | `ocr_lang` column (nullable override) |
+| `documents_router.py` | `ocr_lang` form field on upload; query on reprocess |
 
 Upload (`document_service.py`) and storage (`storage_key`) **stay the same** — OCR consumes the same raw bytes.
 
 ---
 
-## File-by-file: current path when OCR would be needed
+## File-by-file: scanned PDF path (with OCR enabled)
 
-This is what happens **today** for a scanned PDF — use it to see where OCR would slot in:
-
-| Step | File | What happens (no OCR) |
+| Step | File | What happens |
 | ---- | ---- | --------------------- |
-| 1 | `documents_router.py` | Upload stores PDF bytes — OCR not involved |
-| 2 | `document_service.py` | Enqueue job — same for all file types |
+| 1 | `documents_router.py` | Upload stores bytes; optional `ocr_lang` form field |
+| 2 | `document_service.py` | Persists `documents.ocr_lang`; enqueues job |
 | 3 | `worker/handlers/document.py` | Starts workflow |
-| 4 | `document_processing.py` | `read_storage_bytes` → full PDF bytes |
-| 5 | `pymupdf_parser.py` | `get_text()` returns `""` per page; **warnings** for image-only pages |
-| 6 | `document_processing.py` | Saves empty/minimal text to `parsed_text_storage_key` |
-| 7 | `chunking_service.py` | `split("")` → **zero chunks** |
-| 8 | `document_processing.py` | `status=chunked` anyway (ingestion pipeline completed, but no searchable text) |
+| 4 | `document_processing.py` | `read_storage_bytes` → `parser.parse(ocr_lang=document.ocr_lang)` |
+| 5 | `pymupdf_parser.py` | Native text where present; OCR fallback via `get_ocr_provider(lang=...)` |
+| 6 | `document_processing.py` | Saves parsed text to `parsed_text_storage_key` |
+| 7 | `chunking_service.py` | Chunks merged text |
+| 8 | `document_processing.py` | `status=chunked` |
 
-**With OCR (future):** step 5–6 would become: detect low text → render page images → `OcrProvider.recognize(image)` → build full `ParsedDocument.text` → then chunking works as today.
+**Without OCR:** image-only pages log warnings and contribute no text; image uploads fail unless `APE_OCR__ENABLED=true`.
 
 ---
 
@@ -116,7 +182,8 @@ OCR must run in the **worker**, never in `documents_router.py` (CPU/GPU heavy, s
 | **Raster / scan** | Page is a bitmap — needs OCR |
 | **Tesseract** | Common open-source OCR engine (future provider candidate) |
 | **Layout analysis** | Detecting columns, tables before OCR — advanced, not in v1 |
-| **`language` column** | On `documents` — can hint OCR model later |
+| **`language` column** | Detected script on `documents` after parse (not the OCR model hint) |
+| **`ocr_lang` column** | Optional per-document Paddle language override |
 
 ---
 

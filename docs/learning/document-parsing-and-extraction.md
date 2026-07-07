@@ -10,7 +10,7 @@ In APE, parsing is **always asynchronous**:
 - A **worker** reads the file from object storage and extracts text.
 - Extracted text is saved back to storage; metadata goes on the `documents` row.
 
-> **Parsing ≠ OCR.** Parsing reads text that is already embedded in the file (digital PDFs, `.txt`). Scanned PDFs are image-only until [OCR](./ocr-fundamentals.md) is added.
+> **Parsing ≠ OCR by default.** Parsing reads embedded text layers. PDFs route through a quality-scored extraction workflow (PyMuPDF → PDFium → optional OCR). See [OCR fundamentals](./ocr-fundamentals.md) for the OCR path.
 
 ---
 
@@ -88,26 +88,30 @@ flowchart TB
 | --------- | --------------------- | --------- |
 | `.txt`, `.md`, `text/plain` | `plain_text_parser.py` | `bytes.decode("utf-8")` |
 | `.docx` | `docx_parser.py` | `python-docx` paragraphs + table rows |
-| `.pdf`, `application/pdf` | `pymupdf_parser.py` | PyMuPDF `fitz.open()` → `page.get_text()` per page |
+| `.pdf`, `application/pdf` | `pdf_extraction_workflow.py` | Page-level PyMuPDF → PDFium → optional OCR with quality scoring |
 
 Contract (DTO): `platform/providers/contracts/document_parser.py`
 
 - Input: raw `bytes`, `filename`, `content_type`
 - Output: `ParsedDocument(text, page_count, parser_name, parser_version, warnings, ...)`
 
-### E. PyMuPDF internals (digital PDF path)
+### E. PDF extraction workflow (digital + degraded PDF path)
 
 ```text
-pymupdf_parser.py
-  fitz.open(stream=data, filetype="pdf")
-  for each page:
-      page.get_text()     ← embedded text layer only
-      if empty and page has images:
-          append warning "OCR is not enabled"
-  join pages with "\n\n" → ParsedDocument.text
+pdf_extraction_workflow.py
+  PyMuPDF native extraction for all pages
+  score each page (Unicode parse quality)
+  for degraded pages only:
+      try PDFium fallback
+      keep highest-quality candidate
+  if OCR enabled and page still degraded:
+      OCR page
+      keep OCR only if quality beats parser candidate
+  index accepted pages; mark failed pages in sidecar metadata
+  fail document only if success ratio below threshold
 ```
 
-If every page is image-only (scanned PDF), `text` may be **empty** but `page_count > 0`. Status can still reach `chunked` with zero chunks. That is the signal you need OCR.
+If every page is unrecoverable, processing fails with a client-safe error. Partial extraction is supported: good pages are chunked and indexed; failed pages are recorded in `parsed/v{n}.json`.
 
 ---
 
@@ -128,6 +132,7 @@ On failure: `document.error_message` gets a **client-safe** string (`safe_proces
 | ---- | ------- |
 | **Digital PDF** | PDF with a selectable text layer — PyMuPDF works well |
 | **Scanned PDF** | Pages are images — needs OCR, not parsing alone |
+| **Bangla OCR (Phase 1)** | PaddleOCR has no `bn` model; English OCR on Bangla scans is unreliable — see [multilingual_support.md](../features/multilingual_support.md#known-limitation-bangla-bengali-ocr) |
 | **ParsedDocument** | Provider DTO — decouples PyMuPDF from workflow |
 | **Composite parser** | Single entry point; add new formats by adding providers + routing |
 | **Worker boundary** | Parsers run in worker thread pool (`asyncio.to_thread`), not in HTTP handlers |
@@ -139,7 +144,7 @@ On failure: `document.error_message` gets a **client-safe** string (`safe_proces
 | Endpoint | Parsing relevance |
 | -------- | ----------------- |
 | `POST .../documents` | Triggers enqueue; response `status=queued` |
-| `GET .../documents/{id}` | Poll `status`, `parser_name`, `page_count`, `error_message` |
+| `GET .../documents/{id}` | Poll `status`, `parser_name`, `accepted_parser`, `parse_quality_score`, `extraction_method`, `page_count`, `error_message` |
 | `POST .../documents/{id}/reprocess` | Bumps `version`, clears parser fields, re-enqueues |
 
 Router: `api/v1/routes/documents_router.py`
@@ -152,7 +157,7 @@ Router: `api/v1/routes/documents_router.py`
 | ------ | ------- | ---- |
 | Parsed text in object storage | DB stays small | Extra read to fetch full text |
 | Async via Taskiq | API stays fast | Requires Redis + worker process |
-| PyMuPDF first | Fast, no GPU | No scanned documents |
+| PyMuPDF + PDFium + quality gate | Fast path for healthy PDFs; recovers many broken text layers without OCR | OCR still required for true scans |
 | Full `DocumentStatus` enum | Future phases without migration | More states to learn |
 
 ---
@@ -160,5 +165,5 @@ Router: `api/v1/routes/documents_router.py`
 ## Related
 
 - [Knowledge ingestion journey](./knowledge-ingestion-journey.md) — full E2E with file list
-- [OCR fundamentals](./ocr-fundamentals.md) — when parsing is not enough (not built yet)
+- [OCR fundamentals](./ocr-fundamentals.md) — OCR as the last recovery step in the PDF workflow
 - [Text chunking](./text-chunking-for-rag.md) — next step after parse in the same workflow
