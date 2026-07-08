@@ -9,14 +9,13 @@ from fastapi import Depends, Path
 
 from app.core.config import get_settings
 from app.dependencies.common import DbSessionDep
-from app.dependencies.projects import ensure_project_exists, get_project_repository
+from app.dependencies.projects import noop_ensure_project
 from app.dependencies.retrieval import get_search_service
 from app.modules.conversations.ports import ContextChunk, RetrievalPort
 from app.modules.conversations.repositories.conversation_repository import ConversationRepository
 from app.modules.conversations.repositories.message_repository import MessageRepository
 from app.modules.conversations.services.chat_service import ChatService
 from app.modules.conversations.services.conversation_service import ConversationService
-from app.modules.projects.repositories.project_repository import ProjectRepository
 from app.modules.retrieval.schemas.search import SearchRequest
 from app.modules.retrieval.services.search_service import SearchService
 from app.platform.domain.content_hash import content_hash
@@ -85,16 +84,12 @@ def get_retrieval_port(
 def get_conversation_service(
     session: DbSessionDep,
     project_id: Annotated[uuid.UUID, Path()],
-    project_repository: Annotated[ProjectRepository, Depends(get_project_repository)],
     conversation_repository: Annotated[
         ConversationRepository, Depends(get_conversation_repository)
     ],
     message_repository: Annotated[MessageRepository, Depends(get_message_repository)],
 ) -> ConversationService:
     settings = get_settings()
-
-    async def ensure_project() -> None:
-        await ensure_project_exists(project_repository, project_id)
 
     return ConversationService(
         session=session,
@@ -103,14 +98,13 @@ def get_conversation_service(
         message_repository=message_repository,
         llm_config=settings.llm,
         chat_config=settings.chat,
-        ensure_project=ensure_project,
+        ensure_project=noop_ensure_project,
     )
 
 
 def get_chat_service(
     session: DbSessionDep,
     project_id: Annotated[uuid.UUID, Path()],
-    project_repository: Annotated[ProjectRepository, Depends(get_project_repository)],
     conversation_repository: Annotated[
         ConversationRepository, Depends(get_conversation_repository)
     ],
@@ -118,9 +112,6 @@ def get_chat_service(
     retrieval: Annotated[RetrievalPort, Depends(get_retrieval_port)],
 ) -> ChatService:
     settings = get_settings()
-
-    async def ensure_project() -> None:
-        await ensure_project_exists(project_repository, project_id)
 
     return ChatService(
         session=session,
@@ -132,7 +123,7 @@ def get_chat_service(
         chat_config=settings.chat,
         retrieval_config=settings.retrieval,
         llm_config=settings.llm,
-        ensure_project=ensure_project,
+        ensure_project=noop_ensure_project,
     )
 
 

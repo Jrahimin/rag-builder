@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Query, status
+from fastapi import APIRouter, Depends, Query, status
 
-from app.dependencies.projects import ProjectServiceDep
+from app.dependencies.projects import ProjectServiceDep, ensure_project_accessible
 from app.modules.projects.schemas.project import (
     ProjectCreate,
     ProjectResponse,
@@ -65,6 +65,7 @@ async def list_projects(
     "/{project_id}",
     response_model=ApiResponse[ProjectResponse],
     summary="Get a project by id",
+    dependencies=[Depends(ensure_project_accessible)],
 )
 async def get_project(
     project_id: uuid.UUID,
@@ -78,6 +79,7 @@ async def get_project(
     "/{project_id}",
     response_model=ApiResponse[ProjectResponse],
     summary="Update project metadata",
+    dependencies=[Depends(ensure_project_accessible)],
 )
 async def update_project(
     project_id: uuid.UUID,
@@ -92,6 +94,7 @@ async def update_project(
     "/{project_id}/status",
     response_model=ApiResponse[ProjectResponse],
     summary="Toggle project active status",
+    dependencies=[Depends(ensure_project_accessible)],
 )
 async def toggle_project_status(
     project_id: uuid.UUID,
@@ -105,6 +108,7 @@ async def toggle_project_status(
     "/{project_id}",
     response_model=ApiResponse[ProjectResponse],
     summary="Soft-delete a project",
+    dependencies=[Depends(ensure_project_accessible)],
 )
 async def delete_project(
     project_id: uuid.UUID,

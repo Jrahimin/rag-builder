@@ -28,7 +28,9 @@ backend/app/
 │   ├── infra/connectivity/ # Redis/Qdrant adapters (health only)
 │   ├── persistence/        # AsyncRepository, ProjectScopedRepository
 │   ├── domain/             # ORM mixins, lifecycle helpers, text_normalizer, tokenization
-│   ├── http/               # ApiResponse / ErrorResponse, pagination
+│   ├── auth/               # Auth contracts, domain events (cache invalidation)
+│   ├── http/               # ApiResponse / ErrorResponse, pagination, auth headers
+│   ├── infra/auth/         # Verified-key cache, rate limiter, event handlers
 │   ├── system/             # HealthService
 │   ├── providers/          # Errors + capability reference
 │   ├── jobs/               # JobQueue.enqueue contract
@@ -93,11 +95,22 @@ Concrete provider interfaces are added with the first implementation.
 
 | Module | Scope |
 | ------ | ----- |
-| `projects` | Central aggregate (shipped) |
+| `projects` | Central data aggregate (shipped) |
+| `organizations` | Tenant CRUD, API key lifecycle (shipped; ADR-012) |
 | `knowledge` | Ingestion — upload, parse, chunk; ends at `status=chunked` (shipped) |
 | `retrieval` | Embed → index → search (`chunked` → `embedded` → `ready`); hybrid + rerank shipped (ADR-009) |
 | `conversations` | Chat — retrieve → prompt → LLM → answer + citations; stateful conversations (shipped) |
 | `evaluation` | Quality measurement + feedback |
+
+### Organizations vs projects
+
+```text
+modules/organizations/   tenant + API keys; publishes auth invalidation events
+dependencies/auth.py     credential verification, cache, rate limit (composition)
+modules/projects/        project CRUD; organization_id scoping on list/create/access
+```
+
+Auth verification is **not** in `modules/organizations/` services — it lives in `dependencies/auth.py`. Key revoke / org deactivate publish domain events; `VerifiedKeyCacheEventHandler` invalidates the cache centrally.
 
 ### Knowledge vs retrieval vs conversations boundary
 

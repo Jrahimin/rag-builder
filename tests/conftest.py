@@ -34,7 +34,9 @@ os.environ.setdefault("APE_EMBEDDING__BACKEND", "hash")
 os.environ.setdefault("APE_EMBEDDING__DIMENSIONS", "384")
 os.environ.setdefault("APE_VECTOR_STORE__BACKEND", "memory")
 os.environ.setdefault("APE_RETRIEVAL__AUTO_EMBED", "false")
-os.environ.setdefault("APE_RETRIEVAL__AUTO_INDEX", "false")
+os.environ.setdefault("APE_AUTH__ENABLED", "false")
+os.environ.setdefault("APE_AUTH__VERIFY_CACHE_BACKEND", "memory")
+os.environ.setdefault("APE_AUTH__RATE_LIMIT_ENABLED", "false")
 
 from app.core.config import Settings, get_settings
 from app.dependencies.common import get_db_session
@@ -185,7 +187,11 @@ async def db_client(
     _test_connection = connection
 
     async def override_get_db_session() -> AsyncIterator[AsyncSession]:
-        session = AsyncSession(bind=connection, expire_on_commit=False)
+        session = AsyncSession(
+            bind=connection,
+            expire_on_commit=False,
+            join_transaction_mode="create_savepoint",
+        )
         try:
             yield session
         except Exception:

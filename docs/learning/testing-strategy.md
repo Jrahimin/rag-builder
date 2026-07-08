@@ -100,6 +100,24 @@ production database.
 
 ---
 
+## Auth testing (Organization API keys)
+
+Default test env (`tests/conftest.py`) sets `APE_AUTH__ENABLED=false` so most
+integration tests run without credentials.
+
+| Layer | Location | Notes |
+| ----- | -------- | ----- |
+| Crypto / cache | `tests/unit/platform/` | No DB |
+| Event handler | `tests/unit/platform/infra/auth/` | Mock cache; org + key events |
+| Org services | `tests/unit/modules/organizations/` | Mock `AuthEventPublisher`; assert events after revoke/toggle |
+| Full HTTP auth | `tests/integration/test_auth_api.py` | Requires PostgreSQL; uses `auth_db_client` fixture with auth enabled before `create_app()` |
+
+Run auth integration tests after `docker compose up -d postgres` (and migrations on `ape_test`).
+
+Detail: [organization-api-key-auth-journey.md](./organization-api-key-auth-journey.md#testing-journey).
+
+---
+
 ## Running without external services
 
 Integration tests **do not require** PostgreSQL, Redis, Qdrant, or MinIO:
@@ -168,10 +186,10 @@ pre-commit run --all-files      # all git hooks
 
 ## Writing tests for new features
 
-When adding a module (e.g. Projects):
+When adding a module (e.g. Projects or Organizations):
 
-1. **Unit tests** — service logic with faked repositories/providers.
-2. **Integration tests** — HTTP routes via `client` fixture.
+1. **Unit tests** — service logic with faked repositories/providers; mock `AuthEventPublisher` when services publish domain events.
+2. **Integration tests** — HTTP routes via `client` or `auth_db_client` fixture.
 3. **Contract tests** (later) — provider implementations against abstract interfaces.
 
 Pattern for service unit tests (future):

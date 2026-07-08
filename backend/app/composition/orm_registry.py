@@ -18,4 +18,6 @@ from app.models.document import Document  # noqa: F401
 from app.models.document_chunk import DocumentChunk  # noqa: F401
 from app.models.keyword_term_stats import KeywordCollectionStats, KeywordTermStats  # noqa: F401
 from app.models.message import Message  # noqa: F401
+from app.models.organization import Organization  # noqa: F401
+from app.models.organization_api_key import OrganizationApiKey  # noqa: F401
 from app.models.project import Project  # noqa: F401

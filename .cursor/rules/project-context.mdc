@@ -85,13 +85,20 @@ Every deployment owns its:
 * Prompts
 * Evaluations
 
-No shared cloud platform is required. The deployment itself is the trust boundary; **within a deployment, the Project is the isolation boundary** (see Core Domain Model).
+No shared cloud platform is required. The deployment itself is the trust boundary.
+
+**Within a deployment, two boundaries apply (ADR-012):**
+
+* **Organization** — auth / tenant boundary (`organization_id`, Organization API keys)
+* **Project** — data isolation boundary (`project_id`; documents, search, chat, embeddings)
+
+Every business artifact remains Project-scoped. Organization groups Projects and authenticates integrations; it does not replace `project_id` scoping.
 
 ---
 
 # 🧱 Core Domain Model
 
-**Project** is the central domain entity of the platform and the primary unit of isolation.
+**Project** is the central domain entity and the primary unit of **data** isolation.
 
 Everything is owned by and scoped to a Project:
 
@@ -102,11 +109,10 @@ Everything is owned by and scoped to a Project:
 * Evaluations & Datasets
 * Configurations
 * Embeddings & Vector Namespaces
-* API Keys & Access Control
 
 A single deployment may host many Projects. Every API call, retrieval query, background job, and stored artifact is scoped by `project_id`, keeping data, configuration, and cost isolated per Project even within one customer deployment.
 
-An optional `organization_id` may group multiple Projects for larger deployments, but `project_id` is always the mandatory scoping key.
+**Organization** groups Projects for multi-tenant deployments and owns **Organization API keys** (M2M auth). `projects.organization_id` links each Project to its tenant. `project_id` is always the mandatory data scoping key; `organization_id` is the auth boundary when authentication is enabled.
 
 ---
 
@@ -351,6 +357,10 @@ Maintain a concise **API reference** under `docs/api/` — one file per module
 method, path, short description, sample request/response JSON. Intended for
 quick Postman collection preparation; OpenAPI (`/docs`) remains the live contract.
 
+Maintain a **platform integration guide** at `docs/platform-integration-guide.md` —
+the primary onboarding path for developers integrating APE into an external
+application (auth, project mapping, document lifecycle, search, chat, patterns).
+
 These documents should explain concepts, request flow, architecture, internal mechanics, trade-offs, and production considerations using diagrams, flowcharts, sequence diagrams, comparison tables, and practical examples.
 
 The goal is to build a comprehensive AI Engineering knowledge base alongside the platform.
@@ -361,11 +371,12 @@ The goal is to build a comprehensive AI Engineering knowledge base alongside the
 
 Current phase:
 
-**Phase 1 — In progress** (Knowledge + Retrieval + Conversations baseline shipped)
+**Phase 1 — In progress** (Knowledge + Retrieval + Conversations + Organization auth shipped)
 
 Foundation sprint and architectural remediation are complete. **Project Management**,
-**Knowledge** (through `chunked`), **Retrieval** (embed → index → semantic search
-baseline), and **Conversations** (RAG chat on semantic baseline, ADR-008) are implemented.
+**Organizations & API key auth** (ADR-012), **Knowledge** (through `chunked`),
+**Retrieval** (embed → index → semantic + hybrid search), and **Conversations**
+(RAG chat, ADR-008) are implemented.
 
 ## What exists today
 
@@ -377,12 +388,14 @@ baseline), and **Conversations** (RAG chat on semantic baseline, ADR-008) are im
 | Shared service helpers | ✅ | `platform/domain/{lifecycle_service,transactions}.py` |
 | Shared list/pagination schemas | ✅ | `platform/http/pagination.py` |
 | **Project Management module** | ✅ | `modules/projects/`, `api/v1/routes/projects_router.py`, `docs/features/project_module.md` |
+| **Organizations & API key auth** | ✅ | `modules/organizations/`, `dependencies/auth.py`, `platform/auth/`, `platform/infra/auth/`; ADR-012; `docs/features/organization_module.md`, `docs/learning/organization-api-key-auth-journey.md` |
 | **Knowledge module** | ✅ | `modules/knowledge/` — upload → parse → chunk; structure-aware + multilingual chunking; optional OCR (**Bangla OCR not supported** — see `multilingual_support.md`); `docs/features/knowledge_module.md`, `docs/features/multilingual_support.md` |
 | **Retrieval module** | ✅ | `modules/retrieval/` — embed → index → semantic + hybrid search; Unicode BM25; configurable FTS; `docs/features/retrieval_module.md`, ADR-007/009 |
 | **Conversations module (Chat)** | ✅ | `modules/conversations/` — RAG chat, stateful conversations, SSE; `docs/features/conversation_module.md`, ADR-008 |
 | Application factory + lifespan | ✅ | `backend/app/main.py` |
 | API versioning (`/api/v1`) | ✅ | `backend/app/api/v1/router.py`, `api/v1/routes/` |
 | API reference (Postman-oriented) | ✅ | `docs/api/` |
+| Platform integration guide | ✅ | `docs/platform-integration-guide.md` |
 | System health probes | ✅ | `GET /health`, `GET /ready` |
 | Environment-driven config | ✅ | `backend/app/core/config.py` |
 | Structured logging | ✅ | `backend/app/core/logging.py` |
@@ -421,6 +434,7 @@ backend/app/
 * **ADRs** — `docs/architecture/adr/`
 * **Foundation learning** — `docs/learning/`
 * **Feature docs** — `docs/features/` (e.g. `project_module.md`)
+* **Platform integration guide** — `docs/platform-integration-guide.md`
 * **API reference (Postman-oriented)** — `docs/api/`
 
 ## Next up (Phase 1)
@@ -433,6 +447,7 @@ OCR providers — depending on roadmap priority. See `docs/plans/`.
 | Limitation | Impact | Workaround / future |
 | ---------- | ------ | ------------------- |
 | **Bangla OCR** | Scanned or custom-font Bangla PDFs cannot be reliably OCR'd. PaddleOCR 3.7 has no stock `bn` models; `ocr_lang=bn` fails; default English OCR misreads Bengali script | Use PDFs with valid Unicode Bengali text layer, `.txt`/`.docx`, or wait for Bengali-capable `OCRProvider` (Tesseract, cloud, custom Paddle model) |
+| **Verified-key cache TTL** | Revoked keys may succeed for up to cache TTL (30–60s) | Accept for Phase 1; domain events invalidate on revoke/org disable; shorten TTL or disable cache if stricter revocation is required |
 | Stale `parsing` after worker crash | Document stuck until manual reprocess | Call `POST .../reprocess` |
 
 Canonical detail: `docs/features/multilingual_support.md` (Bangla OCR section), ADR-010/011.

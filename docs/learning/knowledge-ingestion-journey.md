@@ -166,7 +166,7 @@ Both are scoped by `project_id` (isolation boundary).
 ## What Knowledge does **not** do
 
 - **Embeddings / vector search** — owned by `modules/retrieval/` ([feature doc](../features/retrieval_module.md))
-- **Chat (Conversations)** — shipped module; uses semantic baseline via `RetrievalPort` today; hybrid retrieval is the production upgrade (ADR-008 amends ADR-007 sequencing)
+- **Chat (Conversations)** — shipped module; uses `RetrievalPort` to consume the configured retrieval strategy, with hybrid retrieval as the production path
 
 Optional **OCR** (PaddleOCR) is implemented when `APE_OCR__ENABLED=true` — see [ocr-fundamentals.md](./ocr-fundamentals.md) and [multilingual_support.md](../features/multilingual_support.md). **Bangla OCR is not production-ready** in Phase 1 (no Paddle `bn` model; English OCR on Bangla scans is unreliable).
 

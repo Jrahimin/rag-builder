@@ -424,6 +424,28 @@ class LLMConfig(BaseModel):
     provider_version: str = "1"
 
 
+class VerifyCacheBackend(StrEnum):
+    """Verified-key cache storage backend."""
+
+    REDIS = "redis"
+    MEMORY = "memory"
+
+
+class AuthConfig(BaseModel):
+    """Organization API key authentication and rate limiting."""
+
+    enabled: bool = False
+    admin_api_key: str | None = None
+    key_pepper: str | None = None
+    verify_cache_enabled: bool = True
+    verify_cache_ttl_seconds: int = Field(default=60, ge=1, le=3600)
+    verify_cache_backend: VerifyCacheBackend = VerifyCacheBackend.REDIS
+    rate_limit_enabled: bool = True
+    rate_limit_requests: int = Field(default=1000, ge=1)
+    rate_limit_window_seconds: int = Field(default=60, ge=1)
+    rate_limit_fail_open: bool = False
+
+
 class ChatConfig(BaseModel):
     """Chat / RAG orchestration defaults."""
 
@@ -469,6 +491,7 @@ class Settings(BaseSettings):
     retrieval: RetrievalConfig = Field(default_factory=RetrievalConfig)
     llm: LLMConfig = Field(default_factory=LLMConfig)
     chat: ChatConfig = Field(default_factory=ChatConfig)
+    auth: AuthConfig = Field(default_factory=AuthConfig)
 
 
 @lru_cache
