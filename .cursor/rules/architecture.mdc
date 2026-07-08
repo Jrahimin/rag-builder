@@ -54,9 +54,11 @@ Build a modular, reusable AI platform rather than a single-purpose chatbot.
 
 ## Project-Scoped by Default
 
-**Project** is the central domain entity and the primary isolation boundary.
+**Project** is the central domain entity and the primary **data** isolation boundary.
 
-Every entity, query, job, and artifact is scoped by `project_id`. There is no global, unscoped data path. An optional `organization_id` may group Projects, but `project_id` is always mandatory.
+Every entity, query, job, and artifact is scoped by `project_id`. There is no global, unscoped data path.
+
+**Organization** is the **auth / tenant** boundary (ADR-012): Organization API keys authenticate callers; `projects.organization_id` scopes which Projects they may access. `project_id` remains mandatory on every data path; `organization_id` is required for auth when `APE_AUTH__ENABLED=true`.
 
 ---
 
@@ -297,7 +299,7 @@ Background jobs default to **Taskiq** (Redis-native, async-first, actively maint
 * Validate request using Pydantic
 * Validate response using Pydantic
 * Inject services with `Depends()`
-* Resolve and enforce `project_id` scope
+* Resolve and enforce `project_id` scope and `organization_id` access (`ensure_project_accessible`)
 * Return standardized `ApiResponse`
 
 ### Forbidden
@@ -341,6 +343,8 @@ Do **not** build a generic CRUD base class; reuse shared helpers via composition
 | `lifecycle_service.require_not_deleted` | block mutations on soft-deleted rows |
 | `lifecycle_service.soft_delete` | idempotent soft delete + persist |
 | `lifecycle_service.toggle_active_status` | flip `is_active` on mutable entities |
+
+**Auth cache invalidation (ADR-012):** after credential mutations commit, services publish auth domain events (`OrganizationAuthInvalidated`, `ApiKeyAuthInvalidated` in `platform/auth/events.py`) via `AuthEventPublisher` — never call `VerifiedKeyCache` directly from module services. Composition wires `VerifiedKeyCacheEventHandler` in `dependencies/organizations.py`.
 
 **Active-status API:** expose `PATCH /{id}/status` with **no request body**; each
 call toggles the stored `is_active` value. Do not accept `is_active` in the
@@ -729,26 +733,25 @@ Worker
 
 ## Hybrid Retrieval
 
-**Target (production RAG):** vector-only search is not sufficient. The canonical
-pipeline is BM25 + vector search → RRF → reranker → context selection → LLM.
+**Production RAG path:** vector-only search is not sufficient. The canonical
+pipeline is BM25 + vector search -> RRF -> reranker -> context selection -> LLM.
 
-**Phase 1 baseline (ADR-007):** `modules/retrieval/` ships **semantic search only**
-(`SemanticRetriever` + `POST /search`) for integration and learning. Hybrid BM25,
-RRF, and reranker are **Retrieval v2** — the production upgrade path. Chat v1 may
-ship on the semantic baseline behind `RetrievalPort` (ADR-008); hybrid remains
-required for production-grade RAG quality.
+`modules/retrieval/` now ships both semantic search and hybrid retrieval. Hybrid
+BM25 + vector + RRF + reranker is the production path (ADR-009). Semantic search
+remains available as an explicit rollback/comparison strategy, not the target
+Chat path.
 
 ```
 Query
    │
-   ├── BM25                    ← Retrieval v2
-   └── Vector Search           ← Phase 1 baseline
+   ├── BM25
+   └── Vector Search
             │
             ▼
-      Reciprocal Rank Fusion    ← Retrieval v2
+      Reciprocal Rank Fusion
             │
             ▼
-         Reranker               ← Retrieval v2
+         Reranker
             │
             ▼
      Context Selection
@@ -859,6 +862,19 @@ Implement
 
 # 🔒 Security
 
+## Two isolation boundaries (Phase 1 auth)
+
+| Boundary | Scope | Enforced by |
+| -------- | ----- | ----------- |
+| **Organization** | Who is calling (tenant / M2M credential) | `require_organization_api_key` / `require_admin_api_key` in `dependencies/auth.py` |
+| **Project** | Which corpus (documents, search, chat) | `project_id` on ORM/repos/providers + `ensure_project_accessible` |
+
+Authentication is **Depends-only** — never parse credentials in middleware. Middleware may enrich logs from `request.state` after auth runs.
+
+Organization API keys: HMAC-SHA256 hash + deployment pepper; short-lived verified-key cache; org-scoped rate limiting. See ADR-012 and `docs/learning/organization-api-key-auth-journey.md`.
+
+---
+
 ## Project Isolation
 
 Every query, job, and stored artifact must be scoped by `project_id`. Retrieval queries must always include the Project (and any required metadata) as filters; providers translate these into vendor-specific syntax. No cross-Project data access is permitted.
@@ -925,9 +941,10 @@ Log:
 
 Apply limits by:
 
-* User
-* Project
-* API Key
+* Organization (primary — Phase 1 API key auth; `organization_id`)
+* User (future)
+* Project (future burst control)
+* API Key (future per-key quotas)
 
 ---
 
@@ -1027,6 +1044,8 @@ backend/app/
 ├── dependencies/   # FastAPI DI factories (composition only)
 ├── core/           # Cross-cutting (config, logging, exceptions)
 ├── platform/       # Shared kernel (db, infra, persistence, jobs, http)
+│   ├── auth/       # Auth contracts + domain events (cache invalidation)
+│   └── infra/auth/ # Verified-key cache, rate limiter, event handlers
 └── modules/        # Feature vertical slices (no HTTP wiring, no ORM models)
 ```
 
@@ -1060,9 +1079,11 @@ Enforced by `tests/architecture/test_import_boundaries.py`.
 ## Planned modules (bounded contexts)
 
 ```text
-modules/projects/ modules/knowledge/ modules/retrieval/
-modules/conversations/ modules/evaluation/
+modules/projects/ modules/organizations/ modules/knowledge/
+modules/retrieval/ modules/conversations/ modules/evaluation/
 ```
+
+**Organizations** owns tenant CRUD and API key lifecycle; auth verification lives in `dependencies/auth.py` + `platform/auth/`.
 
 Provider **implementations** live in `platform/providers/implementations/`, not
 inside feature modules.
@@ -1104,8 +1125,8 @@ Never embed prompts directly inside business logic.
 ## ❌ Vector-only Retrieval (production RAG)
 
 Production RAG paths (e.g. Chat) must use hybrid retrieval (BM25 + vector + RRF +
-reranker). Phase 1 ships a **semantic baseline** only (ADR-007); do not treat it
-as the final production search path.
+reranker). Semantic-only retrieval is acceptable only as an explicit fallback,
+debugging, or comparison strategy.
 
 ---
 

@@ -4,7 +4,7 @@ Project-scoped RAG chat: retrieve context → build prompt → LLM → grounded 
 
 ## Purpose
 
-Complete the RAG user journey on top of the retrieval semantic baseline. Conversations are stateful; messages persist with durable citation snapshots and execution diagnostics.
+Complete the RAG user journey on top of the retrieval pipeline. Conversations are stateful; messages persist with durable citation snapshots and execution diagnostics. Chat uses `RetrievalPort`, so it can consume the configured retrieval strategy without importing retrieval module internals.
 
 ## Architecture
 
@@ -69,12 +69,12 @@ See [conversation API reference](../api/conversation_api.md).
 | -------- | --------- |
 | Per-conversation LLM snapshot | Reproducible turns; provider resolved per conversation at chat time |
 | Tx1/Tx2 split | Avoid holding DB transactions during retrieval/LLM (ADR-008) |
-| Semantic baseline via port | Retrieval v2 swaps adapter only |
+| Retrieval through port | Chat stays decoupled from retrieval internals while supporting hybrid search |
 | Messages kept on soft-delete | Audit/history without hard-delete cascade |
 
 ## Production note
 
-Chat v1 uses **semantic retrieval** via `RetrievalPort`. Hybrid retrieval (Retrieval v2) is a drop-in adapter upgrade (ADR-008).
+Chat uses the configured retrieval strategy through `RetrievalPort`. Hybrid retrieval (BM25 + vector + RRF + reranker) is the production path; semantic search remains available as an explicit rollback or comparison strategy.
 
 ## Testing strategy
 
@@ -84,7 +84,6 @@ Chat v1 uses **semantic retrieval** via `RetrievalPort`. Hybrid retrieval (Retri
 
 ## Future improvements
 
-- Retrieval v2 hybrid adapter
 - Auth/RBAC and rate limiting
 - Token accounting on streamed turns
 - Langfuse tracing

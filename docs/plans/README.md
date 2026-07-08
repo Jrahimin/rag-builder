@@ -9,6 +9,7 @@ design document written before implementation begins.
 | [knowledge_module_plan.md](./knowledge_module_plan.md) | Complete | Knowledge — upload → parse → chunk (v1 at `chunked`) |
 | [retrieval_module_plan.md](./retrieval_module_plan.md) | Complete | Retrieval — embed → index (Qdrant) → semantic search (v1 at `ready`) |
 | [conversation_module_plan.md](./conversation_module_plan.md) | Complete | Chat — RAG generation, stateful conversations, SSE streaming |
+| [organization_auth_module_plan.md](./organization_auth_module_plan.md) | Complete | Organization API key auth, multi-key rotation, verified-key cache, Redis rate limiting |
 
 Plans are superseded by `docs/features/` once a capability ships.
 

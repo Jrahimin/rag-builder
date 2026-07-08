@@ -25,11 +25,13 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.health import router as health_router
 from app.api.v1.router import api_v1_router
+from app.core.auth_config_validation import validate_auth_config
 from app.core.config import Settings, get_settings
 from app.core.exception_handlers import register_exception_handlers
 from app.core.logging import configure_logging, get_logger
 from app.core.middleware import RequestContextMiddleware
 from app.platform.db.session import Database
+from app.platform.http.openapi_security import configure_openapi_security
 from app.platform.infra.connectivity.qdrant import QdrantConnectivity
 from app.platform.infra.connectivity.redis import RedisConnectivity
 
@@ -95,6 +97,7 @@ async def _probe_dependencies(app: FastAPI) -> None:
 def create_app(settings: Settings | None = None) -> FastAPI:
     """Build and configure a FastAPI application instance."""
     settings = settings or get_settings()
+    validate_auth_config(settings)
     configure_logging(settings)
 
     app = FastAPI(
@@ -120,6 +123,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.add_middleware(RequestContextMiddleware)
 
     register_exception_handlers(app)
+    configure_openapi_security(app)
 
     app.include_router(health_router)
     app.include_router(api_v1_router, prefix=settings.app.api_v1_prefix)

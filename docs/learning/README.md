@@ -1,6 +1,6 @@
 # Learning Documentation
 
-
+> **Platform overview (all audiences):** [../Platform-at-a-glance.md](../Platform-at-a-glance.md)
 
 A learning-first knowledge base built alongside the platform. The goal is to
 
@@ -75,6 +75,38 @@ Documents explaining what was built in the platform foundation:
 For request flow and layering, see
 
 [docs/architecture/module-architecture.md](../architecture/module-architecture.md).
+
+
+
+---
+
+
+
+## Authentication & tenant isolation
+
+
+
+**Read in this order** for Organization API key auth (M2M, tenant boundary, project scoping):
+
+
+
+| # | Document | What you learn |
+
+| - | -------- | -------------- |
+
+| 1 | [**Organization API key auth journey**](./organization-api-key-auth-journey.md) | **Start here** — concepts, credential tiers, request/authz flow, key lifecycle, domain events, security rationale |
+
+| 2 | [Entity lifecycle and reusability](./entity-lifecycle-and-reusability.md) | Shared CRUD patterns used by Organization and Project |
+
+| 3 | [Configuration system](./configuration-system.md) | `APE_AUTH__*` settings and environment precedence |
+
+
+
+Code lives under `backend/app/dependencies/auth.py`, `modules/organizations/`, `platform/auth/`, `platform/domain/api_key_crypto.py`, `platform/infra/auth/`.
+
+
+
+Feature doc: [organization_module.md](../features/organization_module.md) · API: [organization_api.md](../api/organization_api.md) · ADR: [012](../architecture/adr/012-organization-api-key-auth.md)
 
 
 
@@ -185,7 +217,7 @@ AI and platform capabilities as they are implemented:
 
 
 
-- Hybrid retrieval (BM25 + vector + RRF + reranking) — Retrieval v2 (ADR-007)
+- Hybrid retrieval (BM25 + vector + RRF + reranking) — shipped production retrieval path (ADR-009)
 
 - Provider abstraction and vendor independence
 

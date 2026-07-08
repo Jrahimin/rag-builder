@@ -9,11 +9,10 @@ from fastapi import Depends, Path
 
 from app.core.config import get_settings
 from app.dependencies.common import DbSessionDep
-from app.dependencies.projects import ensure_project_exists, get_project_repository
+from app.dependencies.projects import noop_ensure_project
 from app.models.document import Document
 from app.modules.knowledge.repositories.document_repository import DocumentRepository
 from app.modules.knowledge.services.document_service import DocumentService
-from app.modules.projects.repositories.project_repository import ProjectRepository
 from app.modules.retrieval.services.retrieval_cleanup_service import RetrievalCleanupService
 from app.platform.jobs.contracts import JobQueue
 from app.platform.jobs.implementations.job_queue_factory import get_job_queue
@@ -40,15 +39,11 @@ def get_job_queue_dep() -> JobQueue:
 def get_document_service(
     session: DbSessionDep,
     repository: Annotated[DocumentRepository, Depends(get_document_repository)],
-    project_repository: Annotated[ProjectRepository, Depends(get_project_repository)],
     storage: Annotated[BaseStorageProvider, Depends(get_storage)],
     job_queue: Annotated[JobQueue, Depends(get_job_queue_dep)],
 ) -> DocumentService:
     settings = get_settings()
     project_id = repository.project_id
-
-    async def ensure_project() -> None:
-        await ensure_project_exists(project_repository, project_id)
 
     cleanup = RetrievalCleanupService(
         session=session,
@@ -64,7 +59,7 @@ def get_document_service(
         repository=repository,
         storage=storage,
         job_queue=job_queue,
-        ensure_project=ensure_project,
+        ensure_project=noop_ensure_project,
         max_upload_bytes=settings.knowledge.max_upload_bytes,
         on_document_delete=on_document_delete,
     )

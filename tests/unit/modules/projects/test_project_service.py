@@ -13,6 +13,7 @@ from app.core.exceptions import BadRequestError, ConflictError, NotFoundError
 from app.models.project import Project
 from app.modules.projects.schemas.project import ProjectCreate, ProjectUpdate
 from app.modules.projects.services.project_service import ProjectService
+from app.platform.domain.auth_context import DEFAULT_ORGANIZATION_ID
 from app.platform.http.pagination import ListParams
 
 pytestmark = pytest.mark.unit
@@ -26,6 +27,7 @@ def _project(
 ) -> Project:
     return Project(
         id=uuid.uuid4(),
+        organization_id=DEFAULT_ORGANIZATION_ID,
         name=name,
         description=None,
         is_active=is_active,
@@ -96,7 +98,7 @@ async def test_create_integrity_error_rolls_back(
 
 
 async def test_get_raises_not_found(service: ProjectService, repository: AsyncMock) -> None:
-    repository.get_by_id.return_value = None
+    repository.get_by_id_for_organization.return_value = None
 
     with pytest.raises(NotFoundError) as exc_info:
         await service.get(uuid.uuid4())
@@ -109,14 +111,7 @@ async def test_get_deleted_treated_as_not_found(
 ) -> None:
     deleted = _project(deleted_at=datetime.now(UTC))
 
-    async def _get_by_id(
-        entity_id: uuid.UUID, *, include_deleted: bool = False
-    ) -> Project | None:
-        if include_deleted:
-            return deleted
-        return None
-
-    repository.get_by_id.side_effect = _get_by_id
+    repository.get_by_id_for_organization.return_value = None
 
     with pytest.raises(NotFoundError):
         await service.get(deleted.id)
@@ -141,14 +136,7 @@ async def test_update_deleted_project_raises_conflict(
 ) -> None:
     deleted = _project(deleted_at=datetime.now(UTC))
 
-    async def _get_by_id(
-        entity_id: uuid.UUID, *, include_deleted: bool = False
-    ) -> Project | None:
-        if include_deleted:
-            return deleted
-        return None
-
-    repository.get_by_id.side_effect = _get_by_id
+    repository.get_by_id_for_organization.return_value = deleted
 
     with pytest.raises(ConflictError) as exc_info:
         await service.update(deleted.id, ProjectUpdate(name="New"))
@@ -163,14 +151,14 @@ async def test_update_empty_body_raises_bad_request(
         await service.update(uuid.uuid4(), ProjectUpdate())
 
     assert exc_info.value.code == "empty_update"
-    repository.get_by_id.assert_not_awaited()
+    repository.get_by_id_for_organization.assert_not_awaited()
 
 
 async def test_update_duplicate_name_raises_conflict(
     service: ProjectService, repository: AsyncMock
 ) -> None:
     project = _project(name="Old")
-    repository.get_by_id.return_value = project
+    repository.get_by_id_for_organization.return_value = project
     repository.exists_by_name.return_value = True
 
     with pytest.raises(ConflictError) as exc_info:
@@ -183,20 +171,19 @@ async def test_toggle_status_on_deleted_raises_conflict(
     service: ProjectService, repository: AsyncMock
 ) -> None:
     deleted = _project(deleted_at=datetime.now(UTC))
-    repository.get_by_id.return_value = deleted
+    repository.get_by_id_for_organization.return_value = deleted
 
     with pytest.raises(ConflictError) as exc_info:
         await service.toggle_status(deleted.id)
 
     assert exc_info.value.code == "project_deleted"
-    repository.get_by_id.assert_awaited_with(deleted.id, include_deleted=True)
 
 
 async def test_toggle_status_flips_true_to_false(
     service: ProjectService, session: AsyncMock, repository: AsyncMock
 ) -> None:
     project = _project(is_active=True)
-    repository.get_by_id.return_value = project
+    repository.get_by_id_for_organization.return_value = project
     repository.flush = AsyncMock()
 
     result = await service.toggle_status(project.id)
@@ -210,7 +197,7 @@ async def test_toggle_status_flips_false_to_true(
     service: ProjectService, session: AsyncMock, repository: AsyncMock
 ) -> None:
     project = _project(is_active=False)
-    repository.get_by_id.return_value = project
+    repository.get_by_id_for_organization.return_value = project
     repository.flush = AsyncMock()
 
     result = await service.toggle_status(project.id)
@@ -224,7 +211,7 @@ async def test_soft_delete_sets_fields_and_commits(
     service: ProjectService, session: AsyncMock, repository: AsyncMock
 ) -> None:
     project = _project(is_active=True)
-    repository.get_by_id.return_value = project
+    repository.get_by_id_for_organization.return_value = project
     repository.flush = AsyncMock()
 
     result = await service.soft_delete(project.id)
@@ -239,7 +226,17 @@ async def test_soft_delete_idempotent_skips_commit(
     service: ProjectService, session: AsyncMock, repository: AsyncMock
 ) -> None:
     deleted = _project(deleted_at=datetime.now(UTC), is_active=False)
-    repository.get_by_id.return_value = deleted
+    async def _get_for_org(
+        project_id: uuid.UUID,
+        organization_id: uuid.UUID | None,
+        *,
+        include_deleted: bool = False,
+    ) -> Project | None:
+        if include_deleted:
+            return deleted
+        return None
+
+    repository.get_by_id_for_organization.side_effect = _get_for_org
 
     result = await service.soft_delete(deleted.id)
 

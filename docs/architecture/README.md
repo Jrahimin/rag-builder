@@ -2,6 +2,9 @@
 
 Authoritative technical reference for **how** the AI Platform Engine (APE) is built.
 
+> **New here?** Start with the cross-audience platform overview: [../Platform-at-a-glance.md](../Platform-at-a-glance.md).
+> **Integrating APE?** See [../platform-integration-guide.md](../platform-integration-guide.md).
+
 ## Start here
 
 | Document | Description |
@@ -14,7 +17,8 @@ Authoritative technical reference for **how** the AI Platform Engine (APE) is bu
 | Concern | Document |
 | ------- | -------- |
 | Module layout & imports | [module-architecture.md](./module-architecture.md) |
-| Project ownership | [domain-ownership.md](./domain-ownership.md) |
+| Project & Organization ownership | [domain-ownership.md](./domain-ownership.md) |
+| Organization API key auth | [adr/012-organization-api-key-auth.md](./adr/012-organization-api-key-auth.md) · [learning journey](../learning/organization-api-key-auth-journey.md) |
 | Provider interfaces | [provider-architecture.md](./provider-architecture.md) |
 | Configuration hierarchy | [configuration-architecture.md](./configuration-architecture.md) |
 | Background jobs | [background-processing.md](./background-processing.md) |

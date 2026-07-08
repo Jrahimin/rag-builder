@@ -4,6 +4,10 @@ This document explains how **ORM mixins**, **repository bases**, and **service
 helpers** work together in APE. It uses the **Projects** module as a concrete
 example so you can follow a real request from HTTP to PostgreSQL.
 
+The **Organizations** module reuses the same lifecycle helpers (`toggle_active_status`,
+`soft_delete`, `flush_commit_refresh`) and adds **auth domain events** after
+credential-affecting commits — see [organization-api-key-auth-journey.md](./organization-api-key-auth-journey.md).
+
 For layering rules see [module-architecture.md](../architecture/module-architecture.md).
 For database sessions and Alembic see [database-and-migrations.md](./database-and-migrations.md).
 
@@ -445,7 +449,8 @@ repository and `commit` in the service operate on the **same transaction**.
 | `platform/domain/lifecycle_service.py` | shared read/lifecycle orchestration |
 | `platform/domain/transactions.py` | flush / commit / refresh |
 | `platform/http/pagination.py` | `ListParams`, `PaginatedResult` |
-| `modules/projects/` | reference implementation |
+| `modules/projects/` | reference implementation (data aggregate) |
+| `modules/organizations/` | same lifecycle helpers + auth event publish after revoke/toggle |
 | `docs/api/project_api.md` | HTTP samples for Postman |
 
 ---

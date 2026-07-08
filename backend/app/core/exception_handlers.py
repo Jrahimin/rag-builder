@@ -13,7 +13,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from app.core.exceptions import APEError
+from app.core.exceptions import APEError, RateLimitError, UnauthorizedError
 from app.core.http.envelopes import ErrorDetail, ErrorInfo, ErrorResponse
 from app.core.logging import get_logger
 
@@ -65,13 +65,18 @@ async def _handle_ape_error(request: Request, exc: APEError) -> JSONResponse:
         error=exc.message,
         **exc.context,
     )
-    return _build_response(
+    response = _build_response(
         request=request,
         status_code=exc.status_code,
         code=exc.code,
         message=exc.message,
         details=exc.details,
     )
+    if isinstance(exc, RateLimitError):
+        response.headers["Retry-After"] = str(exc.retry_after_seconds)
+    if exc.status_code == status.HTTP_401_UNAUTHORIZED or isinstance(exc, UnauthorizedError):
+        response.headers["WWW-Authenticate"] = 'Bearer realm="APE"'
+    return response
 
 
 def _validation_field_path(loc: tuple[object, ...]) -> str:

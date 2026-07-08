@@ -87,6 +87,30 @@ class ValidationError(APEError):
     message = "The request failed validation."
 
 
+class RateLimitError(APEError):
+    status_code = 429
+    code = "rate_limited"
+    message = "Rate limit exceeded."
+
+    def __init__(
+        self,
+        message: str | None = None,
+        *,
+        retry_after_seconds: int,
+        code: str | None = None,
+        details: list[ErrorDetail] | None = None,
+        context: dict[str, Any] | None = None,
+    ) -> None:
+        self.retry_after_seconds = retry_after_seconds
+        super().__init__(
+            message,
+            code=code,
+            status_code=429,
+            details=details,
+            context=context,
+        )
+
+
 class ServiceUnavailableError(APEError):
     status_code = 503
     code = "service_unavailable"

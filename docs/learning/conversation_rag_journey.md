@@ -10,7 +10,7 @@ Start here for the **full chat picture**: how a user question becomes a grounded
 
 1. Client creates a **conversation** (optional title; model config snapshotted on the row).
 2. Client sends a **user message** → API persists it immediately (**Tx1 commit**) so the turn survives LLM failures.
-3. `ChatService` retrieves ranked chunks via **`RetrievalPort`** (adapter over semantic search today).
+3. `ChatService` retrieves ranked chunks via **`RetrievalPort`** (adapter over the configured retrieval strategy).
 4. **`ContextBuilder`** dedupes and trims chunks to budget; **`PromptBuilder`** formats system + context + history + question.
 5. **`BaseLLMProvider`** generates the answer (OpenAI, Gemini, Ollama, echo — same call shape for all).
 6. **`build_citation_snapshots`** maps selected chunks to durable citation JSONB; assistant row persisted (**Tx2 commit**).
@@ -65,7 +65,7 @@ sequenceDiagram
 | **Context chunk** | One searchable text segment from a document, with score and metadata |
 | **Citation snapshot** | Frozen copy of what the model saw (`chunk_hash`, excerpt) — survives re-indexing |
 | **Tx1 / Tx2** | Two database commits per turn; user saved before slow LLM I/O |
-| **Semantic retrieval** | Vector similarity search (Phase 1 baseline); hybrid is Retrieval v2 |
+| **Hybrid retrieval** | BM25 + vector candidates, RRF fusion, and reranking through the retrieval module |
 
 ---
 
@@ -73,13 +73,13 @@ sequenceDiagram
 
 ### Module boundary: `RetrievalPort` not `SearchService`
 
-`modules/conversations/` must not import `modules/retrieval/`. The composition layer (`dependencies/conversations.py`) adapts `SearchService` → `RetrievalPort`. When hybrid retrieval ships, only the adapter changes.
+`modules/conversations/` must not import `modules/retrieval/`. The composition layer (`dependencies/conversations.py`) adapts `SearchService` → `RetrievalPort`, keeping chat independent from retrieval internals.
 
 ### Split: ContextBuilder vs PromptBuilder vs citations
 
 | Piece | Job |
 | ----- | --- |
-| **Retrieval** | Rank chunks (semantic today; hybrid later) |
+| **Retrieval** | Rank chunks using the configured strategy, with hybrid as the production path |
 | **ContextBuilder** | Dedupe + char/chunk budgets only |
 | **PromptBuilder** | Format messages for the LLM |
 | **build_citation_snapshots** | Persistence shape for assistant row |

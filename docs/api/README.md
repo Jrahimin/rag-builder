@@ -2,7 +2,11 @@
 
 Concise endpoint reference for Postman collection preparation. OpenAPI (`/docs`) is the live contract.
 
-**Base URL (local):** `http://localhost:8000`
+> **Integrating APE into your application?** Start with the
+> [Platform Integration Guide](../platform-integration-guide.md) — step-by-step flow,
+> auth, polling, and copy-paste examples. Use this folder as the endpoint cheat sheet.
+
+**Base URL (local):** `http://localhost:8000` (Docker) or `http://localhost:8088` (venv)
 
 ## Response envelope
 
@@ -36,6 +40,7 @@ Error:
 | Module | File | Prefix |
 | ------ | ---- | ------ |
 | System | [system_api.md](system_api.md) | `/health`, `/ready` |
+| Organizations | [organization_api.md](organization_api.md) | `/api/v1/organizations` |
 | Projects | [project_api.md](project_api.md) | `/api/v1/projects` |
 | Knowledge | [knowledge_api.md](knowledge_api.md) | `/api/v1/projects/{project_id}/documents` |
 | Retrieval | [retrieval_api.md](retrieval_api.md) | `/api/v1/projects/{project_id}` (search, embed, index on documents prefix) |

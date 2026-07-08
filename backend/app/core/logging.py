@@ -101,9 +101,20 @@ def get_logger(name: str | None = None) -> structlog.stdlib.BoundLogger:
     return structlog.stdlib.get_logger(name)
 
 
-def bind_request_context(*, request_id: str, trace_id: str) -> None:
+def bind_request_context(
+    *,
+    request_id: str,
+    trace_id: str,
+    organization_id: str | None = None,
+) -> None:
     """Bind per-request identifiers to the logging context."""
-    structlog.contextvars.bind_contextvars(**{_REQUEST_ID_KEY: request_id, _TRACE_ID_KEY: trace_id})
+    context: dict[str, str] = {
+        _REQUEST_ID_KEY: request_id,
+        _TRACE_ID_KEY: trace_id,
+    }
+    if organization_id is not None:
+        context["organization_id"] = organization_id
+    structlog.contextvars.bind_contextvars(**context)
 
 
 def clear_request_context() -> None:

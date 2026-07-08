@@ -12,7 +12,8 @@ Binding rules: `.cursor/rules/architecture.mdc`, `.cursor/rules/project-context.
 | Document | Topic |
 | -------- | ----- |
 | **[Module architecture](./module-architecture.md)** | Canonical repo layout, dependency rules, composition root |
-| [Domain ownership](./domain-ownership.md) | Project-centric aggregate, resource scopes |
+| [Domain ownership](./domain-ownership.md) | Project data scope + Organization auth scope |
+| [Organization API key auth (ADR-012)](./adr/012-organization-api-key-auth.md) | M2M credentials, Depends-only auth, cache, rate limits |
 | [Provider architecture](./provider-architecture.md) | Interfaces, SDK isolation, error taxonomy |
 | [Configuration architecture](./configuration-architecture.md) | Deployment / platform / project config |
 | [Background processing](./background-processing.md) | Jobs, queue, worker boundaries |
@@ -39,11 +40,38 @@ Business Application
    PostgreSQL   Redis    Qdrant    MinIO
 ```
 
-**Project** is the isolation boundary for all business data (`project_id`).
+**Project** is the isolation boundary for business data (`project_id`). **Organization** is the auth / tenant boundary when `APE_AUTH__ENABLED=true` (ADR-012).
 
 ---
 
-## Request lifecycle
+## Authenticated request lifecycle
+
+Business routes (`/api/v1/projects/**` and nested modules) depend on `require_organization_api_key` before handlers run. Middleware assigns correlation IDs only — it does not parse API keys.
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant MW as core/middleware
+    participant Auth as dependencies/auth
+    participant Guard as ensure_project_accessible
+    participant API as api/router
+    participant Svc as modules/.../services
+
+    Client->>MW: HTTP + API key
+    MW->>Auth: Depends (verify key, cache, rate limit)
+    Auth->>Guard: AuthenticatedOrganization
+    Guard->>API: project belongs to org
+    API->>Svc: injected service
+    Svc-->>Client: ApiResponse envelope
+```
+
+Admin routes (`/api/v1/organizations/**`) use `require_admin_api_key` instead. Public: `GET /health`, `GET /ready`.
+
+Detail: [organization-api-key-auth-journey.md](../learning/organization-api-key-auth-journey.md).
+
+---
+
+## Request lifecycle (unauthenticated / health)
 
 ```mermaid
 sequenceDiagram

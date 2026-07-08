@@ -1,266 +1,233 @@
 # AI Platform Engine (APE)
 
-> A deployable, provider-agnostic AI infrastructure platform exposed as
-> Project-scoped REST APIs.
+> A self-hosted, provider-agnostic RAG platform for enterprise applications.
+> Bring your documents, keep your infrastructure, expose the AI layer through
+> clean Project-scoped REST APIs.
 
 [![Python](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-async-009688.svg)](https://fastapi.tiangolo.com/)
 [![Ruff](https://img.shields.io/badge/lint-ruff-D7FF64.svg)](https://docs.astral.sh/ruff/)
+[![Docker](https://img.shields.io/badge/docker-compose-2496ED.svg)](https://docs.docker.com/compose/)
 [![License](https://img.shields.io/badge/license-Proprietary-lightgrey.svg)](#)
+
+**Start here:** [Platform Integration Guide](docs/platform-integration-guide.md) ·
+[Platform at a Glance](docs/Platform-at-a-glance.md) ·
+[API reference](docs/api/README.md) ·
+[Architecture](docs/architecture/README.md) ·
+[Features](docs/features/README.md)
 
 ---
 
-## Overview
+## What Is APE?
 
-AI Platform Engine (APE) is a production-grade, modular AI platform designed to
-integrate with enterprise applications as an independent, self-hosted
-microservice. Instead of baking AI capabilities into each business
-application, APE provides reusable AI infrastructure through well-defined APIs.
-
-Each customer deploys their own APE instance alongside their application with
-complete ownership of their infrastructure, data, models, and configuration. It
-is **domain-agnostic** — there is no business-specific logic — so it can be
-reused across DMS, tax/audit, ERP, HRMS, legal, financial research, and
-internal knowledge-base systems.
-
-> **Status:** Phase 1 in progress — **Project Management**, **Knowledge** (upload →
-> parse → chunk), **Retrieval** (embed → index → semantic search baseline), and
-> **Conversations** (RAG chat on semantic baseline, ADR-008) are shipped. See
-> [docs/features/](docs/features/).
-
-## Vision
-
-Build a deployable, provider-agnostic AI platform that lets enterprise
-applications add modern AI capabilities without implementing AI infrastructure
-themselves. Applications talk only to APE's APIs while the platform manages the
-full AI lifecycle internally — ingestion, storage, parsing, chunking,
-embeddings, retrieval, chat, evaluation, and observability.
-
-Guiding principles: **reusability, provider independence, deployability, data
-isolation, production readiness, observability, security, and cost
-transparency.**
-
-## Architecture Summary
-
-APE follows a strict, layered architecture with clear separation of concerns:
+AI Platform Engine is a modular AI infrastructure service that sits beside a
+business application. The application keeps the product experience; APE handles
+the RAG lifecycle behind stable APIs:
 
 ```text
-                Client
-                  │
-                  ▼
-     Router Layer (api/v1/routes/)     HTTP validation, serialization, DI
-                  │
-                  ▼
-     Service Layer (modules/.../services/)   orchestration, transactions
-             │            │
-             │            ▼
-             │     Repository Layer (ProjectScopedRepository)
-             │
-             ▼
-      Infrastructure Providers (platform/providers/implementations/)
-      └── Vector Store, Storage, Embeddings, Document Parsers, ...
+Organization key -> Project -> Upload -> Parse -> Chunk -> Embed -> Index -> Search -> Chat
 ```
 
-Key foundations:
+APE is built for private deployments and enterprise integration. It is useful
+when you want document intelligence, search, chat, citations, and future AI
+workflows without binding your product to a single AI vendor or hosted platform.
 
-- **Composition root** — `api/`, `dependencies/`, `composition/` wire HTTP and ORM discovery; modules do not import `dependencies/`.
-- **Application factory** (`create_app`) + ASGI entrypoint (`app.main:app`).
-- **API versioning** under `/api/v1` (system probes stay unversioned).
-- **Environment-driven configuration** via Pydantic Settings.
-- **Structured logging** with per-request `request_id` / `trace_id`.
-- **Lifespan-managed infrastructure** (PostgreSQL, Redis, Qdrant connectivity adapters).
-- **Global exception handling** with standard error envelope.
-- **Async SQLAlchemy 2.x + Alembic** with composition-level ORM registry.
-- **Health & readiness** endpoints.
-- **Import boundary tests** enforcing documented dependency rules.
+Phase 1 now includes the full end-to-end core journey: Organizations and API
+keys, Projects, Knowledge ingestion, hybrid Retrieval, and Conversations with
+grounded answers.
 
-Core principle: **Project is the unit of isolation.** `ProjectScopedRepository`
-requires `project_id` on every query (business entities ship with the Projects module).
+---
 
-## Technology Stack
+## What Ships Today
 
-| Component        | Technology                                   |
-| ---------------- | -------------------------------------------- |
-| Language         | Python 3.12                                  |
-| Web framework    | FastAPI (async) + Uvicorn                    |
-| Validation       | Pydantic v2 / Pydantic Settings              |
-| Database         | PostgreSQL + SQLAlchemy 2.x (async, asyncpg) |
-| Migrations       | Alembic (async)                              |
-| Vector DB        | Qdrant                                       |
-| Cache / queue    | Redis                                        |
-| Object storage   | MinIO (S3-compatible)                        |
-| Logging          | structlog (JSON or console)                  |
-| Tooling          | Ruff, Pytest, Mypy, pre-commit               |
-| Containerization | Docker + Docker Compose                      |
+| Area | What it provides |
+| ---- | ---------------- |
+| Organizations and API keys | Tenant boundary, admin bootstrap, M2M auth, org-scoped rate limiting |
+| Projects | Data isolation boundary for documents, search, embeddings, and chat |
+| Knowledge | Upload, storage, parsing, optional OCR, structure-aware chunking |
+| Retrieval | Embeddings, Qdrant indexing, keyword indexing, hybrid search, reranking |
+| Conversations | Stateful RAG chat, citation snapshots, SSE streaming |
+| Operations | Docker Compose, Alembic migrations, health/readiness probes, structured logs |
 
-## Folder Structure
+Read the richer product tour in
+[docs/Platform-at-a-glance.md](docs/Platform-at-a-glance.md).
+
+---
+
+## Architecture In One Screen
 
 ```text
-.
-├── backend/                # Self-contained Python API service
-│   ├── app/
-│   │   ├── composition/    # ORM registry (Alembic model discovery)
-│   │   ├── api/            # HTTP composition (health + /api/v1 + routes/)
-│   │   ├── dependencies/   # FastAPI DI (composition only)
-│   │   ├── core/           # Config, logging, middleware, exceptions
-│   │   ├── platform/       # Shared kernel (db, infra, persistence, jobs)
-│   │   ├── modules/        # Feature vertical slices (bounded contexts)
-│   │   └── main.py         # Application factory + ASGI entrypoint
-│   ├── requirements/       # Pinned dependencies (base, dev, prod)
-│   ├── alembic.ini
-│   ├── .env.example        # Local venv config template (copy to .env)
-│   ├── Dockerfile
-│   └── venv/               # Local virtual environment (gitignored)
-├── .env.docker.example     # Docker / full-stack config template (copy to .env.docker)
-├── tests/
-│   └── architecture/       # Import boundary enforcement
-├── docs/
-│   ├── architecture/       # Canonical architecture guides + ADRs
-│   ├── features/           # Per-feature reference docs
-│   └── learning/           # Foundation deep-dives
+Business application
+        |
+        | REST + API key
+        v
+api/v1/routes/              HTTP validation, response models, Depends
+        |
+        v
+modules/<feature>/services/ Business orchestration and transactions
+        |
+        +--> repositories/   PostgreSQL persistence
+        |
+        +--> providers/      LLM, embeddings, vector store, storage, OCR
 ```
 
-## Prerequisites
+APE uses a modular architecture with strict boundaries:
 
-- **Python 3.12+**
-- **Docker** & **Docker Compose v2** (for the full local stack)
-- **Git**
+- `Project` is the data isolation boundary.
+- `Organization` is the auth and tenant boundary.
+- Vendor SDKs stay behind provider interfaces.
+- Long-running AI work runs through background workers.
+- API routes are versioned under `/api/v1`.
 
-## Installation
+Canonical details live in
+[docs/architecture/module-architecture.md](docs/architecture/module-architecture.md).
+
+---
+
+## Quick Start: Full Docker Stack
+
+Use this when you want the closest "live stack" experience on one machine.
+Docker starts the API, worker, PostgreSQL, Redis, Qdrant, MinIO, and the MinIO
+bucket bootstrap.
 
 ```bash
-# 1. Clone
 git clone <repository-url> rag-builder
-cd rag-builder/backend
+cd rag-builder
 
-# 2. Create & activate a virtual environment
-python -m venv venv
-# macOS / Linux:
-source venv/bin/activate
-# Windows (PowerShell):
-.\venv\Scripts\Activate.ps1
-
-# 3. Install development dependencies
-pip install -r requirements/dev.txt
-
-# 4. Create your local env file (from backend/)
-cp .env.example .env          # macOS/Linux
-# Copy-Item .env.example .env  # Windows PowerShell
-```
-
-## Local Development
-
-Run the API from `backend/` after migrations. Two equivalent ways to start
-uvicorn — pick whichever fits your workflow:
-
-```bash
-cd backend
-alembic upgrade head
-
-# Option A — shortcut; reads APE_SERVER__HOST, APE_SERVER__PORT, APE_SERVER__RELOAD
-#            from backend/.env (default port 8088 in .env.example)
-python -m app
-
-# Option B — explicit uvicorn; host and port on the command line
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8088 --reload-dir app
-```
-
-**Without Docker:** use your own local PostgreSQL (and optionally Redis/Qdrant).
-The API starts even when Redis/Qdrant are down; `/ready` reports degraded until
-they are available.
-
-**With Docker for infrastructure only** (API still in venv), from repo root:
-
-```bash
-cp .env.docker.example .env.docker   # first time only
-docker compose --env-file .env.docker up -d postgres redis qdrant minio
-```
-
-**Full stack in Docker** (from repo root):
-
-```bash
-cp .env.docker.example .env.docker   # first time only
-docker compose --env-file .env.docker up --build -d
-```
-
-## Docker Setup
-
-The entire stack — **FastAPI + PostgreSQL + Redis + Qdrant + MinIO** — starts
-with a single command. Migrations run automatically before the API boots.
-
-```bash
-cp .env.docker.example .env.docker   # first time only
+cp .env.docker.example .env.docker
 docker compose --env-file .env.docker up --build
 ```
 
-| Service        | URL / Endpoint (host port from `.env.docker`; default 8088) |
-| -------------- | ----------------------------------------------------------- |
-| API            | http://localhost:8088                                       |
-| API docs       | http://localhost:8088/docs                                  |
-| Liveness       | http://localhost:8088/health                                |
-| Readiness      | http://localhost:8088/ready                                 |
-| Qdrant         | http://localhost:6333/dashboard         |
-| MinIO console  | http://localhost:9001                   |
+Windows PowerShell:
 
-Useful commands:
+```powershell
+git clone <repository-url> rag-builder
+cd rag-builder
+
+Copy-Item .env.docker.example .env.docker
+docker compose --env-file .env.docker up --build
+```
+
+Default Docker endpoints:
+
+| Service | URL |
+| ------- | --- |
+| API | `http://localhost:8000` |
+| Swagger / OpenAPI | `http://localhost:8000/docs` |
+| Health | `http://localhost:8000/health` |
+| Readiness | `http://localhost:8000/ready` |
+| Qdrant dashboard | `http://localhost:6333/dashboard` |
+| MinIO console | `http://localhost:9001` |
+
+Useful Docker commands:
 
 ```bash
 docker compose --env-file .env.docker ps
 docker compose --env-file .env.docker logs -f backend
+docker compose --env-file .env.docker logs -f worker
 docker compose --env-file .env.docker down
+```
+
+To remove local volumes too:
+
+```bash
 docker compose --env-file .env.docker down -v
 ```
 
-## Running the Application
+---
 
-**Local venv** (default port `8088` in `backend/.env` / `.env.example`):
+## Quick Start: Local Backend
 
-- **API base:** `http://localhost:8088`
-- **Interactive docs (Swagger):** `http://localhost:8088/docs`
-- **OpenAPI schema:** `/openapi.json`
+Use this when you want fast backend iteration in a Python virtual environment.
+You can either run PostgreSQL, Redis, Qdrant, and MinIO yourself, or start only
+the infrastructure services with Docker.
 
-**Docker stack** — host port comes from `BACKEND_PORT` in `.env.docker`
-(default `8088` in `.env.docker.example`; container listens on 8000 internally).
-
-Health probes (adjust port if you overrode it):
+Start infrastructure from the repo root:
 
 ```bash
-curl http://localhost:8088/health   # liveness (always 200 while running)
-curl http://localhost:8088/ready    # readiness (200 healthy / 503 degraded)
+cp .env.docker.example .env.docker
+docker compose --env-file .env.docker up -d postgres redis qdrant minio minio-init
 ```
 
-Every response carries `X-Request-ID` and `X-Trace-ID` headers for end-to-end
-tracing; inbound values are honored if provided.
-
-## Running Tests
+Then run the backend locally:
 
 ```bash
-pytest                       # run the suite
-pytest --cov --cov-report=term-missing   # with coverage
-pytest -m unit               # only unit tests
-pytest -m integration        # only integration tests
-pytest -m architecture         # import boundary tests
+cd backend
+python -m venv venv
+source venv/bin/activate
+pip install -r requirements/dev.txt
+cp .env.example .env
+alembic upgrade head
+python -m app
 ```
 
-Tests run without any external services — the readiness checks report
-dependencies as "down" instead of failing. Bring the stack up to see them pass
-as healthy.
+Windows PowerShell:
 
-## Development Workflow
+```powershell
+cd backend
+python -m venv venv
+.\venv\Scripts\Activate.ps1
+pip install -r requirements/dev.txt
+Copy-Item .env.example .env
+alembic upgrade head
+python -m app
+```
 
-Run from the **repo root** (with `backend/venv` activated or tools on your PATH):
+Default local backend endpoints:
+
+| Surface | URL |
+| ------- | --- |
+| API | `http://localhost:8088` |
+| Swagger / OpenAPI | `http://localhost:8088/docs` |
+| Health | `http://localhost:8088/health` |
+| Readiness | `http://localhost:8088/ready` |
+
+`/health` tells you the process is alive. `/ready` reports dependency status for
+PostgreSQL, Redis, Qdrant, and storage.
+
+---
+
+## First API Journey
+
+The complete integration path is in the
+**[Platform Integration Guide](docs/platform-integration-guide.md)** — auth, projects,
+upload, polling, search, and chat with copy-paste examples.
+
+Summary:
+
+1. Create an Organization and API key.
+2. Create a Project.
+3. Upload a document.
+4. Wait for ingestion and indexing.
+5. Search with hybrid retrieval.
+6. Chat with citations.
+
+OpenAPI is available at `/docs`. The concise Postman-oriented references live in
+[docs/api/](docs/api/README.md).
+
+---
+
+## Development Commands
+
+Run from the repo root unless noted.
 
 ```bash
 ruff check .
 ruff format .
-ruff check . --fix
 mypy
 pytest
-pre-commit install          # one-time: install git hooks
 pre-commit run --all-files
 ```
 
-Create a new database migration (from `backend/`):
+Common focused test runs:
+
+```bash
+pytest -m unit
+pytest -m integration
+pytest -m architecture
+```
+
+Create and apply a migration from `backend/`:
 
 ```bash
 cd backend
@@ -268,45 +235,68 @@ alembic revision --autogenerate -m "describe your change"
 alembic upgrade head
 ```
 
-Conventions:
+---
 
-- **Explicit, domain-specific filenames** (e.g. `health_service.py`, not `service.py`).
-- **No SDK leakage** — vendor SDKs stay inside `providers/`.
-- **Configuration-driven** — nothing AI- or infra-related is hardcoded.
-- **Project-scoped by default** — all data access is scoped by `project_id`.
-- Create database changes via Alembic migrations (see above).
+## Project Layout
 
-## Documentation Structure
+```text
+backend/app/
+  api/            HTTP composition, health routes, /api/v1 routers
+  composition/    ORM registry and Alembic migrations
+  core/           config, logging, middleware, exceptions
+  dependencies/   FastAPI dependency wiring
+  models/         shared SQLAlchemy ORM models
+  modules/        feature slices: projects, organizations, knowledge, retrieval, conversations
+  platform/       shared kernel: db, persistence, providers, jobs, auth, http
 
-| Path | Contents |
-| ---- | -------- |
-| `docs/architecture/` | How the platform is built — start with [system-architecture.md](docs/architecture/system-architecture.md) |
-| `docs/learning/` | Foundation deep-dives (config, logging, DB, Docker, testing, FastAPI factory) |
-| `docs/features/` | Per-feature reference ([projects](docs/features/project_module.md), [knowledge](docs/features/knowledge_module.md), [retrieval](docs/features/retrieval_module.md), [conversations](docs/features/conversation_module.md)) |
-| `docs/api/` | Postman-oriented API reference |
-
-The binding rules live in `.cursor/rules/` (`project-context.mdc` for vision,
-scope, and current status; `architecture.mdc` for engineering standards).
-
-## Future Roadmap
-
-**Phase 1 — Core AI Platform**
-Project management, connector framework + file upload, object storage, OCR &
-parsing, chunking, embeddings, vector storage, hybrid retrieval, chat,
-configuration, background jobs, authentication, evaluation & observability
-foundations.
-
-**Phase 2 — Enterprise AI Platform**
-SQL / API / Website / SharePoint / Google Drive / S3 connectors, voice,
-streaming, multi-modal processing, model registry, prompt library, usage &
-cost analytics, evaluation dashboard.
-
-**Phase 3 — Advanced AI Platform**
-GraphRAG, knowledge graphs, entity extraction, query planning & rewriting,
-multi-hop retrieval, memory layer, agent workflows, MCP integration,
-benchmarking, distributed inference, Kubernetes deployment.
+docs/
+  platform-integration-guide.md
+  Platform-at-a-glance.md
+  api/
+  architecture/
+  features/
+  learning/
+```
 
 ---
 
-*Built learning-first: understanding the engineering principles is as important
-as implementing the features.*
+## Documentation Map
+
+| If you want... | Read... |
+| -------------- | ------- |
+| **Integrate APE into your application** | **[Platform Integration Guide](docs/platform-integration-guide.md)** |
+| A guided product and architecture overview | [Platform at a Glance](docs/Platform-at-a-glance.md) |
+| Endpoint examples for Postman | [API reference](docs/api/README.md) |
+| How modules, dependencies, and providers fit together | [Architecture docs](docs/architecture/README.md) |
+| Feature-by-feature behavior | [Feature docs](docs/features/README.md) |
+| Deep learning journeys and implementation notes | [Learning docs](docs/learning/README.md) |
+| Architecture decisions and trade-offs | [ADRs](docs/architecture/adr/README.md) |
+
+Recommended feature reads:
+[Organizations](docs/features/organization_module.md),
+[Projects](docs/features/project_module.md),
+[Knowledge](docs/features/knowledge_module.md),
+[Retrieval](docs/features/retrieval_module.md),
+[Conversations](docs/features/conversation_module.md).
+
+---
+
+## Roadmap
+
+APE is moving from a complete Phase 1 RAG journey toward a broader enterprise AI
+platform.
+
+| Horizon | Direction |
+| ------- | --------- |
+| Phase 1 hardening | Connector framework, observability, evaluation, better operations |
+| Phase 2 enterprise | SQL/API/website/SharePoint/Drive/S3 connectors, cost analytics, model registry, prompt library |
+
+---
+
+## Philosophy
+
+APE is built learning-first and platform-first.
+
+The goal is not to build another single-purpose chatbot. The goal is to build a
+deployable AI platform that product teams can reuse, inspect, operate, and adapt
+as their providers, models, documents, and business needs change.

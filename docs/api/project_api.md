@@ -2,6 +2,8 @@
 
 Project is the platform isolation boundary. All other modules scope data by `project_id`.
 
+When `APE_AUTH__ENABLED=true`, all project routes require an Organization API key (`Authorization: Bearer ape_live_…` or `X-API-Key`). Projects are scoped to the authenticated organization.
+
 ## POST /api/v1/projects
 
 Create a project.

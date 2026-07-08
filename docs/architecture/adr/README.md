@@ -16,6 +16,8 @@ guides in this folder elaborate on implementation.
 | [ADR-008](./008-chat-on-semantic-baseline.md) | Chat v1 on semantic baseline; split transactions; RetrievalPort | Accepted |
 | [ADR-009](./009-retrieval-v2-hybrid-search.md) | Retrieval v2 hybrid search; RetrievalContext; RRF; RerankRequest | Accepted |
 | [ADR-010](./010-multilingual-document-processing.md) | Multilingual document processing; Unicode tokenization; OCR; reindex CLI | Accepted |
+| [ADR-011](./011-parser-quality-scoring-and-pdf-fallback.md) | Parser quality scoring and PDF fallback | Accepted |
+| [ADR-012](./012-organization-api-key-auth.md) | Organization API key authentication | Accepted |
 
 ## When to add an ADR
 

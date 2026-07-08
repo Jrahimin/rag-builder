@@ -26,6 +26,11 @@ class RedisConnectivity:
             decode_responses=True,
         )
 
+    @property
+    def client(self) -> Redis:
+        """Expose the underlying async Redis client for auth and rate limiting."""
+        return self._client
+
     async def check(self) -> None:
         """Ping Redis to verify connectivity (raises on failure)."""
         await cast(Awaitable[bool], self._client.ping())

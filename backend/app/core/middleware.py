@@ -45,6 +45,13 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
 
         try:
             response = await call_next(request)
+            auth_org = getattr(request.state, "authenticated_organization", None)
+            if auth_org is not None and auth_org.organization_id is not None:
+                bind_request_context(
+                    request_id=request_id,
+                    trace_id=trace_id,
+                    organization_id=str(auth_org.organization_id),
+                )
         except Exception:
             duration_ms = round((time.perf_counter() - start) * 1000, 2)
             log.exception(
