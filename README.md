@@ -270,4 +270,4 @@ provider-agnostic, and owned by the deployment that runs it.
 
 ## License
 
-This project is licensed under the MIT License. See the LICENSE file for details.
+This project is licensed under the [MIT](LICENSE) License.
