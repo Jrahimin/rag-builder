@@ -1,94 +1,116 @@
 # AI Platform Engine (APE)
 
-> A self-hosted, provider-agnostic RAG platform for enterprise applications.
-> Bring your documents, keep your infrastructure, expose the AI layer through
-> clean Project-scoped REST APIs.
+### Drop AI into your product. Keep your stack. Own your data.
+
+> Self-hosted RAG infrastructure for real applications — not another chatbot demo.
+> One API. Many products. Your documents, your models, your deployment.
 
 [![Python](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-async-009688.svg)](https://fastapi.tiangolo.com/)
-[![Ruff](https://img.shields.io/badge/lint-ruff-D7FF64.svg)](https://docs.astral.sh/ruff/)
 [![Docker](https://img.shields.io/badge/docker-compose-2496ED.svg)](https://docs.docker.com/compose/)
-[![License](https://img.shields.io/badge/license-Proprietary-lightgrey.svg)](#)
+[![Ruff](https://img.shields.io/badge/lint-ruff-D7FF64.svg)](https://docs.astral.sh/ruff/)
+[![Phase 1](https://img.shields.io/badge/Phase%201-end--to--end%20RAG-success.svg)](docs/Platform-at-a-glance.md)
 
-**Start here:** [Platform Integration Guide](docs/platform-integration-guide.md) ·
+**Ship grounded AI without rebuilding the plumbing.**
+
+[Integration Guide](docs/platform-integration-guide.md) ·
 [Platform at a Glance](docs/Platform-at-a-glance.md) ·
-[API reference](docs/api/README.md) ·
+[API Reference](docs/api/README.md) ·
 [Architecture](docs/architecture/README.md) ·
 [Features](docs/features/README.md)
 
 ---
 
-## What Is APE?
+## Why teams reach for APE
 
-AI Platform Engine is a modular AI infrastructure service that sits beside a
-business application. The application keeps the product experience; APE handles
-the RAG lifecycle behind stable APIs:
+Every product that needs “ask our documents” eventually rebuilds the same stack:
+upload, parse, chunk, embed, search, chat, citations, workers, auth, isolation.
+
+**APE is that stack — once — as a microservice beside your app.**
+
+| You keep | APE owns |
+| -------- | -------- |
+| UI, users, business workflows | Ingestion → indexing → hybrid retrieval → RAG chat |
+| Brand and product experience | Provider-agnostic LLMs, embeddings, storage, vectors |
+| Customer trust boundary | Self-hosted deployment under *your* control |
 
 ```text
-Organization key -> Project -> Upload -> Parse -> Chunk -> Embed -> Index -> Search -> Chat
+Your app  ──REST + API key──►  APE  ──►  PostgreSQL · Qdrant · Redis · Storage · LLMs
 ```
 
-APE is built for private deployments and enterprise integration. It is useful
-when you want document intelligence, search, chat, citations, and future AI
-workflows without binding your product to a single AI vendor or hosted platform.
+Phase 1 is a complete journey:
 
-Phase 1 now includes the full end-to-end core journey: Organizations and API
-keys, Projects, Knowledge ingestion, hybrid Retrieval, and Conversations with
-grounded answers.
+```text
+Organization key → Project → Upload → Parse → Chunk → Embed → Index → Search → Chat
+```
 
 ---
 
-## What Ships Today
+## One platform. Many products.
 
-| Area | What it provides |
-| ---- | ---------------- |
-| Organizations and API keys | Tenant boundary, admin bootstrap, M2M auth, org-scoped rate limiting |
-| Projects | Data isolation boundary for documents, search, embeddings, and chat |
-| Knowledge | Upload, storage, parsing, optional OCR, structure-aware chunking |
-| Retrieval | Embeddings, Qdrant indexing, keyword indexing, hybrid search, reranking |
-| Conversations | Stateful RAG chat, citation snapshots, SSE streaming |
-| Operations | Docker Compose, Alembic migrations, health/readiness probes, structured logs |
+Same engine. Different corpora. Different experiences.
 
-Read the richer product tour in
-[docs/Platform-at-a-glance.md](docs/Platform-at-a-glance.md).
+| Build this… | With APE as… |
+| ----------- | ------------ |
+| “Ask this folder” in a DMS | Project-scoped knowledge + citations |
+| Tax / audit research assistant | Hybrid search over regs + working papers |
+| Legal matter Q&A | Isolated projects per matter or client |
+| HR policy copilot | Handbook corpus per org / region |
+| Internal knowledge for many apps | One reusable AI service, many Projects |
+| Vertical SaaS AI add-on | Embedded infrastructure, not a rewrite |
+
+**Project** = which corpus. **Organization** = who is calling.
+Wire once; spin up as many product surfaces as you need.
 
 ---
 
-## Architecture In One Screen
+## What ships today
+
+| | Capability | You get |
+| - | ---------- | ------- |
+| 🔐 | **Organizations & API keys** | Tenant auth, admin bootstrap, org-scoped rate limits |
+| 📁 | **Projects** | Hard data isolation for documents, search, and chat |
+| 📄 | **Knowledge** | Upload → storage → parse → optional OCR → structure-aware chunking |
+| 🔎 | **Retrieval** | Embeddings, vector + keyword index, hybrid search, reranking |
+| 💬 | **Conversations** | Stateful RAG chat, citation snapshots, SSE streaming |
+| ⚙️ | **Operations** | Docker Compose, Alembic, `/health` + `/ready`, structured logs |
+
+Full product tour → [Platform at a Glance](docs/Platform-at-a-glance.md)
+
+---
+
+## Architecture in one glance
 
 ```text
 Business application
-        |
-        | REST + API key
-        v
-api/v1/routes/              HTTP validation, response models, Depends
-        |
-        v
-modules/<feature>/services/ Business orchestration and transactions
-        |
-        +--> repositories/   PostgreSQL persistence
-        |
-        +--> providers/      LLM, embeddings, vector store, storage, OCR
+        │  REST + API key
+        ▼
+api/v1/routes/                 HTTP · validation · Depends
+        │
+        ▼
+modules/<feature>/services/    Orchestration · transactions
+        │
+        ├── repositories/      PostgreSQL
+        └── providers/         LLM · embeddings · vectors · storage · OCR
 ```
 
-APE uses a modular architecture with strict boundaries:
+Built to stay replaceable:
 
-- `Project` is the data isolation boundary.
-- `Organization` is the auth and tenant boundary.
-- Vendor SDKs stay behind provider interfaces.
-- Long-running AI work runs through background workers.
-- API routes are versioned under `/api/v1`.
+- **Project-scoped** data paths — no global corpus leakage
+- **Provider interfaces** — swap OpenAI / Ollama / Gemini / Qdrant / MinIO without rewriting business logic
+- **Worker-first AI** — parse, embed, and index never block HTTP
+- **Versioned APIs** under `/api/v1`
 
-Canonical details live in
-[docs/architecture/module-architecture.md](docs/architecture/module-architecture.md).
+Canonical layout → [module architecture](docs/architecture/module-architecture.md)
 
 ---
 
-## Quick Start: Full Docker Stack
+## Quick start
 
-Use this when you want the closest "live stack" experience on one machine.
-Docker starts the API, worker, PostgreSQL, Redis, Qdrant, MinIO, and the MinIO
-bucket bootstrap.
+Commands below work in any Unix-style shell (macOS, Linux, Git Bash / WSL on Windows).
+Docker Desktop is the recommended path on Windows.
+
+### Option A — Full stack (closest to production)
 
 ```bash
 git clone <repository-url> rag-builder
@@ -98,118 +120,66 @@ cp .env.docker.example .env.docker
 docker compose --env-file .env.docker up --build
 ```
 
-Windows PowerShell:
-
-```powershell
-git clone <repository-url> rag-builder
-cd rag-builder
-
-Copy-Item .env.docker.example .env.docker
-docker compose --env-file .env.docker up --build
-```
-
-Default Docker endpoints:
-
-| Service | URL |
+| Surface | URL |
 | ------- | --- |
-| API | `http://localhost:8000` |
-| Swagger / OpenAPI | `http://localhost:8000/docs` |
-| Health | `http://localhost:8000/health` |
-| Readiness | `http://localhost:8000/ready` |
-| Qdrant dashboard | `http://localhost:6333/dashboard` |
-| MinIO console | `http://localhost:9001` |
-
-Useful Docker commands:
+| API | http://localhost:8000 |
+| OpenAPI / Swagger | http://localhost:8000/docs |
+| Health / Ready | http://localhost:8000/health · `/ready` |
+| Qdrant | http://localhost:6333/dashboard |
+| MinIO console | http://localhost:9001 |
 
 ```bash
 docker compose --env-file .env.docker ps
 docker compose --env-file .env.docker logs -f backend
 docker compose --env-file .env.docker logs -f worker
-docker compose --env-file .env.docker down
+docker compose --env-file .env.docker down          # stop
+docker compose --env-file .env.docker down -v       # stop + wipe volumes
 ```
 
-To remove local volumes too:
+### Option B — Local API + Docker infra (fast iteration)
 
 ```bash
-docker compose --env-file .env.docker down -v
-```
-
----
-
-## Quick Start: Local Backend
-
-Use this when you want fast backend iteration in a Python virtual environment.
-You can either run PostgreSQL, Redis, Qdrant, and MinIO yourself, or start only
-the infrastructure services with Docker.
-
-Start infrastructure from the repo root:
-
-```bash
+# from repo root — infra only
 cp .env.docker.example .env.docker
 docker compose --env-file .env.docker up -d postgres redis qdrant minio minio-init
-```
 
-Then run the backend locally:
-
-```bash
 cd backend
-python -m venv venv
-source venv/bin/activate
+python -m venv .venv
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -r requirements/dev.txt
 cp .env.example .env
 alembic upgrade head
 python -m app
 ```
 
-Windows PowerShell:
-
-```powershell
-cd backend
-python -m venv venv
-.\venv\Scripts\Activate.ps1
-pip install -r requirements/dev.txt
-Copy-Item .env.example .env
-alembic upgrade head
-python -m app
-```
-
-Default local backend endpoints:
-
 | Surface | URL |
 | ------- | --- |
-| API | `http://localhost:8088` |
-| Swagger / OpenAPI | `http://localhost:8088/docs` |
-| Health | `http://localhost:8088/health` |
-| Readiness | `http://localhost:8088/ready` |
+| API | http://localhost:8088 |
+| OpenAPI | http://localhost:8088/docs |
 
-`/health` tells you the process is alive. `/ready` reports dependency status for
-PostgreSQL, Redis, Qdrant, and storage.
+`/health` = process alive. `/ready` = PostgreSQL, Redis, Qdrant, and storage.
 
 ---
 
-## First API Journey
+## First API journey
 
-The complete integration path is in the
-**[Platform Integration Guide](docs/platform-integration-guide.md)** — auth, projects,
-upload, polling, search, and chat with copy-paste examples.
+Six calls from empty deployment to cited answers:
 
-Summary:
+1. Create an **Organization** + API key  
+2. Create a **Project**  
+3. **Upload** a document  
+4. Wait for ingest / index (poll status or worker handoff)  
+5. **Search** (hybrid retrieval)  
+6. **Chat** with citations  
 
-1. Create an Organization and API key.
-2. Create a Project.
-3. Upload a document.
-4. Wait for ingestion and indexing.
-5. Search with hybrid retrieval.
-6. Chat with citations.
-
-OpenAPI is available at `/docs`. The concise Postman-oriented references live in
-[docs/api/](docs/api/README.md).
+Copy-paste walkthrough → **[Platform Integration Guide](docs/platform-integration-guide.md)**  
+Endpoint samples → [docs/api/](docs/api/README.md) · live contract → `/docs`
 
 ---
 
-## Development Commands
+## Develop
 
-Run from the repo root unless noted.
+From the repo root unless noted:
 
 ```bash
 ruff check .
@@ -219,15 +189,13 @@ pytest
 pre-commit run --all-files
 ```
 
-Common focused test runs:
-
 ```bash
 pytest -m unit
 pytest -m integration
 pytest -m architecture
 ```
 
-Create and apply a migration from `backend/`:
+Migrations (`backend/`):
 
 ```bash
 cd backend
@@ -237,66 +205,63 @@ alembic upgrade head
 
 ---
 
-## Project Layout
+## Repository map
 
 ```text
 backend/app/
-  api/            HTTP composition, health routes, /api/v1 routers
-  composition/    ORM registry and Alembic migrations
+  api/            HTTP composition, health, /api/v1 routers
+  composition/    ORM registry + Alembic migrations
   core/           config, logging, middleware, exceptions
-  dependencies/   FastAPI dependency wiring
-  models/         shared SQLAlchemy ORM models
-  modules/        feature slices: projects, organizations, knowledge, retrieval, conversations
-  platform/       shared kernel: db, persistence, providers, jobs, auth, http
+  dependencies/   FastAPI DI wiring
+  models/         shared SQLAlchemy ORM
+  modules/        projects · organizations · knowledge · retrieval · conversations
+  platform/       db · persistence · providers · jobs · auth · http
 
 docs/
-  platform-integration-guide.md
-  Platform-at-a-glance.md
-  api/
-  architecture/
-  features/
-  learning/
+  platform-integration-guide.md   ← start here to integrate
+  Platform-at-a-glance.md         ← product + architecture story
+  api/  architecture/  features/  learning/
 ```
 
 ---
 
-## Documentation Map
+## Documentation
 
-| If you want... | Read... |
-| -------------- | ------- |
-| **Integrate APE into your application** | **[Platform Integration Guide](docs/platform-integration-guide.md)** |
-| A guided product and architecture overview | [Platform at a Glance](docs/Platform-at-a-glance.md) |
-| Endpoint examples for Postman | [API reference](docs/api/README.md) |
-| How modules, dependencies, and providers fit together | [Architecture docs](docs/architecture/README.md) |
-| Feature-by-feature behavior | [Feature docs](docs/features/README.md) |
-| Deep learning journeys and implementation notes | [Learning docs](docs/learning/README.md) |
-| Architecture decisions and trade-offs | [ADRs](docs/architecture/adr/README.md) |
+| Goal | Doc |
+| ---- | --- |
+| Integrate APE into an app | [Platform Integration Guide](docs/platform-integration-guide.md) |
+| Understand the product end-to-end | [Platform at a Glance](docs/Platform-at-a-glance.md) |
+| Postman-ready endpoint samples | [API reference](docs/api/README.md) |
+| Modules, providers, deployment | [Architecture](docs/architecture/README.md) |
+| Feature behavior | [Features](docs/features/README.md) |
+| Why / how deep dives | [Learning](docs/learning/README.md) |
+| Decision records | [ADRs](docs/architecture/adr/README.md) |
 
-Recommended feature reads:
-[Organizations](docs/features/organization_module.md),
-[Projects](docs/features/project_module.md),
-[Knowledge](docs/features/knowledge_module.md),
-[Retrieval](docs/features/retrieval_module.md),
-[Conversations](docs/features/conversation_module.md).
+Feature deep-dives:
+[Organizations](docs/features/organization_module.md) ·
+[Projects](docs/features/project_module.md) ·
+[Knowledge](docs/features/knowledge_module.md) ·
+[Retrieval](docs/features/retrieval_module.md) ·
+[Conversations](docs/features/conversation_module.md)
 
 ---
 
 ## Roadmap
 
-APE is moving from a complete Phase 1 RAG journey toward a broader enterprise AI
-platform.
-
-| Horizon | Direction |
-| ------- | --------- |
-| Phase 1 hardening | Connector framework, observability, evaluation, better operations |
-| Phase 2 enterprise | SQL/API/website/SharePoint/Drive/S3 connectors, cost analytics, model registry, prompt library |
+| Horizon | Focus |
+| ------- | ----- |
+| **Now** | Phase 1 complete: auth → ingest → hybrid retrieve → cited chat |
+| **Next** | Connectors, observability, evaluation, ops hardening |
+| **Later** | Enterprise connectors, cost analytics, model registry, prompt library |
 
 ---
 
 ## Philosophy
 
-APE is built learning-first and platform-first.
+APE is **platform-first** and **learning-first**.
 
-The goal is not to build another single-purpose chatbot. The goal is to build a
-deployable AI platform that product teams can reuse, inspect, operate, and adapt
-as their providers, models, documents, and business needs change.
+Not another single-purpose chatbot. A deployable AI layer that product teams can
+reuse across DMS, audit, legal, HR, ERP, and internal tools — inspectable,
+provider-agnostic, and owned by the deployment that runs it.
+
+*Your application keeps the experience. APE owns the AI lifecycle.*
