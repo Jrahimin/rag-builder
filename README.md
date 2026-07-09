@@ -265,3 +265,9 @@ reuse across DMS, audit, legal, HR, ERP, and internal tools — inspectable,
 provider-agnostic, and owned by the deployment that runs it.
 
 *Your application keeps the experience. APE owns the AI lifecycle.*
+
+---
+
+## License
+
+This project is licensed under the MIT License. See the LICENSE file for details.
