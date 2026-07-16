@@ -23,11 +23,17 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+      target: development
       args:
         INSTALL_DEV: "true"
     image: ape-backend:dev
     restart: unless-stopped
+    init: true
     depends_on:
+      migrate:
+        condition: service_completed_successfully
+      minio-init:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       redis:
@@ -61,12 +67,37 @@ services:
     volumes:
       # Live-reload for local development.
       - ./backend:/app
-    command:
-      - sh
-      - -c
-      - |
-        alembic upgrade head &&
-        uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir app
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload", "--reload-dir", "app"]
+    networks:
+      - ape_network
+
+  # -------------------------------------------------------------------------
+  # Database migrations (one-shot)
+  #
+  # Keep schema changes outside the API process so the worker cannot consume
+  # jobs against an unmigrated database. This also mirrors production, where
+  # migrations run once per deployment rather than once per API replica.
+  # -------------------------------------------------------------------------
+  migrate:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: development
+      args:
+        INSTALL_DEV: "true"
+    image: ape-backend:dev
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      APE_APP__ENV: ${APE_APP__ENV:-development}
+      APE_DATABASE__HOST: postgres
+      APE_DATABASE__PORT: "5432"
+      APE_DATABASE__USER: ${POSTGRES_USER:-ape}
+      APE_DATABASE__PASSWORD: ${POSTGRES_PASSWORD:-ape}
+      APE_DATABASE__NAME: ${POSTGRES_DB:-ape}
+    command: ["alembic", "upgrade", "head"]
     networks:
       - ape_network
 
@@ -77,14 +108,22 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+      target: development
       args:
         INSTALL_DEV: "true"
     image: ape-backend:dev
     restart: unless-stopped
+    init: true
     depends_on:
+      migrate:
+        condition: service_completed_successfully
+      minio-init:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      qdrant:
         condition: service_healthy
       minio:
         condition: service_healthy
@@ -99,6 +138,8 @@ services:
       APE_DATABASE__NAME: ${POSTGRES_DB:-ape}
       APE_REDIS__HOST: redis
       APE_REDIS__PORT: "6379"
+      APE_QDRANT__HOST: qdrant
+      APE_QDRANT__PORT: "6333"
       APE_MINIO__ENDPOINT: minio:9000
       APE_MINIO__ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
       APE_MINIO__SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
@@ -167,7 +208,7 @@ services:
   # Qdrant (vector database)
   # -------------------------------------------------------------------------
   qdrant:
-    image: qdrant/qdrant:latest
+    image: qdrant/qdrant:v1.18.2
     restart: unless-stopped
     ports:
       - "${QDRANT_HTTP_PORT:-6333}:6333"
@@ -175,8 +216,9 @@ services:
     volumes:
       - qdrant_data:/qdrant/storage
     healthcheck:
-      # The Qdrant image ships no curl/wget; use a bash TCP port probe.
-      test: ["CMD-SHELL", "timeout 2 bash -c '</dev/tcp/127.0.0.1/6333' || exit 1"]
+      # The Qdrant image ships no curl/wget. Its Bash shell can still probe
+      # Qdrant's readiness endpoint without adding a diagnostic dependency.
+      test: ["CMD-SHELL", "timeout 2 bash -c 'exec 3<>/dev/tcp/127.0.0.1/6333; printf \"GET /readyz HTTP/1.0\\r\\n\\r\\n\" >&3; IFS= read -r status <&3; [[ \"$$status\" == *\" 200 \"* ]]'"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -188,7 +230,7 @@ services:
   # MinIO (S3-compatible object storage)
   # -------------------------------------------------------------------------
   minio:
-    image: minio/minio:latest
+    image: minio/minio:RELEASE.2025-07-23T15-54-02Z
     restart: unless-stopped
     command: ["server", "/data", "--console-address", ":9001"]
     environment:
@@ -212,7 +254,8 @@ services:
   # MinIO bucket bootstrap (one-shot)
   # -------------------------------------------------------------------------
   minio-init:
-    image: minio/mc:latest
+    image: minio/mc:RELEASE.2025-07-21T05-28-08Z
+    restart: "no"
     depends_on:
       minio:
         condition: service_healthy

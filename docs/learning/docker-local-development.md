@@ -20,21 +20,22 @@ docker compose up --build
         │
         ├── postgres:16-alpine     (relational DB)
         ├── redis:7-alpine         (cache / future job queue)
-        ├── qdrant/qdrant:latest   (vector DB)
-        ├── minio/minio:latest     (S3-compatible storage)
+        ├── qdrant/qdrant:v1.18.2  (vector DB)
+        ├── minio/minio:RELEASE…   (S3-compatible storage)
+        ├── migrate                (one-shot Alembic migration)
         ├── minio-init             (one-shot bucket creation)
-        └── backend (ape-backend:dev)
-              │
-              ├── alembic upgrade head
-              └── uvicorn --reload
+        ├── backend (ape-backend:dev) → uvicorn --reload
+        └── worker (ape-backend:dev)  → Taskiq worker
 ```
 
 | Service | Port(s) | Volume | Health check |
 | ------- | ------- | ------ | ------------ |
-| backend | 8000 | `./backend` mounted | Dockerfile `HEALTHCHECK` → `/health` |
+| migrate | — | — | Runs `alembic upgrade head` once after PostgreSQL is healthy |
+| backend | 8000 | `./backend` mounted | Starts after migration and bucket bootstrap; Dockerfile `HEALTHCHECK` → `/health` |
+| worker | — | `./backend` mounted | Starts after migration and bucket bootstrap; consumes Taskiq jobs |
 | postgres | 5432 | `postgres_data` | `pg_isready` |
 | redis | 6379 | `redis_data` | `redis-cli ping` |
-| qdrant | 6333, 6334 | `qdrant_data` | TCP probe on 6333 |
+| qdrant | 6333, 6334 | `qdrant_data` | Bash HTTP probe of `/readyz` |
 | minio | 9000, 9001 | `minio_data` | `mc ready local` |
 | minio-init | — | — | runs once, exits |
 
@@ -58,9 +59,11 @@ base (python:3.12-slim)
 | `builder` | Compile and install dependencies |
 | `runtime` | Minimal image — no build tools |
 
-Build context is the **repository root** so `alembic.ini` and `requirements/`
-are available. `INSTALL_DEV=true` in compose installs dev dependencies for
-local reload.
+Build context is **`backend/`**, making the service self-contained; it contains
+`alembic.ini` and `requirements/`. `INSTALL_DEV=true` in compose installs dev dependencies for
+local reload. Compose selects the `development` target; a plain Docker build
+uses the final `production` target, which serves with Gunicorn and Uvicorn
+workers without reload.
 
 ---
 
@@ -72,24 +75,25 @@ flowchart LR
     RD[redis healthy]
     QD[qdrant healthy]
     MN[minio healthy]
+    MG[migrate]
     BE[backend starts]
     MI[minio-init]
 
-    PG --> BE
+    PG --> MG --> BE
     RD --> BE
     QD --> BE
     MN --> BE
-    MN --> MI
+    MN --> MI --> BE
 ```
 
-`depends_on` with `condition: service_healthy` prevents the backend from
-connecting before infrastructure is ready.
+`depends_on` with `condition: service_healthy` prevents bootstrap jobs from
+connecting before infrastructure is ready. API and worker use
+`condition: service_completed_successfully` for both bootstrap jobs.
 
-Backend startup command:
+Migration startup command:
 
 ```sh
-alembic upgrade head &&
-uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir backend
+alembic upgrade head
 ```
 
 ---
@@ -130,7 +134,7 @@ persist data across `docker compose down`. Use `docker compose down -v` to wipe.
 
 | Image | Challenge | Solution |
 | ----- | --------- | -------- |
-| Qdrant | No curl/wget in minimal image | Bash TCP probe: `</dev/tcp/127.0.0.1/6333` |
+| Qdrant | No curl/wget in minimal image | Bash probes the built-in `/readyz` endpoint over `/dev/tcp` |
 | MinIO | curl removed from recent images | `mc ready local` (bundled client) |
 | PostgreSQL | — | `pg_isready` (native) |
 | Redis | — | `redis-cli ping` (native) |

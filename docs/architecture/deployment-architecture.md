@@ -29,18 +29,22 @@ docker compose up --build
 │  │ backend  │  │ postgres │  │ redis  │  │ qdrant  │ │
 │  │ :8000    │  │ :5432    │  │ :6379  │  │ :6333   │ │
 │  └──────────┘  └──────────┘  └────────┘  └─────────┘ │
-│  ┌──────────┐  ┌──────────┐                            │
-│  │ minio    │  │minio-init│                            │
-│  │ :9000    │  │ (once)   │                            │
-│  └──────────┘  └──────────┘                            │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐             │
+│  │ worker   │  │ minio    │  │migrate /  │             │
+│  │ Taskiq   │  │ :9000    │  │minio-init │             │
+│  └──────────┘  └──────────┘  └──────────┘             │
 └─────────────────────────────────────────────────────────┘
 ```
 
 - **API process:** single container running uvicorn with `--reload`
-- **Worker process:** not yet deployed (jobs architecture defined only)
+- **Worker process:** separate Taskiq container; starts after migrations and
+  bucket bootstrap, and can be scaled independently outside local development.
 - **Volumes:** named volumes for data persistence
 - **Networking:** `ape_network` bridge; service DNS names for inter-container comms
-- **Migrations:** `alembic upgrade head` runs before API start in compose
+- **Bootstrap:** one-shot `migrate` applies `alembic upgrade head`; `minio-init`
+  creates the artifact bucket. API and worker start only after both succeed.
+- **Images:** Qdrant and MinIO use explicit release tags; upgrade them deliberately
+  after testing rather than inheriting a moving `latest` tag.
 
 ### Hybrid mode
 
@@ -83,7 +87,7 @@ Infrastructure in Docker, API on host with venv — see `docs/learning/docker-lo
 | File | Purpose |
 | ---- | ------- |
 | `docker-compose.yml` | Local development stack (repo root) |
-| `backend/Dockerfile` | Multi-stage API image |
+| `backend/Dockerfile` | Multi-stage image: `development` target for reload; default `production` target uses Gunicorn/Uvicorn workers |
 | `infra/` | Future: production compose overrides, K8s manifests |
 | `.dockerignore` | Build context exclusions |
 
