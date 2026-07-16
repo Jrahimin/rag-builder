@@ -1,149 +1,161 @@
-# Conversation RAG — End-to-End Codebase Journey
+# Conversation RAG: From Question to Evidence-Backed Answer
 
-Start here for the **full chat picture**: how a user question becomes a grounded, cited answer, which files are involved, and why the architecture is split the way it is.
+> **The final scene:** the user asks a question, APE finds evidence, an LLM writes from that evidence, and the product receives an answer it can explain.
 
-> **Reading order:** this page → [Provider integration](./conversation_provider_integration.md) → [LLM providers](./conversation_llm_providers.md) → [RAG prompting](./conversation_rag_prompting.md) → [Memory](./conversation_memory.md) → [SSE streaming](./conversation_sse_streaming.md)
+This chapter connects the retrieval story to the conversation story. Chat is not a separate magic feature. It is a carefully ordered composition of persistence, search, context selection, prompting, generation, and citation storage.
 
----
+## The 30-second flow
 
-## The 30-second story
-
-1. Client creates a **conversation** (optional title; model config snapshotted on the row).
-2. Client sends a **user message** → API persists it immediately (**Tx1 commit**) so the turn survives LLM failures.
-3. `ChatService` retrieves ranked chunks via **`RetrievalPort`** (adapter over the configured retrieval strategy).
-4. **`ContextBuilder`** dedupes and trims chunks to budget; **`PromptBuilder`** formats system + context + history + question.
-5. **`BaseLLMProvider`** generates the answer (OpenAI, Gemini, Ollama, echo — same call shape for all).
-6. **`build_citation_snapshots`** maps selected chunks to durable citation JSONB; assistant row persisted (**Tx2 commit**).
-7. Optional: **SSE stream** returns token deltas, then a final `done` event with citations.
-
-**Prerequisite:** documents at `status=ready` (retrieval pipeline complete). See [Retrieval feature](../features/retrieval_module.md).
-
----
-
-## Big-picture diagram
+```text
+create conversation
+  -> save user message
+  -> retrieve ranked chunks
+  -> build context and prompt
+  -> call LLM
+  -> save assistant answer + source metadata
+  -> optionally stream tokens
+```
 
 ```mermaid
 sequenceDiagram
-    participant Client
-    participant Router as conversations_router
-    participant DI as dependencies/conversations
-    participant Chat as ChatService
-    participant Port as RetrievalPort_adapter
-    participant Search as SearchService
-    participant Ctx as ContextBuilder
-    participant Prm as PromptBuilder
-    participant LLM as BaseLLMProvider
-    participant DB as PostgreSQL
+    participant User
+    participant API
+    participant ChatService
+    participant Retrieval
+    participant ContextBuilder
+    participant PromptBuilder
+    participant LLM
+    participant DB
 
-    Client->>Router: POST /messages
-    Router->>DI: ChatServiceDep
-    DI->>Chat: send_message
-    Chat->>DB: Tx1 user message + commit
-    Chat->>Port: retrieve(query)
-    Port->>Search: search
-    Search-->>Port: RetrievalResult list
-    Port-->>Chat: ContextChunk list ranked
-    Chat->>Ctx: select(chunks)
-    Chat->>Prm: build(context, history, question)
-    Prm-->>Chat: list ChatMessage
-    Chat->>LLM: generate(messages)
-    LLM-->>Chat: ChatCompletionResult
-    Chat->>DB: Tx2 assistant + citations + commit
-    Router-->>Client: user + assistant messages
+    User->>API: Send question
+    API->>ChatService: send_message()
+    ChatService->>DB: Tx1 save user message
+    ChatService->>Retrieval: search(question)
+    Retrieval-->>ChatService: ranked context chunks
+    ChatService->>ContextBuilder: dedupe + budget
+    ContextBuilder-->>ChatService: selected evidence
+    ChatService->>PromptBuilder: system + evidence + history + question
+    PromptBuilder-->>ChatService: provider messages
+    ChatService->>LLM: generate()
+    LLM-->>ChatService: answer + usage
+    ChatService->>DB: Tx2 save assistant + citations
+    API-->>User: answer and evidence
 ```
 
----
+## Why save the user message first?
 
-## Glossary (plain language)
+The chat service uses two database transactions:
 
-| Term | Meaning in APE |
-| ---- | ---------------- |
-| **RAG** | Retrieval-Augmented Generation — fetch relevant document snippets, then ask the LLM using that context |
-| **Conversation** | A persisted chat session scoped to a Project |
-| **Turn** | One user message + one assistant reply |
-| **RetrievalPort** | A small interface so chat never imports retrieval module internals |
-| **Context chunk** | One searchable text segment from a document, with score and metadata |
-| **Citation snapshot** | Frozen copy of what the model saw (`chunk_hash`, excerpt) — survives re-indexing |
-| **Tx1 / Tx2** | Two database commits per turn; user saved before slow LLM I/O |
-| **Hybrid retrieval** | BM25 + vector candidates, RRF fusion, and reranking through the retrieval module |
+- **Tx1:** save the user message before slow retrieval/model I/O;
+- **Tx2:** save the assistant answer after generation succeeds.
 
----
+This prevents a failed provider call from making the user’s question disappear. It also avoids holding a database transaction open while an external model takes seconds to respond.
 
-## Architectural choices (why it looks like this)
+The trade-off is visible: a failed turn can contain a user message without an assistant reply. That is honest state, not a bug to hide.
 
-### Module boundary: `RetrievalPort` not `SearchService`
+## Retrieval is behind a port
 
-`modules/conversations/` must not import `modules/retrieval/`. The composition layer (`dependencies/conversations.py`) adapts `SearchService` → `RetrievalPort`, keeping chat independent from retrieval internals.
-
-### Split: ContextBuilder vs PromptBuilder vs citations
-
-| Piece | Job |
-| ----- | --- |
-| **Retrieval** | Rank chunks using the configured strategy, with hybrid as the production path |
-| **ContextBuilder** | Dedupe + char/chunk budgets only |
-| **PromptBuilder** | Format messages for the LLM |
-| **build_citation_snapshots** | Persistence shape for assistant row |
-
-Selection and citation storage are separate concerns.
-
-### Two transactions per turn
-
-Holding a DB transaction open during a 2–20s LLM call ties up connections. Tx1 commits the user message; if the LLM fails, the user still sees their question in history.
-
-### Provider agnostic LLM
-
-`ChatService` calls `BaseLLMProvider.generate()` / `.stream()` only. Switching OpenAI → Gemini → Ollama is **configuration** (`APE_LLM__BACKEND`), not a code change in chat. See [Provider integration](./conversation_provider_integration.md).
-
-### No `sequence` column on messages
-
-Order by `created_at`, `id` — avoids `MAX(sequence)+1` locking on every insert.
-
----
-
-## Status / lifecycle
-
-| Event | DB effect |
-| ----- | --------- |
-| Create conversation | `title=null`, config snapshotted |
-| Send message (Tx1) | `user` row, `last_message_at` updated |
-| LLM success (Tx2) | `assistant` row + citations + metadata; auto-title if first answer |
-| LLM failure after Tx1 | User row kept; no assistant row |
-| Client disconnect (stream) | User row kept; assistant omitted if Tx2 did not run |
-
----
-
-## Key files
-
-| Layer | Path |
-| ----- | ---- |
-| Routes | `api/v1/routes/conversations_router.py` |
-| DI + adapters | `dependencies/conversations.py` |
-| Orchestration | `modules/conversations/services/chat_service.py` |
-| CRUD | `modules/conversations/services/conversation_service.py` |
-| Port DTO | `modules/conversations/ports.py` |
-| Context / prompt | `context_builder.py`, `prompt_builder.py`, `prompts/registry.py` |
-| Citations | `citation_snapshots.py` |
-| LLM contract | `platform/providers/contracts/llm.py` |
-| LLM factory | `platform/providers/implementations/llm_factory.py` |
-| ORM | `models/conversation.py`, `models/message.py` |
-
----
-
-## Configuration quick reference
+Conversation code calls a small `RetrievalPort` interface. It does not import the retrieval module’s repositories or SQL.
 
 ```text
-APE_LLM__BACKEND=echo|openai|openai_compatible|ollama|gemini
-APE_LLM__MODEL=...
-APE_CHAT__RETRIEVAL_TOP_K=10
-APE_CHAT__MAX_CONTEXT_CHUNKS=8
-APE_CHAT__CONTEXT_CHAR_BUDGET=12000
-APE_CHAT__MAX_HISTORY_MESSAGES=20
+Conversation -> RetrievalPort -> configured SearchService
 ```
 
----
+This boundary matters because chat needs “evidence for a question,” not knowledge of how pgvector, BM25, or RRF work. The composition/dependency layer adapts the concrete retrieval service to the port.
 
-## Related
+## Context is a budget
 
-- [Conversation module feature](../features/conversation_module.md)
-- [Conversation API](../api/conversation_api.md)
-- [ADR-008](../architecture/adr/008-chat-on-semantic-baseline.md)
+Retrieval may return many useful chunks. The LLM cannot receive unlimited text, and sending everything creates noise and cost.
+
+`ContextBuilder` controls:
+
+- duplicate removal;
+- maximum context chunks;
+- character budget;
+- source ordering and labels.
+
+The goal is not to maximize context. The goal is to send the **smallest sufficient evidence packet**.
+
+## Prompt assembly
+
+`PromptBuilder` creates messages from four ingredients:
+
+1. system instructions;
+2. numbered evidence blocks;
+3. recent user/assistant history;
+4. the current question.
+
+The model receives document text as data. The system prompt should explicitly say that instructions inside retrieved documents are not instructions for the model to follow.
+
+Read [RAG Prompting](./conversation_rag_prompting.md) for the details.
+
+## Citations: what the system knows versus what the answer proves
+
+The repository can persist a snapshot of selected chunks, including source metadata and excerpts. That is useful for reproducibility and UI display.
+
+However, a list of selected chunks does not automatically prove that every answer claim is supported. A stronger hosted product should evolve toward:
+
+```text
+answer claim -> citation marker -> source chunk -> document page/offset
+```
+
+This distinction is worth learning early because “cited” and “grounded” are related but not identical properties.
+
+## Provider abstraction
+
+`ChatService` calls the `BaseLLMProvider` contract. The service should not contain a separate branch for every vendor.
+
+```text
+ChatService -> BaseLLMProvider
+                     ├── OpenAI
+                     ├── OpenAI-compatible endpoint
+                     ├── Gemini
+                     ├── Ollama
+                     └── Echo (tests/demo)
+```
+
+Provider choice changes deployment behavior, latency, cost, and capabilities. It should not change conversation orchestration.
+
+## Configuration that changes the conversation
+
+| Setting | Effect |
+| --- | --- |
+| Retrieval top-k | How many search results enter context selection |
+| Maximum context chunks | Upper bound on evidence blocks |
+| Context character budget | Upper bound on context size |
+| Maximum history messages | How much prior conversation is forwarded |
+| Temperature | How deterministic or varied generation is |
+| System prompt version | Which answer behavior is requested |
+| Provider/model | Cost, speed, language, and generation quality |
+
+When an answer is wrong, diagnose in this order: evidence found, evidence selected, prompt rules, model behavior.
+
+## A practical experiment
+
+Ask the same question in two ways:
+
+- with no relevant document;
+- with one precise policy chunk.
+
+Observe whether the system distinguishes “I do not have enough evidence” from “here is the answer.” Then increase the context budget and see whether the answer becomes more complete or merely more verbose.
+
+## Streaming is a presentation layer
+
+SSE can return token deltas while the model is generating. It changes how the answer reaches the user, not how retrieval or grounding works.
+
+The final stream event should carry durable metadata such as completion status and citations. A client disconnect must not be confused with a successful answer persistence event.
+
+## Learning checkpoint
+
+You understand Conversation RAG when you can trace:
+
+> user message -> retrieval port -> context builder -> prompt builder -> LLM provider -> assistant persistence -> citations/stream.
+
+## Related code
+
+- `backend/app/modules/conversations/services/chat_service.py`
+- `backend/app/modules/conversations/ports.py`
+- `backend/app/modules/conversations/context_builder.py`
+- `backend/app/modules/conversations/prompt_builder.py`
+- `backend/app/modules/conversations/citation_snapshots.py`
+- `backend/app/platform/providers/contracts/llm.py`

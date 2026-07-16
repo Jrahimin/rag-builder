@@ -1,228 +1,120 @@
-# Learning Documentation
+# Learn RAG by Following the Data
 
-> **Platform overview (all audiences):** [../Platform-at-a-glance.md](../Platform-at-a-glance.md)
+> **Start here:** [RAG from Zero](./rag-from-zero.md)
 
-A learning-first knowledge base built alongside the platform. The goal is to
+APE is built as a learning journey as much as an AI backend. The learning docs are designed for a beginner who wants to understand both the idea and the engineering that makes it dependable.
 
-make **AI Engineering** and **platform engineering** concepts understandable,
+You will follow one question from a raw PDF to a grounded answer. Each chapter explains:
 
-not just implemented.
+- the plain-language idea;
+- the decision the engineer is making;
+- the path through this repository;
+- the configuration knobs that change the behavior;
+- a small experiment or checkpoint to make the concept stick.
 
+## The recommended path
 
+### 1. See the whole story first
 
-## Purpose
+Read [RAG from Zero](./rag-from-zero.md). It gives you the mental model without requiring you to know FastAPI, vectors, or LLM internals.
 
+### 2. Watch a document enter the engine
 
+Read these in order:
 
-APE is a learning-first project: understanding the engineering principles is
+1. [Knowledge Ingestion — End to End](./knowledge-ingestion-journey.md)
+2. [Object Storage for RAG](./object-storage-for-rag.md)
+3. [Document Parsing and Extraction](./document-parsing-and-extraction.md)
+4. [OCR Fundamentals](./ocr-fundamentals.md)
+5. [Text Chunking for RAG](./text-chunking-for-rag.md)
+6. [Multilingual Text Processing](./multilingual-text-processing.md)
 
-considered as important as implementing the features. These documents explain
+**Milestone:** you can explain why the API returns before parsing finishes, why a file has a raw and parsed representation, and why chunk boundaries affect answers.
 
-the *why* and *how* behind the platform — including **which source files**
+### 3. Turn text into searchable meaning
 
-implement each step.
+1. [Embeddings Fundamentals](./embeddings-fundamentals.md)
+2. [Vector Storage and pgvector](./vector-storage-and-pgvector.md)
+3. [Semantic Search for RAG](./semantic-search-for-rag.md)
+4. [Hybrid Retrieval Journey](./hybrid-retrieval-journey.md)
+5. [pgvector Operations Runbook](./pgvector-operations-runbook.md)
 
+**Milestone:** you can explain why semantic search and keyword search complement each other, and which setting you would change when a result is missing.
 
+### 4. Turn evidence into a conversation
 
-Each document covers:
+1. [Conversation RAG Journey](./conversation_rag_journey.md)
+2. [RAG Prompting](./conversation_rag_prompting.md)
+3. [Conversation Provider Integration](./conversation_provider_integration.md)
+4. [Conversation LLM Providers](./conversation_llm_providers.md)
+5. [Conversation Memory](./conversation_memory.md)
+6. [SSE Streaming](./conversation_sse_streaming.md)
 
+**Milestone:** you can trace a question through retrieval, context building, prompt construction, model generation, persistence, and citations.
 
+### 5. Understand the platform underneath
 
-- the concept and why it matters,
+When you are ready for the infrastructure story:
 
-- a visual / end-to-end journey through the codebase,
+- [Configuration System](./configuration-system.md)
+- [Application Factory and FastAPI](./application-factory-and-fastapi.md)
+- [Database and Migrations](./database-and-migrations.md)
+- [Entity Lifecycle and Reusability](./entity-lifecycle-and-reusability.md)
+- [Organization API Key Auth Journey](./organization-api-key-auth-journey.md)
+- [Structured Logging](./structured-logging.md)
+- [Docker Local Development](./docker-local-development.md)
+- [Testing Strategy](./testing-strategy.md)
 
-- file-by-file walkthroughs,
+## How to use each chapter
 
-- trade-offs and production considerations.
+Do not read these documents like a glossary. Use the same loop each time:
 
+1. **Predict:** what should happen next in the pipeline?
+2. **Trace:** open the referenced source file and follow one request or worker call.
+3. **Tweak:** change one configuration value or input condition.
+4. **Observe:** compare the status, chunks, scores, prompt, or answer.
+5. **Explain:** write one sentence about why the behavior changed.
 
+That is the difference between recognising words such as “embedding” and actually understanding the system.
 
----
+## Repository orientation
 
+```text
+backend/app/
+  api/            HTTP routes and request contracts
+  dependencies/   FastAPI dependency wiring and access checks
+  modules/
+    knowledge/    documents, parsing, chunking, lifecycle
+    retrieval/    embeddings, keyword index, vector search, fusion
+    conversations/ chat orchestration, prompts, citations
+  platform/       providers, database, persistence, auth, jobs
+  worker/         background task entrypoints
 
+docs/
+  architecture/  boundaries and decisions
+  features/      behavior contracts
+  learning/      why the system works this way
+```
 
-## Foundation sprint (start here)
+The learning docs point to implementation files intentionally. The goal is to make the jump from concept to code feel natural.
 
+## Three questions to keep asking
 
+### Where can information be lost?
 
-Documents explaining what was built in the platform foundation:
+During parsing, chunking, filtering, context trimming, or generation. A good RAG engineer finds the first point where the useful signal disappears.
 
+### Which boundary owns this decision?
 
+Knowledge owns document preparation. Retrieval owns evidence selection. Conversations owns prompts and model calls. The composition layer connects them.
 
-| Document | Topic |
+### What would I measure?
 
-| -------- | ----- |
+Not just whether the API returned `200`. Measure extraction quality, retrieval recall, citation coverage, groundedness, latency, and cost.
 
-| [Foundation Sprint Overview](./foundation-sprint-overview.md) | What exists, what was skipped, reading order |
+## Platform overview
 
-| [Application Factory and FastAPI](./application-factory-and-fastapi.md) | `create_app`, lifespan, DI, versioning, error handling |
-
-| [Configuration System](./configuration-system.md) | Pydantic Settings, `APE_*` env vars, Docker vs local |
-
-| [Structured Logging](./structured-logging.md) | structlog, `request_id` / `trace_id`, JSON vs console |
-
-| [Database and Migrations](./database-and-migrations.md) | Async SQLAlchemy, sessions, Alembic, repositories |
-
-| [Entity Lifecycle and Reusability](./entity-lifecycle-and-reusability.md) | Mixins, repositories, service helpers, request walkthroughs |
-
-| [Docker Local Development](./docker-local-development.md) | Compose stack, health checks, volumes, hybrid workflow |
-
-| [Testing Strategy](./testing-strategy.md) | Pytest layout, fixtures, unit vs integration |
-
-
-
-For request flow and layering, see
-
-[docs/architecture/module-architecture.md](../architecture/module-architecture.md).
-
-
-
----
-
-
-
-## Authentication & tenant isolation
-
-
-
-**Read in this order** for Organization API key auth (M2M, tenant boundary, project scoping):
-
-
-
-| # | Document | What you learn |
-
-| - | -------- | -------------- |
-
-| 1 | [**Organization API key auth journey**](./organization-api-key-auth-journey.md) | **Start here** — concepts, credential tiers, request/authz flow, key lifecycle, domain events, security rationale |
-
-| 2 | [Entity lifecycle and reusability](./entity-lifecycle-and-reusability.md) | Shared CRUD patterns used by Organization and Project |
-
-| 3 | [Configuration system](./configuration-system.md) | `APE_AUTH__*` settings and environment precedence |
-
-
-
-Code lives under `backend/app/dependencies/auth.py`, `modules/organizations/`, `platform/auth/`, `platform/domain/api_key_crypto.py`, `platform/infra/auth/`.
-
-
-
-Feature doc: [organization_module.md](../features/organization_module.md) · API: [organization_api.md](../api/organization_api.md) · ADR: [012](../architecture/adr/012-organization-api-key-auth.md)
-
-
-
----
-
-
-
-## Knowledge ingestion pipeline
-
-
-
-**Read in this order** for the document upload → parse → chunk pipeline:
-
-
-
-| # | Document | What you learn |
-
-| - | -------- | -------------- |
-
-| 1 | [**Knowledge ingestion journey**](./knowledge-ingestion-journey.md) | **Start here** — full E2E, status lifecycle, all key files |
-
-| 2 | [Object storage for RAG](./object-storage-for-rag.md) | Raw + parsed blob storage, keys, `BaseStorageProvider` |
-
-| 3 | [Document parsing and extraction](./document-parsing-and-extraction.md) | Worker, parsers, PyMuPDF, async job queue |
-
-| 4 | [Text chunking for RAG](./text-chunking-for-rag.md) | `ChunkingService`, `document_chunks`, chunks API |
-
-| 5 | [OCR fundamentals](./ocr-fundamentals.md) | `OCRProvider`, optional PaddleOCR, image uploads |
-| 6 | [Multilingual text processing](./multilingual-text-processing.md) | Unicode tokenization, normalizer, reindex CLI |
-
-
-
-Code lives under `backend/app/modules/knowledge/`, `platform/providers/`, `worker/`, and `models/document*.py`.
-
-
-
----
-
-
-
-## Retrieval pipeline (after `chunked`)
-
-
-
-| # | Document | What you learn |
-
-| - | -------- | -------------- |
-
-| 1 | [Embeddings fundamentals](./embeddings-fundamentals.md) | Providers, `chunk_embeddings`, `embedding_set_version` |
-
-| 2 | [Vector storage and pgvector](./vector-storage-and-pgvector.md) | Native vectors, HNSW/cosine, scoped SQL filters |
-
-| 3 | [Retrieval feature doc](../features/retrieval_module.md) | Embed → index → search API, workers, config |
-
-| 4 | [pgvector operations runbook](./pgvector-operations-runbook.md) | Cutover, verification, recovery, HNSW maintenance, benchmark |
-
-
-
-Code lives under `backend/app/modules/retrieval/`, `worker/handlers/{embedding,indexing}.py`.
-
-
-
----
-
-
-
-## Conversation / RAG chat pipeline
-
-
-
-**Read in this order** for question → retrieve → prompt → LLM → cited answer:
-
-
-
-| # | Document | What you learn |
-
-| - | -------- | -------------- |
-
-| 1 | [**Conversation RAG journey**](./conversation_rag_journey.md) | **Start here** — E2E flow, glossary, architectural choices, key files |
-
-| 2 | [Provider integration](./conversation_provider_integration.md) | One pattern for OpenAI / Gemini / Ollama / echo — no vendor branches in services |
-
-| 3 | [Conversation LLM providers](./conversation_llm_providers.md) | Backends table and SDK boundary |
-
-| 4 | [RAG prompting](./conversation_rag_prompting.md) | ContextBuilder vs PromptBuilder vs citations |
-
-| 5 | [Conversation memory](./conversation_memory.md) | History window, auto-title, citation snapshots |
-
-| 6 | [SSE streaming](./conversation_sse_streaming.md) | Token stream, Tx1/Tx2, client disconnect |
-
-
-
-Code lives under `backend/app/modules/conversations/`, `dependencies/conversations.py`, `platform/providers/contracts/llm.py`.
-
-
-
-Feature doc: [conversation_module.md](../features/conversation_module.md) · API: [conversation_api.md](../api/conversation_api.md)
-
-
-
----
-
-
-
-## Planned topics (Phase 1+)
-
-
-
-AI and platform capabilities as they are implemented:
-
-
-
-- Hybrid retrieval (BM25 + vector + RRF + reranking) — shipped production retrieval path (ADR-009)
-
-- Provider abstraction and vendor independence
-
-- Observability, tracing, and cost tracking (Langfuse)
-
-- Evaluation (faithfulness, relevance, toxicity)
+- [Platform at a Glance](../Platform-at-a-glance.md)
+- [Platform Integration Guide](../platform-integration-guide.md)
+- [Architecture overview](../architecture/README.md)
+- [Features overview](../features/README.md)

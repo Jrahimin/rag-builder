@@ -1,144 +1,153 @@
-# Configuration System
+# Configuration: The Control Panel for the Journey
 
-This document explains how APE loads, structures, and consumes configuration —
-the foundation for environment-driven, provider-agnostic operation.
+> **Beginner question:** why are there so many environment variables, and how do I know which one to change?
 
----
+Configuration is the engine’s control panel. It lets the same code run locally, in Docker, with a hosted provider, or with private infrastructure. The important skill is not memorising variable names; it is understanding which stage each setting changes.
 
-## Why centralized configuration?
+## The basic rule
 
-Hardcoded connection strings, model names, or chunk sizes make a platform
-undeployable and untestable. APE resolves **everything** from the environment
-at startup, with a single `Settings` object as the source of truth.
-
-Future precedence (per architecture rules):
+APE reads nested settings through Pydantic Settings:
 
 ```text
-defaults  →  environment  →  database  →  per-Project overrides
+APE_<SECTION>__<FIELD>
 ```
 
-The foundation implements the first two layers.
+Examples:
 
----
-
-## Technology: Pydantic Settings
-
-`backend/app/core/config.py` defines nested config models and a root `Settings`
-class extending `BaseSettings`.
-
-```python
-class Settings(BaseSettings):
-    model_config = SettingsConfigDict(
-        env_prefix="APE_",
-        env_nested_delimiter="__",
-        env_file=(".env",),
-        extra="ignore",
-    )
-    app: AppConfig = Field(default_factory=AppConfig)
-    database: DatabaseConfig = Field(default_factory=DatabaseConfig)
-    # ...
+```text
+APE_APP__ENV=development
+APE_DATABASE__HOST=localhost
+APE_RETRIEVAL__STRATEGY=hybrid
+APE_CHAT__CONTEXT_CHAR_BUDGET=12000
 ```
 
-### Environment variable naming
+The double underscore represents nesting. `APE_RETRIEVAL__HNSW_EF_SEARCH` means `settings.retrieval.hnsw_ef_search`.
 
-Nested fields map to double-underscore env keys:
+## Where a value comes from
 
-| Setting | Environment variable |
-| ------- | -------------------- |
-| `app.env` | `APE_APP__ENV` |
-| `database.host` | `APE_DATABASE__HOST` |
-| `logging.render_json` | `APE_LOGGING__RENDER_JSON` |
-| `retrieval.hnsw_ef_search` | `APE_RETRIEVAL__HNSW_EF_SEARCH` |
+The foundation currently implements defaults plus environment variables:
 
-### Environments
-
-`APE_APP__ENV` accepts: `development`, `testing`, `production`.
-
-Tests set `APE_APP__ENV=testing` in `tests/conftest.py` before importing the app.
-
----
-
-## Configuration sections
-
-| Section | Model | Purpose |
-| ------- | ----- | ------- |
-| `app` | `AppConfig` | Name, version, env, API prefix |
-| `server` | `ServerConfig` | Host, port, reload, workers |
-| `logging` | `LoggingConfig` | Level, JSON vs console rendering |
-| `cors` | `CORSConfig` | Allowed origins, methods, headers |
-| `database` | `DatabaseConfig` | PostgreSQL DSN, pool settings |
-| `redis` | `RedisConfig` | Redis DSN |
-| `minio` | `MinioConfig` | S3-compatible storage endpoint |
-| `embedding` | `EmbeddingConfig` | Backend, model, fixed pgvector dimension |
-| `retrieval` | `RetrievalConfig` | Strategy, HNSW search depth, filters, RRF/rerank |
-
-### Database DSN generation
-
-`DatabaseConfig` builds URLs via SQLAlchemy's `URL.create()` (handles special
-characters in passwords):
-
-```python
-database.async_dsn  # postgresql+asyncpg://...
-database.sync_dsn   # postgresql+psycopg://... (Alembic tooling)
+```text
+code defaults -> environment/.env -> Settings object -> dependencies/services/providers
 ```
 
----
+The architecture may later add database or project overrides. Do not assume those layers exist just because the long-term design mentions them.
 
-## Access pattern: `get_settings()`
+## Find the stage before changing the knob
 
-```python
-@lru_cache
-def get_settings() -> Settings:
-    return Settings()
+```mermaid
+flowchart LR
+    C[Configuration] --> I[Ingestion]
+    C --> R[Retrieval]
+    C --> G[Generation]
+    C --> O[Operations]
 ```
 
-- Cached for the process lifetime (parse env once).
-- Injected via `Depends(get_settings)` as `SettingsDep`.
-- Tests clear cache: `get_settings.cache_clear()`.
+### Ingestion settings
 
----
+| Setting area | Changes | First question to ask |
+| --- | --- | --- |
+| Storage backend/root | Where raw and parsed artifacts live | Is the file present and readable by the worker? |
+| Maximum upload bytes | Which files are accepted | Are failures clear and intentional? |
+| Parser/OCR backend | How text is extracted | Is the source digital text or pixels? |
+| OCR language | Which recognition model is used | Does the provider support the script? |
+| Chunking strategy/limits | How text becomes retrieval units | Did the correct heading and exception stay together? |
 
-## Docker vs local development
+### Retrieval settings
 
-`.env.example` documents two consumers:
+| Setting area | Changes | First question to ask |
+| --- | --- | --- |
+| Embedding backend/model | Meaning representation | Are chunks and questions in the same vector space? |
+| Embedding dimensions | Vector schema/storage compatibility | Does changing this require migration and re-embedding? |
+| Strategy | Semantic, keyword, or hybrid path | Is the failure conceptual or exact-token matching? |
+| Candidate top-k | Evidence entering fusion/reranking | Is the right chunk present but ranked too low? |
+| RRF settings | How semantic/keyword ranks combine | Which searcher is bringing the useful result? |
+| Reranker | How the shortlist is reordered | Is a better second opinion worth the latency? |
+| Metadata allowlist | Which filters become SQL predicates | Does a filter represent a real business boundary? |
+| HNSW search effort | Recall/latency trade-off | Is approximate search missing filtered neighbors? |
 
-1. **Application** — `APE_*` variables read by Pydantic Settings.
-2. **Docker Compose** — `POSTGRES_*`, `MINIO_*`, port mappings for service containers.
+### Generation settings
 
-In Docker, compose **overrides** hostnames to service names (`postgres`, `redis`,
-`minio`). Locally, defaults point to `localhost`. Semantic persistence needs no
-separate host setting because it uses `database`.
+| Setting area | Changes | First question to ask |
+| --- | --- | --- |
+| LLM backend/model | Writing quality, cost, latency, language | Is retrieval correct before changing the model? |
+| Temperature | Output variability | Does the task need repeatability? |
+| Retrieval top-k | How much evidence is offered to chat | Is the answer incomplete or noisy? |
+| Context chunk/character budget | Prompt size and cost | Is the smallest sufficient packet being sent? |
+| History window | Conversational continuity | Is prior context useful or distracting? |
+| System prompt version | Grounding and safety instructions | Can we reproduce the answer later? |
 
----
+## A configuration example
 
-## Design decisions
+```env
+# Environment
+APE_APP__ENV=development
 
-| Decision | Rationale |
-| -------- | --------- |
-| `APE_` prefix | Avoid collisions with system or library env vars |
-| Nested models | Group related settings; validate as a unit |
-| No secrets in code | `.env` is gitignored; `.env.example` has placeholders |
-| `extra="ignore"` | Unknown env vars do not crash startup |
-| Separate compose vars | Service provisioning vs application config |
+# Storage
+APE_STORAGE__BACKEND=minio
+APE_MINIO__ENDPOINT=localhost:9000
 
----
+# Embeddings: use a real provider for semantic experiments
+APE_EMBEDDING__BACKEND=openai
+APE_EMBEDDING__MODEL=text-embedding-3-small
+APE_EMBEDDING__DIMENSIONS=1536
 
-## Common mistakes
+# Retrieval
+APE_RETRIEVAL__STRATEGY=hybrid
+APE_RETRIEVAL__SEMANTIC_CANDIDATE_TOP_K=50
+APE_RETRIEVAL__KEYWORD_CANDIDATE_TOP_K=50
+APE_RETRIEVAL__HNSW_EF_SEARCH=100
 
-| Mistake | Fix |
-| ------- | --- |
-| Reading `os.environ` directly | Use `get_settings()` |
-| Hardcoding `localhost` in services | Read from `settings.database.host` |
-| Forgetting to copy `.env.example` | Run `cp .env.example .env` |
-| Single-underscore nesting (`APE_DATABASE_HOST`) | Use `APE_DATABASE__HOST` (double underscore) |
+# Chat
+APE_CHAT__RETRIEVAL_TOP_K=10
+APE_CHAT__MAX_CONTEXT_CHUNKS=8
+APE_CHAT__CONTEXT_CHAR_BUDGET=12000
+APE_CHAT__MAX_HISTORY_MESSAGES=20
+```
 
----
+The exact supported fields live in `backend/app/core/config.py`. Treat `.env.example` as the starting template and `.env.docker` as the container wiring layer.
 
-## Key files
+## Development defaults versus meaningful AI
 
-| File | Role |
-| ---- | ---- |
-| `backend/app/core/config.py` | All config models + `get_settings()` |
-| `.env.example` | Documented template |
-| `docker-compose.yml` | Service host overrides for containers |
-| `tests/unit/test_config.py` | DSN, CORS, env flag unit tests |
+`hash` embeddings are useful for deterministic tests. `echo` chat is useful for checking the request shape. Neither tells you whether semantic retrieval or answer quality is good.
+
+Use this mental label:
+
+```text
+hash/echo = pipeline mechanics
+real embedding/LLM = product behavior
+```
+
+Do not make product decisions from the first category.
+
+## A hands-on experiment
+
+Use one corpus and change only one setting:
+
+1. `strategy=semantic`;
+2. `strategy=hybrid`;
+3. hybrid with a larger candidate pool.
+
+Record the returned chunk IDs, source pages, latency, and answer. Then explain which stage changed and why.
+
+## Configuration safety rules
+
+- Keep secrets out of code and committed files.
+- Do not change embedding dimensions without a migration/re-embedding plan.
+- Pin provider/model configuration with an index snapshot.
+- Use allowlisted metadata filters, not arbitrary SQL-shaped input.
+- Treat production defaults as explicit, not “whatever the local demo used.”
+- Prefer one supported deployment profile before exposing many combinations.
+
+## Learning checkpoint
+
+You understand configuration when you can look at a bad answer and say:
+
+> “The evidence was missing, so I will inspect chunking, embeddings, and candidate depth before changing temperature.”
+
+## Related
+
+- [RAG from Zero](./rag-from-zero.md)
+- [Embeddings Fundamentals](./embeddings-fundamentals.md)
+- [Hybrid Retrieval Journey](./hybrid-retrieval-journey.md)
+- [Docker Local Development](./docker-local-development.md)

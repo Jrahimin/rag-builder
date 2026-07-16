@@ -1,117 +1,133 @@
-# AI Platform Engine (APE)
+# RAG Builder
 
-### Drop AI into your product. Keep your stack. Own your data.
+### A private AI knowledge engine your product can call.
 
-> Self-hosted RAG infrastructure for real applications — not another chatbot demo.
-> One API. Many products. Your documents, your models, your deployment.
+RAG Builder is the product-facing name for **APE (AI Platform Engine)**, the reusable backend underneath this repository.
 
-[![Python](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/)
-[![FastAPI](https://img.shields.io/badge/FastAPI-async-009688.svg)](https://fastapi.tiangolo.com/)
-[![Docker](https://img.shields.io/badge/docker-compose-2496ED.svg)](https://docs.docker.com/compose/)
-[![Ruff](https://img.shields.io/badge/lint-ruff-D7FF64.svg)](https://docs.astral.sh/ruff/)
-[![Phase 1](https://img.shields.io/badge/Phase%201-end--to--end%20RAG-success.svg)](docs/Platform-at-a-glance.md)
+RAG Builder helps software products add document ingestion, search, grounded answers, and citations without rebuilding the entire AI backend from scratch.
 
-**Ship grounded AI without rebuilding the plumbing.**
+![RAG Builder architecture and product journey](docs/assets/RAG_Builder_Hero_Image.png)
 
-[Integration Guide](docs/platform-integration-guide.md) ·
-[Platform at a Glance](docs/Platform-at-a-glance.md) ·
-[API Reference](docs/api/README.md) ·
-[Architecture](docs/architecture/README.md) ·
-[Features](docs/features/README.md)
+> **One reusable engine. Many product experiences.**
+>
+> Your application keeps the UI, users, and workflow. RAG Builder carries the document journey: ingest, parse, chunk, embed, index, retrieve, and generate.
+
+[Start the learning journey](docs/learning/rag-from-zero.md) · [Integrate the API](docs/platform-integration-guide.md) · [See the architecture](docs/Platform-at-a-glance.md)
 
 ---
 
-## Why teams reach for APE
+## Why this exists
 
-Every product that needs “ask our documents” eventually rebuilds the same stack:
-upload, parse, chunk, embed, search, chat, citations, workers, auth, isolation.
-
-**APE is that stack — once — as a microservice beside your app.**
-
-| You keep | APE owns |
-| -------- | -------- |
-| UI, users, business workflows | Ingestion → indexing → hybrid retrieval → RAG chat |
-| Brand and product experience | Provider-agnostic LLMs, embeddings, and storage |
-| Customer trust boundary | Self-hosted deployment under *your* control |
+The moment a product wants to “ask our documents,” it inherits a surprisingly large system:
 
 ```text
-Your app  ──REST + API key──►  APE  ──►  PostgreSQL+pgvector · Redis · Storage · LLMs
+upload -> parse/OCR -> chunk -> embed -> index -> retrieve -> answer -> cite
 ```
 
-Phase 1 is a complete journey:
+That system also needs authentication, project isolation, object storage, background workers, provider integration, migrations, and operational status.
+
+RAG Builder is a learning-first implementation of that journey, shaped as a reusable backend for real applications.
 
 ```text
-Organization key → Project → Upload → Parse → Chunk → Embed → Index → Search → Chat
+Your product  ── REST + API key ──►  RAG Builder
+                                      ├─ PostgreSQL + pgvector
+                                      ├─ background workers
+                                      ├─ object storage
+                                      └─ LLM / embedding providers
 ```
 
----
+## What a product gets
 
-## One platform. Many products.
+- Upload and manage project-scoped documents.
+- Parse PDF, DOCX, TXT, and Markdown content.
+- Optional OCR paths for scanned/image content.
+- Structure-aware chunking with source offsets and page metadata.
+- PostgreSQL-native semantic and keyword retrieval.
+- Hybrid search with rank fusion and reranking hooks.
+- Stateful RAG conversations and SSE streaming.
+- Source metadata for citations and evidence display.
+- Organization API keys, project boundaries, health/readiness, and background processing foundations.
 
-Same engine. Different corpora. Different experiences.
+The repository is still being shaped toward a repeatable dedicated hosted service. The learning path and architecture make the decisions visible instead of hiding them behind a demo.
 
-| Build this… | With APE as… |
-| ----------- | ------------ |
-| “Ask this folder” in a DMS | Project-scoped knowledge + citations |
-| Tax / audit research assistant | Hybrid search over regs + working papers |
-| Legal matter Q&A | Isolated projects per matter or client |
-| HR policy copilot | Handbook corpus per org / region |
-| Internal knowledge for many apps | One reusable AI service, many Projects |
-| Vertical SaaS AI add-on | Embedded infrastructure, not a rewrite |
+## Small examples of what becomes possible
 
-**Project** = which corpus. **Organization** = who is calling.
-Wire once; spin up as many product surfaces as you need.
+| Product | Instant AI capability |
+| --- | --- |
+| Law firm workspace | Add matter documents, ask case questions, and return source pages. |
+| Call-center platform | Search support policies and draft grounded agent replies. |
+| Audit/compliance SaaS | Retrieve evidence from policies, reports, and working papers. |
+| HR platform | Answer handbook questions for a selected organization or region. |
+| Document management system | Add “ask this folder” without replacing the existing UI. |
+| Internal operations tool | Turn procedures and playbooks into a searchable assistant. |
 
----
+The host product owns the experience. RAG Builder owns the knowledge lifecycle.
 
-## What ships today
+## The journey inside the engine
 
-| | Capability | You get |
-| - | ---------- | ------- |
-| 🔐 | **Organizations & API keys** | Tenant auth, admin bootstrap, org-scoped rate limits |
-| 📁 | **Projects** | Hard data isolation for documents, search, and chat |
-| 📄 | **Knowledge** | Upload → storage → parse → optional OCR → structure-aware chunking |
-| 🔎 | **Retrieval** | PostgreSQL-native vector + keyword index, hybrid search, reranking |
-| 💬 | **Conversations** | Stateful RAG chat, citation snapshots, SSE streaming |
-| ⚙️ | **Operations** | Docker Compose, Alembic, `/health` + `/ready`, structured logs |
+```text
+1. Ingest       receive a document and preserve the original
+2. Parse/OCR    turn bytes or pixels into text with provenance
+3. Chunk        split text into useful, citable passages
+4. Embed/Index  represent meaning and build search structures
+5. Retrieve     find and rank evidence with semantic + keyword search
+6. Generate     ask the LLM to answer from the evidence
+```
 
-Full product tour → [Platform at a Glance](docs/Platform-at-a-glance.md)
+The most important idea is simple:
 
----
+> **The model should write from evidence, not pretend the evidence does not matter.**
 
-## Architecture in one glance
+## Learn it like a story
+
+The learning docs are written for beginners who want to understand both the concepts and the code.
+
+### Start here
+
+[RAG from Zero: Follow One Question Through the Engine](docs/learning/rag-from-zero.md)
+
+You will follow a question such as “What is our refund policy?” through the complete pipeline, then open the source files behind each stage.
+
+### Continue through the building blocks
+
+1. [Knowledge ingestion](docs/learning/knowledge-ingestion-journey.md)
+2. [Parsing and extraction](docs/learning/document-parsing-and-extraction.md)
+3. [OCR fundamentals](docs/learning/ocr-fundamentals.md)
+4. [Chunking](docs/learning/text-chunking-for-rag.md)
+5. [Embeddings](docs/learning/embeddings-fundamentals.md)
+6. [Vector storage and pgvector](docs/learning/vector-storage-and-pgvector.md)
+7. [Semantic and hybrid retrieval](docs/learning/semantic-search-for-rag.md)
+8. [Conversation RAG and prompting](docs/learning/conversation_rag_journey.md)
+9. [Configuration and tuning](docs/learning/configuration-system.md)
+10. [Docker local development](docs/learning/docker-local-development.md)
+
+Each chapter asks you to predict, trace, tweak, observe, and explain. That is how a list of settings becomes engineering understanding.
+
+## Architecture at a glance
 
 ```text
 Business application
-        │  REST + API key
+        │  REST + organization API key
         ▼
-api/v1/routes/                 HTTP · validation · Depends
+FastAPI routes and project access checks
         │
         ▼
-modules/<feature>/services/    Orchestration · transactions
+Feature services
+  ├── knowledge       upload, parse, chunk, lifecycle
+  ├── retrieval       embeddings, keyword index, vector search, fusion
+  └── conversations   context, prompts, LLM calls, citations
         │
-        ├── repositories/      PostgreSQL · pgvector · keyword index
-        └── providers/         LLM · embeddings · storage · OCR
+        ├── PostgreSQL + pgvector
+        ├── Redis + background workers
+        ├── local/MinIO object storage
+        └── provider contracts for LLM, embeddings, OCR, parsing, storage
 ```
 
-Built to stay replaceable:
+The project uses a modular-monolith shape so the core is easy to inspect and deploy. It does not require a microservice for every stage.
 
-- **Project-scoped** data paths — no global corpus leakage
-- **Provider interfaces** — swap OpenAI / Ollama / Gemini / MinIO without rewriting business logic
-- **One retrieval source of truth** — relational, lexical, and vector data live in PostgreSQL
-- **Worker-first AI** — parse, embed, and index never block HTTP
-- **Versioned APIs** under `/api/v1`
+## Quick start with Docker
 
-Canonical layout → [module architecture](docs/architecture/module-architecture.md)
-
----
-
-## Quick start
-
-Commands below work in any Unix-style shell (macOS, Linux, Git Bash / WSL on Windows).
-Docker Desktop is the recommended path on Windows.
-
-### Option A — Full stack (closest to production)
+Docker Desktop is the easiest way to explore the full local journey.
 
 ```bash
 git clone <repository-url> rag-builder
@@ -121,157 +137,86 @@ cp .env.docker.example .env.docker
 docker compose --env-file .env.docker up --build
 ```
 
-| Surface | URL |
-| ------- | --- |
-| API | http://localhost:8000 |
-| OpenAPI / Swagger | http://localhost:8000/docs |
-| Health / Ready | http://localhost:8000/health · `/ready` |
-| MinIO console | http://localhost:9001 |
-
-```bash
-docker compose --env-file .env.docker ps
-docker compose --env-file .env.docker logs -f backend
-docker compose --env-file .env.docker logs -f worker
-docker compose --env-file .env.docker down          # stop
-docker compose --env-file .env.docker down -v       # stop + wipe volumes
-```
-
-### Option B — Local API + Docker infra (fast iteration)
-
-```bash
-# from repo root — infra only
-cp .env.docker.example .env.docker
-docker compose --env-file .env.docker up -d postgres redis minio minio-init
-
-cd backend
-python -m venv .venv
-source .venv/bin/activate          # Windows: .venv\Scripts\activate
-pip install -r requirements/dev.txt
-cp .env.example .env
-alembic upgrade head
-psql -h localhost -U ape -d ape -c "SELECT extversion FROM pg_extension WHERE extname = 'vector';"
-python -m app
-```
+Local surfaces:
 
 | Surface | URL |
-| ------- | --- |
-| API | http://localhost:8088 |
-| OpenAPI | http://localhost:8088/docs |
+| --- | --- |
+| API | `http://localhost:8000` |
+| Health | `http://localhost:8000/health` |
+| Readiness | `http://localhost:8000/ready` |
+| MinIO console | `http://localhost:9001` |
 
-`/health` = process alive. `/ready` = PostgreSQL/pgvector, Redis, and storage.
-
----
+The local stack includes FastAPI, a Taskiq worker, PostgreSQL with pgvector, Redis, MinIO, and one-shot migration/bootstrap services.
 
 ## First API journey
 
-Six calls from empty deployment to cited answers:
+The product flow is intentionally small:
 
-1. Create an **Organization** + API key  
-2. Create a **Project**  
-3. **Upload** a document  
-4. Wait for ingest / index (poll status or worker handoff)  
-5. **Search** (hybrid retrieval)  
-6. **Chat** with citations  
+1. Create an organization and API key.
+2. Create a project for a corpus boundary.
+3. Upload a document.
+4. Poll or subscribe to processing status.
+5. Search for evidence.
+6. Ask a grounded question.
 
-Copy-paste walkthrough → **[Platform Integration Guide](docs/platform-integration-guide.md)**  
-Endpoint samples → [docs/api/](docs/api/README.md) · live contract → `/docs`
-
----
-
-## Develop
-
-From the repo root unless noted:
-
-```bash
-ruff check .
-ruff format .
-mypy
-pytest
-pre-commit run --all-files
-```
-
-```bash
-pytest -m unit
-pytest -m integration
-pytest -m architecture
-# Opt-in real-pgvector performance/recall harness
-APE_RUN_PGVECTOR_BENCHMARKS=true pytest -m benchmark
-```
-
-Migrations (`backend/`):
-
-```bash
-cd backend
-alembic revision --autogenerate -m "describe your change"
-alembic upgrade head
-```
-
----
+The copy-paste integration path is in the [Platform Integration Guide](docs/platform-integration-guide.md). Endpoint contracts live in the [API reference](docs/api/README.md).
 
 ## Repository map
 
 ```text
 backend/app/
-  api/            HTTP composition, health, /api/v1 routers
-  composition/    ORM registry + Alembic migrations
-  core/           config, logging, middleware, exceptions
-  dependencies/   FastAPI DI wiring
+  api/            HTTP routes, envelopes, health
+  dependencies/   request wiring and access checks
   models/         shared SQLAlchemy ORM
-  modules/        projects · organizations · knowledge · retrieval · conversations
-  platform/       db · persistence · providers · jobs · auth · http
+  modules/
+    organizations/ organization and API-key lifecycle
+    projects/      project boundaries
+    knowledge/     documents, parsing, chunking
+    retrieval/     embeddings, indexing, search
+    conversations/ RAG chat, prompts, citations
+  platform/       database, providers, jobs, auth, persistence
+  worker/         background task entrypoints
 
 docs/
-  platform-integration-guide.md   ← start here to integrate
-  Platform-at-a-glance.md         ← product + architecture story
-  api/  architecture/  features/  learning/
+  architecture/   boundaries and decision records
+  features/       behavior contracts
+  learning/       concepts, stories, experiments, code journeys
 ```
 
----
+## What is implemented and what is still evolving
 
-## Documentation
+The repository already demonstrates the full conceptual journey from authentication and document upload through retrieval and chat. It is not yet a finished public SaaS product.
 
-| Goal | Doc |
-| ---- | --- |
-| Integrate APE into an app | [Platform Integration Guide](docs/platform-integration-guide.md) |
-| Understand the product end-to-end | [Platform at a Glance](docs/Platform-at-a-glance.md) |
-| Postman-ready endpoint samples | [API reference](docs/api/README.md) |
-| Modules, providers, deployment | [Architecture](docs/architecture/README.md) |
-| Feature behavior | [Features](docs/features/README.md) |
-| Why / how deep dives | [Learning](docs/learning/README.md) |
-| Operate pgvector cutover/recovery | [pgvector runbook](docs/learning/pgvector-operations-runbook.md) |
-| Decision records | [ADRs](docs/architecture/adr/README.md) |
+The most important next development work is:
 
-Feature deep-dives:
-[Organizations](docs/features/organization_module.md) ·
-[Projects](docs/features/project_module.md) ·
-[Knowledge](docs/features/knowledge_module.md) ·
-[Retrieval](docs/features/retrieval_module.md) ·
-[Conversations](docs/features/conversation_module.md)
+- durable job state, retry, recovery, and idempotency;
+- first-class asynchronous job status and webhooks;
+- stronger claim-level citations and insufficient-evidence behavior;
+- one certified production embedding/LLM configuration and a real reranker;
+- safer file-ingestion boundaries and repeatable dedicated deployment operations.
 
----
+The scope is intentionally focused. The next product should not begin with agents, GraphRAG, voice, a connector marketplace, multiple vector databases, or a complex billing control plane.
 
-## Roadmap
+## Documentation guide
 
-| Horizon | Focus |
-| ------- | ----- |
-| **Now** | Phase 1 complete: auth → ingest → hybrid retrieve → cited chat |
-| **Next** | Connectors, observability, evaluation, ops hardening |
-| **Later** | Enterprise connectors, cost analytics, model registry, prompt library |
+| Need | Start here |
+| --- | --- |
+| Understand the product | [Platform at a Glance](docs/Platform-at-a-glance.md) |
+| Integrate an application | [Platform Integration Guide](docs/platform-integration-guide.md) |
+| Learn RAG from the beginning | [RAG from Zero](docs/learning/rag-from-zero.md) |
+| Follow document processing | [Knowledge Ingestion Journey](docs/learning/knowledge-ingestion-journey.md) |
+| Understand search quality | [Hybrid Retrieval Journey](docs/learning/hybrid-retrieval-journey.md) |
+| Understand chat grounding | [Conversation RAG Journey](docs/learning/conversation_rag_journey.md) |
+| Study architecture | [Architecture](docs/architecture/README.md) |
+| Explore behavior | [Features](docs/features/README.md) |
+| Operate pgvector | [pgvector Operations Runbook](docs/learning/pgvector-operations-runbook.md) |
 
----
+## The larger direction
 
-## Philosophy
+The strongest product path for this repository is a **dedicated hosted Knowledge API** for document-heavy B2B software vendors. A supported self-hosted edition can follow when the hosted deployment, upgrade, backup, and operational model are repeatable.
 
-APE is **platform-first** and **learning-first**.
-
-Not another single-purpose chatbot. A deployable AI layer that product teams can
-reuse across DMS, audit, legal, HR, ERP, and internal tools — inspectable,
-provider-agnostic, and owned by the deployment that runs it.
-
-*Your application keeps the experience. APE owns the AI lifecycle.*
-
----
+For compliance and case-management software vendors, RAG Builder is a private document intelligence and grounded retrieval backend that helps them add reliable, citable AI search and answers without building a RAG platform themselves or sending customer data through a shared AI data plane.
 
 ## License
 
-This project is licensed under the [MIT](LICENSE) License.
+See [LICENSE](LICENSE) for the current repository license.

@@ -1,197 +1,127 @@
-# Docker Local Development
+# Docker Local Development: Build the Little City
 
-This document explains how APE's Docker-based local development environment
-works: images, compose services, networking, health checks, and volumes.
-
----
-
-## Why Docker Compose?
-
-APE depends on PostgreSQL with pgvector, Redis, and MinIO. Installing and configuring
-each locally is error-prone. A single `docker compose up --build` gives every
-developer an identical stack with health-checked startup ordering.
-
----
-
-## Stack overview
+> **Mental model:** APE is not one process. Local development gives each part of the system a small home so you can watch them collaborate.
 
 ```text
-docker compose up --build
-        │
-        ├── pgvector/pgvector:0.8.1-pg16 (relational + vector DB)
-        ├── redis:7-alpine         (cache / future job queue)
-        ├── minio/minio:RELEASE…   (S3-compatible storage)
-        ├── migrate                (one-shot Alembic migration)
-        ├── minio-init             (one-shot bucket creation)
-        ├── backend (ape-backend:dev) → uvicorn --reload
-        └── worker (ape-backend:dev)  → Taskiq worker
+backend API -> Redis queue -> worker
+     │             │
+     ├────── PostgreSQL + pgvector
+     └────── MinIO object storage
 ```
 
-| Service | Port(s) | Volume | Health check |
-| ------- | ------- | ------ | ------------ |
-| migrate | — | — | Runs `alembic upgrade head` once after PostgreSQL is healthy |
-| backend | 8000 | `./backend` mounted | Starts after migration and bucket bootstrap; Dockerfile `HEALTHCHECK` → `/health` |
-| worker | — | `./backend` mounted | Starts after migration and bucket bootstrap; consumes Taskiq jobs |
-| postgres | 5432 | `postgres_data` | `pg_isready` |
-| redis | 6379 | `redis_data` | `redis-cli ping` |
-| minio | 9000, 9001 | `minio_data` | `mc ready local` |
-| minio-init | — | — | runs once, exits |
+## What each service does
 
----
+| Service | Job in the story | Why it exists |
+| --- | --- | --- |
+| `backend` | Receives API calls | HTTP, validation, orchestration |
+| `worker` | Performs slow work | Parse, chunk, embed, index |
+| `postgres` | Stores truth and search data | Metadata, chunks, vectors, keyword rows |
+| `redis` | Moves background work | Queue and selected caches |
+| `minio` | Stores files and derived artifacts | S3-compatible object storage |
+| `migrate` | Prepares the schema | Runs Alembic once before application services |
+| `minio-init` | Creates the bucket | Makes local storage ready |
 
-## Backend Dockerfile (multi-stage)
+## Start the stack
 
-`backend/Dockerfile` uses three stages:
+From the repository root:
+
+```bash
+cp .env.docker.example .env.docker
+docker compose --env-file .env.docker up --build
+```
+
+The local stack uses development images, source mounts, and reload behavior. It is a learning environment, not the production deployment package.
+
+Useful surfaces:
 
 ```text
-base (python:3.12-slim)
-   │
-   ├── builder → pip install into /opt/venv
-   │
-   └── runtime → copy venv + app code, non-root user `ape`
+API:       http://localhost:8000
+Health:    http://localhost:8000/health
+Readiness: http://localhost:8000/ready
+MinIO:     http://localhost:9001
 ```
 
-| Stage | Purpose |
-| ----- | ------- |
-| `base` | Shared Python runtime settings |
-| `builder` | Compile and install dependencies |
-| `runtime` | Minimal image — no build tools |
+## Watch one upload travel through the city
 
-Build context is **`backend/`**, making the service self-contained; it contains
-`alembic.ini` and `requirements/`. `INSTALL_DEV=true` in compose installs dev dependencies for
-local reload. Compose selects the `development` target; a plain Docker build
-uses the final `production` target, which serves with Gunicorn and Uvicorn
-workers without reload.
+Open three terminals:
 
----
+```bash
+docker compose --env-file .env.docker logs -f backend
+docker compose --env-file .env.docker logs -f worker
+docker compose --env-file .env.docker logs -f redis
+```
 
-## Startup ordering
+Upload a small document. Look for this sequence:
+
+```text
+backend: document accepted / queued
+redis:   job delivered
+worker:  parsing -> chunking -> complete
+backend: document status can now be polled
+```
+
+This is a much better first Docker lesson than memorising service names: you are watching a request become background work.
+
+## Why the migration container starts first
+
+The application should not consume jobs against an unknown schema. Compose waits for `migrate` to finish before starting the backend and worker.
 
 ```mermaid
 flowchart LR
-    PG[postgres healthy]
-    RD[redis healthy]
-    MN[minio healthy]
-    MG[migrate]
-    BE[backend starts]
-    MI[minio-init]
-
-    PG --> MG --> BE
-    RD --> BE
-    MN --> BE
-    MN --> MI --> BE
+    P[PostgreSQL healthy] --> M[Alembic migration]
+    M --> B[Backend]
+    M --> W[Worker]
+    S[Storage bucket ready] --> B
+    S --> W
 ```
 
-`depends_on` with `condition: service_healthy` prevents bootstrap jobs from
-connecting before infrastructure is ready. API and worker use
-`condition: service_completed_successfully` for both bootstrap jobs.
+## Local API plus Docker infrastructure
 
-Migration startup command:
-
-```sh
-alembic upgrade head
-```
-
----
-
-## Environment variable wiring
-
-Compose sets **service hostnames** for in-network communication:
-
-| In container | `APE_*` override |
-| ------------ | ---------------- |
-| `postgres` | `APE_DATABASE__HOST=postgres` |
-| `redis` | `APE_REDIS__HOST=redis` |
-| `minio:9000` | `APE_MINIO__ENDPOINT=minio:9000` |
-
-Credentials come from `.env` (or defaults in compose interpolation):
-`POSTGRES_USER`, `MINIO_ROOT_USER`, etc.
-
----
-
-## Development volumes
-
-```yaml
-volumes:
-  - ./backend:/app/backend        # live code reload
-  - ./alembic.ini:/app/alembic.ini
-```
-
-Code changes on the host are picked up by uvicorn `--reload` without rebuilding
-the image.
-
-Named volumes (`postgres_data`, `redis_data`, `minio_data`)
-persist data across `docker compose down`. Use `docker compose down -v` to wipe.
-
----
-
-## Health check design choices
-
-| Image | Challenge | Solution |
-| ----- | --------- | -------- |
-| MinIO | curl removed from recent images | `mc ready local` (bundled client) |
-| PostgreSQL | — | `pg_isready` (native) |
-| Redis | — | `redis-cli ping` (native) |
-
-Readiness endpoint (`GET /ready`) performs application-level probes including
-MinIO via HTTP from the backend container.
-
----
-
-## Common commands
+For faster Python iteration, run only infrastructure in Docker and run the API locally:
 
 ```bash
-docker compose up --build        # build + start (foreground)
-docker compose up --build -d       # detached
-docker compose ps                # status + health
-docker compose logs -f backend     # tail API logs
-docker compose down              # stop
-docker compose down -v           # stop + delete volumes
-docker compose config --quiet    # validate compose syntax
-```
+docker compose --env-file .env.docker up -d postgres redis minio minio-init
 
-Makefile shortcuts: `make up`, `make down`, `make logs`.
-
----
-
-## Hybrid workflow
-
-Many developers run **infra in Docker, API locally**:
-
-```bash
-docker compose up -d postgres redis minio minio-init
-cp .env.example .env              # APE_* hosts = localhost
+cd backend
+python -m venv .venv
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
+pip install -r requirements/dev.txt
+cp .env.example .env
 alembic upgrade head
-psql -h localhost -U ape -d ape -c "SELECT extversion FROM pg_extension WHERE extname = 'vector';"
-cd backend && uvicorn app.main:app --reload
+python -m app
 ```
 
-Fastest edit/reload loop; same infrastructure as full Docker mode.
+The host process uses `localhost`; containers use service names such as `postgres`, `redis`, and `minio`. That is why the application environment and Compose environment are related but not identical.
 
----
+## A small debugging game
 
-## Production considerations
+Break one dependency and predict the symptom:
 
-The current compose file is **development-oriented**:
+| Break | What you should expect |
+| --- | --- |
+| Stop Redis | Upload may persist but background processing cannot start |
+| Stop the worker | Documents remain queued |
+| Stop MinIO | Files cannot be read or written |
+| Stop PostgreSQL | API readiness fails and metadata/search is unavailable |
+| Delete the bucket | Stored documents exist as metadata but derived work cannot continue |
 
-- Dev dependencies installed in the image (`INSTALL_DEV=true`).
-- Uvicorn with `--reload` (not for production).
-- Default credentials (`ape`/`ape`, `minioadmin`).
+The lesson is that “the API is running” does not mean “the product is ready.” Readiness is a dependency graph.
 
-Production deployments will use:
+## What this local stack is not
 
-- `requirements/prod.txt` + Gunicorn + Uvicorn workers.
-- Secrets from a vault or orchestrator, not `.env` files.
-- Separate compose overrides or Kubernetes manifests under `infra/`.
+The repository’s Compose file is aimed at development. A dedicated hosted service still needs production images, secrets, TLS, resource limits, backups, upgrade procedures, monitoring, and worker recovery. Learn the local topology first; do not mistake it for the commercial deployment contract.
 
----
+## Learning checkpoint
 
-## Key files
+You understand the local stack when you can answer:
 
-| File | Role |
-| ---- | ---- |
-| `docker-compose.yml` | Full local stack definition |
-| `backend/Dockerfile` | Multi-stage API image |
-| `.dockerignore` | Exclude caches, tests, docs from build |
-| `.env.example` | Documented env template |
-| `infra/README.md` | Future production IaC pointer |
+> Why can an upload return successfully while the document is not yet searchable?
+
+Because HTTP acceptance, background processing, storage, embeddings, and indexing are separate stages owned by different processes.
+
+## Related
+
+- [Knowledge Ingestion — End to End](./knowledge-ingestion-journey.md)
+- [Configuration System](./configuration-system.md)
+- [Database and Migrations](./database-and-migrations.md)
+- [Deployment Architecture](../architecture/deployment-architecture.md)

@@ -1,166 +1,152 @@
-# Text Chunking for RAG
+# Text Chunking for RAG: Cut the Document at the Right Places
 
-## The basic idea
+> **The puzzle:** how do you split a long document so search can find the answer without tearing the meaning apart?
 
-Embedding models and LLMs have **limited context windows**. You cannot stuff a 200-page PDF into one vector. **Chunking** splits long text into smaller segments that can be:
+Chunking converts parsed text into searchable passages. Every passage will later become an embedding, a retrieval candidate, and potentially a citation.
 
-1. Embedded individually (`modules/retrieval/`)
-2. Retrieved by similarity at query time
-3. Cited with position metadata (`chunk_index`, `char_start`, `page_number`)
+```text
+parsed document -> boundaries -> chunks -> validation -> document_chunks rows
+```
 
-In APE Knowledge v1, chunking is the **last step** of ingestion. The workflow ends at `status=chunked`.
+## A chunk is a retrieval unit
 
----
+Imagine a handbook containing a “Refunds” heading, an eligibility rule, three exceptions, and a submission address. If the chunk is only one sentence long, the answer may miss the exception. If the chunk is the entire handbook, every question receives too much noise.
 
-## Starting point & end point
+The useful unit is usually:
 
-| | |
-| - | - |
-| **Starts** | Immediately after parsing in the **same worker run** (`DocumentProcessingWorkflow`) |
-| **Input** | `ParsedDocument.text` (in memory; also saved to `parsed_text_storage_key`) |
-| **Output** | Rows in `document_chunks` table |
-| **Final status** | `chunked` on the `documents` row |
+```text
+heading + related paragraphs + enough surrounding context
+```
 
-Upload does not chunk. Clients poll `GET .../documents/{id}` until `status=chunked`, then call `GET .../documents/{id}/chunks`.
+Chunking is therefore not merely “split every 500 characters.” It is a search-quality decision.
 
----
-
-## Visual flow
+## The APE chunking pipeline
 
 ```mermaid
 flowchart LR
-    A[ParsedDocument.text] --> B[status=chunking]
-    B --> C[delete old chunks]
-    C --> D[ChunkingService.split]
-    D --> E[DocumentChunk rows]
-    E --> F[status=chunked]
+    D[ParsedDocument] --> A[Analyze structure]
+    A --> S[Select strategy]
+    S --> C[Create candidate chunks]
+    C --> V[Validate size/content]
+    V --> M[Attach page/offset metadata]
+    M --> R[document_chunks]
 ```
 
-Chunking runs inside `workflows/document_processing.py` — not a separate job or API call.
+The main code lives under `backend/app/modules/knowledge/services/chunking/`.
 
----
+## Strategy menu
 
-## File-by-file journey
+| Strategy | Best first use | Main risk |
+| --- | --- | --- |
+| Markdown/heading | Well-structured Markdown or policy documents | A missing or noisy heading can create uneven chunks |
+| Structure-aware | Documents with headings, paragraphs, lists, and layout signals | More logic and more behavior to inspect |
+| Semantic | Text where neighboring sentences should be grouped by meaning | Depends on the embedding provider and thresholds |
+| Recursive fallback | Messy or unstructured text | Can split important context if limits are too small |
 
-| Step | File | What happens |
-| ---- | ---- | ------------- |
-| 1 | `workflows/document_processing.py` | Parse phase finishes; `document.status = CHUNKING`, commit |
-| 2 | `repositories/document_chunk_repository.py` | `delete_by_document(document.id)` — clears chunks from prior run/reprocess |
-| 3 | `services/chunking_service.py` | `split(parsed.text, page_count=...)` |
-| 3a | same | `RecursiveCharacterTextSplitter` (langchain) splits on paragraph → line → word boundaries |
-| 3b | same | Builds `TextChunk` dataclass: content, offsets, `token_count`, `chunk_metadata` |
-| 4 | `models/document_chunk.py` | ORM entity mapped to `document_chunks` table |
-| 5 | `workflows/document_processing.py` | Maps each `TextChunk` → `DocumentChunk(...)`, `bulk_add()`, `flush()` |
-| 6 | same | `document.status = CHUNKED`, final commit |
-| 7 | `api/v1/routes/documents_router.py` | `GET .../chunks` → `DocumentService.list_chunks()` |
-| 8 | `document_service.py` | `list_chunks()` verifies document exists, delegates to repository |
-| 9 | `repositories/document_chunk_repository.py` | `list_by_document()` ordered by `chunk_index` |
+The selector should be opinionated. More strategies do not automatically mean better results; they mean more behavior to measure.
 
-Worker wiring: `worker/handlers/document.py` builds `ChunkingService.from_settings(settings)` and passes it into the workflow.
+## The three knobs beginners should understand first
 
----
+### Target size
 
-## What each chunk row stores
+The target is the comfortable center of the chunk. It controls how much context normally stays together.
 
-| Column | Source | Purpose |
-| ------ | ------ | ------- |
-| `chunk_index` | 0, 1, 2, … | Stable order within document |
-| `content` | Splitter output | Text returned to retrieval / shown in citations |
-| `char_start` / `char_end` | Computed in `chunking_service.py` | Offset in full parsed text |
-| `page_number` | `1` if `page_count == 1` (plain text), else `null` | Citation hint; PDF per-page mapping is future work |
-| `token_count` | `len(words)` estimate | Rough size — not a real tokenizer yet |
-| `chunk_metadata` | `{"splitter": "recursive_character"}` | Extensible JSON |
-| `project_id` | From document | Isolation — same as all project-owned data |
+- too small: precise but fragmented evidence;
+- too large: broad but noisy evidence;
+- useful starting point: a few paragraphs or a model-appropriate token window.
 
-Model: `models/document_chunk.py`  
-Migration: `composition/migrations/versions/20260630_0006-add_document_chunks_table.py`
+### Maximum size
 
----
+The maximum is a safety ceiling. It prevents one heading or malformed paragraph from creating an enormous chunk.
 
-## Configuration
+### Overlap
 
-| Env var | Default | Effect |
-| ------- | ------- | ------ |
-| `APE_CHUNKING__STRATEGY` | `auto` | Strategy selection (`ChunkingStrategy` enum) |
-| `APE_CHUNKING__TARGET_TOKENS` | `250` | Target tokens per chunk |
-| `APE_CHUNKING__MAX_TOKENS` | `400` | Hard max before validation split |
-| `APE_CHUNKING__MIN_TOKENS` | `50` | Merge threshold for tiny chunks |
-| `APE_CHUNKING__OVERLAP_TOKENS` | `50` | Token overlap between adjacent chunks |
-| `APE_CHUNKING__TOKEN_COUNT_METHOD` | `unicode_property_v1` | Unicode-property token counting |
-
-Defined in `core/config.py` (`ChunkingConfig`). See [multilingual-text-processing.md](multilingual-text-processing.md).
-
-**Intuition:**
-
-- **Higher `target_tokens`** → fewer chunks, more context per hit, risk of noisy retrieval.
-- **Higher `overlap_tokens`** → less lost context at boundaries, more storage/embedding cost.
-- **`auto` strategy** → structure analysis selects markdown / heading / structure / semantic paths.
-
-Changing env vars and reprocessing the same file should change `GET .../chunks` `total`.
-
----
-
-## Concepts
-
-| Term | Meaning |
-| ---- | ------- |
-| **Structure-aware chunking** | Analyze → select strategy → chunk → validate pipeline |
-| **Semantic chunking** | Sentence similarity boundaries via `SentenceSimilarityService` |
-| **Unicode-property tokens** | `regex` `\p{Letter}` etc. — multilingual token counting |
-| **Overlap** | Last N tokens of chunk *i* appear at start of chunk *i+1* |
-| **Chunk vs document** | Document = one uploaded file; chunks = many searchable pieces |
-| **`chunked` status** | Ingestion handoff — embeddings/retrieval indexes are **out of scope** for Knowledge v1 |
-
----
-
-## Reprocess behavior
-
-**Trigger:** `POST .../documents/{id}/reprocess`
+Overlap repeats a small boundary region between neighboring chunks:
 
 ```text
-document_service.reprocess()
-  → version += 1
-  → enqueue document.process
-worker workflow
-  → delete_by_document()   # remove old chunks
-  → parse again
-  → split again
-  → new chunk rows
+chunk A: ... eligibility, receipt, thirty days
+chunk B: receipt, thirty days, exceptions, submission address ...
 ```
 
-Idempotent for unchanged input + stable config → same chunk count.
+Overlap can preserve context at boundaries, but too much overlap increases storage, embedding cost, and duplicate search results.
 
----
+## Tokens versus characters
 
-## Delete behavior
+LLMs and embedding models consume tokens, not characters. A character count is a useful cheap approximation, but it is not a provider tokenizer.
 
-**Trigger:** `DELETE .../documents/{id}`
+APE stores a token estimate with each chunk. Treat that estimate as a control signal, not as an exact billing number.
 
-`DocumentService.soft_delete()` calls `DocumentChunkRepository.delete_by_document()` before removing storage files.
-
----
-
-## API example
-
-```http
-GET /api/v1/projects/{project_id}/documents/{document_id}/chunks?limit=20&offset=0
+```text
+English text: often fewer tokens than characters
+code / tables: unusual punctuation can increase tokens
+some scripts: character-to-token ratios can differ significantly
 ```
 
-Response items include `chunk_index`, `content`, `token_count`, `char_start`, `char_end`. Wrong `project_id` → `404 document_not_found` (same isolation as document GET).
+This is why a chunk size that works for English policy text may behave differently for code, mixed-language content, or tables.
 
----
+## What makes a chunk good?
 
-## What chunking does **not** do (v1)
+A good chunk usually has:
 
-- Semantic / sentence-transformer-based splitting
-- Per-PDF-page chunk boundaries (only single-page hint for `.txt`)
-- Embeddings or retrieval-index writes — reserved for `retrieval` module
-- Token-accurate counts (word estimate only)
+- one coherent topic;
+- enough context to answer a question;
+- a stable page or offset location;
+- no accidental truncation in the middle of a rule;
+- predictable size;
+- content that is not only a heading or navigation fragment.
 
----
+## What is stored
 
-## Related
+`document_chunks` rows carry more than content:
 
-- [Knowledge ingestion journey](./knowledge-ingestion-journey.md) — where chunking sits in the full pipeline
-- [Document parsing](./document-parsing-and-extraction.md) — produces the text that gets split
-- [Feature doc](../features/knowledge_module.md)
+| Field | Role |
+| --- | --- |
+| `chunk_index` | Stable order within a document version |
+| `content` | Text sent to embedding and retrieval |
+| `page_number`, `page_start`, `page_end` | Human-readable evidence location |
+| `char_start`, `char_end` | Precise offsets in parsed text |
+| `token_count` | Budget and diagnostics |
+| `chunk_metadata` | Structure, language, and future filters |
+| `project_id`, `document_id` | Ownership and isolation |
+
+The metadata is why a chunk can become a citation instead of an anonymous string.
+
+## A hands-on experiment
+
+Use a two-page policy and run three configurations:
+
+1. small target, no overlap;
+2. medium target, modest overlap;
+3. structure-aware strategy.
+
+For the same question, inspect:
+
+- which chunk is retrieved;
+- whether the heading stayed with the rule;
+- whether the source page is still clear;
+- how many near-duplicate chunks appear.
+
+Do not choose the configuration because it produced the most chunks. Choose the one that returns the smallest sufficient evidence packet.
+
+## Common mistakes
+
+1. **One chunk per page:** page boundaries are useful metadata, not always semantic boundaries.
+2. **Huge overlap:** it can make retrieval look busy while adding little evidence.
+3. **Tiny chunks:** every result is precise but incomplete.
+4. **Ignoring headings:** the rule loses the context that tells the model what it means.
+5. **Changing chunking without re-embedding:** new chunks need new vectors.
+
+## Learning checkpoint
+
+You understand chunking when you can answer:
+
+> If the correct document is found but the answer misses an exception in the next paragraph, would you first change the LLM, the chunk boundary, or the retrieval candidate count - and why?
+
+Next: [Embeddings Fundamentals](./embeddings-fundamentals.md).
+
+## Related code and chapters
+
+- [Knowledge Ingestion — End to End](./knowledge-ingestion-journey.md)
+- [Document Parsing and Extraction](./document-parsing-and-extraction.md)
+- `backend/app/modules/knowledge/services/chunking_service.py`
+- `backend/app/modules/knowledge/services/chunking/`
