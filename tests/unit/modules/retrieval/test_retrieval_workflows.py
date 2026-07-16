@@ -1,4 +1,4 @@
-"""Unit tests for the embedding and vector indexing workflows."""
+"""Unit tests for the embedding and retrieval indexing workflows."""
 
 from __future__ import annotations
 
@@ -11,12 +11,12 @@ from app.models.chunk_embedding import ChunkEmbedding
 from app.models.document import Document, DocumentStatus
 from app.models.document_chunk import DocumentChunk
 from app.modules.retrieval.workflows.embedding_workflow import EmbeddingWorkflow
-from app.modules.retrieval.workflows.vector_indexing_workflow import VectorIndexingWorkflow
-from app.platform.persistence.vector_codec import pack_vector
+from app.modules.retrieval.workflows.retrieval_indexing_workflow import (
+    RetrievalIndexingWorkflow,
+)
 from app.platform.providers.contracts.embedding import BaseEmbeddingProvider, EmbeddingBatchResult
 from app.platform.providers.errors import ProviderError
 from app.platform.providers.implementations.hash_embedding import HashEmbeddingProvider
-from app.platform.providers.implementations.memory_vector_store import MemoryVectorStoreProvider
 
 pytestmark = pytest.mark.unit
 
@@ -162,6 +162,7 @@ async def test_embedding_happy_path_persists_vectors() -> None:
     assert result.error_message is None
     assert len(persisted) == 3
     assert all(row.embedding_set_version == 1 for row in persisted)
+    assert all(isinstance(row.embedding, list) for row in persisted)
     embedding_repository.delete_for_document_version.assert_awaited_once()
 
 
@@ -182,7 +183,7 @@ async def test_embedding_provider_error_marks_failed() -> None:
     assert result.error_message == "embedding backend down"
 
 
-# --- VectorIndexingWorkflow ---------------------------------------------------------
+# --- RetrievalIndexingWorkflow ----------------------------------------------------
 
 
 def _embedding_row(document: Document, chunk: DocumentChunk) -> ChunkEmbedding:
@@ -200,19 +201,15 @@ def _embedding_row(document: Document, chunk: DocumentChunk) -> ChunkEmbedding:
         provider_version="1",
         input_content_hash="h",
         embedding_schema_version=1,
-        vector=pack_vector(vector),
+        embedding=vector,
     )
 
 
-def _indexing_workflow(
-    project_id: uuid.UUID,
-    store: MemoryVectorStoreProvider,
-) -> VectorIndexingWorkflow:
-    return VectorIndexingWorkflow(
+def _indexing_workflow(project_id: uuid.UUID) -> RetrievalIndexingWorkflow:
+    return RetrievalIndexingWorkflow(
         session=_session(),
         project_id=project_id,
         embedder=_embedder(),
-        vector_store=store,
         embedding_set_version=1,
         filterable_metadata_keys=["source"],
     )
@@ -221,7 +218,7 @@ def _indexing_workflow(
 async def test_indexing_skips_disallowed_status() -> None:
     project_id = uuid.uuid4()
     document = _document(project_id, DocumentStatus.CHUNKED)
-    workflow = _indexing_workflow(project_id, MemoryVectorStoreProvider())
+    workflow = _indexing_workflow(project_id)
     workflow._document_repository = _repo(get_by_id=AsyncMock(return_value=document))
 
     result = await workflow.run(document.id)
@@ -233,7 +230,7 @@ async def test_indexing_skips_disallowed_status() -> None:
 async def test_indexing_fails_without_embeddings() -> None:
     project_id = uuid.uuid4()
     document = _document(project_id, DocumentStatus.INDEXING)
-    workflow = _indexing_workflow(project_id, MemoryVectorStoreProvider())
+    workflow = _indexing_workflow(project_id)
     workflow._document_repository = _repo(get_by_id=AsyncMock(return_value=document))
     workflow._embedding_repository = _repo(list_by_document=AsyncMock(return_value=[]))
 
@@ -244,48 +241,45 @@ async def test_indexing_fails_without_embeddings() -> None:
     assert result.error_message == "No embeddings available for indexing."
 
 
-async def test_indexing_happy_path_upserts_points_with_version_payload() -> None:
+async def test_indexing_happy_path_validates_embeddings_and_builds_keywords() -> None:
     project_id = uuid.uuid4()
-    store = MemoryVectorStoreProvider()
     document = _document(project_id, DocumentStatus.INDEXING)
     chunk = _chunk(document, 0)
     embedding = _embedding_row(document, chunk)
-    workflow = _indexing_workflow(project_id, store)
+    workflow = _indexing_workflow(project_id)
     workflow._document_repository = _repo(get_by_id=AsyncMock(return_value=document))
-    workflow._chunk_repository = _repo(map_by_ids=AsyncMock(return_value={chunk.id: chunk}))
     workflow._embedding_repository = _repo(list_by_document=AsyncMock(return_value=[embedding]))
 
     with patch(
-        "app.modules.retrieval.workflows.vector_indexing_workflow.KeywordIndexingWorkflow.index_document",
+        "app.modules.retrieval.workflows.retrieval_indexing_workflow.KeywordIndexingWorkflow.index_document",
         new_callable=AsyncMock,
     ) as keyword_index:
+        keyword_index.return_value = 1
         result = await workflow.run(document.id)
         keyword_index.assert_awaited_once()
 
     assert result is not None
     assert result.status is DocumentStatus.READY
-    stored = store._points[str(chunk.id)]
-    assert stored.payload["project_id"] == str(project_id)
-    assert stored.payload["embedding_set_version"] == 1
-    assert stored.payload["source"] == "handbook"
 
 
-async def test_indexing_provider_error_marks_failed() -> None:
+async def test_indexing_chunk_count_mismatch_marks_failed() -> None:
     project_id = uuid.uuid4()
     document = _document(project_id, DocumentStatus.INDEXING)
     chunk = _chunk(document, 0)
     embedding = _embedding_row(document, chunk)
-    store = MagicMock(spec=MemoryVectorStoreProvider)
-    store.ensure_collection = AsyncMock(
-        side_effect=ProviderError("vector store down", provider_name="memory")
-    )
-    workflow = _indexing_workflow(project_id, store)
+    workflow = _indexing_workflow(project_id)
     workflow._document_repository = _repo(get_by_id=AsyncMock(return_value=document))
-    workflow._chunk_repository = _repo(map_by_ids=AsyncMock(return_value={chunk.id: chunk}))
     workflow._embedding_repository = _repo(list_by_document=AsyncMock(return_value=[embedding]))
 
-    result = await workflow.run(document.id)
+    with patch(
+        "app.modules.retrieval.workflows.retrieval_indexing_workflow.KeywordIndexingWorkflow.index_document",
+        new_callable=AsyncMock,
+        return_value=0,
+    ):
+        result = await workflow.run(document.id)
 
     assert result is not None
     assert result.status is DocumentStatus.FAILED
-    assert result.error_message == "vector store down"
+    assert result.error_message == (
+        "Embedding and keyword chunk counts differ; re-embed the document."
+    )

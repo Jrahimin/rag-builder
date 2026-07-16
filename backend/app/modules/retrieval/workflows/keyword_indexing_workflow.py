@@ -6,12 +6,12 @@ import time
 import uuid
 
 import structlog
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.chunk_keyword_index import ChunkKeywordIndex
 from app.models.document import Document
-from app.modules.retrieval.keyword.tokenizer import term_frequencies, tokenize
+from app.modules.retrieval.keyword.tokenizer import tokenize
 from app.modules.retrieval.repositories.chunk_keyword_index_repository import (
     ChunkKeywordIndexRepository,
 )
@@ -47,8 +47,6 @@ class KeywordIndexingWorkflow:
             project_id,
             fts_regconfig=fts_regconfig,
         )
-        self._term_stats_repository = KeywordTermStatsRepository(session, project_id)
-        self._collection_stats_repository = KeywordCollectionStatsRepository(session, project_id)
 
     async def index_document(self, document: Document) -> int:
         started = time.perf_counter()
@@ -59,7 +57,6 @@ class KeywordIndexingWorkflow:
         )
 
         indexed = 0
-        document_terms: set[str] = set()
         total_tokens = 0
         for chunk in chunks:
             metadata_snapshot = {
@@ -77,16 +74,13 @@ class KeywordIndexingWorkflow:
             )
             tokens = tokenize(chunk.content)
             total_tokens += len(tokens)
-            document_terms.update(term_frequencies(tokens).keys())
             indexed += 1
 
-        for term in document_terms:
-            await self._term_stats_repository.increment_term(
-                term,
-                embedding_set_version=self._embedding_set_version,
-            )
-
-        await self._refresh_collection_stats()
+        await refresh_keyword_statistics(
+            self._session,
+            self._project_id,
+            self._embedding_set_version,
+        )
         elapsed_ms = int((time.perf_counter() - started) * 1000)
         logger.info(
             "keyword_indexing_complete",
@@ -94,25 +88,55 @@ class KeywordIndexingWorkflow:
             document_id=str(document.id),
             duration_ms=elapsed_ms,
             chunk_count=indexed,
-            unique_terms=len(document_terms),
             total_tokens=total_tokens,
         )
         return indexed
 
-    async def _refresh_collection_stats(self) -> None:
-        stmt = select(
-            func.count(ChunkKeywordIndex.id),
-            func.avg(ChunkKeywordIndex.token_count),
-            func.count(func.distinct(ChunkKeywordIndex.document_id)),
+
+async def refresh_keyword_statistics(
+    session: AsyncSession,
+    project_id: uuid.UUID,
+    embedding_set_version: int,
+) -> None:
+    """Rebuild exact BM25 statistics after an index mutation.
+
+    Rebuilding from the authoritative chunk rows keeps reruns and deletions
+    idempotent. The operation stays inside the caller's transaction.
+    """
+    await session.flush()
+    result = await session.execute(
+        select(
+            ChunkKeywordIndex.document_id,
+            ChunkKeywordIndex.term_frequencies,
+            ChunkKeywordIndex.token_count,
         ).where(
-            ChunkKeywordIndex.project_id == self._project_id,
-            ChunkKeywordIndex.embedding_set_version == self._embedding_set_version,
+            ChunkKeywordIndex.project_id == project_id,
+            ChunkKeywordIndex.embedding_set_version == embedding_set_version,
         )
-        result = await self._session.execute(stmt)
-        total_chunks, avg_doc_length, total_documents = result.one()
-        await self._collection_stats_repository.upsert_stats(
-            embedding_set_version=self._embedding_set_version,
-            total_documents=int(total_documents or 0),
-            total_chunks=int(total_chunks or 0),
-            avg_doc_length=float(avg_doc_length or 0.0) or 1.0,
+    )
+    rows = result.all()
+    documents_by_term: dict[str, set[uuid.UUID]] = {}
+    document_ids: set[uuid.UUID] = set()
+    total_tokens = 0
+    for row in rows:
+        document_ids.add(row.document_id)
+        total_tokens += row.token_count
+        for term in row.term_frequencies:
+            documents_by_term.setdefault(term, set()).add(row.document_id)
+
+    term_repository = KeywordTermStatsRepository(session, project_id)
+    await term_repository.delete_for_version(embedding_set_version)
+    for term, document_ids_for_term in documents_by_term.items():
+        await term_repository.increment_term(
+            term,
+            embedding_set_version=embedding_set_version,
+            delta=len(document_ids_for_term),
         )
+
+    collection_repository = KeywordCollectionStatsRepository(session, project_id)
+    await collection_repository.upsert_stats(
+        embedding_set_version=embedding_set_version,
+        total_documents=len(document_ids),
+        total_chunks=len(rows),
+        avg_doc_length=(total_tokens / len(rows)) if rows else 1.0,
+    )

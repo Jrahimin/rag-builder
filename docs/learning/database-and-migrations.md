@@ -61,7 +61,7 @@ session_factory = async_sessionmaker(engine, expire_on_commit=False)
 ```
 
 - Created once in lifespan, stored on `app.state.db`.
-- `check()` runs `SELECT 1` for readiness probes.
+- `check()` verifies the pgvector extension and the configured `vector(n)` column.
 - `dispose()` closes the pool on shutdown.
 
 ---
@@ -172,14 +172,16 @@ Docker Compose runs `alembic upgrade head` before starting uvicorn.
 
 ---
 
-## Redis and Qdrant (not ORM)
+## Native vector persistence
 
-`platform/infra/connectivity/redis.py` and `qdrant.py` manage **connectivity**
-for health checks and lifespan — not relational persistence. They do not expose
-vendor clients through general DI.
+`chunk_embeddings.embedding` is a pgvector `vector(n)` column managed through
+Alembic. `ChunkEmbeddingRepository` owns fixed-dimension persistence and cosine
+candidate SQL; model-facing embedding calls still use provider interfaces.
+Redis remains a separate connectivity adapter for health and background jobs.
 
-Vector operations will go through provider implementations when the knowledge
-module ships — not direct Qdrant SDK calls from services.
+The pgvector migration enables the extension, creates the HNSW cosine index,
+and returns legacy packed-vector documents to `chunked` for re-embedding. It
+does not attempt unsafe byte conversion.
 
 ---
 

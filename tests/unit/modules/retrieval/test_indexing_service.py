@@ -14,7 +14,6 @@ from app.modules.retrieval.services.indexing_service import IndexingService
 from app.platform.jobs.contracts import JobQueue
 from app.platform.jobs.errors import JobEnqueueError
 from app.platform.providers.implementations.hash_embedding import HashEmbeddingProvider
-from app.platform.providers.implementations.memory_vector_store import MemoryVectorStoreProvider
 
 pytestmark = pytest.mark.unit
 
@@ -68,7 +67,6 @@ def service(
         project_id=project_id,
         job_queue=job_queue,
         embedder=HashEmbeddingProvider(model="m", dimensions=8, provider_version="1"),
-        vector_store=MemoryVectorStoreProvider(),
         retrieval_config=RetrievalConfig(),
         embedding_batch_size=32,
         filterable_metadata_keys=["source"],
@@ -171,7 +169,6 @@ async def test_enqueue_embed_if_enabled_respects_flag(
         project_id=project_id,
         job_queue=job_queue,
         embedder=HashEmbeddingProvider(model="m", dimensions=8, provider_version="1"),
-        vector_store=MemoryVectorStoreProvider(),
         retrieval_config=RetrievalConfig(auto_embed=False),
         embedding_batch_size=32,
         filterable_metadata_keys=[],

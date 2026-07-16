@@ -5,16 +5,21 @@
 
 ## Context
 
-APE must support multiple LLM, vector DB, storage, and OCR vendors without
+APE must support multiple LLM, embedding, storage, and OCR vendors without
 rewriting business logic. Vendor SDK types must not leak into services.
+
+ADR-013 refines semantic persistence: pgvector is a retrieval repository, not
+an external provider seam.
 
 ## Decision
 
 - Provider **interfaces** are added in `app/platform/providers/` when the first
   implementation ships — not as speculative ABCs upfront.
 - Vendor SDKs are confined to `platform/providers/implementations/`.
-- Connectivity adapters (Redis, Qdrant health) live in
+- Connectivity adapters for external runtime services (currently Redis) live in
   `platform/infra/connectivity/` — not in general DI.
+- PostgreSQL-specific vector SQL stays in the retrieval repository; embedding
+  generation continues through `BaseEmbeddingProvider`.
 - `ProviderError` taxonomy in `platform/providers/errors.py`.
 - `ProviderCapability` reference enum in `contracts.py`.
 

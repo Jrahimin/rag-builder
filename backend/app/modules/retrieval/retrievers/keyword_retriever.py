@@ -53,17 +53,8 @@ class KeywordRetriever(BaseRetriever):
             embedding_set_version=context.embedding_set_version,
             top_k=context.keyword_candidate_top_k,
             document_id=context.filters.document_id,
+            metadata_filter=metadata_filter,
         )
-
-        if metadata_filter:
-            rows = [
-                row
-                for row in rows
-                if all(
-                    str(row.metadata_snapshot.get(key)) == value
-                    for key, value in metadata_filter.items()
-                )
-            ]
 
         if context.min_ocr_confidence is not None:
             threshold = context.min_ocr_confidence

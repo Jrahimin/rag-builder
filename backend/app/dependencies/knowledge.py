@@ -18,7 +18,6 @@ from app.platform.jobs.contracts import JobQueue
 from app.platform.jobs.implementations.job_queue_factory import get_job_queue
 from app.platform.providers.contracts.storage import BaseStorageProvider
 from app.platform.providers.implementations.storage_factory import get_storage_provider
-from app.platform.providers.implementations.vector_store_factory import get_vector_store_provider
 
 
 def get_document_repository(
@@ -48,7 +47,6 @@ def get_document_service(
     cleanup = RetrievalCleanupService(
         session=session,
         project_id=project_id,
-        vector_store=get_vector_store_provider(),
     )
 
     async def on_document_delete(document: Document) -> None:

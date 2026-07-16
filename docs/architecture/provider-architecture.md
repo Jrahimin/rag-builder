@@ -7,14 +7,15 @@
 1. Business code uses provider **interfaces** (added with first implementation).
 2. Vendor SDKs stay in `platform/providers/implementations/`.
 3. `ProviderError` taxonomy in `platform/providers/errors.py`.
-4. **Connectivity** (Redis, Qdrant health) is `platform/infra/connectivity/` — not general DI.
+4. **Connectivity** for external services is `platform/infra/connectivity/` — not general DI.
 
 ## What exists today
 
 - `ProviderCapability` reference enum (`providers/contracts.py`)
 - `ProviderError` hierarchy
 - **Embeddings** — `BaseEmbeddingProvider` + Ollama / OpenAI / Gemini / hash implementations
-- **Vector store** — `BaseVectorStoreProvider` + Qdrant / memory implementations
+- **Semantic persistence** — retrieval-owned pgvector repository; it is not a
+  model-facing provider. There is no vector-store provider or external vector client.
 - **Storage** — `BaseStorageProvider` + local / MinIO implementations
 - **Document parsers** — `BaseDocumentParserProvider` + PyMuPDF / plain text / docx / image OCR
 - **OCR** — `OCRProvider` + optional PaddleOCR (`ocr_factory.py`); SDK boundary same as other providers. **Bangla (`bn`) is not supported** on the Paddle backend in Phase 1 — see [multilingual_support.md](../features/multilingual_support.md#known-limitation-bangla-bengali-ocr).
@@ -26,7 +27,8 @@
 Module service → provider interface → implementation → vendor SDK
 ```
 
-Forbidden: `Redis`, `AsyncQdrantClient`, `PointStruct`, etc. in modules or `dependencies/`.
+Forbidden: vendor SDK objects in modules or `dependencies/`. PostgreSQL-specific
+vector expressions stay inside the retrieval repository.
 
 ## LLM integration pattern (provider-agnostic)
 
@@ -40,4 +42,6 @@ get_llm_provider()  →  BaseLLMProvider
 
 Switch backend via `APE_LLM__BACKEND` only — never import vendor implementations from modules. Full guide: [conversation_provider_integration.md](../learning/conversation_provider_integration.md).
 
-Same pattern for embeddings (`get_embedding_provider`), vector store (`get_vector_store_provider`), and storage (`get_storage_provider`).
+Same pattern for embeddings (`get_embedding_provider`) and storage
+(`get_storage_provider`). Semantic search uses the session-aware retrieval
+repository defined by ADR-013.

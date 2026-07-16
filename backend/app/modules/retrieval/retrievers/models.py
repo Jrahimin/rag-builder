@@ -59,6 +59,7 @@ class RetrievalContext:
     filterable_metadata_keys: tuple[str, ...]
     fts_regconfig: str = "simple"
     min_ocr_confidence: float | None = None
+    hnsw_ef_search: int = 100
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def sanitized_metadata_filter(self) -> dict[str, str]:

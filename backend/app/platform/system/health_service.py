@@ -11,7 +11,6 @@ import httpx
 from app.core.config import Settings
 from app.core.logging import get_logger
 from app.platform.db.session import Database
-from app.platform.infra.connectivity.qdrant import QdrantConnectivity
 from app.platform.infra.connectivity.redis import RedisConnectivity
 from app.platform.system.schemas import (
     DependencyHealth,
@@ -34,12 +33,10 @@ class HealthService:
         settings: Settings,
         database: Database,
         redis: RedisConnectivity,
-        qdrant: QdrantConnectivity,
     ) -> None:
         self._settings = settings
         self._database = database
         self._redis = redis
-        self._qdrant = qdrant
 
     def liveness(self) -> LivenessStatus:
         return LivenessStatus(
@@ -52,7 +49,6 @@ class HealthService:
         dependencies = await asyncio.gather(
             self._timed_check("postgresql", self._database.check()),
             self._timed_check("redis", self._redis.check()),
-            self._timed_check("qdrant", self._qdrant.check()),
             self._check_minio(),
         )
         healthy = all(

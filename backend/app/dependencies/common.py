@@ -14,7 +14,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, get_settings
 from app.platform.db.session import Database
-from app.platform.infra.connectivity.qdrant import QdrantConnectivity
 from app.platform.infra.connectivity.redis import RedisConnectivity
 from app.platform.system.health_service import HealthService
 
@@ -25,10 +24,6 @@ def get_database(request: Request) -> Database:
 
 def get_redis_connectivity(request: Request) -> RedisConnectivity:
     return request.app.state.redis
-
-
-def get_qdrant_connectivity(request: Request) -> QdrantConnectivity:
-    return request.app.state.qdrant
 
 
 async def get_db_session(request: Request) -> AsyncIterator[AsyncSession]:
@@ -47,7 +42,6 @@ def get_health_service(request: Request) -> HealthService:
         settings=get_settings(),
         database=get_database(request),
         redis=get_redis_connectivity(request),
-        qdrant=get_qdrant_connectivity(request),
     )
 
 

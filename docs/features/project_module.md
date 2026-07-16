@@ -97,6 +97,6 @@ No module-specific environment variables. Uses standard `APE_DATABASE__*` settin
 
 - Auth integration and `deleted_by` population
 - Restore / undelete endpoint
-- Hard delete with coordinated cascade (SQL, vector store, object storage)
+- Hard delete with coordinated cascade (relational/semantic artifacts and object storage)
 - Per-project AI configuration storage
 - Organization grouping (`organization_id`)

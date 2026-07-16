@@ -157,9 +157,11 @@ Code lives under `backend/app/modules/knowledge/`, `platform/providers/`, `worke
 
 | 1 | [Embeddings fundamentals](./embeddings-fundamentals.md) | Providers, `chunk_embeddings`, `embedding_set_version` |
 
-| 2 | [Vector storage and Qdrant](./vector-storage-and-qdrant.md) | Dual storage, payloads, project scoping |
+| 2 | [Vector storage and pgvector](./vector-storage-and-pgvector.md) | Native vectors, HNSW/cosine, scoped SQL filters |
 
 | 3 | [Retrieval feature doc](../features/retrieval_module.md) | Embed → index → search API, workers, config |
+
+| 4 | [pgvector operations runbook](./pgvector-operations-runbook.md) | Cutover, verification, recovery, HNSW maintenance, benchmark |
 
 
 
@@ -224,5 +226,3 @@ AI and platform capabilities as they are implemented:
 - Observability, tracing, and cost tracking (Langfuse)
 
 - Evaluation (faithfulness, relevance, toxicity)
-
-

@@ -82,7 +82,8 @@ asyncio_mode = "auto"
 addopts = "-ra -q --strict-markers --strict-config"
 markers = [
     "unit: fast, isolated tests with no external dependencies",
-    "integration: tests that require external services (db, redis, qdrant)",
+    "integration: tests that require external services (PostgreSQL/pgvector, Redis, MinIO)",
+    "benchmark: opt-in performance and recall measurements",
     "architecture: import boundary and structural enforcement tests",
 ]
 
@@ -124,7 +125,7 @@ show_error_codes = true
 pretty = true
 
 [[tool.mypy.overrides]]
-module = ["qdrant_client.*", "boto3.*", "botocore.*", "aiofiles.*", "fitz", "pymupdf.*", "docx.*"]
+module = ["boto3.*", "botocore.*", "aiofiles.*", "fitz", "pymupdf.*", "docx.*"]
 ignore_missing_imports = true
 
 [tool.pydantic-mypy]

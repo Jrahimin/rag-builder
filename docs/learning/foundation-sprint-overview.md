@@ -52,22 +52,21 @@ main.py         Application factory + lifespan
 
 - **Composition ORM registry** — Alembic discovers models via `composition/orm_registry.py`; `platform/` never imports `modules/`.
 - **Dependency direction** — modules must not import `dependencies/`; HTTP wiring lives in `api/v1/routes/`.
-- **SDK isolation** — Redis/Qdrant connectivity in `platform/infra/connectivity/`; not exposed via general DI.
+- **SDK isolation** — external connectivity stays in `platform/infra/connectivity/`; not exposed via general DI.
 - **Fail-closed persistence** — `ProjectScopedRepository` requires `project_id`.
 - **Trimmed contracts** — provider interfaces, config resolver, and job models deferred until first consumer.
 - **Import boundary tests** — `tests/architecture/test_import_boundaries.py`.
 
 ### Infrastructure connectivity
 
-- **PostgreSQL** — async SQLAlchemy 2.x with connection pooling.
+- **PostgreSQL + pgvector** — async SQLAlchemy 2.x, relational and vector persistence.
 - **Redis** — async client for cache, health checks, and job queue (Taskiq).
-- **Qdrant** — async client for health checks; vector ops deferred to providers.
 - **MinIO** — probed via HTTP in readiness checks; storage provider deferred.
 
 ### Operations
 
 - `GET /health` — liveness (cheap, no dependency calls).
-- `GET /ready` — parallel probes of all four dependencies; returns 503 when degraded.
+- `GET /ready` — parallel PostgreSQL, Redis, and MinIO probes; returns 503 when degraded.
 - Alembic baseline migration (`0001_initial`) — empty schema, chain established.
 
 ### Docker
@@ -91,7 +90,7 @@ Per sprint scope, these are **out of scope** until Phase 1 feature work:
 - OCR, parsing, chunking, embeddings, retrieval, chat
 - Authentication / authorization
 - Background job workers (Taskiq)
-- Concrete LLM, storage, or vector store providers
+- Concrete LLM or storage providers
 - Business ORM entities and tables (beyond mixins)
 
 ---
@@ -120,7 +119,6 @@ flowchart TB
     subgraph infra [Infrastructure clients]
         PG[(PostgreSQL)]
         RD[(Redis)]
-        QD[(Qdrant)]
         MN[(MinIO)]
     end
 
@@ -133,10 +131,8 @@ flowchart TB
     Factory --> V1
     Factory --> PG
     Factory --> RD
-    Factory --> QD
     Health --> PG
     Health --> RD
-    Health --> QD
     Health --> MN
 ```
 

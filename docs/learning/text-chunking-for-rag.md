@@ -109,7 +109,7 @@ Changing env vars and reprocessing the same file should change `GET .../chunks` 
 | **Unicode-property tokens** | `regex` `\p{Letter}` etc. — multilingual token counting |
 | **Overlap** | Last N tokens of chunk *i* appear at start of chunk *i+1* |
 | **Chunk vs document** | Document = one uploaded file; chunks = many searchable pieces |
-| **`chunked` status** | Ingestion handoff — embeddings/Qdrant are **out of scope** for Knowledge v1 |
+| **`chunked` status** | Ingestion handoff — embeddings/retrieval indexes are **out of scope** for Knowledge v1 |
 
 ---
 
@@ -154,7 +154,7 @@ Response items include `chunk_index`, `content`, `token_count`, `char_start`, `c
 
 - Semantic / sentence-transformer-based splitting
 - Per-PDF-page chunk boundaries (only single-page hint for `.txt`)
-- Embeddings or Qdrant writes — reserved for `retrieval` module
+- Embeddings or retrieval-index writes — reserved for `retrieval` module
 - Token-accurate counts (word estimate only)
 
 ---

@@ -21,7 +21,6 @@ from app.platform.providers.contracts.reranker import (
     RerankCandidate,
     RerankRequest,
 )
-from app.platform.providers.contracts.vector_store import BaseVectorStoreProvider
 from app.platform.providers.errors import ProviderError
 
 logger = structlog.get_logger(__name__)
@@ -35,12 +34,11 @@ class HybridRetriever(BaseRetriever):
         session: AsyncSession,
         project_id: uuid.UUID,
         embedder: BaseEmbeddingProvider,
-        vector_store: BaseVectorStoreProvider,
         reranker: BaseRerankerProvider,
         *,
         fts_regconfig: str = "simple",
     ) -> None:
-        self._semantic = SemanticRetriever(session, project_id, embedder, vector_store)
+        self._semantic = SemanticRetriever(session, project_id, embedder)
         self._keyword = KeywordRetriever(session, project_id, fts_regconfig=fts_regconfig)
         self._content_loader = CandidateContentLoader(session, project_id)
         self._reranker = reranker
@@ -51,7 +49,6 @@ class HybridRetriever(BaseRetriever):
         session: AsyncSession,
         project_id: uuid.UUID,
         embedder: BaseEmbeddingProvider,
-        vector_store: BaseVectorStoreProvider,
         reranker: BaseRerankerProvider,
         *,
         fts_regconfig: str = "simple",
@@ -60,7 +57,6 @@ class HybridRetriever(BaseRetriever):
             session,
             project_id,
             embedder,
-            vector_store,
             reranker,
             fts_regconfig=fts_regconfig,
         )

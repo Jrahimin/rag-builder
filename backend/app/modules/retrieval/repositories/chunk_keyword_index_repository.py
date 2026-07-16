@@ -8,7 +8,13 @@ from sqlalchemy import delete, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.chunk_keyword_index import ChunkKeywordIndex
-from app.modules.retrieval.keyword.tokenizer import normalize_for_indexing, normalize_for_query, term_frequencies, tokenize
+from app.models.document import Document, DocumentStatus
+from app.modules.retrieval.keyword.tokenizer import (
+    normalize_for_indexing,
+    normalize_for_query,
+    term_frequencies,
+    tokenize,
+)
 from app.platform.persistence.project_scoped_repository import ProjectScopedRepository
 
 
@@ -46,6 +52,14 @@ class ChunkKeywordIndexRepository(ProjectScopedRepository[ChunkKeywordIndex]):
             self.model.document_id == document_id,
         )
         await self._session.execute(stmt)
+
+    async def list_versions_for_document(self, document_id: uuid.UUID) -> set[int]:
+        stmt = select(self.model.embedding_set_version).where(
+            self.model.project_id == self._project_id,
+            self.model.document_id == document_id,
+        )
+        result = await self._session.execute(stmt)
+        return set(result.scalars().all())
 
     async def upsert_chunk_row(
         self,
@@ -89,10 +103,18 @@ class ChunkKeywordIndexRepository(ProjectScopedRepository[ChunkKeywordIndex]):
         ts_query = func.plainto_tsquery(self._fts_regconfig, normalized_query)
         stmt = (
             select(self.model)
+            .join(
+                Document,
+                (Document.id == self.model.document_id)
+                & (Document.project_id == self.model.project_id),
+            )
             .where(
                 self.model.project_id == self._project_id,
                 self.model.embedding_set_version == embedding_set_version,
                 self.model.search_vector.op("@@")(ts_query),
+                Document.project_id == self._project_id,
+                Document.status == DocumentStatus.READY,
+                Document.deleted_at.is_(None),
             )
             .order_by(func.ts_rank_cd(self.model.search_vector, ts_query).desc())
             .limit(top_k)
@@ -102,7 +124,7 @@ class ChunkKeywordIndexRepository(ProjectScopedRepository[ChunkKeywordIndex]):
         if metadata_filter:
             for key, value in metadata_filter.items():
                 stmt = stmt.where(
-                    self.model.metadata_snapshot[key].astext == value  # type: ignore[index]
+                    self.model.metadata_snapshot[key].astext == value
                 )
         result = await self._session.execute(stmt)
         return list(result.scalars().all())
@@ -122,11 +144,15 @@ class ChunkKeywordIndexRepository(ProjectScopedRepository[ChunkKeywordIndex]):
         """Backfill search_vector from content_normalized if needed."""
         await self._session.execute(
             text(
-                f"""
+                """
                 UPDATE chunk_keyword_index
                 SET search_vector = to_tsvector(:regconfig, content_normalized)
-                WHERE search_vector IS NULL
+                WHERE project_id = :project_id
+                  AND search_vector IS NULL
                 """
             ),
-            {"regconfig": self._fts_regconfig},
+            {
+                "regconfig": self._fts_regconfig,
+                "project_id": self._project_id,
+            },
         )

@@ -4,7 +4,7 @@
 #
 #     docker compose --env-file .env.docker up --build
 #
-# Services: backend (FastAPI) + PostgreSQL + Redis + Qdrant + MinIO.
+# Services: backend (FastAPI) + PostgreSQL/pgvector + Redis + MinIO.
 # Credentials and tunables come from the root `.env.docker` file
 # (see `.env.docker.example`); every value has a sensible default so the
 # stack runs out of the box. Start with:
@@ -38,8 +38,6 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      qdrant:
-        condition: service_healthy
       minio:
         condition: service_healthy
     environment:
@@ -54,8 +52,11 @@ services:
       APE_DATABASE__NAME: ${POSTGRES_DB:-ape}
       APE_REDIS__HOST: redis
       APE_REDIS__PORT: "6379"
-      APE_QDRANT__HOST: qdrant
-      APE_QDRANT__PORT: "6333"
+      APE_EMBEDDING__BACKEND: ${APE_EMBEDDING__BACKEND:-hash}
+      APE_EMBEDDING__MODEL: ${APE_EMBEDDING__MODEL:-nomic-embed-text}
+      APE_EMBEDDING__DIMENSIONS: ${APE_EMBEDDING__DIMENSIONS:-384}
+      APE_RETRIEVAL__STRATEGY: ${APE_RETRIEVAL__STRATEGY:-hybrid}
+      APE_RETRIEVAL__HNSW_EF_SEARCH: ${APE_RETRIEVAL__HNSW_EF_SEARCH:-100}
       APE_MINIO__ENDPOINT: minio:9000
       APE_MINIO__ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
       APE_MINIO__SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
@@ -97,6 +98,7 @@ services:
       APE_DATABASE__USER: ${POSTGRES_USER:-ape}
       APE_DATABASE__PASSWORD: ${POSTGRES_PASSWORD:-ape}
       APE_DATABASE__NAME: ${POSTGRES_DB:-ape}
+      APE_EMBEDDING__DIMENSIONS: ${APE_EMBEDDING__DIMENSIONS:-384}
     command: ["alembic", "upgrade", "head"]
     networks:
       - ape_network
@@ -123,8 +125,6 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      qdrant:
-        condition: service_healthy
       minio:
         condition: service_healthy
     environment:
@@ -138,8 +138,11 @@ services:
       APE_DATABASE__NAME: ${POSTGRES_DB:-ape}
       APE_REDIS__HOST: redis
       APE_REDIS__PORT: "6379"
-      APE_QDRANT__HOST: qdrant
-      APE_QDRANT__PORT: "6333"
+      APE_EMBEDDING__BACKEND: ${APE_EMBEDDING__BACKEND:-hash}
+      APE_EMBEDDING__MODEL: ${APE_EMBEDDING__MODEL:-nomic-embed-text}
+      APE_EMBEDDING__DIMENSIONS: ${APE_EMBEDDING__DIMENSIONS:-384}
+      APE_RETRIEVAL__STRATEGY: ${APE_RETRIEVAL__STRATEGY:-hybrid}
+      APE_RETRIEVAL__HNSW_EF_SEARCH: ${APE_RETRIEVAL__HNSW_EF_SEARCH:-100}
       APE_MINIO__ENDPOINT: minio:9000
       APE_MINIO__ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
       APE_MINIO__SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
@@ -165,7 +168,7 @@ services:
   # PostgreSQL
   # -------------------------------------------------------------------------
   postgres:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:0.8.1-pg16
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-ape}
@@ -201,28 +204,6 @@ services:
       timeout: 3s
       retries: 5
       start_period: 5s
-    networks:
-      - ape_network
-
-  # -------------------------------------------------------------------------
-  # Qdrant (vector database)
-  # -------------------------------------------------------------------------
-  qdrant:
-    image: qdrant/qdrant:v1.18.2
-    restart: unless-stopped
-    ports:
-      - "${QDRANT_HTTP_PORT:-6333}:6333"
-      - "${QDRANT_GRPC_PORT:-6334}:6334"
-    volumes:
-      - qdrant_data:/qdrant/storage
-    healthcheck:
-      # The Qdrant image ships no curl/wget. Its Bash shell can still probe
-      # Qdrant's readiness endpoint without adding a diagnostic dependency.
-      test: ["CMD-SHELL", "timeout 2 bash -c 'exec 3<>/dev/tcp/127.0.0.1/6333; printf \"GET /readyz HTTP/1.0\\r\\n\\r\\n\" >&3; IFS= read -r status <&3; [[ \"$$status\" == *\" 200 \"* ]]'"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
     networks:
       - ape_network
 
@@ -272,7 +253,6 @@ services:
 volumes:
   postgres_data:
   redis_data:
-  qdrant_data:
   minio_data:
 
 networks:

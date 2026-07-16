@@ -34,6 +34,11 @@ class DocumentChunk(Base, UUIDPrimaryKeyMixin, TimestampMixin, ProjectScopedMixi
         ),
         UniqueConstraint("document_id", "chunk_index", name="uq_document_chunks_document_index"),
         Index("ix_document_chunks_project_document", "project_id", "document_id"),
+        Index(
+            "ix_document_chunks_metadata_gin",
+            "metadata",
+            postgresql_using="gin",
+        ),
     )
 
     document_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)

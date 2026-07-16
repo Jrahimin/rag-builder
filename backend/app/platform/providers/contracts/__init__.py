@@ -24,7 +24,6 @@ class ProviderCapability(StrEnum):
     LLM = "llm"
     EMBEDDING = "embedding"
     RERANKER = "reranker"
-    VECTOR_STORE = "vector_store"
     OBJECT_STORAGE = "object_storage"
     OCR = "ocr"
     DOCUMENT_PARSER = "document_parser"

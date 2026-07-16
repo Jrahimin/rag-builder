@@ -54,7 +54,7 @@ FastAPI's `lifespan` context manager owns long-lived infrastructure:
 ```mermaid
 stateDiagram-v2
     [*] --> Starting: uvicorn loads app
-    Starting --> Probing: Create DB, Redis, Qdrant clients
+    Starting --> Probing: Create PostgreSQL and Redis clients
     Probing --> Serving: Log ready (even if deps degraded)
     Serving --> ShuttingDown: SIGTERM / shutdown
     ShuttingDown --> [*]: Dispose all clients
@@ -62,13 +62,13 @@ stateDiagram-v2
 
 **Startup** (`lifespan` enter):
 
-1. Instantiate `Database`, `RedisClient`, `QdrantConnection` on `app.state`.
-2. Run best-effort connectivity probes (log warnings, never crash).
+1. Instantiate `Database` and `RedisConnectivity` on `app.state`.
+2. Verify pgvector preflight; log best-effort warnings for other connectivity failures.
 3. Log `application_started`.
 
 **Shutdown** (`lifespan` exit):
 
-1. Dispose Qdrant → Redis → Database (reverse order).
+1. Dispose Redis → Database (reverse order).
 2. Log `application_stopped`.
 
 This pattern ensures connection pools are not created per request and are cleaned

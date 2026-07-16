@@ -7,7 +7,7 @@ works: images, compose services, networking, health checks, and volumes.
 
 ## Why Docker Compose?
 
-APE depends on PostgreSQL, Redis, Qdrant, and MinIO. Installing and configuring
+APE depends on PostgreSQL with pgvector, Redis, and MinIO. Installing and configuring
 each locally is error-prone. A single `docker compose up --build` gives every
 developer an identical stack with health-checked startup ordering.
 
@@ -18,9 +18,8 @@ developer an identical stack with health-checked startup ordering.
 ```text
 docker compose up --build
         │
-        ├── postgres:16-alpine     (relational DB)
+        ├── pgvector/pgvector:0.8.1-pg16 (relational + vector DB)
         ├── redis:7-alpine         (cache / future job queue)
-        ├── qdrant/qdrant:v1.18.2  (vector DB)
         ├── minio/minio:RELEASE…   (S3-compatible storage)
         ├── migrate                (one-shot Alembic migration)
         ├── minio-init             (one-shot bucket creation)
@@ -35,7 +34,6 @@ docker compose up --build
 | worker | — | `./backend` mounted | Starts after migration and bucket bootstrap; consumes Taskiq jobs |
 | postgres | 5432 | `postgres_data` | `pg_isready` |
 | redis | 6379 | `redis_data` | `redis-cli ping` |
-| qdrant | 6333, 6334 | `qdrant_data` | Bash HTTP probe of `/readyz` |
 | minio | 9000, 9001 | `minio_data` | `mc ready local` |
 | minio-init | — | — | runs once, exits |
 
@@ -73,7 +71,6 @@ workers without reload.
 flowchart LR
     PG[postgres healthy]
     RD[redis healthy]
-    QD[qdrant healthy]
     MN[minio healthy]
     MG[migrate]
     BE[backend starts]
@@ -81,7 +78,6 @@ flowchart LR
 
     PG --> MG --> BE
     RD --> BE
-    QD --> BE
     MN --> BE
     MN --> MI --> BE
 ```
@@ -106,7 +102,6 @@ Compose sets **service hostnames** for in-network communication:
 | ------------ | ---------------- |
 | `postgres` | `APE_DATABASE__HOST=postgres` |
 | `redis` | `APE_REDIS__HOST=redis` |
-| `qdrant` | `APE_QDRANT__HOST=qdrant` |
 | `minio:9000` | `APE_MINIO__ENDPOINT=minio:9000` |
 
 Credentials come from `.env` (or defaults in compose interpolation):
@@ -125,7 +120,7 @@ volumes:
 Code changes on the host are picked up by uvicorn `--reload` without rebuilding
 the image.
 
-Named volumes (`postgres_data`, `redis_data`, `qdrant_data`, `minio_data`)
+Named volumes (`postgres_data`, `redis_data`, `minio_data`)
 persist data across `docker compose down`. Use `docker compose down -v` to wipe.
 
 ---
@@ -134,7 +129,6 @@ persist data across `docker compose down`. Use `docker compose down -v` to wipe.
 
 | Image | Challenge | Solution |
 | ----- | --------- | -------- |
-| Qdrant | No curl/wget in minimal image | Bash probes the built-in `/readyz` endpoint over `/dev/tcp` |
 | MinIO | curl removed from recent images | `mc ready local` (bundled client) |
 | PostgreSQL | — | `pg_isready` (native) |
 | Redis | — | `redis-cli ping` (native) |
@@ -165,9 +159,10 @@ Makefile shortcuts: `make up`, `make down`, `make logs`.
 Many developers run **infra in Docker, API locally**:
 
 ```bash
-docker compose up -d postgres redis qdrant minio
+docker compose up -d postgres redis minio minio-init
 cp .env.example .env              # APE_* hosts = localhost
 alembic upgrade head
+psql -h localhost -U ape -d ape -c "SELECT extversion FROM pg_extension WHERE extname = 'vector';"
 cd backend && uvicorn app.main:app --reload
 ```
 

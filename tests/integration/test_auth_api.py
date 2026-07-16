@@ -38,7 +38,6 @@ async def auth_db_client(
     from app.platform.providers.implementations.embedding_factory import get_embedding_provider
     from app.platform.providers.implementations.llm_factory import get_llm_provider
     from app.platform.providers.implementations.storage_factory import get_storage_provider
-    from app.platform.providers.implementations.vector_store_factory import get_vector_store_provider
 
     allowed, reason = _integration_db_allowed(settings)
     if not allowed:
@@ -53,7 +52,6 @@ async def auth_db_client(
     get_storage_provider.cache_clear()
     get_job_queue.cache_clear()
     get_embedding_provider.cache_clear()
-    get_vector_store_provider.cache_clear()
     get_llm_provider.cache_clear()
 
     app = create_app()
@@ -223,7 +221,7 @@ async def test_cross_org_conversation_isolation(auth_db_client: AsyncClient) -> 
 
 
 async def test_revoked_key_returns_401_after_cache_warm(auth_db_client: AsyncClient) -> None:
-    org_id, secret, auth_header = await _create_org_with_key(auth_db_client)
+    org_id, _secret, auth_header = await _create_org_with_key(auth_db_client)
 
     warm = await auth_db_client.get("/api/v1/projects", headers={"Authorization": auth_header})
     assert warm.status_code == 200
@@ -374,7 +372,6 @@ async def test_rate_limit_returns_429_with_retry_after(
     from app.platform.providers.implementations.embedding_factory import get_embedding_provider
     from app.platform.providers.implementations.llm_factory import get_llm_provider
     from app.platform.providers.implementations.storage_factory import get_storage_provider
-    from app.platform.providers.implementations.vector_store_factory import get_vector_store_provider
 
     allowed, reason = _integration_db_allowed(settings)
     if not allowed:
@@ -392,7 +389,6 @@ async def test_rate_limit_returns_429_with_retry_after(
     get_storage_provider.cache_clear()
     get_job_queue.cache_clear()
     get_embedding_provider.cache_clear()
-    get_vector_store_provider.cache_clear()
     get_llm_provider.cache_clear()
 
     app = create_app()

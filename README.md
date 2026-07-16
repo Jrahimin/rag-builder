@@ -31,11 +31,11 @@ upload, parse, chunk, embed, search, chat, citations, workers, auth, isolation.
 | You keep | APE owns |
 | -------- | -------- |
 | UI, users, business workflows | Ingestion → indexing → hybrid retrieval → RAG chat |
-| Brand and product experience | Provider-agnostic LLMs, embeddings, storage, vectors |
+| Brand and product experience | Provider-agnostic LLMs, embeddings, and storage |
 | Customer trust boundary | Self-hosted deployment under *your* control |
 
 ```text
-Your app  ──REST + API key──►  APE  ──►  PostgreSQL · Qdrant · Redis · Storage · LLMs
+Your app  ──REST + API key──►  APE  ──►  PostgreSQL+pgvector · Redis · Storage · LLMs
 ```
 
 Phase 1 is a complete journey:
@@ -71,7 +71,7 @@ Wire once; spin up as many product surfaces as you need.
 | 🔐 | **Organizations & API keys** | Tenant auth, admin bootstrap, org-scoped rate limits |
 | 📁 | **Projects** | Hard data isolation for documents, search, and chat |
 | 📄 | **Knowledge** | Upload → storage → parse → optional OCR → structure-aware chunking |
-| 🔎 | **Retrieval** | Embeddings, vector + keyword index, hybrid search, reranking |
+| 🔎 | **Retrieval** | PostgreSQL-native vector + keyword index, hybrid search, reranking |
 | 💬 | **Conversations** | Stateful RAG chat, citation snapshots, SSE streaming |
 | ⚙️ | **Operations** | Docker Compose, Alembic, `/health` + `/ready`, structured logs |
 
@@ -90,14 +90,15 @@ api/v1/routes/                 HTTP · validation · Depends
         ▼
 modules/<feature>/services/    Orchestration · transactions
         │
-        ├── repositories/      PostgreSQL
-        └── providers/         LLM · embeddings · vectors · storage · OCR
+        ├── repositories/      PostgreSQL · pgvector · keyword index
+        └── providers/         LLM · embeddings · storage · OCR
 ```
 
 Built to stay replaceable:
 
 - **Project-scoped** data paths — no global corpus leakage
-- **Provider interfaces** — swap OpenAI / Ollama / Gemini / Qdrant / MinIO without rewriting business logic
+- **Provider interfaces** — swap OpenAI / Ollama / Gemini / MinIO without rewriting business logic
+- **One retrieval source of truth** — relational, lexical, and vector data live in PostgreSQL
 - **Worker-first AI** — parse, embed, and index never block HTTP
 - **Versioned APIs** under `/api/v1`
 
@@ -125,7 +126,6 @@ docker compose --env-file .env.docker up --build
 | API | http://localhost:8000 |
 | OpenAPI / Swagger | http://localhost:8000/docs |
 | Health / Ready | http://localhost:8000/health · `/ready` |
-| Qdrant | http://localhost:6333/dashboard |
 | MinIO console | http://localhost:9001 |
 
 ```bash
@@ -141,7 +141,7 @@ docker compose --env-file .env.docker down -v       # stop + wipe volumes
 ```bash
 # from repo root — infra only
 cp .env.docker.example .env.docker
-docker compose --env-file .env.docker up -d postgres redis qdrant minio minio-init
+docker compose --env-file .env.docker up -d postgres redis minio minio-init
 
 cd backend
 python -m venv .venv
@@ -149,6 +149,7 @@ source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -r requirements/dev.txt
 cp .env.example .env
 alembic upgrade head
+psql -h localhost -U ape -d ape -c "SELECT extversion FROM pg_extension WHERE extname = 'vector';"
 python -m app
 ```
 
@@ -157,7 +158,7 @@ python -m app
 | API | http://localhost:8088 |
 | OpenAPI | http://localhost:8088/docs |
 
-`/health` = process alive. `/ready` = PostgreSQL, Redis, Qdrant, and storage.
+`/health` = process alive. `/ready` = PostgreSQL/pgvector, Redis, and storage.
 
 ---
 
@@ -193,6 +194,8 @@ pre-commit run --all-files
 pytest -m unit
 pytest -m integration
 pytest -m architecture
+# Opt-in real-pgvector performance/recall harness
+APE_RUN_PGVECTOR_BENCHMARKS=true pytest -m benchmark
 ```
 
 Migrations (`backend/`):
@@ -235,6 +238,7 @@ docs/
 | Modules, providers, deployment | [Architecture](docs/architecture/README.md) |
 | Feature behavior | [Features](docs/features/README.md) |
 | Why / how deep dives | [Learning](docs/learning/README.md) |
+| Operate pgvector cutover/recovery | [pgvector runbook](docs/learning/pgvector-operations-runbook.md) |
 | Decision records | [ADRs](docs/architecture/adr/README.md) |
 
 Feature deep-dives:

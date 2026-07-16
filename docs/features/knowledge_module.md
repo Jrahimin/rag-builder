@@ -12,7 +12,7 @@ Client → documents_router → DocumentService → PostgreSQL (documents, docum
                           ↘ JobQueue → Redis/Taskiq → DocumentProcessingWorkflow
                                                     ↘ Parser providers
                                                     ↘ ChunkingService
-                          ↘ (on delete) RetrievalCleanupService — PG embeddings + vector purge
+                          ↘ (on delete) RetrievalCleanupService — native vectors + keyword rows
 ```
 
 Upload hashes stream through a spooled temp file (`SpooledTemporaryFile`) so large
@@ -76,7 +76,7 @@ The ingestion pipeline (parse quality gate → PDFium → PaddleOCR fallback) is
 | -------- | --------- |
 | Worker entry guard (`status=queued` only) | Duplicate or stale job delivery is a no-op instead of re-running parse/chunk |
 | `parsing` committed; `chunking` is a stage marker | Crash mid-parse leaves a recoverable state; reprocess re-enqueues from any non-terminal status |
-| `RetrievalCleanupService` on delete | Knowledge owns the delete API; retrieval artifacts are purged via a lightweight composition callback — no full `IndexingService` wiring |
+| `RetrievalCleanupService` on delete | Knowledge owns the delete API; PostgreSQL retrieval artifacts and BM25 statistics are updated through a lightweight transactional composition callback |
 | `ChunkingStrategy` config seam | Auto-selects markdown/heading/structure/semantic strategies from parser elements and structure signals; recursive fallback for oversized sections |
 
 ## Worker

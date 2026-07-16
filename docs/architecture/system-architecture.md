@@ -35,9 +35,9 @@ Business Application
 │  platform/ (persistence, providers, jobs, db)     │
 │  core/ (config, logging, exceptions)              │
 └───────────────────────────────────────────────────┘
-        │         │         │         │
-        ▼         ▼         ▼         ▼
-   PostgreSQL   Redis    Qdrant    MinIO
+        │              │              │
+        ▼              ▼              ▼
+ PostgreSQL+pgvector  Redis          MinIO
 ```
 
 **Project** is the isolation boundary for business data (`project_id`). **Organization** is the auth / tenant boundary when `APE_AUTH__ENABLED=true` (ADR-012).
@@ -100,9 +100,10 @@ Errors → `ErrorResponse` via `core/exception_handlers.py`.
 
 ## Application startup
 
-`main.py` lifespan creates `Database` plus `RedisConnectivity` and
-`QdrantConnectivity` (`platform/infra/connectivity/`), probes dependencies
-(best-effort), disposes on shutdown.
+`main.py` lifespan creates `Database` plus the Redis connectivity client. The
+database startup/readiness probe requires the pgvector extension and reports an
+actionable error when PostgreSQL is reachable without it or when the configured
+embedding dimension differs from `chunk_embeddings.embedding`.
 
 Deployment-level health: `platform/system/health_service.py` + `api/health.py`.
 

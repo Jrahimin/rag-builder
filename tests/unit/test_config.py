@@ -9,9 +9,9 @@ from app.core.config import (
     CORSConfig,
     DatabaseConfig,
     DisposableDatabaseConfig,
+    EmbeddingConfig,
     Environment,
     MinioConfig,
-    QdrantConfig,
     RedisConfig,
     get_settings,
 )
@@ -39,9 +39,7 @@ def test_redis_dsn_with_and_without_password() -> None:
     )
 
 
-def test_qdrant_and_minio_urls() -> None:
-    assert QdrantConfig(host="q", port=6333).url == "http://q:6333"
-    assert QdrantConfig(host="q", port=6333, https=True).url == "https://q:6333"
+def test_minio_urls() -> None:
     assert MinioConfig(endpoint="m:9000").url == "http://m:9000"
     assert MinioConfig(endpoint="m:9000", secure=True).url == "https://m:9000"
 
@@ -74,6 +72,12 @@ def test_disposable_database_defaults() -> None:
     cfg = DisposableDatabaseConfig()
     assert cfg.name == "ape_test"
     assert cfg.allow_migrations is False
+
+
+def test_embedding_dimension_policy_caps_pgvector_hnsw_at_2000() -> None:
+    assert EmbeddingConfig(dimensions=2000).dimensions == 2000
+    with pytest.raises(ValueError):
+        EmbeddingConfig(dimensions=2001)
 
 
 def test_integration_db_guard_settings(monkeypatch: pytest.MonkeyPatch) -> None:
