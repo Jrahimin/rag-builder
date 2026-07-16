@@ -25,10 +25,10 @@ docker compose up --build
 ┌─────────────────────────────────────────────────────────┐
 │  docker-compose (single host)                           │
 │                                                         │
-│  ┌──────────┐  ┌──────────┐  ┌────────┐  ┌─────────┐ │
-│  │ backend  │  │ postgres │  │ redis  │  │ qdrant  │ │
-│  │ :8000    │  │ :5432    │  │ :6379  │  │ :6333   │ │
-│  └──────────┘  └──────────┘  └────────┘  └─────────┘ │
+│  ┌──────────┐  ┌───────────────────┐  ┌────────┐     │
+│  │ backend  │  │ postgres+pgvector │  │ redis  │     │
+│  │ :8000    │  │ :5432             │  │ :6379  │     │
+│  └──────────┘  └───────────────────┘  └────────┘     │
 │  ┌──────────┐  ┌──────────┐  ┌──────────┐             │
 │  │ worker   │  │ minio    │  │migrate /  │             │
 │  │ Taskiq   │  │ :9000    │  │minio-init │             │
@@ -43,8 +43,8 @@ docker compose up --build
 - **Networking:** `ape_network` bridge; service DNS names for inter-container comms
 - **Bootstrap:** one-shot `migrate` applies `alembic upgrade head`; `minio-init`
   creates the artifact bucket. API and worker start only after both succeed.
-- **Images:** Qdrant and MinIO use explicit release tags; upgrade them deliberately
-  after testing rather than inheriting a moving `latest` tag.
+- **Images:** PostgreSQL uses `pgvector/pgvector:0.8.1-pg16`; MinIO also uses an
+  explicit release tag. Upgrade either deliberately after migration testing.
 
 ### Hybrid mode
 
@@ -67,7 +67,7 @@ Infrastructure in Docker, API on host with venv — see `docs/learning/docker-lo
 │  └──────┬──────┘         └──────┬──────┘             │
 │         └──────────┬────────────┘                    │
 │                    ▼                                 │
-│     PostgreSQL │ Redis │ Qdrant │ MinIO/S3          │
+│     PostgreSQL+pgvector │ Redis │ MinIO/S3           │
 └──────────────────────────────────────────────────────┘
 ```
 
@@ -75,9 +75,8 @@ Infrastructure in Docker, API on host with venv — see `docs/learning/docker-lo
 | --------- | ------- | ----- |
 | API | Horizontal (stateless) | Behind load balancer |
 | Worker | Horizontal | Scales with queue depth |
-| PostgreSQL | Vertical / managed | Single primary (Phase 1) |
+| PostgreSQL + pgvector | Vertical / managed | Single primary (Phase 1); `vector` extension required |
 | Redis | Single instance / managed | Queue + cache |
-| Qdrant | Single / clustered | Per deployment |
 | Object storage | S3 / MinIO | Customer-owned |
 
 ---
@@ -99,7 +98,7 @@ Production will add `docker-compose.prod.yml` or `infra/production/` — not yet
 
 Each customer deployment owns:
 
-- PostgreSQL, Redis, Qdrant, object storage
+- PostgreSQL with pgvector, Redis, object storage
 - AI model endpoints (Ollama, vLLM, cloud APIs)
 - All Project data within the deployment
 
@@ -112,7 +111,19 @@ No shared multi-tenant cloud platform.
 | Endpoint | Process | Purpose |
 | -------- | ------- | ------- |
 | `GET /health` | API | Liveness |
-| `GET /ready` | API | Readiness (DB, Redis, Qdrant, MinIO) |
+| `GET /ready` | API | Readiness; PostgreSQL check includes the required pgvector extension |
+
+Managed PostgreSQL must support `CREATE EXTENSION vector`. If the application
+migration role cannot create extensions, the platform operator provisions it
+before `alembic upgrade head`. The configured embedding dimension must match the
+deployment's `vector(n)` column; dimension changes require migration plus
+re-embedding.
+
+Back up the whole PostgreSQL database, including pgvector rows, with the normal
+PostgreSQL backup tooling. Restore into a server with the `vector` extension
+available before applying schema migrations. See the
+[pgvector operations runbook](../learning/pgvector-operations-runbook.md) for
+cutover, verification, HNSW maintenance, and recovery.
 
 Worker health check (future): separate lightweight probe on worker process.
 

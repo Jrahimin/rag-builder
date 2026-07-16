@@ -1,12 +1,14 @@
-"""Chunk embedding ORM entity — project-scoped vectors stored as BYTEA."""
+"""Chunk embedding ORM entity — project-scoped native pgvector rows."""
 
 from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import ForeignKeyConstraint, Index, Integer, LargeBinary, String, UniqueConstraint
+from pgvector.sqlalchemy import Vector  # type: ignore[import-untyped]
+from sqlalchemy import ForeignKeyConstraint, Index, Integer, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
+from app.core.config import get_settings
 from app.platform.db.base import Base
 from app.platform.domain.mixins import (
     ProjectScopedMixin,
@@ -45,6 +47,21 @@ class ChunkEmbedding(Base, UUIDPrimaryKeyMixin, TimestampMixin, ProjectScopedMix
             name="uq_chunk_embeddings_chunk_esv_provider_model",
         ),
         Index("ix_chunk_embeddings_project_document", "project_id", "document_id"),
+        Index(
+            "ix_chunk_embeddings_semantic_scope",
+            "project_id",
+            "embedding_set_version",
+            "provider",
+            "model",
+            "document_id",
+        ),
+        Index(
+            "ix_chunk_embeddings_embedding_hnsw_cosine",
+            "embedding",
+            postgresql_using="hnsw",
+            postgresql_ops={"embedding": "vector_cosine_ops"},
+            postgresql_with={"m": 16, "ef_construction": 64},
+        ),
     )
 
     document_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
@@ -61,4 +78,7 @@ class ChunkEmbedding(Base, UUIDPrimaryKeyMixin, TimestampMixin, ProjectScopedMix
         nullable=False,
         default=EMBEDDING_SCHEMA_VERSION,
     )
-    vector: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    embedding: Mapped[list[float]] = mapped_column(
+        Vector(get_settings().embedding.dimensions),
+        nullable=False,
+    )

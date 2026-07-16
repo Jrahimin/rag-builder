@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.core.config import RetrievalConfig, RetrievalStrategy, RerankerBackend
+from app.core.config import RerankerBackend, RetrievalConfig, RetrievalStrategy
 
 pytestmark = pytest.mark.unit
 
@@ -14,6 +14,7 @@ def test_retrieval_config_defaults_to_semantic_strategy() -> None:
     assert config.strategy is RetrievalStrategy.SEMANTIC
     assert config.rerank_enabled is True
     assert config.reranker_backend is RerankerBackend.LEXICAL
+    assert config.hnsw_ef_search == 100
 
 
 def test_retrieval_config_accepts_hybrid_strategy_from_env(monkeypatch: pytest.MonkeyPatch) -> None:

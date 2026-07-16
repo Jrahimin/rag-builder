@@ -120,7 +120,8 @@ Detail: [organization-api-key-auth-journey.md](./organization-api-key-auth-journ
 
 ## Running without external services
 
-Integration tests **do not require** PostgreSQL, Redis, Qdrant, or MinIO:
+HTTP-stack integration tests that do not request database fixtures can run
+without PostgreSQL, Redis, or MinIO:
 
 - Lifespan creates clients but probes log warnings instead of crashing.
 - `/ready` returns 200 or 503 depending on reachability — both are valid assertions.
@@ -164,7 +165,7 @@ report all dependencies as `ok`.
 | `test_health_returns_ok` | 200, `success: true`, `environment: testing` |
 | `test_health_sets_correlation_headers` | `X-Request-ID`, `X-Trace-ID` present |
 | `test_health_honors_inbound_request_id` | Inbound ID echoed back |
-| `test_ready_reports_dependency_breakdown` | All four deps listed |
+| `test_ready_reports_dependency_breakdown` | PostgreSQL, Redis, and MinIO listed |
 | `test_unknown_route_returns_standard_error` | 404 `ErrorResponse` envelope |
 
 ---

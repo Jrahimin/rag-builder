@@ -50,7 +50,7 @@ APE turns that repeated work into a platform.
 | Instead of every app building... | APE provides... |
 | -------------------------------- | --------------- |
 | A one-off RAG pipeline | A reusable API platform |
-| Vendor-specific SDK code | Provider interfaces for LLMs, embeddings, storage, vectors |
+| Vendor-specific SDK code | Provider interfaces for LLMs, embeddings, and storage |
 | Unclear document scope | Project-scoped isolation everywhere |
 | A demo chat endpoint | Ingestion, indexing, retrieval, conversations, citations |
 | A shared black-box SaaS | A customer-owned self-hosted deployment |
@@ -75,9 +75,8 @@ flowchart TB
         Ops[Health, logs, config, workers]
     end
 
-    APE --> PG[(PostgreSQL)]
+    APE --> PG[(PostgreSQL + pgvector)]
     APE --> Redis[(Redis)]
-    APE --> Qdrant[(Qdrant)]
     APE --> Storage[(MinIO / S3 / local)]
     APE --> LLM[LLM providers]
 ```
@@ -109,7 +108,7 @@ sequenceDiagram
     participant App as Business app
     participant APE
     participant Worker
-    participant Stores as PG + Qdrant + Storage
+    participant Stores as PostgreSQL/pgvector + Storage
     participant LLM
 
     Admin->>APE: Create Organization + API key
@@ -155,7 +154,7 @@ OCR, embedding, and indexing continue asynchronously.
 | Storage abstraction | Keep raw and parsed artifacts behind a provider | Shipped |
 | OCR contract | Optional OCR provider boundary for image/scanned inputs | Shipped, with Bangla OCR limitation |
 | Embeddings | Convert chunks into model vectors | Shipped |
-| Vector indexing | Persist searchable points in Qdrant | Shipped |
+| Vector indexing | Persist native pgvector rows in PostgreSQL | Shipped |
 | Keyword indexing | Build BM25 / FTS rows in PostgreSQL | Shipped |
 | Hybrid retrieval | BM25 + vector + RRF + reranking | Shipped |
 | Conversations | Stateful RAG chat with citations and streaming | Shipped |
@@ -253,9 +252,9 @@ dependencies/               Composition and cross-module wiring
   v
 modules/<feature>/services/ Business orchestration and transactions
   |
-  +--> repositories/         PostgreSQL persistence
+  +--> repositories/         PostgreSQL relational, vector, and keyword persistence
   |
-  +--> platform providers    LLM, embeddings, vector store, storage, OCR
+  +--> platform providers    LLM, embeddings, storage, OCR
 ```
 
 | Principle | What it means in APE |
@@ -314,7 +313,7 @@ matter more than a quick hosted demo.
 | Self-hosted by design | Enterprises can keep data, infra, and model choices under their control |
 | Project isolation | Multi-corpus and multi-customer use cases are built into the model |
 | Hybrid retrieval now | Exact terms and semantic meaning both participate in ranking |
-| Provider abstraction | OpenAI, Ollama, Gemini, Qdrant, MinIO, and future providers stay replaceable |
+| Provider abstraction | OpenAI, Ollama, Gemini, MinIO, and future model/storage providers stay replaceable |
 | Modular architecture | Bounded contexts and provider seams keep the platform cohesive and evolvable |
 | Learning docs | The repository teaches the architecture, not just the commands |
 
@@ -353,8 +352,7 @@ For step-by-step integration (auth, polling, copy-paste examples), see
 | Layer | Current choice |
 | ----- | -------------- |
 | API | Python 3.12, FastAPI, Pydantic, Uvicorn |
-| Database | PostgreSQL, SQLAlchemy 2 async, Alembic |
-| Vector store | Qdrant behind `BaseVectorStoreProvider` |
+| Database and vectors | PostgreSQL + pgvector, SQLAlchemy 2 async, Alembic, HNSW cosine |
 | Cache and queue | Redis, Taskiq |
 | Object storage | Local filesystem or MinIO / S3-compatible storage |
 | Embeddings | Hash, Ollama, OpenAI, Gemini |

@@ -31,7 +31,7 @@ async def health(service: HealthServiceDep) -> ApiResponse[LivenessStatus]:
     response_model=ApiResponse[ReadinessStatus],
     summary="Readiness probe",
     description=(
-        "Probes PostgreSQL, Redis, Qdrant and MinIO. Returns 200 when every "
+        "Probes PostgreSQL (including pgvector), Redis and MinIO. Returns 200 when every "
         "dependency is reachable, otherwise 503."
     ),
 )

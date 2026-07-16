@@ -1,4 +1,4 @@
 """PostgreSQL engine, session management, and Alembic migrations.
 
-Infrastructure connectivity (Redis, Qdrant) lives in ``platform.infra.connectivity``.
+Non-database infrastructure connectivity lives in ``platform.infra.connectivity``.
 """

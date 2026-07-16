@@ -170,7 +170,7 @@ async def embed_document(
 @router.post(
     "/{document_id}/index",
     response_model=ApiResponse[DocumentResponse],
-    summary="Enqueue vector indexing",
+    summary="Enqueue retrieval indexing",
 )
 async def index_document(
     project_id: uuid.UUID,

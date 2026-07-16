@@ -163,27 +163,6 @@ class RedisConfig(BaseModel):
         return f"redis://{auth}{self.host}:{self.port}/{self.db}"
 
 
-class QdrantConfig(BaseModel):
-    """Qdrant vector database connection configuration.
-
-    NOTE: This holds *connectivity* settings only. Actual vector operations
-    must go through a ``BaseVectorStoreProvider`` abstraction (added later),
-    keeping the application core vector-DB agnostic.
-    """
-
-    host: str = "localhost"
-    port: int = 6333
-    grpc_port: int = 6334
-    prefer_grpc: bool = False
-    https: bool = False
-    api_key: str | None = None
-
-    @property
-    def url(self) -> str:
-        scheme = "https" if self.https else "http"
-        return f"{scheme}://{self.host}:{self.port}"
-
-
 class MinioConfig(BaseModel):
     """MinIO / S3-compatible object storage connection configuration."""
 
@@ -300,7 +279,7 @@ class EmbeddingConfig(BaseModel):
 
     backend: EmbeddingBackend = EmbeddingBackend.HASH
     model: str = "nomic-embed-text"
-    dimensions: int = Field(default=384, ge=1, le=4096)
+    dimensions: int = Field(default=384, ge=1, le=2000)
     batch_size: int = Field(default=32, ge=1, le=256)
     ollama_base_url: str = "http://localhost:11434"
     openai_api_key: str | None = None
@@ -308,20 +287,6 @@ class EmbeddingConfig(BaseModel):
     gemini_api_key: str | None = None
     gemini_base_url: str = "https://generativelanguage.googleapis.com/v1beta"
     provider_version: str = "1"
-
-
-class VectorStoreBackend(StrEnum):
-    """Supported vector store backends."""
-
-    QDRANT = "qdrant"
-    MEMORY = "memory"
-
-
-class VectorStoreConfig(BaseModel):
-    """Vector store collection configuration (connectivity via QdrantConfig)."""
-
-    backend: VectorStoreBackend = VectorStoreBackend.QDRANT
-    collection_name: str = "ape_chunks"
 
 
 class OcrBackend(StrEnum):
@@ -376,6 +341,7 @@ class RetrievalConfig(BaseModel):
     )
     strategy: RetrievalStrategy = RetrievalStrategy.SEMANTIC
     semantic_candidate_top_k: int = Field(default=50, ge=1, le=200)
+    hnsw_ef_search: int = Field(default=100, ge=1, le=1000)
     keyword_candidate_top_k: int = Field(default=50, ge=1, le=200)
     rrf_k: int = Field(default=60, ge=1, le=500)
     semantic_weight: float = Field(default=1.0, ge=0.0, le=10.0)
@@ -478,7 +444,6 @@ class Settings(BaseSettings):
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)
     test_database: DisposableDatabaseConfig = Field(default_factory=DisposableDatabaseConfig)
     redis: RedisConfig = Field(default_factory=RedisConfig)
-    qdrant: QdrantConfig = Field(default_factory=QdrantConfig)
     minio: MinioConfig = Field(default_factory=MinioConfig)
     storage: StorageConfig = Field(default_factory=StorageConfig)
     jobs: JobsConfig = Field(default_factory=JobsConfig)
@@ -487,7 +452,6 @@ class Settings(BaseSettings):
     chunking: ChunkingConfig = Field(default_factory=ChunkingConfig)
     ocr: OcrConfig = Field(default_factory=OcrConfig)
     embedding: EmbeddingConfig = Field(default_factory=EmbeddingConfig)
-    vector_store: VectorStoreConfig = Field(default_factory=VectorStoreConfig)
     retrieval: RetrievalConfig = Field(default_factory=RetrievalConfig)
     llm: LLMConfig = Field(default_factory=LLMConfig)
     chat: ChatConfig = Field(default_factory=ChatConfig)

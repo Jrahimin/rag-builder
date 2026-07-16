@@ -43,7 +43,7 @@ async def test_ready_reports_dependency_breakdown(client: AsyncClient) -> None:
     body = response.json()
     assert body["success"] is True
     names = {dep["name"] for dep in body["data"]["dependencies"]}
-    assert {"postgresql", "redis", "qdrant", "minio"} <= names
+    assert names == {"postgresql", "redis", "minio"}
 
 
 async def test_unknown_route_returns_standard_error(client: AsyncClient) -> None:

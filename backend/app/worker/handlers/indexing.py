@@ -1,4 +1,4 @@
-"""Taskiq worker handlers for vector indexing."""
+"""Taskiq worker handlers for retrieval indexing."""
 
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ async def run_document_index(
     project_id: uuid.UUID | str,
     document_id: uuid.UUID | str,
 ) -> None:
-    """Run vector indexing outside the HTTP request path."""
+    """Finalize PostgreSQL retrieval indexes outside the HTTP request path."""
     settings = get_settings()
     database = Database(settings)
     project_uuid = uuid.UUID(str(project_id))

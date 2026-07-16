@@ -1,9 +1,6 @@
 """Concrete provider implementations (one subpackage per vendor).
 
-Examples (Phase 1+):
-
-    implementations/qdrant/vector_store_provider.py
-    implementations/minio/storage_provider.py
+Examples include embedding model clients and MinIO/S3 storage providers.
 
 Vendor SDK imports are allowed ONLY inside this package.
 """

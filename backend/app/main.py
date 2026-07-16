@@ -2,7 +2,7 @@
 
 ``create_app`` builds and wires a fully configured FastAPI application:
 configuration, structured logging, middleware, exception handlers, routers,
-and lifespan-managed infrastructure (database, Redis, Qdrant).
+and lifespan-managed infrastructure (PostgreSQL and Redis).
 
 The module-level ``app`` is the ASGI target used by uvicorn/gunicorn. From
 ``backend/``, either::
@@ -30,9 +30,8 @@ from app.core.config import Settings, get_settings
 from app.core.exception_handlers import register_exception_handlers
 from app.core.logging import configure_logging, get_logger
 from app.core.middleware import RequestContextMiddleware
-from app.platform.db.session import Database
+from app.platform.db.session import Database, PgVectorUnavailableError
 from app.platform.http.openapi_security import configure_openapi_security
-from app.platform.infra.connectivity.qdrant import QdrantConnectivity
 from app.platform.infra.connectivity.redis import RedisConnectivity
 
 log = get_logger(__name__)
@@ -56,7 +55,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Instantiating clients does not open network connections yet.
     app.state.db = Database(settings)
     app.state.redis = RedisConnectivity(settings)
-    app.state.qdrant = QdrantConnectivity(settings)
 
     await _probe_dependencies(app)
     log.info("application_started")
@@ -65,7 +63,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         yield
     finally:
         log.info("application_stopping")
-        await app.state.qdrant.dispose()
         await app.state.redis.dispose()
         await app.state.db.dispose()
         log.info("application_stopped")
@@ -80,12 +77,13 @@ async def _probe_dependencies(app: FastAPI) -> None:
     checks = {
         "postgresql": app.state.db,
         "redis": app.state.redis,
-        "qdrant": app.state.qdrant,
     }
     for name, client in checks.items():
         try:
             await client.check()
             log.info("dependency_ready", dependency=name)
+        except PgVectorUnavailableError:
+            raise
         except Exception as exc:
             log.warning(
                 "dependency_unavailable_at_startup",

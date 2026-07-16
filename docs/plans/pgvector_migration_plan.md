@@ -1,6 +1,6 @@
 # pgvector Migration Plan — PostgreSQL-Native Semantic Retrieval
 
-**Status:** Proposed  
+**Status:** Complete — WP0 through WP5 implemented
 **Scope:** Replace Qdrant with pgvector for all local and self-hosted APE deployments without changing the public ingestion, search, or chat contracts.
 
 ---
@@ -286,3 +286,18 @@ native embeddings and keyword rows, representative semantic and hybrid queries
 pass validation, and the Qdrant service/data are no longer referenced by code,
 Compose, configuration, health checks, or operational documentation.
 
+## Implementation outcome
+
+- `RetrievalIndexingWorkflow` preserves the public index job while finalizing
+  native embeddings and PostgreSQL keyword/BM25 state transactionally.
+- Search candidates require ready, non-deleted documents and enforce Project,
+  version, provider/model, document, and allowlisted metadata filters in SQL.
+- Document deletion removes native vector and keyword rows and rebuilds affected
+  BM25 statistics in the document transaction.
+- Compose, runtime configuration, health, packages, and application wiring have
+  no Qdrant dependency.
+- Real-pgvector integration tests cover schema/index creation, lifecycle
+  visibility, ranking/thresholds, isolation, filters, deletion, re-embedding,
+  idempotency, and hybrid search. `tests/benchmarks/` provides the opt-in SLO
+  harness; production thresholds remain deployment-specific and must be agreed
+  during the runbook rehearsal.

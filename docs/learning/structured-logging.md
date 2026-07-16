@@ -78,7 +78,7 @@ from app.core.logging import get_logger
 log = get_logger(__name__)
 
 log.info("document_indexed", document_id=str(doc_id), chunks=42)
-log.warning("dependency_slow", dependency="qdrant", latency_ms=2500)
+log.warning("dependency_slow", dependency="postgresql", latency_ms=2500)
 log.exception("unhandled_failure", error=str(exc))  # includes traceback
 ```
 

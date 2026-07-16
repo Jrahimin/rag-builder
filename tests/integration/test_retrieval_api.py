@@ -6,13 +6,20 @@ import uuid
 
 import pytest
 from httpx import AsyncClient
+from sqlalchemy import func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession
 
 from app.core.config import get_settings
+from app.models.chunk_embedding import ChunkEmbedding
+from app.models.chunk_keyword_index import ChunkKeywordIndex
+from app.models.document_chunk import DocumentChunk
+from app.models.keyword_term_stats import KeywordTermStats
+from app.modules.retrieval.repositories.chunk_embedding_repository import (
+    ChunkEmbeddingRepository,
+)
 from app.modules.retrieval.services.indexing_service import IndexingService
 from app.platform.jobs.contracts import JobDefinition
 from app.platform.providers.implementations.embedding_factory import create_embedding_provider
-from app.platform.providers.implementations.vector_store_factory import create_vector_store_provider
 from tests.conftest import CapturingJobQueue
 from tests.integration.knowledge_helpers import (
     run_captured_document_jobs,
@@ -23,6 +30,49 @@ from tests.integration.knowledge_helpers import (
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
 _UNIQUE_PHRASE = "retrieval-e2e-zephyr-quantum-unique-phrase-42"
+
+
+async def test_pgvector_extension_column_and_hnsw_index(
+    db_client: AsyncClient,
+    integration_connection: AsyncConnection,
+) -> None:
+    assert db_client is not None
+    extension_version = await integration_connection.scalar(
+        text("SELECT extversion FROM pg_extension WHERE extname = 'vector'")
+    )
+    column_type = await integration_connection.scalar(
+        text(
+            """
+            SELECT format_type(a.atttypid, a.atttypmod)
+            FROM pg_attribute AS a
+            JOIN pg_class AS c ON c.oid = a.attrelid
+            WHERE c.relname = 'chunk_embeddings'
+              AND a.attname = 'embedding'
+              AND NOT a.attisdropped
+            """
+        )
+    )
+    index_rows = await integration_connection.execute(
+        text(
+            """
+            SELECT indexname, indexdef FROM pg_indexes
+            WHERE indexname IN (
+              'ix_chunk_embeddings_embedding_hnsw_cosine',
+              'ix_chunk_embeddings_semantic_scope',
+              'ix_document_chunks_metadata_gin'
+            )
+            """
+        )
+    )
+    index_definitions = {row.indexname: row.indexdef for row in index_rows}
+
+    assert extension_version
+    assert column_type == "vector(384)"
+    hnsw_definition = index_definitions["ix_chunk_embeddings_embedding_hnsw_cosine"]
+    assert "USING hnsw" in hnsw_definition
+    assert "vector_cosine_ops" in hnsw_definition
+    assert "ix_chunk_embeddings_semantic_scope" in index_definitions
+    assert "USING gin" in index_definitions["ix_document_chunks_metadata_gin"]
 
 
 async def _create_project(client: AsyncClient) -> str:
@@ -79,6 +129,13 @@ async def test_embed_and_index_document(
     await run_captured_embed_jobs(integration_connection, captured_jobs)
     embedded = await db_client.get(f"/api/v1/projects/{project_id}/documents/{document_id}")
     assert embedded.json()["data"]["status"] == "embedded"
+
+    not_ready_search = await db_client.post(
+        f"/api/v1/projects/{project_id}/search",
+        json={"query": _UNIQUE_PHRASE},
+    )
+    assert not_ready_search.status_code == 200
+    assert not_ready_search.json()["data"]["results"] == []
 
     index = await db_client.post(
         f"/api/v1/projects/{project_id}/documents/{document_id}/index",
@@ -138,6 +195,14 @@ async def test_search_metadata_filter(
         content=f"Filtered content.\n\n{_UNIQUE_PHRASE} with metadata.".encode(),
     )
 
+    async with AsyncSession(bind=integration_connection, expire_on_commit=False) as session:
+        await session.execute(
+            update(DocumentChunk)
+            .where(DocumentChunk.document_id == uuid.UUID(document_id))
+            .values(chunk_metadata={"source": "handbook"})
+        )
+        await session.commit()
+
     await db_client.post(f"/api/v1/projects/{project_id}/documents/{document_id}/embed")
     await run_captured_embed_jobs(integration_connection, captured_jobs)
     await db_client.post(f"/api/v1/projects/{project_id}/documents/{document_id}/index")
@@ -151,6 +216,13 @@ async def test_search_metadata_filter(
     assert unfiltered.status_code == 200
     assert len(unfiltered.json()["data"]["results"]) >= 1
 
+    matching = await db_client.post(
+        f"/api/v1/projects/{project_id}/search",
+        json={"query": _UNIQUE_PHRASE, "metadata_filter": {"source": "handbook"}},
+    )
+    assert matching.status_code == 200
+    assert matching.json()["data"]["results"]
+
     # A filterable key ("source") with a non-matching value excludes every hit.
     filtered = await db_client.post(
         f"/api/v1/projects/{project_id}/search",
@@ -158,6 +230,57 @@ async def test_search_metadata_filter(
     )
     assert filtered.status_code == 200
     assert filtered.json()["data"]["results"] == []
+
+
+async def test_search_document_and_embedding_version_filters(
+    db_client: AsyncClient,
+    integration_connection: AsyncConnection,
+    captured_jobs: list[JobDefinition],
+) -> None:
+    project_id = await _create_project(db_client)
+    first_id = await _upload_chunked(
+        db_client,
+        integration_connection,
+        captured_jobs,
+        project_id,
+        content=f"First {_UNIQUE_PHRASE}.".encode(),
+    )
+    second_id = await _upload_chunked(
+        db_client,
+        integration_connection,
+        captured_jobs,
+        project_id,
+        content=f"Second {_UNIQUE_PHRASE}.".encode(),
+    )
+    for document_id in (first_id, second_id):
+        await db_client.post(f"/api/v1/projects/{project_id}/documents/{document_id}/embed")
+        await run_captured_embed_jobs(integration_connection, captured_jobs)
+        await db_client.post(f"/api/v1/projects/{project_id}/documents/{document_id}/index")
+        await run_captured_index_jobs(integration_connection, captured_jobs)
+
+    restricted = await db_client.post(
+        f"/api/v1/projects/{project_id}/search",
+        json={"query": _UNIQUE_PHRASE, "document_id": first_id},
+    )
+    assert restricted.status_code == 200
+    assert restricted.json()["data"]["results"]
+    assert {hit["document_id"] for hit in restricted.json()["data"]["results"]} == {first_id}
+
+    await integration_connection.execute(
+        text(
+            """
+            UPDATE chunk_embeddings SET embedding_set_version = 2
+            WHERE project_id = :project_id
+            """
+        ),
+        {"project_id": uuid.UUID(project_id)},
+    )
+    stale = await db_client.post(
+        f"/api/v1/projects/{project_id}/search",
+        json={"query": _UNIQUE_PHRASE},
+    )
+    assert stale.status_code == 200
+    assert stale.json()["data"]["results"] == []
 
 
 async def test_auto_embed_index_chain(
@@ -195,7 +318,6 @@ async def test_auto_embed_index_chain(
             ensure_project=_noop_ensure_project,
             job_queue=CapturingJobQueue(captured_jobs),
             embedder=create_embedding_provider(settings),
-            vector_store=create_vector_store_provider(settings),
         )
 
     document_uuid = uuid.UUID(document_id)
@@ -242,6 +364,70 @@ async def test_search_isolated_by_project(
     )
     assert search.status_code == 200
     assert search.json()["data"]["results"] == []
+
+
+async def test_pgvector_cosine_ranking_and_score_threshold(
+    db_client: AsyncClient,
+    integration_connection: AsyncConnection,
+    captured_jobs: list[JobDefinition],
+) -> None:
+    project_id = await _create_project(db_client)
+    document_ids = []
+    for label in ("near", "far"):
+        document_id = await _upload_chunked(
+            db_client,
+            integration_connection,
+            captured_jobs,
+            project_id,
+            content=f"{label} {_UNIQUE_PHRASE}".encode(),
+        )
+        document_ids.append(document_id)
+        await db_client.post(f"/api/v1/projects/{project_id}/documents/{document_id}/embed")
+        await run_captured_embed_jobs(integration_connection, captured_jobs)
+        await db_client.post(f"/api/v1/projects/{project_id}/documents/{document_id}/index")
+        await run_captured_index_jobs(integration_connection, captured_jobs)
+
+    settings = get_settings()
+    embedder = create_embedding_provider(settings)
+    query_vector = (await embedder.embed_texts([_UNIQUE_PHRASE])).vectors[0]
+    project_uuid = uuid.UUID(project_id)
+    near_document_id, far_document_id = map(uuid.UUID, document_ids)
+
+    async with AsyncSession(bind=integration_connection, expire_on_commit=False) as session:
+        rows = list(
+            (
+                await session.execute(
+                    select(ChunkEmbedding).where(
+                        ChunkEmbedding.project_id == project_uuid,
+                        ChunkEmbedding.document_id.in_([near_document_id, far_document_id]),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        for row in rows:
+            row.embedding = (
+                query_vector
+                if row.document_id == near_document_id
+                else [-value for value in query_vector]
+            )
+        await session.flush()
+
+        repository = ChunkEmbeddingRepository(session, project_uuid)
+        hits = await repository.search_cosine(
+            query_vector=query_vector,
+            top_k=10,
+            embedding_set_version=1,
+            provider=embedder.provider_name,
+            model=embedder.model_name,
+            score_threshold=0.5,
+        )
+
+    near_chunk_ids = {row.chunk_id for row in rows if row.document_id == near_document_id}
+    assert hits
+    assert {hit.chunk_id for hit in hits} == near_chunk_ids
+    assert hits[0].score == pytest.approx(1.0, abs=1e-5)
 
 
 async def test_search_hybrid_prefers_exact_keyword_match(
@@ -295,10 +481,34 @@ async def test_deleted_document_not_in_search(
     await db_client.post(f"/api/v1/projects/{project_id}/documents/{document_id}/index")
     await run_captured_index_jobs(integration_connection, captured_jobs)
 
+    project_uuid = uuid.UUID(project_id)
+    document_uuid = uuid.UUID(document_id)
+
     deleted = await db_client.delete(
         f"/api/v1/projects/{project_id}/documents/{document_id}",
     )
     assert deleted.status_code == 200
+
+    embedding_count = await integration_connection.scalar(
+        select(func.count()).select_from(ChunkEmbedding).where(
+            ChunkEmbedding.project_id == project_uuid,
+            ChunkEmbedding.document_id == document_uuid,
+        )
+    )
+    keyword_count = await integration_connection.scalar(
+        select(func.count()).select_from(ChunkKeywordIndex).where(
+            ChunkKeywordIndex.project_id == project_uuid,
+            ChunkKeywordIndex.document_id == document_uuid,
+        )
+    )
+    term_count = await integration_connection.scalar(
+        select(func.count()).select_from(KeywordTermStats).where(
+            KeywordTermStats.project_id == project_uuid,
+        )
+    )
+    assert embedding_count == 0
+    assert keyword_count == 0
+    assert term_count == 0
 
     search = await db_client.post(
         f"/api/v1/projects/{project_id}/search",
@@ -306,3 +516,69 @@ async def test_deleted_document_not_in_search(
     )
     assert search.status_code == 200
     assert search.json()["data"]["results"] == []
+
+
+async def test_reembedding_and_reindexing_are_idempotent(
+    db_client: AsyncClient,
+    integration_connection: AsyncConnection,
+    captured_jobs: list[JobDefinition],
+) -> None:
+    project_id = await _create_project(db_client)
+    document_id = await _upload_chunked(
+        db_client,
+        integration_connection,
+        captured_jobs,
+        project_id,
+        content=f"Idempotent recovery {_UNIQUE_PHRASE}.".encode(),
+    )
+    document_path = f"/api/v1/projects/{project_id}/documents/{document_id}"
+
+    await db_client.post(f"{document_path}/embed")
+    await run_captured_embed_jobs(integration_connection, captured_jobs)
+    await db_client.post(f"{document_path}/index")
+    await run_captured_index_jobs(integration_connection, captured_jobs)
+
+    async def _counts() -> tuple[int, int, list[tuple[str, int]]]:
+        project_uuid = uuid.UUID(project_id)
+        document_uuid = uuid.UUID(document_id)
+        embedding_count = int(
+            await integration_connection.scalar(
+                select(func.count()).select_from(ChunkEmbedding).where(
+                    ChunkEmbedding.project_id == project_uuid,
+                    ChunkEmbedding.document_id == document_uuid,
+                )
+            )
+            or 0
+        )
+        keyword_count = int(
+            await integration_connection.scalar(
+                select(func.count()).select_from(ChunkKeywordIndex).where(
+                    ChunkKeywordIndex.project_id == project_uuid,
+                    ChunkKeywordIndex.document_id == document_uuid,
+                )
+            )
+            or 0
+        )
+        frequencies = list(
+            (
+                await integration_connection.execute(
+                    select(
+                        KeywordTermStats.term,
+                        KeywordTermStats.document_frequency,
+                    )
+                    .where(KeywordTermStats.project_id == project_uuid)
+                    .order_by(KeywordTermStats.term)
+                )
+            ).all()
+        )
+        return embedding_count, keyword_count, frequencies
+
+    initial = await _counts()
+    await db_client.post(f"{document_path}/embed")
+    await run_captured_embed_jobs(integration_connection, captured_jobs)
+    await db_client.post(f"{document_path}/index")
+    await run_captured_index_jobs(integration_connection, captured_jobs)
+
+    assert await _counts() == initial
+    ready = await db_client.get(document_path)
+    assert ready.json()["data"]["status"] == "ready"

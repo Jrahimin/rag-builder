@@ -18,7 +18,6 @@ from app.modules.retrieval.retrievers.semantic_retriever import SemanticRetrieve
 from app.modules.retrieval.schemas.search import SearchRequest, SearchResponse
 from app.platform.providers.contracts.embedding import BaseEmbeddingProvider
 from app.platform.providers.contracts.reranker import BaseRerankerProvider
-from app.platform.providers.contracts.vector_store import BaseVectorStoreProvider
 
 logger = structlog.get_logger(__name__)
 
@@ -33,7 +32,6 @@ class SearchService:
         session: AsyncSession,
         project_id: uuid.UUID,
         embedder: BaseEmbeddingProvider,
-        vector_store: BaseVectorStoreProvider,
         reranker: BaseRerankerProvider,
         retrieval_config: RetrievalConfig,
         *,
@@ -42,7 +40,6 @@ class SearchService:
         self._session = session
         self._project_id = project_id
         self._embedder = embedder
-        self._vector_store = vector_store
         self._reranker = reranker
         self._config = retrieval_config
         self._ensure_project = ensure_project
@@ -79,6 +76,7 @@ class SearchService:
             filterable_metadata_keys=tuple(self._config.filterable_metadata_keys),
             fts_regconfig=self._config.fts_regconfig,
             min_ocr_confidence=self._config.min_ocr_confidence,
+            hnsw_ef_search=self._config.hnsw_ef_search,
             metadata={"request_strategy": strategy.value},
         )
 
@@ -105,7 +103,6 @@ class SearchService:
                 self._session,
                 self._project_id,
                 self._embedder,
-                self._vector_store,
                 self._reranker,
                 fts_regconfig=self._config.fts_regconfig,
             )
@@ -113,5 +110,4 @@ class SearchService:
             self._session,
             self._project_id,
             self._embedder,
-            self._vector_store,
         )

@@ -1,3 +1,4 @@
+# ruff: noqa: E402
 """Shared pytest fixtures.
 
 Forces the ``testing`` environment *before* importing the application so a
@@ -32,8 +33,8 @@ os.environ.setdefault("APE_STORAGE__BACKEND", "local")
 os.environ.setdefault("APE_STORAGE__LOCAL_ROOT", str(_test_storage_root))
 os.environ.setdefault("APE_EMBEDDING__BACKEND", "hash")
 os.environ.setdefault("APE_EMBEDDING__DIMENSIONS", "384")
-os.environ.setdefault("APE_VECTOR_STORE__BACKEND", "memory")
 os.environ.setdefault("APE_RETRIEVAL__AUTO_EMBED", "false")
+os.environ.setdefault("APE_RETRIEVAL__AUTO_INDEX", "false")
 os.environ.setdefault("APE_AUTH__ENABLED", "false")
 os.environ.setdefault("APE_AUTH__VERIFY_CACHE_BACKEND", "memory")
 os.environ.setdefault("APE_AUTH__RATE_LIMIT_ENABLED", "false")
@@ -86,7 +87,7 @@ async def client() -> AsyncIterator[AsyncClient]:
     """An HTTP client bound to the ASGI app with lifespan executed.
 
     The lifespan is resilient to unavailable dependencies, so this works even
-    when no external services (Postgres/Redis/Qdrant/MinIO) are running.
+    when no external services (PostgreSQL/Redis/MinIO) are running.
     """
     app = create_app()
     async with LifespanManager(app):
@@ -136,8 +137,24 @@ def apply_migrations(require_postgres: None, settings: Settings) -> None:
     from alembic import command
     from alembic.config import Config
 
+    async def _enable_pgvector() -> None:
+        engine = create_async_engine(settings.database.async_dsn)
+        try:
+            async with engine.begin() as connection:
+                await connection.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+        finally:
+            await engine.dispose()
+
+    import asyncio
+
+    asyncio.run(_enable_pgvector())
     get_settings.cache_clear()
-    cfg = Config("backend/alembic.ini")
+    backend_root = Path(__file__).resolve().parents[1] / "backend"
+    cfg = Config(str(backend_root / "alembic.ini"))
+    cfg.set_main_option(
+        "script_location",
+        str(backend_root / "app" / "composition" / "migrations"),
+    )
     command.upgrade(cfg, "head")
 
 
@@ -171,12 +188,7 @@ async def db_client(
     get_storage_provider.cache_clear()
     get_job_queue.cache_clear()
     from app.platform.providers.implementations.embedding_factory import get_embedding_provider
-    from app.platform.providers.implementations.vector_store_factory import (
-        get_vector_store_provider,
-    )
-
     get_embedding_provider.cache_clear()
-    get_vector_store_provider.cache_clear()
     from app.platform.providers.implementations.llm_factory import get_llm_provider
 
     get_llm_provider.cache_clear()

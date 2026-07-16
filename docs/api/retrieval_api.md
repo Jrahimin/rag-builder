@@ -12,8 +12,8 @@ Search results are filtered to the deployment's active `embedding_set_version`
 (`APE_RETRIEVAL__EMBEDDING_SET_VERSION`) so vectors and keyword rows from prior
 embedding runs are excluded.
 
-Indexing (`POST .../index`) refreshes **both** Qdrant vector points and PostgreSQL
-keyword index rows.
+Embedding persists native pgvector rows. Indexing (`POST .../index`) refreshes
+the PostgreSQL keyword index while retaining the existing lifecycle contract.
 
 ## POST `/documents/{document_id}/embed`
 
@@ -23,7 +23,9 @@ Enqueue embedding for a `chunked` document.
 
 ## POST `/documents/{document_id}/index`
 
-Enqueue vector + keyword indexing for an `embedded` document.
+Enqueue retrieval-index finalization for an `embedded` document. The worker
+validates the current native embedding set, rebuilds keyword/BM25 rows, and
+marks the document ready in one PostgreSQL transaction.
 
 **Response `data.status`:** `indexing` (async) → `ready` after worker
 
@@ -53,8 +55,8 @@ Search over indexed chunks using the deployment strategy (`semantic` or `hybrid`
 | `strategy` | no | `semantic` or `hybrid`; default from config |
 | `rerank` | no | Override `APE_RETRIEVAL__RERANK_ENABLED` |
 
-**Score semantics:** `results[].score` is the final ranking score (RRF fused or
-reranker relevance), not raw cosine similarity.
+**Score semantics:** semantic-only results use `1 - cosine_distance`. Hybrid
+results expose the final RRF or reranker score.
 
 **Response:**
 
@@ -82,12 +84,16 @@ reranker relevance), not raw cosine similarity.
 }
 ```
 
-## Reindex runbook (v2 upgrade)
+## Re-embed after the pgvector cutover
 
-After deploying Retrieval v2, reindex existing `ready` documents so keyword rows exist:
+The native-vector migration returns documents with legacy packed embeddings to
+`chunked`. Rebuild them through the unchanged endpoints:
 
-1. For each document: `POST /api/v1/projects/{project_id}/documents/{document_id}/index`
-2. Poll `GET /documents/{id}` until `status=ready`
-3. Verify hybrid search with `{"strategy":"hybrid","query":"..."}`
+1. `POST /api/v1/projects/{project_id}/documents/{document_id}/embed`
+2. Poll until `embedded`, then call `POST .../index`
+3. Poll until `ready` and validate semantic/hybrid search
 
-Bulk reindex API is out of scope for v2; use per-document index or an admin script.
+Bulk re-embedding remains an operator/admin-script concern.
+
+Operational sequence and validation queries:
+[pgvector operations runbook](../learning/pgvector-operations-runbook.md).

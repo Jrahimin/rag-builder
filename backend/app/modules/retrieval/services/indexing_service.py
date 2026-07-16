@@ -1,4 +1,4 @@
-"""Indexing orchestration — embed/index enqueue, workflows, vector purge."""
+"""Indexing orchestration — native embedding and retrieval-index jobs."""
 
 from __future__ import annotations
 
@@ -16,16 +16,16 @@ from app.modules.retrieval.repositories.retrieval_document_repository import (
     RetrievalDocumentRepository,
 )
 from app.modules.retrieval.workflows.embedding_workflow import EmbeddingWorkflow
-from app.modules.retrieval.workflows.vector_indexing_workflow import VectorIndexingWorkflow
+from app.modules.retrieval.workflows.retrieval_indexing_workflow import (
+    RetrievalIndexingWorkflow,
+)
 from app.platform.domain.transactions import flush_commit_refresh
 from app.platform.jobs.contracts import JobDefinition, JobQueue
 from app.platform.jobs.errors import JobEnqueueError
 from app.platform.jobs.implementations.job_queue_factory import get_job_queue
 from app.platform.jobs.names import DOCUMENT_EMBED, DOCUMENT_INDEX
 from app.platform.providers.contracts.embedding import BaseEmbeddingProvider
-from app.platform.providers.contracts.vector_store import BaseVectorStoreProvider
 from app.platform.providers.implementations.embedding_factory import get_embedding_provider
-from app.platform.providers.implementations.vector_store_factory import get_vector_store_provider
 
 logger = structlog.get_logger(__name__)
 
@@ -40,7 +40,7 @@ _INDEX_ALLOWED = {DocumentStatus.EMBEDDED, DocumentStatus.READY}
 
 
 class IndexingService:
-    """Orchestrates embedding and vector indexing within a Project."""
+    """Orchestrates embedding and retrieval indexing within a Project."""
 
     def __init__(
         self,
@@ -48,7 +48,6 @@ class IndexingService:
         project_id: uuid.UUID,
         job_queue: JobQueue,
         embedder: BaseEmbeddingProvider,
-        vector_store: BaseVectorStoreProvider,
         retrieval_config: RetrievalConfig,
         *,
         embedding_batch_size: int,
@@ -59,7 +58,6 @@ class IndexingService:
         self._project_id = project_id
         self._job_queue = job_queue
         self._embedder = embedder
-        self._vector_store = vector_store
         self._config = retrieval_config
         self._embedding_batch_size = embedding_batch_size
         self._filterable_metadata_keys = filterable_metadata_keys
@@ -77,7 +75,6 @@ class IndexingService:
         ensure_project: EnsureProjectFn,
         job_queue: JobQueue | None = None,
         embedder: BaseEmbeddingProvider | None = None,
-        vector_store: BaseVectorStoreProvider | None = None,
     ) -> IndexingService:
         """Build a fully wired service from settings.
 
@@ -89,9 +86,6 @@ class IndexingService:
             project_id=project_id,
             job_queue=job_queue if job_queue is not None else get_job_queue(),
             embedder=embedder if embedder is not None else get_embedding_provider(),
-            vector_store=(
-                vector_store if vector_store is not None else get_vector_store_provider()
-            ),
             retrieval_config=settings.retrieval,
             embedding_batch_size=settings.embedding.batch_size,
             filterable_metadata_keys=settings.retrieval.filterable_metadata_keys,
@@ -192,11 +186,10 @@ class IndexingService:
         return document
 
     async def run_index(self, document_id: uuid.UUID) -> Document | None:
-        workflow = VectorIndexingWorkflow(
+        workflow = RetrievalIndexingWorkflow(
             session=self._session,
             project_id=self._project_id,
             embedder=self._embedder,
-            vector_store=self._vector_store,
             embedding_set_version=self._config.embedding_set_version,
             filterable_metadata_keys=self._filterable_metadata_keys,
             fts_regconfig=self._config.fts_regconfig,

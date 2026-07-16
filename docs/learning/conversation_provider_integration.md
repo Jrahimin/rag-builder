@@ -119,7 +119,7 @@ All providers raise `ProviderError` from `platform/providers/errors.py`. Global 
 | Capability | Contract | Factory | Config key |
 | ---------- | -------- | ------- | ---------- |
 | Embeddings | `BaseEmbeddingProvider` | `get_embedding_provider()` | `APE_EMBEDDING__BACKEND` |
-| Vector store | `BaseVectorStoreProvider` | `get_vector_store_provider()` | `APE_VECTOR_STORE__BACKEND` |
+| Semantic persistence | `ChunkEmbeddingRepository` | request-scoped SQLAlchemy session | PostgreSQL/pgvector |
 | Storage | `BaseStorageProvider` | `get_storage_provider()` | `APE_STORAGE__BACKEND` |
 | **LLM** | `BaseLLMProvider` | `get_llm_provider()` | `APE_LLM__BACKEND` |
 

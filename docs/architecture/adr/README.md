@@ -18,6 +18,7 @@ guides in this folder elaborate on implementation.
 | [ADR-010](./010-multilingual-document-processing.md) | Multilingual document processing; Unicode tokenization; OCR; reindex CLI | Accepted |
 | [ADR-011](./011-parser-quality-scoring-and-pdf-fallback.md) | Parser quality scoring and PDF fallback | Accepted |
 | [ADR-012](./012-organization-api-key-auth.md) | Organization API key authentication | Accepted |
+| [ADR-013](./013-postgresql-native-semantic-retrieval.md) | PostgreSQL-native semantic retrieval with pgvector | Accepted |
 
 ## When to add an ADR
 

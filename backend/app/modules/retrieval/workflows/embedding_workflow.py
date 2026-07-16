@@ -17,7 +17,6 @@ from app.modules.retrieval.repositories.retrieval_document_repository import (
 )
 from app.modules.retrieval.workflows.stage_runner import StageFailure, run_document_stage
 from app.platform.domain.content_hash import content_hash
-from app.platform.persistence.vector_codec import pack_vector
 from app.platform.providers.contracts.embedding import BaseEmbeddingProvider
 
 logger = structlog.get_logger(__name__)
@@ -87,7 +86,7 @@ class EmbeddingWorkflow:
                     provider_version=result.provider_version,
                     input_content_hash=content_hash(chunk.content),
                     embedding_schema_version=EMBEDDING_SCHEMA_VERSION,
-                    vector=pack_vector(vector),
+                    embedding=vector,
                 )
                 for chunk, vector in zip(batch, result.vectors, strict=True)
             ]

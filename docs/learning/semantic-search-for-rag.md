@@ -7,7 +7,7 @@ Phase 3 exposes a **semantic retrieval baseline** — vector similarity search w
 ```text
 POST /search
   → embed query (same provider as documents)
-  → vector store ANN search (project-scoped)
+  → pgvector HNSW cosine search (project-scoped SQL)
   → hydrate chunks + document filename
   → RetrievalResult DTO
 ```
@@ -18,16 +18,12 @@ Stable API shape for downstream Chat: `chunk_id`, `document_id`, `content`, `sco
 
 ## Metadata filters
 
-Only keys in `APE_RETRIEVAL__FILTERABLE_METADATA_KEYS` are applied (default: `source`, `tags`). Unknown keys are ignored to prevent arbitrary payload querying.
+Only keys in `APE_RETRIEVAL__FILTERABLE_METADATA_KEYS` are applied. Unknown
+keys are ignored; sanitized values become predicates on joined
+`document_chunks.metadata` rows.
 
-## What is deferred (Retrieval v2)
-
-- BM25 keyword index
-- Reciprocal rank fusion (RRF)
-- Cross-encoder reranking
-- `BaseRetriever` / `HybridRetriever` ABC
-
-See [ADR-007](../architecture/adr/007-staged-retrieval-delivery.md).
+Hybrid BM25, RRF, and optional reranking are implemented alongside the semantic
+path. `ResultHydrator` remains the only response-content hydration point.
 
 ## Production considerations
 

@@ -8,7 +8,7 @@
 
 | Scope | Examples |
 | ----- | -------- |
-| **Deployment** | DB/Redis/Qdrant connections, process config, health probes, auth pepper + admin key |
+| **Deployment** | PostgreSQL/pgvector, Redis and storage connections, process config, health probes, auth pepper + admin key |
 | **Platform** | Deployment-wide defaults, job queue, provider registry (future) |
 | **Organization** | Tenant identity, Organization API keys, org-scoped rate limits |
 | **Project** | Documents, connectors, prompts, chats, evaluations, embeddings |
@@ -30,7 +30,7 @@ Project         →  which corpus (project_id on all business data)
 - `ProjectScopedMixin` on ORM entities
 - `ProjectScopedRepository` on every Project-owned repository
 - `projects.organization_id` FK + `get_by_id_for_organization` on project access
-- `project_id` on every provider call and background job (when implemented)
+- `project_id` on every repository query, provider call, and background job
 - API routes under `/api/v1/projects/{project_id}/...` (documents, search, conversations, embed, index)
 
 No resource-catalog enums in code — ownership is documented here and enforced

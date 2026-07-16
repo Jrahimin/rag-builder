@@ -1,0 +1,8 @@
+[
+  {"project": "alpha", "topic": "orion", "text": "Orion handbook: incident commanders use the cobalt escalation matrix."},
+  {"project": "alpha", "topic": "lyra", "text": "Lyra policy: customer exports require a signed privacy review."},
+  {"project": "alpha", "topic": "vega", "text": "Vega operations: rotate service credentials every ninety days."},
+  {"project": "beta", "topic": "atlas", "text": "Atlas guide: warehouse audits reconcile the amber inventory ledger."},
+  {"project": "beta", "topic": "draco", "text": "Draco support: severity one cases page the regional duty manager."},
+  {"project": "beta", "topic": "phoenix", "text": "Phoenix recovery: restore snapshots before rebuilding search indexes."}
+]

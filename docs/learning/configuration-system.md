@@ -48,7 +48,7 @@ Nested fields map to double-underscore env keys:
 | `app.env` | `APE_APP__ENV` |
 | `database.host` | `APE_DATABASE__HOST` |
 | `logging.render_json` | `APE_LOGGING__RENDER_JSON` |
-| `qdrant.api_key` | `APE_QDRANT__API_KEY` |
+| `retrieval.hnsw_ef_search` | `APE_RETRIEVAL__HNSW_EF_SEARCH` |
 
 ### Environments
 
@@ -68,8 +68,9 @@ Tests set `APE_APP__ENV=testing` in `tests/conftest.py` before importing the app
 | `cors` | `CORSConfig` | Allowed origins, methods, headers |
 | `database` | `DatabaseConfig` | PostgreSQL DSN, pool settings |
 | `redis` | `RedisConfig` | Redis DSN |
-| `qdrant` | `QdrantConfig` | Qdrant host, ports, API key |
 | `minio` | `MinioConfig` | S3-compatible storage endpoint |
+| `embedding` | `EmbeddingConfig` | Backend, model, fixed pgvector dimension |
+| `retrieval` | `RetrievalConfig` | Strategy, HNSW search depth, filters, RRF/rerank |
 
 ### Database DSN generation
 
@@ -105,7 +106,8 @@ def get_settings() -> Settings:
 2. **Docker Compose** — `POSTGRES_*`, `MINIO_*`, port mappings for service containers.
 
 In Docker, compose **overrides** hostnames to service names (`postgres`, `redis`,
-`qdrant`, `minio`). Locally, defaults point to `localhost`.
+`minio`). Locally, defaults point to `localhost`. Semantic persistence needs no
+separate host setting because it uses `database`.
 
 ---
 

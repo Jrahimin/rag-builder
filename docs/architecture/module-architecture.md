@@ -25,7 +25,7 @@ backend/app/
 ├── core/                   # Config, logging, exceptions, middleware
 ├── platform/               # Shared kernel (no feature imports)
 │   ├── db/                 # PostgreSQL engine + session management
-│   ├── infra/connectivity/ # Redis/Qdrant adapters (health only)
+│   ├── infra/connectivity/ # External-service adapters (health only)
 │   ├── persistence/        # AsyncRepository, ProjectScopedRepository
 │   ├── domain/             # ORM mixins, lifecycle helpers, text_normalizer, tokenization
 │   ├── auth/               # Auth contracts, domain events (cache invalidation)
@@ -85,7 +85,7 @@ Register models in `app/composition/orm_registry.py`. Alembic imports that file;
 
 - Vendor SDKs: `platform/providers/implementations/` only
 - Connectivity adapters: `platform/infra/connectivity/` (health/lifespan only)
-- No `Redis` / `QdrantClient` in `dependencies/` public DI
+- No vendor clients in `dependencies/` public DI
 
 Concrete provider interfaces are added with the first implementation.
 
@@ -122,6 +122,8 @@ modules/conversations/   chat (RAG generation)         uses RetrievalPort + Base
 
 - **Knowledge** does not import retrieval.
 - **Retrieval** reads shared ORM (`Document`, `DocumentChunk`) via its own thin repos — never imports `modules/knowledge/`.
+- **Retrieval** owns pgvector SQL and keyword persistence. Model-facing embedding
+  calls remain providers; vector persistence is not a provider abstraction.
 - **Conversations** does not import `modules/retrieval/` internals; composition layer wires `RetrievalPort` adapter.
 - **Composition layer** (`dependencies/`) wires delete cascade, worker handoffs, and cross-module adapters.
 

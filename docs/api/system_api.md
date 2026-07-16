@@ -22,7 +22,8 @@ Liveness — process is running; does not probe dependencies.
 
 ## GET /ready
 
-Readiness — probes PostgreSQL, Redis, Qdrant, MinIO.
+Readiness — probes PostgreSQL (including the pgvector extension and configured
+`vector(n)` dimension), Redis, and MinIO.
 
 **Response** `200` when all dependencies reachable; `503` when degraded.
 
