@@ -189,10 +189,10 @@ The repository already demonstrates the full conceptual journey from authenticat
 
 The most important next development work is:
 
-- durable job state, retry, recovery, and idempotency;
-- first-class asynchronous job status and webhooks;
+- the private operator console over the implemented operator backend;
+- first-class asynchronous outcome webhooks;
 - stronger claim-level citations and insufficient-evidence behavior;
-- one certified production embedding/LLM configuration and a real reranker;
+- measured evidence quality and learned-reranker evaluation;
 - safer file-ingestion boundaries and repeatable dedicated deployment operations.
 
 The scope is intentionally focused. The next product should not begin with agents, GraphRAG, voice, a connector marketplace, multiple vector databases, or a complex billing control plane.

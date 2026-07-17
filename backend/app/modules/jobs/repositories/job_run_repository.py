@@ -107,7 +107,10 @@ class JobRunRepository(ProjectScopedRepository[JobRun]):
         worker_id: str,
         lease_seconds: int,
     ) -> JobRun | None:
-        now = func.now()
+        # Leases are wall-clock deadlines. ``now()`` is frozen at transaction
+        # start in PostgreSQL and can make a due retry invisible to a
+        # long-lived dispatcher transaction.
+        now = func.clock_timestamp()
         eligible = or_(
             JobRun.state == JobState.QUEUED,
             and_(
@@ -153,8 +156,8 @@ class JobRunRepository(ProjectScopedRepository[JobRun]):
         progress: int | None = None,
     ) -> bool:
         values: dict[str, object] = {
-            "heartbeat_at": func.now(),
-            "lease_expires_at": func.now() + timedelta(seconds=lease_seconds),
+            "heartbeat_at": func.clock_timestamp(),
+            "lease_expires_at": func.clock_timestamp() + timedelta(seconds=lease_seconds),
         }
         if stage is not None:
             values["stage"] = stage
@@ -168,7 +171,7 @@ class JobRunRepository(ProjectScopedRepository[JobRun]):
                 JobRun.state == JobState.RUNNING,
                 JobRun.lease_owner == worker_id,
                 JobRun.lease_expires_at.is_not(None),
-                JobRun.lease_expires_at > func.now(),
+                JobRun.lease_expires_at > func.clock_timestamp(),
             )
             .values(**values)
         )
@@ -183,7 +186,7 @@ class JobRunRepository(ProjectScopedRepository[JobRun]):
                 JobRun.state == JobState.RUNNING,
                 JobRun.lease_owner == worker_id,
                 JobRun.lease_expires_at.is_not(None),
-                JobRun.lease_expires_at > func.now(),
+                JobRun.lease_expires_at > func.clock_timestamp(),
             )
             .with_for_update()
         )
@@ -195,7 +198,7 @@ class JobRunRepository(ProjectScopedRepository[JobRun]):
             .where(
                 JobRun.state == JobState.RUNNING,
                 JobRun.lease_expires_at.is_not(None),
-                JobRun.lease_expires_at < func.now(),
+                JobRun.lease_expires_at < func.clock_timestamp(),
             )
             .order_by(JobRun.lease_expires_at, JobRun.id)
             .limit(limit)

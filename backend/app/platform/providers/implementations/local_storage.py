@@ -62,6 +62,13 @@ class LocalFilesystemStorageProvider(BaseStorageProvider):
         if path.is_file():
             await aiofiles.os.remove(path)
 
+    async def check(self) -> None:
+        """Ensure the local storage root can be created and inspected."""
+        await aiofiles.os.makedirs(self._root, exist_ok=True)
+        if not self._root.is_dir():
+            msg = "Configured local storage root is not a directory"
+            raise ProviderError(msg, provider_name="local")
+
     async def delete_document_tree(
         self,
         *,

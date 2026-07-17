@@ -196,7 +196,11 @@ async def test_search_metadata_filter(
         content=f"Filtered content.\n\n{_UNIQUE_PHRASE} with metadata.".encode(),
     )
 
-    async with AsyncSession(bind=integration_connection, expire_on_commit=False) as session:
+    async with AsyncSession(
+        bind=integration_connection,
+        expire_on_commit=False,
+        join_transaction_mode="create_savepoint",
+    ) as session:
         await session.execute(
             update(DocumentChunk)
             .where(DocumentChunk.document_id == uuid.UUID(document_id))
@@ -318,7 +322,11 @@ async def test_auto_embed_index_chain(
         )
 
     document_uuid = uuid.UUID(document_id)
-    async with AsyncSession(bind=integration_connection, expire_on_commit=False) as session:
+    async with AsyncSession(
+        bind=integration_connection,
+        expire_on_commit=False,
+        join_transaction_mode="create_savepoint",
+    ) as session:
         await _service(session).enqueue_embed_if_enabled(document_uuid)
     assert [job.name for job in captured_jobs] == ["document.embed"]
     await run_captured_embed_jobs(integration_connection, captured_jobs)
@@ -384,7 +392,11 @@ async def test_pgvector_cosine_ranking_and_score_threshold(
     project_uuid = uuid.UUID(project_id)
     near_document_id, far_document_id = map(uuid.UUID, document_ids)
 
-    async with AsyncSession(bind=integration_connection, expire_on_commit=False) as session:
+    async with AsyncSession(
+        bind=integration_connection,
+        expire_on_commit=False,
+        join_transaction_mode="create_savepoint",
+    ) as session:
         rows = list(
             (
                 await session.execute(

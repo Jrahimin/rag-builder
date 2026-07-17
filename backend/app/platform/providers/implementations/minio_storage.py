@@ -105,6 +105,22 @@ class MinioStorageProvider(BaseStorageProvider):
                 provider_name="minio",
             ) from exc
 
+    async def check(self) -> None:
+        """Verify credentials and access to the configured bucket."""
+        try:
+            await self._run(self._client.head_bucket, Bucket=self._config.bucket)
+        except ClientError as exc:
+            code = exc.response.get("Error", {}).get("Code", "")
+            if code in {"403", "InvalidAccessKeyId", "SignatureDoesNotMatch"}:
+                raise ProviderAuthenticationError(
+                    "MinIO authentication failed.",
+                    provider_name="minio",
+                ) from exc
+            raise ProviderError(
+                "Configured MinIO bucket is unavailable.",
+                provider_name="minio",
+            ) from exc
+
     async def delete_document_tree(
         self,
         *,

@@ -12,6 +12,7 @@ from app.core.config import JobsConfig
 from app.models.job_outbox import JobOutbox, JobOutboxState
 from app.models.job_run import JobRun, JobState, JobType
 from app.modules.jobs.services.job_service import JobService
+from app.platform.audit.contracts import AuditRecorder
 from app.platform.jobs.contracts import JobDefinition, JobQueue
 from app.platform.jobs.failure import JobFailure
 
@@ -43,6 +44,7 @@ def _service(run: JobRun, queue: AsyncMock | None = None) -> JobService:
         project_id=run.project_id,
         queue=queue or AsyncMock(spec=JobQueue),
         config=JobsConfig(),
+        audit=AsyncMock(spec=AuditRecorder),
     )
     service._runs.lock_owned_run = AsyncMock(return_value=run)
     service._outbox.add_intent = MagicMock()

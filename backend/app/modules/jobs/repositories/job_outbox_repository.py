@@ -37,7 +37,10 @@ class JobOutboxRepository(ProjectScopedRepository[JobOutbox]):
     ) -> JobOutbox | None:
         stmt = self._scoped().where(
             JobOutbox.state == JobOutboxState.PENDING,
-            JobOutbox.available_at <= func.now(),
+            # Scheduling is wall-clock based. PostgreSQL ``now()`` is frozen at
+            # transaction start, which can incorrectly hide newly due rows in
+            # long-lived operator/test transactions.
+            JobOutbox.available_at <= func.clock_timestamp(),
         )
         if job_run_id is not None:
             stmt = stmt.where(JobOutbox.job_run_id == job_run_id)

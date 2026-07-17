@@ -10,6 +10,7 @@ import structlog
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.composition.audit import DatabaseAuditRecorder
 from app.core.config import Settings
 from app.models.document import DocumentStatus
 from app.models.project import Project
@@ -27,7 +28,13 @@ def build_job_service(
     settings: Settings,
     queue: JobQueue,
 ) -> JobService:
-    return JobService(session, project_id, queue, settings.jobs)
+    return JobService(
+        session,
+        project_id,
+        queue,
+        settings.jobs,
+        audit=DatabaseAuditRecorder(session, project_id),
+    )
 
 
 class DurableJobDispatcher:

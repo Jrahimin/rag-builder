@@ -21,6 +21,12 @@ from app.modules.jobs.repositories.job_configuration_repository import (
 from app.modules.jobs.repositories.job_outbox_repository import JobOutboxRepository
 from app.modules.jobs.repositories.job_run_repository import JobRunRepository
 from app.modules.jobs.schemas.job import JobListParams
+from app.platform.audit.contracts import (
+    AuditActorType,
+    AuditEventType,
+    AuditOutcome,
+    AuditRecorder,
+)
 from app.platform.http.pagination import PaginatedResult
 from app.platform.jobs.contracts import (
     DurableJobSubmitter,
@@ -57,11 +63,14 @@ class JobService(DurableJobSubmitter):
         project_id: uuid.UUID,
         queue: JobQueue,
         config: JobsConfig,
+        *,
+        audit: AuditRecorder,
     ) -> None:
         self._session = session
         self._project_id = project_id
         self._queue = queue
         self._config = config
+        self._audit = audit
         self._runs = JobRunRepository(session, project_id)
         self._snapshots = JobConfigurationRepository(session, project_id)
         self._outbox = JobOutboxRepository(session, project_id)
@@ -92,6 +101,13 @@ class JobService(DurableJobSubmitter):
         )
         if created:
             self._outbox.add_intent(run.id)
+            self._record_job_event(
+                run,
+                event_type=AuditEventType.JOB_SUBMITTED,
+                actor_type=AuditActorType.SYSTEM,
+                outcome=AuditOutcome.SUCCESS,
+                detail={"job_type": run.job_type.value},
+            )
         return JobSubmission(job_id=run.id, created=created)
 
     async def dispatch(self, job_id: uuid.UUID) -> None:
@@ -133,6 +149,16 @@ class JobService(DurableJobSubmitter):
                 outbox,
                 error=f"{type(exc).__name__}: {exc}",
                 available_at=datetime.now(UTC) + timedelta(seconds=delay),
+            )
+            self._record_job_event(
+                run,
+                event_type=AuditEventType.JOB_DISPATCH_DEFERRED,
+                actor_type=AuditActorType.SYSTEM,
+                outcome=AuditOutcome.DEFERRED,
+                detail={
+                    "dispatch_attempts": outbox.dispatch_attempts,
+                    "error_type": type(exc).__name__,
+                },
             )
             await self._session.commit()
             logger.warning(
@@ -209,6 +235,15 @@ class JobService(DurableJobSubmitter):
             configuration_snapshot_id=snapshot.id,
             retry_of_job_id=run.id,
         )
+        retried = await self._runs.get_by_id(submission.job_id, include_deleted=True)
+        if retried is not None:
+            self._record_job_event(
+                retried,
+                event_type=AuditEventType.JOB_RETRIED,
+                actor_type=AuditActorType.OPERATOR,
+                outcome=AuditOutcome.SUCCESS,
+                detail={"retry_of_job_id": str(run.id)},
+            )
         await self._session.commit()
         await self.dispatch(submission.job_id)
         return await self.get(submission.job_id)
@@ -219,6 +254,15 @@ class JobService(DurableJobSubmitter):
             worker_id=worker_id,
             lease_seconds=self._config.lease_seconds,
         )
+        if run is not None:
+            self._record_job_event(
+                run,
+                event_type=AuditEventType.JOB_STARTED,
+                actor_type=AuditActorType.WORKER,
+                actor_id=worker_id,
+                outcome=AuditOutcome.SUCCESS,
+                detail={"attempt_count": run.attempt_count},
+            )
         await self._session.commit()
         return run
 
@@ -262,6 +306,14 @@ class JobService(DurableJobSubmitter):
                 configuration_snapshot_id=snapshot.id,
             )
         self._runs.mark_succeeded(run)
+        self._record_job_event(
+            run,
+            event_type=AuditEventType.JOB_SUCCEEDED,
+            actor_type=AuditActorType.WORKER,
+            actor_id=worker_id,
+            outcome=AuditOutcome.SUCCESS,
+            detail={"attempt_count": run.attempt_count},
+        )
         await self._session.commit()
         return submission
 
@@ -306,6 +358,8 @@ class JobService(DurableJobSubmitter):
             )
             run.failure_details = {**failure.details, "retryable": True}
             self._outbox.add_intent(run.id, available_at=available_at)
+            event_type = AuditEventType.JOB_RETRY_SCHEDULED
+            outcome = AuditOutcome.DEFERRED
         else:
             self._runs.mark_failed(
                 run,
@@ -313,6 +367,20 @@ class JobService(DurableJobSubmitter):
                 message=failure.message,
                 details={**failure.details, "retryable": failure.retryable},
             )
+            event_type = AuditEventType.JOB_FAILED
+            outcome = AuditOutcome.FAILURE
+        self._record_job_event(
+            run,
+            event_type=event_type,
+            actor_type=AuditActorType.WORKER,
+            actor_id=worker_id,
+            outcome=outcome,
+            detail={
+                "attempt_count": run.attempt_count,
+                "failure_code": failure.code,
+                "retryable": failure.retryable,
+            },
+        )
         return run, will_retry
 
     async def recover_expired(self, *, limit: int) -> RecoveryResult:
@@ -328,6 +396,13 @@ class JobService(DurableJobSubmitter):
                     message="The previous worker lease expired; execution was recovered.",
                 )
                 self._outbox.add_intent(run.id, available_at=available_at)
+                self._record_job_event(
+                    run,
+                    event_type=AuditEventType.JOB_RECOVERED,
+                    actor_type=AuditActorType.SYSTEM,
+                    outcome=AuditOutcome.DEFERRED,
+                    detail={"attempt_count": run.attempt_count},
+                )
             else:
                 self._runs.mark_failed(
                     run,
@@ -336,10 +411,43 @@ class JobService(DurableJobSubmitter):
                     details={"retryable": True},
                 )
                 failed.append(run)
+                self._record_job_event(
+                    run,
+                    event_type=AuditEventType.JOB_FAILED,
+                    actor_type=AuditActorType.SYSTEM,
+                    outcome=AuditOutcome.FAILURE,
+                    detail={
+                        "attempt_count": run.attempt_count,
+                        "failure_code": "job_attempts_exhausted",
+                    },
+                )
         return RecoveryResult(rescheduled=len(expired) - len(failed), failed=tuple(failed))
 
     def _retry_delay(self, attempt_count: int) -> float:
         return min(
             self._config.retry_base_delay_seconds * (2 ** max(attempt_count - 1, 0)),
             self._config.retry_max_delay_seconds,
+        )
+
+    def _record_job_event(
+        self,
+        run: JobRun,
+        *,
+        event_type: AuditEventType,
+        actor_type: AuditActorType,
+        outcome: AuditOutcome,
+        actor_id: str | None = None,
+        detail: dict[str, object] | None = None,
+    ) -> None:
+        safe_detail = dict(detail or {})
+        if run.document_id is not None:
+            safe_detail["document_id"] = str(run.document_id)
+        self._audit.record(
+            event_type=event_type,
+            actor_type=actor_type,
+            actor_id=actor_id,
+            resource_type="job_run",
+            resource_id=run.id,
+            outcome=outcome,
+            detail=safe_detail,
         )

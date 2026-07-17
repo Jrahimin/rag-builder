@@ -90,7 +90,11 @@ async def test_committed_outbox_survives_redis_failure_and_later_dispatches(
 ) -> None:
     project_id = uuid.UUID(await _create_project(db_client))
     settings = get_settings()
-    async with AsyncSession(bind=integration_connection, expire_on_commit=False) as session:
+    async with AsyncSession(
+        bind=integration_connection,
+        expire_on_commit=False,
+        join_transaction_mode="create_savepoint",
+    ) as session:
         service = build_job_service(
             session=session,
             project_id=project_id,
@@ -109,7 +113,11 @@ async def test_committed_outbox_survives_redis_failure_and_later_dispatches(
         await session.commit()
         await service.dispatch(submission.job_id)
 
-    async with AsyncSession(bind=integration_connection, expire_on_commit=False) as session:
+    async with AsyncSession(
+        bind=integration_connection,
+        expire_on_commit=False,
+        join_transaction_mode="create_savepoint",
+    ) as session:
         run = await session.get(JobRun, submission.job_id)
         outbox = (
             await session.execute(
@@ -162,7 +170,11 @@ async def test_expired_lease_replays_process_outputs_without_duplicates(
         async def report(self, stage: str, progress: int) -> None:
             del stage, progress
 
-    async with AsyncSession(bind=integration_connection, expire_on_commit=False) as session:
+    async with AsyncSession(
+        bind=integration_connection,
+        expire_on_commit=False,
+        join_transaction_mode="create_savepoint",
+    ) as session:
         service = build_job_service(
             session=session,
             project_id=project_uuid,
@@ -176,7 +188,11 @@ async def test_expired_lease_replays_process_outputs_without_duplicates(
         effective = apply_job_configuration(settings, snapshot)
         await _process(session, run, effective, service, _Reporter())  # type: ignore[arg-type]
 
-    async with AsyncSession(bind=integration_connection, expire_on_commit=False) as session:
+    async with AsyncSession(
+        bind=integration_connection,
+        expire_on_commit=False,
+        join_transaction_mode="create_savepoint",
+    ) as session:
         before = await session.scalar(
             select(func.count())
             .select_from(DocumentChunk)
@@ -206,7 +222,11 @@ async def test_expired_lease_replays_process_outputs_without_duplicates(
     assert captured_jobs and captured_jobs[0].name == delivery.name
     await run_captured_document_jobs(integration_connection, captured_jobs)
 
-    async with AsyncSession(bind=integration_connection, expire_on_commit=False) as session:
+    async with AsyncSession(
+        bind=integration_connection,
+        expire_on_commit=False,
+        join_transaction_mode="create_savepoint",
+    ) as session:
         after = await session.scalar(
             select(func.count())
             .select_from(DocumentChunk)

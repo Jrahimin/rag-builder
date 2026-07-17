@@ -10,6 +10,11 @@
 3. Project     — per-Project overrides (future)
 ```
 
+`RuntimeConfig` adds the certified production profile, bounded preflight timeouts, and worker
+heartbeat/staleness thresholds. `validate_runtime_config` is fail-fast and production-only so
+development/test fake providers remain available. Operator configuration serialization uses an
+explicit allowlist and credential-presence flags; it never dumps `Settings`.
+
 `ConfigLayer` + `CONFIG_PRECEDENCE_ORDER` in `platform/config/contracts.py`.
 
 ## Durable job snapshots

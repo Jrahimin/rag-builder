@@ -34,6 +34,10 @@ class BaseStorageProvider(ABC):
     async def delete(self, key: str) -> None:
         """Remove object at ``key``; idempotent when already absent."""
 
+    @abstractmethod
+    async def check(self) -> None:
+        """Verify that the configured storage location is reachable and usable."""
+
     async def delete_document_tree(
         self,
         *,

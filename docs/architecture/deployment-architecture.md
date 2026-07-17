@@ -9,7 +9,7 @@
 | Mode | Purpose | Status |
 | ---- | ------- | ------ |
 | **Local development** | Developer machine, fast iteration | ✅ Implemented |
-| **Dedicated hosted production** | Isolated customer deployment operated as a service | ⏳ Documented, partial implementation |
+| **Dedicated hosted production runtime** | Isolated customer backend with certified providers and operator APIs | ✅ Backend profile implemented; console/release operations remain later phases |
 | **Supported self-hosted edition** | Customer-operated release (Future F1) | Deferred / demand-led |
 
 ---
@@ -55,7 +55,7 @@ Infrastructure in Docker, API on host with venv — see `docs/learning/docker-lo
 
 ---
 
-## Dedicated hosted production (planned)
+## Dedicated hosted production runtime
 
 ```text
 ┌──────────────── Business Application ────────────────┐
@@ -95,6 +95,12 @@ Infrastructure in Docker, API on host with venv — see `docs/learning/docker-lo
 
 Production will add `docker-compose.prod.yml` or `infra/production/` — not yet present.
 
+The application-level production contract is implemented independently of final Phase 6 release
+packaging. `APE_RUNTIME__PROFILE` selects `hosted_openai` or `private_ollama`; configuration
+validation and a bounded capability preflight run in both API and worker processes before they
+serve or consume work. The local Compose file passes the same profile/provider/secret settings
+while retaining development defaults.
+
 ---
 
 ## Infrastructure ownership
@@ -116,7 +122,9 @@ support boundary are Future F1 work.
 | Endpoint | Process | Purpose |
 | -------- | ------- | ------- |
 | `GET /health` | API | Liveness |
-| `GET /ready` | API | Readiness; PostgreSQL check includes the required pgvector extension |
+| `GET /ready` | API | Cheap dependency readiness plus cached provider preflight results |
+| `GET /metrics` | API | Admin-gated Prometheus-compatible current gauges |
+| `GET /api/v1/operator/*` | API | Admin-gated dependencies, workers, metrics, configuration, failures, and audit |
 
 Managed PostgreSQL must support `CREATE EXTENSION vector`. If the application
 migration role cannot create extensions, the platform operator provisions it
@@ -130,7 +138,8 @@ available before applying schema migrations. See the
 [pgvector operations runbook](../learning/pgvector-operations-runbook.md) for
 cutover, verification, HNSW maintenance, and recovery.
 
-Worker health check (future): separate lightweight probe on worker process.
+Taskiq workers publish expiring Redis heartbeats. A graceful shutdown deletes its heartbeat;
+process loss is detected by TTL. The operator workers API reports heartbeat age and active count.
 
 ---
 

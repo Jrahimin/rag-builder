@@ -83,11 +83,12 @@ class IndexingService:
     async def enqueue_embed(self, document_id: uuid.UUID) -> Document:
         document = await self._get_document_or_raise(document_id)
         self._require_status(document, _EMBED_ALLOWED, action="embed")
-        document.status = DocumentStatus.EMBEDDING
         submission = await self._job_submitter.stage(
             self.build_embed_job(document),
             self._job_configuration,
         )
+        if submission.created:
+            document.status = DocumentStatus.EMBEDDING
         await self._session.commit()
         await self._session.refresh(document)
         await self._job_submitter.dispatch(submission.job_id)
@@ -97,11 +98,12 @@ class IndexingService:
     async def enqueue_index(self, document_id: uuid.UUID) -> Document:
         document = await self._get_document_or_raise(document_id)
         self._require_status(document, _INDEX_ALLOWED, action="index")
-        document.status = DocumentStatus.INDEXING
         submission = await self._job_submitter.stage(
             self.build_index_job(document),
             self._job_configuration,
         )
+        if submission.created:
+            document.status = DocumentStatus.INDEXING
         await self._session.commit()
         await self._session.refresh(document)
         await self._job_submitter.dispatch(submission.job_id)

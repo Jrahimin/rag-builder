@@ -43,7 +43,21 @@ async def test_ready_reports_dependency_breakdown(client: AsyncClient) -> None:
     body = response.json()
     assert body["success"] is True
     names = {dep["name"] for dep in body["data"]["dependencies"]}
-    assert names == {"postgresql", "redis", "minio"}
+    assert names == {
+        "postgresql",
+        "redis",
+        "object_storage",
+        "embedding_provider",
+        "llm_provider",
+        "reranker_provider",
+        "ocr_provider",
+    }
+    provider_checks = [
+        dependency
+        for dependency in body["data"]["dependencies"]
+        if dependency["name"].endswith("_provider")
+    ]
+    assert all(dependency["cached"] is True for dependency in provider_checks)
 
 
 async def test_unknown_route_returns_standard_error(client: AsyncClient) -> None:

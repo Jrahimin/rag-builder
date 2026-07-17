@@ -44,7 +44,11 @@ async def _execute(
     job_id = uuid.UUID(str(delivery.payload["job_id"]))
     queue = _CaptureQueue(captured_jobs)
     worker_id = f"integration:{uuid.uuid4()}"
-    async with AsyncSession(bind=connection, expire_on_commit=False) as session:
+    async with AsyncSession(
+        bind=connection,
+        expire_on_commit=False,
+        join_transaction_mode="create_savepoint",
+    ) as session:
         service = build_job_service(
             session=session,
             project_id=project_id,
@@ -76,7 +80,7 @@ async def _execute(
             await session.rollback()
             failure = classify_job_failure(exc)
             failed_run, will_retry = await service.stage_failure(
-                run.id,
+                job_id,
                 worker_id=worker_id,
                 failure=failure,
             )

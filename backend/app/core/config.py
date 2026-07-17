@@ -86,6 +86,32 @@ class LoggingConfig(BaseModel):
     render_json: bool = False
 
 
+class RuntimeProfile(StrEnum):
+    """Certified deployment capability profiles."""
+
+    DEVELOPMENT = "development"
+    HOSTED_OPENAI = "hosted_openai"
+    PRIVATE_OLLAMA = "private_ollama"
+
+
+class RuntimeConfig(BaseModel):
+    """Production preflight and worker-observability settings."""
+
+    profile: RuntimeProfile = RuntimeProfile.DEVELOPMENT
+    startup_timeout_seconds: float = Field(default=30.0, ge=1.0, le=300.0)
+    dependency_timeout_seconds: float = Field(default=3.0, ge=0.1, le=30.0)
+    provider_timeout_seconds: float = Field(default=15.0, ge=0.5, le=120.0)
+    worker_heartbeat_seconds: int = Field(default=10, ge=1, le=300)
+    worker_stale_seconds: int = Field(default=35, ge=3, le=900)
+
+    @model_validator(mode="after")
+    def _validate_worker_timing(self) -> RuntimeConfig:
+        if self.worker_stale_seconds <= self.worker_heartbeat_seconds:
+            msg = "runtime.worker_stale_seconds must exceed worker_heartbeat_seconds"
+            raise ValueError(msg)
+        return self
+
+
 class CORSConfig(BaseModel):
     """Cross-Origin Resource Sharing configuration."""
 
@@ -457,6 +483,7 @@ class Settings(BaseSettings):
     app: AppConfig = Field(default_factory=AppConfig)
     server: ServerConfig = Field(default_factory=ServerConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
+    runtime: RuntimeConfig = Field(default_factory=RuntimeConfig)
     cors: CORSConfig = Field(default_factory=CORSConfig)
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)
     test_database: DisposableDatabaseConfig = Field(default_factory=DisposableDatabaseConfig)

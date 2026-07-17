@@ -9,6 +9,19 @@
 3. `ProviderError` taxonomy in `platform/providers/errors.py`.
 4. **Connectivity** for external services is `platform/infra/connectivity/` — not general DI.
 
+## Certified production matrix
+
+Only two combinations are startup-certified:
+
+| Runtime profile | LLM | Embeddings |
+| --- | --- | --- |
+| `hosted_openai` | OpenAI-compatible route through the `openai` adapter | `openai` |
+| `private_ollama` | `ollama` | `ollama` |
+
+Other implemented adapters remain available for development/comparison but are non-certified in
+production. Startup invokes each configured capability once under a timeout and caches the result;
+readiness never repeats model calls.
+
 ## What exists today
 
 - `ProviderCapability` reference enum (`providers/contracts.py`)
