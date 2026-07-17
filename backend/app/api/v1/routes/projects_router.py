@@ -6,13 +6,17 @@ import uuid
 
 from fastapi import APIRouter, Depends, Query, status
 
-from app.dependencies.projects import ProjectServiceDep, ensure_project_accessible
+from app.core.http.envelopes import ApiResponse
+from app.dependencies.projects import (
+    ProjectServiceDep,
+    ensure_project_accessible,
+    ensure_project_owned,
+)
 from app.modules.projects.schemas.project import (
     ProjectCreate,
     ProjectResponse,
     ProjectUpdate,
 )
-from app.platform.http.envelopes import ApiResponse
 from app.platform.http.pagination import ListParams, PaginatedResult
 
 router = APIRouter()
@@ -79,7 +83,7 @@ async def get_project(
     "/{project_id}",
     response_model=ApiResponse[ProjectResponse],
     summary="Update project metadata",
-    dependencies=[Depends(ensure_project_accessible)],
+    dependencies=[Depends(ensure_project_owned)],
 )
 async def update_project(
     project_id: uuid.UUID,
@@ -94,7 +98,7 @@ async def update_project(
     "/{project_id}/status",
     response_model=ApiResponse[ProjectResponse],
     summary="Toggle project active status",
-    dependencies=[Depends(ensure_project_accessible)],
+    dependencies=[Depends(ensure_project_owned)],
 )
 async def toggle_project_status(
     project_id: uuid.UUID,
@@ -108,7 +112,7 @@ async def toggle_project_status(
     "/{project_id}",
     response_model=ApiResponse[ProjectResponse],
     summary="Soft-delete a project",
-    dependencies=[Depends(ensure_project_accessible)],
+    dependencies=[Depends(ensure_project_owned)],
 )
 async def delete_project(
     project_id: uuid.UUID,

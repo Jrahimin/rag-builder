@@ -34,13 +34,17 @@ class BaseStorageProvider(ABC):
     async def delete(self, key: str) -> None:
         """Remove object at ``key``; idempotent when already absent."""
 
+    @abstractmethod
+    async def check(self) -> None:
+        """Verify that the configured storage location is reachable and usable."""
+
     async def delete_document_tree(
         self,
         *,
         project_id: uuid.UUID,
         document_id: uuid.UUID,
     ) -> None:
-        """Remove provider-native containers for ``{project_id}/{document_id}`` after object deletes."""
+        """Remove provider-native containers after their document objects."""
         del project_id, document_id
 
     async def get_download_url(self, key: str, *, expires_seconds: int = 3600) -> str | None:

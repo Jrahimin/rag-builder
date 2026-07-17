@@ -56,7 +56,7 @@ async def test_send_message_provider_error_returns_503(db_client: AsyncClient) -
                 code="llm_provider_unavailable",
             )
 
-    db_client._transport.app.dependency_overrides[get_chat_service] = _FailingSvc  # noqa: SLF001
+    db_client._transport.app.dependency_overrides[get_chat_service] = _FailingSvc
 
     project_id = await _create_project(db_client)
     conversation_id = await _create_conversation(db_client, project_id)
@@ -84,7 +84,7 @@ async def test_stream_message_emits_sanitized_error_on_failure(
             )
             yield ""  # pragma: no cover
 
-    db_client._transport.app.dependency_overrides[get_chat_service] = _FailingStreamSvc  # noqa: SLF001
+    db_client._transport.app.dependency_overrides[get_chat_service] = _FailingStreamSvc
 
     project_id = await _create_project(db_client)
     conversation_id = await _create_conversation(db_client, project_id)

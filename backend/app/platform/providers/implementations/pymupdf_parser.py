@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import fitz
+from typing_extensions import TypedDict
 
 from app.core.config import OcrConfig, get_settings
 from app.platform.domain.language_detection import detect_language
@@ -26,6 +27,16 @@ from app.platform.providers.implementations.pdf_page_layout import (
 
 _PARSER_NAME = "pymupdf"
 _PARSER_VERSION = "1.26.3"
+
+
+class _OcrResult(TypedDict):
+    """Typed intermediate result shared by page and region OCR paths."""
+
+    text: str
+    confidence: float
+    source: str
+    accepted: bool
+    meta: dict[str, object]
 
 
 class PyMuPDFParserProvider(BaseDocumentParserProvider):
@@ -142,9 +153,9 @@ class PyMuPDFParserProvider(BaseDocumentParserProvider):
         min_page_confidence = None
         if ocr_pages:
             confidences = [
-                float(item["confidence"])
+                float(value)
                 for item in ocr_pages
-                if item.get("confidence") is not None
+                if isinstance((value := item.get("confidence")), (int, float))
             ]
             if confidences:
                 min_page_confidence = min(confidences)
@@ -237,9 +248,7 @@ def _process_image_only_page(
                     )
                 )
                 return 0
-            warnings.append(
-                f"Page {page_number} OCR below min_text_chars or min_page_confidence."
-            )
+            warnings.append(f"Page {page_number} OCR below min_text_chars or min_page_confidence.")
             return 1
     if page.get_images():
         ocr_pages.append({"page": page_number, "confidence": 0.0, "source": "native"})
@@ -423,7 +432,7 @@ def _ocr_page(
     dpi: int,
     page_number: int,
     ocr_cfg: OcrConfig,
-) -> dict[str, object] | None:
+) -> _OcrResult | None:
     try:
         pixmap = page.get_pixmap(dpi=dpi)
         result = ocr_provider.recognize(
@@ -465,7 +474,7 @@ def _ocr_bbox(
     page_number: int,
     ocr_cfg: OcrConfig,
     area_ratio: float,
-) -> dict[str, object] | None:
+) -> _OcrResult | None:
     try:
         clip = fitz.Rect(bbox)
         pixmap = page.get_pixmap(dpi=dpi, clip=clip)

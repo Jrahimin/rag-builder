@@ -7,7 +7,7 @@ import fitz
 from app.platform.domain.text_normalizer import normalize_for_storage
 from app.platform.providers.contracts.document_parser import ParsedElement, ParsedElementType
 from app.platform.providers.errors import ProviderError
-from app.platform.providers.implementations.pdf_page_layout import analyze_page_blocks
+from app.platform.providers.implementations.pdf_page_layout import PageLayout, analyze_page_blocks
 from app.platform.providers.implementations.pdf_page_models import PdfPageExtraction
 
 _PARSER_NAME = "pymupdf"
@@ -91,7 +91,7 @@ def _page_median_font_size_from_blocks(text_blocks: tuple[dict, ...]) -> float |
 
 
 def _blocks_to_elements(
-    layout,
+    layout: PageLayout,
     page_number: int,
     *,
     page_median_size: float | None,

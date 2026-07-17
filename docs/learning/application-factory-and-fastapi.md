@@ -175,4 +175,4 @@ outbound payload against Pydantic, catching serialization bugs early.
 | `backend/app/api/health.py` | System health routes |
 | `backend/app/api/v1/router.py` | Versioned API aggregator |
 | `backend/app/core/exception_handlers.py` | Global error envelope |
-| `backend/app/platform/http/envelopes.py` | `ApiResponse`, `ErrorResponse` |
+| `backend/app/core/http/envelopes.py` | `ApiResponse`, `ErrorResponse` |

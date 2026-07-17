@@ -28,10 +28,24 @@ class StructureAnalyzerService:
         config = self._config
         long_block_threshold = config.long_block_token_threshold if config else 600
 
-        headings = [element for element in parsed.elements if element.element_type == ParsedElementType.HEADING]
-        tables = [element for element in parsed.elements if element.element_type == ParsedElementType.TABLE]
-        lists = [element for element in parsed.elements if element.element_type == ParsedElementType.LIST]
-        code_blocks = [element for element in parsed.elements if element.element_type == ParsedElementType.CODE_BLOCK]
+        headings = [
+            element
+            for element in parsed.elements
+            if element.element_type == ParsedElementType.HEADING
+        ]
+        tables = [
+            element
+            for element in parsed.elements
+            if element.element_type == ParsedElementType.TABLE
+        ]
+        lists = [
+            element for element in parsed.elements if element.element_type == ParsedElementType.LIST
+        ]
+        code_blocks = [
+            element
+            for element in parsed.elements
+            if element.element_type == ParsedElementType.CODE_BLOCK
+        ]
         paragraphs = [
             element
             for element in parsed.elements
@@ -47,7 +61,9 @@ class StructureAnalyzerService:
         signals = StructureSignals(
             has_headings=bool(headings),
             heading_count=len(headings),
-            max_heading_level=max((element.heading_level or 0) for element in headings) if headings else 0,
+            max_heading_level=max((element.heading_level or 0) for element in headings)
+            if headings
+            else 0,
             has_tables=bool(tables),
             table_count=len(tables),
             has_lists=bool(lists),

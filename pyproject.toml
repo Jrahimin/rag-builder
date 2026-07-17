@@ -125,7 +125,17 @@ show_error_codes = true
 pretty = true
 
 [[tool.mypy.overrides]]
-module = ["boto3.*", "botocore.*", "aiofiles.*", "fitz", "pymupdf.*", "docx.*"]
+module = [
+    "aiofiles.*",
+    "boto3.*",
+    "botocore.*",
+    "docx.*",
+    "fitz",
+    "paddleocr.*",
+    "PIL.*",
+    "pypdfium2.*",
+    "regex",
+]
 ignore_missing_imports = true
 
 [tool.pydantic-mypy]

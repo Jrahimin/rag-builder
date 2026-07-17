@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 import fitz
 import structlog
 
-from app.core.config import OcrConfig, ParsingConfig, get_settings
+from app.core.config import OcrConfig, ParsingConfig, Settings, get_settings
 from app.platform.domain.language_detection import detect_language
 from app.platform.domain.parse_quality import (
     CandidateSelectionStatus,
@@ -80,10 +80,12 @@ class PdfExtractionWorkflow(BaseDocumentParserProvider):
         *,
         parsing_config: ParsingConfig | None = None,
         ocr_config: OcrConfig | None = None,
+        settings: Settings | None = None,
     ) -> None:
-        settings = get_settings()
+        settings = settings or get_settings()
         self._parsing = parsing_config or settings.parsing
         self._ocr_cfg = ocr_config or settings.ocr
+        self._settings = settings.model_copy(update={"ocr": self._ocr_cfg})
         self._scorer = ParseQualityScorer(
             min_page_quality_score=self._parsing.min_page_quality_score,
             min_text_chars=self._parsing.min_text_chars,
@@ -104,7 +106,11 @@ class PdfExtractionWorkflow(BaseDocumentParserProvider):
             raise ProviderError(msg, provider_name=_WORKFLOW_NAME)
 
         warnings: list[str] = []
-        ocr_provider = get_ocr_provider(lang=ocr_lang) if self._ocr_cfg.enabled else None
+        ocr_provider = (
+            get_ocr_provider(lang=ocr_lang, settings=self._settings)
+            if self._ocr_cfg.enabled
+            else None
+        )
 
         started = time.perf_counter()
         page_count, pymupdf_pages = extract_pymupdf_pages(data)
@@ -126,7 +132,8 @@ class PdfExtractionWorkflow(BaseDocumentParserProvider):
                 duration_ms=per_page_pymupdf_ms,
                 extraction_method=ExtractionMethod.NATIVE_TEXT,
             )
-            _register_candidate(states[page.page_number], candidate, self._scorer)
+            if candidate is not None:
+                _register_candidate(states[page.page_number], candidate, self._scorer)
 
         if "pdfium" in self._parser_order:
             degraded = _degraded_page_numbers(states, self._scorer)
@@ -137,13 +144,13 @@ class PdfExtractionWorkflow(BaseDocumentParserProvider):
                 per_page_pdfium_ms = pdfium_duration_ms // max(len(degraded), 1)
                 pdfium_name, pdfium_version = pdfium_parser_identity()
                 for page_number in degraded:
-                    page = pdfium_pages.get(page_number)
-                    text = page.text if page else ""
+                    fallback_page = pdfium_pages.get(page_number)
+                    text = fallback_page.text if fallback_page else ""
                     assessment = self._scorer.assess(text)
                     candidate = _candidate_from_page(
                         parser_id=pdfium_name,
                         parser_version=pdfium_version,
-                        page=page,
+                        page=fallback_page,
                         quality_score=assessment.score,
                         duration_ms=per_page_pdfium_ms,
                         extraction_method=ExtractionMethod.FALLBACK_PARSER,
@@ -168,7 +175,9 @@ class PdfExtractionWorkflow(BaseDocumentParserProvider):
                     state.attempts.append(failed_attempt)
         else:
             for page_number in _degraded_page_numbers(states, self._scorer):
-                warnings.append(f"Page {page_number}: OCR disabled and text extraction quality is low.")
+                warnings.append(
+                    f"Page {page_number}: OCR disabled and text extraction quality is low."
+                )
 
         page_records = [_build_page_record(state) for state in states.values()]
         page_records.sort(key=lambda item: item.page_number)
@@ -425,7 +434,10 @@ def _build_elements(page_records: list[PageExtractionRecord]) -> list[ParsedElem
                 "accepted_parser": record.accepted_parser,
             }
             for attempt in record.attempts:
-                if attempt.selection_status is CandidateSelectionStatus.SELECTED and attempt.ocr_confidence is not None:
+                if (
+                    attempt.selection_status is CandidateSelectionStatus.SELECTED
+                    and attempt.ocr_confidence is not None
+                ):
                     metadata["ocr_confidence"] = attempt.ocr_confidence
                     if attempt.ocr_provider is not None:
                         metadata["ocr_source"] = attempt.ocr_provider
@@ -519,18 +531,6 @@ def _ocr_page_candidate(
         ocr_version=ocr_version,
         ocr_confidence=result.confidence,
     )
-    attempt = ParserAttemptRecord(
-        parser_id="ocr",
-        parser_version=None,
-        duration_ms=duration_ms,
-        parse_quality_score=quality_score,
-        selection_status=CandidateSelectionStatus.REJECTED,
-        rejection_reason=None,
-        ocr_provider=result.provider_name,
-        ocr_model=ocr_model,
-        ocr_version=ocr_version,
-        ocr_confidence=result.confidence,
-    )
     return candidate, None
 
 
@@ -538,7 +538,7 @@ def _ocr_provenance(ocr_provider: OCRProvider) -> tuple[str | None, str | None]:
     provider_name = ocr_provider.provider_name
     if provider_name == "paddle":
         try:
-            import paddleocr  # type: ignore[import-untyped]
+            import paddleocr
 
             return "paddleocr", getattr(paddleocr, "__version__", None)
         except ImportError:

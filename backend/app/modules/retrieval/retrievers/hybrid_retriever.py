@@ -43,24 +43,6 @@ class HybridRetriever(BaseRetriever):
         self._content_loader = CandidateContentLoader(session, project_id)
         self._reranker = reranker
 
-    @classmethod
-    def from_context(
-        cls,
-        session: AsyncSession,
-        project_id: uuid.UUID,
-        embedder: BaseEmbeddingProvider,
-        reranker: BaseRerankerProvider,
-        *,
-        fts_regconfig: str = "simple",
-    ) -> HybridRetriever:
-        return cls(
-            session,
-            project_id,
-            embedder,
-            reranker,
-            fts_regconfig=fts_regconfig,
-        )
-
     async def retrieve(self, context: RetrievalContext) -> list[CandidateHit]:
         started = time.perf_counter()
         semantic_hits, keyword_hits = await asyncio.gather(

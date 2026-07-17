@@ -21,11 +21,15 @@ class RetrievalDocumentRepository(ProjectScopedRepository[Document]):
         document_id: uuid.UUID,
         *,
         include_deleted: bool = False,
+        for_update: bool = False,
     ) -> Document | None:
         clauses: list[ColumnElement[bool]] = [self.model.id == document_id]
         if not include_deleted:
             clauses.append(not_deleted_filter(self.model))
-        result = await self._session.execute(self._scoped().where(*clauses))
+        stmt = self._scoped().where(*clauses)
+        if for_update:
+            stmt = stmt.with_for_update()
+        result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
 
     async def map_by_ids(self, document_ids: set[uuid.UUID]) -> dict[uuid.UUID, Document]:

@@ -9,6 +9,19 @@
 3. `ProviderError` taxonomy in `platform/providers/errors.py`.
 4. **Connectivity** for external services is `platform/infra/connectivity/` — not general DI.
 
+## Certified production matrix
+
+Only two combinations are startup-certified:
+
+| Runtime profile | LLM | Embeddings |
+| --- | --- | --- |
+| `hosted_openai` | OpenAI-compatible route through the `openai` adapter | `openai` |
+| `private_ollama` | `ollama` | `ollama` |
+
+Other implemented adapters remain available for development/comparison but are non-certified in
+production. Startup invokes each configured capability once under a timeout and caches the result;
+readiness never repeats model calls.
+
 ## What exists today
 
 - `ProviderCapability` reference enum (`providers/contracts.py`)
@@ -41,6 +54,10 @@ get_llm_provider()  →  BaseLLMProvider
 ```
 
 Switch backend via `APE_LLM__BACKEND` only — never import vendor implementations from modules. Full guide: [conversation_provider_integration.md](../learning/conversation_provider_integration.md).
+
+Factories are called by composition (`dependencies/`, `composition/`, worker
+handlers, or operational CLIs). Services receive provider contracts or a typed
+resolver; they do not select concrete provider implementations.
 
 Same pattern for embeddings (`get_embedding_provider`) and storage
 (`get_storage_provider`). Semantic search uses the session-aware retrieval

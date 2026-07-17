@@ -7,6 +7,7 @@ from collections.abc import AsyncIterator
 
 from fastapi import APIRouter, Form, Query, UploadFile, status
 
+from app.core.http.envelopes import ApiResponse
 from app.dependencies.knowledge import DocumentServiceDep
 from app.dependencies.retrieval import IndexingServiceDep
 from app.modules.knowledge.schemas.chunk import ChunkListParams, ChunkResponse
@@ -15,7 +16,6 @@ from app.modules.knowledge.schemas.document import (
     DocumentListParams,
     DocumentResponse,
 )
-from app.platform.http.envelopes import ApiResponse
 from app.platform.http.pagination import PaginatedResult
 
 router = APIRouter()

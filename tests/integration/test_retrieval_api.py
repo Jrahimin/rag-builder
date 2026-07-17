@@ -9,6 +9,7 @@ from httpx import AsyncClient
 from sqlalchemy import func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession
 
+from app.composition.retrieval import build_indexing_service
 from app.core.config import get_settings
 from app.models.chunk_embedding import ChunkEmbedding
 from app.models.chunk_keyword_index import ChunkKeywordIndex
@@ -195,7 +196,11 @@ async def test_search_metadata_filter(
         content=f"Filtered content.\n\n{_UNIQUE_PHRASE} with metadata.".encode(),
     )
 
-    async with AsyncSession(bind=integration_connection, expire_on_commit=False) as session:
+    async with AsyncSession(
+        bind=integration_connection,
+        expire_on_commit=False,
+        join_transaction_mode="create_savepoint",
+    ) as session:
         await session.execute(
             update(DocumentChunk)
             .where(DocumentChunk.document_id == uuid.UUID(document_id))
@@ -307,32 +312,26 @@ async def test_auto_embed_index_chain(
         }
     )
 
-    async def _noop_ensure_project() -> None:
-        return None
-
     def _service(session: AsyncSession) -> IndexingService:
-        return IndexingService.from_settings(
+        return build_indexing_service(
             session=session,
             project_id=uuid.UUID(project_id),
             settings=auto_settings,
-            ensure_project=_noop_ensure_project,
             job_queue=CapturingJobQueue(captured_jobs),
             embedder=create_embedding_provider(settings),
         )
 
     document_uuid = uuid.UUID(document_id)
-    async with AsyncSession(bind=integration_connection, expire_on_commit=False) as session:
+    async with AsyncSession(
+        bind=integration_connection,
+        expire_on_commit=False,
+        join_transaction_mode="create_savepoint",
+    ) as session:
         await _service(session).enqueue_embed_if_enabled(document_uuid)
     assert [job.name for job in captured_jobs] == ["document.embed"]
-    captured_jobs.clear()
-
-    async with AsyncSession(bind=integration_connection, expire_on_commit=False) as session:
-        await _service(session).run_embed(document_uuid)
+    await run_captured_embed_jobs(integration_connection, captured_jobs)
     assert [job.name for job in captured_jobs] == ["document.index"]
-    captured_jobs.clear()
-
-    async with AsyncSession(bind=integration_connection, expire_on_commit=False) as session:
-        await _service(session).run_index(document_uuid)
+    await run_captured_index_jobs(integration_connection, captured_jobs)
 
     ready = await db_client.get(f"/api/v1/projects/{project_id}/documents/{document_id}")
     assert ready.json()["data"]["status"] == "ready"
@@ -393,7 +392,11 @@ async def test_pgvector_cosine_ranking_and_score_threshold(
     project_uuid = uuid.UUID(project_id)
     near_document_id, far_document_id = map(uuid.UUID, document_ids)
 
-    async with AsyncSession(bind=integration_connection, expire_on_commit=False) as session:
+    async with AsyncSession(
+        bind=integration_connection,
+        expire_on_commit=False,
+        join_transaction_mode="create_savepoint",
+    ) as session:
         rows = list(
             (
                 await session.execute(
@@ -490,19 +493,25 @@ async def test_deleted_document_not_in_search(
     assert deleted.status_code == 200
 
     embedding_count = await integration_connection.scalar(
-        select(func.count()).select_from(ChunkEmbedding).where(
+        select(func.count())
+        .select_from(ChunkEmbedding)
+        .where(
             ChunkEmbedding.project_id == project_uuid,
             ChunkEmbedding.document_id == document_uuid,
         )
     )
     keyword_count = await integration_connection.scalar(
-        select(func.count()).select_from(ChunkKeywordIndex).where(
+        select(func.count())
+        .select_from(ChunkKeywordIndex)
+        .where(
             ChunkKeywordIndex.project_id == project_uuid,
             ChunkKeywordIndex.document_id == document_uuid,
         )
     )
     term_count = await integration_connection.scalar(
-        select(func.count()).select_from(KeywordTermStats).where(
+        select(func.count())
+        .select_from(KeywordTermStats)
+        .where(
             KeywordTermStats.project_id == project_uuid,
         )
     )
@@ -543,7 +552,9 @@ async def test_reembedding_and_reindexing_are_idempotent(
         document_uuid = uuid.UUID(document_id)
         embedding_count = int(
             await integration_connection.scalar(
-                select(func.count()).select_from(ChunkEmbedding).where(
+                select(func.count())
+                .select_from(ChunkEmbedding)
+                .where(
                     ChunkEmbedding.project_id == project_uuid,
                     ChunkEmbedding.document_id == document_uuid,
                 )
@@ -552,7 +563,9 @@ async def test_reembedding_and_reindexing_are_idempotent(
         )
         keyword_count = int(
             await integration_connection.scalar(
-                select(func.count()).select_from(ChunkKeywordIndex).where(
+                select(func.count())
+                .select_from(ChunkKeywordIndex)
+                .where(
                     ChunkKeywordIndex.project_id == project_uuid,
                     ChunkKeywordIndex.document_id == document_uuid,
                 )

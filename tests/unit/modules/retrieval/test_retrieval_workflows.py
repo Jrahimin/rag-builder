@@ -14,6 +14,8 @@ from app.modules.retrieval.workflows.embedding_workflow import EmbeddingWorkflow
 from app.modules.retrieval.workflows.retrieval_indexing_workflow import (
     RetrievalIndexingWorkflow,
 )
+from app.modules.retrieval.workflows.stage_runner import StageFailure
+from app.platform.jobs.errors import PermanentJobError
 from app.platform.providers.contracts.embedding import BaseEmbeddingProvider, EmbeddingBatchResult
 from app.platform.providers.errors import ProviderError
 from app.platform.providers.implementations.hash_embedding import HashEmbeddingProvider
@@ -112,7 +114,7 @@ async def test_embedding_skips_missing_document() -> None:
     assert await workflow.run(uuid.uuid4()) is None
 
 
-async def test_embedding_skips_disallowed_status() -> None:
+async def test_embedding_rejects_superseded_document_version() -> None:
     project_id = uuid.uuid4()
     document = _document(project_id, DocumentStatus.PARSING)
     workflow = _embedding_workflow(project_id)
@@ -120,10 +122,8 @@ async def test_embedding_skips_disallowed_status() -> None:
     chunk_repository = _repo(list_by_document=AsyncMock())
     workflow._chunk_repository = chunk_repository
 
-    result = await workflow.run(document.id)
-
-    assert result is document
-    assert result.status is DocumentStatus.PARSING
+    with pytest.raises(PermanentJobError):
+        await workflow.run(document.id, expected_document_version=2)
     chunk_repository.list_by_document.assert_not_awaited()
 
 
@@ -134,11 +134,8 @@ async def test_embedding_fails_without_chunks() -> None:
     workflow._document_repository = _repo(get_by_id=AsyncMock(return_value=document))
     workflow._chunk_repository = _repo(list_by_document=AsyncMock(return_value=[]))
 
-    result = await workflow.run(document.id)
-
-    assert result is not None
-    assert result.status is DocumentStatus.FAILED
-    assert result.error_message == "No chunks available for embedding."
+    with pytest.raises(StageFailure, match="No chunks available"):
+        await workflow.run(document.id)
 
 
 async def test_embedding_happy_path_persists_vectors() -> None:
@@ -166,7 +163,7 @@ async def test_embedding_happy_path_persists_vectors() -> None:
     embedding_repository.delete_for_document_version.assert_awaited_once()
 
 
-async def test_embedding_provider_error_marks_failed() -> None:
+async def test_embedding_provider_error_propagates_for_durable_classification() -> None:
     project_id = uuid.uuid4()
     document = _document(project_id, DocumentStatus.EMBEDDING)
     workflow = _embedding_workflow(project_id, embedder=_FailingEmbedder())
@@ -176,11 +173,8 @@ async def test_embedding_provider_error_marks_failed() -> None:
     )
     workflow._embedding_repository = _repo(delete_for_document_version=AsyncMock())
 
-    result = await workflow.run(document.id)
-
-    assert result is not None
-    assert result.status is DocumentStatus.FAILED
-    assert result.error_message == "embedding backend down"
+    with pytest.raises(ProviderError, match="embedding backend down"):
+        await workflow.run(document.id)
 
 
 # --- RetrievalIndexingWorkflow ----------------------------------------------------
@@ -215,16 +209,14 @@ def _indexing_workflow(project_id: uuid.UUID) -> RetrievalIndexingWorkflow:
     )
 
 
-async def test_indexing_skips_disallowed_status() -> None:
+async def test_indexing_rejects_superseded_document_version() -> None:
     project_id = uuid.uuid4()
     document = _document(project_id, DocumentStatus.CHUNKED)
     workflow = _indexing_workflow(project_id)
     workflow._document_repository = _repo(get_by_id=AsyncMock(return_value=document))
 
-    result = await workflow.run(document.id)
-
-    assert result is document
-    assert result.status is DocumentStatus.CHUNKED
+    with pytest.raises(PermanentJobError):
+        await workflow.run(document.id, expected_document_version=2)
 
 
 async def test_indexing_fails_without_embeddings() -> None:
@@ -234,11 +226,8 @@ async def test_indexing_fails_without_embeddings() -> None:
     workflow._document_repository = _repo(get_by_id=AsyncMock(return_value=document))
     workflow._embedding_repository = _repo(list_by_document=AsyncMock(return_value=[]))
 
-    result = await workflow.run(document.id)
-
-    assert result is not None
-    assert result.status is DocumentStatus.FAILED
-    assert result.error_message == "No embeddings available for indexing."
+    with pytest.raises(StageFailure, match="No embeddings available"):
+        await workflow.run(document.id)
 
 
 async def test_indexing_happy_path_validates_embeddings_and_builds_keywords() -> None:
@@ -262,7 +251,7 @@ async def test_indexing_happy_path_validates_embeddings_and_builds_keywords() ->
     assert result.status is DocumentStatus.READY
 
 
-async def test_indexing_chunk_count_mismatch_marks_failed() -> None:
+async def test_indexing_chunk_count_mismatch_propagates() -> None:
     project_id = uuid.uuid4()
     document = _document(project_id, DocumentStatus.INDEXING)
     chunk = _chunk(document, 0)
@@ -271,15 +260,12 @@ async def test_indexing_chunk_count_mismatch_marks_failed() -> None:
     workflow._document_repository = _repo(get_by_id=AsyncMock(return_value=document))
     workflow._embedding_repository = _repo(list_by_document=AsyncMock(return_value=[embedding]))
 
-    with patch(
-        "app.modules.retrieval.workflows.retrieval_indexing_workflow.KeywordIndexingWorkflow.index_document",
-        new_callable=AsyncMock,
-        return_value=0,
+    with (
+        patch(
+            "app.modules.retrieval.workflows.retrieval_indexing_workflow.KeywordIndexingWorkflow.index_document",
+            new_callable=AsyncMock,
+            return_value=0,
+        ),
+        pytest.raises(StageFailure, match="Embedding and keyword chunk counts differ"),
     ):
-        result = await workflow.run(document.id)
-
-    assert result is not None
-    assert result.status is DocumentStatus.FAILED
-    assert result.error_message == (
-        "Embedding and keyword chunk counts differ; re-embed the document."
-    )
+        await workflow.run(document.id)

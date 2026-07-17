@@ -60,14 +60,15 @@ class SoftDeleteMixin:
 
 
 class ProjectScopedMixin:
-    """Adds an indexed ``project_id`` — mandatory for Project-owned entities.
+    """Adds ``project_id`` — mandatory for Project-owned entities.
 
     Every query, job, and deletion on Project-owned data must filter by this
-    column. Foreign keys to ``projects`` are declared on concrete models.
+    column. Foreign keys and workload-appropriate indexes are declared on
+    concrete models so the mixin does not create redundant single-column
+    indexes beside their composite scope indexes.
     """
 
     project_id: Mapped[uuid.UUID] = mapped_column(
         Uuid,
         nullable=False,
-        index=True,
     )

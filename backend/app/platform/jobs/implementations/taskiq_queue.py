@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 
 from taskiq.abc.broker import AsyncBroker
@@ -17,11 +18,14 @@ class TaskiqJobQueue(JobQueue):
     def __init__(self, broker: AsyncBroker) -> None:
         self._broker = broker
         self._started = False
+        self._start_lock = asyncio.Lock()
 
     async def _ensure_started(self) -> None:
         if not self._started:
-            await self._broker.startup()
-            self._started = True
+            async with self._start_lock:
+                if not self._started:
+                    await self._broker.startup()
+                    self._started = True
 
     async def enqueue(self, job: JobDefinition) -> str:
         registry = get_job_registry()
@@ -31,15 +35,14 @@ class TaskiqJobQueue(JobQueue):
             raise JobEnqueueError(msg)
 
         job_id = job.idempotency_key or str(uuid.uuid4())
-        document_id, _ = spec.validate_payload(job.payload)
+        durable_job_id = spec.validate_payload(job.payload)
 
         try:
             await self._ensure_started()
             task = await spec.enqueue(
                 job_id=job_id,
                 project_id=job.project_id,
-                document_id=document_id,
-                retry=job.retry,
+                durable_job_id=durable_job_id,
             )
         except JobEnqueueError:
             raise

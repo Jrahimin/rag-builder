@@ -10,6 +10,7 @@ import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 
 import structlog
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import ConflictError, PayloadTooLargeError, ServiceUnavailableError
@@ -26,18 +27,20 @@ from app.platform.domain.lifecycle_service import (
     require_not_deleted,
     soft_delete,
 )
-from app.platform.domain.transactions import flush_commit_refresh
+from app.platform.domain.ocr_language import normalize_stored_ocr_lang
 from app.platform.http.pagination import ListParams, PaginatedResult
-from app.platform.jobs.contracts import JobDefinition, JobQueue
-from app.platform.providers.implementations.ocr_factory import normalize_stored_ocr_lang
-from app.platform.jobs.errors import JobEnqueueError
+from app.platform.jobs.contracts import (
+    DurableJobSubmitter,
+    JobConfiguration,
+    JobDefinition,
+    RetryPolicy,
+)
 from app.platform.jobs.names import DOCUMENT_PROCESS
 from app.platform.providers.contracts.storage import BaseStorageProvider
 from app.platform.providers.errors import ProviderError
 
 logger = structlog.get_logger(__name__)
 
-type EnsureProjectFn = Callable[[], Awaitable[None]]
 type OnDocumentDeleteFn = Callable[[Document], Awaitable[None]]
 
 _UNSAFE_FILENAME = re.compile(r"[^\w.\-]+")
@@ -75,23 +78,23 @@ class DocumentService:
         session: AsyncSession,
         repository: DocumentRepository,
         storage: BaseStorageProvider,
-        job_queue: JobQueue,
+        job_submitter: DurableJobSubmitter,
+        job_configuration: JobConfiguration,
         *,
-        ensure_project: EnsureProjectFn,
+        job_max_attempts: int,
         max_upload_bytes: int,
         on_document_delete: OnDocumentDeleteFn | None = None,
     ) -> None:
         self._session = session
         self._repository = repository
         self._storage = storage
-        self._job_queue = job_queue
-        self._ensure_project = ensure_project
+        self._job_submitter = job_submitter
+        self._job_configuration = job_configuration
+        self._job_max_attempts = job_max_attempts
         self._max_upload_bytes = max_upload_bytes
         self._on_document_delete = on_document_delete
 
     async def upload(self, data: DocumentIngestInput) -> Document:
-        await self._ensure_project()
-
         digest, size_bytes, replay_stream = await self._hash_stream(data.stream)
         if await self._repository.exists_by_content_sha256(digest):
             raise _duplicate_content()
@@ -128,17 +131,16 @@ class DocumentService:
             ) from exc
 
         try:
-            document = await flush_commit_refresh(
-                self._session,
-                self._repository,
-                document,
-                on_integrity=_duplicate_content,
-            )
-        except ConflictError:
+            await self._repository.flush()
+            return await self._stage_processing(document)
+        except IntegrityError as exc:
+            await self._session.rollback()
+            await self._storage.delete(storage_key)
+            raise _duplicate_content() from exc
+        except Exception:
+            await self._session.rollback()
             await self._storage.delete(storage_key)
             raise
-
-        return await self._enqueue_processing(document)
 
     async def reprocess(
         self,
@@ -172,33 +174,29 @@ class DocumentService:
         if ocr_lang is not None:
             document.ocr_lang = normalize_stored_ocr_lang(ocr_lang)
 
-        return await self._enqueue_processing(document)
+        return await self._stage_processing(document)
 
-    async def _enqueue_processing(self, document: Document) -> Document:
+    async def _stage_processing(self, document: Document) -> Document:
         document.status = DocumentStatus.QUEUED
-        document = await flush_commit_refresh(self._session, self._repository, document)
-
-        try:
-            await self._job_queue.enqueue(
-                JobDefinition(
-                    name=DOCUMENT_PROCESS,
-                    project_id=document.project_id,
-                    payload={"document_id": str(document.id)},
-                    idempotency_key=(
-                        f"document.process:{document.project_id}:{document.id}:v{document.version}"
-                    ),
-                )
-            )
-        except JobEnqueueError as exc:
-            document.status = DocumentStatus.UPLOADED
-            await flush_commit_refresh(self._session, self._repository, document)
-            raise ServiceUnavailableError(
-                message="Background processing queue is unavailable.",
-                code="job_queue_unavailable",
-            ) from exc
-
-        refreshed = await self._repository.get_by_id(document.id, include_deleted=True)
-        return refreshed if refreshed is not None else document
+        submission = await self._job_submitter.stage(
+            JobDefinition(
+                name=DOCUMENT_PROCESS,
+                project_id=document.project_id,
+                document_id=document.id,
+                payload={"document_version": document.version},
+                idempotency_key=(
+                    f"document.process:{document.project_id}:{document.id}:v{document.version}"
+                ),
+                retry=RetryPolicy(max_attempts=self._job_max_attempts),
+            ),
+            self._job_configuration,
+        )
+        await self._session.commit()
+        await self._session.refresh(document)
+        await self._job_submitter.dispatch(submission.job_id)
+        document = await self._repository.get_by_id(document.id, include_deleted=True) or document
+        document.__dict__["job_id"] = submission.job_id
+        return document
 
     async def get(self, document_id: uuid.UUID) -> Document:
         return await get_or_raise(

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from app.core.config import get_settings
+from app.core.config import Settings, get_settings
 from app.platform.domain.language_detection import detect_language
 from app.platform.providers.contracts.document_parser import (
     BaseDocumentParserProvider,
@@ -33,6 +33,9 @@ _IMAGE_CONTENT_TYPES = {
 class ImageOcrParserProvider(BaseDocumentParserProvider):
     """Parse raster images via the configured OCR provider."""
 
+    def __init__(self, *, settings: Settings | None = None) -> None:
+        self._settings = settings
+
     def parse(
         self,
         *,
@@ -42,12 +45,12 @@ class ImageOcrParserProvider(BaseDocumentParserProvider):
         ocr_lang: str | None = None,
     ) -> ParsedDocument:
         del filename
-        settings = get_settings()
+        settings = self._settings or get_settings()
         if not settings.ocr.enabled:
             msg = "OCR is disabled. Enable APE_OCR__ENABLED to parse image uploads."
             raise ProviderError(msg, provider_name=_PARSER_NAME)
 
-        ocr = get_ocr_provider(lang=ocr_lang)
+        ocr = get_ocr_provider(lang=ocr_lang, settings=settings)
         ocr_cfg = settings.ocr
         result = ocr.recognize(
             OcrImageInput(data=data, mime_type=content_type, page_number=1),

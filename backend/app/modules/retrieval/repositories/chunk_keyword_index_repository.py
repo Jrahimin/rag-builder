@@ -123,9 +123,7 @@ class ChunkKeywordIndexRepository(ProjectScopedRepository[ChunkKeywordIndex]):
             stmt = stmt.where(self.model.document_id == document_id)
         if metadata_filter:
             for key, value in metadata_filter.items():
-                stmt = stmt.where(
-                    self.model.metadata_snapshot[key].astext == value
-                )
+                stmt = stmt.where(self.model.metadata_snapshot[key].astext == value)
         result = await self._session.execute(stmt)
         return list(result.scalars().all())
 

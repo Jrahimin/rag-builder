@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-from sqlalchemy import ForeignKeyConstraint, Index, Integer, Text, UniqueConstraint
+from sqlalchemy import ForeignKeyConstraint, Index, Integer, Text, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -53,5 +53,10 @@ class ChunkKeywordIndex(Base, UUIDPrimaryKeyMixin, TimestampMixin, ProjectScoped
     content_normalized: Mapped[str] = mapped_column(Text, nullable=False)
     token_count: Mapped[int] = mapped_column(Integer, nullable=False)
     term_frequencies: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
-    metadata_snapshot: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    metadata_snapshot: Mapped[dict[str, Any]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=dict,
+        server_default=text("'{}'::jsonb"),
+    )
     search_vector: Mapped[Any] = mapped_column(TSVECTOR, nullable=False)

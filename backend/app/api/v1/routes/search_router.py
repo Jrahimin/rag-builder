@@ -6,9 +6,9 @@ import uuid
 
 from fastapi import APIRouter, status
 
+from app.core.http.envelopes import ApiResponse
 from app.dependencies.retrieval import SearchServiceDep
 from app.modules.retrieval.schemas.search import SearchRequest, SearchResponse
-from app.platform.http.envelopes import ApiResponse
 
 router = APIRouter()
 

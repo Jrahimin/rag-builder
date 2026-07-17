@@ -48,7 +48,7 @@ def test_scorer_rejects_custom_font_latin_garbled_text() -> None:
         "rtolffitsft <l(qtfi-t q-?mFr qrqT flqq Fr6 r+<ffiEt<t mula-<fiut, ulot "
         "www.nbr.eov.bd Rtt: qht+T {R'E \\ot\\-\\o\\e cnIr.lufuq0xr.Fn s o6ftqqEn16a1qFrfi "
         'cfrrrt fi <t q"{Bd fuT <| fu dqf{ €fd 6q6 gqr{ qdqfd q-qfrs -{frd.t I qd qttq eo\\5 '
-        'q< {tirt eo q( $$TT qErs-d q{i\'fm,t sbbs qr {r$ 53C q(r.ffi{ TTt c-st q(r"tlfiE '
+        "q< {tirt eo q( $$TT qErs-d q{i'fm,t sbbs qr {r$ 53C q(r.ffi{ TTt c-st q(r\"tlfiE "
         '{m frm E rqf"F €{l Rr{l: "53C. Collection of tax on sale price of goods or property '
         "sold by public auction.- Any person making sale, by public auction through sealed "
         "tender or otherwise, of any goods or property belonging to the Government shall "

@@ -9,6 +9,7 @@ import pytest
 
 from app.core.config import OcrConfig, ParsingConfig
 from app.platform.domain.parse_quality import CandidateSelectionStatus, ExtractionMethod
+from app.platform.providers.errors import ProviderError
 from app.platform.providers.implementations.pdf_extraction_workflow import PdfExtractionWorkflow
 
 pytestmark = pytest.mark.unit
@@ -76,7 +77,7 @@ def test_pdf_extraction_workflow_fails_when_all_pages_unrecoverable() -> None:
         ),
         ocr_config=OcrConfig(enabled=False),
     )
-    with pytest.raises(Exception):
+    with pytest.raises(ProviderError):
         workflow.parse(
             data=_minimal_pdf("Short"),
             filename="sample.pdf",
@@ -93,7 +94,7 @@ class _FakeOcrProvider:
     def provider_name(self) -> str:
         return "fake_ocr"
 
-    def recognize(self, image):  # noqa: ANN001
+    def recognize(self, image):
         from app.platform.providers.contracts.ocr import OcrPageResult
 
         return OcrPageResult(

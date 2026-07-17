@@ -39,9 +39,11 @@ Error:
 
 | Module | File | Prefix |
 | ------ | ---- | ------ |
-| System | [system_api.md](system_api.md) | `/health`, `/ready` |
+| System | [system_api.md](system_api.md) | `/health`, `/ready`, `/metrics` |
+| Operator | [operator_api.md](operator_api.md) | `/api/v1/operator` |
 | Organizations | [organization_api.md](organization_api.md) | `/api/v1/organizations` |
 | Projects | [project_api.md](project_api.md) | `/api/v1/projects` |
 | Knowledge | [knowledge_api.md](knowledge_api.md) | `/api/v1/projects/{project_id}/documents` |
+| Jobs | [jobs_api.md](jobs_api.md) | `/api/v1/projects/{project_id}/jobs` |
 | Retrieval | [retrieval_api.md](retrieval_api.md) | `/api/v1/projects/{project_id}` (search, embed, index on documents prefix) |
 | Conversations | [conversation_api.md](conversation_api.md) | `/api/v1/projects/{project_id}/conversations` |

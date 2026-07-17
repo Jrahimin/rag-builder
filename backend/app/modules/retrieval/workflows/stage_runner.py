@@ -1,9 +1,4 @@
-"""Shared skeleton for retrieval document-stage workflows.
-
-Both retrieval workflows (embed, index) follow the same shape: load the
-document, guard on allowed statuses, run stage work, and persist a terminal
-status in a single commit. Only the middle "work" differs, so it is injected.
-"""
+"""Replay-safe shared skeleton for retrieval document stages."""
 
 from __future__ import annotations
 
@@ -17,18 +12,17 @@ from app.models.document import Document, DocumentStatus
 from app.modules.retrieval.repositories.retrieval_document_repository import (
     RetrievalDocumentRepository,
 )
+from app.platform.db.advisory_lock import acquire_document_stage_lock
 from app.platform.domain.transactions import flush_commit_refresh
-from app.platform.providers.errors import ProviderError
+from app.platform.jobs.errors import PermanentJobError
 
 logger = structlog.get_logger(__name__)
 
 
-class StageFailure(Exception):
-    """Domain-level stage failure with a client-safe message."""
+class StageFailure(PermanentJobError):
+    """Stable domain-level stage failure."""
 
-    def __init__(self, message: str) -> None:
-        self.message = message
-        super().__init__(message)
+    code = "document_stage_failed"
 
 
 async def run_document_stage(
@@ -38,18 +32,18 @@ async def run_document_stage(
     project_id: uuid.UUID,
     document_id: uuid.UUID,
     stage: str,
-    allowed_statuses: set[DocumentStatus],
-    failure_message: str,
+    running_status: DocumentStatus,
+    expected_document_version: int | None,
     work: Callable[[Document], Awaitable[None]],
 ) -> Document | None:
-    """Run one pipeline stage for a document with guards and failure handling.
-
-    ``work`` must set the success status on the document; any raised
-    ``StageFailure`` / ``ProviderError`` surfaces its message, other exceptions
-    fall back to ``failure_message``. The terminal state is persisted here in a
-    single commit.
-    """
-    document = await repository.get_by_id(document_id)
+    """Fence and execute one idempotent stage; durable job state owns retries."""
+    await acquire_document_stage_lock(
+        session,
+        project_id=project_id,
+        document_id=document_id,
+        stage=stage,
+    )
+    document = await repository.get_by_id(document_id, for_update=True)
     if document is None:
         logger.warning(
             f"{stage}_skipped_missing",
@@ -57,33 +51,16 @@ async def run_document_stage(
             document_id=str(document_id),
         )
         return None
-
-    if document.status not in allowed_statuses:
-        logger.info(
-            f"{stage}_skipped_status",
-            project_id=str(project_id),
-            document_id=str(document_id),
-            status=document.status.value,
-        )
-        return document
-
-    try:
-        await work(document)
-    except (StageFailure, ProviderError) as exc:
-        document.status = DocumentStatus.FAILED
-        document.error_message = exc.message
-        logger.exception(
-            f"{stage}_failed",
-            project_id=str(project_id),
-            document_id=str(document_id),
-        )
-    except Exception:
-        document.status = DocumentStatus.FAILED
-        document.error_message = failure_message
-        logger.exception(
-            f"{stage}_failed",
-            project_id=str(project_id),
-            document_id=str(document_id),
+    if expected_document_version is not None and document.version != expected_document_version:
+        raise PermanentJobError(
+            "Document version no longer matches this job.",
+            context={
+                "expected_document_version": expected_document_version,
+                "actual_document_version": document.version,
+            },
         )
 
+    document.status = running_status
+    document.error_message = None
+    await work(document)
     return await flush_commit_refresh(session, repository, document)

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from app.platform.providers.contracts.document_parser import (
     ParsedElement,
-    ParsedElementType,
     build_plain_text_projection,
 )
 
@@ -15,20 +14,20 @@ def assign_char_offsets(elements: list[ParsedElement]) -> list[ParsedElement]:
         return []
 
     text_parts: list[str] = []
-    offsets: list[tuple[int, int]] = []
+    offsets: list[tuple[int | None, int | None]] = []
     cursor = 0
 
-    for index, element in enumerate(elements):
+    for element in elements:
         stripped = element.text.strip()
         if not stripped:
-            offsets.append((None, None))  # type: ignore[list-item]
+            offsets.append((None, None))
             continue
         if text_parts:
             cursor += 2
-        start = cursor
+        char_start = cursor
         cursor += len(stripped)
         text_parts.append(stripped)
-        offsets.append((start, cursor))
+        offsets.append((char_start, cursor))
 
     updated: list[ParsedElement] = []
     for element, (start, end) in zip(elements, offsets, strict=True):

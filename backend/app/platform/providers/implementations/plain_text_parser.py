@@ -58,7 +58,11 @@ class PlainTextParserProvider(BaseDocumentParserProvider):
 
         if source_format is SourceFormat.MARKDOWN:
             elements = _parse_markdown_elements(text)
-            confidence = 0.9 if any(element.element_type != ParsedElementType.PARAGRAPH for element in elements) else 0.7
+            confidence = (
+                0.9
+                if any(element.element_type != ParsedElementType.PARAGRAPH for element in elements)
+                else 0.7
+            )
         else:
             elements = _parse_plain_text_elements(text)
             confidence = 0.6

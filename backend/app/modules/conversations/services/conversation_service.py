@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import uuid
-from collections.abc import Awaitable, Callable
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -25,8 +24,6 @@ from app.platform.domain.lifecycle_service import (
 )
 from app.platform.domain.transactions import flush_commit_refresh
 from app.platform.http.pagination import ListParams, PaginatedResult
-
-type EnsureProjectFn = Callable[[], Awaitable[None]]
 
 _NOT_FOUND = {"message": "Conversation not found.", "code": "conversation_not_found"}
 _DELETED = {"message": "Cannot modify a deleted conversation.", "code": "conversation_deleted"}
@@ -63,7 +60,6 @@ class ConversationService:
         *,
         llm_config: LLMConfig,
         chat_config: ChatConfig,
-        ensure_project: EnsureProjectFn,
     ) -> None:
         self._session = session
         self._project_id = project_id
@@ -71,10 +67,8 @@ class ConversationService:
         self._message_repository = message_repository
         self._llm_config = llm_config
         self._chat_config = chat_config
-        self._ensure_project = ensure_project
 
     async def create(self, data: ConversationCreate) -> Conversation:
-        await self._ensure_project()
         provider = _validate_provider(data.provider) or self._llm_config.backend.value
         prompt_version = _validate_prompt_version(
             data.system_prompt_version,
@@ -99,7 +93,6 @@ class ConversationService:
         )
 
     async def get(self, conversation_id: uuid.UUID) -> Conversation:
-        await self._ensure_project()
         return await get_or_raise(
             self._conversation_repository,
             conversation_id,
@@ -108,11 +101,9 @@ class ConversationService:
         )
 
     async def list(self, params: ListParams) -> PaginatedResult[Conversation]:
-        await self._ensure_project()
         return await list_paginated(self._conversation_repository, params)
 
     async def update(self, conversation_id: uuid.UUID, data: ConversationUpdate) -> Conversation:
-        await self._ensure_project()
         if not data.model_fields_set:
             raise BadRequestError(
                 message="At least one field must be provided.",
@@ -142,7 +133,6 @@ class ConversationService:
         )
 
     async def toggle_status(self, conversation_id: uuid.UUID) -> Conversation:
-        await self._ensure_project()
         return await toggle_active_status(
             self._session,
             self._conversation_repository,
@@ -154,7 +144,6 @@ class ConversationService:
         )
 
     async def soft_delete(self, conversation_id: uuid.UUID) -> Conversation:
-        await self._ensure_project()
         return await soft_delete_entity(
             self._session,
             self._conversation_repository,
@@ -170,7 +159,6 @@ class ConversationService:
         limit: int,
         offset: int,
     ) -> PaginatedResult:
-        await self._ensure_project()
         items = await self._message_repository.list_by_conversation(
             conversation_id,
             limit=limit,

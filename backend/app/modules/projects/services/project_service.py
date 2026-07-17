@@ -146,6 +146,7 @@ class ProjectService:
         project = await self._repository.get_by_id_for_organization(
             project_id,
             self._organization_id,
+            include_deleted=True,
         )
         if project is None:
             raise NotFoundError(message=_NOT_FOUND["message"], code=_NOT_FOUND["code"])

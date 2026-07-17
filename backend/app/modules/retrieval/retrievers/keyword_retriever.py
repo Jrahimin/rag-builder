@@ -58,11 +58,7 @@ class KeywordRetriever(BaseRetriever):
 
         if context.min_ocr_confidence is not None:
             threshold = context.min_ocr_confidence
-            rows = [
-                row
-                for row in rows
-                if _passes_ocr_threshold(row.metadata_snapshot, threshold)
-            ]
+            rows = [row for row in rows if _passes_ocr_threshold(row.metadata_snapshot, threshold)]
 
         unique_terms = list(dict.fromkeys(query_terms))
         document_frequencies = await self._term_stats_repository.map_document_frequencies(

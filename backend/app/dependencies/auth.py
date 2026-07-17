@@ -147,9 +147,7 @@ async def _resolve_organization_from_key(
 async def require_admin_api_key(
     request: Request,
     settings: SettingsDep,
-    _bearer: Annotated[
-        HTTPAuthorizationCredentials | None, Depends(ADMIN_BEARER_SCHEME)
-    ] = None,
+    _bearer: Annotated[HTTPAuthorizationCredentials | None, Depends(ADMIN_BEARER_SCHEME)] = None,
 ) -> None:
     """Validate the deployment admin bootstrap API key."""
     if not settings.auth.enabled:

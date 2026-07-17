@@ -77,9 +77,7 @@ async def test_semantic_retriever_uses_hybrid_candidate_window() -> None:
     repository = _repository([])
     retriever = SemanticRetriever(AsyncMock(), project_id, _embedder(), repository)
 
-    await retriever.retrieve(
-        _context(project_id, strategy=RetrievalStrategy.HYBRID, top_k=5)
-    )
+    await retriever.retrieve(_context(project_id, strategy=RetrievalStrategy.HYBRID, top_k=5))
 
     assert repository.search_cosine.await_args.kwargs["top_k"] == 50
 

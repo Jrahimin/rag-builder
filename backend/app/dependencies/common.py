@@ -39,9 +39,11 @@ async def get_db_session(request: Request) -> AsyncIterator[AsyncSession]:
 
 def get_health_service(request: Request) -> HealthService:
     return HealthService(
-        settings=get_settings(),
+        settings=request.app.state.settings,
         database=get_database(request),
         redis=get_redis_connectivity(request),
+        storage=request.app.state.storage,
+        preflight=request.app.state.preflight,
     )
 
 

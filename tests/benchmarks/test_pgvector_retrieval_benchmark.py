@@ -67,23 +67,19 @@ async def test_pgvector_retrieval_benchmark(
     for copy_index in range(multiplier):
         for row in corpus:
             project_id = project_ids[row["project"]]
-            content_text = f'{row["text"]} Corpus copy {copy_index}.'
+            content_text = f"{row['text']} Corpus copy {copy_index}."
             content = content_text.encode()
             upload = await db_client.post(
                 f"/api/v1/projects/{project_id}/documents",
-                files={"file": (f'{row["topic"]}-{copy_index}.txt', content, "text/plain")},
+                files={"file": (f"{row['topic']}-{copy_index}.txt", content, "text/plain")},
             )
             assert upload.status_code == 201
             document_id = upload.json()["data"]["id"]
             await run_captured_document_jobs(integration_connection, captured_jobs)
-            await db_client.post(
-                f"/api/v1/projects/{project_id}/documents/{document_id}/embed"
-            )
+            await db_client.post(f"/api/v1/projects/{project_id}/documents/{document_id}/embed")
             await run_captured_embed_jobs(integration_connection, captured_jobs)
             index_started = time.perf_counter()
-            await db_client.post(
-                f"/api/v1/projects/{project_id}/documents/{document_id}/index"
-            )
+            await db_client.post(f"/api/v1/projects/{project_id}/documents/{document_id}/index")
             await run_captured_index_jobs(integration_connection, captured_jobs)
             index_latencies.append((time.perf_counter() - index_started) * 1000)
             indexed.append(
@@ -106,7 +102,7 @@ async def test_pgvector_retrieval_benchmark(
         for _ in range(repeat_queries):
             semantic_started = time.perf_counter()
             semantic = await db_client.post(
-                f'/api/v1/projects/{item["project_id"]}/search',
+                f"/api/v1/projects/{item['project_id']}/search",
                 json={"query": query, "top_k": 5, "strategy": "semantic"},
             )
             semantic_latencies.append((time.perf_counter() - semantic_started) * 1000)
@@ -116,7 +112,7 @@ async def test_pgvector_retrieval_benchmark(
             )
 
             filtered = await db_client.post(
-                f'/api/v1/projects/{item["project_id"]}/search',
+                f"/api/v1/projects/{item['project_id']}/search",
                 json={"query": query, "top_k": 5, "document_id": item["document_id"]},
             )
             filtered_matches += any(
@@ -126,7 +122,7 @@ async def test_pgvector_retrieval_benchmark(
 
             hybrid_started = time.perf_counter()
             hybrid = await db_client.post(
-                f'/api/v1/projects/{item["project_id"]}/search',
+                f"/api/v1/projects/{item['project_id']}/search",
                 json={"query": query, "top_k": 5, "strategy": "hybrid", "rerank": False},
             )
             assert hybrid.status_code == 200
@@ -156,6 +152,4 @@ async def test_pgvector_retrieval_benchmark(
     assert metrics["index_build_p95_ms"] <= float(
         os.getenv("APE_BENCHMARK_MAX_INDEX_P95_MS", "1000")
     )
-    assert metrics["hybrid_p95_ms"] <= float(
-        os.getenv("APE_BENCHMARK_MAX_HYBRID_P95_MS", "750")
-    )
+    assert metrics["hybrid_p95_ms"] <= float(os.getenv("APE_BENCHMARK_MAX_HYBRID_P95_MS", "750"))

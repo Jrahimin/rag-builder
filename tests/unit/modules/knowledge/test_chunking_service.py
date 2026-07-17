@@ -5,11 +5,17 @@ from __future__ import annotations
 import pytest
 
 from app.core.config import ChunkingConfig, ChunkingStrategy
-from app.modules.knowledge.services.chunking.chunk_strategy_selector_service import ChunkStrategySelectorService
+from app.modules.knowledge.services.chunking.chunk_strategy_selector_service import (
+    ChunkStrategySelectorService,
+)
 from app.modules.knowledge.services.chunking.chunk_validation_service import ChunkValidationService
 from app.modules.knowledge.services.chunking.models import DraftChunk
-from app.modules.knowledge.services.chunking.sentence_similarity_service import HashSentenceSimilarityService
-from app.modules.knowledge.services.chunking.structure_analyzer_service import StructureAnalyzerService
+from app.modules.knowledge.services.chunking.sentence_similarity_service import (
+    HashSentenceSimilarityService,
+)
+from app.modules.knowledge.services.chunking.structure_analyzer_service import (
+    StructureAnalyzerService,
+)
 from app.modules.knowledge.services.chunking_service import ChunkingService
 from app.platform.providers.contracts.document_parser import (
     PARSED_DOCUMENT_VERSION,
@@ -51,7 +57,9 @@ def _markdown_parsed() -> ParsedDocument:
         ),
     )
     return ParsedDocument(
-        text="Introduction\n\nFirst paragraph about chunking.\n\nSecond paragraph with more detail.",
+        text=(
+            "Introduction\n\nFirst paragraph about chunking.\n\nSecond paragraph with more detail."
+        ),
         page_count=1,
         parser_name="plain_text",
         parser_version="2.0.0",
@@ -79,7 +87,9 @@ async def test_split_document_uses_markdown_strategy_for_markdown() -> None:
 
 def test_split_legacy_plain_text_still_returns_chunks() -> None:
     text = " ".join(f"token{i}" for i in range(600))
-    service = ChunkingService(config=ChunkingConfig(target_tokens=100, max_tokens=100, overlap_tokens=10))
+    service = ChunkingService(
+        config=ChunkingConfig(target_tokens=100, max_tokens=100, overlap_tokens=10)
+    )
     chunks = service.split(text.strip(), page_count=1)
 
     assert len(chunks) > 1

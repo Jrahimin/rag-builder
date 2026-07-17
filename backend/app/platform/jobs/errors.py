@@ -23,3 +23,15 @@ class JobEnqueueError(JobError):
     """Failed to place a job on the queue."""
 
     code = "job_enqueue_error"
+
+
+class JobLeaseLostError(JobError):
+    """The worker no longer owns the durable execution lease."""
+
+    code = "job_lease_lost"
+
+
+class PermanentJobError(JobError):
+    """A stable input/configuration failure that should not be retried."""
+
+    code = "permanent_job_error"

@@ -6,16 +6,9 @@ from collections import OrderedDict
 from threading import Lock
 
 from app.core.config import OcrBackend, Settings, get_settings
-from app.platform.providers.contracts.ocr import OCRProvider, OcrImageInput, OcrPageResult
+from app.platform.domain.ocr_language import resolve_ocr_lang
+from app.platform.providers.contracts.ocr import OcrImageInput, OcrPageResult, OCRProvider
 from app.platform.providers.errors import ProviderError
-
-_OCR_LANG_ALIASES: dict[str, str] = {
-    "eng": "en",
-    "english": "en",
-    "ben": "bn",
-    "bengali": "bn",
-    "bangla": "bn",
-}
 
 _POOL_MAX_SIZE = 4
 _NOOP_PROVIDER: OCRProvider | None = None
@@ -32,24 +25,6 @@ class NoopOCRProvider(OCRProvider):
         del image
         msg = "OCR is disabled. Set APE_OCR__ENABLED=true and install requirements/ocr.txt."
         raise ProviderError(msg, provider_name=self.provider_name)
-
-
-def resolve_ocr_lang(document_ocr_lang: str | None, default_lang: str) -> str:
-    """Resolve per-document OCR language with deployment default fallback."""
-    raw = (document_ocr_lang if document_ocr_lang is not None else default_lang).strip().lower()
-    if not raw:
-        raw = default_lang.strip().lower()
-    return _OCR_LANG_ALIASES.get(raw, raw)
-
-
-def normalize_stored_ocr_lang(value: str | None) -> str | None:
-    """Normalize optional upload/reprocess OCR language for persistence."""
-    if value is None:
-        return None
-    stripped = value.strip()
-    if not stripped:
-        return None
-    return resolve_ocr_lang(stripped, "en")
 
 
 def create_ocr_provider(settings: Settings, *, lang: str | None = None) -> OCRProvider:

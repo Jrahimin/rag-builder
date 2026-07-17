@@ -23,7 +23,9 @@ Liveness — process is running; does not probe dependencies.
 ## GET /ready
 
 Readiness — probes PostgreSQL (including the pgvector extension and configured
-`vector(n)` dimension), Redis, and MinIO.
+`vector(n)` dimension), Redis, and configured object storage. Startup-only provider
+capability results are included with `cached=true`; health requests never repeat LLM,
+embedding, reranker, or OCR calls.
 
 **Response** `200` when all dependencies reachable; `503` when degraded.
 
@@ -36,8 +38,14 @@ Readiness — probes PostgreSQL (including the pgvector extension and configured
     "version": "0.1.0",
     "environment": "development",
     "dependencies": [
-      { "name": "postgresql", "state": "ok", "detail": null, "latency_ms": 1.2 }
+      { "name": "postgresql", "state": "ok", "detail": null, "latency_ms": 1.2, "cached": false },
+      { "name": "llm_provider", "state": "ok", "detail": null, "latency_ms": 91.0, "cached": true }
     ]
   }
 }
 ```
+
+## GET /metrics
+
+Admin-gated Prometheus-compatible current operational gauges. See
+[operator_api.md](operator_api.md) for the JSON operator surfaces.

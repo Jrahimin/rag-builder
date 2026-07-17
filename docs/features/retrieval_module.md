@@ -18,7 +18,7 @@ modules/retrieval/     embed → index → search      chunked → ready → POS
 ```
 
 ```text
-documents_router (embed/index) ──► IndexingService ──► JobQueue
+documents_router (embed/index) ──► IndexingService ──► JobRun + outbox
 search_router ──► SearchService ──► RetrievalContext ──► Retriever strategy
                                                     ├── SemanticRetriever
                                                     └── HybridRetriever
@@ -33,14 +33,14 @@ Worker handlers ──► EmbeddingWorkflow / RetrievalIndexingWorkflow + Keywor
 
 | Component | Role |
 | --------- | ---- |
-| **IndexingService** | Status validation, job enqueue (built via `IndexingService.from_settings`) |
+| **IndexingService** | Business validation plus durable job staging; wired from one Settings snapshot by `composition/retrieval.py` |
 | **EmbeddingWorkflow** / **RetrievalIndexingWorkflow** | Stage work only; shared skeleton in `workflows/stage_runner.py` |
 | **KeywordIndexingWorkflow** | BM25/FTS rows in `chunk_keyword_index`; invoked during `document.index` |
 | **SemanticRetriever** / **KeywordRetriever** | Candidate-only retrievers (`chunk_id`, `score`, `source`) |
 | **HybridRetriever** | Concurrent semantic + keyword → RRF → optional rerank |
 | **ResultHydrator** | Single hydration point for chunk/document ORM rows |
 | **RetrievalCleanupService** | Transactional native-vector, keyword-row, and BM25-stat cleanup |
-| **Worker handoff** | After `document.process` reaches `chunked`, worker calls `IndexingService.enqueue_embed_if_enabled` |
+| **Worker handoff** | Successful process/embed atomically stages an idempotent child job using the parent's immutable configuration snapshot |
 
 ## Document lifecycle (retrieval-owned statuses)
 
@@ -52,6 +52,8 @@ Worker handlers ──► EmbeddingWorkflow / RetrievalIndexingWorkflow + Keywor
 | `ready` | Native vector and keyword rows are available; document is searchable |
 
 Poll `GET /documents/{id}` until `ready` (or `failed`). Manual triggers: `POST .../embed`, `POST .../index`.
+Their responses include `job_id`; [Jobs API](../api/jobs_api.md) exposes execution
+progress, attempts, structured failure, and explicit retry.
 
 **Reindex after v2 upgrade:** existing `ready` documents need `POST .../index` once to populate keyword rows.
 

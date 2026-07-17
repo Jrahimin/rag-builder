@@ -40,7 +40,9 @@ class ChunkValidationService:
             unique.append(chunk)
         return unique
 
-    def _merge_tiny_chunks(self, chunks: list[DraftChunk], config: ChunkingConfig) -> list[DraftChunk]:
+    def _merge_tiny_chunks(
+        self, chunks: list[DraftChunk], config: ChunkingConfig
+    ) -> list[DraftChunk]:
         if not chunks:
             return []
 
@@ -56,10 +58,7 @@ class ChunkValidationService:
                 merged.append(chunk)
                 continue
 
-            if buffer is None:
-                buffer = chunk
-            else:
-                buffer = self._merge_adjacent(buffer, chunk)
+            buffer = chunk if buffer is None else self._merge_adjacent(buffer, chunk)
 
         if buffer is not None:
             if merged and self._token_counter.count(buffer.content) < config.min_tokens:
@@ -76,7 +75,9 @@ class ChunkValidationService:
         index = 0
         while index < len(chunks):
             chunk = chunks[index]
-            is_heading_only = chunk.heading_level is not None and self._token_counter.count(chunk.content) <= 12
+            is_heading_only = (
+                chunk.heading_level is not None and self._token_counter.count(chunk.content) <= 12
+            )
             if is_heading_only and index + 1 < len(chunks):
                 merged = self._merge_adjacent(chunk, chunks[index + 1])
                 result.append(merged)
@@ -86,8 +87,10 @@ class ChunkValidationService:
             index += 1
         return result
 
-    def _split_oversized(self, chunks: list[DraftChunk], config: ChunkingConfig) -> list[DraftChunk]:
-        from app.modules.knowledge.services.chunking.chunk_strategies.recursive_fallback_chunk_strategy import (
+    def _split_oversized(
+        self, chunks: list[DraftChunk], config: ChunkingConfig
+    ) -> list[DraftChunk]:
+        from app.modules.knowledge.services.chunking.chunk_strategies import (
             RecursiveFallbackChunkStrategy,
         )
 

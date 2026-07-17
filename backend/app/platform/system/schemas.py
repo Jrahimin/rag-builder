@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from enum import StrEnum
 
 from pydantic import BaseModel
@@ -23,6 +24,18 @@ class DependencyHealth(BaseModel):
     state: DependencyState
     detail: str | None = None
     latency_ms: float | None = None
+    action: str | None = None
+    checked_at: datetime | None = None
+    cached: bool = False
+
+
+class PreflightStatus(BaseModel):
+    """Bounded startup capability report cached for operator inspection."""
+
+    status: str
+    profile: str
+    checked_at: datetime
+    checks: list[DependencyHealth]
 
 
 class LivenessStatus(BaseModel):

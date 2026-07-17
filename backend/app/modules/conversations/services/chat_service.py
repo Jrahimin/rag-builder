@@ -12,7 +12,7 @@ from typing import Any
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import ChatConfig, LLMConfig, RetrievalConfig, Settings
+from app.core.config import ChatConfig, LLMConfig, RetrievalConfig
 from app.core.exceptions import NotFoundError, ServiceUnavailableError
 from app.models.conversation import Conversation
 from app.models.message import Message, MessageRole
@@ -23,16 +23,18 @@ from app.modules.conversations.prompt_builder import PromptBuilder
 from app.modules.conversations.prompts.registry import PromptTemplate, require_prompt_template
 from app.modules.conversations.repositories.conversation_repository import ConversationRepository
 from app.modules.conversations.repositories.message_repository import MessageRepository
-from app.modules.conversations.schemas.message import ChatTurnResponse, MessageSendRequest
+from app.modules.conversations.schemas.message import (
+    ChatTurnResponse,
+    MessageResponse,
+    MessageSendRequest,
+)
 from app.platform.domain.lifecycle_service import get_or_raise, require_not_deleted
 from app.platform.domain.transactions import commit_refresh
-from app.platform.providers.contracts.llm import BaseLLMProvider, ChatMessage, ChatCompletionResult
+from app.platform.providers.contracts.llm import BaseLLMProvider, ChatMessage
 from app.platform.providers.errors import ProviderError
-from app.platform.providers.implementations.llm_factory import create_llm_provider_for_conversation
 
 logger = structlog.get_logger(__name__)
 
-type EnsureProjectFn = Callable[[], Awaitable[None]]
 type ShouldCancelFn = Callable[[], Awaitable[bool]]
 type LLMProviderResolver = Callable[[Conversation], BaseLLMProvider]
 
@@ -65,25 +67,21 @@ class ChatService:
         conversation_repository: ConversationRepository,
         message_repository: MessageRepository,
         retrieval: RetrievalPort,
-        settings: Settings,
         chat_config: ChatConfig,
         retrieval_config: RetrievalConfig,
         llm_config: LLMConfig,
         *,
-        ensure_project: EnsureProjectFn,
-        resolve_llm: LLMProviderResolver | None = None,
+        resolve_llm: LLMProviderResolver,
     ) -> None:
         self._session = session
         self._project_id = project_id
         self._conversation_repository = conversation_repository
         self._message_repository = message_repository
         self._retrieval = retrieval
-        self._settings = settings
         self._chat_config = chat_config
         self._retrieval_config = retrieval_config
         self._llm_config = llm_config
-        self._ensure_project = ensure_project
-        self._resolve_llm = resolve_llm or self._default_resolve_llm
+        self._resolve_llm = resolve_llm
         self._context_builder = ContextBuilder(chat_config)
         self._prompt_builder = PromptBuilder()
 
@@ -92,7 +90,6 @@ class ChatService:
         conversation_id: uuid.UUID,
         request: MessageSendRequest,
     ) -> ChatTurnResponse:
-        await self._ensure_project()
         conversation = await self._require_mutable_conversation(conversation_id)
         started = time.perf_counter()
 
@@ -159,7 +156,6 @@ class ChatService:
         should_cancel: ShouldCancelFn | None = None,
     ) -> AsyncIterator[str | dict[str, Any]]:
         """Yield SSE payload fragments: token strings, then final citations dict."""
-        await self._ensure_project()
         conversation = await self._require_mutable_conversation(conversation_id)
         started = time.perf_counter()
 
@@ -253,11 +249,8 @@ class ChatService:
             conversation_id,
             limit=fetch_limit,
         )
-        history = [
-            message
-            for message in history
-            if message.id != user_message.id
-        ][-history_limit:]
+        history = [message for message in history if message.id != user_message.id]
+        history = history[-history_limit:] if history_limit > 0 else []
 
         messages = self._prompt_builder.build(
             template=template,
@@ -349,13 +342,6 @@ class ChatService:
     async def _release_read_transaction(self) -> None:
         """Close any implicit read transaction before slow external I/O."""
         await self._session.rollback()
-
-    def _default_resolve_llm(self, conversation: Conversation) -> BaseLLMProvider:
-        return create_llm_provider_for_conversation(
-            self._settings,
-            provider=conversation.provider,
-            model=conversation.model,
-        )
 
     def _effective_temperature(self, conversation: Conversation) -> float:
         if conversation.temperature is not None:
@@ -492,9 +478,7 @@ class ChatService:
         *,
         conversation_provider: str | None = None,
         conversation_model: str | None = None,
-    ):
-        from app.modules.conversations.schemas.message import MessageResponse
-
+    ) -> MessageResponse:
         return MessageResponse.from_message(
             message,
             conversation_provider=conversation_provider,

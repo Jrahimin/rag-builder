@@ -17,6 +17,7 @@ Binding rules: `.cursor/rules/architecture.mdc`, `.cursor/rules/project-context.
 | [Provider architecture](./provider-architecture.md) | Interfaces, SDK isolation, error taxonomy |
 | [Configuration architecture](./configuration-architecture.md) | Deployment / platform / project config |
 | [Background processing](./background-processing.md) | Jobs, queue, worker boundaries |
+| [RAG runtime flows](./rag-runtime-flows.md) | Code-derived ingestion, retrieval, and chat call graph |
 | [Deployment architecture](./deployment-architecture.md) | Local vs production topology |
 | [ADRs](./adr/README.md) | Architecture decision records |
 
@@ -92,7 +93,7 @@ sequenceDiagram
 1. **Middleware** (`core/middleware.py`) — correlation IDs, access logs
 2. **Router** (`api/v1/routes/`) — validation, DI, `ApiResponse`
 3. **Service** (`modules/<f>/services/`) — orchestration, transactions
-4. **Platform** — persistence, provider interfaces, job enqueue
+4. **Platform** — persistence, provider interfaces, durable job submission
 
 Errors → `ErrorResponse` via `core/exception_handlers.py`.
 
@@ -100,12 +101,18 @@ Errors → `ErrorResponse` via `core/exception_handlers.py`.
 
 ## Application startup
 
-`main.py` lifespan creates `Database` plus the Redis connectivity client. The
+`main.py` lifespan creates `Database` plus the Redis connectivity client and
+starts the durable outbox/expired-lease dispatcher. The
 database startup/readiness probe requires the pgvector extension and reports an
 actionable error when PostgreSQL is reachable without it or when the configured
 embedding dimension differs from `chunk_embeddings.embedding`.
 
 Deployment-level health: `platform/system/health_service.py` + `api/health.py`.
+
+Long-running ingestion/indexing is database-first: the originating transaction
+commits a `JobRun`, immutable configuration snapshot, and `JobOutbox` intent.
+Redis/Taskiq carries only the job identity. See
+[Background processing](./background-processing.md).
 
 ---
 
@@ -113,9 +120,9 @@ Deployment-level health: `platform/system/health_service.py` + `api/health.py`.
 
 See `backend/app/modules/README.md` and `modules/_template/README.md`.
 
-1. Create `modules/<name>/` with services, repositories, schemas, models
+1. Create `modules/<name>/` with services, repositories, schemas, and optional workflows
 2. Add router in `api/v1/routes/` and register on `api/v1/router.py`
-3. Register models in `composition/orm_registry.py`
+3. Add ORM entities under `app/models/` and register them in `composition/orm_registry.py`
 4. Alembic migration + `docs/features/<name>.md` + tests
 
 ---
