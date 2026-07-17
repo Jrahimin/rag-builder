@@ -1,6 +1,6 @@
 # RAG Builder
 
-### A private AI knowledge engine your product can call.
+### A private AI knowledge engine your product can Integrate with ease.
 
 RAG Builder is the product-facing name for **APE (AI Platform Engine)**, the reusable backend underneath this repository.
 
