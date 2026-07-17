@@ -11,6 +11,7 @@ Authoritative technical reference for **how** the AI Platform Engine (APE) is bu
 | -------- | ----------- |
 | **[Module architecture](./module-architecture.md)** | **Canonical** repo layout, dependency rules, composition root |
 | [System architecture guide](./system-architecture.md) | Overview, request flow, doc index |
+| [RAG runtime flows](./rag-runtime-flows.md) | Code-derived ingestion, retrieval, and chat ownership |
 
 ## By concern (one canonical doc each)
 
@@ -22,6 +23,7 @@ Authoritative technical reference for **how** the AI Platform Engine (APE) is bu
 | Provider interfaces | [provider-architecture.md](./provider-architecture.md) |
 | Configuration hierarchy | [configuration-architecture.md](./configuration-architecture.md) |
 | Background jobs | [background-processing.md](./background-processing.md) |
+| Runtime RAG flows | [rag-runtime-flows.md](./rag-runtime-flows.md) |
 | Deployment topology | [deployment-architecture.md](./deployment-architecture.md) |
 | Long-term decisions | [adr/](./adr/README.md) |
 

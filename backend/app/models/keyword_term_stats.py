@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from sqlalchemy import Float, ForeignKeyConstraint, Index, Integer, String, UniqueConstraint
+from sqlalchemy import Float, ForeignKeyConstraint, Index, Integer, String, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.platform.db.base import Base
@@ -59,6 +59,21 @@ class KeywordCollectionStats(Base, UUIDPrimaryKeyMixin, TimestampMixin, ProjectS
     )
 
     embedding_set_version: Mapped[int] = mapped_column(Integer, nullable=False)
-    total_documents: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    total_chunks: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    avg_doc_length: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    total_documents: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default=text("0"),
+    )
+    total_chunks: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default=text("0"),
+    )
+    avg_doc_length: Mapped[float] = mapped_column(
+        Float,
+        nullable=False,
+        default=0.0,
+        server_default=text("0"),
+    )

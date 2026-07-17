@@ -29,24 +29,24 @@ def test_tokenize_bangla_terms() -> None:
 
 
 def test_bm25_scores_matching_terms_higher() -> None:
-  query = ["refund", "policy"]
-  strong = bm25_score(
-      query,
-      term_frequencies={"refund": 2, "policy": 1},
-      doc_length=10,
-      avg_doc_length=10.0,
-      total_documents=100,
-      document_frequencies={"refund": 5, "policy": 8},
-  )
-  weak = bm25_score(
-      query,
-      term_frequencies={"refund": 0, "policy": 1},
-      doc_length=10,
-      avg_doc_length=10.0,
-      total_documents=100,
-      document_frequencies={"refund": 5, "policy": 8},
-  )
-  assert strong > weak > 0
+    query = ["refund", "policy"]
+    strong = bm25_score(
+        query,
+        term_frequencies={"refund": 2, "policy": 1},
+        doc_length=10,
+        avg_doc_length=10.0,
+        total_documents=100,
+        document_frequencies={"refund": 5, "policy": 8},
+    )
+    weak = bm25_score(
+        query,
+        term_frequencies={"refund": 0, "policy": 1},
+        doc_length=10,
+        avg_doc_length=10.0,
+        total_documents=100,
+        document_frequencies={"refund": 5, "policy": 8},
+    )
+    assert strong > weak > 0
 
 
 def test_normalize_text_collapses_whitespace() -> None:

@@ -68,6 +68,6 @@ def test_code_switching_bangla_english_inline() -> None:
     tokens = tokenize(CODE_SWITCHING_SAMPLE)
     assert "stock" in tokens
     assert "price" in tokens
-    assert any("\u0986" <= ch <= "\u09FF" for token in tokens for ch in token)
+    assert any("\u0986" <= ch <= "\u09ff" for token in tokens for ch in token)
     result = detect_language(CODE_SWITCHING_SAMPLE)
     assert result.is_mixed is True

@@ -226,6 +226,7 @@ async def test_soft_delete_idempotent_skips_commit(
     service: ProjectService, session: AsyncMock, repository: AsyncMock
 ) -> None:
     deleted = _project(deleted_at=datetime.now(UTC), is_active=False)
+
     async def _get_for_org(
         project_id: uuid.UUID,
         organization_id: uuid.UUID | None,

@@ -17,10 +17,10 @@ class RankedList:
 
 
 def reciprocal_rank_fusion(
-  ranked_lists: list[RankedList],
-  *,
-  rrf_k: int,
-  top_k: int,
+    ranked_lists: list[RankedList],
+    *,
+    rrf_k: int,
+    top_k: int,
 ) -> list[CandidateHit]:
     """Fuse multiple ranked lists using weighted reciprocal rank fusion."""
     fused_scores: dict[uuid.UUID, float] = {}

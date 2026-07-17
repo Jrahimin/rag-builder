@@ -35,9 +35,7 @@ def _chunk(
 def test_deduplicates_by_chunk_id() -> None:
     chunk_id = uuid.uuid4()
     builder = ContextBuilder(ChatConfig(max_context_chunks=5, context_char_budget=10_000))
-    selected = builder.select(
-        [_chunk(chunk_id=chunk_id), _chunk(chunk_id=chunk_id, content="dup")]
-    )
+    selected = builder.select([_chunk(chunk_id=chunk_id), _chunk(chunk_id=chunk_id, content="dup")])
     assert len(selected) == 1
 
 

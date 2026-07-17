@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 import uuid
-from collections.abc import Awaitable, Callable
 
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import RetrievalConfig, Settings
-from app.core.exceptions import BadRequestError, NotFoundError, ServiceUnavailableError
+from app.core.config import RetrievalConfig
+from app.core.exceptions import BadRequestError, NotFoundError
 from app.models.document import Document, DocumentStatus
 from app.modules.retrieval.repositories.chunk_embedding_repository import ChunkEmbeddingRepository
 from app.modules.retrieval.repositories.retrieval_document_repository import (
@@ -19,17 +18,17 @@ from app.modules.retrieval.workflows.embedding_workflow import EmbeddingWorkflow
 from app.modules.retrieval.workflows.retrieval_indexing_workflow import (
     RetrievalIndexingWorkflow,
 )
-from app.platform.domain.transactions import flush_commit_refresh
-from app.platform.jobs.contracts import JobDefinition, JobQueue
-from app.platform.jobs.errors import JobEnqueueError
-from app.platform.jobs.implementations.job_queue_factory import get_job_queue
+from app.platform.jobs.contracts import (
+    DurableJobSubmitter,
+    JobConfiguration,
+    JobDefinition,
+    JobProgressCallback,
+    RetryPolicy,
+)
 from app.platform.jobs.names import DOCUMENT_EMBED, DOCUMENT_INDEX
 from app.platform.providers.contracts.embedding import BaseEmbeddingProvider
-from app.platform.providers.implementations.embedding_factory import get_embedding_provider
 
 logger = structlog.get_logger(__name__)
-
-type EnsureProjectFn = Callable[[], Awaitable[None]]
 
 _EMBED_ALLOWED = {
     DocumentStatus.CHUNKED,
@@ -46,51 +45,26 @@ class IndexingService:
         self,
         session: AsyncSession,
         project_id: uuid.UUID,
-        job_queue: JobQueue,
+        job_submitter: DurableJobSubmitter,
+        job_configuration: JobConfiguration,
         embedder: BaseEmbeddingProvider,
         retrieval_config: RetrievalConfig,
         *,
+        job_max_attempts: int,
         embedding_batch_size: int,
         filterable_metadata_keys: list[str],
-        ensure_project: EnsureProjectFn,
     ) -> None:
         self._session = session
         self._project_id = project_id
-        self._job_queue = job_queue
+        self._job_submitter = job_submitter
+        self._job_configuration = job_configuration
+        self._job_max_attempts = job_max_attempts
         self._embedder = embedder
         self._config = retrieval_config
         self._embedding_batch_size = embedding_batch_size
         self._filterable_metadata_keys = filterable_metadata_keys
-        self._ensure_project = ensure_project
         self._document_repository = RetrievalDocumentRepository(session, project_id)
         self._embedding_repository = ChunkEmbeddingRepository(session, project_id)
-
-    @classmethod
-    def from_settings(
-        cls,
-        session: AsyncSession,
-        project_id: uuid.UUID,
-        settings: Settings,
-        *,
-        ensure_project: EnsureProjectFn,
-        job_queue: JobQueue | None = None,
-        embedder: BaseEmbeddingProvider | None = None,
-    ) -> IndexingService:
-        """Build a fully wired service from settings.
-
-        Defaults to the process-scoped provider singletons; explicit overrides
-        exist for tests and callers that manage provider lifecycles themselves.
-        """
-        return cls(
-            session=session,
-            project_id=project_id,
-            job_queue=job_queue if job_queue is not None else get_job_queue(),
-            embedder=embedder if embedder is not None else get_embedding_provider(),
-            retrieval_config=settings.retrieval,
-            embedding_batch_size=settings.embedding.batch_size,
-            filterable_metadata_keys=settings.retrieval.filterable_metadata_keys,
-            ensure_project=ensure_project,
-        )
 
     @property
     def embedding_set_version(self) -> int:
@@ -107,85 +81,60 @@ class IndexingService:
         return await self.enqueue_index(document_id)
 
     async def enqueue_embed(self, document_id: uuid.UUID) -> Document:
-        await self._ensure_project()
         document = await self._get_document_or_raise(document_id)
         self._require_status(document, _EMBED_ALLOWED, action="embed")
-        previous_status = document.status
-
         document.status = DocumentStatus.EMBEDDING
-        document = await flush_commit_refresh(
-            self._session,
-            self._document_repository,
-            document,
+        submission = await self._job_submitter.stage(
+            self.build_embed_job(document),
+            self._job_configuration,
         )
-
-        try:
-            await self._job_queue.enqueue(
-                JobDefinition(
-                    name=DOCUMENT_EMBED,
-                    project_id=document.project_id,
-                    payload={"document_id": str(document.id)},
-                    idempotency_key=self._embed_idempotency_key(document),
-                )
-            )
-        except JobEnqueueError as exc:
-            document.status = previous_status
-            await flush_commit_refresh(self._session, self._document_repository, document)
-            raise ServiceUnavailableError(
-                message="Background processing queue is unavailable.",
-                code="job_queue_unavailable",
-            ) from exc
-
-        refreshed = await self._document_repository.get_by_id(document.id, include_deleted=True)
-        return refreshed if refreshed is not None else document
+        await self._session.commit()
+        await self._session.refresh(document)
+        await self._job_submitter.dispatch(submission.job_id)
+        document.__dict__["job_id"] = submission.job_id
+        return document
 
     async def enqueue_index(self, document_id: uuid.UUID) -> Document:
-        await self._ensure_project()
         document = await self._get_document_or_raise(document_id)
         self._require_status(document, _INDEX_ALLOWED, action="index")
-        previous_status = document.status
-
         document.status = DocumentStatus.INDEXING
-        document = await flush_commit_refresh(
-            self._session,
-            self._document_repository,
-            document,
+        submission = await self._job_submitter.stage(
+            self.build_index_job(document),
+            self._job_configuration,
         )
+        await self._session.commit()
+        await self._session.refresh(document)
+        await self._job_submitter.dispatch(submission.job_id)
+        document.__dict__["job_id"] = submission.job_id
+        return document
 
-        try:
-            await self._job_queue.enqueue(
-                JobDefinition(
-                    name=DOCUMENT_INDEX,
-                    project_id=document.project_id,
-                    payload={"document_id": str(document.id)},
-                    idempotency_key=self._index_idempotency_key(document),
-                )
-            )
-        except JobEnqueueError as exc:
-            document.status = previous_status
-            await flush_commit_refresh(self._session, self._document_repository, document)
-            raise ServiceUnavailableError(
-                message="Background processing queue is unavailable.",
-                code="job_queue_unavailable",
-            ) from exc
-
-        refreshed = await self._document_repository.get_by_id(document.id, include_deleted=True)
-        return refreshed if refreshed is not None else document
-
-    async def run_embed(self, document_id: uuid.UUID) -> Document | None:
+    async def run_embed(
+        self,
+        document_id: uuid.UUID,
+        *,
+        expected_document_version: int | None = None,
+        on_progress: JobProgressCallback | None = None,
+    ) -> Document | None:
         workflow = EmbeddingWorkflow(
             session=self._session,
             project_id=self._project_id,
             embedder=self._embedder,
             embedding_set_version=self._config.embedding_set_version,
             batch_size=self._embedding_batch_size,
+            on_progress=on_progress,
         )
-        document = await workflow.run(document_id)
-        if document is not None and document.status is DocumentStatus.EMBEDDED:
-            await self.enqueue_index_if_enabled(document.id)
-        return document
+        return await workflow.run(
+            document_id,
+            expected_document_version=expected_document_version,
+        )
 
-    async def run_index(self, document_id: uuid.UUID) -> Document | None:
+    async def run_index(
+        self,
+        document_id: uuid.UUID,
+        *,
+        expected_document_version: int | None = None,
+        on_progress: JobProgressCallback | None = None,
+    ) -> Document | None:
         workflow = RetrievalIndexingWorkflow(
             session=self._session,
             project_id=self._project_id,
@@ -193,19 +142,51 @@ class IndexingService:
             embedding_set_version=self._config.embedding_set_version,
             filterable_metadata_keys=self._filterable_metadata_keys,
             fts_regconfig=self._config.fts_regconfig,
+            on_progress=on_progress,
         )
-        return await workflow.run(document_id)
+        return await workflow.run(
+            document_id,
+            expected_document_version=expected_document_version,
+        )
 
     def _embed_idempotency_key(self, document: Document) -> str:
         return (
             f"document.embed:{document.project_id}:{document.id}:"
-            f"esv{self._config.embedding_set_version}"
+            f"v{document.version}:esv{self._config.embedding_set_version}:"
+            f"cfg{self._job_configuration.digest()[:16]}"
         )
 
     def _index_idempotency_key(self, document: Document) -> str:
         return (
             f"document.index:{document.project_id}:{document.id}:"
-            f"esv{self._config.embedding_set_version}"
+            f"v{document.version}:esv{self._config.embedding_set_version}:"
+            f"cfg{self._job_configuration.digest()[:16]}"
+        )
+
+    def build_embed_job(self, document: Document) -> JobDefinition:
+        return JobDefinition(
+            name=DOCUMENT_EMBED,
+            project_id=document.project_id,
+            document_id=document.id,
+            payload={
+                "document_version": document.version,
+                "embedding_set_version": self._config.embedding_set_version,
+            },
+            idempotency_key=self._embed_idempotency_key(document),
+            retry=RetryPolicy(max_attempts=self._job_max_attempts),
+        )
+
+    def build_index_job(self, document: Document) -> JobDefinition:
+        return JobDefinition(
+            name=DOCUMENT_INDEX,
+            project_id=document.project_id,
+            document_id=document.id,
+            payload={
+                "document_version": document.version,
+                "embedding_set_version": self._config.embedding_set_version,
+            },
+            idempotency_key=self._index_idempotency_key(document),
+            retry=RetryPolicy(max_attempts=self._job_max_attempts),
         )
 
     async def _get_document_or_raise(self, document_id: uuid.UUID) -> Document:

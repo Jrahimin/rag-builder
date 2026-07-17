@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import uuid
 from enum import StrEnum
+from typing import ClassVar
 
 from sqlalchemy import BigInteger, Enum, ForeignKeyConstraint, Index, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column
@@ -35,6 +37,7 @@ class Document(Base, UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixin, Proje
     """Uploaded file owned by a Project — bytes live in object storage."""
 
     __tablename__ = "documents"
+    job_id: ClassVar[uuid.UUID | None] = None
     __table_args__ = (
         ForeignKeyConstraint(
             ["project_id"],

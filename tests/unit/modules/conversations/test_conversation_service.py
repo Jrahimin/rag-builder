@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from app.core.config import ChatConfig, LLMConfig, LLMBackend
+from app.core.config import ChatConfig, LLMBackend, LLMConfig
 from app.core.exceptions import BadRequestError
 from app.models.conversation import Conversation
 from app.modules.conversations.schemas.conversation import ConversationCreate, ConversationUpdate
@@ -43,9 +43,6 @@ def service(
     conversation_repository: AsyncMock,
     message_repository: AsyncMock,
 ) -> ConversationService:
-    async def ensure_project() -> None:
-        return None
-
     return ConversationService(
         session=session,
         project_id=uuid.uuid4(),
@@ -53,7 +50,6 @@ def service(
         message_repository=message_repository,
         llm_config=LLMConfig(backend=LLMBackend.ECHO, model="test-model"),
         chat_config=ChatConfig(),
-        ensure_project=ensure_project,
     )
 
 
@@ -116,7 +112,7 @@ async def test_soft_delete_does_not_touch_messages(
     conversation_id = uuid.uuid4()
     deleted = Conversation(
         id=conversation_id,
-        project_id=service._project_id,  # noqa: SLF001
+        project_id=service._project_id,
         title="t",
         provider="echo",
         model="m",

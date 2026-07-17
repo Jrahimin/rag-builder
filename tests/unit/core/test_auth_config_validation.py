@@ -23,9 +23,7 @@ def test_disabled_auth_allowed_in_development() -> None:
 
 def test_disabled_auth_rejected_in_production() -> None:
     with pytest.raises(AuthConfigurationError, match="APE_AUTH__ENABLED"):
-        validate_auth_config(
-            _settings(auth=AuthConfig(enabled=False), env=Environment.PRODUCTION)
-        )
+        validate_auth_config(_settings(auth=AuthConfig(enabled=False), env=Environment.PRODUCTION))
 
 
 def test_enabled_auth_requires_admin_key_and_pepper() -> None:
@@ -33,9 +31,7 @@ def test_enabled_auth_requires_admin_key_and_pepper() -> None:
         validate_auth_config(_settings(auth=AuthConfig(enabled=True)))
 
     with pytest.raises(AuthConfigurationError, match="KEY_PEPPER"):
-        validate_auth_config(
-            _settings(auth=AuthConfig(enabled=True, admin_api_key=ADMIN_KEY))
-        )
+        validate_auth_config(_settings(auth=AuthConfig(enabled=True, admin_api_key=ADMIN_KEY)))
 
 
 def test_enabled_auth_rejects_short_secrets() -> None:

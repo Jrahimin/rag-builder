@@ -8,25 +8,49 @@ import uuid
 
 import structlog
 
+from app.composition.jobs import build_job_service
 from app.core.config import get_settings
 from app.models.document import DocumentStatus
 from app.modules.knowledge.repositories.document_repository import DocumentRepository
 from app.modules.knowledge.services.document_service import DocumentService
 from app.platform.db.session import Database
-from app.platform.jobs.implementations.job_queue_factory import get_job_queue
+from app.platform.jobs.configuration import build_job_configuration
+from app.platform.jobs.implementations.job_queue_factory import create_job_queue
 from app.platform.providers.implementations.storage_factory import create_storage_provider
-from app.worker.handlers.document import run_document_process
 
 logger = structlog.get_logger(__name__)
 
 
-async def _noop_ensure_project() -> None:
-    return None
-
-
 async def _reprocess_document(project_id: uuid.UUID, document_id: uuid.UUID) -> None:
-    await run_document_process(project_id=project_id, document_id=document_id)
-    logger.info("reindex_document_complete", project_id=str(project_id), document_id=str(document_id))
+    settings = get_settings()
+    database = Database(settings)
+    try:
+        async with database.session_factory() as session:
+            repository = DocumentRepository(session, project_id)
+            queue = create_job_queue(settings)
+            jobs = build_job_service(
+                session=session,
+                project_id=project_id,
+                settings=settings,
+                queue=queue,
+            )
+            service = DocumentService(
+                session=session,
+                repository=repository,
+                storage=create_storage_provider(settings),
+                job_submitter=jobs,
+                job_configuration=build_job_configuration(settings),
+                job_max_attempts=settings.jobs.max_attempts,
+                max_upload_bytes=settings.knowledge.max_upload_bytes,
+            )
+            await service.reprocess(document_id)
+        logger.info(
+            "reindex_document_enqueued",
+            project_id=str(project_id),
+            document_id=str(document_id),
+        )
+    finally:
+        await database.dispose()
 
 
 async def _reprocess_project(
@@ -41,6 +65,22 @@ async def _reprocess_project(
     try:
         async with database.session_factory() as session:
             repository = DocumentRepository(session, project_id)
+            queue = create_job_queue(settings)
+            jobs = build_job_service(
+                session=session,
+                project_id=project_id,
+                settings=settings,
+                queue=queue,
+            )
+            service = DocumentService(
+                session=session,
+                repository=repository,
+                storage=create_storage_provider(settings),
+                job_submitter=jobs,
+                job_configuration=build_job_configuration(settings),
+                job_max_attempts=settings.jobs.max_attempts,
+                max_upload_bytes=settings.knowledge.max_upload_bytes,
+            )
             documents = await repository.list_page(limit=10_000, offset=0)
             for document in documents:
                 if document.status is DocumentStatus.FAILED and not full:
@@ -55,14 +95,6 @@ async def _reprocess_project(
                     count += 1
                     continue
 
-                service = DocumentService(
-                    session=session,
-                    repository=repository,
-                    storage=create_storage_provider(settings),
-                    job_queue=get_job_queue(),
-                    ensure_project=_noop_ensure_project,
-                    max_upload_bytes=settings.knowledge.max_upload_bytes,
-                )
                 await service.reprocess(document.id)
                 count += 1
     finally:
@@ -81,7 +113,9 @@ def _build_parser() -> argparse.ArgumentParser:
     project_parser = subparsers.add_parser("project", help="Reprocess documents in a project")
     project_parser.add_argument("--project-id", required=True)
     project_parser.add_argument("--full", action="store_true", help="Include failed documents")
-    project_parser.add_argument("--dry-run", action="store_true", help="List targets without enqueue")
+    project_parser.add_argument(
+        "--dry-run", action="store_true", help="List targets without enqueue"
+    )
     return parser
 
 

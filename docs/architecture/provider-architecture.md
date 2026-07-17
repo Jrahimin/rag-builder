@@ -42,6 +42,10 @@ get_llm_provider()  →  BaseLLMProvider
 
 Switch backend via `APE_LLM__BACKEND` only — never import vendor implementations from modules. Full guide: [conversation_provider_integration.md](../learning/conversation_provider_integration.md).
 
+Factories are called by composition (`dependencies/`, `composition/`, worker
+handlers, or operational CLIs). Services receive provider contracts or a typed
+resolver; they do not select concrete provider implementations.
+
 Same pattern for embeddings (`get_embedding_provider`) and storage
 (`get_storage_provider`). Semantic search uses the session-aware retrieval
 repository defined by ADR-013.

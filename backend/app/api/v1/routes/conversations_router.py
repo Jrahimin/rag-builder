@@ -12,6 +12,7 @@ from fastapi import APIRouter, Query, Request, status
 from fastapi.responses import StreamingResponse
 
 from app.core.exceptions import APEError
+from app.core.http.envelopes import ApiResponse
 from app.dependencies.conversations import ChatServiceDep, ConversationServiceDep
 from app.modules.conversations.schemas.conversation import (
     ConversationCreate,
@@ -23,7 +24,6 @@ from app.modules.conversations.schemas.message import (
     MessageResponse,
     MessageSendRequest,
 )
-from app.platform.http.envelopes import ApiResponse
 from app.platform.http.pagination import ListParams, PaginatedResult
 from app.platform.providers.errors import ProviderError
 
@@ -229,9 +229,7 @@ async def stream_message(
         except Exception as exc:
             if not await request.is_disconnected():
                 logger.warning("chat_stream_failed", error=str(exc))
-                error_payload = json.dumps(
-                    {"event": "error", "message": _sse_error_message(exc)}
-                )
+                error_payload = json.dumps({"event": "error", "message": _sse_error_message(exc)})
                 yield f"data: {error_payload}\n\n"
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")

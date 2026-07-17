@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import time
 import uuid
-from collections.abc import Awaitable, Callable
 
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,8 +20,6 @@ from app.platform.providers.contracts.reranker import BaseRerankerProvider
 
 logger = structlog.get_logger(__name__)
 
-type EnsureProjectFn = Callable[[], Awaitable[None]]
-
 
 class SearchService:
     """Project-scoped search entry point with semantic and hybrid strategies."""
@@ -34,19 +31,15 @@ class SearchService:
         embedder: BaseEmbeddingProvider,
         reranker: BaseRerankerProvider,
         retrieval_config: RetrievalConfig,
-        *,
-        ensure_project: EnsureProjectFn,
     ) -> None:
         self._session = session
         self._project_id = project_id
         self._embedder = embedder
         self._reranker = reranker
         self._config = retrieval_config
-        self._ensure_project = ensure_project
         self._hydrator = ResultHydrator(session, project_id)
 
     async def search(self, request: SearchRequest) -> SearchResponse:
-        await self._ensure_project()
         started = time.perf_counter()
         top_k = request.top_k or self._config.default_top_k
         strategy = request.strategy or self._config.strategy

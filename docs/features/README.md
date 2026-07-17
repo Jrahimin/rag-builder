@@ -12,6 +12,7 @@ Concise, per-feature reference documentation for the AI Platform Engine.
 | Organizations & auth | [organization_module.md](./organization_module.md) | Tenant CRUD, API keys, org-scoped rate limits (ADR-012) |
 | Project Management | [project_module.md](./project_module.md) | CRUD, `is_active` toggle, soft-delete, org scoping |
 | Knowledge | [knowledge_module.md](./knowledge_module.md) | Upload → parse → chunk (`status=chunked`) |
+| Durable jobs | [jobs_module.md](./jobs_module.md) | Transactional dispatch, lease/retry recovery, inspection APIs |
 | Retrieval | [retrieval_module.md](./retrieval_module.md) | Embed → index → semantic + hybrid search (`ready`, ADR-007/009) |
 | Conversations | [conversation_module.md](./conversation_module.md) | RAG chat, stateful conversations, SSE streaming (ADR-008) |
 | Multilingual | [multilingual_support.md](./multilingual_support.md) | Unicode tokenization, FTS, OCR notes (ADR-010) |

@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from app.modules.knowledge.services.chunking.chunk_strategies.base_chunk_strategy import BaseChunkStrategy
-from app.modules.knowledge.services.chunking.chunk_strategies.recursive_fallback_chunk_strategy import (
-    RecursiveFallbackChunkStrategy,
+from itertools import pairwise
+
+from app.modules.knowledge.services.chunking.chunk_strategies.base_chunk_strategy import (
+    BaseChunkStrategy,
 )
 from app.modules.knowledge.services.chunking.models import ChunkingContext, DraftChunk
 from app.modules.knowledge.services.chunking.sentence_similarity_service import (
@@ -13,6 +14,8 @@ from app.modules.knowledge.services.chunking.sentence_similarity_service import 
     split_sentences,
 )
 from app.modules.knowledge.services.chunking.token_counting_service import TokenCountingService
+
+from .recursive_fallback_chunk_strategy import RecursiveFallbackChunkStrategy
 
 
 class SemanticChunkStrategy(BaseChunkStrategy):
@@ -27,7 +30,9 @@ class SemanticChunkStrategy(BaseChunkStrategy):
     ) -> None:
         self._similarity_service = similarity_service
         self._token_counter = token_counter or TokenCountingService()
-        self._fallback = fallback or RecursiveFallbackChunkStrategy(token_counter=self._token_counter)
+        self._fallback = fallback or RecursiveFallbackChunkStrategy(
+            token_counter=self._token_counter
+        )
         self._last_boundary_result: BoundaryDetectionResult | None = None
 
     @property
@@ -56,7 +61,7 @@ class SemanticChunkStrategy(BaseChunkStrategy):
         boundaries = {0, *boundary_result.boundaries, len(sentences)}
         ordered_boundaries = sorted(boundaries)
         chunks: list[DraftChunk] = []
-        for start_index, end_index in zip(ordered_boundaries, ordered_boundaries[1:], strict=False):
+        for start_index, end_index in pairwise(ordered_boundaries):
             segment = " ".join(sentences[start_index:end_index]).strip()
             if not segment:
                 continue

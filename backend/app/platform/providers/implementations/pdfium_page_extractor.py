@@ -10,9 +10,11 @@ from app.platform.providers.errors import ProviderError
 from app.platform.providers.implementations.pdf_page_models import PdfPageExtraction
 
 _PARSER_NAME = "pdfium"
-_PARSER_VERSION = getattr(pdfium, "VLibpdfium", pdfium).get_version() if hasattr(
-    getattr(pdfium, "VLibpdfium", pdfium), "get_version"
-) else "bundled"
+_PARSER_VERSION = (
+    getattr(pdfium, "VLibpdfium", pdfium).get_version()
+    if hasattr(getattr(pdfium, "VLibpdfium", pdfium), "get_version")
+    else "bundled"
+)
 
 
 def extract_pdfium_pages(

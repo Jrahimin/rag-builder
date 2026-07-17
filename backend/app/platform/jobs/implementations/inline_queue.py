@@ -14,27 +14,27 @@ class InlineJobQueue(JobQueue):
 
     async def enqueue(self, job: JobDefinition) -> str:
         job_id = job.idempotency_key or str(uuid.uuid4())
-        document_id = job.payload.get("document_id")
-        if document_id is None:
-            msg = "Job payload requires document_id"
+        durable_job_id = job.payload.get("job_id")
+        if durable_job_id is None:
+            msg = "Job payload requires job_id"
             raise JobEnqueueError(msg)
 
         if job.name == DOCUMENT_PROCESS:
             from app.worker.handlers.document import run_document_process
 
-            await run_document_process(project_id=job.project_id, document_id=document_id)
+            await run_document_process(project_id=job.project_id, job_id=durable_job_id)
             return job_id
 
         if job.name == DOCUMENT_EMBED:
             from app.worker.handlers.embedding import run_document_embed
 
-            await run_document_embed(project_id=job.project_id, document_id=document_id)
+            await run_document_embed(project_id=job.project_id, job_id=durable_job_id)
             return job_id
 
         if job.name == DOCUMENT_INDEX:
             from app.worker.handlers.indexing import run_document_index
 
-            await run_document_index(project_id=job.project_id, document_id=document_id)
+            await run_document_index(project_id=job.project_id, job_id=durable_job_id)
             return job_id
 
         msg = f"Inline queue does not support job: {job.name!r}"

@@ -43,5 +43,6 @@ Error:
 | Organizations | [organization_api.md](organization_api.md) | `/api/v1/organizations` |
 | Projects | [project_api.md](project_api.md) | `/api/v1/projects` |
 | Knowledge | [knowledge_api.md](knowledge_api.md) | `/api/v1/projects/{project_id}/documents` |
+| Jobs | [jobs_api.md](jobs_api.md) | `/api/v1/projects/{project_id}/jobs` |
 | Retrieval | [retrieval_api.md](retrieval_api.md) | `/api/v1/projects/{project_id}` (search, embed, index on documents prefix) |
 | Conversations | [conversation_api.md](conversation_api.md) | `/api/v1/projects/{project_id}/conversations` |

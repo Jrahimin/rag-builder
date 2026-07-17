@@ -9,7 +9,7 @@ Project-scoped file upload and ingestion pipeline: store raw bytes, extract text
 ```text
 Client → documents_router → DocumentService → PostgreSQL (documents, document_chunks)
                           ↘ BaseStorageProvider (raw + parsed text)
-                          ↘ JobQueue → Redis/Taskiq → DocumentProcessingWorkflow
+                          ↘ JobRun + outbox → Redis/Taskiq → leased DocumentProcessingWorkflow
                                                     ↘ Parser providers
                                                     ↘ ChunkingService
                           ↘ (on delete) RetrievalCleanupService — native vectors + keyword rows
@@ -24,8 +24,8 @@ raises `413 Payload Too Large`.
 | Status | Meaning |
 | ------ | ------- |
 | `uploaded` | Bytes stored (brief) |
-| `queued` | Job enqueued (only status the worker accepts as entry) |
-| `parsing` | Worker reading/parsing file — a crash mid-processing leaves this status; recover via `reprocess` |
+| `queued` | Processing has been accepted; durable job state records dispatch/execution |
+| `parsing` | Worker reading/parsing file; expired leases recover automatically |
 | `chunking` | Transient marker only — persisted in the same commit as the terminal status |
 | `chunked` | **Ingestion complete** for Knowledge v1 |
 | `failed` | Safe `error_message` on document |
@@ -38,6 +38,9 @@ Owned by the retrieval module: `embedding`, `embedded`, `indexing`, `ready`.
 | -------- | ------- | ----------- |
 | `APE_STORAGE__BACKEND` | `local` | Object storage backend |
 | `APE_JOBS__BACKEND` | `taskiq` | `taskiq` or `inline` (tests) |
+| `APE_JOBS__LEASE_SECONDS` | `300` | Worker lease duration |
+| `APE_JOBS__HEARTBEAT_SECONDS` | `30` | Lease heartbeat cadence |
+| `APE_JOBS__MAX_ATTEMPTS` | `3` | Durable attempt budget |
 | `APE_KNOWLEDGE__MAX_UPLOAD_BYTES` | `52428800` (50 MB) | Upload size limit (413 when exceeded) |
 | `APE_CHUNKING__STRATEGY` | `auto` | Chunking strategy (`auto`, `markdown`, `heading`, `structure`, `semantic`, `recursive_fallback`) |
 | `APE_CHUNKING__TARGET_TOKENS` | `250` | Approximate target tokens per chunk |
@@ -70,12 +73,15 @@ The ingestion pipeline (parse quality gate → PDFium → PaddleOCR fallback) is
 | `POST` | `/documents/{id}/reprocess` | Re-run pipeline (bumps `version`; optional `ocr_lang` query) |
 | `DELETE` | `/documents/{id}` | Soft-delete + remove raw/parsed storage + chunks + retrieval artifacts |
 
+Async action responses include `job_id`; use the
+[Jobs API](../api/jobs_api.md) for execution progress and failed-job retry.
+
 ## Design decisions
 
 | Decision | Rationale |
 | -------- | --------- |
-| Worker entry guard (`status=queued` only) | Duplicate or stale job delivery is a no-op instead of re-running parse/chunk |
-| `parsing` committed; `chunking` is a stage marker | Crash mid-parse leaves a recoverable state; reprocess re-enqueues from any non-terminal status |
+| Database lease, not Document status, admits work | Duplicate/stale Taskiq delivery cannot run the same job concurrently |
+| Version fence + advisory lock + transactional replace | Retry after interruption cannot append duplicate chunks or publish stale output |
 | `RetrievalCleanupService` on delete | Knowledge owns the delete API; PostgreSQL retrieval artifacts and BM25 statistics are updated through a lightweight transactional composition callback |
 | `ChunkingStrategy` config seam | Auto-selects markdown/heading/structure/semantic strategies from parser elements and structure signals; recursive fallback for oversized sections |
 

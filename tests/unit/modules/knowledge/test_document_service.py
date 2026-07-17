@@ -9,19 +9,17 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from app.core.config import Settings
 from app.core.exceptions import ConflictError, NotFoundError
 from app.models.document import Document, DocumentStatus
 from app.modules.knowledge.repositories.document_repository import DocumentRepository
 from app.modules.knowledge.schemas.document import DocumentIngestInput
 from app.modules.knowledge.services.document_service import DocumentService
-from app.platform.jobs.contracts import JobQueue
+from app.platform.jobs.configuration import build_job_configuration
+from app.platform.jobs.contracts import DurableJobSubmitter, JobSubmission
 from app.platform.providers.contracts.storage import BaseStorageProvider
 
 pytestmark = pytest.mark.unit
-
-
-async def _noop_ensure_project() -> None:
-    return None
 
 
 async def _stream(data: bytes) -> AsyncIterator[bytes]:
@@ -61,9 +59,10 @@ def storage() -> AsyncMock:
 
 
 @pytest.fixture
-def job_queue() -> AsyncMock:
-    mock = AsyncMock(spec=JobQueue)
-    mock.enqueue = AsyncMock(return_value="job-1")
+def job_submitter() -> MagicMock:
+    mock = MagicMock(spec=DurableJobSubmitter)
+    mock.stage = AsyncMock(return_value=JobSubmission(job_id=uuid.uuid4(), created=True))
+    mock.dispatch = AsyncMock()
     return mock
 
 
@@ -72,14 +71,15 @@ def service(
     session: AsyncMock,
     repository: AsyncMock,
     storage: AsyncMock,
-    job_queue: AsyncMock,
+    job_submitter: MagicMock,
 ) -> DocumentService:
     return DocumentService(
         session=session,
         repository=repository,
         storage=storage,
-        job_queue=job_queue,
-        ensure_project=_noop_ensure_project,
+        job_submitter=job_submitter,
+        job_configuration=build_job_configuration(Settings()),
+        job_max_attempts=3,
         max_upload_bytes=50 * 1024 * 1024,
     )
 
@@ -89,7 +89,7 @@ async def test_upload_persists_and_stores_bytes(
     session: AsyncMock,
     repository: AsyncMock,
     storage: AsyncMock,
-    job_queue: AsyncMock,
+    job_submitter: MagicMock,
 ) -> None:
     content = b"hello knowledge"
     documents: list[Document] = []
@@ -117,37 +117,13 @@ async def test_upload_persists_and_stores_bytes(
     assert result.size_bytes == len(content)
     repository.add.assert_called_once()
     storage.put.assert_awaited_once()
-    job_queue.enqueue.assert_awaited_once()
-    assert session.commit.await_count >= 2
-
-
-async def test_upload_unknown_project_raises_not_found(
-    session: AsyncMock,
-    repository: AsyncMock,
-    storage: AsyncMock,
-) -> None:
-    async def missing_project() -> None:
-        raise NotFoundError(message="Project not found.", code="project_not_found")
-
-    service = DocumentService(
-        session=session,
-        repository=repository,
-        storage=storage,
-        job_queue=AsyncMock(spec=JobQueue),
-        ensure_project=missing_project,
-        max_upload_bytes=50 * 1024 * 1024,
-    )
-
-    with pytest.raises(NotFoundError) as exc_info:
-        await service.upload(
-            DocumentIngestInput(
-                filename="x.txt",
-                content_type="text/plain",
-                stream=_stream(b"x"),
-            )
-        )
-
-    assert exc_info.value.code == "project_not_found"
+    job_submitter.stage.assert_awaited_once()
+    definition = job_submitter.stage.await_args.args[0]
+    assert definition.name == "document.process"
+    assert definition.document_id == result.id
+    assert definition.payload == {"document_version": 1}
+    job_submitter.dispatch.assert_awaited_once_with(result.job_id)
+    session.commit.assert_awaited_once()
 
 
 async def test_upload_duplicate_content_raises_conflict(

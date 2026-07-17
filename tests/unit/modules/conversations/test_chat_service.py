@@ -8,9 +8,10 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from app.core.config import ChatConfig, LLMConfig, LLMBackend, RetrievalConfig, Settings
+from app.core.config import ChatConfig, LLMBackend, LLMConfig, RetrievalConfig
 from app.core.exceptions import ConflictError, NotFoundError, ServiceUnavailableError
 from app.models.conversation import Conversation
+from app.models.message import Message, MessageRole
 from app.modules.conversations.ports import ContextChunk
 from app.modules.conversations.schemas.message import MessageSendRequest
 from app.modules.conversations.services.chat_service import ChatService
@@ -111,23 +112,64 @@ def _service(
     conversation_repository: AsyncMock,
     message_repository: AsyncMock,
     llm: EchoLLMProvider,
+    *,
+    chat_config: ChatConfig | None = None,
 ) -> ChatService:
-    async def ensure_project() -> None:
-        return None
-
     return ChatService(
         session=session,
         project_id=uuid.uuid4(),
         conversation_repository=conversation_repository,
         message_repository=message_repository,
         retrieval=FakeRetrieval(),
-        settings=Settings(),
-        chat_config=ChatConfig(system_prompt_version="v1"),
+        chat_config=chat_config or ChatConfig(system_prompt_version="v1"),
         retrieval_config=RetrievalConfig(),
         llm_config=LLMConfig(backend=LLMBackend.ECHO, max_tokens=100, temperature=0.2),
-        ensure_project=ensure_project,
         resolve_llm=lambda _conversation: llm,
     )
+
+
+async def test_zero_history_limit_excludes_prior_messages(
+    session: AsyncMock,
+    conversation_repository: AsyncMock,
+    message_repository: AsyncMock,
+    conversation: Conversation,
+) -> None:
+    captured_contents: list[str] = []
+
+    class CapturingLLM(EchoLLMProvider):
+        async def generate(self, messages, *, temperature, max_tokens):
+            captured_contents.extend(message.content for message in messages)
+            return await super().generate(
+                messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+
+    prior = Message(
+        id=uuid.uuid4(),
+        project_id=conversation.project_id,
+        conversation_id=conversation.id,
+        role=MessageRole.USER,
+        content="must not be included",
+        created_at=datetime.now(UTC),
+        updated_at=datetime.now(UTC),
+    )
+    message_repository.list_recent_for_conversation.return_value = [prior]
+    service = _service(
+        session,
+        conversation_repository,
+        message_repository,
+        CapturingLLM(model="test", provider_version="1"),
+        chat_config=ChatConfig(system_prompt_version="v1", max_history_messages=0),
+    )
+
+    await service.send_message(
+        conversation.id,
+        MessageSendRequest(content="current question"),
+    )
+
+    assert "must not be included" not in captured_contents
+    assert captured_contents[-1] == "current question"
 
 
 async def test_send_message_commits_user_before_assistant(

@@ -7,7 +7,6 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
-from app.platform.jobs.contracts import RetryPolicy
 from app.platform.jobs.errors import JobEnqueueError
 from app.platform.jobs.names import (
     DOCUMENT_EMBED,
@@ -20,25 +19,16 @@ from app.platform.jobs.names import (
 class JobDispatchSpec:
     """How to validate payload and enqueue a named job on Taskiq."""
 
-    validate_payload: Callable[[dict[str, Any]], tuple[str, str]]
+    validate_payload: Callable[[dict[str, Any]], str]
     enqueue: Callable[..., Awaitable[Any]]
 
 
-def _retry_labels(retry: RetryPolicy) -> dict[str, Any]:
-    """Translate the platform retry policy to Taskiq SmartRetryMiddleware labels."""
-    return {
-        "retry_on_error": True,
-        "max_retries": retry.max_attempts,
-        "delay": retry.initial_delay_seconds,
-    }
-
-
-def _validate_document_id(payload: dict[str, Any]) -> tuple[str, str]:
-    document_id = payload.get("document_id")
-    if document_id is None:
-        msg = "Job payload requires document_id"
+def _validate_job_id(payload: dict[str, Any]) -> str:
+    job_id = payload.get("job_id")
+    if job_id is None:
+        msg = "Job payload requires job_id"
         raise JobEnqueueError(msg)
-    return str(document_id), "document_id"
+    return str(job_id)
 
 
 def _build_registry() -> dict[str, JobDispatchSpec]:
@@ -50,55 +40,49 @@ def _build_registry() -> dict[str, JobDispatchSpec]:
         *,
         job_id: str,
         project_id: uuid.UUID,
-        document_id: str,
-        retry: RetryPolicy,
+        durable_job_id: str,
     ) -> Any:
         return await (
             document_process_task.kicker()
             .with_task_id(job_id)
-            .with_labels(**_retry_labels(retry))
-            .kiq(project_id=str(project_id), document_id=document_id)
+            .kiq(project_id=str(project_id), job_id=durable_job_id)
         )
 
     async def enqueue_embed(
         *,
         job_id: str,
         project_id: uuid.UUID,
-        document_id: str,
-        retry: RetryPolicy,
+        durable_job_id: str,
     ) -> Any:
         return await (
             document_embed_task.kicker()
             .with_task_id(job_id)
-            .with_labels(**_retry_labels(retry))
-            .kiq(project_id=str(project_id), document_id=document_id)
+            .kiq(project_id=str(project_id), job_id=durable_job_id)
         )
 
     async def enqueue_index(
         *,
         job_id: str,
         project_id: uuid.UUID,
-        document_id: str,
-        retry: RetryPolicy,
+        durable_job_id: str,
     ) -> Any:
         return await (
             document_index_task.kicker()
             .with_task_id(job_id)
-            .with_labels(**_retry_labels(retry))
-            .kiq(project_id=str(project_id), document_id=document_id)
+            .kiq(project_id=str(project_id), job_id=durable_job_id)
         )
 
     return {
         DOCUMENT_PROCESS: JobDispatchSpec(
-            validate_payload=_validate_document_id,
+            validate_payload=_validate_job_id,
             enqueue=enqueue_process,
         ),
         DOCUMENT_EMBED: JobDispatchSpec(
-            validate_payload=_validate_document_id,
+            validate_payload=_validate_job_id,
             enqueue=enqueue_embed,
         ),
         DOCUMENT_INDEX: JobDispatchSpec(
-            validate_payload=_validate_document_id,
+            validate_payload=_validate_job_id,
             enqueue=enqueue_index,
         ),
     }

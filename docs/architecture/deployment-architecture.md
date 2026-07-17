@@ -1,6 +1,6 @@
 # Deployment Architecture
 
-> **Canonical source** for local development vs self-hosted production topology.
+> **Canonical source** for local development and dedicated hosted production topology.
 
 ---
 
@@ -9,7 +9,8 @@
 | Mode | Purpose | Status |
 | ---- | ------- | ------ |
 | **Local development** | Developer machine, fast iteration | ✅ Implemented |
-| **Self-hosted production** | Customer-owned infrastructure | ⏳ Documented, partial implementation |
+| **Dedicated hosted production** | Isolated customer deployment operated as a service | ⏳ Documented, partial implementation |
+| **Supported self-hosted edition** | Customer-operated release (Future F1) | Deferred / demand-led |
 
 ---
 
@@ -37,6 +38,8 @@ docker compose up --build
 ```
 
 - **API process:** single container running uvicorn with `--reload`
+- **Durable dispatcher:** lifespan task in each API process; concurrent replicas
+  coordinate outbox and expired-lease claims through PostgreSQL row locks.
 - **Worker process:** separate Taskiq container; starts after migrations and
   bucket bootstrap, and can be scaled independently outside local development.
 - **Volumes:** named volumes for data persistence
@@ -52,7 +55,7 @@ Infrastructure in Docker, API on host with venv — see `docs/learning/docker-lo
 
 ---
 
-## Self-hosted production (planned)
+## Dedicated hosted production (planned)
 
 ```text
 ┌──────────────── Business Application ────────────────┐
@@ -76,7 +79,7 @@ Infrastructure in Docker, API on host with venv — see `docs/learning/docker-lo
 | API | Horizontal (stateless) | Behind load balancer |
 | Worker | Horizontal | Scales with queue depth |
 | PostgreSQL + pgvector | Vertical / managed | Single primary (Phase 1); `vector` extension required |
-| Redis | Single instance / managed | Queue + cache |
+| Redis | Single instance / managed | At-least-once Taskiq transport + cache; PostgreSQL retains dispatch intent and execution state |
 | Object storage | S3 / MinIO | Customer-owned |
 
 ---
@@ -96,13 +99,15 @@ Production will add `docker-compose.prod.yml` or `infra/production/` — not yet
 
 ## Infrastructure ownership
 
-Each customer deployment owns:
+Each dedicated customer deployment contains:
 
 - PostgreSQL with pgvector, Redis, object storage
 - AI model endpoints (Ollama, vLLM, cloud APIs)
 - All Project data within the deployment
 
-No shared multi-tenant cloud platform.
+The initial product is operator-managed dedicated hosting with no shared
+customer data plane. Customer-operated self-hosting, release packaging, and its
+support boundary are Future F1 work.
 
 ---
 

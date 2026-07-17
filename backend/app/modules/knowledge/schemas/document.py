@@ -49,10 +49,7 @@ class DocumentResponse(BaseModel):
     deleted_at: datetime | None
     created_at: datetime
     updated_at: datetime
-
-
-class DocumentUploadResponse(DocumentResponse):
-    """Upload response — same shape as read for Phase 1."""
+    job_id: uuid.UUID | None = None
 
 
 class DocumentListParams(BaseModel):

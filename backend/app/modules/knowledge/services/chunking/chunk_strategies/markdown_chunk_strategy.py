@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
-from app.modules.knowledge.services.chunking.chunk_strategies.base_chunk_strategy import BaseChunkStrategy
-from app.modules.knowledge.services.chunking.chunk_strategies.structure_chunk_strategy import StructureChunkStrategy
+from app.modules.knowledge.services.chunking.chunk_strategies.base_chunk_strategy import (
+    BaseChunkStrategy,
+)
+from app.modules.knowledge.services.chunking.chunk_strategies.structure_chunk_strategy import (
+    StructureChunkStrategy,
+)
 from app.modules.knowledge.services.chunking.models import ChunkingContext, DraftChunk
 
 

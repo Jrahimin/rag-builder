@@ -35,6 +35,7 @@ os.environ.setdefault("APE_EMBEDDING__BACKEND", "hash")
 os.environ.setdefault("APE_EMBEDDING__DIMENSIONS", "384")
 os.environ.setdefault("APE_RETRIEVAL__AUTO_EMBED", "false")
 os.environ.setdefault("APE_RETRIEVAL__AUTO_INDEX", "false")
+os.environ.setdefault("APE_JOBS__DISPATCHER_ENABLED", "false")
 os.environ.setdefault("APE_AUTH__ENABLED", "false")
 os.environ.setdefault("APE_AUTH__VERIFY_CACHE_BACKEND", "memory")
 os.environ.setdefault("APE_AUTH__RATE_LIMIT_ENABLED", "false")
@@ -181,13 +182,14 @@ async def db_client(
     """HTTP client with DB session override (rolled back after each test)."""
     global _test_connection
     get_settings.cache_clear()
-    from app.dependencies.knowledge import get_job_queue_dep
+    from app.dependencies.jobs import get_job_queue_dep
     from app.platform.jobs.implementations.job_queue_factory import get_job_queue
     from app.platform.providers.implementations.storage_factory import get_storage_provider
 
     get_storage_provider.cache_clear()
     get_job_queue.cache_clear()
     from app.platform.providers.implementations.embedding_factory import get_embedding_provider
+
     get_embedding_provider.cache_clear()
     from app.platform.providers.implementations.llm_factory import get_llm_provider
 

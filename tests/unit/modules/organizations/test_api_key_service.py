@@ -213,4 +213,3 @@ def test_rotation_name_adds_numeric_suffix_for_conflicts() -> None:
     base = "Production"
     assert _rotation_name(base) == "Production-rotated"
     assert _rotation_name(base, 2) == "Production-rotated-2"
-

@@ -3,14 +3,19 @@
 from __future__ import annotations
 
 import uuid
-from typing import Any
+from typing import Any, cast
 
-from sqlalchemy import Select, func, select
+from sqlalchemy import ColumnElement, Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import InstrumentedAttribute
 
 from app.platform.db.base import Base
-from app.platform.persistence.filters import apply_deterministic_order
+from app.platform.persistence.filters import (
+    LifecycleListFilters,
+    apply_deterministic_order,
+    build_lifecycle_filters,
+    not_deleted_filter,
+)
 
 
 class ProjectScopedRepository[ModelT: Base]:
@@ -38,6 +43,51 @@ class ProjectScopedRepository[ModelT: Base]:
             raise TypeError(msg)
         return select(self.model).where(project_col == self._project_id)
 
+    def _lifecycle_filters(
+        self,
+        filters: LifecycleListFilters,
+    ) -> list[ColumnElement[bool]]:
+        return build_lifecycle_filters(
+            self.model,
+            include_deleted=filters.include_deleted,
+            is_active=filters.is_active,
+        )
+
+    async def get_by_id(
+        self,
+        entity_id: uuid.UUID,
+        *,
+        include_deleted: bool = False,
+        for_update: bool = False,
+    ) -> ModelT | None:
+        """Fetch one entity inside this Project, excluding soft-deleted rows by default."""
+        entity_id_col = getattr(self.model, "id", None)
+        if entity_id_col is None:
+            msg = f"{self.model.__name__} must expose id (use UUIDPrimaryKeyMixin)"
+            raise TypeError(msg)
+        clauses: list[ColumnElement[bool]] = [entity_id_col == entity_id]
+        if not include_deleted and getattr(self.model, "deleted_at", None) is not None:
+            clauses.append(not_deleted_filter(self.model))
+        stmt = self._scoped().where(*clauses)
+        if for_update:
+            stmt = stmt.with_for_update()
+        result = await self._session.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def list_page(
+        self,
+        *,
+        limit: int,
+        offset: int,
+        filters: LifecycleListFilters | None = None,
+    ) -> list[ModelT]:
+        """Return a lifecycle-filtered, deterministically ordered Project page."""
+        list_filters = filters or LifecycleListFilters()
+        stmt = self._scoped().where(*self._lifecycle_filters(list_filters))
+        stmt = apply_deterministic_order(stmt, self.model).limit(limit).offset(offset)
+        result = await self._session.execute(stmt)
+        return list(result.scalars().all())
+
     async def get(self, entity_id: uuid.UUID) -> ModelT | None:
         """Fetch by primary key within this Project, or ``None``."""
         entity_id_col = getattr(self.model, "id", None)
@@ -54,11 +104,15 @@ class ProjectScopedRepository[ModelT: Base]:
         result = await self._session.execute(stmt)
         return list(result.scalars().all())
 
-    async def count(self) -> int:
-        """Count rows for this Project only."""
-        project_col: InstrumentedAttribute[Any] = self.model.project_id  # type: ignore[attr-defined]
+    async def count(self, *, filters: LifecycleListFilters | None = None) -> int:
+        """Count lifecycle-filtered rows for this Project only."""
+        project_col = cast(InstrumentedAttribute[Any], self.model.__dict__["project_id"])
+        list_filters = filters or LifecycleListFilters()
         result = await self._session.execute(
-            select(func.count()).select_from(self.model).where(project_col == self._project_id)
+            select(func.count())
+            .select_from(self.model)
+            .where(project_col == self._project_id)
+            .where(*self._lifecycle_filters(list_filters))
         )
         return int(result.scalar_one())
 

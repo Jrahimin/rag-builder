@@ -8,7 +8,7 @@ from sqlalchemy import select
 
 from app.models.project import Project
 from app.platform.persistence.async_repository import AsyncRepository
-from app.platform.persistence.filters import LifecycleListFilters, build_lifecycle_filters
+from app.platform.persistence.filters import LifecycleListFilters
 
 
 class ProjectRepository(AsyncRepository[Project]):

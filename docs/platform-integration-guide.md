@@ -190,7 +190,7 @@ a sample — simple toggles, deletes, and enqueue-only calls are omitted.
 flowchart LR
     A[Bootstrap org + key] --> B[Create Project]
     B --> C[Upload documents]
-    C --> D[Poll until ready]
+    C --> D[Save job_id and poll job/document]
     D --> E[Search optional]
     D --> F[Chat with citations]
 ```
@@ -200,7 +200,7 @@ flowchart LR
 | 0 | Operator provisions Organization + API key | — |
 | 1 | Create a **Project** | No |
 | 2 | **Upload** documents | Yes — worker processes |
-| 3 | Wait for `status=ready` | Poll `GET /documents/{id}` |
+| 3 | Wait for `status=ready` | Poll Document; optionally inspect returned `job_id` |
 | 4 | **Search** (optional) | No |
 | 5 | **Chat** | No (LLM call may take seconds) |
 
@@ -212,6 +212,8 @@ Steps 3–6 (embed/index) usually run automatically when `APE_RETRIEVAL__AUTO_EM
 ## Document lifecycle
 
 Understanding `status` is essential for polling and error handling.
+It describes product lifecycle. Durable execution details such as dispatch,
+attempts, lease recovery, stage progress, and failure code live on JobRun.
 
 ```text
 uploaded -> queued -> parsing -> chunked
@@ -501,6 +503,7 @@ Optional form field for scanned PDFs / images:
     "version": 1,
     "page_count": null,
     "error_message": null,
+    "job_id": "770e8400-e29b-41d4-a716-446655440002",
     "created_at": "2026-07-08T12:05:00Z",
     "updated_at": "2026-07-08T12:05:00Z"
   },
@@ -511,6 +514,9 @@ Optional form field for scanned PDFs / images:
 </details>
 
 ### Poll until ready
+
+Store the upload response's `job_id`. Document polling remains the simplest
+product-ready check; job polling is useful for operational progress and retry.
 
 ```bash
 curl -s "$APE_BASE_URL/api/v1/projects/$PROJECT_ID/documents/$DOCUMENT_ID" \
@@ -572,6 +578,21 @@ curl -s "$APE_BASE_URL/api/v1/projects/$PROJECT_ID/documents/$DOCUMENT_ID" \
 ```
 
 </details>
+
+### Inspect or retry durable work
+
+```bash
+curl -s "$APE_BASE_URL/api/v1/projects/$PROJECT_ID/jobs/$JOB_ID" \
+  -H "Authorization: Bearer $APE_ORG_KEY" | jq '.data.state, .data.stage, .data.progress, .data.failure_code'
+
+# Only a failed job can be retried; this returns a new linked job identity.
+curl -s -X POST "$APE_BASE_URL/api/v1/projects/$PROJECT_ID/jobs/$JOB_ID/retry" \
+  -H "Authorization: Bearer $APE_ORG_KEY"
+```
+
+List by document with
+`GET /api/v1/projects/{project_id}/jobs?document_id={document_id}`. Automatic
+transient retries and expired-worker recovery do not require client action.
 
 ### Other document endpoints
 
@@ -956,6 +977,7 @@ Same request body as non-streaming `POST .../messages`.
 Your customer account  ->  APE Organization (one key per integration / env)
 Your workspace / matter  ->  APE Project (store project_id in your DB)
 Your uploaded file       ->  APE Document (store document_id)
+Your async operation     ->  APE JobRun (store returned job_id when useful)
 Your chat thread         ->  APE Conversation (store conversation_id)
 ```
 
@@ -991,6 +1013,8 @@ your own user authorization before choosing `project_id`.
 
 - Uploading the same file twice creates two documents unless you deduplicate in your app.
 - `reprocess` bumps `version` and replaces chunks — use when content changed or pipeline failed.
+- Duplicate delivery and worker recovery replace derived outputs safely; they do
+  not create duplicate chunks, active vectors, or keyword rows.
 - Revoked API keys fail immediately on cache miss; cached keys may work up to ~60s.
 
 ---
@@ -1004,6 +1028,9 @@ your own user authorization before choosing `project_id`.
 | Create project | `POST` | `/api/v1/projects` |
 | Upload file | `POST` | `/api/v1/projects/{project_id}/documents` |
 | Document status | `GET` | `/api/v1/projects/{project_id}/documents/{id}` |
+| List jobs | `GET` | `/api/v1/projects/{project_id}/jobs` |
+| Job detail | `GET` | `/api/v1/projects/{project_id}/jobs/{job_id}` |
+| Retry failed job | `POST` | `/api/v1/projects/{project_id}/jobs/{job_id}/retry` |
 | Search | `POST` | `/api/v1/projects/{project_id}/search` |
 | Create chat | `POST` | `/api/v1/projects/{project_id}/conversations` |
 | Send message | `POST` | `/api/v1/projects/{project_id}/conversations/{id}/messages` |
@@ -1018,7 +1045,7 @@ your own user authorization before choosing `project_id`.
 - [ ] Backend proxy — keys never in client apps
 - [ ] Worker process running (`taskiq` worker in Docker or `python worker.py`)
 - [ ] `/ready` returns healthy before routing user traffic
-- [ ] Poll document status — do not assume instant `ready`
+- [ ] Save async `job_id`; poll Document for readiness and JobRun for execution detail
 - [ ] Handle `429` with `Retry-After` backoff
 - [ ] Log `trace_id` from errors for support requests
 - [ ] Hybrid search enabled (`APE_RETRIEVAL__STRATEGY=hybrid` in production `.env`)
@@ -1031,7 +1058,8 @@ your own user authorization before choosing `project_id`.
 | ------- | ------------ | ---------- |
 | `401 unauthorized` | Bad or missing API key | Verify header and key not revoked |
 | `404 project_not_found` | Wrong `project_id` or other org's project | Confirm project belongs to your Organization |
-| Document stuck in `parsing` | Worker crash | `POST .../documents/{id}/reprocess` |
+| Job remains `queued`/`retry_scheduled` | Redis/worker unavailable | Restore infrastructure; durable outbox/lease recovery resumes automatically |
+| Job is `failed` | Permanent error or attempts exhausted | Inspect `failure_code`, fix the cause, then `POST .../jobs/{job_id}/retry` |
 | Search returns empty | Document not `ready` | Poll status; check worker logs |
 | Chat `503 llm_provider_unavailable` | LLM backend down or misconfigured | Check `APE_LLM__*` settings on deployment |
 | `413` on upload | File too large | Split file or raise `APE_KNOWLEDGE__MAX_UPLOAD_BYTES` |

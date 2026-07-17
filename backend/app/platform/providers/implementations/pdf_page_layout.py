@@ -37,7 +37,9 @@ def bbox_area(bbox: tuple[float, float, float, float]) -> float:
     return max(0.0, x1 - x0) * max(0.0, y1 - y0)
 
 
-def image_area_ratio(bbox: tuple[float, float, float, float], page_width: float, page_height: float) -> float:
+def image_area_ratio(
+    bbox: tuple[float, float, float, float], page_width: float, page_height: float
+) -> float:
     return bbox_area(bbox) / page_area(page_width, page_height)
 
 

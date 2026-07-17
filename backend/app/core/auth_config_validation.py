@@ -18,8 +18,8 @@ def _secret_byte_length(value: str) -> int:
 def validate_auth_config(settings: Settings) -> None:
     """Fail fast on insecure or incomplete auth configuration.
 
-  When auth is disabled, production deployments are rejected so the API cannot
-  start in an accidentally open state.
+    When auth is disabled, production deployments are rejected so the API cannot
+    start in an accidentally open state.
     """
     auth = settings.auth
 

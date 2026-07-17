@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-from app.core.config import ChunkingConfig
-from app.modules.knowledge.services.chunking.chunk_strategies.recursive_fallback_chunk_strategy import (
-    RecursiveFallbackChunkStrategy,
-)
 from app.modules.knowledge.services.chunking.models import ChunkingContext, DraftChunk
 from app.modules.knowledge.services.chunking.token_counting_service import TokenCountingService
 from app.platform.providers.contracts.document_parser import ParsedElement, ParsedElementType
+
+from .recursive_fallback_chunk_strategy import RecursiveFallbackChunkStrategy
 
 
 def group_sections(elements: list[ParsedElement]) -> list[list[ParsedElement]]:
@@ -140,7 +138,9 @@ def chunk_by_sections(
         section_tokens = sum(token_counter.count(element.text) for element in section)
         if section_tokens <= context.config.max_tokens:
             section_title = _section_title(section)
-            combined_text = "\n\n".join(element.text.strip() for element in section if element.text.strip())
+            combined_text = "\n\n".join(
+                element.text.strip() for element in section if element.text.strip()
+            )
             if not combined_text:
                 continue
             first = section[0]
@@ -153,7 +153,9 @@ def chunk_by_sections(
                     page_start=first.page_start,
                     page_end=last.page_end,
                     section_title=section_title,
-                    heading_level=first.heading_level if first.element_type is ParsedElementType.HEADING else None,
+                    heading_level=first.heading_level
+                    if first.element_type is ParsedElementType.HEADING
+                    else None,
                     metadata={"strategy_used": strategy_name, "section_chunk": True},
                 )
             )

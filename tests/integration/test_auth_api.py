@@ -31,7 +31,7 @@ async def auth_db_client(
     """HTTP client with auth enabled for integration tests."""
     from app.core.config import get_settings
     from app.dependencies.common import get_db_session
-    from app.dependencies.knowledge import get_job_queue_dep
+    from app.dependencies.jobs import get_job_queue_dep
     from app.main import create_app
     from app.platform.db.session import Database
     from app.platform.jobs.implementations.job_queue_factory import get_job_queue
@@ -346,8 +346,16 @@ async def test_cache_hit_skips_database_lookup(
 
     _, _, auth_header = await _create_org_with_key(auth_db_client)
     original = ApiKeyRepository.get_by_key_hash
-    mock_get = AsyncMock(side_effect=original)
-    monkeypatch.setattr(ApiKeyRepository, "get_by_key_hash", mock_get)
+    mock_get = AsyncMock()
+
+    async def tracked_get_by_key_hash(
+        repository: ApiKeyRepository,
+        key_hash: str,
+    ):
+        await mock_get(key_hash)
+        return await original(repository, key_hash)
+
+    monkeypatch.setattr(ApiKeyRepository, "get_by_key_hash", tracked_get_by_key_hash)
 
     first = await auth_db_client.get("/api/v1/projects", headers={"Authorization": auth_header})
     second = await auth_db_client.get("/api/v1/projects", headers={"Authorization": auth_header})
@@ -365,7 +373,7 @@ async def test_rate_limit_returns_429_with_retry_after(
 ) -> None:
     from app.core.config import get_settings
     from app.dependencies.common import get_db_session
-    from app.dependencies.knowledge import get_job_queue_dep
+    from app.dependencies.jobs import get_job_queue_dep
     from app.main import create_app
     from app.platform.db.session import Database
     from app.platform.jobs.implementations.job_queue_factory import get_job_queue

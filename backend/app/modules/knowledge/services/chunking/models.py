@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from app.core.config import ChunkingConfig, ChunkingStrategy
-from app.platform.providers.contracts.document_parser import ParsedDocument, SourceFormat
+from app.platform.providers.contracts.document_parser import ParsedDocument
 
 
 @dataclass(frozen=True, slots=True)

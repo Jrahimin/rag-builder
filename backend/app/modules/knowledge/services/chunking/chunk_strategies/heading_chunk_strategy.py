@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
-from app.modules.knowledge.services.chunking.chunk_strategies.base_chunk_strategy import BaseChunkStrategy
-from app.modules.knowledge.services.chunking.chunk_strategies.recursive_fallback_chunk_strategy import (
-    RecursiveFallbackChunkStrategy,
+from app.modules.knowledge.services.chunking.chunk_strategies.base_chunk_strategy import (
+    BaseChunkStrategy,
 )
-from app.modules.knowledge.services.chunking.chunk_strategies.structure_helpers import group_sections
+from app.modules.knowledge.services.chunking.chunk_strategies.structure_helpers import (
+    group_sections,
+)
 from app.modules.knowledge.services.chunking.models import ChunkingContext, DraftChunk
 from app.modules.knowledge.services.chunking.token_counting_service import TokenCountingService
 from app.platform.providers.contracts.document_parser import ParsedElementType
+
+from .recursive_fallback_chunk_strategy import RecursiveFallbackChunkStrategy
 
 
 class HeadingChunkStrategy(BaseChunkStrategy):
@@ -22,7 +25,9 @@ class HeadingChunkStrategy(BaseChunkStrategy):
         fallback: RecursiveFallbackChunkStrategy | None = None,
     ) -> None:
         self._token_counter = token_counter or TokenCountingService()
-        self._fallback = fallback or RecursiveFallbackChunkStrategy(token_counter=self._token_counter)
+        self._fallback = fallback or RecursiveFallbackChunkStrategy(
+            token_counter=self._token_counter
+        )
 
     def chunk(self, context: ChunkingContext) -> list[DraftChunk]:
         elements = list(context.parsed.elements)
@@ -36,10 +41,16 @@ class HeadingChunkStrategy(BaseChunkStrategy):
         chunks: list[DraftChunk] = []
         for section in group_sections(elements):
             section_title = next(
-                (element.text.strip() for element in section if element.element_type is ParsedElementType.HEADING),
+                (
+                    element.text.strip()
+                    for element in section
+                    if element.element_type is ParsedElementType.HEADING
+                ),
                 None,
             )
-            content = "\n\n".join(element.text.strip() for element in section if element.text.strip())
+            content = "\n\n".join(
+                element.text.strip() for element in section if element.text.strip()
+            )
             if not content:
                 continue
             first = section[0]

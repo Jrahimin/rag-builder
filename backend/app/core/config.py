@@ -23,7 +23,7 @@ from enum import StrEnum
 from functools import lru_cache
 from typing import Annotated
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 from sqlalchemy import URL
 
@@ -204,6 +204,23 @@ class JobsConfig(BaseModel):
     """Background job queue configuration."""
 
     backend: JobQueueBackend = JobQueueBackend.TASKIQ
+    dispatcher_enabled: bool = True
+    dispatcher_poll_seconds: float = Field(default=1.0, ge=0.1, le=60.0)
+    dispatcher_batch_size: int = Field(default=50, ge=1, le=500)
+    lease_seconds: int = Field(default=300, ge=10, le=3600)
+    heartbeat_seconds: int = Field(default=30, ge=1, le=600)
+    max_attempts: int = Field(default=3, ge=1, le=20)
+    retry_base_delay_seconds: float = Field(default=2.0, ge=0.1, le=3600.0)
+    retry_max_delay_seconds: float = Field(default=300.0, ge=1.0, le=86_400.0)
+    dispatch_retry_base_seconds: float = Field(default=1.0, ge=0.1, le=3600.0)
+    dispatch_retry_max_seconds: float = Field(default=60.0, ge=1.0, le=3600.0)
+
+    @model_validator(mode="after")
+    def _validate_heartbeat(self) -> JobsConfig:
+        if self.heartbeat_seconds >= self.lease_seconds:
+            msg = "jobs.heartbeat_seconds must be lower than jobs.lease_seconds"
+            raise ValueError(msg)
+        return self
 
 
 class KnowledgeConfig(BaseModel):

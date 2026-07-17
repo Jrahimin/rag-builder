@@ -106,7 +106,7 @@ def split_sentences(text: str) -> list[str]:
     normalized = normalize_for_storage(text)
     if not normalized:
         return []
-    parts = regex.split(r"(?<=[.!?।॥。！？…])\s+", normalized)
+    parts = regex.split(r"(?<=[.!?।॥。！？…])\s+", normalized)  # noqa: RUF001
     return [part.strip() for part in parts if part.strip()]
 
 

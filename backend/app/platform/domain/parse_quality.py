@@ -306,9 +306,7 @@ def _unnatural_word_ratio(text: str) -> float:
     words = _RAW_WORD_PATTERN.findall(text)
     if not words:
         return 0.0
-    unnatural_count = sum(
-        1 for word in words if _SUSPICIOUS_TOKEN_CHAR_PATTERN.search(word)
-    )
+    unnatural_count = sum(1 for word in words if _SUSPICIOUS_TOKEN_CHAR_PATTERN.search(word))
     return unnatural_count / len(words)
 
 
@@ -322,9 +320,7 @@ def _split_quality_segments(text: str) -> list[str]:
             segments.append(block)
             continue
         segments.extend(
-            segment.strip()
-            for segment in regex.split(r"(?<=[.!?])\s+", block)
-            if segment.strip()
+            segment.strip() for segment in regex.split(r"(?<=[.!?])\s+", block) if segment.strip()
         )
     return segments
 
@@ -417,7 +413,10 @@ def summarize_page_extractions(
         parser_counts[page.accepted_parser] = parser_counts.get(page.accepted_parser, 0) + 1
         accepted_qualities.append(page.parse_quality_score)
         for attempt in page.attempts:
-            if attempt.selection_status is CandidateSelectionStatus.SELECTED and attempt.ocr_confidence is not None:
+            if (
+                attempt.selection_status is CandidateSelectionStatus.SELECTED
+                and attempt.ocr_confidence is not None
+            ):
                 ocr_confidences.append(attempt.ocr_confidence)
 
     extraction_method = _dominant_extraction_method(method_counts)
@@ -425,9 +424,7 @@ def summarize_page_extractions(
 
     accepted_count = len(accepted_pages)
     success_ratio = accepted_count / total_page_count
-    ocr_page_count = sum(
-        1 for page in pages if page.status is PageExtractionStatus.OCR_USED
-    )
+    ocr_page_count = sum(1 for page in pages if page.status is PageExtractionStatus.OCR_USED)
     fallback_page_count = sum(
         1 for page in pages if page.status is PageExtractionStatus.FALLBACK_PARSER_USED
     )
@@ -451,7 +448,9 @@ def summarize_page_extractions(
         fallback_page_count=fallback_page_count,
         partial_extraction=bool(failed_pages or empty_pages) and accepted_count > 0,
         min_page_quality=min(accepted_qualities) if accepted_qualities else None,
-        ocr_quality=round(sum(ocr_confidences) / len(ocr_confidences), 4) if ocr_confidences else None,
+        ocr_quality=round(sum(ocr_confidences) / len(ocr_confidences), 4)
+        if ocr_confidences
+        else None,
     )
 
 

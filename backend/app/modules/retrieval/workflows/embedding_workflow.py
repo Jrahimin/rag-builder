@@ -17,6 +17,7 @@ from app.modules.retrieval.repositories.retrieval_document_repository import (
 )
 from app.modules.retrieval.workflows.stage_runner import StageFailure, run_document_stage
 from app.platform.domain.content_hash import content_hash
+from app.platform.jobs.contracts import JobProgressCallback
 from app.platform.providers.contracts.embedding import BaseEmbeddingProvider
 
 logger = structlog.get_logger(__name__)
@@ -33,25 +34,32 @@ class EmbeddingWorkflow:
         *,
         embedding_set_version: int,
         batch_size: int,
+        on_progress: JobProgressCallback | None = None,
     ) -> None:
         self._session = session
         self._project_id = project_id
         self._embedder = embedder
         self._embedding_set_version = embedding_set_version
         self._batch_size = batch_size
+        self._on_progress = on_progress
         self._document_repository = RetrievalDocumentRepository(session, project_id)
         self._chunk_repository = RetrievalChunkRepository(session, project_id)
         self._embedding_repository = ChunkEmbeddingRepository(session, project_id)
 
-    async def run(self, document_id: uuid.UUID) -> Document | None:
+    async def run(
+        self,
+        document_id: uuid.UUID,
+        *,
+        expected_document_version: int | None = None,
+    ) -> Document | None:
         return await run_document_stage(
             session=self._session,
             repository=self._document_repository,
             project_id=self._project_id,
             document_id=document_id,
             stage="embedding",
-            allowed_statuses={DocumentStatus.EMBEDDING, DocumentStatus.CHUNKED},
-            failure_message="Embedding failed.",
+            running_status=DocumentStatus.EMBEDDING,
+            expected_document_version=expected_document_version,
             work=self._embed,
         )
 
@@ -69,6 +77,8 @@ class EmbeddingWorkflow:
         )
 
         total = 0
+        if self._on_progress is not None:
+            await self._on_progress("embedding", 10)
         for offset in range(0, len(chunks), self._batch_size):
             batch = chunks[offset : offset + self._batch_size]
             texts = [chunk.content for chunk in batch]
@@ -93,9 +103,14 @@ class EmbeddingWorkflow:
             self._embedding_repository.bulk_add(entities)
             await self._embedding_repository.flush()
             total += len(batch)
+            if self._on_progress is not None:
+                progress = 10 + int(80 * total / len(chunks))
+                await self._on_progress("embedding", min(progress, 90))
 
         document.status = DocumentStatus.EMBEDDED
         document.error_message = None
+        if self._on_progress is not None:
+            await self._on_progress("embedded", 100)
         elapsed_ms = int((time.perf_counter() - started) * 1000)
         logger.info(
             "embedding_complete",

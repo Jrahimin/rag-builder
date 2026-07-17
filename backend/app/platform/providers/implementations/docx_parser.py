@@ -5,7 +5,7 @@ from __future__ import annotations
 from io import BytesIO
 from typing import Any
 
-from docx import Document as open_docx_document
+from docx import Document as DocxDocument
 from docx.opc.exceptions import PackageNotFoundError
 from docx.oxml.ns import qn
 from docx.text.paragraph import Paragraph
@@ -50,7 +50,7 @@ class DocxParserProvider(BaseDocumentParserProvider):
             )
 
         try:
-            document = open_docx_document(BytesIO(data))
+            document = DocxDocument(BytesIO(data))
             elements = _extract_elements(document)
             text, finalized = finalize_elements(elements)
         except PackageNotFoundError as exc:
@@ -60,7 +60,9 @@ class DocxParserProvider(BaseDocumentParserProvider):
             msg = "Failed to parse DOCX document."
             raise ProviderError(msg, provider_name=_PARSER_NAME) from exc
 
-        heading_count = sum(1 for element in finalized if element.element_type == ParsedElementType.HEADING)
+        heading_count = sum(
+            1 for element in finalized if element.element_type == ParsedElementType.HEADING
+        )
         confidence = 0.9 if heading_count else 0.75 if finalized else 0.0
         language_result = detect_language(text)
 

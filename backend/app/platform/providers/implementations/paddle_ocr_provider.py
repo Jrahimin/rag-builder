@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.platform.domain.text_normalizer import normalize_for_storage
-from app.platform.providers.contracts.ocr import OCRProvider, OcrImageInput, OcrPageResult
+from app.platform.providers.contracts.ocr import OcrImageInput, OcrPageResult, OCRProvider
 from app.platform.providers.errors import ProviderError
 from app.platform.providers.implementations.paddle_ocr_langs import ensure_paddle_ocr_lang_supported
 
@@ -20,7 +20,7 @@ class PaddleOCRProvider(OCRProvider):
         ensure_paddle_ocr_lang_supported(lang)
 
         try:
-            from paddleocr import PaddleOCR  # type: ignore[import-untyped]
+            from paddleocr import PaddleOCR
         except ImportError as exc:
             msg = "PaddleOCR is not installed. Install backend/requirements/ocr.txt."
             raise ProviderError(msg, provider_name=_PROVIDER_NAME) from exc
@@ -39,8 +39,8 @@ class PaddleOCRProvider(OCRProvider):
 
     def recognize(self, image: OcrImageInput) -> OcrPageResult:
         try:
-            import numpy as np  # type: ignore[import-untyped]
-            from PIL import Image  # type: ignore[import-untyped]
+            import numpy as np
+            from PIL import Image
         except ImportError as exc:
             msg = "Pillow and numpy are required for PaddleOCR image decoding."
             raise ProviderError(msg, provider_name=_PROVIDER_NAME) from exc

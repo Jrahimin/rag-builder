@@ -13,7 +13,7 @@ slices + `api/` / `dependencies/` / `composition/` as the composition root.
 ```text
 backend/app/
 ├── main.py                 # ASGI entry + lifespan
-├── composition/            # ORM registry + Alembic migrations
+├── composition/            # ORM registry/migrations + shared API/worker service wiring
 ├── models/                 # All SQLAlchemy ORM entities (shared across modules)
 ├── api/                    # HTTP composition (mount routers)
 │   ├── health.py           # Deployment-level probes
@@ -29,16 +29,21 @@ backend/app/
 │   ├── persistence/        # AsyncRepository, ProjectScopedRepository
 │   ├── domain/             # ORM mixins, lifecycle helpers, text_normalizer, tokenization
 │   ├── auth/               # Auth contracts, domain events (cache invalidation)
-│   ├── http/               # ApiResponse / ErrorResponse, pagination, auth headers
+│   ├── http/               # Pagination, auth headers, OpenAPI helpers
 │   ├── infra/auth/         # Verified-key cache, rate limiter, event handlers
 │   ├── system/             # HealthService
 │   ├── providers/          # Errors + capability reference
-│   ├── jobs/               # JobQueue.enqueue contract
+│   ├── jobs/               # durable submission/configuration + executor transport contracts
 │   └── config/             # ConfigLayer precedence model
 └── modules/                # Feature vertical slices (no HTTP wiring, no ORM)
+    ├── jobs/               # JobRun/outbox repositories, service, API schemas
     └── <feature>/
         services/ repositories/ schemas/ [workflows/]
 ```
+
+Success/error envelope schemas and global error handling are core HTTP concerns
+in `core/http/envelopes.py` and `core/exception_handlers.py`. Feature modules use
+`platform/http/pagination.py` for shared list contracts.
 
 ---
 
@@ -126,6 +131,9 @@ modules/conversations/   chat (RAG generation)         uses RetrievalPort + Base
   calls remain providers; vector persistence is not a provider abstraction.
 - **Conversations** does not import `modules/retrieval/` internals; composition layer wires `RetrievalPort` adapter.
 - **Composition layer** (`dependencies/`) wires delete cascade, worker handoffs, and cross-module adapters.
+- **Shared composition helpers** (`composition/`) may wire the same service for
+  API, worker, CLI, and tests; services themselves do not select concrete
+  providers or queue implementations.
 
 ---
 

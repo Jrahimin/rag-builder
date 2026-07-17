@@ -28,7 +28,6 @@ async def test_search_service_uses_request_strategy_override() -> None:
         embedder=embedder,
         reranker=reranker,
         retrieval_config=config,
-        ensure_project=AsyncMock(),
     )
 
     retriever = MagicMock()
@@ -50,9 +49,7 @@ async def test_search_service_uses_request_strategy_override() -> None:
         ]
     )
 
-    response = await service.search(
-        SearchRequest(query="test", strategy=RetrievalStrategy.HYBRID)
-    )
+    response = await service.search(SearchRequest(query="test", strategy=RetrievalStrategy.HYBRID))
 
     service._build_retriever.assert_called_once_with(RetrievalStrategy.HYBRID)
     assert response.top_k == config.default_top_k

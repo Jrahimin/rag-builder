@@ -17,6 +17,7 @@ CLI (useful when you want to override without editing ``.env``).
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 from collections.abc import AsyncIterator
 
@@ -25,6 +26,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.health import router as health_router
 from app.api.v1.router import api_v1_router
+from app.composition.jobs import DurableJobDispatcher, stop_dispatcher_task
 from app.core.auth_config_validation import validate_auth_config
 from app.core.config import Settings, get_settings
 from app.core.exception_handlers import register_exception_handlers
@@ -33,6 +35,8 @@ from app.core.middleware import RequestContextMiddleware
 from app.platform.db.session import Database, PgVectorUnavailableError
 from app.platform.http.openapi_security import configure_openapi_security
 from app.platform.infra.connectivity.redis import RedisConnectivity
+from app.platform.jobs.implementations.job_queue_factory import get_job_queue
+from app.platform.jobs.implementations.taskiq_queue import TaskiqJobQueue
 
 log = get_logger(__name__)
 
@@ -57,12 +61,28 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.redis = RedisConnectivity(settings)
 
     await _probe_dependencies(app)
+    dispatcher: DurableJobDispatcher | None = None
+    dispatcher_task: asyncio.Task[None] | None = None
+    queue = get_job_queue()
+    if settings.jobs.dispatcher_enabled:
+        dispatcher = DurableJobDispatcher(
+            session_factory=app.state.db.session_factory,
+            settings=settings,
+            queue=queue,
+        )
+        dispatcher_task = asyncio.create_task(
+            dispatcher.run_forever(),
+            name="durable-job-dispatcher",
+        )
     log.info("application_started")
 
     try:
         yield
     finally:
         log.info("application_stopping")
+        await stop_dispatcher_task(dispatcher, dispatcher_task)
+        if isinstance(queue, TaskiqJobQueue):
+            await queue.close()
         await app.state.redis.dispose()
         await app.state.db.dispose()
         log.info("application_stopped")

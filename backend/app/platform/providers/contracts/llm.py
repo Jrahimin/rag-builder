@@ -102,7 +102,7 @@ class BaseLLMProvider(ABC):
         """Run a non-streaming chat completion."""
 
     @abstractmethod
-    async def stream(
+    def stream(
         self,
         messages: list[ChatMessage],
         *,

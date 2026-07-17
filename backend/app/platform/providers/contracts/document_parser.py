@@ -7,7 +7,6 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
-
 PARSED_DOCUMENT_VERSION = "1.0.0"
 
 

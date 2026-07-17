@@ -26,9 +26,39 @@ async def ensure_project_accessible(
     auth_org: AuthenticatedOrganizationDep,
 ) -> None:
     """Raise when the project is not accessible to the authenticated organization."""
+    await _ensure_project_for_organization(
+        project_id,
+        project_repository,
+        auth_org,
+        include_deleted=False,
+    )
+
+
+async def ensure_project_owned(
+    project_id: ProjectIdPath,
+    project_repository: Annotated[ProjectRepository, Depends(get_project_repository)],
+    auth_org: AuthenticatedOrganizationDep,
+) -> None:
+    """Authorize a Project mutation while leaving deleted-state semantics to its service."""
+    await _ensure_project_for_organization(
+        project_id,
+        project_repository,
+        auth_org,
+        include_deleted=True,
+    )
+
+
+async def _ensure_project_for_organization(
+    project_id: uuid.UUID,
+    project_repository: ProjectRepository,
+    auth_org: AuthenticatedOrganizationDep,
+    *,
+    include_deleted: bool,
+) -> None:
     project = await project_repository.get_by_id_for_organization(
         project_id,
         auth_org.organization_id,
+        include_deleted=include_deleted,
     )
     if project is None:
         raise NotFoundError(
@@ -50,7 +80,3 @@ def get_project_service(
 
 
 ProjectServiceDep = Annotated[ProjectService, Depends(get_project_service)]
-
-
-async def noop_ensure_project() -> None:
-    """No-op guard for HTTP routes already protected by router-level dependencies."""

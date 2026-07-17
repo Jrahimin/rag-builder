@@ -9,13 +9,13 @@ from fastapi import Depends, Path
 
 from app.core.config import get_settings
 from app.dependencies.common import DbSessionDep
-from app.dependencies.projects import noop_ensure_project
+from app.dependencies.jobs import get_job_submitter
 from app.models.document import Document
 from app.modules.knowledge.repositories.document_repository import DocumentRepository
 from app.modules.knowledge.services.document_service import DocumentService
 from app.modules.retrieval.services.retrieval_cleanup_service import RetrievalCleanupService
-from app.platform.jobs.contracts import JobQueue
-from app.platform.jobs.implementations.job_queue_factory import get_job_queue
+from app.platform.jobs.configuration import build_job_configuration
+from app.platform.jobs.contracts import DurableJobSubmitter
 from app.platform.providers.contracts.storage import BaseStorageProvider
 from app.platform.providers.implementations.storage_factory import get_storage_provider
 
@@ -31,15 +31,11 @@ def get_storage() -> BaseStorageProvider:
     return get_storage_provider()
 
 
-def get_job_queue_dep() -> JobQueue:
-    return get_job_queue()
-
-
 def get_document_service(
     session: DbSessionDep,
     repository: Annotated[DocumentRepository, Depends(get_document_repository)],
     storage: Annotated[BaseStorageProvider, Depends(get_storage)],
-    job_queue: Annotated[JobQueue, Depends(get_job_queue_dep)],
+    job_submitter: Annotated[DurableJobSubmitter, Depends(get_job_submitter)],
 ) -> DocumentService:
     settings = get_settings()
     project_id = repository.project_id
@@ -56,8 +52,9 @@ def get_document_service(
         session=session,
         repository=repository,
         storage=storage,
-        job_queue=job_queue,
-        ensure_project=noop_ensure_project,
+        job_submitter=job_submitter,
+        job_configuration=build_job_configuration(settings),
+        job_max_attempts=settings.jobs.max_attempts,
         max_upload_bytes=settings.knowledge.max_upload_bytes,
         on_document_delete=on_document_delete,
     )

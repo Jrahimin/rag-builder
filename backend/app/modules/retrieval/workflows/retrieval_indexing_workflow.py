@@ -19,6 +19,7 @@ from app.modules.retrieval.workflows.keyword_indexing_workflow import (
     KeywordIndexingWorkflow,
 )
 from app.modules.retrieval.workflows.stage_runner import StageFailure, run_document_stage
+from app.platform.jobs.contracts import JobProgressCallback
 from app.platform.providers.contracts.embedding import BaseEmbeddingProvider
 
 logger = structlog.get_logger(__name__)
@@ -36,6 +37,7 @@ class RetrievalIndexingWorkflow:
         embedding_set_version: int,
         filterable_metadata_keys: list[str],
         fts_regconfig: str = "simple",
+        on_progress: JobProgressCallback | None = None,
     ) -> None:
         self._session = session
         self._project_id = project_id
@@ -43,23 +45,31 @@ class RetrievalIndexingWorkflow:
         self._embedding_set_version = embedding_set_version
         self._filterable_metadata_keys = filterable_metadata_keys
         self._fts_regconfig = fts_regconfig
+        self._on_progress = on_progress
         self._document_repository = RetrievalDocumentRepository(session, project_id)
         self._embedding_repository = ChunkEmbeddingRepository(session, project_id)
 
-    async def run(self, document_id: uuid.UUID) -> Document | None:
+    async def run(
+        self,
+        document_id: uuid.UUID,
+        *,
+        expected_document_version: int | None = None,
+    ) -> Document | None:
         return await run_document_stage(
             session=self._session,
             repository=self._document_repository,
             project_id=self._project_id,
             document_id=document_id,
             stage="indexing",
-            allowed_statuses={DocumentStatus.INDEXING, DocumentStatus.EMBEDDED},
-            failure_message="Retrieval indexing failed.",
+            running_status=DocumentStatus.INDEXING,
+            expected_document_version=expected_document_version,
             work=self._index,
         )
 
     async def _index(self, document: Document) -> None:
         started = time.perf_counter()
+        if self._on_progress is not None:
+            await self._on_progress("validating_embeddings", 15)
         embeddings = await self._embedding_repository.list_by_document(
             document.id,
             embedding_set_version=self._embedding_set_version,
@@ -76,14 +86,16 @@ class RetrievalIndexingWorkflow:
             filterable_metadata_keys=self._filterable_metadata_keys,
             fts_regconfig=self._fts_regconfig,
         )
+        if self._on_progress is not None:
+            await self._on_progress("keyword_indexing", 45)
         keyword_count = await keyword_workflow.index_document(document)
         if keyword_count != len(embeddings):
-            raise StageFailure(
-                "Embedding and keyword chunk counts differ; re-embed the document."
-            )
+            raise StageFailure("Embedding and keyword chunk counts differ; re-embed the document.")
 
         document.status = DocumentStatus.READY
         document.error_message = None
+        if self._on_progress is not None:
+            await self._on_progress("ready", 100)
         elapsed_ms = int((time.perf_counter() - started) * 1000)
         logger.info(
             "retrieval_indexing_complete",

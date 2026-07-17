@@ -7,19 +7,15 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from app.core.config import RetrievalConfig
-from app.core.exceptions import BadRequestError, NotFoundError, ServiceUnavailableError
+from app.core.config import RetrievalConfig, Settings
+from app.core.exceptions import BadRequestError, NotFoundError
 from app.models.document import Document, DocumentStatus
 from app.modules.retrieval.services.indexing_service import IndexingService
-from app.platform.jobs.contracts import JobQueue
-from app.platform.jobs.errors import JobEnqueueError
+from app.platform.jobs.configuration import build_job_configuration
+from app.platform.jobs.contracts import DurableJobSubmitter, JobSubmission
 from app.platform.providers.implementations.hash_embedding import HashEmbeddingProvider
 
 pytestmark = pytest.mark.unit
-
-
-async def _noop_ensure_project() -> None:
-    return None
 
 
 def _document(project_id: uuid.UUID, status: DocumentStatus) -> Document:
@@ -50,9 +46,10 @@ def session() -> AsyncMock:
 
 
 @pytest.fixture
-def job_queue() -> AsyncMock:
-    mock = AsyncMock(spec=JobQueue)
-    mock.enqueue = AsyncMock(return_value="job-1")
+def job_submitter() -> MagicMock:
+    mock = MagicMock(spec=DurableJobSubmitter)
+    mock.stage = AsyncMock(return_value=JobSubmission(job_id=uuid.uuid4(), created=True))
+    mock.dispatch = AsyncMock()
     return mock
 
 
@@ -60,17 +57,20 @@ def job_queue() -> AsyncMock:
 def service(
     session: AsyncMock,
     project_id: uuid.UUID,
-    job_queue: AsyncMock,
+    job_submitter: MagicMock,
 ) -> IndexingService:
     svc = IndexingService(
         session=session,
         project_id=project_id,
-        job_queue=job_queue,
+        job_submitter=job_submitter,
+        job_configuration=build_job_configuration(
+            Settings(embedding={"dimensions": 8, "model": "m"})
+        ),
         embedder=HashEmbeddingProvider(model="m", dimensions=8, provider_version="1"),
         retrieval_config=RetrievalConfig(),
+        job_max_attempts=3,
         embedding_batch_size=32,
         filterable_metadata_keys=["source"],
-        ensure_project=_noop_ensure_project,
     )
     repository = MagicMock()
     repository.flush = AsyncMock()
@@ -101,7 +101,7 @@ async def test_enqueue_embed_rejects_wrong_status(
 async def test_enqueue_embed_sets_status_and_enqueues(
     service: IndexingService,
     project_id: uuid.UUID,
-    job_queue: AsyncMock,
+    job_submitter: MagicMock,
 ) -> None:
     document = _document(project_id, DocumentStatus.CHUNKED)
     service._document_repository.get_by_id = AsyncMock(return_value=document)
@@ -109,26 +109,12 @@ async def test_enqueue_embed_sets_status_and_enqueues(
     result = await service.enqueue_embed(document.id)
 
     assert result.status is DocumentStatus.EMBEDDING
-    job_queue.enqueue.assert_awaited_once()
-    job = job_queue.enqueue.await_args.args[0]
+    job_submitter.stage.assert_awaited_once()
+    job = job_submitter.stage.await_args.args[0]
     assert job.name == "document.embed"
-    assert job.payload == {"document_id": str(document.id)}
-
-
-async def test_enqueue_embed_rolls_back_status_on_queue_failure(
-    service: IndexingService,
-    project_id: uuid.UUID,
-    job_queue: AsyncMock,
-) -> None:
-    document = _document(project_id, DocumentStatus.CHUNKED)
-    service._document_repository.get_by_id = AsyncMock(return_value=document)
-    job_queue.enqueue.side_effect = JobEnqueueError("queue down")
-
-    with pytest.raises(ServiceUnavailableError) as exc_info:
-        await service.enqueue_embed(document.id)
-
-    assert exc_info.value.code == "job_queue_unavailable"
-    assert document.status is DocumentStatus.CHUNKED
+    assert job.document_id == document.id
+    assert job.payload == {"document_version": 1, "embedding_set_version": 1}
+    job_submitter.dispatch.assert_awaited_once_with(result.job_id)
 
 
 async def test_enqueue_index_rejects_unembedded_document(
@@ -144,35 +130,37 @@ async def test_enqueue_index_rejects_unembedded_document(
     assert exc_info.value.code == "document_not_indexable"
 
 
-async def test_enqueue_index_rolls_back_status_on_queue_failure(
+async def test_enqueue_index_stages_durable_job(
     service: IndexingService,
     project_id: uuid.UUID,
-    job_queue: AsyncMock,
+    job_submitter: MagicMock,
 ) -> None:
     document = _document(project_id, DocumentStatus.EMBEDDED)
     service._document_repository.get_by_id = AsyncMock(return_value=document)
-    job_queue.enqueue.side_effect = JobEnqueueError("queue down")
+    result = await service.enqueue_index(document.id)
 
-    with pytest.raises(ServiceUnavailableError):
-        await service.enqueue_index(document.id)
-
-    assert document.status is DocumentStatus.EMBEDDED
+    assert result.status is DocumentStatus.INDEXING
+    job_submitter.stage.assert_awaited_once()
+    assert job_submitter.stage.await_args.args[0].name == "document.index"
 
 
 async def test_enqueue_embed_if_enabled_respects_flag(
     session: AsyncMock,
     project_id: uuid.UUID,
-    job_queue: AsyncMock,
+    job_submitter: MagicMock,
 ) -> None:
     service = IndexingService(
         session=session,
         project_id=project_id,
-        job_queue=job_queue,
+        job_submitter=job_submitter,
+        job_configuration=build_job_configuration(
+            Settings(embedding={"dimensions": 8, "model": "m"})
+        ),
         embedder=HashEmbeddingProvider(model="m", dimensions=8, provider_version="1"),
         retrieval_config=RetrievalConfig(auto_embed=False),
+        job_max_attempts=3,
         embedding_batch_size=32,
         filterable_metadata_keys=[],
-        ensure_project=_noop_ensure_project,
     )
     document = _document(project_id, DocumentStatus.CHUNKED)
     repository = MagicMock()
@@ -183,4 +171,4 @@ async def test_enqueue_embed_if_enabled_respects_flag(
 
     assert result is document
     assert result.status is DocumentStatus.CHUNKED
-    job_queue.enqueue.assert_not_awaited()
+    job_submitter.stage.assert_not_awaited()

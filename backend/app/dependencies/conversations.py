@@ -9,8 +9,8 @@ from fastapi import Depends, Path
 
 from app.core.config import get_settings
 from app.dependencies.common import DbSessionDep
-from app.dependencies.projects import noop_ensure_project
 from app.dependencies.retrieval import get_search_service
+from app.models.conversation import Conversation
 from app.modules.conversations.ports import ContextChunk, RetrievalPort
 from app.modules.conversations.repositories.conversation_repository import ConversationRepository
 from app.modules.conversations.repositories.message_repository import MessageRepository
@@ -19,6 +19,10 @@ from app.modules.conversations.services.conversation_service import Conversation
 from app.modules.retrieval.schemas.search import SearchRequest
 from app.modules.retrieval.services.search_service import SearchService
 from app.platform.domain.content_hash import content_hash
+from app.platform.providers.contracts.llm import BaseLLMProvider
+from app.platform.providers.implementations.llm_factory import (
+    create_llm_provider_for_conversation,
+)
 
 
 class SearchServiceRetrievalAdapter:
@@ -98,7 +102,6 @@ def get_conversation_service(
         message_repository=message_repository,
         llm_config=settings.llm,
         chat_config=settings.chat,
-        ensure_project=noop_ensure_project,
     )
 
 
@@ -113,17 +116,23 @@ def get_chat_service(
 ) -> ChatService:
     settings = get_settings()
 
+    def resolve_llm(conversation: Conversation) -> BaseLLMProvider:
+        return create_llm_provider_for_conversation(
+            settings,
+            provider=conversation.provider,
+            model=conversation.model,
+        )
+
     return ChatService(
         session=session,
         project_id=project_id,
         conversation_repository=conversation_repository,
         message_repository=message_repository,
         retrieval=retrieval,
-        settings=settings,
         chat_config=settings.chat,
         retrieval_config=settings.retrieval,
         llm_config=settings.llm,
-        ensure_project=noop_ensure_project,
+        resolve_llm=resolve_llm,
     )
 
 

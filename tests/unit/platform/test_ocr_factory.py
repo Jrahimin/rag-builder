@@ -7,12 +7,11 @@ from dataclasses import dataclass
 import pytest
 
 from app.core.config import OcrBackend, OcrConfig, Settings
-from app.platform.providers.contracts.ocr import OCRProvider, OcrImageInput, OcrPageResult
+from app.platform.domain.ocr_language import normalize_stored_ocr_lang, resolve_ocr_lang
+from app.platform.providers.contracts.ocr import OcrImageInput, OcrPageResult, OCRProvider
 from app.platform.providers.implementations.ocr_factory import (
     clear_ocr_provider_cache,
     get_ocr_provider,
-    normalize_stored_ocr_lang,
-    resolve_ocr_lang,
 )
 
 pytestmark = pytest.mark.unit

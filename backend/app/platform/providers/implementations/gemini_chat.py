@@ -92,10 +92,7 @@ class GeminiChatProvider(BaseLLMProvider):
 
     def _url(self, *, stream: bool) -> str:
         action = "streamGenerateContent" if stream else "generateContent"
-        return (
-            f"{self._base_url}/models/{self._model}:{action}"
-            f"?key={self._api_key}"
-        )
+        return f"{self._base_url}/models/{self._model}:{action}?key={self._api_key}"
 
     def _parse_response(self, payload: dict[str, object]) -> ChatCompletionResult:
         candidates = payload.get("candidates")

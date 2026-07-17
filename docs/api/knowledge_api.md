@@ -13,7 +13,9 @@ Optional form field `ocr_lang` — per-document OCR language for scanned PDFs an
 
 > **Bangla OCR limitation:** `ocr_lang=bn` is accepted at the API but **will fail in the worker** — PaddleOCR 3.7 has no stock Bengali models. English OCR on Bangla scans produces unreliable text. See [multilingual_support.md](../features/multilingual_support.md#known-limitation-bangla-bengali-ocr).
 
-Poll `GET /{document_id}` until `status=chunked` (or `failed`).
+The response includes `job_id`. Inspect it through the
+[Jobs API](./jobs_api.md), or poll the Document until `status=chunked` (or
+`failed`).
 
 **413** — upload exceeds `APE_KNOWLEDGE__MAX_UPLOAD_BYTES` (default 50 MB).
 
@@ -38,7 +40,8 @@ ocr_lang=hi
     "status": "queued",
     "ocr_lang": "hi",
     "language": null,
-    "version": 1
+    "version": 1,
+    "job_id": "880e8400-e29b-41d4-a716-446655440003"
   }
 }
 ```
@@ -102,6 +105,7 @@ Query: `limit` (1–100, default 20), `offset`.
 ## POST `/{document_id}/reprocess`
 
 Re-enqueue full pipeline (parse + chunk). Bumps `document.version`; replaces existing chunks.
+The response includes the new durable `job_id`.
 
 Optional query `ocr_lang` — set or override per-document OCR language for the new run. Pass empty string to clear and fall back to `APE_OCR__LANG`. When omitted, the existing `documents.ocr_lang` is kept.
 

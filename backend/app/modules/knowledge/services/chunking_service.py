@@ -6,14 +6,24 @@ import time
 from typing import Any
 
 from app.core.config import ChunkingConfig, ChunkingStrategy, Settings
-from app.modules.knowledge.services.chunking.chunk_strategies.heading_chunk_strategy import HeadingChunkStrategy
-from app.modules.knowledge.services.chunking.chunk_strategies.markdown_chunk_strategy import MarkdownChunkStrategy
-from app.modules.knowledge.services.chunking.chunk_strategies.recursive_fallback_chunk_strategy import (
+from app.modules.knowledge.services.chunking.chunk_strategies import (
     RecursiveFallbackChunkStrategy,
 )
-from app.modules.knowledge.services.chunking.chunk_strategies.semantic_chunk_strategy import SemanticChunkStrategy
-from app.modules.knowledge.services.chunking.chunk_strategies.structure_chunk_strategy import StructureChunkStrategy
-from app.modules.knowledge.services.chunking.chunk_strategy_selector_service import ChunkStrategySelectorService
+from app.modules.knowledge.services.chunking.chunk_strategies.heading_chunk_strategy import (
+    HeadingChunkStrategy,
+)
+from app.modules.knowledge.services.chunking.chunk_strategies.markdown_chunk_strategy import (
+    MarkdownChunkStrategy,
+)
+from app.modules.knowledge.services.chunking.chunk_strategies.semantic_chunk_strategy import (
+    SemanticChunkStrategy,
+)
+from app.modules.knowledge.services.chunking.chunk_strategies.structure_chunk_strategy import (
+    StructureChunkStrategy,
+)
+from app.modules.knowledge.services.chunking.chunk_strategy_selector_service import (
+    ChunkStrategySelectorService,
+)
 from app.modules.knowledge.services.chunking.chunk_validation_service import ChunkValidationService
 from app.modules.knowledge.services.chunking.models import (
     ChunkingContext,
@@ -22,8 +32,12 @@ from app.modules.knowledge.services.chunking.models import (
     StructureAnalysis,
     TextChunk,
 )
-from app.modules.knowledge.services.chunking.sentence_similarity_service import BaseSentenceSimilarityService
-from app.modules.knowledge.services.chunking.structure_analyzer_service import StructureAnalyzerService
+from app.modules.knowledge.services.chunking.sentence_similarity_service import (
+    BaseSentenceSimilarityService,
+)
+from app.modules.knowledge.services.chunking.structure_analyzer_service import (
+    StructureAnalyzerService,
+)
 from app.modules.knowledge.services.chunking.token_counting_service import TokenCountingService
 from app.platform.providers.contracts.document_parser import ParsedDocument
 
@@ -74,11 +88,15 @@ class ChunkingService:
     ) -> ChunkingService:
         return cls(config=settings.chunking, similarity_service=similarity_service)
 
-    async def split_document(self, parsed: ParsedDocument) -> tuple[list[TextChunk], ChunkingRunMetadata]:
+    async def split_document(
+        self, parsed: ParsedDocument
+    ) -> tuple[list[TextChunk], ChunkingRunMetadata]:
         started = time.perf_counter()
         analysis = self._analyzer.analyze(parsed)
         strategy = self._selector.select(parsed, analysis, self._config)
-        context = ChunkingContext(parsed=parsed, config=self._config, analysis=analysis, strategy=strategy)
+        context = ChunkingContext(
+            parsed=parsed, config=self._config, analysis=analysis, strategy=strategy
+        )
 
         semantic_used = False
         boundary_provider: str | None = None
@@ -96,7 +114,10 @@ class ChunkingService:
                 boundary_provider = semantic_strategy.last_boundary_result.provider
                 boundary_model = semantic_strategy.last_boundary_result.model
                 boundary_provider_version = semantic_strategy.last_boundary_result.provider_version
-        elif strategy in {ChunkingStrategy.RECURSIVE_FALLBACK, ChunkingStrategy.RECURSIVE_CHARACTER}:
+        elif strategy in {
+            ChunkingStrategy.RECURSIVE_FALLBACK,
+            ChunkingStrategy.RECURSIVE_CHARACTER,
+        }:
             drafts = self._fallback.split_text(
                 parsed.text,
                 config=self._config,
@@ -112,15 +133,15 @@ class ChunkingService:
         validated = self._validator.validate(drafts, self._config)
         chunks = self._to_text_chunks(validated, parsed, analysis, strategy)
         elapsed_ms = int((time.perf_counter() - started) * 1000)
-        avg_tokens = (
-            sum(chunk.token_count for chunk in chunks) / len(chunks) if chunks else 0.0
-        )
+        avg_tokens = sum(chunk.token_count for chunk in chunks) / len(chunks) if chunks else 0.0
         run_metadata = ChunkingRunMetadata(
             strategy_used=strategy,
             structure_score=analysis.structure_score,
             structure_signals=analysis.signals.to_dict(),
             semantic_refinement_used=semantic_used,
-            similarity_drop_threshold=self._config.similarity_drop_threshold if semantic_used else None,
+            similarity_drop_threshold=self._config.similarity_drop_threshold
+            if semantic_used
+            else None,
             boundary_provider=boundary_provider,
             boundary_model=boundary_model,
             boundary_provider_version=boundary_provider_version,
