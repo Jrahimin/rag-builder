@@ -8,7 +8,6 @@ from sqlalchemy import delete, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.chunk_keyword_index import ChunkKeywordIndex
-from app.models.document import Document, DocumentStatus
 from app.modules.retrieval.keyword.tokenizer import (
     normalize_for_indexing,
     normalize_for_query,
@@ -93,6 +92,7 @@ class ChunkKeywordIndexRepository(ProjectScopedRepository[ChunkKeywordIndex]):
         self,
         *,
         query: str,
+        index_build_id: uuid.UUID | None = None,
         embedding_set_version: int,
         top_k: int,
         document_id: uuid.UUID | None = None,
@@ -103,22 +103,16 @@ class ChunkKeywordIndexRepository(ProjectScopedRepository[ChunkKeywordIndex]):
         ts_query = func.plainto_tsquery(self._fts_regconfig, normalized_query)
         stmt = (
             select(self.model)
-            .join(
-                Document,
-                (Document.id == self.model.document_id)
-                & (Document.project_id == self.model.project_id),
-            )
             .where(
                 self.model.project_id == self._project_id,
                 self.model.embedding_set_version == embedding_set_version,
                 self.model.search_vector.op("@@")(ts_query),
-                Document.project_id == self._project_id,
-                Document.status == DocumentStatus.READY,
-                Document.deleted_at.is_(None),
             )
             .order_by(func.ts_rank_cd(self.model.search_vector, ts_query).desc())
             .limit(top_k)
         )
+        if index_build_id is not None:
+            stmt = stmt.where(self.model.index_build_id == index_build_id)
         if document_id is not None:
             stmt = stmt.where(self.model.document_id == document_id)
         if metadata_filter:
@@ -127,7 +121,9 @@ class ChunkKeywordIndexRepository(ProjectScopedRepository[ChunkKeywordIndex]):
         result = await self._session.execute(stmt)
         return list(result.scalars().all())
 
-    async def map_content_by_ids(self, chunk_ids: list[uuid.UUID]) -> dict[uuid.UUID, str]:
+    async def map_content_by_ids(
+        self, chunk_ids: list[uuid.UUID], *, index_build_id: uuid.UUID | None = None
+    ) -> dict[uuid.UUID, str]:
         """Load normalized content for reranking without full hydration."""
         if not chunk_ids:
             return {}
@@ -135,6 +131,8 @@ class ChunkKeywordIndexRepository(ProjectScopedRepository[ChunkKeywordIndex]):
             self.model.project_id == self._project_id,
             self.model.chunk_id.in_(chunk_ids),
         )
+        if index_build_id is not None:
+            stmt = stmt.where(self.model.index_build_id == index_build_id)
         result = await self._session.execute(stmt)
         return {row.chunk_id: row.content_normalized for row in result.all()}
 

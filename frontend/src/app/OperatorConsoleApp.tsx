@@ -14,6 +14,9 @@ const ActiveConfigurationDetails = lazy(() =>
 const JobRuns = lazy(() =>
   import("../features/jobs/JobRuns").then((module) => ({ default: module.JobRuns })),
 );
+const TestLab = lazy(() =>
+  import("../features/lab/TestLab").then((module) => ({ default: module.TestLab })),
+);
 const OperationalMetrics = lazy(() =>
   import("../features/metrics/OperationalMetrics").then((module) => ({
     default: module.OperationalMetrics,
@@ -49,6 +52,14 @@ export function OperatorConsoleApp() {
           element={
             <Suspense fallback={<LoadingState label="Loading overview" />}>
               <SystemHealthOverview />
+            </Suspense>
+          }
+        />
+        <Route
+          path="lab"
+          element={
+            <Suspense fallback={<LoadingState label="Loading Test Lab" />}>
+              <TestLab />
             </Suspense>
           }
         />

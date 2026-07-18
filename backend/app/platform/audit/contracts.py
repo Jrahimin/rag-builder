@@ -17,6 +17,11 @@ class AuditEventType(StrEnum):
     JOB_FAILED = "job.failed"
     JOB_RECOVERED = "job.recovered"
     JOB_DISPATCH_DEFERRED = "job.dispatch_deferred"
+    INDEX_BUILD_ACTIVATED = "index_build.activated"
+    INDEX_BUILD_ROLLED_BACK = "index_build.rolled_back"
+    DOCUMENT_DELETE_REQUESTED = "document.delete_requested"
+    DOCUMENT_PURGE_REQUESTED = "document.purge_requested"
+    STORAGE_RECONCILIATION_REQUESTED = "storage.reconciliation_requested"
 
 
 class AuditActorType(StrEnum):

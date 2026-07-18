@@ -46,6 +46,7 @@ class KeywordTermStatsRepository(ProjectScopedRepository[KeywordTermStats]):
         terms: list[str],
         *,
         embedding_set_version: int,
+        index_build_id: uuid.UUID | None = None,
     ) -> dict[str, int]:
         if not terms:
             return {}
@@ -54,6 +55,8 @@ class KeywordTermStatsRepository(ProjectScopedRepository[KeywordTermStats]):
             self.model.embedding_set_version == embedding_set_version,
             self.model.term.in_(terms),
         )
+        if index_build_id is not None:
+            stmt = stmt.where(self.model.index_build_id == index_build_id)
         result = await self._session.execute(stmt)
         return {row.term: row.document_frequency for row in result.all()}
 
@@ -92,11 +95,15 @@ class KeywordCollectionStatsRepository(ProjectScopedRepository[KeywordCollection
     def __init__(self, session: AsyncSession, project_id: uuid.UUID) -> None:
         super().__init__(session, project_id)
 
-    async def get_for_version(self, embedding_set_version: int) -> KeywordCollectionStats | None:
+    async def get_for_version(
+        self, embedding_set_version: int, *, index_build_id: uuid.UUID | None = None
+    ) -> KeywordCollectionStats | None:
         stmt = select(self.model).where(
             self.model.project_id == self._project_id,
             self.model.embedding_set_version == embedding_set_version,
         )
+        if index_build_id is not None:
+            stmt = stmt.where(self.model.index_build_id == index_build_id)
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
 

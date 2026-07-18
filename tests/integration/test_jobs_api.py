@@ -48,7 +48,7 @@ async def test_job_api_is_project_scoped_and_retry_returns_new_identity(
     other_project_id = await _create_project(db_client)
     upload = await db_client.post(
         f"/api/v1/projects/{project_id}/documents",
-        files={"file": ("unsupported.bin", b"\x00\x01", "application/octet-stream")},
+        files={"file": ("job.txt", b"valid job", "text/plain")},
     )
     assert upload.status_code == 201
     job_id = upload.json()["data"]["job_id"]
@@ -67,11 +67,22 @@ async def test_job_api_is_project_scoped_and_retry_returns_new_identity(
     assert cross_project.status_code == 404
     assert cross_project.json()["error"]["code"] == "job_not_found"
 
-    await run_captured_document_jobs(integration_connection, captured_jobs)
+    await integration_connection.execute(
+        update(JobRun)
+        .where(JobRun.id == uuid.UUID(job_id))
+        .values(
+            state=JobState.FAILED,
+            failure_code="test_failure",
+            failure_message="forced integration failure",
+            failure_details={"retryable": False},
+            completed_at=datetime.now(UTC),
+        )
+    )
+    captured_jobs.clear()
     failed = await db_client.get(f"/api/v1/projects/{project_id}/jobs/{job_id}")
     failed_data = failed.json()["data"]
     assert failed_data["state"] == "failed"
-    assert failed_data["failure_code"] == "provider_error"
+    assert failed_data["failure_code"] == "test_failure"
     assert failed_data["failure_details"]["retryable"] is False
 
     retry = await db_client.post(f"/api/v1/projects/{project_id}/jobs/{job_id}/retry")

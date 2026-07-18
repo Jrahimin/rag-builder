@@ -5,6 +5,7 @@ import {
   FileStack,
   Gauge,
   HeartPulse,
+  FlaskConical,
   Menu,
   Settings2,
   ShieldCheck,
@@ -15,6 +16,7 @@ import { NavLink } from "react-router-dom";
 
 const navigation = [
   { to: "/", label: "Overview", icon: Gauge, end: true },
+  { to: "/lab", label: "Test Lab", icon: FlaskConical },
   { to: "/jobs", label: "Jobs", icon: BriefcaseBusiness },
   { to: "/projects", label: "Projects / Documents", icon: FileStack },
   { to: "/configuration", label: "Configuration", icon: Settings2 },
@@ -26,6 +28,7 @@ const navigation = [
 
 export function OperatorNavigation() {
   const [open, setOpen] = useState(false);
+  const [expanded, setExpanded] = useState(false);
   return (
     <>
       <button
@@ -45,7 +48,12 @@ export function OperatorNavigation() {
           onClick={() => setOpen(false)}
         />
       )}
-      <aside className={`sidebar ${open ? "sidebar--open" : ""}`}>
+      <aside
+        className={`sidebar ${open ? "sidebar--open" : ""} ${expanded ? "sidebar--expanded" : ""}`}
+        onMouseEnter={() => setExpanded(true)}
+        onMouseLeave={() => setExpanded(false)}
+        onFocusCapture={() => setExpanded(true)}
+      >
         <div className="brand">
           <div className="brand__mark" aria-hidden="true">
             R
@@ -61,7 +69,11 @@ export function OperatorNavigation() {
               key={to}
               to={to}
               end={end}
-              onClick={() => setOpen(false)}
+              title={label}
+              onClick={() => {
+                setOpen(false);
+                setExpanded(false);
+              }}
               className={({ isActive }) => `nav-link${isActive ? " nav-link--active" : ""}`}
             >
               <Icon size={18} aria-hidden="true" />

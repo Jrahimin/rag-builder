@@ -37,10 +37,12 @@ class ChunkKeywordIndex(Base, UUIDPrimaryKeyMixin, TimestampMixin, ProjectScoped
             ["document_chunks.id"],
             ondelete="CASCADE",
         ),
+        ForeignKeyConstraint(["index_build_id"], ["index_builds.id"], ondelete="CASCADE"),
         UniqueConstraint(
+            "index_build_id",
             "chunk_id",
             "embedding_set_version",
-            name="uq_chunk_keyword_index_chunk_esv",
+            name="uq_chunk_keyword_index_build_chunk_esv",
         ),
         Index("ix_chunk_keyword_index_project_esv", "project_id", "embedding_set_version"),
         Index("ix_chunk_keyword_index_search_vector", "search_vector", postgresql_using="gin"),
@@ -48,6 +50,7 @@ class ChunkKeywordIndex(Base, UUIDPrimaryKeyMixin, TimestampMixin, ProjectScoped
 
     document_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
     chunk_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    index_build_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
     embedding_set_version: Mapped[int] = mapped_column(Integer, nullable=False)
     document_version: Mapped[int] = mapped_column(Integer, nullable=False)
     content_normalized: Mapped[str] = mapped_column(Text, nullable=False)

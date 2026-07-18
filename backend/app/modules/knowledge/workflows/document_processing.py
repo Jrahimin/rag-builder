@@ -141,13 +141,14 @@ class DocumentProcessingWorkflow:
 
         document.status = DocumentStatus.CHUNKING
         await self._report(on_progress, "chunking", 60)
-        await self._chunk_repository.delete_by_document(document.id)
+        await self._chunk_repository.delete_document_version(document.id, document.version)
         text_chunks, run_metadata = await self._chunking.split_document(parsed)
         await self._store_parsed_json(parsed_json_key, parsed, run_metadata=run_metadata)
         chunk_entities = [
             DocumentChunk(
                 project_id=document.project_id,
                 document_id=document.id,
+                document_version=document.version,
                 chunk_index=chunk.chunk_index,
                 content=chunk.content,
                 page_number=chunk.page_number,

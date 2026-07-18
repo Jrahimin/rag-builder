@@ -17,7 +17,7 @@ from app.platform.providers.contracts.reranker import RerankCandidate, RerankReq
 from app.platform.providers.contracts.storage import BaseStorageProvider
 from app.platform.providers.implementations.embedding_factory import create_embedding_provider
 from app.platform.providers.implementations.llm_factory import create_llm_provider
-from app.platform.providers.implementations.ocr_factory import create_ocr_provider
+from app.platform.providers.implementations.ocr_factory import get_ocr_provider
 from app.platform.providers.implementations.reranker_factory import create_reranker_provider
 from app.platform.system.schemas import DependencyHealth, DependencyState, PreflightStatus
 
@@ -196,7 +196,11 @@ class StartupPreflightService:
             )
 
         async def initialize() -> None:
-            await asyncio.to_thread(create_ocr_provider, self._settings)
+            # Warm the same process-scoped provider pool used by document
+            # processing.  Constructing a provider directly here made the
+            # startup check discard the initialized model, so the first real
+            # OCR request could initialize it again (and appear unhealthy).
+            await asyncio.to_thread(get_ocr_provider, settings=self._settings)
 
         return await self._check(
             "ocr_provider",

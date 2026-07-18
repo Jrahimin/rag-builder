@@ -95,6 +95,10 @@ services:
       APE_LLM__OLLAMA_BASE_URL: ${APE_LLM__OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       APE_RETRIEVAL__STRATEGY: ${APE_RETRIEVAL__STRATEGY:-hybrid}
       APE_RETRIEVAL__HNSW_EF_SEARCH: ${APE_RETRIEVAL__HNSW_EF_SEARCH:-100}
+      APE_MALWARE_SCAN__BACKEND: ${APE_MALWARE_SCAN__BACKEND:-disabled}
+      APE_MALWARE_SCAN__HOST: ${APE_MALWARE_SCAN__HOST:-clamav}
+      APE_MALWARE_SCAN__PORT: ${APE_MALWARE_SCAN__PORT:-3310}
+      APE_MALWARE_SCAN__TIMEOUT_SECONDS: ${APE_MALWARE_SCAN__TIMEOUT_SECONDS:-15}
       APE_MINIO__ENDPOINT: minio:9000
       APE_MINIO__ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
       APE_MINIO__SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
@@ -195,6 +199,10 @@ services:
       APE_LLM__OLLAMA_BASE_URL: ${APE_LLM__OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       APE_RETRIEVAL__STRATEGY: ${APE_RETRIEVAL__STRATEGY:-hybrid}
       APE_RETRIEVAL__HNSW_EF_SEARCH: ${APE_RETRIEVAL__HNSW_EF_SEARCH:-100}
+      APE_MALWARE_SCAN__BACKEND: ${APE_MALWARE_SCAN__BACKEND:-disabled}
+      APE_MALWARE_SCAN__HOST: ${APE_MALWARE_SCAN__HOST:-clamav}
+      APE_MALWARE_SCAN__PORT: ${APE_MALWARE_SCAN__PORT:-3310}
+      APE_MALWARE_SCAN__TIMEOUT_SECONDS: ${APE_MALWARE_SCAN__TIMEOUT_SECONDS:-15}
       APE_MINIO__ENDPOINT: minio:9000
       APE_MINIO__ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
       APE_MINIO__SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
@@ -213,6 +221,9 @@ services:
         "app.worker.handlers.embedding",
         "app.worker.handlers.indexing",
         "app.worker.handlers.evaluation",
+        "app.worker.handlers.corpus",
+        "app.worker.handlers.document_lifecycle",
+        "app.worker.handlers.storage_reconciliation",
       ]
     networks:
       - ape_network

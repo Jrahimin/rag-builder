@@ -33,13 +33,10 @@ class RetrievalDocumentRepository(ProjectScopedRepository[Document]):
         return result.scalar_one_or_none()
 
     async def map_by_ids(self, document_ids: set[uuid.UUID]) -> dict[uuid.UUID, Document]:
-        """Return non-deleted documents keyed by id."""
+        """Return documents keyed by id; the active build is the retrieval authority."""
         if not document_ids:
             return {}
-        stmt = self._scoped().where(
-            self.model.id.in_(document_ids),
-            not_deleted_filter(self.model),
-        )
+        stmt = self._scoped().where(self.model.id.in_(document_ids))
         result = await self._session.execute(stmt)
         rows = list(result.scalars().all())
         return {row.id: row for row in rows}

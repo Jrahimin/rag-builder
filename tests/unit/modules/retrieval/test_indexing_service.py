@@ -13,7 +13,6 @@ from app.models.document import Document, DocumentStatus
 from app.modules.retrieval.services.indexing_service import IndexingService
 from app.platform.jobs.configuration import build_job_configuration
 from app.platform.jobs.contracts import DurableJobSubmitter, JobSubmission
-from app.platform.providers.implementations.hash_embedding import HashEmbeddingProvider
 
 pytestmark = pytest.mark.unit
 
@@ -66,11 +65,8 @@ def service(
         job_configuration=build_job_configuration(
             Settings(embedding={"dimensions": 8, "model": "m"})
         ),
-        embedder=HashEmbeddingProvider(model="m", dimensions=8, provider_version="1"),
         retrieval_config=RetrievalConfig(),
         job_max_attempts=3,
-        embedding_batch_size=32,
-        filterable_metadata_keys=["source"],
     )
     repository = MagicMock()
     repository.flush = AsyncMock()
@@ -113,7 +109,11 @@ async def test_enqueue_embed_sets_status_and_enqueues(
     job = job_submitter.stage.await_args.args[0]
     assert job.name == "document.embed"
     assert job.document_id == document.id
-    assert job.payload == {"document_version": 1, "embedding_set_version": 1}
+    assert job.payload == {
+        "document_version": 1,
+        "embedding_set_version": 1,
+        "operation": "reembed",
+    }
     job_submitter.dispatch.assert_awaited_once_with(result.job_id)
 
 
@@ -156,11 +156,8 @@ async def test_enqueue_embed_if_enabled_respects_flag(
         job_configuration=build_job_configuration(
             Settings(embedding={"dimensions": 8, "model": "m"})
         ),
-        embedder=HashEmbeddingProvider(model="m", dimensions=8, provider_version="1"),
         retrieval_config=RetrievalConfig(auto_embed=False),
         job_max_attempts=3,
-        embedding_batch_size=32,
-        filterable_metadata_keys=[],
     )
     document = _document(project_id, DocumentStatus.CHUNKED)
     repository = MagicMock()

@@ -117,6 +117,7 @@ export const jobFixture: Job = {
   failure_code: "parse_failed",
   failure_message: "Parser rejected the document.",
   failure_details: null,
+  result: null,
   created_at: now,
   updated_at: now,
 };

@@ -31,6 +31,8 @@ class DocumentStatus(StrEnum):
     EMBEDDED = "embedded"
     INDEXING = "indexing"
     READY = "ready"
+    DELETING = "deleting"
+    PURGING = "purging"
 
 
 class Document(Base, UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixin, ProjectScopedMixin):

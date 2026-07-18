@@ -9,7 +9,8 @@ Organization API key and verify that `{project_id}` belongs to that Organization
 
 List newest jobs with `limit` (1–100), `offset`, and optional `state`,
 `job_type`, or `document_id` filters. Job types are `document.process`,
-`document.embed`, and `document.index`; states are `queued`, `running`,
+`document.embed`, `document.index`, `corpus.reembed`, `corpus.reindex`,
+`document.delete`, `document.purge`, and `storage.reconcile`; states are `queued`, `running`,
 `retry_scheduled`, `succeeded`, and `failed`.
 
 The paginated response exposes stage/progress, attempts, lease/heartbeat,

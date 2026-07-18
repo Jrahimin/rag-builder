@@ -65,9 +65,10 @@ async def _process(
         project_id=run.project_id,
         settings=settings,
         job_submitter=jobs,
-        embedder=embedder,
     )
-    return indexing.build_embed_job(document)
+    definition = indexing.build_embed_job(document)
+    definition.payload["operation"] = str(run.payload.get("operation", "ingest"))
+    return definition
 
 
 def _document_version(run: JobRun) -> int:

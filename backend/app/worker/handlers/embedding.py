@@ -7,13 +7,14 @@ import uuid
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.composition.retrieval import build_indexing_service
 from app.core.config import Settings
+from app.models.index_build import IndexBuildOperation
 from app.models.job_run import JobRun, JobType
 from app.modules.jobs.services.job_service import JobService
 from app.platform.jobs.contracts import JobDefinition
 from app.platform.jobs.errors import PermanentJobError
 from app.worker.broker import broker
+from app.worker.handlers.corpus import execute_index_build
 from app.worker.job_runtime import JobProgressReporter, run_durable_job
 
 logger = structlog.get_logger(__name__)
@@ -28,20 +29,17 @@ async def _embed(
 ) -> JobDefinition | None:
     if run.document_id is None:
         raise PermanentJobError("Embedding job has no document reference.")
-    service = build_indexing_service(
-        session=session,
-        project_id=run.project_id,
-        settings=settings,
-        job_submitter=jobs,
+    del jobs
+    _document_version(run)
+    await execute_index_build(
+        session,
+        run,
+        settings,
+        reporter,
+        operation=IndexBuildOperation(str(run.payload.get("operation", "ingest"))),
+        auto_activate_default=True,
     )
-    document = await service.run_embed(
-        run.document_id,
-        expected_document_version=_document_version(run),
-        on_progress=reporter.report,
-    )
-    if document is None or not settings.retrieval.auto_index:
-        return None
-    return service.build_index_job(document)
+    return None
 
 
 def _document_version(run: JobRun) -> int:

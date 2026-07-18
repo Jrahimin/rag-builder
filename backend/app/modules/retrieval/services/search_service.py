@@ -9,6 +9,7 @@ import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import RetrievalConfig, RetrievalStrategy
+from app.modules.retrieval.repositories.index_build_repository import IndexBuildRepository
 from app.modules.retrieval.retrievers.base_retriever import BaseRetriever
 from app.modules.retrieval.retrievers.hybrid_retriever import HybridRetriever
 from app.modules.retrieval.retrievers.models import RetrievalContext, RetrievalFilters
@@ -38,6 +39,7 @@ class SearchService:
         self._reranker = reranker
         self._config = retrieval_config
         self._hydrator = ResultHydrator(session, project_id)
+        self._builds = IndexBuildRepository(session, project_id)
 
     async def search(self, request: SearchRequest) -> SearchResponse:
         started = time.perf_counter()
@@ -46,11 +48,29 @@ class SearchService:
         rerank_enabled = (
             request.rerank if request.rerank is not None else self._config.rerank_enabled
         )
+        active_build = await self._builds.get_active()
+        if active_build is None:
+            elapsed_ms = int((time.perf_counter() - started) * 1000)
+            return SearchResponse(
+                results=[],
+                query=request.query,
+                top_k=top_k,
+                diagnostics=SearchDiagnostics(
+                    strategy=strategy,
+                    duration_ms=elapsed_ms,
+                    rerank_requested=False,
+                    rerank_status="empty_corpus",
+                    reranker_provider=None,
+                    reranker_model=None,
+                    reranker_version=None,
+                ),
+            )
 
         context = RetrievalContext(
             project_id=self._project_id,
             query=request.query,
-            embedding_set_version=self._config.embedding_set_version,
+            index_build_id=active_build.id,
+            embedding_set_version=active_build.embedding_set_version,
             filters=RetrievalFilters(
                 document_id=request.document_id,
                 metadata=dict(request.metadata_filter),

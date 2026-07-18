@@ -10,23 +10,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import RetrievalConfig
 from app.core.exceptions import BadRequestError, NotFoundError
 from app.models.document import Document, DocumentStatus
-from app.modules.retrieval.repositories.chunk_embedding_repository import ChunkEmbeddingRepository
 from app.modules.retrieval.repositories.retrieval_document_repository import (
     RetrievalDocumentRepository,
-)
-from app.modules.retrieval.workflows.embedding_workflow import EmbeddingWorkflow
-from app.modules.retrieval.workflows.retrieval_indexing_workflow import (
-    RetrievalIndexingWorkflow,
 )
 from app.platform.jobs.contracts import (
     DurableJobSubmitter,
     JobConfiguration,
     JobDefinition,
-    JobProgressCallback,
     RetryPolicy,
 )
 from app.platform.jobs.names import DOCUMENT_EMBED, DOCUMENT_INDEX
-from app.platform.providers.contracts.embedding import BaseEmbeddingProvider
 
 logger = structlog.get_logger(__name__)
 
@@ -47,24 +40,17 @@ class IndexingService:
         project_id: uuid.UUID,
         job_submitter: DurableJobSubmitter,
         job_configuration: JobConfiguration,
-        embedder: BaseEmbeddingProvider,
         retrieval_config: RetrievalConfig,
         *,
         job_max_attempts: int,
-        embedding_batch_size: int,
-        filterable_metadata_keys: list[str],
     ) -> None:
         self._session = session
         self._project_id = project_id
         self._job_submitter = job_submitter
         self._job_configuration = job_configuration
         self._job_max_attempts = job_max_attempts
-        self._embedder = embedder
         self._config = retrieval_config
-        self._embedding_batch_size = embedding_batch_size
-        self._filterable_metadata_keys = filterable_metadata_keys
         self._document_repository = RetrievalDocumentRepository(session, project_id)
-        self._embedding_repository = ChunkEmbeddingRepository(session, project_id)
 
     @property
     def embedding_set_version(self) -> int:
@@ -110,47 +96,6 @@ class IndexingService:
         document.__dict__["job_id"] = submission.job_id
         return document
 
-    async def run_embed(
-        self,
-        document_id: uuid.UUID,
-        *,
-        expected_document_version: int | None = None,
-        on_progress: JobProgressCallback | None = None,
-    ) -> Document | None:
-        workflow = EmbeddingWorkflow(
-            session=self._session,
-            project_id=self._project_id,
-            embedder=self._embedder,
-            embedding_set_version=self._config.embedding_set_version,
-            batch_size=self._embedding_batch_size,
-            on_progress=on_progress,
-        )
-        return await workflow.run(
-            document_id,
-            expected_document_version=expected_document_version,
-        )
-
-    async def run_index(
-        self,
-        document_id: uuid.UUID,
-        *,
-        expected_document_version: int | None = None,
-        on_progress: JobProgressCallback | None = None,
-    ) -> Document | None:
-        workflow = RetrievalIndexingWorkflow(
-            session=self._session,
-            project_id=self._project_id,
-            embedder=self._embedder,
-            embedding_set_version=self._config.embedding_set_version,
-            filterable_metadata_keys=self._filterable_metadata_keys,
-            fts_regconfig=self._config.fts_regconfig,
-            on_progress=on_progress,
-        )
-        return await workflow.run(
-            document_id,
-            expected_document_version=expected_document_version,
-        )
-
     def _embed_idempotency_key(self, document: Document) -> str:
         return (
             f"document.embed:{document.project_id}:{document.id}:"
@@ -173,6 +118,7 @@ class IndexingService:
             payload={
                 "document_version": document.version,
                 "embedding_set_version": self._config.embedding_set_version,
+                "operation": "reembed",
             },
             idempotency_key=self._embed_idempotency_key(document),
             retry=RetryPolicy(max_attempts=self._job_max_attempts),
@@ -186,6 +132,7 @@ class IndexingService:
             payload={
                 "document_version": document.version,
                 "embedding_set_version": self._config.embedding_set_version,
+                "operation": "reindex",
             },
             idempotency_key=self._index_idempotency_key(document),
             retry=RetryPolicy(max_attempts=self._job_max_attempts),

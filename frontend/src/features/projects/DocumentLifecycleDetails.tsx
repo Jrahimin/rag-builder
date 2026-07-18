@@ -1,7 +1,9 @@
 import { Check, Circle, X } from "lucide-react";
+import { useState } from "react";
 import type { Document } from "../../api/operatorApiClient";
 import { StatusBadge } from "../../components/StatusBadge";
 import { formatBytes, formatDate } from "../../shared/formatters";
+import { useDocumentLifecycleAction } from "../../api/operatorConsoleQueries";
 
 const stages = ["uploaded", "parsing", "chunking", "embedding", "indexing", "ready"];
 const stageIndex: Record<string, number> = {
@@ -19,11 +21,15 @@ const stageIndex: Record<string, number> = {
 
 export function DocumentLifecycleDetails({
   document,
+  projectId,
   onClose,
 }: {
   document: Document;
+  projectId: string;
   onClose: () => void;
 }) {
+  const lifecycle = useDocumentLifecycleAction(projectId);
+  const [purgeText, setPurgeText] = useState("");
   const activeIndex = stageIndex[document.status] ?? 0;
   return (
     <aside className="detail-panel" aria-label="Document details">
@@ -103,6 +109,55 @@ export function DocumentLifecycleDetails({
             <p>{document.error_message}</p>
           </section>
         )}
+        <section>
+          <h3>Guarded actions</h3>
+          <div className="button-row">
+            <button
+              type="button"
+              disabled={lifecycle.isPending}
+              onClick={() =>
+                window.confirm("Reprocess this document into a new isolated snapshot?") &&
+                lifecycle.mutate({ documentId: document.id, action: "reprocess" })
+              }
+            >
+              Reprocess
+            </button>
+            <button
+              type="button"
+              disabled={lifecycle.isPending}
+              onClick={() =>
+                window.confirm(
+                  "Delete this document from the active corpus? Retained artifacts remain reversible.",
+                ) && lifecycle.mutate({ documentId: document.id, action: "delete" })
+              }
+            >
+              Delete
+            </button>
+          </div>
+          <div className="lab-danger-zone">
+            <p>
+              Purge is irreversible. Type <strong>{document.filename}</strong> to remove every
+              relational and storage artifact.
+            </p>
+            <div className="lab-confirm-row">
+              <input
+                aria-label="Purge confirmation"
+                value={purgeText}
+                onChange={(event) => setPurgeText(event.target.value)}
+                placeholder={document.filename}
+              />
+              <button
+                className="danger-button"
+                type="button"
+                disabled={lifecycle.isPending || purgeText !== document.filename}
+                onClick={() => lifecycle.mutate({ documentId: document.id, action: "purge" })}
+              >
+                Purge permanently
+              </button>
+            </div>
+          </div>
+          {lifecycle.isError && <p className="failure-box">{lifecycle.error.message}</p>}
+        </section>
       </div>
     </aside>
   );

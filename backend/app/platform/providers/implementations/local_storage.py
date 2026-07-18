@@ -24,7 +24,7 @@ class LocalFilesystemStorageProvider(BaseStorageProvider):
     def _path_for(self, key: str) -> Path:
         normalized = key.lstrip("/").replace("\\", "/")
         path = (self._root / normalized).resolve()
-        if not str(path).startswith(str(self._root)):
+        if not path.is_relative_to(self._root):
             msg = "Storage key escapes configured root"
             raise ProviderError(msg, provider_name="local")
         return path
@@ -68,6 +68,17 @@ class LocalFilesystemStorageProvider(BaseStorageProvider):
         if not self._root.is_dir():
             msg = "Configured local storage root is not a directory"
             raise ProviderError(msg, provider_name="local")
+
+    async def list_keys(self, prefix: str) -> list[str]:
+        base = self._path_for(prefix)
+        if not base.exists():
+            return []
+        if base.is_file():
+            return [prefix]
+        paths = await asyncio.to_thread(
+            lambda: sorted(path for path in base.rglob("*") if path.is_file())
+        )
+        return [path.relative_to(self._root).as_posix() for path in paths]
 
     async def delete_document_tree(
         self,

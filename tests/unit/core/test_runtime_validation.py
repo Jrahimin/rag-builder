@@ -15,6 +15,8 @@ from app.core.config import (
     JobsConfig,
     LLMBackend,
     LLMConfig,
+    MalwareScanConfig,
+    MalwareScannerBackend,
     MinioConfig,
     OcrBackend,
     OcrConfig,
@@ -39,6 +41,7 @@ def _production_settings(**updates: object) -> Settings:
         "redis": RedisConfig(password="redis-secret"),
         "minio": MinioConfig(access_key="storage-user", secret_key="storage-secret"),
         "storage": StorageConfig(backend=StorageBackend.MINIO),
+        "malware_scan": MalwareScanConfig(backend=MalwareScannerBackend.CLAMAV),
         "jobs": JobsConfig(backend=JobQueueBackend.TASKIQ, dispatcher_enabled=True),
         "embedding": EmbeddingConfig(
             backend=EmbeddingBackend.OPENAI,

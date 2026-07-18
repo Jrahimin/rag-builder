@@ -8,7 +8,6 @@ from typing import Any
 from sqlalchemy import delete, literal, select, text
 
 from app.models.chunk_embedding import ChunkEmbedding
-from app.models.document import Document, DocumentStatus
 from app.models.document_chunk import DocumentChunk
 from app.modules.retrieval.retrievers.models import CandidateHit, CandidateSource
 from app.platform.persistence.project_scoped_repository import ProjectScopedRepository
@@ -78,6 +77,7 @@ class ChunkEmbeddingRepository(ProjectScopedRepository[ChunkEmbedding]):
         *,
         query_vector: list[float],
         top_k: int,
+        index_build_id: uuid.UUID | None = None,
         embedding_set_version: int,
         provider: str,
         model: str,
@@ -101,20 +101,14 @@ class ChunkEmbeddingRepository(ProjectScopedRepository[ChunkEmbedding]):
                 (DocumentChunk.id == self.model.chunk_id)
                 & (DocumentChunk.project_id == self.model.project_id),
             )
-            .join(
-                Document,
-                (Document.id == self.model.document_id)
-                & (Document.project_id == self.model.project_id),
-            )
             .where(self.model.project_id == self._project_id)
             .where(DocumentChunk.project_id == self._project_id)
-            .where(Document.project_id == self._project_id)
-            .where(Document.status == DocumentStatus.READY)
-            .where(Document.deleted_at.is_(None))
             .where(self.model.embedding_set_version == embedding_set_version)
             .where(self.model.provider == provider)
             .where(self.model.model == model)
         )
+        if index_build_id is not None:
+            stmt = stmt.where(self.model.index_build_id == index_build_id)
         if document_id is not None:
             stmt = stmt.where(self.model.document_id == document_id)
         for key, value in (metadata_filter or {}).items():

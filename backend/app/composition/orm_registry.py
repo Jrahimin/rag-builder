@@ -19,6 +19,7 @@ from app.models.document import Document  # noqa: F401
 from app.models.document_chunk import DocumentChunk  # noqa: F401
 from app.models.evaluation_dataset import EvaluationDataset  # noqa: F401
 from app.models.evaluation_run import EvaluationRun  # noqa: F401
+from app.models.index_build import IndexBuild, ProjectIndexPointer  # noqa: F401
 from app.models.job_configuration_snapshot import JobConfigurationSnapshot  # noqa: F401
 from app.models.job_outbox import JobOutbox  # noqa: F401
 from app.models.job_run import JobRun  # noqa: F401

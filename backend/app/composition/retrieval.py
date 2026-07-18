@@ -12,10 +12,6 @@ from app.modules.retrieval.services.indexing_service import IndexingService
 from app.platform.jobs.configuration import build_job_configuration
 from app.platform.jobs.contracts import DurableJobSubmitter, JobQueue
 from app.platform.jobs.implementations.job_queue_factory import create_job_queue
-from app.platform.providers.contracts.embedding import BaseEmbeddingProvider
-from app.platform.providers.implementations.embedding_factory import (
-    create_embedding_provider,
-)
 
 
 def build_indexing_service(
@@ -25,7 +21,6 @@ def build_indexing_service(
     settings: Settings,
     job_submitter: DurableJobSubmitter | None = None,
     job_queue: JobQueue | None = None,
-    embedder: BaseEmbeddingProvider | None = None,
 ) -> IndexingService:
     """Wire retrieval indexing from one explicit settings snapshot."""
     queue = job_queue if job_queue is not None else create_job_queue(settings)
@@ -40,9 +35,6 @@ def build_indexing_service(
         project_id=project_id,
         job_submitter=submitter,
         job_configuration=build_job_configuration(settings),
-        embedder=embedder if embedder is not None else create_embedding_provider(settings),
         retrieval_config=settings.retrieval,
         job_max_attempts=settings.jobs.max_attempts,
-        embedding_batch_size=settings.embedding.batch_size,
-        filterable_metadata_keys=settings.retrieval.filterable_metadata_keys,
     )

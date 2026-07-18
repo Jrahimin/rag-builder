@@ -35,6 +35,9 @@ async def test_search_service_uses_request_strategy_override() -> None:
         return_value=[CandidateHit(uuid.uuid4(), 0.5, CandidateSource.SEMANTIC)]
     )
     service._build_retriever = MagicMock(return_value=retriever)  # type: ignore[method-assign]
+    active_build = MagicMock(id=uuid.uuid4(), embedding_set_version=1)
+    service._builds = MagicMock()
+    service._builds.get_active = AsyncMock(return_value=active_build)
     service._hydrator = MagicMock()
     service._hydrator.hydrate = AsyncMock(
         return_value=[

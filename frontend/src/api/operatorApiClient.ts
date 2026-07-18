@@ -14,9 +14,20 @@ export type JobDetail = components["schemas"]["JobDetailResponse"];
 export type EvaluationDataset = components["schemas"]["EvaluationDatasetResponse"];
 export type EvaluationRun = components["schemas"]["EvaluationRunResponse"];
 export type QualitySummary = components["schemas"]["QualitySummary"];
+export type IndexBuild = components["schemas"]["IndexBuildResponse"];
+export type IndexBuildList = components["schemas"]["IndexBuildListResponse"];
+export type LifecycleJob = components["schemas"]["LifecycleJobResponse"];
+export type SearchRequest = components["schemas"]["SearchRequest"];
+export type SearchResponse = components["schemas"]["SearchResponse"];
+export type Conversation = components["schemas"]["ConversationResponse"];
+export type Message = components["schemas"]["MessageResponse"];
+export type ChatTurn = components["schemas"]["ChatTurnResponse"];
+export type StreamMessageResult = { content: string };
 export type ProjectPage = components["schemas"]["PaginatedResult_ProjectResponse_"];
 export type DocumentPage = components["schemas"]["PaginatedResult_DocumentResponse_"];
 export type JobPage = components["schemas"]["PaginatedResult_JobResponse_"];
+export type ConversationPage = components["schemas"]["PaginatedResult_ConversationResponse_"];
+export type MessagePage = components["schemas"]["PaginatedResult_MessageResponse_"];
 
 type ApiSuccess<T> = { success: true; data: T | null };
 type ApiFailure = {
@@ -109,8 +120,163 @@ export const operatorApiClient = {
     request<AuditEvent[]>(`${apiRoot}/operator/audit-events${query({ limit, offset })}`),
   getProjects: (limit = 100, offset = 0) =>
     request<ProjectPage>(`${apiRoot}/projects${query({ limit, offset })}`),
+  createProject: (name: string, description?: string) =>
+    request<Project>(`${apiRoot}/projects`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, description }),
+    }),
   getDocuments: (projectId: string, limit = 100, offset = 0) =>
     request<DocumentPage>(`${apiRoot}/projects/${projectId}/documents${query({ limit, offset })}`),
+  getDocument: (projectId: string, documentId: string) =>
+    request<Document>(`${apiRoot}/projects/${projectId}/documents/${documentId}`),
+  uploadDocument: (projectId: string, file: File, ocrLang?: string) => {
+    const body = new FormData();
+    body.append("file", file);
+    if (ocrLang) body.append("ocr_lang", ocrLang);
+    return request<Document>(`${apiRoot}/projects/${projectId}/documents`, {
+      method: "POST",
+      body,
+    });
+  },
+  reprocessDocument: (projectId: string, documentId: string) =>
+    request<Document>(`${apiRoot}/projects/${projectId}/documents/${documentId}/reprocess`, {
+      method: "POST",
+    }),
+  embedDocument: (projectId: string, documentId: string) =>
+    request<Document>(`${apiRoot}/projects/${projectId}/documents/${documentId}/embed`, {
+      method: "POST",
+    }),
+  indexDocument: (projectId: string, documentId: string) =>
+    request<Document>(`${apiRoot}/projects/${projectId}/documents/${documentId}/index`, {
+      method: "POST",
+    }),
+  deleteDocument: (projectId: string, documentId: string) =>
+    request<Document>(`${apiRoot}/projects/${projectId}/documents/${documentId}`, {
+      method: "DELETE",
+    }),
+  purgeDocument: (projectId: string, documentId: string) =>
+    request<Document>(`${apiRoot}/projects/${projectId}/documents/${documentId}/purge`, {
+      method: "DELETE",
+    }),
+  getIndexBuilds: (projectId: string) =>
+    request<IndexBuildList>(`${apiRoot}/projects/${projectId}/index-builds`),
+  reembedCorpus: (projectId: string) =>
+    request<LifecycleJob>(`${apiRoot}/projects/${projectId}/index-builds/reembed`, {
+      method: "POST",
+    }),
+  reindexCorpus: (projectId: string) =>
+    request<LifecycleJob>(`${apiRoot}/projects/${projectId}/index-builds/reindex`, {
+      method: "POST",
+    }),
+  reconcileStorage: (projectId: string) =>
+    request<LifecycleJob>(`${apiRoot}/projects/${projectId}/index-builds/reconcile-storage`, {
+      method: "POST",
+    }),
+  activateIndexBuild: (projectId: string, buildId: string) =>
+    request<IndexBuild>(`${apiRoot}/projects/${projectId}/index-builds/${buildId}/activate`, {
+      method: "POST",
+    }),
+  rollbackIndexBuild: (projectId: string) =>
+    request<IndexBuild>(`${apiRoot}/projects/${projectId}/index-builds/rollback`, {
+      method: "POST",
+    }),
+  search: (projectId: string, body: SearchRequest) =>
+    request<SearchResponse>(`${apiRoot}/projects/${projectId}/search`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  getConversations: (projectId: string, limit = 100, offset = 0) =>
+    request<ConversationPage>(
+      `${apiRoot}/projects/${projectId}/conversations${query({ limit, offset })}`,
+    ),
+  createConversation: (projectId: string, title?: string) =>
+    request<Conversation>(`${apiRoot}/projects/${projectId}/conversations`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: title ?? null }),
+    }),
+  getConversation: (projectId: string, conversationId: string) =>
+    request<Conversation>(`${apiRoot}/projects/${projectId}/conversations/${conversationId}`),
+  getMessages: (projectId: string, conversationId: string, limit = 200, offset = 0) =>
+    request<MessagePage>(
+      `${apiRoot}/projects/${projectId}/conversations/${conversationId}/messages${query({ limit, offset })}`,
+    ),
+  sendMessage: (projectId: string, conversationId: string, content: string, documentId?: string) =>
+    request<ChatTurn>(`${apiRoot}/projects/${projectId}/conversations/${conversationId}/messages`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content, document_id: documentId ?? null, metadata_filter: {} }),
+    }),
+  streamMessage: async (
+    projectId: string,
+    conversationId: string,
+    content: string,
+    onDelta: (delta: string) => void,
+    documentId?: string,
+  ): Promise<StreamMessageResult> => {
+    let response: Response;
+    try {
+      response = await fetch(
+        `${apiRoot}/projects/${projectId}/conversations/${conversationId}/messages/stream`,
+        {
+          method: "POST",
+          headers: { Accept: "text/event-stream", "Content-Type": "application/json" },
+          body: JSON.stringify({ content, document_id: documentId ?? null, metadata_filter: {} }),
+        },
+      );
+    } catch {
+      throw new OperatorApiError(
+        "The backend is unavailable. Start the API service and try again.",
+        0,
+        "backend_unavailable",
+      );
+    }
+    if (!response.ok || !response.body) {
+      throw new OperatorApiError(
+        "The streaming response could not be started.",
+        response.status,
+        "stream_unavailable",
+        response.headers.get("x-trace-id"),
+      );
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let streamed = "";
+    const consume = (frame: string) => {
+      const data = frame
+        .split("\n")
+        .filter((line) => line.startsWith("data:"))
+        .map((line) => line.slice(5).trim())
+        .join("\n");
+      if (!data) return;
+      const event = JSON.parse(data) as { event?: string; delta?: string; message?: string };
+      if (event.event === "error") {
+        throw new OperatorApiError(
+          event.message ?? "The streamed message failed.",
+          502,
+          "stream_failed",
+        );
+      }
+      if (event.event === "token" && event.delta) {
+        streamed += event.delta;
+        onDelta(event.delta);
+      }
+    };
+    while (true) {
+      const { done, value } = await reader.read();
+      buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done });
+      const frames = buffer.split("\n\n");
+      buffer = frames.pop() ?? "";
+      frames.forEach(consume);
+      if (done) break;
+    }
+    if (buffer.trim()) consume(buffer);
+    return { content: streamed };
+  },
   getJobs: (
     projectId: string,
     filters: {

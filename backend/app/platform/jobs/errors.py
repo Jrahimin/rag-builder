@@ -11,9 +11,15 @@ class JobError(Exception):
     code: str = "job_error"
 
     def __init__(
-        self, message: str, *, retryable: bool = False, context: dict[str, Any] | None = None
+        self,
+        message: str,
+        *,
+        code: str | None = None,
+        retryable: bool = False,
+        context: dict[str, Any] | None = None,
     ) -> None:
         self.message = message
+        self.code = code or self.code
         self.retryable = retryable
         self.context = context or {}
         super().__init__(message)

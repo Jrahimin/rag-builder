@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
 
-from app.core.config import Settings, StorageConfig
+from app.core.config import OcrBackend, OcrConfig, Settings, StorageConfig
 from app.platform.providers.contracts.embedding import EmbeddingBatchResult
 from app.platform.system.preflight_service import StartupPreflightService
 from app.platform.system.schemas import DependencyState
@@ -91,3 +91,24 @@ async def test_preflight_marks_disabled_ocr_as_skipped(monkeypatch) -> None:
     ).run()
     ocr = next(check for check in result.checks if check.name == "ocr_provider")
     assert ocr.state is DependencyState.SKIPPED
+
+
+async def test_preflight_warms_cached_ocr_provider(monkeypatch) -> None:
+    settings = Settings(ocr=OcrConfig(enabled=True, backend=OcrBackend.PADDLE))
+    service = StartupPreflightService(
+        settings=settings,
+        database=MagicMock(),
+        redis=MagicMock(),
+        storage=MagicMock(),
+    )
+    provider = MagicMock()
+    get_provider = MagicMock(return_value=provider)
+    monkeypatch.setattr(
+        "app.platform.system.preflight_service.get_ocr_provider",
+        get_provider,
+    )
+
+    result = await service._check_ocr()
+
+    assert result.state is DependencyState.OK
+    get_provider.assert_called_once_with(settings=settings)

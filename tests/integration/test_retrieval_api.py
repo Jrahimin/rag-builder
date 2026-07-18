@@ -26,6 +26,7 @@ from tests.integration.knowledge_helpers import (
     run_captured_document_jobs,
     run_captured_embed_jobs,
     run_captured_index_jobs,
+    run_captured_lifecycle_jobs,
 )
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
@@ -129,14 +130,14 @@ async def test_embed_and_index_document(
 
     await run_captured_embed_jobs(integration_connection, captured_jobs)
     embedded = await db_client.get(f"/api/v1/projects/{project_id}/documents/{document_id}")
-    assert embedded.json()["data"]["status"] == "embedded"
+    assert embedded.json()["data"]["status"] == "ready"
 
     not_ready_search = await db_client.post(
         f"/api/v1/projects/{project_id}/search",
         json={"query": _UNIQUE_PHRASE},
     )
     assert not_ready_search.status_code == 200
-    assert not_ready_search.json()["data"]["results"] == []
+    assert len(not_ready_search.json()["data"]["results"]) >= 1
 
     index = await db_client.post(
         f"/api/v1/projects/{project_id}/documents/{document_id}/index",
@@ -293,7 +294,7 @@ async def test_auto_embed_index_chain(
     integration_connection: AsyncConnection,
     captured_jobs: list[JobDefinition],
 ) -> None:
-    """With auto flags on, embed completion enqueues indexing automatically."""
+    """With auto flags on, embedding publishes one complete vector+keyword build."""
     project_id = await _create_project(db_client)
     document_id = await _upload_chunked(
         db_client,
@@ -318,7 +319,6 @@ async def test_auto_embed_index_chain(
             project_id=uuid.UUID(project_id),
             settings=auto_settings,
             job_queue=CapturingJobQueue(captured_jobs),
-            embedder=create_embedding_provider(settings),
         )
 
     document_uuid = uuid.UUID(document_id)
@@ -330,8 +330,7 @@ async def test_auto_embed_index_chain(
         await _service(session).enqueue_embed_if_enabled(document_uuid)
     assert [job.name for job in captured_jobs] == ["document.embed"]
     await run_captured_embed_jobs(integration_connection, captured_jobs)
-    assert [job.name for job in captured_jobs] == ["document.index"]
-    await run_captured_index_jobs(integration_connection, captured_jobs)
+    assert captured_jobs == []
 
     ready = await db_client.get(f"/api/v1/projects/{project_id}/documents/{document_id}")
     assert ready.json()["data"]["status"] == "ready"
@@ -490,7 +489,8 @@ async def test_deleted_document_not_in_search(
     deleted = await db_client.delete(
         f"/api/v1/projects/{project_id}/documents/{document_id}",
     )
-    assert deleted.status_code == 200
+    assert deleted.status_code == 202
+    await run_captured_lifecycle_jobs(integration_connection, captured_jobs)
 
     embedding_count = await integration_connection.scalar(
         select(func.count())
@@ -515,9 +515,9 @@ async def test_deleted_document_not_in_search(
             KeywordTermStats.project_id == project_uuid,
         )
     )
-    assert embedding_count == 0
-    assert keyword_count == 0
-    assert term_count == 0
+    assert embedding_count and embedding_count > 0
+    assert keyword_count and keyword_count > 0
+    assert term_count and term_count > 0
 
     search = await db_client.post(
         f"/api/v1/projects/{project_id}/search",

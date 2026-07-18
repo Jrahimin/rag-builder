@@ -45,6 +45,7 @@ Error:
 | Projects | [project_api.md](project_api.md) | `/api/v1/projects` |
 | Knowledge | [knowledge_api.md](knowledge_api.md) | `/api/v1/projects/{project_id}/documents` |
 | Jobs | [jobs_api.md](jobs_api.md) | `/api/v1/projects/{project_id}/jobs` |
+| Index lifecycle | [index_lifecycle_api.md](index_lifecycle_api.md) | `/api/v1/projects/{project_id}/index-builds` |
 | Retrieval | [retrieval_api.md](retrieval_api.md) | `/api/v1/projects/{project_id}` (search, embed, index on documents prefix) |
 | Conversations | [conversation_api.md](conversation_api.md) | `/api/v1/projects/{project_id}/conversations` |
 | Evaluation | [evaluation_api.md](evaluation_api.md) | `/api/v1/projects/{project_id}/evaluations` |

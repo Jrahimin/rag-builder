@@ -27,7 +27,7 @@ semantics.
 
 ```mermaid
 flowchart LR
-    A["POST documents"] --> B["DocumentService.upload"]
+    A["POST documents"] --> B["size + MIME/signature + malware validation"]
     B --> C["StorageProvider.put raw bytes"]
     C --> D["Document: uploaded → queued"]
     D --> E["Tx: snapshot + JobRun + outbox"]
@@ -37,10 +37,10 @@ flowchart LR
     H --> I["ChunkingService"]
     I --> J["Document: chunked"]
     J --> K["durable document.embed"]
-    K --> L["EmbeddingWorkflow"]
-    L --> M["Document: embedded"]
-    M --> N["durable document.index"]
-    N --> O["RetrievalIndexingWorkflow"]
+    K --> L["private full IndexBuild"]
+    L --> M["vectors + keywords + stats"]
+    M --> N["validate complete snapshot"]
+    N --> O["atomic active-pointer swap"]
     O --> P["Document: ready"]
 ```
 
@@ -49,7 +49,7 @@ flowchart LR
 | Concern | Owner | Verified behavior |
 | --- | --- | --- |
 | HTTP streaming | `api/v1/routes/documents_router.py` | Reads `UploadFile` in bounded chunks and builds `DocumentIngestInput`. |
-| Hash, duplicate detection, storage, lifecycle | `modules/knowledge/services/document_service.py` | Spools while hashing, enforces size, writes raw bytes, and stages the Document plus durable processing job. |
+| Validation, hash, duplicate detection, storage, lifecycle | `modules/knowledge/services/{document_service,file_validation_service}.py` | Spools once, enforces size/type/signature/integrity, scans through `BaseMalwareScanner`, then writes raw bytes and stages the durable job. |
 | Storage selection | `dependencies/knowledge.py` → storage factory | Deployment configuration chooses local or MinIO behind `BaseStorageProvider`. |
 | Durable submission | `modules/jobs/services/job_service.py` | Commits configuration snapshot, idempotent JobRun, and outbox intent in the caller transaction. |
 | Executor selection | `dependencies/knowledge.py` → job queue factory | Taskiq is the normal transport; inline is a test/development executor. |
@@ -84,22 +84,34 @@ structured job details and a sanitized Document message.
 
 ### Embedding and indexing
 
-When `auto_embed` is enabled, successful processing atomically stages the
-idempotent `document.embed` child job with the same configuration snapshot. The embed worker runs
-`EmbeddingWorkflow`, which loads Project-scoped chunks, replaces only the
-configured provider/model/embedding-set rows, batches calls through
-`BaseEmbeddingProvider`, and marks the document `embedded`.
+When `auto_embed` is enabled, successful processing stages an idempotent
+`document.embed` child job with the same configuration snapshot. The worker
+creates a private full-corpus `IndexBuild`, loads only current versioned chunks,
+batches calls through `BaseEmbeddingProvider`, then writes build-scoped vector,
+keyword, and BM25 statistics. Counts and the exact document/version manifest are
+validated before the build is sealed.
 
-When `auto_index` is enabled, successful embedding stages `document.index`, which validates the native pgvector
-rows, rebuilds PostgreSQL keyword rows and BM25 statistics, and marks the
-document `ready`. `composition/retrieval.py` is the single constructor for this
-service across API, worker, CLI, and integration-test execution, so one Settings
-snapshot controls queue, embedder, batch size, metadata keys, and index version.
+Automatic ingestion/reprocess builds activate after validation. Manual corpus
+re-embed/reindex builds remain validated until an operator activates them.
+Activation locks `ProjectIndexPointer` and atomically retains the former active
+build. A retry clears and reconstructs only its own private output, so a crash or
+provider failure cannot affect the active snapshot.
 
-Embedding and indexing use the same expected-version/advisory-lock fence and
-transactional replace semantics. A crash after output commit but before job
-success can replay without appending duplicate vectors, keyword rows, or BM25
-statistics; stale worker terminal writes are rejected by lease ownership.
+`IndexingService` now owns job staging only; the superseded in-place embedding
+and indexing workflows were removed. Build execution is owned by
+`IndexBuildWorkflow` and worker handlers.
+
+### Delete, purge, and reconciliation
+
+Delete and purge are durable jobs that first build and activate a complete
+snapshot excluding the target document. Delete then soft-deletes the document
+while retaining artifacts and the previous build for rollback. Purge removes
+chunks, all build-scoped vector/keyword rows, raw/parsed objects, and the
+relational row; retained builds containing it become superseded.
+
+`storage.reconcile` compares `BaseStorageProvider.list_keys(project prefix)`
+with every raw/parsed key implied by Project documents and stores missing/orphan
+sets in `JobRun.result`. It never deletes objects automatically.
 
 ## Job inspection and recovery
 
@@ -125,12 +137,12 @@ flowchart LR
     H --> I["SearchResponse"]
 ```
 
-`SearchService` resolves request overrides against `RetrievalConfig` and builds
+`SearchService` first resolves the Project's active complete `IndexBuild`, then resolves request overrides against `RetrievalConfig` and builds
 a `RetrievalContext`. Semantic SQL lives only in
 `ChunkEmbeddingRepository`; keyword SQL and BM25 persistence live in retrieval
-repositories/workflows. Both paths require matching `project_id`, active
-`embedding_set_version`, ready/non-deleted documents, and allowlisted metadata
-filters. Hybrid retrieval runs semantic and keyword candidates concurrently,
+repositories. Both paths require matching `project_id` and `index_build_id`, and
+apply allowlisted metadata filters. Document status is not a retrieval activation
+authority; the immutable build manifest/pointer is. Hybrid retrieval runs semantic and keyword candidates concurrently,
 fuses them with RRF, optionally reranks through `BaseRerankerProvider`, and
 falls back to fused order when reranking is unavailable. `ResultHydrator` is the
 single ORM-to-response hydration point. `SearchResponse.diagnostics` records the
@@ -208,6 +220,9 @@ loop exists.
 | Service lifecycle operations | `platform/domain/lifecycle_service.py` |
 | OCR language normalization | `platform/domain/ocr_language.py` |
 | Retrieval service construction | `composition/retrieval.py` |
+| Index build execution and atomic pointer transition | `modules/retrieval/workflows/index_build_workflow.py` |
+| Upload type/integrity checks | `modules/knowledge/services/file_validation_service.py` |
+| Malware scan boundary | `platform/providers/contracts/malware_scanner.py` |
 | Evaluation adapters and version capture | `composition/evaluation.py` |
 | Durable job/outbox construction and recovery | `composition/jobs.py` |
 | Lease, heartbeat, configuration restore, failure transition | `worker/job_runtime.py` |

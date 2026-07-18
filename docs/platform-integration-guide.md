@@ -449,8 +449,9 @@ export PROJECT_ID="<data.id from response>"
 
 ### What it is
 
-Upload sends a file to object storage and enqueues background processing: parse,
-optional OCR, structure-aware chunking.
+Upload validates supported type, MIME/signature, structural integrity, and
+malware status before it sends a file to object storage and enqueues background
+processing: parse, optional OCR, and structure-aware chunking.
 
 ### When to call
 
@@ -601,7 +602,8 @@ transient retries and expired-worker recovery do not require client action.
 | `GET` | `.../documents` | List documents (paginated) |
 | `GET` | `.../documents/{id}/chunks` | Inspect chunk text after processing |
 | `POST` | `.../documents/{id}/reprocess` | Re-run pipeline (bumps version) |
-| `DELETE` | `.../documents/{id}` | Remove document + indexes |
+| `DELETE` | `.../documents/{id}` | Stage reversible delete (returns durable `job_id`) |
+| `DELETE` | `.../documents/{id}/purge` | Stage irreversible full artifact purge |
 
 ---
 
@@ -617,7 +619,13 @@ can retrieve context.
 Usually **you do not need to** — the worker auto-enqueues embed and index when
 `APE_RETRIEVAL__AUTO_EMBED` and `APE_RETRIEVAL__AUTO_INDEX` are true.
 
-Call manually if auto flags are disabled or you need to reindex after a model change:
+The document endpoints remain useful when auto flags are disabled. For a safe
+whole-corpus model/configuration change, stage `/index-builds/reembed` or
+`/index-builds/reindex`, wait for the build to become `validated`, then call
+`/index-builds/{build_id}/activate`. The former active snapshot remains available
+through `/index-builds/rollback`.
+
+Per-document staging:
 
 ```bash
 # Only when status is chunked
@@ -1048,10 +1056,12 @@ your own user authorization before choosing `project_id`.
 
 ### Idempotency
 
-- Uploading the same file twice creates two documents unless you deduplicate in your app.
-- `reprocess` bumps `version` and replaces chunks — use when content changed or pipeline failed.
-- Duplicate delivery and worker recovery replace derived outputs safely; they do
-  not create duplicate chunks, active vectors, or keyword rows.
+- Uploading identical content twice in one Project returns
+  `document_content_duplicate`.
+- `reprocess` bumps `version`, replaces that version's chunks, and atomically
+  activates a complete new full-corpus build.
+- Duplicate delivery and worker recovery rebuild only private snapshot output;
+  partial or failed builds never replace the active vectors or keyword rows.
 - Revoked API keys fail immediately on cache miss; cached keys may work up to ~60s.
 
 ---

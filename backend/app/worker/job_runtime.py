@@ -15,9 +15,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.composition.jobs import build_job_service
 from app.core.config import Settings, get_settings
 from app.models.document import DocumentStatus
+from app.models.index_build import IndexBuildState
 from app.models.job_run import JobRun, JobType
 from app.modules.jobs.services.job_service import JobService
 from app.modules.knowledge.repositories.document_repository import DocumentRepository
+from app.modules.retrieval.repositories.index_build_repository import IndexBuildRepository
 from app.platform.db.session import Database
 from app.platform.jobs.configuration import apply_job_configuration
 from app.platform.jobs.contracts import JobConfiguration, JobDefinition
@@ -172,6 +174,21 @@ async def run_durable_job(
                     ):
                         document.status = DocumentStatus.FAILED
                         document.error_message = failure.message
+                if not will_retry:
+                    raw_build_id = failed_run.payload.get("build_id")
+                    if raw_build_id is not None:
+                        try:
+                            build_id = uuid.UUID(str(raw_build_id))
+                        except ValueError:
+                            build_id = None
+                        if build_id is not None:
+                            build = await IndexBuildRepository(session, project_uuid).get_by_id(
+                                build_id, for_update=True
+                            )
+                            if build is not None and build.state is IndexBuildState.BUILDING:
+                                build.state = IndexBuildState.FAILED
+                                build.failure_code = failure.code
+                                build.failure_message = failure.message
                 await session.commit()
                 logger.exception(
                     "durable_job_failed",

@@ -10,14 +10,21 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from app.core.config import Settings
-from app.core.exceptions import ConflictError, NotFoundError
+from app.core.exceptions import (
+    BadRequestError,
+    ConflictError,
+    NotFoundError,
+    ServiceUnavailableError,
+)
 from app.models.document import Document, DocumentStatus
 from app.modules.knowledge.repositories.document_repository import DocumentRepository
 from app.modules.knowledge.schemas.document import DocumentIngestInput
 from app.modules.knowledge.services.document_service import DocumentService
 from app.platform.jobs.configuration import build_job_configuration
 from app.platform.jobs.contracts import DurableJobSubmitter, JobSubmission
+from app.platform.providers.contracts.malware_scanner import MalwareScanResult
 from app.platform.providers.contracts.storage import BaseStorageProvider
+from app.platform.providers.errors import ProviderConnectionError
 
 pytestmark = pytest.mark.unit
 
@@ -121,7 +128,7 @@ async def test_upload_persists_and_stores_bytes(
     definition = job_submitter.stage.await_args.args[0]
     assert definition.name == "document.process"
     assert definition.document_id == result.id
-    assert definition.payload == {"document_version": 1}
+    assert definition.payload == {"document_version": 1, "operation": "ingest"}
     job_submitter.dispatch.assert_awaited_once_with(result.job_id)
     session.commit.assert_awaited_once()
 
@@ -144,6 +151,48 @@ async def test_upload_duplicate_content_raises_conflict(
     assert exc_info.value.code == "document_content_duplicate"
 
 
+async def test_upload_malware_fails_before_storage_or_job(
+    service: DocumentService,
+    storage: AsyncMock,
+    job_submitter: MagicMock,
+) -> None:
+    service._malware_scanner.scan = AsyncMock(
+        return_value=MalwareScanResult(clean=False, scanner="clamav", signature="Eicar-Test")
+    )
+
+    with pytest.raises(BadRequestError) as exc_info:
+        await service.upload(
+            DocumentIngestInput(
+                filename="unsafe.txt", content_type="text/plain", stream=_stream(b"payload")
+            )
+        )
+
+    assert exc_info.value.code == "document_malware_detected"
+    storage.put.assert_not_awaited()
+    job_submitter.stage.assert_not_awaited()
+
+
+async def test_upload_fails_closed_when_scanner_is_unavailable(
+    service: DocumentService,
+    storage: AsyncMock,
+    job_submitter: MagicMock,
+) -> None:
+    service._malware_scanner.scan = AsyncMock(
+        side_effect=ProviderConnectionError("offline", provider_name="clamav")
+    )
+
+    with pytest.raises(ServiceUnavailableError) as exc_info:
+        await service.upload(
+            DocumentIngestInput(
+                filename="safe.txt", content_type="text/plain", stream=_stream(b"payload")
+            )
+        )
+
+    assert exc_info.value.code == "malware_scanner_unavailable"
+    storage.put.assert_not_awaited()
+    job_submitter.stage.assert_not_awaited()
+
+
 async def test_get_raises_not_found(service: DocumentService, repository: AsyncMock) -> None:
     repository.get_by_id.return_value = None
 
@@ -153,7 +202,7 @@ async def test_get_raises_not_found(service: DocumentService, repository: AsyncM
     assert exc_info.value.code == "document_not_found"
 
 
-async def test_soft_delete_removes_storage(
+async def test_soft_delete_is_staged_as_durable_job(
     service: DocumentService,
     repository: AsyncMock,
     storage: AsyncMock,
@@ -179,10 +228,11 @@ async def test_soft_delete_removes_storage(
 
     result = await service.soft_delete(document.id)
 
-    assert result.deleted_at is not None
-    deleted_keys = [call.args[0] for call in storage.delete.await_args_list]
-    assert "p/d/gone.txt" in deleted_keys
-    assert f"{repository.project_id}/{document.id}/parsed/v1.json" in deleted_keys
-    storage.delete.assert_awaited()
-    storage.delete_document_tree.assert_awaited_once()
+    assert result.deleted_at is None
+    assert result.status is DocumentStatus.DELETING
+    definition = service._job_submitter.stage.await_args.args[0]
+    assert definition.name == "document.delete"
+    assert definition.document_id == document.id
+    storage.delete.assert_not_awaited()
+    storage.delete_document_tree.assert_not_awaited()
     session.commit.assert_awaited_once()

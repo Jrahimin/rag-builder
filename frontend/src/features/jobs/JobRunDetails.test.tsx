@@ -36,3 +36,22 @@ test("does not offer retry for a running job", async () => {
   expect(await screen.findByRole("button", { name: "Retry failed job" })).toBeDisabled();
   expect(screen.getByText(/available only after/)).toBeInTheDocument();
 });
+
+test("renders reconciliation result fields as a structured report", async () => {
+  vi.spyOn(operatorApiClient, "getJob").mockResolvedValue({
+    ...jobDetailFixture,
+    job_type: "storage.reconcile",
+    state: "succeeded",
+    progress: 100,
+    failure_code: null,
+    failure_message: null,
+    result: { expected: 12, actual: 11, missing: 1, orphan: 0, consistent: false },
+  });
+  renderOperatorComponent(
+    <JobRunDetails projectId={projectFixture.id} jobId={jobFixture.id} onClose={() => undefined} />,
+  );
+  expect(await screen.findByRole("heading", { name: "Reconciliation report" })).toBeInTheDocument();
+  expect(screen.getByText("Expected")).toBeInTheDocument();
+  expect(screen.getByText("Missing")).toBeInTheDocument();
+  expect(screen.getByText("No")).toHaveClass("result-inconsistent");
+});

@@ -7,7 +7,8 @@ import os
 import re
 import tempfile
 import uuid
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator
+from typing import BinaryIO, cast
 
 import structlog
 from sqlalchemy.exc import IntegrityError
@@ -16,16 +17,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.exceptions import ConflictError, PayloadTooLargeError, ServiceUnavailableError
 from app.models.document import Document, DocumentStatus
 from app.models.document_chunk import DocumentChunk
-from app.modules.knowledge.domain.document_storage_keys import iter_document_storage_keys
 from app.modules.knowledge.repositories.document_chunk_repository import DocumentChunkRepository
 from app.modules.knowledge.repositories.document_repository import DocumentRepository
 from app.modules.knowledge.schemas.chunk import ChunkListParams
 from app.modules.knowledge.schemas.document import DocumentIngestInput, DocumentListParams
+from app.modules.knowledge.services.file_validation_service import FileValidationService
+from app.platform.audit.contracts import AuditActorType, AuditEventType, AuditOutcome, AuditRecorder
 from app.platform.domain.lifecycle_service import (
     get_or_raise,
     list_paginated,
     require_not_deleted,
-    soft_delete,
 )
 from app.platform.domain.ocr_language import normalize_stored_ocr_lang
 from app.platform.http.pagination import ListParams, PaginatedResult
@@ -35,13 +36,12 @@ from app.platform.jobs.contracts import (
     JobDefinition,
     RetryPolicy,
 )
-from app.platform.jobs.names import DOCUMENT_PROCESS
+from app.platform.jobs.names import DOCUMENT_DELETE, DOCUMENT_PROCESS, DOCUMENT_PURGE
+from app.platform.providers.contracts.malware_scanner import BaseMalwareScanner
 from app.platform.providers.contracts.storage import BaseStorageProvider
 from app.platform.providers.errors import ProviderError
 
 logger = structlog.get_logger(__name__)
-
-type OnDocumentDeleteFn = Callable[[Document], Awaitable[None]]
 
 _UNSAFE_FILENAME = re.compile(r"[^\w.\-]+")
 _NOT_FOUND = {"message": "Document not found.", "code": "document_not_found"}
@@ -83,64 +83,95 @@ class DocumentService:
         *,
         job_max_attempts: int,
         max_upload_bytes: int,
-        on_document_delete: OnDocumentDeleteFn | None = None,
+        malware_scanner: BaseMalwareScanner | None = None,
+        file_validator: FileValidationService | None = None,
+        audit: AuditRecorder | None = None,
     ) -> None:
         self._session = session
         self._repository = repository
         self._storage = storage
+        if malware_scanner is None:
+            from app.platform.providers.implementations.malware_scanner_provider import (
+                DisabledMalwareScanner,
+            )
+
+            malware_scanner = DisabledMalwareScanner()
+        self._malware_scanner = malware_scanner
+        self._file_validator = file_validator or FileValidationService()
         self._job_submitter = job_submitter
         self._job_configuration = job_configuration
         self._job_max_attempts = job_max_attempts
         self._max_upload_bytes = max_upload_bytes
-        self._on_document_delete = on_document_delete
+        self._audit = audit
 
     async def upload(self, data: DocumentIngestInput) -> Document:
-        digest, size_bytes, replay_stream = await self._hash_stream(data.stream)
-        if await self._repository.exists_by_content_sha256(digest):
-            raise _duplicate_content()
-
-        document_id = uuid.uuid4()
-        storage_key = build_storage_key(self._repository.project_id, document_id, data.filename)
-
-        document = Document(
-            id=document_id,
-            project_id=self._repository.project_id,
-            filename=safe_filename(data.filename),
-            content_type=data.content_type,
-            size_bytes=size_bytes,
-            storage_key=storage_key,
-            content_sha256=digest,
-            status=DocumentStatus.UPLOADED,
-            version=1,
-            ocr_lang=normalize_stored_ocr_lang(data.ocr_lang),
-        )
-        self._repository.add(document)
-
+        digest, size_bytes, spool = await self._hash_stream(data.stream)
         try:
-            await self._storage.put(
-                storage_key,
-                replay_stream,
-                content_type=data.content_type,
-                size_bytes=size_bytes,
+            content_type = self._file_validator.validate(
+                filename=data.filename, content_type=data.content_type, file=spool
             )
-        except ProviderError as exc:
-            await self._session.rollback()
-            raise ServiceUnavailableError(
-                message="Object storage is unavailable.",
-                code="storage_unavailable",
-            ) from exc
+            try:
+                verdict = await self._malware_scanner.scan(self._spool_stream(spool))
+            except ProviderError as exc:
+                raise ServiceUnavailableError(
+                    message="Malware scanning is unavailable.",
+                    code="malware_scanner_unavailable",
+                ) from exc
+            if not verdict.clean:
+                from app.core.exceptions import BadRequestError
 
-        try:
-            await self._repository.flush()
-            return await self._stage_processing(document)
-        except IntegrityError as exc:
-            await self._session.rollback()
-            await self._storage.delete(storage_key)
-            raise _duplicate_content() from exc
-        except Exception:
-            await self._session.rollback()
-            await self._storage.delete(storage_key)
-            raise
+                raise BadRequestError(
+                    message="The uploaded file failed malware scanning.",
+                    code="document_malware_detected",
+                    context={"scanner": verdict.scanner, "signature": verdict.signature},
+                )
+            if await self._repository.exists_by_content_sha256(digest):
+                raise _duplicate_content()
+
+            document_id = uuid.uuid4()
+            storage_key = build_storage_key(self._repository.project_id, document_id, data.filename)
+
+            document = Document(
+                id=document_id,
+                project_id=self._repository.project_id,
+                filename=safe_filename(data.filename),
+                content_type=content_type,
+                size_bytes=size_bytes,
+                storage_key=storage_key,
+                content_sha256=digest,
+                status=DocumentStatus.UPLOADED,
+                version=1,
+                ocr_lang=normalize_stored_ocr_lang(data.ocr_lang),
+            )
+            self._repository.add(document)
+
+            try:
+                await self._storage.put(
+                    storage_key,
+                    self._spool_stream(spool),
+                    content_type=content_type,
+                    size_bytes=size_bytes,
+                )
+            except ProviderError as exc:
+                await self._session.rollback()
+                raise ServiceUnavailableError(
+                    message="Object storage is unavailable.",
+                    code="storage_unavailable",
+                ) from exc
+
+            try:
+                await self._repository.flush()
+                return await self._stage_processing(document, operation="ingest")
+            except IntegrityError as exc:
+                await self._session.rollback()
+                await self._storage.delete(storage_key)
+                raise _duplicate_content() from exc
+            except Exception:
+                await self._session.rollback()
+                await self._storage.delete(storage_key)
+                raise
+        finally:
+            spool.close()
 
     async def reprocess(
         self,
@@ -160,6 +191,11 @@ class DocumentService:
             message=_DELETED["message"],
             code=_DELETED["code"],
         )
+        if document.status in {DocumentStatus.DELETING, DocumentStatus.PURGING}:
+            raise ConflictError(
+                message="A destructive document lifecycle job is already pending.",
+                code="document_lifecycle_pending",
+            )
 
         document.version += 1
         document.error_message = None
@@ -174,16 +210,16 @@ class DocumentService:
         if ocr_lang is not None:
             document.ocr_lang = normalize_stored_ocr_lang(ocr_lang)
 
-        return await self._stage_processing(document)
+        return await self._stage_processing(document, operation="reprocess")
 
-    async def _stage_processing(self, document: Document) -> Document:
+    async def _stage_processing(self, document: Document, *, operation: str) -> Document:
         document.status = DocumentStatus.QUEUED
         submission = await self._job_submitter.stage(
             JobDefinition(
                 name=DOCUMENT_PROCESS,
                 project_id=document.project_id,
                 document_id=document.id,
-                payload={"document_version": document.version},
+                payload={"document_version": document.version, "operation": operation},
                 idempotency_key=(
                     f"document.process:{document.project_id}:{document.id}:v{document.version}"
                 ),
@@ -220,7 +256,7 @@ class DocumentService:
         document_id: uuid.UUID,
         params: ChunkListParams,
     ) -> PaginatedResult[DocumentChunk]:
-        await self.get(document_id)
+        document = await self.get(document_id)
         chunk_repository = DocumentChunkRepository(
             self._session,
             self._repository.project_id,
@@ -229,8 +265,11 @@ class DocumentService:
             document_id,
             limit=params.limit,
             offset=params.offset,
+            document_version=document.version,
         )
-        total = await chunk_repository.count_by_document(document_id)
+        total = await chunk_repository.count_by_document(
+            document_id, document_version=document.version
+        )
         return PaginatedResult(
             items=items,
             total=total,
@@ -239,57 +278,61 @@ class DocumentService:
         )
 
     async def soft_delete(self, document_id: uuid.UUID) -> Document:
+        return await self._stage_destructive(document_id, purge=False)
+
+    async def purge(self, document_id: uuid.UUID) -> Document:
+        return await self._stage_destructive(document_id, purge=True)
+
+    async def _stage_destructive(self, document_id: uuid.UUID, *, purge: bool) -> Document:
         document = await get_or_raise(
             self._repository,
             document_id,
             message=_NOT_FOUND["message"],
             code=_NOT_FOUND["code"],
+            include_deleted=True,
         )
-        if self._on_document_delete is not None:
-            await self._on_document_delete(document)
-        chunk_repository = DocumentChunkRepository(
-            self._session,
-            self._repository.project_id,
-        )
-        await chunk_repository.delete_by_document(document.id)
-        document = await soft_delete(
-            self._session,
-            self._repository,
-            document_id,
-            not_found_message=_NOT_FOUND["message"],
-            not_found_code=_NOT_FOUND["code"],
-        )
-        await self._delete_document_storage(document)
-        return document
-
-    async def _delete_document_storage(self, document: Document) -> None:
-        for storage_key in iter_document_storage_keys(document):
-            try:
-                await self._storage.delete(storage_key)
-            except ProviderError as exc:
-                logger.warning(
-                    "storage_delete_failed",
-                    document_id=str(document.id),
-                    storage_key=storage_key,
-                    error=str(exc),
-                )
-        try:
-            await self._storage.delete_document_tree(
+        name = DOCUMENT_PURGE if purge else DOCUMENT_DELETE
+        submission = await self._job_submitter.stage(
+            JobDefinition(
+                name=name,
                 project_id=document.project_id,
                 document_id=document.id,
+                payload={
+                    "document_version": document.version,
+                    "exclude_document_id": str(document.id),
+                    "auto_activate": True,
+                },
+                idempotency_key=f"{name}:{document.project_id}:{document.id}:v{document.version}",
+                retry=RetryPolicy(max_attempts=self._job_max_attempts),
+            ),
+            self._job_configuration,
+        )
+        if submission.created:
+            document.status = DocumentStatus.PURGING if purge else DocumentStatus.DELETING
+        if self._audit is not None:
+            self._audit.record(
+                event_type=(
+                    AuditEventType.DOCUMENT_PURGE_REQUESTED
+                    if purge
+                    else AuditEventType.DOCUMENT_DELETE_REQUESTED
+                ),
+                actor_type=AuditActorType.OPERATOR,
+                resource_type="document",
+                resource_id=document.id,
+                outcome=AuditOutcome.SUCCESS,
+                detail={"job_id": str(submission.job_id), "document_version": document.version},
             )
-        except ProviderError as exc:
-            logger.warning(
-                "storage_delete_tree_failed",
-                document_id=str(document.id),
-                project_id=str(document.project_id),
-                error=str(exc),
-            )
+        await self._session.commit()
+        await self._session.refresh(document)
+        await self._job_submitter.dispatch(submission.job_id)
+        document = await self._repository.get_by_id(document.id, include_deleted=True) or document
+        document.__dict__["job_id"] = submission.job_id
+        return document
 
     async def _hash_stream(
         self,
         stream: AsyncIterator[bytes],
-    ) -> tuple[str, int, AsyncIterator[bytes]]:
+    ) -> tuple[str, int, BinaryIO]:
         """Hash the upload while spooling it to a temp file (bounded memory)."""
         hasher = hashlib.sha256()
         # Not a context manager: the spool outlives this method and is closed by
@@ -315,15 +358,13 @@ class DocumentService:
             raise
 
         spool.seek(0)
+        return hasher.hexdigest(), size_bytes, cast(BinaryIO, spool)
 
-        async def replay() -> AsyncIterator[bytes]:
-            try:
-                while True:
-                    data = spool.read(_REPLAY_CHUNK_BYTES)
-                    if not data:
-                        break
-                    yield data
-            finally:
-                spool.close()
-
-        return hasher.hexdigest(), size_bytes, replay()
+    @staticmethod
+    async def _spool_stream(spool: BinaryIO) -> AsyncIterator[bytes]:
+        spool.seek(0)
+        while True:
+            data = spool.read(_REPLAY_CHUNK_BYTES)
+            if not data:
+                break
+            yield data

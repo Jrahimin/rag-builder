@@ -32,7 +32,12 @@ class DocumentChunk(Base, UUIDPrimaryKeyMixin, TimestampMixin, ProjectScopedMixi
             ["documents.id"],
             ondelete="CASCADE",
         ),
-        UniqueConstraint("document_id", "chunk_index", name="uq_document_chunks_document_index"),
+        UniqueConstraint(
+            "document_id",
+            "document_version",
+            "chunk_index",
+            name="uq_document_chunks_document_version_index",
+        ),
         Index("ix_document_chunks_project_document", "project_id", "document_id"),
         Index(
             "ix_document_chunks_metadata_gin",
@@ -42,6 +47,9 @@ class DocumentChunk(Base, UUIDPrimaryKeyMixin, TimestampMixin, ProjectScopedMixi
     )
 
     document_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    document_version: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=1, server_default="1"
+    )
     chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     page_number: Mapped[int | None] = mapped_column(Integer, nullable=True)

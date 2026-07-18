@@ -39,12 +39,14 @@ class ChunkEmbedding(Base, UUIDPrimaryKeyMixin, TimestampMixin, ProjectScopedMix
             ["document_chunks.id"],
             ondelete="CASCADE",
         ),
+        ForeignKeyConstraint(["index_build_id"], ["index_builds.id"], ondelete="CASCADE"),
         UniqueConstraint(
+            "index_build_id",
             "chunk_id",
             "embedding_set_version",
             "provider",
             "model",
-            name="uq_chunk_embeddings_chunk_esv_provider_model",
+            name="uq_chunk_embeddings_build_chunk_esv_provider_model",
         ),
         Index("ix_chunk_embeddings_project_document", "project_id", "document_id"),
         Index(
@@ -66,6 +68,7 @@ class ChunkEmbedding(Base, UUIDPrimaryKeyMixin, TimestampMixin, ProjectScopedMix
 
     document_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
     chunk_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    index_build_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
     embedding_set_version: Mapped[int] = mapped_column(Integer, nullable=False)
     document_version: Mapped[int] = mapped_column(Integer, nullable=False)
     provider: Mapped[str] = mapped_column(String(64), nullable=False)
