@@ -1,0 +1,102 @@
+import { lazy, Suspense } from "react";
+import { Navigate, Route, Routes } from "react-router-dom";
+import { LoadingState } from "../components/QueryStatePanel";
+import { OperatorConsoleLayout } from "./OperatorConsoleLayout";
+
+const AuditHistory = lazy(() =>
+  import("../features/audit/AuditHistory").then((module) => ({ default: module.AuditHistory })),
+);
+const ActiveConfigurationDetails = lazy(() =>
+  import("../features/configuration/ActiveConfigurationDetails").then((module) => ({
+    default: module.ActiveConfigurationDetails,
+  })),
+);
+const JobRuns = lazy(() =>
+  import("../features/jobs/JobRuns").then((module) => ({ default: module.JobRuns })),
+);
+const OperationalMetrics = lazy(() =>
+  import("../features/metrics/OperationalMetrics").then((module) => ({
+    default: module.OperationalMetrics,
+  })),
+);
+const SystemHealthOverview = lazy(() =>
+  import("../features/overview/SystemHealthOverview").then((module) => ({
+    default: module.SystemHealthOverview,
+  })),
+);
+const ProjectDocumentInspection = lazy(() =>
+  import("../features/projects/ProjectDocumentInspection").then((module) => ({
+    default: module.ProjectDocumentInspection,
+  })),
+);
+const DependencyWorkerHealth = lazy(() =>
+  import("../features/system-health/DependencyWorkerHealth").then((module) => ({
+    default: module.DependencyWorkerHealth,
+  })),
+);
+
+export function OperatorConsoleApp() {
+  return (
+    <Routes>
+      <Route element={<OperatorConsoleLayout />}>
+        <Route
+          index
+          element={
+            <Suspense fallback={<LoadingState label="Loading overview" />}>
+              <SystemHealthOverview />
+            </Suspense>
+          }
+        />
+        <Route
+          path="jobs"
+          element={
+            <Suspense fallback={<LoadingState label="Loading jobs" />}>
+              <JobRuns />
+            </Suspense>
+          }
+        />
+        <Route
+          path="projects"
+          element={
+            <Suspense fallback={<LoadingState label="Loading projects" />}>
+              <ProjectDocumentInspection />
+            </Suspense>
+          }
+        />
+        <Route
+          path="configuration"
+          element={
+            <Suspense fallback={<LoadingState label="Loading configuration" />}>
+              <ActiveConfigurationDetails />
+            </Suspense>
+          }
+        />
+        <Route
+          path="metrics"
+          element={
+            <Suspense fallback={<LoadingState label="Loading metrics" />}>
+              <OperationalMetrics />
+            </Suspense>
+          }
+        />
+        <Route
+          path="audit"
+          element={
+            <Suspense fallback={<LoadingState label="Loading audit" />}>
+              <AuditHistory />
+            </Suspense>
+          }
+        />
+        <Route
+          path="health"
+          element={
+            <Suspense fallback={<LoadingState label="Loading system health" />}>
+              <DependencyWorkerHealth />
+            </Suspense>
+          }
+        />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Route>
+    </Routes>
+  );
+}

@@ -141,12 +141,31 @@ Local surfaces:
 
 | Surface | URL |
 | --- | --- |
+| Operator console | `http://localhost:3000/operator/` |
 | API | `http://localhost:8000` |
 | Health | `http://localhost:8000/health` |
 | Readiness | `http://localhost:8000/ready` |
 | MinIO console | `http://localhost:9001` |
 
-The local stack includes FastAPI, a Taskiq worker, PostgreSQL with pgvector, Redis, MinIO, and one-shot migration/bootstrap services.
+The local stack includes the React operator console, FastAPI, a Taskiq worker, PostgreSQL with pgvector, Redis, MinIO, and one-shot migration/bootstrap services. The console is intentionally open in the current trusted deployment and follows the backend's existing configurable authentication behavior; it does not add users, login, sessions, or browser-stored credentials.
+
+Useful targeted flows use the same Compose file:
+
+```bash
+# Backend, worker, and required infrastructure (no frontend)
+docker compose --env-file .env.docker up --build backend worker
+
+# Frontend only; renders a backend-unavailable state until the API exists
+docker compose --env-file .env.docker up --build --no-deps frontend
+```
+
+For host frontend development with Vite fast refresh:
+
+```bash
+cd frontend
+pnpm install
+pnpm dev
+```
 
 ## First API journey
 
@@ -177,6 +196,12 @@ backend/app/
   platform/       database, providers, jobs, auth, persistence
   worker/         background task entrypoints
 
+frontend/
+  src/api/        generated OpenAPI contract and one typed API client
+  src/app/        routing, navigation, and query-client composition
+  src/components/ reusable accessible states and primitives
+  src/features/   operator screens grouped by domain
+
 docs/
   architecture/   boundaries and decision records
   features/       behavior contracts
@@ -185,11 +210,10 @@ docs/
 
 ## What is implemented and what is still evolving
 
-The repository already demonstrates the full conceptual journey from authentication and document upload through retrieval and chat. It is not yet a finished public SaaS product.
+The repository demonstrates the full conceptual journey from authentication and document upload through retrieval and chat, plus an internal operator console for deployment health, durable work, documents, configuration, metrics, and audit. It is not a public SaaS product.
 
 The most important next development work is:
 
-- the private operator console over the implemented operator backend;
 - first-class asynchronous outcome webhooks;
 - stronger claim-level citations and insufficient-evidence behavior;
 - measured evidence quality and learned-reranker evaluation;

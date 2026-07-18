@@ -4,7 +4,8 @@
 
 Phase 2 makes an API and worker deployment fail fast when its configured production
 capabilities are fake, incomplete, unreachable, or incompatible. It also gives the deployment
-operator stable, admin-gated visibility without requiring direct database access.
+operator stable, admin-gated visibility without requiring direct database access. Phase 3 adds
+the separate console UI described in [Operator Console MVP](operator_console.md).
 
 ## Certified production profiles
 
@@ -77,7 +78,8 @@ available.
 
 ## Intentional limits
 
-This slice does not add a frontend, a provider marketplace, billing/cost calculation, Kubernetes,
-public SaaS tenancy, customer authorization, or long-term time-series storage. The metrics
+This backend slice does not add a provider marketplace, billing/cost calculation, Kubernetes,
+public SaaS tenancy, customer authorization, or long-term time-series storage. The Phase 3
+frontend consumes it without changing these limits. The metrics
 endpoint exposes current database-derived aggregates; a later deployment may scrape them into an
 external monitoring system.

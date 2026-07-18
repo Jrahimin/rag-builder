@@ -4,7 +4,7 @@
 #
 #     docker compose --env-file .env.docker up --build
 #
-# Services: backend (FastAPI) + PostgreSQL/pgvector + Redis + MinIO.
+# Services: frontend (Vite) + backend (FastAPI) + worker + PostgreSQL/pgvector + Redis + MinIO.
 # Credentials and tunables come from the root `.env.docker` file
 # (see `.env.docker.example`); every value has a sensible default so the
 # stack runs out of the box. Start with:
@@ -16,6 +16,31 @@
 name: ape
 
 services:
+  # -------------------------------------------------------------------------
+  # React operator console
+  #
+  # Intentionally has no depends_on: `docker compose up frontend` is a valid
+  # frontend-only workflow and renders an actionable API-unavailable state.
+  # -------------------------------------------------------------------------
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      target: development
+    image: ape-frontend:dev
+    restart: unless-stopped
+    init: true
+    environment:
+      VITE_API_PROXY_TARGET: http://backend:8000
+    ports:
+      - "${FRONTEND_PORT:-3000}:5173"
+    volumes:
+      - ./frontend:/app
+      - frontend_node_modules:/app/node_modules
+    command: ["pnpm", "dev"]
+    networks:
+      - ape_network
+
   # -------------------------------------------------------------------------
   # FastAPI backend
   # -------------------------------------------------------------------------
@@ -280,6 +305,7 @@ services:
       - ape_network
 
 volumes:
+  frontend_node_modules:
   postgres_data:
   redis_data:
   minio_data:

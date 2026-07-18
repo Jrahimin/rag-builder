@@ -7,6 +7,8 @@ Concise, per-feature reference documentation for the AI Platform Engine.
 
 ## Shipped features
 
+- [Operator Console MVP](operator_console.md)
+
 | Feature | Doc | Scope |
 | ------- | --- | ----- |
 | Organizations & auth | [organization_module.md](./organization_module.md) | Tenant CRUD, API keys, org-scoped rate limits (ADR-012) |

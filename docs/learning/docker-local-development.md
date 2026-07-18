@@ -3,16 +3,17 @@
 > **Mental model:** APE is not one process. Local development gives each part of the system a small home so you can watch them collaborate.
 
 ```text
-backend API -> Redis queue -> worker
-     │             │
-     ├────── PostgreSQL + pgvector
-     └────── MinIO object storage
+operator console -> backend API -> Redis queue -> worker
+                        │             │
+                        ├────── PostgreSQL + pgvector
+                        └────── MinIO object storage
 ```
 
 ## What each service does
 
 | Service | Job in the story | Why it exists |
 | --- | --- | --- |
+| `frontend` | Shows the operator console | React/Vite monitoring and administration UI |
 | `backend` | Receives API calls | HTTP, validation, orchestration |
 | `worker` | Performs slow work | Parse, chunk, embed, index |
 | `postgres` | Stores truth and search data | Metadata, chunks, vectors, keyword rows |
@@ -35,10 +36,35 @@ The local stack uses development images, source mounts, and reload behavior. It 
 Useful surfaces:
 
 ```text
+Console:   http://localhost:3000/operator/
 API:       http://localhost:8000
 Health:    http://localhost:8000/health
 Readiness: http://localhost:8000/ready
 MinIO:     http://localhost:9001
+```
+
+## Targeted development flows
+
+Compose service targeting keeps one canonical stack definition:
+
+```bash
+# Full stack
+docker compose --env-file .env.docker up --build
+
+# Backend, worker, and the infrastructure they require
+docker compose --env-file .env.docker up --build backend worker
+
+# Infrastructure only for host-side backend work
+docker compose --env-file .env.docker up -d postgres redis minio minio-init
+
+# Frontend only (the offline state is intentional and useful)
+docker compose --env-file .env.docker up --build --no-deps frontend
+```
+
+The Compose frontend uses Vite with a source mount and fast refresh. The production frontend image is a separate multi-stage target with Nginx SPA fallback and same-origin `/api` reverse proxying:
+
+```bash
+docker build --target production -t ape-frontend:production frontend
 ```
 
 ## Watch one upload travel through the city
