@@ -3,6 +3,16 @@
 All routes require the deployment admin key when authentication is enabled. Responses are
 sanitized and never contain secret values.
 
+The Phase 3 console consumes these endpoints with relative same-origin `/api` requests. In the
+current trusted/internal deployment, leave `APE_AUTH__ENABLED=false`; the console adds no login,
+session, cookie, user, or credential storage. If backend authentication is enabled, the existing
+backend gates remain authoritative and unauthenticated console requests fail normally.
+
+The console reuses project-scoped Projects, Documents, and Jobs APIs for inspection and safe retry.
+In particular, `POST /api/v1/projects/{project_id}/jobs/{job_id}/retry` remains the only retry
+action, preserving the Jobs service's eligibility check, immutable configuration snapshot,
+transaction, audit event, idempotency key, and durable outbox dispatch.
+
 ## GET /api/v1/operator/overview
 
 Combined dependency, worker, metric, and recent-failure status.
