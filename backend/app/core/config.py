@@ -255,6 +255,20 @@ class KnowledgeConfig(BaseModel):
     max_upload_bytes: int = Field(default=50 * 1024 * 1024, ge=1)
 
 
+class MalwareScannerBackend(StrEnum):
+    DISABLED = "disabled"
+    CLAMAV = "clamav"
+
+
+class MalwareScanConfig(BaseModel):
+    """Upload malware scanning; disabled is explicit for development/testing only."""
+
+    backend: MalwareScannerBackend = MalwareScannerBackend.DISABLED
+    host: str = "localhost"
+    port: int = Field(default=3310, ge=1, le=65535)
+    timeout_seconds: float = Field(default=15.0, ge=0.1, le=120.0)
+
+
 class ParsingConfig(BaseModel):
     """PDF text extraction and parse-quality configuration."""
 
@@ -534,6 +548,7 @@ class Settings(BaseSettings):
     storage: StorageConfig = Field(default_factory=StorageConfig)
     jobs: JobsConfig = Field(default_factory=JobsConfig)
     knowledge: KnowledgeConfig = Field(default_factory=KnowledgeConfig)
+    malware_scan: MalwareScanConfig = Field(default_factory=MalwareScanConfig)
     parsing: ParsingConfig = Field(default_factory=ParsingConfig)
     chunking: ChunkingConfig = Field(default_factory=ChunkingConfig)
     ocr: OcrConfig = Field(default_factory=OcrConfig)

@@ -3,10 +3,16 @@
 All routes require the deployment admin key when authentication is enabled. Responses are
 sanitized and never contain secret values.
 
-The Phase 3 console consumes these endpoints with relative same-origin `/api` requests. In the
+The operator console consumes these endpoints with relative same-origin `/api` requests. In the
 current trusted/internal deployment, leave `APE_AUTH__ENABLED=false`; the console adds no login,
 session, cookie, user, or credential storage. If backend authentication is enabled, the existing
 backend gates remain authoritative and unauthenticated console requests fail normally.
+
+The `/operator/lab` Test Lab also reuses the existing project-scoped Projects, Documents, Jobs,
+Index Builds, Search, and Conversations APIs for browser-based end-to-end verification. It does
+not introduce operator-only upload/search/chat contracts or a persisted test-run resource. Every
+displayed result is an ordinary backend response, durable job state, immutable build state, or
+persisted conversation message.
 
 The console reuses project-scoped Projects, Documents, and Jobs APIs for inspection and safe retry.
 In particular, `POST /api/v1/projects/{project_id}/jobs/{job_id}/retry` remains the only retry

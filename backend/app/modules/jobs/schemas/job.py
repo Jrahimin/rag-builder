@@ -43,6 +43,7 @@ class JobResponse(BaseModel):
     failure_code: str | None
     failure_message: str | None
     failure_details: dict[str, Any] | None
+    result: dict[str, Any] | None
     created_at: datetime
     updated_at: datetime
 

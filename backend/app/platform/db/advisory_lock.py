@@ -19,6 +19,12 @@ def document_stage_lock_key(
     return int.from_bytes(digest, "big", signed=True)
 
 
+def project_stage_lock_key(project_id: uuid.UUID, stage: str) -> int:
+    payload = f"{project_id}:{stage}".encode()
+    digest = hashlib.blake2b(payload, digest_size=8).digest()
+    return int.from_bytes(digest, "big", signed=True)
+
+
 async def acquire_document_stage_lock(
     session: AsyncSession,
     *,
@@ -30,4 +36,17 @@ async def acquire_document_stage_lock(
     await session.execute(
         text("SELECT pg_advisory_xact_lock(:lock_key)"),
         {"lock_key": document_stage_lock_key(project_id, document_id, stage)},
+    )
+
+
+async def acquire_project_stage_lock(
+    session: AsyncSession,
+    *,
+    project_id: uuid.UUID,
+    stage: str,
+) -> None:
+    """Serialize one Project-wide metadata transition for this transaction."""
+    await session.execute(
+        text("SELECT pg_advisory_xact_lock(:lock_key)"),
+        {"lock_key": project_stage_lock_key(project_id, stage)},
     )

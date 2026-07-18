@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends
 from app.api.v1.routes.conversations_router import router as conversations_router
 from app.api.v1.routes.documents_router import router as documents_router
 from app.api.v1.routes.evaluations_router import router as evaluations_router
+from app.api.v1.routes.index_builds_router import router as index_builds_router
 from app.api.v1.routes.jobs_router import router as jobs_router
 from app.api.v1.routes.operator_router import router as operator_router
 from app.api.v1.routes.organizations_router import router as organizations_router
@@ -29,6 +30,11 @@ _business_router = APIRouter(dependencies=[Depends(require_organization_api_key)
 _business_router.include_router(projects_router, prefix="/projects", tags=["projects"])
 
 _project_nested_router = APIRouter(dependencies=[Depends(ensure_project_accessible)])
+_project_nested_router.include_router(
+    index_builds_router,
+    prefix="/projects/{project_id}/index-builds",
+    tags=["index-builds"],
+)
 _project_nested_router.include_router(
     documents_router,
     prefix="/projects/{project_id}/documents",

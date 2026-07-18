@@ -99,7 +99,8 @@ async def get_document(
 @router.delete(
     "/{document_id}",
     response_model=ApiResponse[DocumentResponse],
-    summary="Soft-delete a document and remove stored bytes",
+    summary="Stage a reversible document deletion",
+    status_code=status.HTTP_202_ACCEPTED,
 )
 async def delete_document(
     project_id: uuid.UUID,
@@ -108,6 +109,22 @@ async def delete_document(
 ) -> ApiResponse[DocumentResponse]:
     del project_id
     document = await service.soft_delete(document_id)
+    return ApiResponse.ok(DocumentResponse.model_validate(document))
+
+
+@router.delete(
+    "/{document_id}/purge",
+    response_model=ApiResponse[DocumentResponse],
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Irreversibly purge a document and every retained artifact",
+)
+async def purge_document(
+    project_id: uuid.UUID,
+    document_id: uuid.UUID,
+    service: DocumentServiceDep,
+) -> ApiResponse[DocumentResponse]:
+    del project_id
+    document = await service.purge(document_id)
     return ApiResponse.ok(DocumentResponse.model_validate(document))
 
 

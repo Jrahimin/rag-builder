@@ -644,6 +644,90 @@
         "title": "ApiResponse[EvaluationRunResponse]",
         "type": "object"
       },
+      "ApiResponse_IndexBuildListResponse_": {
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IndexBuildListResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          },
+          "meta": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ResponseMeta"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "success": {
+            "default": true,
+            "title": "Success",
+            "type": "boolean"
+          }
+        },
+        "title": "ApiResponse[IndexBuildListResponse]",
+        "type": "object"
+      },
+      "ApiResponse_IndexBuildResponse_": {
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/IndexBuildResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          },
+          "meta": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ResponseMeta"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "success": {
+            "default": true,
+            "title": "Success",
+            "type": "boolean"
+          }
+        },
+        "title": "ApiResponse[IndexBuildResponse]",
+        "type": "object"
+      },
       "ApiResponse_JobDetailResponse_": {
         "properties": {
           "data": {
@@ -726,6 +810,48 @@
           }
         },
         "title": "ApiResponse[JobResponse]",
+        "type": "object"
+      },
+      "ApiResponse_LifecycleJobResponse_": {
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LifecycleJobResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          },
+          "meta": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ResponseMeta"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "success": {
+            "default": true,
+            "title": "Success",
+            "type": "boolean"
+          }
+        },
+        "title": "ApiResponse[LifecycleJobResponse]",
         "type": "object"
       },
       "ApiResponse_LivenessStatus_": {
@@ -1711,7 +1837,12 @@
           "job.retry_scheduled",
           "job.failed",
           "job.recovered",
-          "job.dispatch_deferred"
+          "job.dispatch_deferred",
+          "index_build.activated",
+          "index_build.rolled_back",
+          "document.delete_requested",
+          "document.purge_requested",
+          "storage.reconciliation_requested"
         ],
         "title": "AuditEventType",
         "type": "string"
@@ -2720,7 +2851,9 @@
           "embedding",
           "embedded",
           "indexing",
-          "ready"
+          "ready",
+          "deleting",
+          "purging"
         ],
         "title": "DocumentStatus",
         "type": "string"
@@ -3080,6 +3213,224 @@
         "title": "HTTPValidationError",
         "type": "object"
       },
+      "IndexBuildListResponse": {
+        "properties": {
+          "active_build_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Active Build Id"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/IndexBuildResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "previous_build_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous Build Id"
+          }
+        },
+        "required": [
+          "items",
+          "active_build_id",
+          "previous_build_id"
+        ],
+        "title": "IndexBuildListResponse",
+        "type": "object"
+      },
+      "IndexBuildOperation": {
+        "enum": [
+          "ingest",
+          "reprocess",
+          "reembed",
+          "reindex",
+          "delete",
+          "purge",
+          "migration"
+        ],
+        "title": "IndexBuildOperation",
+        "type": "string"
+      },
+      "IndexBuildResponse": {
+        "properties": {
+          "activated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Activated At"
+          },
+          "chunk_count": {
+            "title": "Chunk Count",
+            "type": "integer"
+          },
+          "configuration_hash": {
+            "title": "Configuration Hash",
+            "type": "string"
+          },
+          "corpus_fingerprint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Corpus Fingerprint"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "document_count": {
+            "title": "Document Count",
+            "type": "integer"
+          },
+          "embedding_set_version": {
+            "title": "Embedding Set Version",
+            "type": "integer"
+          },
+          "failure_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure Code"
+          },
+          "failure_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure Message"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "job_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Job Id"
+          },
+          "keyword_count": {
+            "title": "Keyword Count",
+            "type": "integer"
+          },
+          "manifest": {
+            "additionalProperties": true,
+            "title": "Manifest",
+            "type": "object"
+          },
+          "operation": {
+            "$ref": "#/components/schemas/IndexBuildOperation"
+          },
+          "project_id": {
+            "format": "uuid",
+            "title": "Project Id",
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/IndexBuildState"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "validated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Validated At"
+          },
+          "vector_count": {
+            "title": "Vector Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "project_id",
+          "job_id",
+          "state",
+          "operation",
+          "embedding_set_version",
+          "configuration_hash",
+          "corpus_fingerprint",
+          "document_count",
+          "chunk_count",
+          "vector_count",
+          "keyword_count",
+          "manifest",
+          "validated_at",
+          "activated_at",
+          "failure_code",
+          "failure_message",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "IndexBuildResponse",
+        "type": "object"
+      },
+      "IndexBuildState": {
+        "enum": [
+          "building",
+          "validated",
+          "active",
+          "retained",
+          "failed",
+          "superseded"
+        ],
+        "title": "IndexBuildState",
+        "type": "string"
+      },
       "InsufficientEvidenceReason": {
         "description": "Stable reasons for a correct no-answer outcome.",
         "enum": [
@@ -3248,6 +3599,18 @@
             "title": "Queued At",
             "type": "string"
           },
+          "result": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result"
+          },
           "retry_of_job_id": {
             "anyOf": [
               {
@@ -3307,6 +3670,7 @@
           "failure_code",
           "failure_message",
           "failure_details",
+          "result",
           "created_at",
           "updated_at",
           "payload",
@@ -3537,6 +3901,18 @@
             "title": "Queued At",
             "type": "string"
           },
+          "result": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result"
+          },
           "retry_of_job_id": {
             "anyOf": [
               {
@@ -3596,6 +3972,7 @@
           "failure_code",
           "failure_message",
           "failure_details",
+          "result",
           "created_at",
           "updated_at"
         ],
@@ -3618,7 +3995,12 @@
           "document.process",
           "document.embed",
           "document.index",
-          "evaluation.run"
+          "evaluation.run",
+          "corpus.reembed",
+          "corpus.reindex",
+          "document.delete",
+          "document.purge",
+          "storage.reconcile"
         ],
         "title": "JobType",
         "type": "string"
@@ -3663,6 +4045,37 @@
           "maximum_ms"
         ],
         "title": "LatencyMetric",
+        "type": "object"
+      },
+      "LifecycleJobResponse": {
+        "properties": {
+          "build_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Build Id"
+          },
+          "created": {
+            "title": "Created",
+            "type": "boolean"
+          },
+          "job_id": {
+            "format": "uuid",
+            "title": "Job Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "job_id",
+          "created"
+        ],
+        "title": "LifecycleJobResponse",
         "type": "object"
       },
       "LivenessStatus": {
@@ -7112,7 +7525,7 @@
           }
         ],
         "responses": {
-          "200": {
+          "202": {
             "content": {
               "application/json": {
                 "schema": {
@@ -7407,6 +7820,67 @@
           }
         ],
         "summary": "Enqueue retrieval indexing",
+        "tags": [
+          "documents"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/documents/{document_id}/purge": {
+      "delete": {
+        "operationId": "purge_document_api_v1_projects__project_id__documents__document_id__purge_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Document Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_DocumentResponse_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OrganizationBearer": []
+          },
+          {
+            "OrganizationApiKey": []
+          }
+        ],
+        "summary": "Irreversibly purge a document and every retained artifact",
         "tags": [
           "documents"
         ]
@@ -7864,6 +8338,322 @@
         "summary": "Get one quality run and its exact versions",
         "tags": [
           "evaluations"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/index-builds": {
+      "get": {
+        "operationId": "list_index_builds_api_v1_projects__project_id__index_builds_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_IndexBuildListResponse_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OrganizationBearer": []
+          },
+          {
+            "OrganizationApiKey": []
+          }
+        ],
+        "summary": "List Index Builds",
+        "tags": [
+          "index-builds"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/index-builds/reconcile-storage": {
+      "post": {
+        "operationId": "reconcile_storage_api_v1_projects__project_id__index_builds_reconcile_storage_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_LifecycleJobResponse_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OrganizationBearer": []
+          },
+          {
+            "OrganizationApiKey": []
+          }
+        ],
+        "summary": "Reconcile Storage",
+        "tags": [
+          "index-builds"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/index-builds/reembed": {
+      "post": {
+        "operationId": "reembed_corpus_api_v1_projects__project_id__index_builds_reembed_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_LifecycleJobResponse_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OrganizationBearer": []
+          },
+          {
+            "OrganizationApiKey": []
+          }
+        ],
+        "summary": "Reembed Corpus",
+        "tags": [
+          "index-builds"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/index-builds/reindex": {
+      "post": {
+        "operationId": "reindex_corpus_api_v1_projects__project_id__index_builds_reindex_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_LifecycleJobResponse_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OrganizationBearer": []
+          },
+          {
+            "OrganizationApiKey": []
+          }
+        ],
+        "summary": "Reindex Corpus",
+        "tags": [
+          "index-builds"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/index-builds/rollback": {
+      "post": {
+        "operationId": "rollback_index_build_api_v1_projects__project_id__index_builds_rollback_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_IndexBuildResponse_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OrganizationBearer": []
+          },
+          {
+            "OrganizationApiKey": []
+          }
+        ],
+        "summary": "Rollback Index Build",
+        "tags": [
+          "index-builds"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/index-builds/{build_id}/activate": {
+      "post": {
+        "operationId": "activate_index_build_api_v1_projects__project_id__index_builds__build_id__activate_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "build_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Build Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_IndexBuildResponse_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OrganizationBearer": []
+          },
+          {
+            "OrganizationApiKey": []
+          }
+        ],
+        "summary": "Activate Index Build",
+        "tags": [
+          "index-builds"
         ]
       }
     },

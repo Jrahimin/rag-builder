@@ -7,6 +7,10 @@ const titles: Record<string, { title: string; description: string }> = {
     title: "Jobs",
     description: "Monitor durable runs, inspect details, and retry safe failures",
   },
+  "/lab": {
+    title: "Test Lab",
+    description: "Browser-based end-to-end product verification",
+  },
   "/projects": {
     title: "Projects / Documents",
     description: "Inspect corpus scope and document processing lifecycle",

@@ -442,6 +442,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{project_id}/documents/{document_id}/purge": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Irreversibly purge a document and every retained artifact */
+        delete: operations["purge_document_api_v1_projects__project_id__documents__document_id__purge_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{project_id}/documents/{document_id}/reprocess": {
         parameters: {
             query?: never;
@@ -523,6 +540,108 @@ export interface paths {
         get: operations["get_run_api_v1_projects__project_id__evaluations_runs__run_id__get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/index-builds": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Index Builds */
+        get: operations["list_index_builds_api_v1_projects__project_id__index_builds_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/index-builds/reconcile-storage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Reconcile Storage */
+        post: operations["reconcile_storage_api_v1_projects__project_id__index_builds_reconcile_storage_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/index-builds/reembed": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Reembed Corpus */
+        post: operations["reembed_corpus_api_v1_projects__project_id__index_builds_reembed_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/index-builds/reindex": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Reindex Corpus */
+        post: operations["reindex_corpus_api_v1_projects__project_id__index_builds_reindex_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/index-builds/rollback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Rollback Index Build */
+        post: operations["rollback_index_build_api_v1_projects__project_id__index_builds_rollback_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/index-builds/{build_id}/activate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Activate Index Build */
+        post: operations["activate_index_build_api_v1_projects__project_id__index_builds__build_id__activate_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -902,6 +1021,30 @@ export interface components {
              */
             success: boolean;
         };
+        /** ApiResponse[IndexBuildListResponse] */
+        ApiResponse_IndexBuildListResponse_: {
+            data?: components["schemas"]["IndexBuildListResponse"] | null;
+            /** Message */
+            message?: string | null;
+            meta?: components["schemas"]["ResponseMeta"] | null;
+            /**
+             * Success
+             * @default true
+             */
+            success: boolean;
+        };
+        /** ApiResponse[IndexBuildResponse] */
+        ApiResponse_IndexBuildResponse_: {
+            data?: components["schemas"]["IndexBuildResponse"] | null;
+            /** Message */
+            message?: string | null;
+            meta?: components["schemas"]["ResponseMeta"] | null;
+            /**
+             * Success
+             * @default true
+             */
+            success: boolean;
+        };
         /** ApiResponse[JobDetailResponse] */
         ApiResponse_JobDetailResponse_: {
             data?: components["schemas"]["JobDetailResponse"] | null;
@@ -917,6 +1060,18 @@ export interface components {
         /** ApiResponse[JobResponse] */
         ApiResponse_JobResponse_: {
             data?: components["schemas"]["JobResponse"] | null;
+            /** Message */
+            message?: string | null;
+            meta?: components["schemas"]["ResponseMeta"] | null;
+            /**
+             * Success
+             * @default true
+             */
+            success: boolean;
+        };
+        /** ApiResponse[LifecycleJobResponse] */
+        ApiResponse_LifecycleJobResponse_: {
+            data?: components["schemas"]["LifecycleJobResponse"] | null;
             /** Message */
             message?: string | null;
             meta?: components["schemas"]["ResponseMeta"] | null;
@@ -1225,7 +1380,7 @@ export interface components {
          * AuditEventType
          * @enum {string}
          */
-        AuditEventType: "job.submitted" | "job.retried" | "job.started" | "job.succeeded" | "job.retry_scheduled" | "job.failed" | "job.recovered" | "job.dispatch_deferred";
+        AuditEventType: "job.submitted" | "job.retried" | "job.started" | "job.succeeded" | "job.retry_scheduled" | "job.failed" | "job.recovered" | "job.dispatch_deferred" | "index_build.activated" | "index_build.rolled_back" | "document.delete_requested" | "document.purge_requested" | "storage.reconciliation_requested";
         /**
          * AuditOutcome
          * @enum {string}
@@ -1575,7 +1730,7 @@ export interface components {
          * @description Ingestion lifecycle — full enum defined upfront; phases activate subsets.
          * @enum {string}
          */
-        DocumentStatus: "uploaded" | "queued" | "parsing" | "chunking" | "chunked" | "failed" | "embedding" | "embedded" | "indexing" | "ready";
+        DocumentStatus: "uploaded" | "queued" | "parsing" | "chunking" | "chunked" | "failed" | "embedding" | "embedded" | "indexing" | "ready" | "deleting" | "purging";
         /** EvaluationCase */
         EvaluationCase: {
             /** Document Id */
@@ -1727,6 +1882,78 @@ export interface components {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
         };
+        /** IndexBuildListResponse */
+        IndexBuildListResponse: {
+            /** Active Build Id */
+            active_build_id: string | null;
+            /** Items */
+            items: components["schemas"]["IndexBuildResponse"][];
+            /** Previous Build Id */
+            previous_build_id: string | null;
+        };
+        /**
+         * IndexBuildOperation
+         * @enum {string}
+         */
+        IndexBuildOperation: "ingest" | "reprocess" | "reembed" | "reindex" | "delete" | "purge" | "migration";
+        /** IndexBuildResponse */
+        IndexBuildResponse: {
+            /** Activated At */
+            activated_at: string | null;
+            /** Chunk Count */
+            chunk_count: number;
+            /** Configuration Hash */
+            configuration_hash: string;
+            /** Corpus Fingerprint */
+            corpus_fingerprint: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Document Count */
+            document_count: number;
+            /** Embedding Set Version */
+            embedding_set_version: number;
+            /** Failure Code */
+            failure_code: string | null;
+            /** Failure Message */
+            failure_message: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Job Id */
+            job_id: string | null;
+            /** Keyword Count */
+            keyword_count: number;
+            /** Manifest */
+            manifest: {
+                [key: string]: unknown;
+            };
+            operation: components["schemas"]["IndexBuildOperation"];
+            /**
+             * Project Id
+             * Format: uuid
+             */
+            project_id: string;
+            state: components["schemas"]["IndexBuildState"];
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            /** Validated At */
+            validated_at: string | null;
+            /** Vector Count */
+            vector_count: number;
+        };
+        /**
+         * IndexBuildState
+         * @enum {string}
+         */
+        IndexBuildState: "building" | "validated" | "active" | "retained" | "failed" | "superseded";
         /**
          * InsufficientEvidenceReason
          * @description Stable reasons for a correct no-answer outcome.
@@ -1799,6 +2026,10 @@ export interface components {
              * Format: date-time
              */
             queued_at: string;
+            /** Result */
+            result: {
+                [key: string]: unknown;
+            } | null;
             /** Retry Of Job Id */
             retry_of_job_id: string | null;
             /** Stage */
@@ -1893,6 +2124,10 @@ export interface components {
              * Format: date-time
              */
             queued_at: string;
+            /** Result */
+            result: {
+                [key: string]: unknown;
+            } | null;
             /** Retry Of Job Id */
             retry_of_job_id: string | null;
             /** Stage */
@@ -1915,7 +2150,7 @@ export interface components {
          * JobType
          * @enum {string}
          */
-        JobType: "document.process" | "document.embed" | "document.index" | "evaluation.run";
+        JobType: "document.process" | "document.embed" | "document.index" | "evaluation.run" | "corpus.reembed" | "corpus.reindex" | "document.delete" | "document.purge" | "storage.reconcile";
         /** LatencyMetric */
         LatencyMetric: {
             /** Average Ms */
@@ -1926,6 +2161,18 @@ export interface components {
             maximum_ms: number | null;
             /** Name */
             name: string;
+        };
+        /** LifecycleJobResponse */
+        LifecycleJobResponse: {
+            /** Build Id */
+            build_id?: string | null;
+            /** Created */
+            created: boolean;
+            /**
+             * Job Id
+             * Format: uuid
+             */
+            job_id: string;
         };
         /**
          * LivenessStatus
@@ -3564,7 +3811,7 @@ export interface operations {
         requestBody?: never;
         responses: {
             /** @description Successful Response */
-            200: {
+            202: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3664,6 +3911,38 @@ export interface operations {
         responses: {
             /** @description Successful Response */
             200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_DocumentResponse_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    purge_document_api_v1_projects__project_id__documents__document_id__purge_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+                document_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3904,6 +4183,193 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApiResponse_EvaluationRunResponse_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_index_builds_api_v1_projects__project_id__index_builds_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_IndexBuildListResponse_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reconcile_storage_api_v1_projects__project_id__index_builds_reconcile_storage_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_LifecycleJobResponse_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reembed_corpus_api_v1_projects__project_id__index_builds_reembed_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_LifecycleJobResponse_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reindex_corpus_api_v1_projects__project_id__index_builds_reindex_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_LifecycleJobResponse_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    rollback_index_build_api_v1_projects__project_id__index_builds_rollback_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_IndexBuildResponse_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    activate_index_build_api_v1_projects__project_id__index_builds__build_id__activate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+                build_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_IndexBuildResponse_"];
                 };
             };
             /** @description Validation Error */

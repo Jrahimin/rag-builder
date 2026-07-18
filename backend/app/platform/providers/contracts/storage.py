@@ -38,6 +38,10 @@ class BaseStorageProvider(ABC):
     async def check(self) -> None:
         """Verify that the configured storage location is reachable and usable."""
 
+    @abstractmethod
+    async def list_keys(self, prefix: str) -> list[str]:
+        """List keys under a project-scoped prefix in deterministic order."""
+
     async def delete_document_tree(
         self,
         *,

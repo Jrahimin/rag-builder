@@ -7,7 +7,10 @@
 
 ## POST ``
 
-Upload a file (multipart field `file`). Enqueues `document.process` (`status=queued`).
+Upload a file (multipart field `file`). Supported inputs are PDF, DOCX, UTF-8
+TXT/Markdown, PNG, JPEG, TIFF, and WebP. Extension/MIME/signature, corruption,
+password protection, and malware checks run before storage or job creation.
+Enqueues `document.process` (`status=queued`).
 
 Optional form field `ocr_lang` — per-document OCR language for scanned PDFs and image uploads. When omitted, the worker uses deployment default `APE_OCR__LANG` (`en`). Normalized aliases: `eng`→`en`, `bangla`/`bengali`→`bn`.
 
@@ -18,6 +21,11 @@ The response includes `job_id`. Inspect it through the
 `failed`).
 
 **413** — upload exceeds `APE_KNOWLEDGE__MAX_UPLOAD_BYTES` (default 50 MB).
+
+Stable upload failures include `document_type_unsupported`,
+`document_mime_mismatch`, `document_signature_mismatch`, `document_corrupt`,
+`document_password_protected`, `document_malware_detected`, and
+`malware_scanner_unavailable`.
 
 **Sample request** (Hindi/Devanagari scan — supported Paddle language):
 
@@ -104,7 +112,9 @@ Query: `limit` (1–100, default 20), `offset`.
 
 ## POST `/{document_id}/reprocess`
 
-Re-enqueue full pipeline (parse + chunk). Bumps `document.version`; replaces existing chunks.
+Re-enqueue the durable full pipeline. It bumps `document.version`, writes new
+versioned chunks, creates a complete isolated vector+keyword build, validates it,
+and atomically activates it while preserving the previous build.
 The response includes the new durable `job_id`.
 
 Optional query `ocr_lang` — set or override per-document OCR language for the new run. Pass empty string to clear and fall back to `APE_OCR__LANG`. When omitted, the existing `documents.ocr_lang` is kept.
@@ -113,6 +123,13 @@ Optional query `ocr_lang` — set or override per-document OCR language for the 
 
 ## DELETE `/{document_id}`
 
-Soft-delete document, remove raw and parsed storage artifacts (`.txt` and `.json` sidecars for all versions), delete chunk rows, and purge
-retrieval artifacts (`chunk_embeddings` + best-effort vector points via
-`RetrievalCleanupService`).
+Stages a durable reversible delete and returns `202` with `job_id`. The job
+builds and atomically activates a corpus excluding the document, then sets
+`deleted_at`. Relational and storage artifacts remain available for rollback.
+
+## DELETE `/{document_id}/purge`
+
+Stages a durable irreversible purge and returns `202` with `job_id`. After an
+excluding build is active, the job removes all document chunks, vectors, keyword
+rows, raw/parsed storage objects, and the document row. Retained builds that
+reference the document are superseded and cannot be reactivated.

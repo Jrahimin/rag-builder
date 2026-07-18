@@ -14,7 +14,7 @@ keeping knowledge ingestion and retrieval concerns separate (ADR-007, ADR-009).
 
 ```text
 modules/knowledge/     upload → parse → chunk     status=chunked
-modules/retrieval/     embed → index → search      chunked → ready → POST /search
+modules/retrieval/     full immutable build → activate → search     chunked → ready
 ```
 
 ```text
@@ -27,35 +27,38 @@ search_router ──► SearchService ──► RetrievalContext ──► Retri
                                                           ├── RRF fusion
                                                           └── RerankerProvider
                                                     └── ResultHydrator (once)
-Worker handlers ──► EmbeddingWorkflow / RetrievalIndexingWorkflow + KeywordIndexingWorkflow
-                 └──► chunk_embeddings (pgvector) + chunk_keyword_index (PostgreSQL)
+Worker handlers ──► IndexBuildWorkflow
+                 ├──► build-scoped pgvector + keyword + BM25 rows
+                 └──► validate ──► atomic ProjectIndexPointer swap
 ```
 
 | Component | Role |
 | --------- | ---- |
 | **IndexingService** | Business validation plus durable job staging; wired from one Settings snapshot by `composition/retrieval.py` |
-| **EmbeddingWorkflow** / **RetrievalIndexingWorkflow** | Stage work only; shared skeleton in `workflows/stage_runner.py` |
-| **KeywordIndexingWorkflow** | BM25/FTS rows in `chunk_keyword_index`; invoked during `document.index` |
+| **IndexBuildWorkflow** | Writes a complete private vector+keyword snapshot, validates it, and optionally activates it |
+| **IndexLifecycleService** | Durable corpus build staging plus guarded activation/rollback |
 | **SemanticRetriever** / **KeywordRetriever** | Candidate-only retrievers (`chunk_id`, `score`, `source`) |
 | **HybridRetriever** | Concurrent semantic + keyword → RRF → optional rerank |
 | **ResultHydrator** | Single hydration point for chunk/document ORM rows |
-| **RetrievalCleanupService** | Transactional native-vector, keyword-row, and BM25-stat cleanup |
+| **RetrievalCleanupService** | Irreversible purge cleanup across retained builds |
 | **Worker handoff** | Successful process/embed atomically stages an idempotent child job using the parent's immutable configuration snapshot |
 
 ## Document lifecycle (retrieval-owned statuses)
 
 | Status | Meaning |
 | ------ | ------- |
-| `embedding` | Embed job enqueued or worker running `EmbeddingWorkflow` |
-| `embedded` | Native vectors persisted in `chunk_embeddings` (PostgreSQL/pgvector) |
-| `indexing` | Index job enqueued or worker validating vectors and rebuilding keyword rows |
-| `ready` | Native vector and keyword rows are available; document is searchable |
+| `embedding` | A document-triggered full build is queued or running |
+| `embedded` | Legacy intermediate accepted by manual index staging; new builds publish vectors and keywords together |
+| `indexing` | An isolated full build is queued/running |
+| `ready` | The document version is present in an active complete build |
+| `deleting` / `purging` | A guarded destructive lifecycle job is pending |
 
 Poll `GET /documents/{id}` until `ready` (or `failed`). Manual triggers: `POST .../embed`, `POST .../index`.
 Their responses include `job_id`; [Jobs API](../api/jobs_api.md) exposes execution
 progress, attempts, structured failure, and explicit retry.
 
-**Reindex after v2 upgrade:** existing `ready` documents need `POST .../index` once to populate keyword rows.
+For whole-corpus changes use `/index-builds/reembed` or `/index-builds/reindex`,
+then activate the validated build. The prior active build remains the rollback target.
 
 ## Configuration
 
@@ -64,7 +67,9 @@ progress, attempts, structured failure, and explicit retry.
 | `EmbeddingConfig` | `APE_EMBEDDING__*` | Backend (`hash`, `ollama`, `openai`, `gemini`), model, dimensions, API keys |
 | `RetrievalConfig` | `APE_RETRIEVAL__*` | `strategy`, candidate pools, `hnsw_ef_search`, RRF weights, reranker, `embedding_set_version`, `filterable_metadata_keys` |
 
-`embedding_set_version` is a deployment-level int, independent of `Document.version`. Bump it after a model change to re-embed; search and index rows filter to the active version.
+`embedding_set_version` is a deployment-level int, independent of
+`Document.version`. Both are captured in a build manifest; search filters by the
+active `index_build_id`, which is stricter than selecting the newest embedding set.
 
 The production default is hybrid with 40 semantic and 40 keyword candidates before RRF. Search
 responses include sanitized strategy, latency, reranker identity, and fallback diagnostics. Phase 4
@@ -76,17 +81,18 @@ from a versioned dataset rather than ad hoc changes.
 - `chunk_embeddings` — native fixed-dimension `vector(n)` rows with an HNSW cosine index
 - `chunk_keyword_index` — normalized text, `search_vector` (GIN), term frequencies, metadata snapshot
 - `keyword_term_stats` / `keyword_collection_stats` — BM25 document frequencies and collection stats
+- `index_builds` / `project_index_pointers` — immutable snapshot metadata and atomic active/previous authority
 
-Semantic SQL joins `documents` and `document_chunks`, requires a ready,
-non-deleted document, and applies `project_id`, active
-embedding-set/provider/model, optional document, and allowlisted metadata
-filters before ordering candidates by cosine distance.
+Semantic and keyword SQL apply `project_id`, the resolved active
+`index_build_id`, provider/model configuration, optional document, and allowlisted
+metadata filters before ranking. A partially written build has no query path.
 
 ## Delete policy
 
-`RetrievalCleanupService` deletes pgvector embeddings and keyword rows and
-rebuilds affected BM25 statistics in the same transaction as the document
-delete. There is no remote purge or eventual-consistency window.
+Delete first activates a complete snapshot excluding the document, then
+soft-deletes it while retaining the previous build and artifacts for rollback.
+Purge performs the same safe activation, then removes every relational,
+vector/keyword, raw, and parsed artifact and invalidates builds that referenced it.
 
 ## Workers
 
@@ -96,7 +102,7 @@ python worker.py
 
 ## Testing
 
-- Unit: `tests/unit/modules/retrieval/` (retrievers, RRF, hydrator, BM25, config, workflows)
+- Unit: `tests/unit/modules/retrieval/` (retrievers, RRF, hydrator, BM25, config, lifecycle service)
 - Integration: `tests/integration/test_retrieval_api.py` (real pgvector ranking,
   semantic + hybrid search, isolation, lifecycle visibility,
   document/version/metadata filters, deletion, and idempotent rebuilds)

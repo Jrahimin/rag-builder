@@ -10,9 +10,6 @@ from app.modules.retrieval.repositories.chunk_embedding_repository import ChunkE
 from app.modules.retrieval.repositories.chunk_keyword_index_repository import (
     ChunkKeywordIndexRepository,
 )
-from app.modules.retrieval.workflows.keyword_indexing_workflow import (
-    refresh_keyword_statistics,
-)
 
 
 class RetrievalCleanupService:
@@ -32,10 +29,7 @@ class RetrievalCleanupService:
         await self._embedding_repository.delete_by_document(document_id)
 
     async def delete_keyword_index_for_document(self, document_id: uuid.UUID) -> None:
-        versions = await self._keyword_repository.list_versions_for_document(document_id)
         await self._keyword_repository.delete_by_document_all_versions(document_id)
-        for version in versions:
-            await refresh_keyword_statistics(self._session, self._project_id, version)
 
     async def on_document_delete(self, document_id: uuid.UUID) -> None:
         """Delete every retrieval row before the document transaction commits."""

@@ -20,7 +20,8 @@ DurableJobDispatcher → Redis / Taskiq → handler(job_id)
 ```
 
 PostgreSQL is the source of truth for execution. Redis/Taskiq is only the
-executor transport. Upload, reprocess, embed, and index commit the business
+executor transport. Upload, reprocess, embed, index, corpus re-embed/reindex,
+delete, purge, and storage reconciliation commit the business
 change, job, and outbox row together, then make a best-effort immediate dispatch.
 If Redis is unavailable, the API result remains committed and the dispatcher
 retries the outbox with bounded exponential backoff.
@@ -38,8 +39,9 @@ retries the outbox with bounded exponential backoff.
 - `JobService` owns submission, inspection, lease transitions, retry scheduling,
   terminal transitions, outbox dispatch, and expired-lease recovery.
 
-The stable job types are `document.process`, `document.embed`, and
-`document.index`. Their states are `queued`, `running`, `retry_scheduled`,
+The stable job types include `document.process`, `document.embed`,
+`document.index`, `corpus.reembed`, `corpus.reindex`, `document.delete`,
+`document.purge`, and `storage.reconcile`. Their states are `queued`, `running`, `retry_scheduled`,
 `succeeded`, and `failed`.
 
 ## Worker correctness
@@ -60,13 +62,21 @@ Stage output is replay-safe:
 
 - the expected `Document.version` fences obsolete work;
 - a transaction-scoped advisory lock serializes each document/stage;
-- chunks, active embedding-set rows, keyword rows, and BM25 statistics are
-  replaced transactionally rather than appended;
+- versioned chunks are replaced transactionally;
+- corpus jobs clear only their own private `building` output on retry, then
+  recreate a complete vector+keyword snapshot;
+- sealed builds are immutable and search filters every artifact by the atomic
+  Project active pointer;
 - child jobs use stable configuration/version-aware idempotency keys;
 - a stale worker cannot publish success after losing its lease.
 
 `Document.status` remains the product lifecycle (`queued` through `ready` or
 `failed`), not the worker admission or retry state.
+
+Manual corpus builds stop in `validated`. Activation and rollback are short
+pointer-locking transactions outside the expensive provider work. Delete is a
+reversible excluding build plus soft delete; purge additionally deletes all
+document artifacts and invalidates rollback builds containing that document.
 
 ## Product API
 
@@ -89,7 +99,7 @@ Retrieval wiring shared by API, workers, CLI, and tests remains in
 
 ## Deferred
 
-Cancellation, webhooks, UI, provider registries, extra queue systems, and
+Cancellation, webhooks, provider registries, extra queue systems, and
 customer billing/entitlements are later-roadmap concerns.
 
 Interactive chat generation remains synchronous inside the HTTP request; it is

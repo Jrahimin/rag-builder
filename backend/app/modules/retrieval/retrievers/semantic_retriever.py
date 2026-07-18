@@ -47,6 +47,7 @@ class SemanticRetriever(BaseRetriever):
             candidates = await self._repository.search_cosine(
                 query_vector=query_vector,
                 top_k=effective_top_k,
+                index_build_id=context.index_build_id,
                 document_id=context.filters.document_id,
                 embedding_set_version=context.embedding_set_version,
                 provider=embedded.provider,

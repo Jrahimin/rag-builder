@@ -6,6 +6,7 @@ from app.core.config import (
     EmbeddingBackend,
     JobQueueBackend,
     LLMBackend,
+    MalwareScannerBackend,
     OcrBackend,
     RerankerBackend,
     RetrievalStrategy,
@@ -41,6 +42,8 @@ def validate_runtime_config(settings: Settings) -> None:
         errors.append("production requires the durable outbox dispatcher")
     if settings.storage.backend is not StorageBackend.MINIO:
         errors.append("production requires MinIO/S3-compatible object storage")
+    if settings.malware_scan.backend is not MalwareScannerBackend.CLAMAV:
+        errors.append("production requires APE_MALWARE_SCAN__BACKEND=clamav")
     if settings.retrieval.strategy is not RetrievalStrategy.HYBRID:
         errors.append("production requires hybrid retrieval")
     if not settings.retrieval.rerank_enabled:

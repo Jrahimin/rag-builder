@@ -14,11 +14,23 @@ from app.modules.knowledge.repositories.document_repository import DocumentRepos
 from app.platform.jobs.configuration import apply_job_configuration
 from app.platform.jobs.contracts import JobConfiguration, JobDefinition, JobQueue
 from app.platform.jobs.failure import classify_job_failure
-from app.platform.jobs.names import DOCUMENT_EMBED, DOCUMENT_INDEX, DOCUMENT_PROCESS
+from app.platform.jobs.names import (
+    CORPUS_REEMBED,
+    CORPUS_REINDEX,
+    DOCUMENT_DELETE,
+    DOCUMENT_EMBED,
+    DOCUMENT_INDEX,
+    DOCUMENT_PROCESS,
+    DOCUMENT_PURGE,
+    STORAGE_RECONCILE,
+)
+from app.worker.handlers.corpus import _reembed, _reindex
 from app.worker.handlers.document import _process
+from app.worker.handlers.document_lifecycle import _delete, _purge
 from app.worker.handlers.embedding import _embed
 from app.worker.handlers.evaluation import _evaluate
 from app.worker.handlers.indexing import _index
+from app.worker.handlers.storage_reconciliation import _reconcile
 
 
 class _CaptureQueue(JobQueue):
@@ -78,6 +90,16 @@ async def _execute(
                     service,
                     reporter,  # type: ignore[arg-type]
                 )
+            elif run.job_type is JobType.CORPUS_REEMBED:
+                child = await _reembed(session, run, effective, service, reporter)  # type: ignore[arg-type]
+            elif run.job_type is JobType.CORPUS_REINDEX:
+                child = await _reindex(session, run, effective, service, reporter)  # type: ignore[arg-type]
+            elif run.job_type is JobType.DOCUMENT_DELETE:
+                child = await _delete(session, run, effective, service, reporter)  # type: ignore[arg-type]
+            elif run.job_type is JobType.DOCUMENT_PURGE:
+                child = await _purge(session, run, effective, service, reporter)  # type: ignore[arg-type]
+            elif run.job_type is JobType.STORAGE_RECONCILE:
+                child = await _reconcile(session, run, effective, service, reporter)  # type: ignore[arg-type]
             else:  # pragma: no cover - helper only dispatches the supported test jobs
                 raise AssertionError(f"Unsupported captured job type: {run.job_type.value}")
             submission = await service.stage_success(
@@ -157,6 +179,20 @@ async def run_captured_evaluation_jobs(
     await _run_named(connection, jobs, JobType.EVALUATION_RUN.value)
 
 
+async def run_captured_lifecycle_jobs(
+    connection: AsyncConnection,
+    jobs: list[JobDefinition],
+) -> None:
+    for name in (
+        CORPUS_REEMBED,
+        CORPUS_REINDEX,
+        DOCUMENT_DELETE,
+        DOCUMENT_PURGE,
+        STORAGE_RECONCILE,
+    ):
+        await _run_named(connection, jobs, name)
+
+
 async def run_all_captured_jobs(
     connection: AsyncConnection,
     jobs: list[JobDefinition],
@@ -164,4 +200,5 @@ async def run_all_captured_jobs(
     await run_captured_document_jobs(connection, jobs)
     await run_captured_embed_jobs(connection, jobs)
     await run_captured_index_jobs(connection, jobs)
+    await run_captured_lifecycle_jobs(connection, jobs)
     await run_captured_evaluation_jobs(connection, jobs)

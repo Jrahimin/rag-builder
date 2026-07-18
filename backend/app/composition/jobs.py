@@ -13,9 +13,11 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.composition.audit import DatabaseAuditRecorder
 from app.core.config import Settings
 from app.models.document import DocumentStatus
+from app.models.index_build import IndexBuildState
 from app.models.project import Project
 from app.modules.jobs.services.job_service import JobService
 from app.modules.knowledge.repositories.document_repository import DocumentRepository
+from app.modules.retrieval.repositories.index_build_repository import IndexBuildRepository
 from app.platform.jobs.contracts import JobQueue
 
 logger = structlog.get_logger(__name__)
@@ -88,18 +90,33 @@ class DurableJobDispatcher:
                 )
                 if recovery.failed:
                     documents = DocumentRepository(session, project_id)
+                    builds = IndexBuildRepository(session, project_id)
                     for run in recovery.failed:
-                        if run.document_id is None:
+                        if run.document_id is not None:
+                            document = await documents.get_by_id(
+                                run.document_id, include_deleted=True
+                            )
+                            expected_version = run.payload.get("document_version")
+                            if (
+                                document is not None
+                                and isinstance(expected_version, int)
+                                and document.version == expected_version
+                            ):
+                                document.status = DocumentStatus.FAILED
+                                document.error_message = run.failure_message
+
+                        raw_build_id = run.payload.get("build_id")
+                        if raw_build_id is None:
                             continue
-                        document = await documents.get_by_id(run.document_id, include_deleted=True)
-                        expected_version = run.payload.get("document_version")
-                        if (
-                            document is not None
-                            and isinstance(expected_version, int)
-                            and document.version == expected_version
-                        ):
-                            document.status = DocumentStatus.FAILED
-                            document.error_message = run.failure_message
+                        try:
+                            build_id = uuid.UUID(str(raw_build_id))
+                        except (TypeError, ValueError):
+                            continue
+                        build = await builds.get_by_id(build_id, for_update=True)
+                        if build is not None and build.state is IndexBuildState.BUILDING:
+                            build.state = IndexBuildState.FAILED
+                            build.failure_code = run.failure_code
+                            build.failure_message = run.failure_message
                 await session.commit()
                 for _ in range(self._settings.jobs.dispatcher_batch_size):
                     if not await service.dispatch_next():

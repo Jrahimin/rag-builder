@@ -47,20 +47,22 @@ Your product  ── REST + API key ──►  RAG Builder
 - Stateful RAG conversations and SSE streaming.
 - Claim-linked citations, explicit insufficient-evidence answers, and evidence display.
 - Versioned evaluation datasets, durable quality runs, regression metrics, and reranker comparison.
+- Safe corpus changes with durable reprocess/re-embed/reindex jobs, immutable index builds, atomic activation/rollback, and guarded delete/purge.
+- A browser-based **Test Lab** that verifies upload, durable processing, retrieval, grounded citations or valid refusal, build activation/rollback, and storage reconciliation without Postman.
 - Organization API keys, project boundaries, health/readiness, and background processing foundations.
 
 The repository is still being shaped toward a repeatable dedicated hosted service. The learning path and architecture make the decisions visible instead of hiding them behind a demo.
 
 ## Small examples of what becomes possible
 
-| Product | Instant AI capability |
-| --- | --- |
-| Law firm workspace | Add matter documents, ask case questions, and return source pages. |
-| Call-center platform | Search support policies and draft grounded agent replies. |
-| Audit/compliance SaaS | Retrieve evidence from policies, reports, and working papers. |
-| HR platform | Answer handbook questions for a selected organization or region. |
-| Document management system | Add “ask this folder” without replacing the existing UI. |
-| Internal operations tool | Turn procedures and playbooks into a searchable assistant. |
+| Product                    | Instant AI capability                                              |
+| -------------------------- | ------------------------------------------------------------------ |
+| Law firm workspace         | Add matter documents, ask case questions, and return source pages. |
+| Call-center platform       | Search support policies and draft grounded agent replies.          |
+| Audit/compliance SaaS      | Retrieve evidence from policies, reports, and working papers.      |
+| HR platform                | Answer handbook questions for a selected organization or region.   |
+| Document management system | Add “ask this folder” without replacing the existing UI.           |
+| Internal operations tool   | Turn procedures and playbooks into a searchable assistant.         |
 
 The host product owns the experience. RAG Builder owns the knowledge lifecycle.
 
@@ -70,7 +72,7 @@ The host product owns the experience. RAG Builder owns the knowledge lifecycle.
 1. Ingest       receive a document and preserve the original
 2. Parse/OCR    turn bytes or pixels into text with provenance
 3. Chunk        split text into useful, citable passages
-4. Embed/Index  represent meaning and build search structures
+4. Embed/Index  represent meaning and build versioned, safely activatable search structures
 5. Retrieve     find and rank evidence with semantic + keyword search
 6. Generate     ask the LLM to answer from the evidence
 ```
@@ -115,7 +117,7 @@ FastAPI routes and project access checks
         ▼
 Feature services
   ├── knowledge       upload, parse, chunk, lifecycle
-  ├── retrieval       embeddings, keyword index, vector search, fusion
+  ├── retrieval       embeddings, immutable index builds, activation/rollback, search
   ├── conversations   context, evidence gate, prompts, LLM calls, grounded claims
   └── evaluation      datasets, quality runs, metrics, regressions
         │
@@ -141,15 +143,16 @@ docker compose --env-file .env.docker up --build
 
 Local surfaces:
 
-| Surface | URL |
-| --- | --- |
-| Operator console | `http://localhost:3000/operator/` |
-| API | `http://localhost:8000` |
-| Health | `http://localhost:8000/health` |
-| Readiness | `http://localhost:8000/ready` |
-| MinIO console | `http://localhost:9001` |
+| Surface          | URL                                  |
+| ---------------- | ------------------------------------ |
+| Operator console | `http://localhost:3000/operator/`    |
+| Test Lab         | `http://localhost:3000/operator/lab` |
+| API              | `http://localhost:8000`              |
+| Health           | `http://localhost:8000/health`       |
+| Readiness        | `http://localhost:8000/ready`        |
+| MinIO console    | `http://localhost:9001`              |
 
-The local stack includes the React operator console, FastAPI, a Taskiq worker, PostgreSQL with pgvector, Redis, MinIO, and one-shot migration/bootstrap services. The console is intentionally open in the current trusted deployment and follows the backend's existing configurable authentication behavior; it does not add users, login, sessions, or browser-stored credentials.
+The local stack includes the React operator console, FastAPI, a Taskiq worker, PostgreSQL with pgvector, Redis, MinIO, and one-shot migration/bootstrap services. Use the Test Lab as the browser-based end-to-end verification surface: select or create a project, upload a real document, follow its durable job, test retrieval and citations, then exercise corpus lifecycle controls. The console is intentionally open in the current trusted deployment and follows the backend's existing configurable authentication behavior; it does not add users, login, sessions, or browser-stored credentials.
 
 Useful targeted flows use the same Compose file:
 
@@ -215,29 +218,31 @@ docs/
 
 The repository demonstrates the full conceptual journey from authentication and document upload
 through measured retrieval and grounded chat, plus an internal operator console for deployment
-health, durable work, documents, configuration, metrics, evidence quality, and audit. It is not a
-public SaaS product.
+health, durable work, documents, corpus/index lifecycle, configuration, metrics, evidence quality,
+and audit. It is not a public SaaS product.
 
 The most important next development work is:
 
 - first-class asynchronous outcome webhooks;
-- safer file-ingestion boundaries and repeatable dedicated deployment operations.
+- repeatable dedicated deployment operations.
 
 The scope is intentionally focused. The next product should not begin with agents, GraphRAG, voice, a connector marketplace, multiple vector databases, or a complex billing control plane.
 
 ## Documentation guide
 
-| Need | Start here |
-| --- | --- |
-| Understand the product | [Platform at a Glance](docs/Platform-at-a-glance.md) |
-| Integrate an application | [Platform Integration Guide](docs/platform-integration-guide.md) |
-| Learn RAG from the beginning | [RAG from Zero](docs/learning/rag-from-zero.md) |
-| Follow document processing | [Knowledge Ingestion Journey](docs/learning/knowledge-ingestion-journey.md) |
-| Understand search quality | [Hybrid Retrieval Journey](docs/learning/hybrid-retrieval-journey.md) |
-| Understand chat grounding | [Conversation RAG Journey](docs/learning/conversation_rag_journey.md) |
-| Study architecture | [Architecture](docs/architecture/README.md) |
-| Explore behavior | [Features](docs/features/README.md) |
-| Operate pgvector | [pgvector Operations Runbook](docs/learning/pgvector-operations-runbook.md) |
+| Need                               | Start here                                                                  |
+| ---------------------------------- | --------------------------------------------------------------------------- |
+| Understand the product             | [Platform at a Glance](docs/Platform-at-a-glance.md)                        |
+| Integrate an application           | [Platform Integration Guide](docs/platform-integration-guide.md)            |
+| Learn RAG from the beginning       | [RAG from Zero](docs/learning/rag-from-zero.md)                             |
+| Follow document processing         | [Knowledge Ingestion Journey](docs/learning/knowledge-ingestion-journey.md) |
+| Understand search quality          | [Hybrid Retrieval Journey](docs/learning/hybrid-retrieval-journey.md)       |
+| Understand chat grounding          | [Conversation RAG Journey](docs/learning/conversation_rag_journey.md)       |
+| Study architecture                 | [Architecture](docs/architecture/README.md)                                 |
+| Explore behavior                   | [Features](docs/features/README.md)                                         |
+| Operate corpus and index lifecycle | [Safe corpus/index lifecycle](docs/features/safe_corpus_index_lifecycle.md) |
+| Integrate lifecycle APIs           | [Index lifecycle API](docs/api/index_lifecycle_api.md)                      |
+| Operate pgvector                   | [pgvector Operations Runbook](docs/learning/pgvector-operations-runbook.md) |
 
 ## The larger direction
 

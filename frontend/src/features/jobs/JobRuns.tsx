@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useAllJobs, useJobs, useProjects } from "../../api/operatorConsoleQueries";
 import { EmptyState, ErrorState, LoadingState } from "../../components/QueryStatePanel";
 import { ProjectSelector } from "../../components/ProjectSelector";
@@ -7,11 +8,16 @@ import { formatDate, shortId } from "../../shared/formatters";
 import { JobRunDetails } from "./JobRunDetails";
 
 export function JobRuns() {
+  const [params] = useSearchParams();
   const projects = useProjects();
-  const [projectId, setProjectId] = useState("");
+  const [projectId, setProjectId] = useState(params.get("project") ?? "");
   const [state, setState] = useState("");
   const [jobType, setJobType] = useState("");
-  const [selectedJob, setSelectedJob] = useState<{ id: string; projectId: string } | null>(null);
+  const [selectedJob, setSelectedJob] = useState<{ id: string; projectId: string } | null>(
+    params.get("job") && params.get("project")
+      ? { id: params.get("job")!, projectId: params.get("project")! }
+      : null,
+  );
   const allJobs = useAllJobs(projects.data?.items ?? [], state, jobType, !projectId);
   const projectJobs = useJobs(projectId, state, jobType);
   const jobs = projectId ? projectJobs : allJobs;
@@ -59,6 +65,12 @@ export function JobRuns() {
               <option value="document.process">Process</option>
               <option value="document.embed">Embed</option>
               <option value="document.index">Index</option>
+              <option value="evaluation.run">Evaluation</option>
+              <option value="corpus.reembed">Corpus re-embed</option>
+              <option value="corpus.reindex">Corpus reindex</option>
+              <option value="document.delete">Document delete</option>
+              <option value="document.purge">Document purge</option>
+              <option value="storage.reconcile">Storage reconcile</option>
             </select>
           </label>
           <span className="polling-note">Auto-refreshes active jobs every 3s</span>

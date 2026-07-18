@@ -3,6 +3,7 @@ import { useJob, useRetryJob } from "../../api/operatorConsoleQueries";
 import { ErrorState, LoadingState } from "../../components/QueryStatePanel";
 import { StatusBadge } from "../../components/StatusBadge";
 import { formatDate } from "../../shared/formatters";
+import { StructuredJobResult } from "./StructuredJobResult";
 
 export function JobRunDetails({
   projectId,
@@ -99,9 +100,13 @@ export function JobRunDetails({
               <p>{job.data.failure_message}</p>
             </section>
           )}
+          {job.data.result && <StructuredJobResult result={job.data.result} />}
           <section>
             <h3>Configuration snapshot</h3>
-            <pre className="json-view">{JSON.stringify(job.data.configuration, null, 2)}</pre>
+            <details>
+              <summary>Technical configuration</summary>
+              <pre className="json-view">{JSON.stringify(job.data.configuration, null, 2)}</pre>
+            </details>
           </section>
           <button
             className="button button--primary button--full"

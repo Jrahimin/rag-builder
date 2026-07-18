@@ -11,7 +11,10 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 
 from app.core.config import get_settings
 from app.platform.jobs.contracts import JobDefinition
-from tests.integration.knowledge_helpers import run_captured_document_jobs
+from tests.integration.knowledge_helpers import (
+    run_captured_document_jobs,
+    run_captured_lifecycle_jobs,
+)
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
@@ -90,15 +93,66 @@ async def test_upload_list_get_delete_document(
     assert fetched.json()["data"]["status"] == "chunked"
 
     deleted = await db_client.delete(f"/api/v1/projects/{project_id}/documents/{document_id}")
-    assert deleted.status_code == 200
-    assert deleted.json()["data"]["deleted_at"] is not None
-    assert not storage_path.is_file()
-    assert not parsed_path.is_file()
-    assert not parsed_json_path.is_file()
-    assert not storage_path.parent.exists()
+    assert deleted.status_code == 202
+    assert deleted.json()["data"]["status"] == "deleting"
+    assert deleted.json()["data"]["deleted_at"] is None
+    await run_captured_lifecycle_jobs(integration_connection, captured_jobs)
+    assert storage_path.is_file()
+    assert parsed_path.is_file()
+    assert parsed_json_path.is_file()
 
     list_after = await db_client.get(f"/api/v1/projects/{project_id}/documents")
     assert document_id not in {item["id"] for item in list_after.json()["data"]["items"]}
+
+
+async def test_purge_removes_document_and_every_storage_artifact(
+    db_client: AsyncClient,
+    integration_connection: AsyncConnection,
+    captured_jobs: list[JobDefinition],
+) -> None:
+    project_id = await _create_project(db_client)
+    body = await _upload_and_process(
+        db_client,
+        integration_connection,
+        captured_jobs,
+        project_id,
+        filename="purge-me.txt",
+        content=b"This corpus artifact must be irreversibly purged.",
+    )
+    document_id = body["id"]
+    settings = get_settings()
+    raw_path = Path(settings.storage.local_root) / str(body["storage_key"])
+    parsed_path = Path(settings.storage.local_root) / str(body["parsed_text_storage_key"])
+    parsed_json_path = parsed_path.with_suffix(".json")
+    assert raw_path.is_file()
+    assert parsed_path.is_file()
+    assert parsed_json_path.is_file()
+
+    purging = await db_client.delete(
+        f"/api/v1/projects/{project_id}/documents/{document_id}/purge",
+    )
+    assert purging.status_code == 202
+    data = purging.json()["data"]
+    assert data["status"] == "purging"
+    job_id = data["job_id"]
+
+    await run_captured_lifecycle_jobs(integration_connection, captured_jobs)
+
+    fetched = await db_client.get(
+        f"/api/v1/projects/{project_id}/documents/{document_id}",
+    )
+    assert fetched.status_code == 404
+    assert not raw_path.exists()
+    assert not parsed_path.exists()
+    assert not parsed_json_path.exists()
+
+    job = await db_client.get(f"/api/v1/projects/{project_id}/jobs/{job_id}")
+    assert job.status_code == 200
+    job_data = job.json()["data"]
+    assert job_data["state"] == "succeeded"
+    assert job_data["document_id"] is None
+    assert job_data["result"]["document_id"] == document_id
+    assert job_data["result"]["mode"] == "purge"
 
 
 async def test_upload_duplicate_content_returns_conflict(
@@ -184,24 +238,20 @@ async def test_parse_text_document_via_workflow(
     assert body["parsed_text_storage_key"] is not None
 
 
-async def test_unsupported_file_marks_failed(
+async def test_unsupported_file_fails_before_job_creation(
     db_client: AsyncClient,
     integration_connection: AsyncConnection,
     captured_jobs: list[JobDefinition],
 ) -> None:
     project_id = await _create_project(db_client)
-    body = await _upload_and_process(
-        db_client,
-        integration_connection,
-        captured_jobs,
-        project_id,
-        filename="data.bin",
-        content=b"\x00\x01\x02",
-        content_type="application/octet-stream",
+    del integration_connection
+    response = await db_client.post(
+        f"/api/v1/projects/{project_id}/documents",
+        files={"file": ("data.bin", b"\x00\x01\x02", "application/octet-stream")},
     )
-    assert body["status"] == "failed"
-    assert body["error_message"]
-    assert "traceback" not in body["error_message"].lower()
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "document_type_unsupported"
+    assert captured_jobs == []
 
 
 async def test_reprocess_deleted_document_returns_conflict(
@@ -225,7 +275,7 @@ async def test_reprocess_deleted_document_returns_conflict(
         f"/api/v1/projects/{project_id}/documents/{document_id}/reprocess",
     )
     assert response.status_code == 409
-    assert response.json()["error"]["code"] == "document_deleted"
+    assert response.json()["error"]["code"] == "document_lifecycle_pending"
 
 
 async def test_reprocess_bumps_version_and_rechunks(

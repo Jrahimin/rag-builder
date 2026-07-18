@@ -13,13 +13,17 @@ class RetrievalChunkRepository(ProjectScopedRepository[DocumentChunk]):
 
     model = DocumentChunk
 
-    async def list_by_document(self, document_id: uuid.UUID) -> list[DocumentChunk]:
+    async def list_by_document(
+        self, document_id: uuid.UUID, *, document_version: int | None = None
+    ) -> list[DocumentChunk]:
         """Return all chunks for a document ordered by ``chunk_index``."""
         stmt = (
             self._scoped()
             .where(self.model.document_id == document_id)
             .order_by(self.model.chunk_index)
         )
+        if document_version is not None:
+            stmt = stmt.where(self.model.document_version == document_version)
         result = await self._session.execute(stmt)
         return list(result.scalars().all())
 

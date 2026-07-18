@@ -121,6 +121,24 @@ class MinioStorageProvider(BaseStorageProvider):
                 provider_name="minio",
             ) from exc
 
+    async def list_keys(self, prefix: str) -> list[str]:
+        keys: list[str] = []
+        token: str | None = None
+        while True:
+            kwargs: dict[str, str] = {"Bucket": self._config.bucket, "Prefix": prefix}
+            if token is not None:
+                kwargs["ContinuationToken"] = token
+            try:
+                response = await self._run(self._client.list_objects_v2, **kwargs)
+            except ClientError as exc:
+                raise ProviderError(
+                    "Failed to list storage objects.", provider_name="minio", retryable=True
+                ) from exc
+            keys.extend(str(item["Key"]) for item in response.get("Contents") or [])
+            if not response.get("IsTruncated"):
+                return sorted(keys)
+            token = response.get("NextContinuationToken")
+
     async def delete_document_tree(
         self,
         *,

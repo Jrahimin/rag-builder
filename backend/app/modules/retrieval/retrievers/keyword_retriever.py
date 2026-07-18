@@ -50,6 +50,7 @@ class KeywordRetriever(BaseRetriever):
         metadata_filter = context.sanitized_metadata_filter()
         rows = await self._keyword_repository.search_candidates(
             query=context.query,
+            index_build_id=context.index_build_id,
             embedding_set_version=context.embedding_set_version,
             top_k=context.keyword_candidate_top_k,
             document_id=context.filters.document_id,
@@ -63,10 +64,12 @@ class KeywordRetriever(BaseRetriever):
         unique_terms = list(dict.fromkeys(query_terms))
         document_frequencies = await self._term_stats_repository.map_document_frequencies(
             unique_terms,
+            index_build_id=context.index_build_id,
             embedding_set_version=context.embedding_set_version,
         )
         collection_stats = await self._collection_stats_repository.get_for_version(
-            context.embedding_set_version
+            context.embedding_set_version,
+            index_build_id=context.index_build_id,
         )
         total_documents = (
             collection_stats.total_documents if collection_stats else max(len(rows), 1)

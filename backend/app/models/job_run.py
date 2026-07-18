@@ -32,6 +32,11 @@ class JobType(StrEnum):
     DOCUMENT_EMBED = "document.embed"
     DOCUMENT_INDEX = "document.index"
     EVALUATION_RUN = "evaluation.run"
+    CORPUS_REEMBED = "corpus.reembed"
+    CORPUS_REINDEX = "corpus.reindex"
+    DOCUMENT_DELETE = "document.delete"
+    DOCUMENT_PURGE = "document.purge"
+    STORAGE_RECONCILE = "storage.reconcile"
 
 
 class JobState(StrEnum):
@@ -48,7 +53,7 @@ class JobRun(Base, UUIDPrimaryKeyMixin, TimestampMixin, ProjectScopedMixin):
     __tablename__ = "job_runs"
     __table_args__ = (
         ForeignKeyConstraint(["project_id"], ["projects.id"], ondelete="CASCADE"),
-        ForeignKeyConstraint(["document_id"], ["documents.id"], ondelete="CASCADE"),
+        ForeignKeyConstraint(["document_id"], ["documents.id"], ondelete="SET NULL"),
         ForeignKeyConstraint(
             ["configuration_snapshot_id"],
             ["job_configuration_snapshots.id"],
@@ -114,3 +119,4 @@ class JobRun(Base, UUIDPrimaryKeyMixin, TimestampMixin, ProjectScopedMixin):
     failure_code: Mapped[str | None] = mapped_column(String(128), nullable=True)
     failure_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     failure_details: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    result: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)

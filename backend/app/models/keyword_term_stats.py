@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import uuid
+
 from sqlalchemy import Float, ForeignKeyConstraint, Index, Integer, String, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -23,11 +25,13 @@ class KeywordTermStats(Base, UUIDPrimaryKeyMixin, TimestampMixin, ProjectScopedM
             ["projects.id"],
             ondelete="CASCADE",
         ),
+        ForeignKeyConstraint(["index_build_id"], ["index_builds.id"], ondelete="CASCADE"),
         UniqueConstraint(
             "project_id",
+            "index_build_id",
             "embedding_set_version",
             "term",
-            name="uq_keyword_term_stats_project_esv_term",
+            name="uq_keyword_term_stats_project_build_esv_term",
         ),
         Index(
             "ix_keyword_term_stats_project_esv",
@@ -37,6 +41,7 @@ class KeywordTermStats(Base, UUIDPrimaryKeyMixin, TimestampMixin, ProjectScopedM
     )
 
     embedding_set_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    index_build_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
     term: Mapped[str] = mapped_column(String(128), nullable=False)
     document_frequency: Mapped[int] = mapped_column(Integer, nullable=False)
 
@@ -51,14 +56,17 @@ class KeywordCollectionStats(Base, UUIDPrimaryKeyMixin, TimestampMixin, ProjectS
             ["projects.id"],
             ondelete="CASCADE",
         ),
+        ForeignKeyConstraint(["index_build_id"], ["index_builds.id"], ondelete="CASCADE"),
         UniqueConstraint(
             "project_id",
+            "index_build_id",
             "embedding_set_version",
-            name="uq_keyword_collection_stats_project_esv",
+            name="uq_keyword_collection_stats_project_build_esv",
         ),
     )
 
     embedding_set_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    index_build_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
     total_documents: Mapped[int] = mapped_column(
         Integer,
         nullable=False,
