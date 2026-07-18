@@ -11,6 +11,9 @@ export type Project = components["schemas"]["ProjectResponse"];
 export type Document = components["schemas"]["DocumentResponse"];
 export type Job = components["schemas"]["JobResponse"];
 export type JobDetail = components["schemas"]["JobDetailResponse"];
+export type EvaluationDataset = components["schemas"]["EvaluationDatasetResponse"];
+export type EvaluationRun = components["schemas"]["EvaluationRunResponse"];
+export type QualitySummary = components["schemas"]["QualitySummary"];
 export type ProjectPage = components["schemas"]["PaginatedResult_ProjectResponse_"];
 export type DocumentPage = components["schemas"]["PaginatedResult_DocumentResponse_"];
 export type JobPage = components["schemas"]["PaginatedResult_JobResponse_"];
@@ -131,4 +134,14 @@ export const operatorApiClient = {
     request<JobDetail>(`${apiRoot}/projects/${projectId}/jobs/${jobId}`),
   retryJob: (projectId: string, jobId: string) =>
     request<Job>(`${apiRoot}/projects/${projectId}/jobs/${jobId}/retry`, { method: "POST" }),
+  getQuality: (projectId: string) =>
+    request<QualitySummary>(`${apiRoot}/projects/${projectId}/evaluations/quality`),
+  getEvaluationDatasets: (projectId: string) =>
+    request<EvaluationDataset[]>(`${apiRoot}/projects/${projectId}/evaluations/datasets`),
+  createEvaluationRun: (projectId: string, datasetId: string) =>
+    request<EvaluationRun>(`${apiRoot}/projects/${projectId}/evaluations/runs`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ dataset_id: datasetId }),
+    }),
 };

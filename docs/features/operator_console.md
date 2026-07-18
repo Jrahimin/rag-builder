@@ -32,6 +32,7 @@ invalidation. State local to filters, selections, and mobile navigation stays in
 | `/operator/projects` | `ProjectDocumentInspection`, `DocumentLifecycleDetails` | Project/corpus selection and document lifecycle inspection |
 | `/operator/configuration` | `ActiveConfigurationDetails` | Sanitized providers, runtime choices, index version, snapshots |
 | `/operator/metrics` | `OperationalMetrics` | Queue, latency, token, corpus, and storage metrics |
+| `/operator/quality` | `EvidenceQuality` | Dataset/config versions, latest metrics, regressions, failed cases, and reranker comparison |
 | `/operator/audit` | `AuditHistory` | Recent immutable operator and durable-job events |
 | `/operator/health` | `DependencyWorkerHealth` | Readiness checks, degraded dependencies, worker heartbeats |
 
@@ -45,6 +46,8 @@ selection. Feature files use descriptive domain names and remain separate from a
 - An open active job detail polls every 2 seconds.
 - Safe retry is enabled only for terminal failed jobs. The backend performs the authoritative check.
 - Empty projects, documents, jobs, audit, latency, and worker pools have explicit states.
+- Quality runs poll while their durable job is active; the only quality mutation queues a run for an
+  existing immutable dataset version.
 - Degraded dependencies and an unavailable worker registry remain visible without hiding healthy data.
 - Network failure renders a useful backend-unavailable state, including frontend-only Compose mode.
 
@@ -58,11 +61,12 @@ backend/infrastructure-only, and frontend-only service targeting.
 ## Testing
 
 Vitest and Testing Library cover routing, loading/empty states, backend errors, degraded readiness,
-active-job polling, job detail, and safe retry. Static checks include Prettier, ESLint, TypeScript,
-Vitest, and the Vite production build.
+active-job polling, job detail, safe retry, and quality metrics/version rendering. Static checks
+include Prettier, ESLint, TypeScript, Vitest, and the Vite production build.
 
 ## Intentional limits
 
-The console is read-only except for the existing failed-job retry action. It does not add login,
-sessions, cookies, users, provider credentials, configuration mutation, SSR, long-term time-series
-storage, end-user chat, or customer administration.
+The console is read-only except for the existing failed-job retry action and queueing an evaluation
+run against an existing immutable dataset. It does not create/edit datasets, add login, sessions,
+cookies, users, provider credentials, configuration mutation, SSR, long-term time-series storage,
+end-user chat, or customer administration.

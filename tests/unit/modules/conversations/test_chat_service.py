@@ -37,6 +37,12 @@ class FakeRetrieval:
         ]
 
 
+class EmptyRetrieval:
+    async def retrieve(self, **kwargs: object) -> list[ContextChunk]:
+        del kwargs
+        return []
+
+
 class FailingLLM(EchoLLMProvider):
     async def generate(self, messages, *, temperature, max_tokens):
         del messages, temperature, max_tokens
@@ -212,6 +218,40 @@ async def test_send_message_llm_failure_leaves_user_only(
             MessageSendRequest(content="question"),
         )
     assert session.commit.await_count == 1
+
+
+async def test_insufficient_evidence_skips_generation_and_persists_refusal(
+    session: AsyncMock,
+    conversation_repository: AsyncMock,
+    message_repository: AsyncMock,
+    conversation: Conversation,
+) -> None:
+    class CountingLLM(EchoLLMProvider):
+        calls = 0
+
+        async def generate(self, messages, *, temperature, max_tokens):
+            self.calls += 1
+            return await super().generate(
+                messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+
+    llm = CountingLLM(model="test", provider_version="1")
+    service = _service(session, conversation_repository, message_repository, llm)
+    service._retrieval = EmptyRetrieval()
+
+    turn = await service.send_message(
+        conversation.id,
+        MessageSendRequest(content="What is the lunar payroll rule?"),
+    )
+
+    assert llm.calls == 0
+    assert turn.assistant_message.finish_reason == "insufficient_evidence"
+    assert turn.assistant_message.insufficient_evidence_reason == "no_retrieval_results"
+    assert turn.assistant_message.grounded is False
+    assert turn.assistant_message.claims == []
+    assert turn.assistant_message.citations == []
 
 
 async def test_send_message_uses_conversation_temperature(

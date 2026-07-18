@@ -133,7 +133,8 @@ repositories/workflows. Both paths require matching `project_id`, active
 filters. Hybrid retrieval runs semantic and keyword candidates concurrently,
 fuses them with RRF, optionally reranks through `BaseRerankerProvider`, and
 falls back to fused order when reranking is unavailable. `ResultHydrator` is the
-single ORM-to-response hydration point.
+single ORM-to-response hydration point. `SearchResponse.diagnostics` records the
+strategy, latency, reranker identity, and applied/unavailable fallback state.
 
 ## Chat
 
@@ -148,9 +149,14 @@ sequenceDiagram
     API->>Chat: message request
     Chat->>DB: commit user message (Tx1)
     Chat->>Search: Project-scoped retrieval
-    Chat->>Chat: context budget + prompt version + history
-    Chat->>LLM: generate or stream (no DB transaction held)
-    Chat->>DB: commit assistant + citations (Tx2)
+    Chat->>Chat: context budget + evidence sufficiency
+    alt insufficient evidence
+        Chat->>DB: commit deterministic refusal + reason (Tx2)
+    else sufficient evidence
+        Chat->>LLM: prompt v2 generate or stream (no DB transaction held)
+        Chat->>Chat: map answer claims to evidence locations
+        Chat->>DB: commit assistant + claims + citations (Tx2)
+    end
     Chat-->>API: response or SSE done event
 ```
 
@@ -160,10 +166,36 @@ retrieval and LLM contracts. `ContextBuilder` deduplicates and trims ranked
 chunks; `PromptBuilder` formats the versioned prompt and bounded history.
 `max_history_messages=0` means no prior messages.
 
+`GroundingService` makes the insufficient-evidence decision before generation,
+then validates generated segments against the selected source chunks. Non-stream
+responses and SSE `done` events expose the same claim/evidence structure.
+
 Provider failures become the stable `llm_provider_unavailable` application
 error. Streaming uses the same service mapping and emits a sanitized SSE error;
 client cancellation leaves the already-committed user message but does not
 persist a partial assistant message.
+
+## Quality evaluation
+
+```mermaid
+flowchart LR
+    A["POST evaluations/runs"] --> B["EvaluationService"]
+    B --> C["JobRun + config snapshot + outbox"]
+    C --> D["evaluation.run worker"]
+    D --> E["EvaluationRunnerService"]
+    E --> F["semantic / hybrid / reranker profiles"]
+    E --> G["grounded answer adapter"]
+    F --> H["metrics + cases + regressions"]
+    G --> H
+    H --> I["evaluation_runs"]
+    I --> J["Project quality API + operator view"]
+```
+
+The evaluation module owns immutable datasets, metrics, acceptance thresholds,
+and stored comparisons. Composition adapters are the only place it sees
+retrieval and conversation implementations. Evaluation remains Project-scoped
+and asynchronous; no separate evaluation deployment or synchronous HTTP model
+loop exists.
 
 ## Cross-cutting owners after alignment
 
@@ -176,6 +208,7 @@ persist a partial assistant message.
 | Service lifecycle operations | `platform/domain/lifecycle_service.py` |
 | OCR language normalization | `platform/domain/ocr_language.py` |
 | Retrieval service construction | `composition/retrieval.py` |
+| Evaluation adapters and version capture | `composition/evaluation.py` |
 | Durable job/outbox construction and recovery | `composition/jobs.py` |
 | Lease, heartbeat, configuration restore, failure transition | `worker/job_runtime.py` |
 | Provider selection | `platform/providers/implementations/*_factory.py`, called by composition layers |

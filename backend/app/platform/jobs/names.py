@@ -5,3 +5,4 @@ from __future__ import annotations
 DOCUMENT_PROCESS = "document.process"
 DOCUMENT_EMBED = "document.embed"
 DOCUMENT_INDEX = "document.index"
+EVALUATION_RUN = "evaluation.run"

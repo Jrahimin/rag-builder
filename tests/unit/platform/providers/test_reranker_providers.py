@@ -7,6 +7,8 @@ import uuid
 import pytest
 
 from app.platform.providers.contracts.reranker import RerankCandidate, RerankRequest
+from app.platform.providers.implementations.embedding_reranker import EmbeddingRerankerProvider
+from app.platform.providers.implementations.hash_embedding import HashEmbeddingProvider
 from app.platform.providers.implementations.lexical_reranker import LexicalRerankerProvider
 from app.platform.providers.implementations.noop_reranker import NoopRerankerProvider
 
@@ -59,3 +61,24 @@ async def test_lexical_reranker_prefers_overlap() -> None:
     )
     assert response.results[0].chunk_id == strong_id
     assert response.results[0].score > response.results[1].score
+
+
+async def test_embedding_reranker_reports_non_learned_hash_fallback() -> None:
+    provider = EmbeddingRerankerProvider(
+        HashEmbeddingProvider(model="hash", dimensions=32, provider_version="1")
+    )
+    response = await provider.rerank(
+        RerankRequest(
+            query="refund policy",
+            candidates=[
+                RerankCandidate(
+                    chunk_id=uuid.uuid4(),
+                    text="refund policy applies for thirty days",
+                    source_score=0.2,
+                )
+            ],
+            top_n=1,
+        )
+    )
+    assert response.provider == "embedding"
+    assert response.results[0].metadata["learned"] is False

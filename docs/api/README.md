@@ -47,3 +47,4 @@ Error:
 | Jobs | [jobs_api.md](jobs_api.md) | `/api/v1/projects/{project_id}/jobs` |
 | Retrieval | [retrieval_api.md](retrieval_api.md) | `/api/v1/projects/{project_id}` (search, embed, index on documents prefix) |
 | Conversations | [conversation_api.md](conversation_api.md) | `/api/v1/projects/{project_id}/conversations` |
+| Evaluation | [evaluation_api.md](evaluation_api.md) | `/api/v1/projects/{project_id}/evaluations` |

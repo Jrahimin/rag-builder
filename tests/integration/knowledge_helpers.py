@@ -17,6 +17,7 @@ from app.platform.jobs.failure import classify_job_failure
 from app.platform.jobs.names import DOCUMENT_EMBED, DOCUMENT_INDEX, DOCUMENT_PROCESS
 from app.worker.handlers.document import _process
 from app.worker.handlers.embedding import _embed
+from app.worker.handlers.evaluation import _evaluate
 from app.worker.handlers.indexing import _index
 
 
@@ -67,8 +68,18 @@ async def _execute(
                 child = await _process(session, run, effective, service, reporter)  # type: ignore[arg-type]
             elif run.job_type is JobType.DOCUMENT_EMBED:
                 child = await _embed(session, run, effective, service, reporter)  # type: ignore[arg-type]
-            else:
+            elif run.job_type is JobType.DOCUMENT_INDEX:
                 child = await _index(session, run, effective, service, reporter)  # type: ignore[arg-type]
+            elif run.job_type is JobType.EVALUATION_RUN:
+                child = await _evaluate(
+                    session,
+                    run,
+                    effective,
+                    service,
+                    reporter,  # type: ignore[arg-type]
+                )
+            else:  # pragma: no cover - helper only dispatches the supported test jobs
+                raise AssertionError(f"Unsupported captured job type: {run.job_type.value}")
             submission = await service.stage_success(
                 run.id,
                 worker_id=worker_id,
@@ -139,6 +150,13 @@ async def run_captured_retrieval_jobs(
     await run_captured_index_jobs(connection, jobs)
 
 
+async def run_captured_evaluation_jobs(
+    connection: AsyncConnection,
+    jobs: list[JobDefinition],
+) -> None:
+    await _run_named(connection, jobs, JobType.EVALUATION_RUN.value)
+
+
 async def run_all_captured_jobs(
     connection: AsyncConnection,
     jobs: list[JobDefinition],
@@ -146,3 +164,4 @@ async def run_all_captured_jobs(
     await run_captured_document_jobs(connection, jobs)
     await run_captured_embed_jobs(connection, jobs)
     await run_captured_index_jobs(connection, jobs)
+    await run_captured_evaluation_jobs(connection, jobs)

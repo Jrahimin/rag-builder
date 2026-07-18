@@ -75,6 +75,37 @@
         "title": "ActiveConfiguration",
         "type": "object"
       },
+      "AnswerClaim": {
+        "description": "A generated answer segment linked to zero or more evidence locations.",
+        "properties": {
+          "claim_id": {
+            "title": "Claim Id",
+            "type": "string"
+          },
+          "evidence": {
+            "items": {
+              "$ref": "#/components/schemas/ClaimEvidence"
+            },
+            "title": "Evidence",
+            "type": "array"
+          },
+          "grounded": {
+            "title": "Grounded",
+            "type": "boolean"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "claim_id",
+          "text",
+          "grounded"
+        ],
+        "title": "AnswerClaim",
+        "type": "object"
+      },
       "ApiKeyCreate": {
         "additionalProperties": false,
         "description": "Payload for creating a named API key.",
@@ -527,6 +558,90 @@
           }
         },
         "title": "ApiResponse[DocumentResponse]",
+        "type": "object"
+      },
+      "ApiResponse_EvaluationDatasetResponse_": {
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EvaluationDatasetResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          },
+          "meta": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ResponseMeta"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "success": {
+            "default": true,
+            "title": "Success",
+            "type": "boolean"
+          }
+        },
+        "title": "ApiResponse[EvaluationDatasetResponse]",
+        "type": "object"
+      },
+      "ApiResponse_EvaluationRunResponse_": {
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EvaluationRunResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          },
+          "meta": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ResponseMeta"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "success": {
+            "default": true,
+            "title": "Success",
+            "type": "boolean"
+          }
+        },
+        "title": "ApiResponse[EvaluationRunResponse]",
         "type": "object"
       },
       "ApiResponse_JobDetailResponse_": {
@@ -1159,6 +1274,48 @@
         "title": "ApiResponse[ProjectResponse]",
         "type": "object"
       },
+      "ApiResponse_QualitySummary_": {
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/QualitySummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          },
+          "meta": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ResponseMeta"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "success": {
+            "default": true,
+            "title": "Success",
+            "type": "boolean"
+          }
+        },
+        "title": "ApiResponse[QualitySummary]",
+        "type": "object"
+      },
       "ApiResponse_ReadinessStatus_": {
         "properties": {
           "data": {
@@ -1329,6 +1486,98 @@
           }
         },
         "title": "ApiResponse[list[AuditEventResponse]]",
+        "type": "object"
+      },
+      "ApiResponse_list_EvaluationDatasetResponse__": {
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/EvaluationDatasetResponse"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Data"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          },
+          "meta": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ResponseMeta"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "success": {
+            "default": true,
+            "title": "Success",
+            "type": "boolean"
+          }
+        },
+        "title": "ApiResponse[list[EvaluationDatasetResponse]]",
+        "type": "object"
+      },
+      "ApiResponse_list_EvaluationRunResponse__": {
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/EvaluationRunResponse"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Data"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          },
+          "meta": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ResponseMeta"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "success": {
+            "default": true,
+            "title": "Success",
+            "type": "boolean"
+          }
+        },
+        "title": "ApiResponse[list[EvaluationRunResponse]]",
         "type": "object"
       },
       "ApiResponse_list_RecentFailure__": {
@@ -1646,6 +1895,28 @@
       "CitationSnapshot": {
         "description": "Durable citation stored on assistant messages.",
         "properties": {
+          "char_end": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Char End"
+          },
+          "char_start": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Char Start"
+          },
           "chunk_hash": {
             "title": "Chunk Hash",
             "type": "string"
@@ -1704,6 +1975,87 @@
           "chunk_hash"
         ],
         "title": "CitationSnapshot",
+        "type": "object"
+      },
+      "ClaimEvidence": {
+        "description": "One source location supporting an answer claim.",
+        "properties": {
+          "char_end": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Char End"
+          },
+          "char_start": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Char Start"
+          },
+          "chunk_id": {
+            "format": "uuid",
+            "title": "Chunk Id",
+            "type": "string"
+          },
+          "chunk_index": {
+            "title": "Chunk Index",
+            "type": "integer"
+          },
+          "citation_index": {
+            "minimum": 1.0,
+            "title": "Citation Index",
+            "type": "integer"
+          },
+          "document_id": {
+            "format": "uuid",
+            "title": "Document Id",
+            "type": "string"
+          },
+          "excerpt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Excerpt"
+          },
+          "filename": {
+            "title": "Filename",
+            "type": "string"
+          },
+          "page_number": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page Number"
+          }
+        },
+        "required": [
+          "citation_index",
+          "chunk_id",
+          "document_id",
+          "filename",
+          "chunk_index"
+        ],
+        "title": "ClaimEvidence",
         "type": "object"
       },
       "ConfigurationSnapshotSummary": {
@@ -2373,6 +2725,348 @@
         "title": "DocumentStatus",
         "type": "string"
       },
+      "EvaluationCase": {
+        "additionalProperties": false,
+        "properties": {
+          "document_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Document Id"
+          },
+          "expected_answer_tokens": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Expected Answer Tokens",
+            "type": "array"
+          },
+          "expected_no_answer": {
+            "default": false,
+            "title": "Expected No Answer",
+            "type": "boolean"
+          },
+          "key": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_.-]+$",
+            "title": "Key",
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/EvaluationCaseKind"
+          },
+          "metadata_filter": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Metadata Filter",
+            "type": "object"
+          },
+          "query": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "title": "Query",
+            "type": "string"
+          },
+          "relevant_chunk_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Relevant Chunk Ids",
+            "type": "array"
+          },
+          "relevant_document_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Relevant Document Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "key",
+          "kind",
+          "query"
+        ],
+        "title": "EvaluationCase",
+        "type": "object"
+      },
+      "EvaluationCaseKind": {
+        "enum": [
+          "exact_token",
+          "paraphrase",
+          "metadata_filter",
+          "multilingual",
+          "no_answer",
+          "citation"
+        ],
+        "title": "EvaluationCaseKind",
+        "type": "string"
+      },
+      "EvaluationDatasetCreate": {
+        "additionalProperties": false,
+        "properties": {
+          "cases": {
+            "items": {
+              "$ref": "#/components/schemas/EvaluationCase"
+            },
+            "minItems": 1,
+            "title": "Cases",
+            "type": "array"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "name": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "schema_version": {
+            "default": 1,
+            "minimum": 1.0,
+            "title": "Schema Version",
+            "type": "integer"
+          },
+          "version": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "version",
+          "cases"
+        ],
+        "title": "EvaluationDatasetCreate",
+        "type": "object"
+      },
+      "EvaluationDatasetResponse": {
+        "properties": {
+          "cases": {
+            "items": {
+              "$ref": "#/components/schemas/EvaluationCase"
+            },
+            "title": "Cases",
+            "type": "array"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "dataset_hash": {
+            "title": "Dataset Hash",
+            "type": "string"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "project_id": {
+            "format": "uuid",
+            "title": "Project Id",
+            "type": "string"
+          },
+          "schema_version": {
+            "title": "Schema Version",
+            "type": "integer"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "project_id",
+          "name",
+          "version",
+          "schema_version",
+          "description",
+          "dataset_hash",
+          "cases",
+          "created_at"
+        ],
+        "title": "EvaluationDatasetResponse",
+        "type": "object"
+      },
+      "EvaluationRunCreate": {
+        "additionalProperties": false,
+        "properties": {
+          "dataset_id": {
+            "format": "uuid",
+            "title": "Dataset Id",
+            "type": "string"
+          },
+          "top_k": {
+            "anyOf": [
+              {
+                "maximum": 100.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Top K"
+          }
+        },
+        "required": [
+          "dataset_id"
+        ],
+        "title": "EvaluationRunCreate",
+        "type": "object"
+      },
+      "EvaluationRunResponse": {
+        "properties": {
+          "case_results": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Case Results",
+            "type": "array"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "configuration_hash": {
+            "title": "Configuration Hash",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "dataset_id": {
+            "format": "uuid",
+            "title": "Dataset Id",
+            "type": "string"
+          },
+          "failed_cases": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Failed Cases",
+            "type": "array"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "job_id": {
+            "format": "uuid",
+            "title": "Job Id",
+            "type": "string"
+          },
+          "job_state": {
+            "title": "Job State",
+            "type": "string"
+          },
+          "metrics": {
+            "additionalProperties": true,
+            "title": "Metrics",
+            "type": "object"
+          },
+          "project_id": {
+            "format": "uuid",
+            "title": "Project Id",
+            "type": "string"
+          },
+          "regressions": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Regressions",
+            "type": "array"
+          },
+          "reranker_comparison": {
+            "additionalProperties": true,
+            "title": "Reranker Comparison",
+            "type": "object"
+          },
+          "top_k": {
+            "title": "Top K",
+            "type": "integer"
+          },
+          "versions": {
+            "additionalProperties": true,
+            "title": "Versions",
+            "type": "object"
+          }
+        },
+        "required": [
+          "id",
+          "project_id",
+          "dataset_id",
+          "job_id",
+          "job_state",
+          "top_k",
+          "configuration_hash",
+          "versions",
+          "metrics",
+          "case_results",
+          "regressions",
+          "failed_cases",
+          "reranker_comparison",
+          "completed_at",
+          "created_at"
+        ],
+        "title": "EvaluationRunResponse",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -2385,6 +3079,16 @@
         },
         "title": "HTTPValidationError",
         "type": "object"
+      },
+      "InsufficientEvidenceReason": {
+        "description": "Stable reasons for a correct no-answer outcome.",
+        "enum": [
+          "no_retrieval_results",
+          "below_relevance_threshold",
+          "low_query_evidence_coverage"
+        ],
+        "title": "InsufficientEvidenceReason",
+        "type": "string"
       },
       "JobDetailResponse": {
         "properties": {
@@ -2913,7 +3617,8 @@
         "enum": [
           "document.process",
           "document.embed",
-          "document.index"
+          "document.index",
+          "evaluation.run"
         ],
         "title": "JobType",
         "type": "string"
@@ -2999,6 +3704,13 @@
             "title": "Citations",
             "type": "array"
           },
+          "claims": {
+            "items": {
+              "$ref": "#/components/schemas/AnswerClaim"
+            },
+            "title": "Claims",
+            "type": "array"
+          },
           "content": {
             "title": "Content",
             "type": "string"
@@ -3035,6 +3747,17 @@
             ],
             "title": "Finish Reason"
           },
+          "grounded": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Grounded"
+          },
           "id": {
             "format": "uuid",
             "title": "Id",
@@ -3050,6 +3773,16 @@
               }
             ],
             "title": "Input Tokens"
+          },
+          "insufficient_evidence_reason": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/InsufficientEvidenceReason"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "metadata": {
             "additionalProperties": true,
@@ -3838,6 +4571,42 @@
         "title": "ProviderConfiguration",
         "type": "object"
       },
+      "QualitySummary": {
+        "properties": {
+          "acceptance_thresholds": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "title": "Acceptance Thresholds",
+            "type": "object"
+          },
+          "dataset": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EvaluationDatasetResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "last_run": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EvaluationRunResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "acceptance_thresholds"
+        ],
+        "title": "QualitySummary",
+        "type": "object"
+      },
       "ReadinessStatus": {
         "description": "Readiness probe payload \u2014 downstream dependency health.",
         "properties": {
@@ -4056,6 +4825,67 @@
         "title": "RetrievalStrategy",
         "type": "string"
       },
+      "SearchDiagnostics": {
+        "description": "Sanitized execution facts used by quality evaluation and operators.",
+        "properties": {
+          "duration_ms": {
+            "title": "Duration Ms",
+            "type": "integer"
+          },
+          "rerank_requested": {
+            "title": "Rerank Requested",
+            "type": "boolean"
+          },
+          "rerank_status": {
+            "title": "Rerank Status",
+            "type": "string"
+          },
+          "reranker_model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reranker Model"
+          },
+          "reranker_provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reranker Provider"
+          },
+          "reranker_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reranker Version"
+          },
+          "strategy": {
+            "$ref": "#/components/schemas/RetrievalStrategy"
+          }
+        },
+        "required": [
+          "strategy",
+          "duration_ms",
+          "rerank_requested",
+          "rerank_status"
+        ],
+        "title": "SearchDiagnostics",
+        "type": "object"
+      },
       "SearchRequest": {
         "description": "Search request body.",
         "properties": {
@@ -4128,6 +4958,9 @@
       "SearchResponse": {
         "description": "Search response wrapper.",
         "properties": {
+          "diagnostics": {
+            "$ref": "#/components/schemas/SearchDiagnostics"
+          },
           "query": {
             "title": "Query",
             "type": "string"
@@ -6653,6 +7486,384 @@
         "summary": "Re-enqueue document parsing",
         "tags": [
           "documents"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/evaluations/datasets": {
+      "get": {
+        "operationId": "list_datasets_api_v1_projects__project_id__evaluations_datasets_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_list_EvaluationDatasetResponse__"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OrganizationBearer": []
+          },
+          {
+            "OrganizationApiKey": []
+          }
+        ],
+        "summary": "List evaluation dataset versions",
+        "tags": [
+          "evaluations"
+        ]
+      },
+      "post": {
+        "operationId": "create_dataset_api_v1_projects__project_id__evaluations_datasets_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EvaluationDatasetCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_EvaluationDatasetResponse_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OrganizationBearer": []
+          },
+          {
+            "OrganizationApiKey": []
+          }
+        ],
+        "summary": "Create an immutable evaluation dataset version",
+        "tags": [
+          "evaluations"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/evaluations/quality": {
+      "get": {
+        "operationId": "get_quality_api_v1_projects__project_id__evaluations_quality_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_QualitySummary_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OrganizationBearer": []
+          },
+          {
+            "OrganizationApiKey": []
+          }
+        ],
+        "summary": "Get the latest dataset, run, metrics, and acceptance thresholds",
+        "tags": [
+          "evaluations"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/evaluations/runs": {
+      "get": {
+        "operationId": "list_runs_api_v1_projects__project_id__evaluations_runs_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_list_EvaluationRunResponse__"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OrganizationBearer": []
+          },
+          {
+            "OrganizationApiKey": []
+          }
+        ],
+        "summary": "List quality runs",
+        "tags": [
+          "evaluations"
+        ]
+      },
+      "post": {
+        "operationId": "create_run_api_v1_projects__project_id__evaluations_runs_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EvaluationRunCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_EvaluationRunResponse_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OrganizationBearer": []
+          },
+          {
+            "OrganizationApiKey": []
+          }
+        ],
+        "summary": "Queue a reproducible quality run",
+        "tags": [
+          "evaluations"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/evaluations/runs/{run_id}": {
+      "get": {
+        "operationId": "get_run_api_v1_projects__project_id__evaluations_runs__run_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_EvaluationRunResponse_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OrganizationBearer": []
+          },
+          {
+            "OrganizationApiKey": []
+          }
+        ],
+        "summary": "Get one quality run and its exact versions",
+        "tags": [
+          "evaluations"
         ]
       }
     },

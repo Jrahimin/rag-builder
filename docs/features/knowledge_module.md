@@ -89,7 +89,7 @@ Async action responses include `job_id`; use the
 
 ```bash
 python worker.py
-# or: taskiq worker app.worker.broker:broker app.worker.handlers.document app.worker.handlers.embedding app.worker.handlers.indexing
+# or: taskiq worker app.worker.broker:broker app.worker.handlers.document app.worker.handlers.embedding app.worker.handlers.indexing app.worker.handlers.evaluation
 ```
 
 ## Testing

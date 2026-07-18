@@ -18,6 +18,7 @@ from app.models.conversation import Conversation
 from app.models.message import Message, MessageRole
 from app.modules.conversations.citation_snapshots import build_citation_snapshots
 from app.modules.conversations.context_builder import ContextBuilder
+from app.modules.conversations.grounding_service import EvidenceDecision, GroundingService
 from app.modules.conversations.ports import ContextChunk, RetrievalPort
 from app.modules.conversations.prompt_builder import PromptBuilder
 from app.modules.conversations.prompts.registry import PromptTemplate, require_prompt_template
@@ -55,6 +56,7 @@ class _PreparedTurn:
     temperature: float
     llm: BaseLLMProvider
     retrieval_ms: int
+    evidence: EvidenceDecision
 
 
 class ChatService:
@@ -84,6 +86,7 @@ class ChatService:
         self._resolve_llm = resolve_llm
         self._context_builder = ContextBuilder(chat_config)
         self._prompt_builder = PromptBuilder()
+        self._grounding = GroundingService(chat_config)
 
     async def send_message(
         self,
@@ -107,6 +110,33 @@ class ChatService:
             user_message=user_message,
             request=request,
         )
+
+        if not prepared.evidence.sufficient:
+            assistant_message = await self._persist_assistant_turn(
+                conversation=conversation,
+                prepared=prepared,
+                content=self._chat_config.insufficient_evidence_message,
+                finish_reason="insufficient_evidence",
+                input_tokens=0,
+                output_tokens=0,
+                provider=prepared.llm.provider_name,
+                model=prepared.llm.model_name,
+                generation_ms=0,
+                total_ms=int((time.perf_counter() - started) * 1000),
+                user_content_for_title=request.content,
+                streamed=False,
+                input_tokens_logged=0,
+                output_tokens_logged=0,
+                insufficient_reason=prepared.evidence.reason,
+            )
+            return ChatTurnResponse(
+                user_message=user_message_response,
+                assistant_message=self._to_response(
+                    assistant_message,
+                    conversation_provider=conversation_provider,
+                    conversation_model=conversation_model,
+                ),
+            )
 
         generation_started = time.perf_counter()
         try:
@@ -170,6 +200,29 @@ class ChatService:
         if should_cancel is not None and await should_cancel():
             return
 
+        if not prepared.evidence.sufficient:
+            content = self._chat_config.insufficient_evidence_message
+            yield content
+            assistant_message = await self._persist_assistant_turn(
+                conversation=conversation,
+                prepared=prepared,
+                content=content,
+                finish_reason="insufficient_evidence",
+                input_tokens=0,
+                output_tokens=0,
+                provider=prepared.llm.provider_name,
+                model=prepared.llm.model_name,
+                generation_ms=0,
+                total_ms=int((time.perf_counter() - started) * 1000),
+                user_content_for_title=request.content,
+                streamed=True,
+                input_tokens_logged=0,
+                output_tokens_logged=0,
+                insufficient_reason=prepared.evidence.reason,
+            )
+            yield self._done_event(assistant_message, conversation)
+            return
+
         generation_started = time.perf_counter()
         content_parts: list[str] = []
         finish_reason: str | None = None
@@ -215,11 +268,7 @@ class ChatService:
             output_tokens_logged=None,
         )
 
-        yield {
-            "event": "done",
-            "assistant_message_id": str(assistant_message.id),
-            "citations": self._citations_for(prepared.selected),
-        }
+        yield self._done_event(assistant_message, conversation)
 
     async def _prepare_turn(
         self,
@@ -238,6 +287,7 @@ class ChatService:
         )
         retrieval_ms = int((time.perf_counter() - retrieval_started) * 1000)
         selected = self._context_builder.select(chunks)
+        evidence = self._grounding.assess(request.content, selected)
 
         prompt_version = (
             conversation.system_prompt_version or self._chat_config.system_prompt_version
@@ -273,6 +323,7 @@ class ChatService:
             temperature=temperature,
             llm=llm,
             retrieval_ms=retrieval_ms,
+            evidence=evidence,
         )
 
     async def _persist_assistant_turn(
@@ -292,7 +343,12 @@ class ChatService:
         streamed: bool,
         input_tokens_logged: int | None,
         output_tokens_logged: int | None,
+        insufficient_reason: object | None = None,
     ) -> Message:
+        reason_value = str(insufficient_reason) if insufficient_reason is not None else None
+        grounding = self._grounding.map_claims(content, prepared.selected)
+        if reason_value is not None:
+            grounding = type(grounding)(claims=[], grounded=False, citation_coverage=1.0)
         metadata = self._build_metadata(
             retrieval_ms=prepared.retrieval_ms,
             generation_ms=generation_ms,
@@ -300,7 +356,16 @@ class ChatService:
             retrieved_count=len(prepared.chunks),
             selected_count=len(prepared.selected),
         )
-        citations = self._citations_for(prepared.selected)
+        metadata.update(
+            {
+                "grounded": grounding.grounded,
+                "citation_coverage": grounding.citation_coverage,
+                "evidence_best_score": prepared.evidence.best_score,
+                "query_evidence_token_coverage": prepared.evidence.query_token_coverage,
+                "insufficient_evidence_reason": reason_value,
+            }
+        )
+        citations = [] if reason_value is not None else self._citations_for(prepared.selected)
         assistant_message = await self._commit_assistant_message(
             conversation=conversation,
             content=content,
@@ -312,6 +377,9 @@ class ChatService:
             model=model,
             metadata=metadata,
             citations=citations,
+            claims=grounding.claims,
+            grounded=grounding.grounded,
+            insufficient_evidence_reason=reason_value,
             user_content_for_title=user_content_for_title,
         )
         log_kwargs: dict[str, Any] = {
@@ -326,6 +394,8 @@ class ChatService:
             "provider": provider,
             "model": model,
             "streamed": streamed,
+            "grounded": grounding.grounded,
+            "insufficient_evidence_reason": reason_value,
         }
         if input_tokens_logged is not None:
             log_kwargs["input_tokens"] = input_tokens_logged
@@ -333,6 +403,21 @@ class ChatService:
             log_kwargs["output_tokens"] = output_tokens_logged
         logger.info("chat_complete", **log_kwargs)
         return assistant_message
+
+    def _done_event(self, message: Message, conversation: Conversation) -> dict[str, Any]:
+        response = self._to_response(
+            message,
+            conversation_provider=conversation.provider,
+            conversation_model=conversation.model,
+        )
+        return {
+            "event": "done",
+            "assistant_message_id": str(message.id),
+            "citations": [item.model_dump(mode="json") for item in response.citations],
+            "claims": [item.model_dump(mode="json") for item in response.claims],
+            "grounded": response.grounded,
+            "insufficient_evidence_reason": response.insufficient_evidence_reason,
+        }
 
     def _citations_for(self, selected: list[ContextChunk]) -> list[dict]:
         if not self._chat_config.include_citations:
@@ -374,6 +459,8 @@ class ChatService:
             conversation_id=conversation.id,
             role=MessageRole.USER,
             content=content,
+            citations=[],
+            claims=[],
         )
         conversation.last_message_at = datetime.now(UTC)
         self._message_repository.add(user_message)
@@ -397,6 +484,9 @@ class ChatService:
         model: str,
         metadata: dict[str, Any],
         citations: list[dict],
+        claims: list[dict],
+        grounded: bool,
+        insufficient_evidence_reason: str | None,
         user_content_for_title: str,
     ) -> Message:
         await self._session.refresh(conversation)
@@ -417,6 +507,9 @@ class ChatService:
             model=model_override,
             message_metadata=metadata,
             citations=citations,
+            claims=claims,
+            grounded=grounded,
+            insufficient_evidence_reason=insufficient_evidence_reason,
         )
         conversation.last_message_at = datetime.now(UTC)
         if conversation.title is None:

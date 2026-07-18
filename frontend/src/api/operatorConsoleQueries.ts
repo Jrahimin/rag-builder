@@ -19,6 +19,9 @@ export const operatorQueryKeys = {
     ["operator", "projects", "all", "jobs", projectIds, state, jobType] as const,
   job: (projectId: string, jobId: string) =>
     ["operator", "projects", projectId, "jobs", jobId] as const,
+  quality: (projectId: string) => ["operator", "projects", projectId, "quality"] as const,
+  evaluationDatasets: (projectId: string) =>
+    ["operator", "projects", projectId, "evaluation-datasets"] as const,
 };
 
 export const overviewQueryOptions = queryOptions({
@@ -107,6 +110,40 @@ export function useRetryJob(projectId: string) {
         queryClient.invalidateQueries({ queryKey: operatorQueryKeys.jobsBase(projectId) }),
         queryClient.invalidateQueries({ queryKey: operatorQueryKeys.overview }),
         queryClient.invalidateQueries({ queryKey: operatorQueryKeys.failures }),
+      ]);
+    },
+  });
+}
+
+export function useQuality(projectId: string) {
+  return useQuery({
+    queryKey: operatorQueryKeys.quality(projectId),
+    queryFn: () => operatorApiClient.getQuality(projectId),
+    enabled: Boolean(projectId),
+    refetchInterval: (query) => {
+      const state = query.state.data?.last_run?.job_state;
+      return state && ["queued", "running", "retry_scheduled"].includes(state) ? 3_000 : 15_000;
+    },
+  });
+}
+
+export function useEvaluationDatasets(projectId: string) {
+  return useQuery({
+    queryKey: operatorQueryKeys.evaluationDatasets(projectId),
+    queryFn: () => operatorApiClient.getEvaluationDatasets(projectId),
+    enabled: Boolean(projectId),
+    staleTime: 30_000,
+  });
+}
+
+export function useCreateEvaluationRun(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (datasetId: string) => operatorApiClient.createEvaluationRun(projectId, datasetId),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: operatorQueryKeys.quality(projectId) }),
+        queryClient.invalidateQueries({ queryKey: operatorQueryKeys.jobsBase(projectId) }),
       ]);
     },
   });

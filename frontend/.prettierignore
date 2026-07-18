@@ -1,4 +1,5 @@
 dist
+.vite
 coverage
 node_modules
 src/api/generated/openapi.ts

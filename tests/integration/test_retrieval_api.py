@@ -282,7 +282,7 @@ async def test_search_document_and_embedding_version_filters(
     )
     stale = await db_client.post(
         f"/api/v1/projects/{project_id}/search",
-        json={"query": _UNIQUE_PHRASE},
+        json={"query": _UNIQUE_PHRASE, "strategy": "semantic"},
     )
     assert stale.status_code == 200
     assert stale.json()["data"]["results"] == []

@@ -4,7 +4,12 @@ from __future__ import annotations
 
 import pytest
 
-from app.platform.jobs.names import DOCUMENT_EMBED, DOCUMENT_INDEX, DOCUMENT_PROCESS
+from app.platform.jobs.names import (
+    DOCUMENT_EMBED,
+    DOCUMENT_INDEX,
+    DOCUMENT_PROCESS,
+    EVALUATION_RUN,
+)
 from app.platform.jobs.registry import get_job_registry
 
 
@@ -14,3 +19,4 @@ def test_job_registry_includes_all_document_jobs() -> None:
     assert DOCUMENT_PROCESS in registry
     assert DOCUMENT_EMBED in registry
     assert DOCUMENT_INDEX in registry
+    assert EVALUATION_RUN in registry

@@ -369,6 +369,8 @@ class RerankerBackend(StrEnum):
 
     NOOP = "noop"
     LEXICAL = "lexical"
+    EMBEDDING = "embedding"
+    EMBEDDING_MAX = "embedding_max"
 
 
 class RetrievalConfig(BaseModel):
@@ -382,7 +384,7 @@ class RetrievalConfig(BaseModel):
     filterable_metadata_keys: Annotated[list[str], NoDecode] = Field(
         default_factory=lambda: ["source", "tags", "ocr_confidence"]
     )
-    strategy: RetrievalStrategy = RetrievalStrategy.SEMANTIC
+    strategy: RetrievalStrategy = RetrievalStrategy.HYBRID
     semantic_candidate_top_k: int = Field(default=50, ge=1, le=200)
     hnsw_ef_search: int = Field(default=100, ge=1, le=1000)
     keyword_candidate_top_k: int = Field(default=50, ge=1, le=200)
@@ -462,10 +464,50 @@ class ChatConfig(BaseModel):
     max_context_chunks: int = Field(default=8, ge=1, le=50)
     context_char_budget: int = Field(default=12_000, ge=500, le=200_000)
     max_history_messages: int = Field(default=20, ge=0, le=200)
-    system_prompt_version: str = "v1"
+    system_prompt_version: str = "v2"
     include_citations: bool = True
     citation_excerpt_max_chars: int = Field(default=200, ge=0, le=2000)
+    minimum_evidence_score: float = Field(default=0.01, ge=0.0, le=1.0)
+    minimum_query_token_coverage: float = Field(default=0.15, ge=0.0, le=1.0)
+    minimum_claim_token_coverage: float = Field(default=0.35, ge=0.0, le=1.0)
+    insufficient_evidence_message: str = (
+        "I don't have enough evidence in the indexed sources to answer that question."
+    )
     auto_title_max_chars: int = Field(default=80, ge=10, le=255)
+
+
+class EvaluationConfig(BaseModel):
+    """Reproducible quality-run defaults and acceptance thresholds."""
+
+    evaluator_version: str = "quality-v1"
+    default_top_k: int = Field(default=5, ge=1, le=100)
+    max_cases_per_dataset: int = Field(default=500, ge=1, le=10_000)
+    minimum_recall_at_k: float = Field(default=0.80, ge=0.0, le=1.0)
+    minimum_filtered_correctness: float = Field(default=0.95, ge=0.0, le=1.0)
+    minimum_refusal_accuracy: float = Field(default=0.90, ge=0.0, le=1.0)
+    minimum_groundedness: float = Field(default=0.80, ge=0.0, le=1.0)
+    minimum_citation_coverage: float = Field(default=0.80, ge=0.0, le=1.0)
+    maximum_p95_latency_ms: float = Field(default=750.0, ge=1.0)
+    maximum_metric_regression: float = Field(default=0.02, ge=0.0, le=1.0)
+    minimum_reranker_ndcg_gain: float = Field(default=0.02, ge=0.0, le=1.0)
+    maximum_reranker_latency_penalty_ms: float = Field(default=150.0, ge=0.0)
+    reranker_candidates: Annotated[list[RerankerBackend], NoDecode] = Field(
+        default_factory=lambda: [
+            RerankerBackend.LEXICAL,
+            RerankerBackend.EMBEDDING,
+            RerankerBackend.EMBEDDING_MAX,
+        ]
+    )
+
+    @field_validator("reranker_candidates", mode="before")
+    @classmethod
+    def _split_reranker_candidates(cls, value: object) -> object:
+        if isinstance(value, str):
+            stripped = value.strip()
+            if not stripped or stripped.startswith("["):
+                return value
+            return [item.strip() for item in stripped.split(",") if item.strip()]
+        return value
 
 
 class Settings(BaseSettings):
@@ -499,6 +541,7 @@ class Settings(BaseSettings):
     retrieval: RetrievalConfig = Field(default_factory=RetrievalConfig)
     llm: LLMConfig = Field(default_factory=LLMConfig)
     chat: ChatConfig = Field(default_factory=ChatConfig)
+    evaluation: EvaluationConfig = Field(default_factory=EvaluationConfig)
     auth: AuthConfig = Field(default_factory=AuthConfig)
 
 

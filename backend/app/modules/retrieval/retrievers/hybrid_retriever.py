@@ -107,12 +107,17 @@ class HybridRetriever(BaseRetriever):
 
         try:
             response = await self._reranker.rerank(request)
-        except ProviderError:
+        except ProviderError as exc:
             logger.warning(
                 "rerank_failed_using_fused_order",
                 project_id=str(context.project_id),
+                provider=exc.provider_name,
             )
-            return fused
+            return _annotate_candidates(
+                fused,
+                rerank_status="unavailable",
+                reranker_provider=exc.provider_name,
+            )
 
         reranked: list[CandidateHit] = []
         for result in response.results:
@@ -126,10 +131,31 @@ class HybridRetriever(BaseRetriever):
                     chunk_id=result.chunk_id,
                     score=result.score,
                     source=CandidateSource.RERANK,
-                    metadata=dict(result.metadata),
+                    metadata={
+                        **result.metadata,
+                        "rerank_status": "applied",
+                        "reranker_provider": response.provider,
+                        "reranker_model": response.model,
+                        "reranker_version": response.provider_version,
+                    },
                 )
             )
 
         if not reranked:
-            return fused
+            return _annotate_candidates(fused, rerank_status="empty")
         return reranked
+
+
+def _annotate_candidates(
+    candidates: list[CandidateHit],
+    **metadata: object,
+) -> list[CandidateHit]:
+    return [
+        CandidateHit(
+            chunk_id=candidate.chunk_id,
+            score=candidate.score,
+            source=candidate.source,
+            metadata={**candidate.metadata, **metadata},
+        )
+        for candidate in candidates
+    ]

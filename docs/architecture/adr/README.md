@@ -19,6 +19,7 @@ guides in this folder elaborate on implementation.
 | [ADR-011](./011-parser-quality-scoring-and-pdf-fallback.md) | Parser quality scoring and PDF fallback | Accepted |
 | [ADR-012](./012-organization-api-key-auth.md) | Organization API key authentication | Accepted |
 | [ADR-013](./013-postgresql-native-semantic-retrieval.md) | PostgreSQL-native semantic retrieval with pgvector | Accepted |
+| [ADR-014](./014-evidence-quality-and-grounded-answers.md) | Persisted evidence quality and deterministic grounding | Accepted |
 
 ## When to add an ADR
 

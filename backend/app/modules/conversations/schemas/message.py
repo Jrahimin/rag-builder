@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -19,9 +20,42 @@ class CitationSnapshot(BaseModel):
     filename: str
     chunk_index: int
     page_number: int | None = None
+    char_start: int | None = None
+    char_end: int | None = None
     score: float
     chunk_hash: str
     excerpt: str | None = None
+
+
+class InsufficientEvidenceReason(StrEnum):
+    """Stable reasons for a correct no-answer outcome."""
+
+    NO_RETRIEVAL_RESULTS = "no_retrieval_results"
+    BELOW_RELEVANCE_THRESHOLD = "below_relevance_threshold"
+    LOW_QUERY_EVIDENCE_COVERAGE = "low_query_evidence_coverage"
+
+
+class ClaimEvidence(BaseModel):
+    """One source location supporting an answer claim."""
+
+    citation_index: int = Field(ge=1)
+    chunk_id: uuid.UUID
+    document_id: uuid.UUID
+    filename: str
+    chunk_index: int
+    page_number: int | None = None
+    char_start: int | None = None
+    char_end: int | None = None
+    excerpt: str | None = None
+
+
+class AnswerClaim(BaseModel):
+    """A generated answer segment linked to zero or more evidence locations."""
+
+    claim_id: str
+    text: str
+    grounded: bool
+    evidence: list[ClaimEvidence] = Field(default_factory=list)
 
 
 class MessageResponse(BaseModel):
@@ -43,6 +77,9 @@ class MessageResponse(BaseModel):
     model: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict, validation_alias="message_metadata")
     citations: list[CitationSnapshot] = Field(default_factory=list)
+    claims: list[AnswerClaim] = Field(default_factory=list)
+    grounded: bool | None = None
+    insufficient_evidence_reason: InsufficientEvidenceReason | None = None
     created_at: datetime
     updated_at: datetime
 

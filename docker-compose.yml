@@ -212,6 +212,7 @@ services:
         "app.worker.handlers.document",
         "app.worker.handlers.embedding",
         "app.worker.handlers.indexing",
+        "app.worker.handlers.evaluation",
       ]
     networks:
       - ape_network

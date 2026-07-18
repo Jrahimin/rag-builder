@@ -14,7 +14,7 @@ from app.modules.retrieval.retrievers.hybrid_retriever import HybridRetriever
 from app.modules.retrieval.retrievers.models import RetrievalContext, RetrievalFilters
 from app.modules.retrieval.retrievers.result_hydrator import ResultHydrator
 from app.modules.retrieval.retrievers.semantic_retriever import SemanticRetriever
-from app.modules.retrieval.schemas.search import SearchRequest, SearchResponse
+from app.modules.retrieval.schemas.search import SearchDiagnostics, SearchRequest, SearchResponse
 from app.platform.providers.contracts.embedding import BaseEmbeddingProvider
 from app.platform.providers.contracts.reranker import BaseRerankerProvider
 
@@ -88,7 +88,31 @@ class SearchService:
             strategy=strategy.value,
             rerank_enabled=rerank_enabled,
         )
-        return SearchResponse(results=results, query=request.query, top_k=top_k)
+        rerank_metadata = results[0].metadata if results else {}
+        rerank_status = str(
+            rerank_metadata.get(
+                "rerank_status",
+                (
+                    "disabled"
+                    if not rerank_enabled or strategy is not RetrievalStrategy.HYBRID
+                    else "empty"
+                ),
+            )
+        )
+        return SearchResponse(
+            results=results,
+            query=request.query,
+            top_k=top_k,
+            diagnostics=SearchDiagnostics(
+                strategy=strategy,
+                duration_ms=elapsed_ms,
+                rerank_requested=rerank_enabled and strategy is RetrievalStrategy.HYBRID,
+                rerank_status=rerank_status,
+                reranker_provider=_optional_string(rerank_metadata.get("reranker_provider")),
+                reranker_model=_optional_string(rerank_metadata.get("reranker_model")),
+                reranker_version=_optional_string(rerank_metadata.get("reranker_version")),
+            ),
+        )
 
     def _build_retriever(self, strategy: RetrievalStrategy) -> BaseRetriever:
         if strategy is RetrievalStrategy.HYBRID:
@@ -104,3 +128,7 @@ class SearchService:
             self._project_id,
             self._embedder,
         )
+
+
+def _optional_string(value: object) -> str | None:
+    return str(value) if value is not None else None

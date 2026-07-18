@@ -6,7 +6,7 @@ import tseslint from "typescript-eslint";
 
 export default tseslint.config(
   {
-    ignores: ["dist", "coverage", "eslint.config.js", "src/api/generated/openapi.ts"],
+    ignores: ["dist", ".vite", "coverage", "eslint.config.js", "src/api/generated/openapi.ts"],
   },
   eslint.configs.recommended,
   ...tseslint.configs.recommendedTypeChecked,

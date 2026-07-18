@@ -16,6 +16,10 @@ const titles: Record<string, { title: string; description: string }> = {
     description: "Read-only active runtime and index configuration",
   },
   "/metrics": { title: "Metrics", description: "Queue, latency, usage, and corpus measurements" },
+  "/quality": {
+    title: "Evidence Quality",
+    description: "Reproducible retrieval, groundedness, refusal, and reranker decisions",
+  },
   "/audit": { title: "Audit", description: "Recent deployment and durable-job activity" },
   "/health": {
     title: "System Health",

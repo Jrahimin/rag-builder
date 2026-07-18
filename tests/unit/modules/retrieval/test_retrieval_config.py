@@ -9,9 +9,9 @@ from app.core.config import RerankerBackend, RetrievalConfig, RetrievalStrategy
 pytestmark = pytest.mark.unit
 
 
-def test_retrieval_config_defaults_to_semantic_strategy() -> None:
+def test_retrieval_config_defaults_to_production_hybrid_strategy() -> None:
     config = RetrievalConfig()
-    assert config.strategy is RetrievalStrategy.SEMANTIC
+    assert config.strategy is RetrievalStrategy.HYBRID
     assert config.rerank_enabled is True
     assert config.reranker_backend is RerankerBackend.LEXICAL
     assert config.hnsw_ef_search == 100

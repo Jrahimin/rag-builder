@@ -24,6 +24,11 @@ const SystemHealthOverview = lazy(() =>
     default: module.SystemHealthOverview,
   })),
 );
+const EvidenceQuality = lazy(() =>
+  import("../features/quality/EvidenceQuality").then((module) => ({
+    default: module.EvidenceQuality,
+  })),
+);
 const ProjectDocumentInspection = lazy(() =>
   import("../features/projects/ProjectDocumentInspection").then((module) => ({
     default: module.ProjectDocumentInspection,
@@ -76,6 +81,14 @@ export function OperatorConsoleApp() {
           element={
             <Suspense fallback={<LoadingState label="Loading metrics" />}>
               <OperationalMetrics />
+            </Suspense>
+          }
+        />
+        <Route
+          path="quality"
+          element={
+            <Suspense fallback={<LoadingState label="Loading evidence quality" />}>
+              <EvidenceQuality />
             </Suspense>
           }
         />

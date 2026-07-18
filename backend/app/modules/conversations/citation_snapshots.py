@@ -25,6 +25,8 @@ def build_citation_snapshots(
             filename=chunk.filename,
             chunk_index=chunk.chunk_index,
             page_number=chunk.page_number,
+            char_start=chunk.char_start,
+            char_end=chunk.char_end,
             score=chunk.score,
             chunk_hash=chunk.chunk_hash,
             excerpt=excerpt,

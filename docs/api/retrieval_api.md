@@ -33,7 +33,8 @@ marks the document ready in one PostgreSQL transaction.
 
 ## POST `/search`
 
-Search over indexed chunks using the deployment strategy (`semantic` or `hybrid`).
+Search over indexed chunks using the deployment strategy (`semantic` or `hybrid`). The production
+default is `hybrid`; semantic remains an explicit comparison/rollback strategy.
 
 **Request:**
 
@@ -79,12 +80,24 @@ results expose the final RRF or reranker score.
         "page_number": 1,
         "char_start": 0,
         "char_end": 120,
-        "metadata": {}
+        "metadata": { "retrieval_source": "rerank", "rerank_status": "applied" }
       }
-    ]
+    ],
+    "diagnostics": {
+      "strategy": "hybrid",
+      "duration_ms": 42,
+      "rerank_requested": true,
+      "rerank_status": "applied",
+      "reranker_provider": "lexical",
+      "reranker_model": "lexical-overlap",
+      "reranker_version": "1"
+    }
   }
 }
 ```
+
+On reranker failure the search still returns fused RRF order and diagnostics report
+`rerank_status=unavailable`; quality runs count this path against candidate promotion.
 
 ## Re-embed after the pgvector cutover
 
