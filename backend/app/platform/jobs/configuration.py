@@ -6,6 +6,7 @@ from app.core.config import Settings
 from app.platform.jobs.contracts import JobConfiguration
 
 _EMBEDDING_SECRET_FIELDS = {"openai_api_key", "gemini_api_key"}
+_LLM_SECRET_FIELDS = {"openai_api_key", "gemini_api_key"}
 
 
 def build_job_configuration(settings: Settings) -> JobConfiguration:
@@ -23,6 +24,11 @@ def build_job_configuration(settings: Settings) -> JobConfiguration:
             ),
             "retrieval": settings.retrieval.model_dump(mode="json"),
         },
+        quality={
+            "chat": settings.chat.model_dump(mode="json"),
+            "evaluation": settings.evaluation.model_dump(mode="json"),
+            "llm": settings.llm.model_dump(mode="json", exclude=_LLM_SECRET_FIELDS),
+        },
     )
 
 
@@ -33,6 +39,7 @@ def apply_job_configuration(
     """Overlay a stored snapshot while retaining live infrastructure secrets."""
     processing = configuration.processing
     index = configuration.index
+    quality = configuration.quality
     return settings.model_copy(
         update={
             "parsing": type(settings.parsing).model_validate(processing["parsing"]),
@@ -45,5 +52,13 @@ def apply_job_configuration(
                 }
             ),
             "retrieval": type(settings.retrieval).model_validate(index["retrieval"]),
+            "chat": type(settings.chat).model_validate(quality["chat"]),
+            "evaluation": type(settings.evaluation).model_validate(quality["evaluation"]),
+            "llm": type(settings.llm).model_validate(
+                {
+                    **settings.llm.model_dump(),
+                    **quality["llm"],
+                }
+            ),
         }
     )

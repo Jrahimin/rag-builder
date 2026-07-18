@@ -66,6 +66,11 @@ progress, attempts, structured failure, and explicit retry.
 
 `embedding_set_version` is a deployment-level int, independent of `Document.version`. Bump it after a model change to re-embed; search and index rows filter to the active version.
 
+The production default is hybrid with 40 semantic and 40 keyword candidates before RRF. Search
+responses include sanitized strategy, latency, reranker identity, and fallback diagnostics. Phase 4
+quality runs persist these values; candidate pools, weights, and reranker promotion should be tuned
+from a versioned dataset rather than ad hoc changes.
+
 ## Data model
 
 - `chunk_embeddings` — native fixed-dimension `vector(n)` rows with an HNSW cosine index

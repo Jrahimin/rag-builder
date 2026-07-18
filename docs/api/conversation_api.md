@@ -1,6 +1,7 @@
 # Conversation API
 
-RAG chat and conversation management. Semantic search (`status=ready` documents) required for grounded answers.
+RAG chat and conversation management. Hybrid search over `status=ready` documents is the production
+path for grounded answers.
 
 **Prefix:** `/api/v1/projects/{project_id}/conversations`
 
@@ -85,16 +86,40 @@ Send a user message; returns grounded assistant answer + citations. Returns **20
         "filename": "policy.txt",
         "chunk_index": 0,
         "page_number": null,
+        "char_start": 0,
+        "char_end": 120,
         "score": 0.87,
         "chunk_hash": "...",
         "excerpt": "..."
       }
     ],
+    "claims": [
+      {
+        "claim_id": "claim-1",
+        "text": "Refunds are accepted within thirty days.",
+        "grounded": true,
+        "evidence": [
+          {
+            "citation_index": 1,
+            "chunk_id": "...",
+            "document_id": "...",
+            "filename": "policy.txt",
+            "chunk_index": 0,
+            "page_number": null,
+            "char_start": 0,
+            "char_end": 120,
+            "excerpt": "..."
+          }
+        ]
+      }
+    ],
+    "grounded": true,
+    "insufficient_evidence_reason": null,
     "metadata": {
       "retrieval_time_ms": 120,
       "generation_time_ms": 800,
       "total_time_ms": 950,
-      "retrieval_strategy": "semantic",
+      "retrieval_strategy": "hybrid",
       "retrieval_top_k": 10,
       "retrieved_chunk_count": 5,
       "selected_chunk_count": 3
@@ -102,6 +127,11 @@ Send a user message; returns grounded assistant answer + citations. Returns **20
   }
 }
 ```
+
+If retrieval evidence is insufficient, the service skips generation and persists a deterministic
+answer with `grounded=false`, empty `claims`/`citations`, `finish_reason=insufficient_evidence`, and
+one of: `no_retrieval_results`, `below_relevance_threshold`, or
+`low_query_evidence_coverage`.
 
 **Errors:** `conversation_not_found`, `conversation_deleted`, `conversation_inactive`, `unknown_prompt_version`, `llm_provider_unavailable` (503)
 
@@ -111,7 +141,7 @@ SSE stream (`text/event-stream`). Events:
 
 ```json
 {"event": "token", "delta": "partial text"}
-{"event": "done", "assistant_message_id": "...", "citations": []}
+{"event": "done", "assistant_message_id": "...", "citations": [], "claims": [], "grounded": false, "insufficient_evidence_reason": "no_retrieval_results"}
 {"event": "error", "message": "The language model provider is temporarily unavailable."}
 ```
 

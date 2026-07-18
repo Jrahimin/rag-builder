@@ -51,7 +51,11 @@ class ResultHydrator:
                     page_number=chunk.page_number,
                     char_start=chunk.char_start,
                     char_end=chunk.char_end,
-                    metadata=dict(chunk.chunk_metadata),
+                    metadata={
+                        **chunk.chunk_metadata,
+                        **candidate.metadata,
+                        "retrieval_source": candidate.source.value,
+                    },
                 )
             )
         return results

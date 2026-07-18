@@ -36,9 +36,29 @@ class RetrievalResult(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class SearchDiagnostics(BaseModel):
+    """Sanitized execution facts used by quality evaluation and operators."""
+
+    strategy: RetrievalStrategy
+    duration_ms: int
+    rerank_requested: bool
+    rerank_status: str
+    reranker_provider: str | None = None
+    reranker_model: str | None = None
+    reranker_version: str | None = None
+
+
 class SearchResponse(BaseModel):
     """Search response wrapper."""
 
     results: list[RetrievalResult]
     query: str
     top_k: int
+    diagnostics: SearchDiagnostics = Field(
+        default_factory=lambda: SearchDiagnostics(
+            strategy=RetrievalStrategy.SEMANTIC,
+            duration_ms=0,
+            rerank_requested=False,
+            rerank_status="not_recorded",
+        )
+    )

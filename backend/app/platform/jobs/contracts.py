@@ -37,11 +37,12 @@ class JobDefinition(BaseModel):
 
 
 class JobConfiguration(BaseModel):
-    """Normalized, secret-free processing and indexing configuration."""
+    """Normalized, secret-free processing, indexing, and quality configuration."""
 
-    schema_version: int = 1
+    schema_version: int = 2
     processing: dict[str, Any]
     index: dict[str, Any]
+    quality: dict[str, Any]
 
     def digest(self) -> str:
         payload = json.dumps(

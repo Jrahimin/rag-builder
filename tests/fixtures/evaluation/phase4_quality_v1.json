@@ -1,0 +1,14 @@
+{
+  "name": "phase4-representative",
+  "version": "1.0.0",
+  "schema_version": 1,
+  "description": "Representative exact, paraphrase, filter, multilingual, no-answer, and citation cases.",
+  "cases": [
+    {"key":"exact-token","kind":"exact_token","query":"cobalt escalation matrix","relevant_chunk_ids":["10000000-0000-0000-0000-000000000001"],"expected_answer_tokens":["cobalt"]},
+    {"key":"paraphrase","kind":"paraphrase","query":"Who handles the most urgent incidents?","relevant_chunk_ids":["10000000-0000-0000-0000-000000000002"]},
+    {"key":"metadata-filter","kind":"metadata_filter","query":"privacy review","relevant_document_ids":["20000000-0000-0000-0000-000000000001"],"metadata_filter":{"source":"policy"}},
+    {"key":"multilingual","kind":"multilingual","query":"গ্রাহক রপ্তানির অনুমোদন কী?","relevant_chunk_ids":["10000000-0000-0000-0000-000000000003"]},
+    {"key":"no-answer","kind":"no_answer","query":"What is the lunar payroll rule?","expected_no_answer":true},
+    {"key":"citation","kind":"citation","query":"How often are credentials rotated?","relevant_chunk_ids":["10000000-0000-0000-0000-000000000004"],"expected_answer_tokens":["ninety"]}
+  ]
+}

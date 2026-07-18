@@ -41,7 +41,13 @@ async def test_create_conversation_and_send_message(db_client: AsyncClient) -> N
     body = response.json()
     assert body["success"] is True
     assert body["data"]["user_message"]["content"] == "What is APE?"
-    assert body["data"]["assistant_message"]["content"].startswith("[echo]")
+    assistant = body["data"]["assistant_message"]
+    assert assistant["content"] == (
+        "I don't have enough evidence in the indexed sources to answer that question."
+    )
+    assert assistant["grounded"] is False
+    assert assistant["insufficient_evidence_reason"] == "no_retrieval_results"
+    assert assistant["claims"] == []
 
 
 async def test_send_message_provider_error_returns_503(db_client: AsyncClient) -> None:

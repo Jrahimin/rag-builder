@@ -459,6 +459,76 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{project_id}/evaluations/datasets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List evaluation dataset versions */
+        get: operations["list_datasets_api_v1_projects__project_id__evaluations_datasets_get"];
+        put?: never;
+        /** Create an immutable evaluation dataset version */
+        post: operations["create_dataset_api_v1_projects__project_id__evaluations_datasets_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/evaluations/quality": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get the latest dataset, run, metrics, and acceptance thresholds */
+        get: operations["get_quality_api_v1_projects__project_id__evaluations_quality_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/evaluations/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List quality runs */
+        get: operations["list_runs_api_v1_projects__project_id__evaluations_runs_get"];
+        put?: never;
+        /** Queue a reproducible quality run */
+        post: operations["create_run_api_v1_projects__project_id__evaluations_runs_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/evaluations/runs/{run_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get one quality run and its exact versions */
+        get: operations["get_run_api_v1_projects__project_id__evaluations_runs__run_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{project_id}/jobs": {
         parameters: {
             query?: never;
@@ -633,6 +703,20 @@ export interface components {
             storage_backend: string;
         };
         /**
+         * AnswerClaim
+         * @description A generated answer segment linked to zero or more evidence locations.
+         */
+        AnswerClaim: {
+            /** Claim Id */
+            claim_id: string;
+            /** Evidence */
+            evidence?: components["schemas"]["ClaimEvidence"][];
+            /** Grounded */
+            grounded: boolean;
+            /** Text */
+            text: string;
+        };
+        /**
          * ApiKeyCreate
          * @description Payload for creating a named API key.
          */
@@ -785,6 +869,30 @@ export interface components {
         /** ApiResponse[DocumentResponse] */
         ApiResponse_DocumentResponse_: {
             data?: components["schemas"]["DocumentResponse"] | null;
+            /** Message */
+            message?: string | null;
+            meta?: components["schemas"]["ResponseMeta"] | null;
+            /**
+             * Success
+             * @default true
+             */
+            success: boolean;
+        };
+        /** ApiResponse[EvaluationDatasetResponse] */
+        ApiResponse_EvaluationDatasetResponse_: {
+            data?: components["schemas"]["EvaluationDatasetResponse"] | null;
+            /** Message */
+            message?: string | null;
+            meta?: components["schemas"]["ResponseMeta"] | null;
+            /**
+             * Success
+             * @default true
+             */
+            success: boolean;
+        };
+        /** ApiResponse[EvaluationRunResponse] */
+        ApiResponse_EvaluationRunResponse_: {
+            data?: components["schemas"]["EvaluationRunResponse"] | null;
             /** Message */
             message?: string | null;
             meta?: components["schemas"]["ResponseMeta"] | null;
@@ -974,6 +1082,18 @@ export interface components {
              */
             success: boolean;
         };
+        /** ApiResponse[QualitySummary] */
+        ApiResponse_QualitySummary_: {
+            data?: components["schemas"]["QualitySummary"] | null;
+            /** Message */
+            message?: string | null;
+            meta?: components["schemas"]["ResponseMeta"] | null;
+            /**
+             * Success
+             * @default true
+             */
+            success: boolean;
+        };
         /** ApiResponse[ReadinessStatus] */
         ApiResponse_ReadinessStatus_: {
             data?: components["schemas"]["ReadinessStatus"] | null;
@@ -1014,6 +1134,32 @@ export interface components {
         ApiResponse_list_AuditEventResponse__: {
             /** Data */
             data?: components["schemas"]["AuditEventResponse"][] | null;
+            /** Message */
+            message?: string | null;
+            meta?: components["schemas"]["ResponseMeta"] | null;
+            /**
+             * Success
+             * @default true
+             */
+            success: boolean;
+        };
+        /** ApiResponse[list[EvaluationDatasetResponse]] */
+        ApiResponse_list_EvaluationDatasetResponse__: {
+            /** Data */
+            data?: components["schemas"]["EvaluationDatasetResponse"][] | null;
+            /** Message */
+            message?: string | null;
+            meta?: components["schemas"]["ResponseMeta"] | null;
+            /**
+             * Success
+             * @default true
+             */
+            success: boolean;
+        };
+        /** ApiResponse[list[EvaluationRunResponse]] */
+        ApiResponse_list_EvaluationRunResponse__: {
+            /** Data */
+            data?: components["schemas"]["EvaluationRunResponse"][] | null;
             /** Message */
             message?: string | null;
             meta?: components["schemas"]["ResponseMeta"] | null;
@@ -1156,6 +1302,10 @@ export interface components {
          * @description Durable citation stored on assistant messages.
          */
         CitationSnapshot: {
+            /** Char End */
+            char_end?: number | null;
+            /** Char Start */
+            char_start?: number | null;
             /** Chunk Hash */
             chunk_hash: string;
             /**
@@ -1178,6 +1328,36 @@ export interface components {
             page_number?: number | null;
             /** Score */
             score: number;
+        };
+        /**
+         * ClaimEvidence
+         * @description One source location supporting an answer claim.
+         */
+        ClaimEvidence: {
+            /** Char End */
+            char_end?: number | null;
+            /** Char Start */
+            char_start?: number | null;
+            /**
+             * Chunk Id
+             * Format: uuid
+             */
+            chunk_id: string;
+            /** Chunk Index */
+            chunk_index: number;
+            /** Citation Index */
+            citation_index: number;
+            /**
+             * Document Id
+             * Format: uuid
+             */
+            document_id: string;
+            /** Excerpt */
+            excerpt?: string | null;
+            /** Filename */
+            filename: string;
+            /** Page Number */
+            page_number?: number | null;
         };
         /** ConfigurationSnapshotSummary */
         ConfigurationSnapshotSummary: {
@@ -1396,11 +1576,163 @@ export interface components {
          * @enum {string}
          */
         DocumentStatus: "uploaded" | "queued" | "parsing" | "chunking" | "chunked" | "failed" | "embedding" | "embedded" | "indexing" | "ready";
+        /** EvaluationCase */
+        EvaluationCase: {
+            /** Document Id */
+            document_id?: string | null;
+            /** Expected Answer Tokens */
+            expected_answer_tokens?: string[];
+            /**
+             * Expected No Answer
+             * @default false
+             */
+            expected_no_answer: boolean;
+            /** Key */
+            key: string;
+            kind: components["schemas"]["EvaluationCaseKind"];
+            /** Metadata Filter */
+            metadata_filter?: {
+                [key: string]: string;
+            };
+            /** Query */
+            query: string;
+            /** Relevant Chunk Ids */
+            relevant_chunk_ids?: string[];
+            /** Relevant Document Ids */
+            relevant_document_ids?: string[];
+        };
+        /**
+         * EvaluationCaseKind
+         * @enum {string}
+         */
+        EvaluationCaseKind: "exact_token" | "paraphrase" | "metadata_filter" | "multilingual" | "no_answer" | "citation";
+        /** EvaluationDatasetCreate */
+        EvaluationDatasetCreate: {
+            /** Cases */
+            cases: components["schemas"]["EvaluationCase"][];
+            /** Description */
+            description?: string | null;
+            /** Name */
+            name: string;
+            /**
+             * Schema Version
+             * @default 1
+             */
+            schema_version: number;
+            /** Version */
+            version: string;
+        };
+        /** EvaluationDatasetResponse */
+        EvaluationDatasetResponse: {
+            /** Cases */
+            cases: components["schemas"]["EvaluationCase"][];
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Dataset Hash */
+            dataset_hash: string;
+            /** Description */
+            description: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+            /**
+             * Project Id
+             * Format: uuid
+             */
+            project_id: string;
+            /** Schema Version */
+            schema_version: number;
+            /** Version */
+            version: string;
+        };
+        /** EvaluationRunCreate */
+        EvaluationRunCreate: {
+            /**
+             * Dataset Id
+             * Format: uuid
+             */
+            dataset_id: string;
+            /** Top K */
+            top_k?: number | null;
+        };
+        /** EvaluationRunResponse */
+        EvaluationRunResponse: {
+            /** Case Results */
+            case_results: {
+                [key: string]: unknown;
+            }[];
+            /** Completed At */
+            completed_at: string | null;
+            /** Configuration Hash */
+            configuration_hash: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Dataset Id
+             * Format: uuid
+             */
+            dataset_id: string;
+            /** Failed Cases */
+            failed_cases: {
+                [key: string]: unknown;
+            }[];
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Job Id
+             * Format: uuid
+             */
+            job_id: string;
+            /** Job State */
+            job_state: string;
+            /** Metrics */
+            metrics: {
+                [key: string]: unknown;
+            };
+            /**
+             * Project Id
+             * Format: uuid
+             */
+            project_id: string;
+            /** Regressions */
+            regressions: {
+                [key: string]: unknown;
+            }[];
+            /** Reranker Comparison */
+            reranker_comparison: {
+                [key: string]: unknown;
+            };
+            /** Top K */
+            top_k: number;
+            /** Versions */
+            versions: {
+                [key: string]: unknown;
+            };
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
         };
+        /**
+         * InsufficientEvidenceReason
+         * @description Stable reasons for a correct no-answer outcome.
+         * @enum {string}
+         */
+        InsufficientEvidenceReason: "no_retrieval_results" | "below_relevance_threshold" | "low_query_evidence_coverage";
         /** JobDetailResponse */
         JobDetailResponse: {
             /** Attempt Count */
@@ -1583,7 +1915,7 @@ export interface components {
          * JobType
          * @enum {string}
          */
-        JobType: "document.process" | "document.embed" | "document.index";
+        JobType: "document.process" | "document.embed" | "document.index" | "evaluation.run";
         /** LatencyMetric */
         LatencyMetric: {
             /** Average Ms */
@@ -1619,6 +1951,8 @@ export interface components {
         MessageResponse: {
             /** Citations */
             citations?: components["schemas"]["CitationSnapshot"][];
+            /** Claims */
+            claims?: components["schemas"]["AnswerClaim"][];
             /** Content */
             content: string;
             /**
@@ -1635,6 +1969,8 @@ export interface components {
             embedding_set_version?: number | null;
             /** Finish Reason */
             finish_reason?: string | null;
+            /** Grounded */
+            grounded?: boolean | null;
             /**
              * Id
              * Format: uuid
@@ -1642,6 +1978,7 @@ export interface components {
             id: string;
             /** Input Tokens */
             input_tokens?: number | null;
+            insufficient_evidence_reason?: components["schemas"]["InsufficientEvidenceReason"] | null;
             /** Metadata */
             metadata?: {
                 [key: string]: unknown;
@@ -1918,6 +2255,15 @@ export interface components {
             /** Provider Version */
             provider_version?: string | null;
         };
+        /** QualitySummary */
+        QualitySummary: {
+            /** Acceptance Thresholds */
+            acceptance_thresholds: {
+                [key: string]: number;
+            };
+            dataset?: components["schemas"]["EvaluationDatasetResponse"] | null;
+            last_run?: components["schemas"]["EvaluationRunResponse"] | null;
+        };
         /**
          * ReadinessStatus
          * @description Readiness probe payload — downstream dependency health.
@@ -2015,6 +2361,25 @@ export interface components {
          */
         RetrievalStrategy: "semantic" | "hybrid";
         /**
+         * SearchDiagnostics
+         * @description Sanitized execution facts used by quality evaluation and operators.
+         */
+        SearchDiagnostics: {
+            /** Duration Ms */
+            duration_ms: number;
+            /** Rerank Requested */
+            rerank_requested: boolean;
+            /** Rerank Status */
+            rerank_status: string;
+            /** Reranker Model */
+            reranker_model?: string | null;
+            /** Reranker Provider */
+            reranker_provider?: string | null;
+            /** Reranker Version */
+            reranker_version?: string | null;
+            strategy: components["schemas"]["RetrievalStrategy"];
+        };
+        /**
          * SearchRequest
          * @description Search request body.
          */
@@ -2038,6 +2403,7 @@ export interface components {
          * @description Search response wrapper.
          */
         SearchResponse: {
+            diagnostics?: components["schemas"]["SearchDiagnostics"];
             /** Query */
             query: string;
             /** Results */
@@ -3337,6 +3703,207 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApiResponse_DocumentResponse_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_datasets_api_v1_projects__project_id__evaluations_datasets_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_list_EvaluationDatasetResponse__"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_dataset_api_v1_projects__project_id__evaluations_datasets_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EvaluationDatasetCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_EvaluationDatasetResponse_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_quality_api_v1_projects__project_id__evaluations_quality_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_QualitySummary_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_runs_api_v1_projects__project_id__evaluations_runs_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_list_EvaluationRunResponse__"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_run_api_v1_projects__project_id__evaluations_runs_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EvaluationRunCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_EvaluationRunResponse_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_run_api_v1_projects__project_id__evaluations_runs__run_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_EvaluationRunResponse_"];
                 };
             };
             /** @description Validation Error */

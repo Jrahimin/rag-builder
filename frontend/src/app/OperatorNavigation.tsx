@@ -7,6 +7,7 @@ import {
   HeartPulse,
   Menu,
   Settings2,
+  ShieldCheck,
   X,
 } from "lucide-react";
 import { useState } from "react";
@@ -18,6 +19,7 @@ const navigation = [
   { to: "/projects", label: "Projects / Documents", icon: FileStack },
   { to: "/configuration", label: "Configuration", icon: Settings2 },
   { to: "/metrics", label: "Metrics", icon: Activity },
+  { to: "/quality", label: "Evidence Quality", icon: ShieldCheck },
   { to: "/audit", label: "Audit", icon: ClipboardList },
   { to: "/health", label: "System Health", icon: HeartPulse },
 ];

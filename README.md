@@ -45,7 +45,8 @@ Your product  ── REST + API key ──►  RAG Builder
 - PostgreSQL-native semantic and keyword retrieval.
 - Hybrid search with rank fusion and reranking hooks.
 - Stateful RAG conversations and SSE streaming.
-- Source metadata for citations and evidence display.
+- Claim-linked citations, explicit insufficient-evidence answers, and evidence display.
+- Versioned evaluation datasets, durable quality runs, regression metrics, and reranker comparison.
 - Organization API keys, project boundaries, health/readiness, and background processing foundations.
 
 The repository is still being shaped toward a repeatable dedicated hosted service. The learning path and architecture make the decisions visible instead of hiding them behind a demo.
@@ -115,7 +116,8 @@ FastAPI routes and project access checks
 Feature services
   ├── knowledge       upload, parse, chunk, lifecycle
   ├── retrieval       embeddings, keyword index, vector search, fusion
-  └── conversations   context, prompts, LLM calls, citations
+  ├── conversations   context, evidence gate, prompts, LLM calls, grounded claims
+  └── evaluation      datasets, quality runs, metrics, regressions
         │
         ├── PostgreSQL + pgvector
         ├── Redis + background workers
@@ -193,6 +195,7 @@ backend/app/
     knowledge/     documents, parsing, chunking
     retrieval/     embeddings, indexing, search
     conversations/ RAG chat, prompts, citations
+    evaluation/    versioned datasets and reproducible quality runs
   platform/       database, providers, jobs, auth, persistence
   worker/         background task entrypoints
 
@@ -210,13 +213,14 @@ docs/
 
 ## What is implemented and what is still evolving
 
-The repository demonstrates the full conceptual journey from authentication and document upload through retrieval and chat, plus an internal operator console for deployment health, durable work, documents, configuration, metrics, and audit. It is not a public SaaS product.
+The repository demonstrates the full conceptual journey from authentication and document upload
+through measured retrieval and grounded chat, plus an internal operator console for deployment
+health, durable work, documents, configuration, metrics, evidence quality, and audit. It is not a
+public SaaS product.
 
 The most important next development work is:
 
 - first-class asynchronous outcome webhooks;
-- stronger claim-level citations and insufficient-evidence behavior;
-- measured evidence quality and learned-reranker evaluation;
 - safer file-ingestion boundaries and repeatable dedicated deployment operations.
 
 The scope is intentionally focused. The next product should not begin with agents, GraphRAG, voice, a connector marketplace, multiple vector databases, or a complex billing control plane.

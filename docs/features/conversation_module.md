@@ -1,6 +1,7 @@
 # Conversation Module
 
-Project-scoped RAG chat: retrieve context → build prompt → LLM → grounded answer + citations.
+Project-scoped RAG chat: retrieve context → evidence gate → prompt/LLM → grounded claims and
+citations, or an explicit insufficient-evidence answer without generation.
 
 ## Purpose
 
@@ -12,6 +13,7 @@ Complete the RAG user journey on top of the retrieval pipeline. Conversations ar
 conversations_router ──► ConversationService (CRUD)
                       └──► ChatService ──► RetrievalPort (composition adapter)
                                         ├──► ContextBuilder
+                                        ├──► GroundingService
                                         ├──► PromptBuilder
                                         ├──► BaseLLMProvider (per-conversation resolve)
                                         └──► build_citation_snapshots
@@ -25,6 +27,7 @@ conversations_router ──► ConversationService (CRUD)
 | **ContextBuilder** | Dedupe + budget trim (preserves retrieval order) |
 | **PromptBuilder** | Versioned system prompt + context + history |
 | **build_citation_snapshots** | Durable citation JSONB for assistant messages |
+| **GroundingService** | Pre-generation evidence decision and post-generation claim/source mapping |
 
 ## Data flow
 
@@ -33,9 +36,10 @@ POST /messages
   → validate conversation (active, not deleted)
   → Tx1: persist user message + last_message_at → commit
   → load history + retrieve (read txn rolled back before LLM)
-  → ContextBuilder → PromptBuilder → resolve LLM from conversation snapshot
-  → LLM generate / stream
-  → Tx2: persist assistant (+ citations, metadata, auto-title) → commit
+  → ContextBuilder → GroundingService evidence gate
+  → insufficient: skip LLM and persist stable reason
+  → sufficient: PromptBuilder v2 → LLM generate / stream → map claims
+  → Tx2: persist assistant (+ claims, citations, metadata, auto-title) → commit
 ```
 
 LLM failure after Tx1: user message retained, no assistant row.
@@ -48,12 +52,14 @@ LLM failure after Tx1: user message retained, no assistant row.
 | `ChatConfig` | `APE_CHAT__*` | Retrieval top-k, context budgets, history window, prompt version |
 | `RetrievalConfig` | `APE_RETRIEVAL__EMBEDDING_SET_VERSION` | Snapshotted on assistant messages |
 
-Notable `ChatConfig` keys: `citation_excerpt_max_chars`, `auto_title_max_chars`, `include_citations`.
+Notable `ChatConfig` keys: `citation_excerpt_max_chars`, `minimum_evidence_score`,
+`minimum_query_token_coverage`, `minimum_claim_token_coverage`, and `include_citations`.
 
 ## Data model
 
 - `conversations` — config snapshot (`provider`, `model`, `temperature`), nullable `title`, `last_message_at`
-- `messages` — no `sequence`; ordered by `created_at`, `id`; assistant `metadata` + `citations` JSONB
+- `messages` — no `sequence`; ordered by `created_at`, `id`; assistant `metadata`, `citations`,
+  `claims`, `grounded`, and `insufficient_evidence_reason`
 
 Soft-deleting a conversation sets `deleted_at` on the conversation only; messages remain for audit.
 
@@ -78,7 +84,8 @@ Chat uses the configured retrieval strategy through `RetrievalPort`. Hybrid retr
 
 ## Testing strategy
 
-- Unit: `ChatService` (Tx1/Tx2, provider resolve, errors, stream cancel), `ConversationService` validation, `ContextBuilder`, `PromptBuilder`, citation snapshots, retrieval adapter
+- Unit: `ChatService` (Tx1/Tx2, refusal, provider resolve, errors, stream cancel),
+  `GroundingService`, `ConversationService`, context/prompt builders, citation snapshots, retrieval adapter
 - Provider contract: echo LLM + factory overrides
 - Integration: `test_conversations_api` (when stack available)
 
@@ -92,5 +99,6 @@ Chat uses the configured retrieval strategy through `RetrievalPort`. Hybrid retr
 
 - [Retrieval](./retrieval_module.md)
 - [ADR-008](../architecture/adr/008-chat-on-semantic-baseline.md)
+- [ADR-014](../architecture/adr/014-evidence-quality-and-grounded-answers.md)
 - [Implementation plan](../plans/conversation_module_plan.md)
 - [RAG journey (learning)](../learning/conversation_rag_journey.md)

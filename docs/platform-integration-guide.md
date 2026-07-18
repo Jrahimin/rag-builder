@@ -842,11 +842,34 @@ curl -s -X POST "$APE_BASE_URL/api/v1/projects/$PROJECT_ID/conversations/$CONVER
           "filename": "policy-handbook.pdf",
           "chunk_index": 2,
           "page_number": 4,
+          "char_start": 120,
+          "char_end": 260,
           "score": 0.87,
           "chunk_hash": "a1b2c3…",
           "excerpt": "Refunds are available within 30 days of purchase when…"
         }
       ],
+      "claims": [
+        {
+          "claim_id": "claim-1",
+          "text": "Refunds are available within 30 days.",
+          "grounded": true,
+          "evidence": [
+            {
+              "citation_index": 1,
+              "chunk_id": "770e8400-e29b-41d4-a716-446655440002",
+              "document_id": "550e8400-e29b-41d4-a716-446655440000",
+              "filename": "policy-handbook.pdf",
+              "chunk_index": 2,
+              "page_number": 4,
+              "char_start": 120,
+              "char_end": 260
+            }
+          ]
+        }
+      ],
+      "grounded": true,
+      "insufficient_evidence_reason": null,
       "metadata": {
         "retrieval_time_ms": 120,
         "generation_time_ms": 800,
@@ -863,6 +886,10 @@ curl -s -X POST "$APE_BASE_URL/api/v1/projects/$PROJECT_ID/conversations/$CONVER
 }
 ```
 
+Unsupported questions are a successful API response: the assistant contains the configured
+insufficient-evidence message, `grounded=false`, empty claims/citations, and a stable
+`insufficient_evidence_reason`. Do not convert this correct outcome into an application error.
+
 </details>
 
 ### Streaming (SSE)
@@ -873,7 +900,7 @@ For token-by-token UI, use:
 POST /api/v1/projects/{project_id}/conversations/{conversation_id}/messages/stream
 ```
 
-Events: `token` (partial text), `done` (final id + citations), `error`.
+Events: `token` (partial text), `done` (final id + citations + claims + grounding), `error`.
 
 <details>
 <summary>Sample SSE events — stream message</summary>
@@ -899,7 +926,17 @@ Same request body as non-streaming `POST .../messages`.
       "filename": "policy-handbook.pdf",
       "excerpt": "Refunds are available within 30 days…"
     }
-  ]
+  ],
+  "claims": [
+    {
+      "claim_id": "claim-1",
+      "text": "Refunds are available within 30 days.",
+      "grounded": true,
+      "evidence": [{ "citation_index": 1, "chunk_id": "770e8400-e29b-41d4-a716-446655440002" }]
+    }
+  ],
+  "grounded": true,
+  "insufficient_evidence_reason": null
 }
 ```
 
@@ -1035,6 +1072,9 @@ your own user authorization before choosing `project_id`.
 | Create chat | `POST` | `/api/v1/projects/{project_id}/conversations` |
 | Send message | `POST` | `/api/v1/projects/{project_id}/conversations/{id}/messages` |
 | Stream message | `POST` | `/api/v1/projects/{project_id}/conversations/{id}/messages/stream` |
+| Create evaluation dataset | `POST` | `/api/v1/projects/{project_id}/evaluations/datasets` |
+| Queue quality run | `POST` | `/api/v1/projects/{project_id}/evaluations/runs` |
+| Latest quality summary | `GET` | `/api/v1/projects/{project_id}/evaluations/quality` |
 
 ---
 
@@ -1049,6 +1089,8 @@ your own user authorization before choosing `project_id`.
 - [ ] Handle `429` with `Retry-After` backoff
 - [ ] Log `trace_id` from errors for support requests
 - [ ] Hybrid search enabled (`APE_RETRIEVAL__STRATEGY=hybrid` in production `.env`)
+- [ ] Versioned pilot evaluation dataset has a passing stored run before trusted-answer rollout
+- [ ] Client displays insufficient-evidence outcomes and claim/source locations explicitly
 
 ---
 

@@ -6,7 +6,7 @@ import uuid
 from enum import StrEnum
 from typing import Any
 
-from sqlalchemy import Enum, ForeignKeyConstraint, Index, Integer, String, Text
+from sqlalchemy import Boolean, Enum, ForeignKeyConstraint, Index, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -70,3 +70,11 @@ class Message(Base, UUIDPrimaryKeyMixin, TimestampMixin, ProjectScopedMixin):
         default=list,
         server_default="[]",
     )
+    claims: Mapped[list[Any]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=list,
+        server_default="[]",
+    )
+    grounded: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    insufficient_evidence_reason: Mapped[str | None] = mapped_column(String(64), nullable=True)

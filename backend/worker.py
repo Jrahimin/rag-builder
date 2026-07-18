@@ -5,7 +5,8 @@ Loads all pipeline handlers (knowledge + retrieval)::
     taskiq worker app.worker.broker:broker \\
         app.worker.handlers.document \\
         app.worker.handlers.embedding \\
-        app.worker.handlers.indexing
+        app.worker.handlers.indexing \\
+        app.worker.handlers.evaluation
 """
 
 from __future__ import annotations
@@ -18,6 +19,7 @@ _HANDLER_MODULES = (
     "app.worker.handlers.document",
     "app.worker.handlers.embedding",
     "app.worker.handlers.indexing",
+    "app.worker.handlers.evaluation",
 )
 
 if __name__ == "__main__":
