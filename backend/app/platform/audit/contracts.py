@@ -22,6 +22,10 @@ class AuditEventType(StrEnum):
     DOCUMENT_DELETE_REQUESTED = "document.delete_requested"
     DOCUMENT_PURGE_REQUESTED = "document.purge_requested"
     STORAGE_RECONCILIATION_REQUESTED = "storage.reconciliation_requested"
+    WEBHOOK_ENDPOINT_CREATED = "webhook.endpoint_created"
+    WEBHOOK_ENDPOINT_ENABLED = "webhook.endpoint_enabled"
+    WEBHOOK_ENDPOINT_DISABLED = "webhook.endpoint_disabled"
+    WEBHOOK_DELIVERY_REPLAYED = "webhook.delivery_replayed"
 
 
 class AuditActorType(StrEnum):

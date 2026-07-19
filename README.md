@@ -48,10 +48,13 @@ Your product  ── REST + API key ──►  RAG Builder
 - Claim-linked citations, explicit insufficient-evidence answers, and evidence display.
 - Versioned evaluation datasets, durable quality runs, regression metrics, and reranker comparison.
 - Safe corpus changes with durable reprocess/re-embed/reindex jobs, immutable index builds, atomic activation/rollback, and guarded delete/purge.
+- Versioned HMAC webhooks with retry/backoff, delivery history, endpoint disablement, and replay-safe event IDs.
+- A digest-pinned, TLS-fronted dedicated hosted profile with guarded backup, restore, upgrade, rollback, and diagnostics.
 - A browser-based **Test Lab** that verifies upload, durable processing, retrieval, grounded citations or valid refusal, build activation/rollback, and storage reconciliation without Postman.
 - Organization API keys, project boundaries, health/readiness, and background processing foundations.
 
-The repository is still being shaped toward a repeatable dedicated hosted service. The learning path and architecture make the decisions visible instead of hiding them behind a demo.
+The repository now reaches the roadmap's dedicated hosted pilot cut. Supported
+self-hosting and customer-specific authorization remain later, demand-led products.
 
 ## Small examples of what becomes possible
 

@@ -112,7 +112,7 @@ Query: `limit` (1–100, default 20), `offset`.
 
 ## POST `/{document_id}/reprocess`
 
-Re-enqueue the durable full pipeline. It bumps `document.version`, writes new
+Returns `202` and re-enqueues the durable full pipeline. It bumps `document.version`, writes new
 versioned chunks, creates a complete isolated vector+keyword build, validates it,
 and atomically activates it while preserving the previous build.
 The response includes the new durable `job_id`.

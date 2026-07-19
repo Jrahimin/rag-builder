@@ -384,7 +384,7 @@ export interface paths {
         get: operations["get_document_api_v1_projects__project_id__documents__document_id__get"];
         put?: never;
         post?: never;
-        /** Soft-delete a document and remove stored bytes */
+        /** Stage a reversible document deletion */
         delete: operations["delete_document_api_v1_projects__project_id__documents__document_id__delete"];
         options?: never;
         head?: never;
@@ -731,6 +731,92 @@ export interface paths {
         head?: never;
         /** Toggle project active status */
         patch: operations["toggle_project_status_api_v1_projects__project_id__status_patch"];
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/webhooks/deliveries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List webhook delivery history */
+        get: operations["list_deliveries_api_v1_projects__project_id__webhooks_deliveries_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/webhooks/deliveries/{delivery_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Inspect a webhook delivery and every HTTP attempt */
+        get: operations["get_delivery_api_v1_projects__project_id__webhooks_deliveries__delivery_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/webhooks/deliveries/{delivery_id}/replay": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Replay an existing event with the same event ID */
+        post: operations["replay_delivery_api_v1_projects__project_id__webhooks_deliveries__delivery_id__replay_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/webhooks/endpoints": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List webhook endpoints */
+        get: operations["list_endpoints_api_v1_projects__project_id__webhooks_endpoints_get"];
+        put?: never;
+        /** Create a signed webhook endpoint */
+        post: operations["create_endpoint_api_v1_projects__project_id__webhooks_endpoints_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/webhooks/endpoints/{endpoint_id}/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Enable or disable a webhook endpoint */
+        patch: operations["update_endpoint_status_api_v1_projects__project_id__webhooks_endpoints__endpoint_id__status_patch"];
         trace?: never;
     };
     "/health": {
@@ -1225,6 +1311,30 @@ export interface components {
              */
             success: boolean;
         };
+        /** ApiResponse[PaginatedResult[WebhookDeliveryResponse]] */
+        ApiResponse_PaginatedResult_WebhookDeliveryResponse__: {
+            data?: components["schemas"]["PaginatedResult_WebhookDeliveryResponse_"] | null;
+            /** Message */
+            message?: string | null;
+            meta?: components["schemas"]["ResponseMeta"] | null;
+            /**
+             * Success
+             * @default true
+             */
+            success: boolean;
+        };
+        /** ApiResponse[PaginatedResult[WebhookEndpointResponse]] */
+        ApiResponse_PaginatedResult_WebhookEndpointResponse__: {
+            data?: components["schemas"]["PaginatedResult_WebhookEndpointResponse_"] | null;
+            /** Message */
+            message?: string | null;
+            meta?: components["schemas"]["ResponseMeta"] | null;
+            /**
+             * Success
+             * @default true
+             */
+            success: boolean;
+        };
         /** ApiResponse[ProjectResponse] */
         ApiResponse_ProjectResponse_: {
             data?: components["schemas"]["ProjectResponse"] | null;
@@ -1264,6 +1374,54 @@ export interface components {
         /** ApiResponse[SearchResponse] */
         ApiResponse_SearchResponse_: {
             data?: components["schemas"]["SearchResponse"] | null;
+            /** Message */
+            message?: string | null;
+            meta?: components["schemas"]["ResponseMeta"] | null;
+            /**
+             * Success
+             * @default true
+             */
+            success: boolean;
+        };
+        /** ApiResponse[WebhookDeliveryDetailResponse] */
+        ApiResponse_WebhookDeliveryDetailResponse_: {
+            data?: components["schemas"]["WebhookDeliveryDetailResponse"] | null;
+            /** Message */
+            message?: string | null;
+            meta?: components["schemas"]["ResponseMeta"] | null;
+            /**
+             * Success
+             * @default true
+             */
+            success: boolean;
+        };
+        /** ApiResponse[WebhookDeliveryResponse] */
+        ApiResponse_WebhookDeliveryResponse_: {
+            data?: components["schemas"]["WebhookDeliveryResponse"] | null;
+            /** Message */
+            message?: string | null;
+            meta?: components["schemas"]["ResponseMeta"] | null;
+            /**
+             * Success
+             * @default true
+             */
+            success: boolean;
+        };
+        /** ApiResponse[WebhookEndpointCreatedResponse] */
+        ApiResponse_WebhookEndpointCreatedResponse_: {
+            data?: components["schemas"]["WebhookEndpointCreatedResponse"] | null;
+            /** Message */
+            message?: string | null;
+            meta?: components["schemas"]["ResponseMeta"] | null;
+            /**
+             * Success
+             * @default true
+             */
+            success: boolean;
+        };
+        /** ApiResponse[WebhookEndpointResponse] */
+        ApiResponse_WebhookEndpointResponse_: {
+            data?: components["schemas"]["WebhookEndpointResponse"] | null;
             /** Message */
             message?: string | null;
             meta?: components["schemas"]["ResponseMeta"] | null;
@@ -1380,7 +1538,7 @@ export interface components {
          * AuditEventType
          * @enum {string}
          */
-        AuditEventType: "job.submitted" | "job.retried" | "job.started" | "job.succeeded" | "job.retry_scheduled" | "job.failed" | "job.recovered" | "job.dispatch_deferred" | "index_build.activated" | "index_build.rolled_back" | "document.delete_requested" | "document.purge_requested" | "storage.reconciliation_requested";
+        AuditEventType: "job.submitted" | "job.retried" | "job.started" | "job.succeeded" | "job.retry_scheduled" | "job.failed" | "job.recovered" | "job.dispatch_deferred" | "index_build.activated" | "index_build.rolled_back" | "document.delete_requested" | "document.purge_requested" | "storage.reconciliation_requested" | "webhook.endpoint_created" | "webhook.endpoint_enabled" | "webhook.endpoint_disabled" | "webhook.delivery_replayed";
         /**
          * AuditOutcome
          * @enum {string}
@@ -2438,6 +2596,28 @@ export interface components {
             /** Total */
             total: number;
         };
+        /** PaginatedResult[WebhookDeliveryResponse] */
+        PaginatedResult_WebhookDeliveryResponse_: {
+            /** Items */
+            items: components["schemas"]["WebhookDeliveryResponse"][];
+            /** Limit */
+            limit: number;
+            /** Offset */
+            offset: number;
+            /** Total */
+            total: number;
+        };
+        /** PaginatedResult[WebhookEndpointResponse] */
+        PaginatedResult_WebhookEndpointResponse_: {
+            /** Items */
+            items: components["schemas"]["WebhookEndpointResponse"][];
+            /** Limit */
+            limit: number;
+            /** Offset */
+            offset: number;
+            /** Total */
+            total: number;
+        };
         /**
          * ProjectCreate
          * @description Payload for creating a new Project.
@@ -2680,6 +2860,286 @@ export interface components {
             /** Error Type */
             type: string;
         };
+        /** WebhookAttemptResponse */
+        WebhookAttemptResponse: {
+            /** Attempt Number */
+            attempt_number: number;
+            /**
+             * Attempted At
+             * Format: date-time
+             */
+            attempted_at: string;
+            /** Error */
+            error: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Latency Ms */
+            latency_ms: number | null;
+            /** Response Excerpt */
+            response_excerpt: string | null;
+            /** Status Code */
+            status_code: number | null;
+        };
+        /** WebhookDeliveryDetailResponse */
+        WebhookDeliveryDetailResponse: {
+            /** Attempt Count */
+            attempt_count: number;
+            /** Attempts */
+            attempts: components["schemas"]["WebhookAttemptResponse"][];
+            /**
+             * Available At
+             * Format: date-time
+             */
+            available_at: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Delivered At */
+            delivered_at: string | null;
+            /**
+             * Endpoint Id
+             * Format: uuid
+             */
+            endpoint_id: string;
+            event: components["schemas"]["WebhookEventResponse"];
+            /**
+             * Event Id
+             * Format: uuid
+             */
+            event_id: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Last Error */
+            last_error: string | null;
+            /** Last Status Code */
+            last_status_code: number | null;
+            /** Max Attempts */
+            max_attempts: number;
+            /**
+             * Project Id
+             * Format: uuid
+             */
+            project_id: string;
+            /** Replay Number */
+            replay_number: number;
+            /** Replay Of Delivery Id */
+            replay_of_delivery_id: string | null;
+            state: components["schemas"]["WebhookDeliveryState"];
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /** WebhookDeliveryResponse */
+        WebhookDeliveryResponse: {
+            /** Attempt Count */
+            attempt_count: number;
+            /**
+             * Available At
+             * Format: date-time
+             */
+            available_at: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Delivered At */
+            delivered_at: string | null;
+            /**
+             * Endpoint Id
+             * Format: uuid
+             */
+            endpoint_id: string;
+            /**
+             * Event Id
+             * Format: uuid
+             */
+            event_id: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Last Error */
+            last_error: string | null;
+            /** Last Status Code */
+            last_status_code: number | null;
+            /** Max Attempts */
+            max_attempts: number;
+            /**
+             * Project Id
+             * Format: uuid
+             */
+            project_id: string;
+            /** Replay Number */
+            replay_number: number;
+            /** Replay Of Delivery Id */
+            replay_of_delivery_id: string | null;
+            state: components["schemas"]["WebhookDeliveryState"];
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /**
+         * WebhookDeliveryState
+         * @enum {string}
+         */
+        WebhookDeliveryState: "pending" | "delivering" | "retry_scheduled" | "succeeded" | "failed";
+        /** WebhookEndpointCreate */
+        WebhookEndpointCreate: {
+            /** Description */
+            description?: string | null;
+            /**
+             * Event Types
+             * @example [
+             *       "document.indexing.succeeded.v1"
+             *     ]
+             */
+            event_types: components["schemas"]["WebhookEventType"][];
+            /**
+             * Url
+             * Format: uri
+             * @example https://customer.example.com/webhooks/ape
+             */
+            url: string;
+        };
+        /** WebhookEndpointCreatedResponse */
+        WebhookEndpointCreatedResponse: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Description */
+            description: string | null;
+            /** Disabled At */
+            disabled_at: string | null;
+            /** Disabled Reason */
+            disabled_reason: string | null;
+            /** Event Types */
+            event_types: components["schemas"]["WebhookEventType"][];
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Is Enabled */
+            is_enabled: boolean;
+            /**
+             * Project Id
+             * Format: uuid
+             */
+            project_id: string;
+            /**
+             * Signing Secret
+             * @description Endpoint signing secret. Store it securely and use it to verify signatures.
+             */
+            signing_secret: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            /** Url */
+            url: string;
+        };
+        /** WebhookEndpointResponse */
+        WebhookEndpointResponse: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Description */
+            description: string | null;
+            /** Disabled At */
+            disabled_at: string | null;
+            /** Disabled Reason */
+            disabled_reason: string | null;
+            /** Event Types */
+            event_types: components["schemas"]["WebhookEventType"][];
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Is Enabled */
+            is_enabled: boolean;
+            /**
+             * Project Id
+             * Format: uuid
+             */
+            project_id: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            /** Url */
+            url: string;
+        };
+        /** WebhookEndpointStatusUpdate */
+        WebhookEndpointStatusUpdate: {
+            /** Enabled */
+            enabled: boolean;
+            /** Reason */
+            reason?: string | null;
+        };
+        /** WebhookEventResponse */
+        WebhookEventResponse: {
+            /** Api Version */
+            api_version: number;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Data */
+            data: {
+                [key: string]: unknown;
+            };
+            event_type: components["schemas"]["WebhookEventType"];
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Occurred At
+             * Format: date-time
+             */
+            occurred_at: string;
+            /**
+             * Project Id
+             * Format: uuid
+             */
+            project_id: string;
+            /**
+             * Source Id
+             * Format: uuid
+             */
+            source_id: string;
+            /** Source Type */
+            source_type: string;
+        };
+        /**
+         * WebhookEventType
+         * @description The intentionally small, versioned hosted-integration event vocabulary.
+         * @enum {string}
+         */
+        WebhookEventType: "document.processing.succeeded.v1" | "document.processing.failed.v1" | "document.indexing.succeeded.v1" | "document.indexing.failed.v1";
         /** WorkerOverview */
         WorkerOverview: {
             /** Active Count */
@@ -3878,7 +4338,7 @@ export interface operations {
         requestBody?: never;
         responses: {
             /** @description Successful Response */
-            200: {
+            202: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3910,7 +4370,7 @@ export interface operations {
         requestBody?: never;
         responses: {
             /** @description Successful Response */
-            200: {
+            202: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3976,7 +4436,7 @@ export interface operations {
         requestBody?: never;
         responses: {
             /** @description Successful Response */
-            200: {
+            202: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -4465,7 +4925,7 @@ export interface operations {
         requestBody?: never;
         responses: {
             /** @description Successful Response */
-            200: {
+            202: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -4537,6 +4997,211 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApiResponse_ProjectResponse_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_deliveries_api_v1_projects__project_id__webhooks_deliveries_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+                endpoint_id?: string | null;
+                state?: components["schemas"]["WebhookDeliveryState"] | null;
+            };
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_PaginatedResult_WebhookDeliveryResponse__"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_delivery_api_v1_projects__project_id__webhooks_deliveries__delivery_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+                delivery_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_WebhookDeliveryDetailResponse_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    replay_delivery_api_v1_projects__project_id__webhooks_deliveries__delivery_id__replay_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+                delivery_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_WebhookDeliveryResponse_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_endpoints_api_v1_projects__project_id__webhooks_endpoints_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_PaginatedResult_WebhookEndpointResponse__"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_endpoint_api_v1_projects__project_id__webhooks_endpoints_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WebhookEndpointCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_WebhookEndpointCreatedResponse_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_endpoint_status_api_v1_projects__project_id__webhooks_endpoints__endpoint_id__status_patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+                endpoint_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WebhookEndpointStatusUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_WebhookEndpointResponse_"];
                 };
             };
             /** @description Validation Error */

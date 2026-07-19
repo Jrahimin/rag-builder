@@ -38,6 +38,12 @@ from app.platform.jobs.contracts import (
 )
 from app.platform.jobs.errors import JobLeaseLostError
 from app.platform.jobs.failure import JobFailure
+from app.platform.webhooks.contracts import (
+    NullWebhookEventPublisher,
+    WebhookEventDefinition,
+    WebhookEventPublisher,
+    WebhookEventType,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -65,12 +71,14 @@ class JobService(DurableJobSubmitter):
         config: JobsConfig,
         *,
         audit: AuditRecorder,
+        webhooks: WebhookEventPublisher | None = None,
     ) -> None:
         self._session = session
         self._project_id = project_id
         self._queue = queue
         self._config = config
         self._audit = audit
+        self._webhooks = webhooks or NullWebhookEventPublisher()
         self._runs = JobRunRepository(session, project_id)
         self._snapshots = JobConfigurationRepository(session, project_id)
         self._outbox = JobOutboxRepository(session, project_id)
@@ -306,6 +314,7 @@ class JobService(DurableJobSubmitter):
                 configuration_snapshot_id=snapshot.id,
             )
         self._runs.mark_succeeded(run)
+        await self._stage_webhook_outcome(run, succeeded=True)
         self._record_job_event(
             run,
             event_type=AuditEventType.JOB_SUCCEEDED,
@@ -369,6 +378,7 @@ class JobService(DurableJobSubmitter):
             )
             event_type = AuditEventType.JOB_FAILED
             outcome = AuditOutcome.FAILURE
+            await self._stage_webhook_outcome(run, succeeded=False)
         self._record_job_event(
             run,
             event_type=event_type,
@@ -411,6 +421,7 @@ class JobService(DurableJobSubmitter):
                     details={"retryable": True},
                 )
                 failed.append(run)
+                await self._stage_webhook_outcome(run, succeeded=False)
                 self._record_job_event(
                     run,
                     event_type=AuditEventType.JOB_FAILED,
@@ -450,4 +461,42 @@ class JobService(DurableJobSubmitter):
             resource_id=run.id,
             outcome=outcome,
             detail=safe_detail,
+        )
+
+    async def _stage_webhook_outcome(self, run: JobRun, *, succeeded: bool) -> None:
+        event_type: WebhookEventType | None = None
+        if run.job_type.value == "document.process":
+            event_type = (
+                WebhookEventType.DOCUMENT_PROCESSING_SUCCEEDED_V1
+                if succeeded
+                else WebhookEventType.DOCUMENT_PROCESSING_FAILED_V1
+            )
+        elif run.job_type.value == "document.index":
+            event_type = (
+                WebhookEventType.DOCUMENT_INDEXING_SUCCEEDED_V1
+                if succeeded
+                else WebhookEventType.DOCUMENT_INDEXING_FAILED_V1
+            )
+        if event_type is None or run.document_id is None:
+            return
+        data: dict[str, object] = {
+            "job_id": str(run.id),
+            "document_id": str(run.document_id),
+            "document_version": run.payload.get("document_version"),
+            "outcome": "succeeded" if succeeded else "failed",
+        }
+        if not succeeded:
+            data["failure_code"] = run.failure_code
+        build_id = run.payload.get("build_id")
+        if build_id is not None:
+            data["build_id"] = str(build_id)
+        await self._webhooks.stage(
+            WebhookEventDefinition(
+                event_type=event_type,
+                source_key=f"job:{run.id}:{'succeeded' if succeeded else 'failed'}",
+                source_type="job_run",
+                source_id=run.id,
+                data=data,
+                occurred_at=datetime.now(UTC),
+            )
         )

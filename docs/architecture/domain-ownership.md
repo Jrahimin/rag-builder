@@ -11,7 +11,7 @@
 | **Deployment** | PostgreSQL/pgvector, Redis and storage connections, process config, health probes, auth pepper + admin key |
 | **Platform** | Deployment-wide defaults, durable jobs/outbox, executor transport, provider registry (future) |
 | **Organization** | Tenant identity, Organization API keys, org-scoped rate limits |
-| **Project** | Documents, connectors, prompts, chats, evaluations, embeddings |
+| **Project** | Documents, prompts, chats, evaluations, embeddings, webhook endpoints/events/deliveries |
 
 `OwnershipScope` enum: `platform/domain/ownership.py`.
 
@@ -35,7 +35,8 @@ Project         →  which corpus (project_id on all business data)
 - `projects.organization_id` FK + `get_by_id_for_organization` on project access
 - `project_id` on every repository query, provider call, durable job,
   configuration snapshot, and outbox operation
-- API routes under `/api/v1/projects/{project_id}/...` (documents, jobs, search, conversations, embed, index)
+- API routes under `/api/v1/projects/{project_id}/...` (documents, jobs, search,
+  conversations, embed, index, webhooks)
 
 No resource-catalog enums in code — ownership is documented here and enforced
 through mixins, repositories, and auth dependencies.

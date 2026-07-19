@@ -1,6 +1,7 @@
 # API Reference
 
 Concise endpoint reference for Postman collection preparation. OpenAPI (`/docs`) is the live contract.
+See [versioning-and-errors.md](versioning-and-errors.md) for the stable v1 policy.
 
 > **Integrating APE into your application?** Start with the
 > [Platform Integration Guide](../platform-integration-guide.md) — step-by-step flow,
@@ -49,3 +50,4 @@ Error:
 | Retrieval | [retrieval_api.md](retrieval_api.md) | `/api/v1/projects/{project_id}` (search, embed, index on documents prefix) |
 | Conversations | [conversation_api.md](conversation_api.md) | `/api/v1/projects/{project_id}/conversations` |
 | Evaluation | [evaluation_api.md](evaluation_api.md) | `/api/v1/projects/{project_id}/evaluations` |
+| Webhooks | [webhooks_api.md](webhooks_api.md) | `/api/v1/projects/{project_id}/webhooks` |

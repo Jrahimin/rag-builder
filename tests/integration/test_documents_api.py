@@ -298,7 +298,7 @@ async def test_reprocess_bumps_version_and_rechunks(
     reprocess = await db_client.post(
         f"/api/v1/projects/{project_id}/documents/{document_id}/reprocess",
     )
-    assert reprocess.status_code == 200
+    assert reprocess.status_code == 202
     assert reprocess.json()["data"]["status"] == "queued"
     assert reprocess.json()["data"]["version"] == 2
     assert len(captured_jobs) == 1

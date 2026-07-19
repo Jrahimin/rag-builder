@@ -156,6 +156,7 @@ async def list_document_chunks(
 @router.post(
     "/{document_id}/reprocess",
     response_model=ApiResponse[DocumentResponse],
+    status_code=status.HTTP_202_ACCEPTED,
     summary="Re-enqueue document parsing",
 )
 async def reprocess_document(
@@ -172,6 +173,7 @@ async def reprocess_document(
 @router.post(
     "/{document_id}/embed",
     response_model=ApiResponse[DocumentResponse],
+    status_code=status.HTTP_202_ACCEPTED,
     summary="Enqueue document embedding",
 )
 async def embed_document(
@@ -187,6 +189,7 @@ async def embed_document(
 @router.post(
     "/{document_id}/index",
     response_model=ApiResponse[DocumentResponse],
+    status_code=status.HTTP_202_ACCEPTED,
     summary="Enqueue retrieval indexing",
 )
 async def index_document(

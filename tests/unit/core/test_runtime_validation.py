@@ -29,6 +29,7 @@ from app.core.config import (
     Settings,
     StorageBackend,
     StorageConfig,
+    WebhooksConfig,
 )
 from app.core.runtime_validation import ProductionConfigurationError, validate_runtime_config
 
@@ -43,6 +44,7 @@ def _production_settings(**updates: object) -> Settings:
         "storage": StorageConfig(backend=StorageBackend.MINIO),
         "malware_scan": MalwareScanConfig(backend=MalwareScannerBackend.CLAMAV),
         "jobs": JobsConfig(backend=JobQueueBackend.TASKIQ, dispatcher_enabled=True),
+        "webhooks": WebhooksConfig(signing_key="hosted-webhook-secret" * 2),
         "embedding": EmbeddingConfig(
             backend=EmbeddingBackend.OPENAI,
             openai_api_key="embedding-secret",
@@ -74,6 +76,11 @@ def test_certified_hosted_profile_is_accepted() -> None:
         ("embedding", EmbeddingConfig(backend=EmbeddingBackend.HASH), "hash embeddings"),
         ("llm", LLMConfig(backend=LLMBackend.ECHO), "echo chat"),
         ("redis", RedisConfig(password=None), "APE_REDIS__PASSWORD"),
+        (
+            "webhooks",
+            WebhooksConfig(signing_key="development-only-webhook-signing-key"),
+            "APE_WEBHOOKS__SIGNING_KEY",
+        ),
         (
             "retrieval",
             RetrievalConfig(

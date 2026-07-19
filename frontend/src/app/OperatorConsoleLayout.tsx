@@ -25,6 +25,10 @@ const titles: Record<string, { title: string; description: string }> = {
     description: "Reproducible retrieval, groundedness, refusal, and reranker decisions",
   },
   "/audit": { title: "Audit", description: "Recent deployment and durable-job activity" },
+  "/webhooks": {
+    title: "Webhooks",
+    description: "Signed integration endpoints, delivery attempts, failures, and replay",
+  },
   "/health": {
     title: "System Health",
     description: "Dependencies, startup checks, and worker heartbeats",

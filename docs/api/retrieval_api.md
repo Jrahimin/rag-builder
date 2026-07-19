@@ -19,7 +19,7 @@ the PostgreSQL keyword index while retaining the existing lifecycle contract.
 
 Enqueue embedding for a `chunked` document.
 
-**Response:** existing Document shape with `data.status=embedding` and additive
+**202 response:** existing Document shape with `data.status=embedding` and additive
 `data.job_id`; inspect the run through the [Jobs API](./jobs_api.md).
 
 ## POST `/documents/{document_id}/index`
@@ -28,7 +28,7 @@ Enqueue retrieval-index finalization for an `embedded` document. The worker
 validates the current native embedding set, rebuilds keyword/BM25 rows, and
 marks the document ready in one PostgreSQL transaction.
 
-**Response:** existing Document shape with `data.status=indexing` and additive
+**202 response:** existing Document shape with `data.status=indexing` and additive
 `data.job_id`; the worker eventually moves the Document to `ready`.
 
 ## POST `/search`

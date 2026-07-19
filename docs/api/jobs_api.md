@@ -26,7 +26,7 @@ Wrong-Project and unknown identities both return `404 job_not_found`.
 
 ## POST `/{job_id}/retry`
 
-Retry a terminal failed job. The response is a new queued JobRun with a new
+Returns `202` and retries a terminal failed job. The response is a new queued JobRun with a new
 identity, `retry_of_job_id` pointing to the failed run, and the same immutable
 configuration snapshot. A non-failed job returns `400 job_not_retryable`.
 
@@ -35,7 +35,7 @@ failure therefore does not lose the accepted retry.
 
 ## Async action compatibility
 
-Upload, reprocess, embed, and index responses keep their existing Document
-response and status code and add nullable `data.job_id`. Save this identity when
+Upload returns `201`; reprocess, embed, and index return `202`. Their Document
+response includes nullable `data.job_id`. Save this identity when
 you need detailed operational progress or explicit failure retry; continue using
 `Document.status` to decide when the corpus is product-ready.

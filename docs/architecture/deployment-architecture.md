@@ -9,7 +9,7 @@
 | Mode | Purpose | Status |
 | ---- | ------- | ------ |
 | **Local development** | Developer machine, fast iteration | ✅ Implemented |
-| **Dedicated hosted production runtime** | Isolated customer backend with certified providers and operator APIs | ✅ Backend profile implemented; console/release operations remain later phases |
+| **Dedicated hosted production runtime** | Isolated customer backend, console, webhooks, and recovery contract | ✅ Phase 6 supported pilot profile |
 | **Supported self-hosted edition** | Customer-operated release (Future F1) | Deferred / demand-led |
 
 ---
@@ -82,6 +82,10 @@ Infrastructure in Docker, API on host with venv — see `docs/learning/docker-lo
 | Redis | Single instance / managed | At-least-once Taskiq transport + cache; PostgreSQL retains dispatch intent and execution state |
 | Object storage | S3 / MinIO | Customer-owned |
 
+The supported pilot is deliberately a single-host Compose topology. It exposes only the
+TLS gateway; data services stay internal while API/workers/ClamAV have explicit egress
+for providers, customer webhooks, and updates. Images are digest-pinned and validated.
+
 ---
 
 ## Docker organization
@@ -90,16 +94,19 @@ Infrastructure in Docker, API on host with venv — see `docs/learning/docker-lo
 | ---- | ------- |
 | `docker-compose.yml` | Local development stack (repo root) |
 | `backend/Dockerfile` | Multi-stage image: `development` target for reload; default `production` target uses Gunicorn/Uvicorn workers |
-| `infra/` | Future: production compose overrides, K8s manifests |
+| `infra/hosted/compose.yaml` | Supported dedicated hosted pilot topology |
+| `infra/hosted/hostedctl.py` | Immutable-release validation and guarded recovery operations |
 | `.dockerignore` | Build context exclusions |
 
-Production will add `docker-compose.prod.yml` or `infra/production/` — not yet present.
+`APE_RUNTIME__PROFILE` selects `hosted_openai` or `private_ollama`; validation and
+bounded preflight run in API and workers before they serve or consume. Migration is a
+one-shot gate. Every service has a probe and resource limit. Release/runtime/TLS inputs
+are injected at deployment and never baked into images.
 
-The application-level production contract is implemented independently of final Phase 6 release
-packaging. `APE_RUNTIME__PROFILE` selects `hosted_openai` or `private_ollama`; configuration
-validation and a bounded capability preflight run in both API and worker processes before they
-serve or consume work. The local Compose file passes the same profile/provider/secret settings
-while retaining development defaults.
+Backups quiesce writes and capture PostgreSQL plus object storage with a release manifest.
+Upgrade takes a pre-upgrade snapshot. Rollback restores both data and prior digest-pinned
+images; it never assumes Alembic downgrade safety. The canonical procedure is the
+[`hosted runbook`](../../infra/hosted/RUNBOOK.md).
 
 ---
 

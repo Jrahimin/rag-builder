@@ -9,4 +9,4 @@ Canonical layout (see ``docs/architecture/module-architecture.md``):
     dependencies/ DI wiring
 """
 
-__version__ = "0.1.0"
+__version__ = "1.0.0"

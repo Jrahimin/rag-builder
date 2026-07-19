@@ -160,12 +160,12 @@ async def test_durable_runner_persists_metrics_claims_and_refusal(
     embed = await db_client.post(
         f"/api/v1/projects/{project_id}/documents/{document_id}/embed"
     )
-    assert embed.status_code == 200
+    assert embed.status_code == 202
     await run_captured_embed_jobs(integration_connection, captured_jobs)
     index = await db_client.post(
         f"/api/v1/projects/{project_id}/documents/{document_id}/index"
     )
-    assert index.status_code == 200
+    assert index.status_code == 202
     await run_captured_index_jobs(integration_connection, captured_jobs)
 
     dataset = await db_client.post(

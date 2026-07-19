@@ -9,6 +9,7 @@ import {
   Menu,
   Settings2,
   ShieldCheck,
+  Webhook,
   X,
 } from "lucide-react";
 import { useState } from "react";
@@ -23,6 +24,7 @@ const navigation = [
   { to: "/metrics", label: "Metrics", icon: Activity },
   { to: "/quality", label: "Evidence Quality", icon: ShieldCheck },
   { to: "/audit", label: "Audit", icon: ClipboardList },
+  { to: "/webhooks", label: "Webhooks", icon: Webhook },
   { to: "/health", label: "System Health", icon: HeartPulse },
 ];
 

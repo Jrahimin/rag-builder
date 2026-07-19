@@ -1,0 +1,200 @@
+name: ${APE_DEPLOYMENT_ID:?Set APE_DEPLOYMENT_ID in release.env}
+
+x-app-env: &app-env
+  env_file:
+    - ./secrets/runtime.env
+  networks: [ape_private, ape_egress]
+
+x-app-resources: &app-resources
+  deploy:
+    resources:
+      limits:
+        cpus: "${APE_APP_CPU_LIMIT:-2.0}"
+        memory: "${APE_APP_MEMORY_LIMIT:-2G}"
+      reservations:
+        cpus: "${APE_APP_CPU_RESERVATION:-0.25}"
+        memory: "${APE_APP_MEMORY_RESERVATION:-256M}"
+
+services:
+  gateway:
+    image: ${NGINX_IMAGE:?Set a digest-pinned NGINX_IMAGE}
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+      frontend:
+        condition: service_healthy
+    ports:
+      - "${APE_HTTP_PORT:-80}:80"
+      - "${APE_HTTPS_PORT:-443}:443"
+    volumes:
+      - ./gateway.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./secrets/tls.crt:/run/secrets/tls.crt:ro
+      - ./secrets/tls.key:/run/secrets/tls.key:ro
+    networks: [ape_private]
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-check-certificate -q -O /dev/null https://127.0.0.1/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    deploy:
+      resources:
+        limits: { cpus: "0.50", memory: "256M" }
+
+  frontend:
+    image: ${APE_FRONTEND_IMAGE:?Set a digest-pinned APE_FRONTEND_IMAGE}
+    restart: unless-stopped
+    networks: [ape_private]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/operator/ || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits: { cpus: "0.50", memory: "256M" }
+
+  backend:
+    <<: [*app-env, *app-resources]
+    image: ${APE_BACKEND_IMAGE:?Set a digest-pinned APE_BACKEND_IMAGE}
+    restart: unless-stopped
+    init: true
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      minio-init: { condition: service_completed_successfully }
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      minio: { condition: service_healthy }
+      clamav: { condition: service_healthy }
+    command: ["gunicorn", "app.main:app", "--bind", "0.0.0.0:8000", "--workers", "2", "--worker-class", "uvicorn.workers.UvicornWorker", "--access-logfile", "-"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  worker:
+    <<: [*app-env, *app-resources]
+    image: ${APE_BACKEND_IMAGE:?Set a digest-pinned APE_BACKEND_IMAGE}
+    restart: unless-stopped
+    init: true
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      minio-init: { condition: service_completed_successfully }
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      minio: { condition: service_healthy }
+      clamav: { condition: service_healthy }
+    command: ["taskiq", "worker", "app.worker.broker:broker", "app.worker.handlers.document", "app.worker.handlers.embedding", "app.worker.handlers.indexing", "app.worker.handlers.evaluation", "app.worker.handlers.corpus", "app.worker.handlers.document_lifecycle", "app.worker.handlers.storage_reconciliation"]
+
+  migrate:
+    image: ${APE_BACKEND_IMAGE:?Set a digest-pinned APE_BACKEND_IMAGE}
+    env_file: [./secrets/runtime.env]
+    networks: [ape_private]
+    restart: "no"
+    depends_on:
+      postgres: { condition: service_healthy }
+    command: ["alembic", "upgrade", "head"]
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: "1G" }
+
+  postgres:
+    image: ${POSTGRES_IMAGE:?Set a digest-pinned POSTGRES_IMAGE}
+    restart: unless-stopped
+    env_file: [./secrets/runtime.env]
+    volumes: [postgres_data:/var/lib/postgresql/data]
+    networks: [ape_private]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    deploy:
+      resources:
+        limits:
+          cpus: "${APE_POSTGRES_CPU_LIMIT:-4.0}"
+          memory: "${APE_POSTGRES_MEMORY_LIMIT:-4G}"
+
+  redis:
+    image: ${REDIS_IMAGE:?Set a digest-pinned REDIS_IMAGE}
+    restart: unless-stopped
+    env_file: [./secrets/runtime.env]
+    command: ["sh", "-ec", "exec redis-server --appendonly yes --requirepass \"$$REDIS_PASSWORD\""]
+    volumes: [redis_data:/data]
+    networks: [ape_private]
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$${REDIS_PASSWORD}\" ping | grep PONG"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: "1G" }
+
+  minio:
+    image: ${MINIO_IMAGE:?Set a digest-pinned MINIO_IMAGE}
+    restart: unless-stopped
+    env_file: [./secrets/runtime.env]
+    command: ["server", "/data"]
+    volumes: [minio_data:/data]
+    networks: [ape_private]
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    deploy:
+      resources:
+        limits: { cpus: "2.0", memory: "2G" }
+
+  minio-init:
+    image: ${MC_IMAGE:?Set a digest-pinned MC_IMAGE}
+    restart: "no"
+    env_file: [./secrets/runtime.env]
+    depends_on:
+      minio: { condition: service_healthy }
+    entrypoint: ["/bin/sh", "-ec"]
+    command: ["mc alias set local http://minio:9000 \"$$MINIO_ROOT_USER\" \"$$MINIO_ROOT_PASSWORD\"; mc mb --ignore-existing local/\"$$MINIO_BUCKET\""]
+    networks: [ape_private]
+
+  clamav:
+    image: ${CLAMAV_IMAGE:?Set a digest-pinned CLAMAV_IMAGE}
+    restart: unless-stopped
+    volumes: [clamav_data:/var/lib/clamav]
+    networks: [ape_private, ape_egress]
+    healthcheck:
+      test: ["CMD-SHELL", "clamdscan --ping 1 >/dev/null 2>&1"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 120s
+    deploy:
+      resources:
+        limits: { cpus: "2.0", memory: "2G" }
+
+  mc:
+    image: ${MC_IMAGE:?Set a digest-pinned MC_IMAGE}
+    profiles: [ops]
+    env_file: [./secrets/runtime.env]
+    volumes:
+      - ${APE_BACKUP_DIR:-./backups}:/backup
+    networks: [ape_private]
+    entrypoint: ["/bin/sh", "-ec"]
+    command: ["mc --version"]
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:
+  clamav_data:
+
+networks:
+  ape_private:
+    internal: true
+  ape_egress:

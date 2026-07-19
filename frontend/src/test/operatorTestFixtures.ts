@@ -39,7 +39,7 @@ export const dependencyFixture: DependencyOverview = {
   readiness: {
     status: "ready",
     service: "APE",
-    version: "0.1.0",
+    version: "1.0.0",
     environment: "development",
     dependencies: [
       {
@@ -66,7 +66,7 @@ export const workerFixture: WorkerOverview = {
       hostname: "host",
       process_id: 1,
       queue: "ape",
-      version: "0.1.0",
+      version: "1.0.0",
       started_at: now,
       heartbeat_at: now,
       heartbeat_age_seconds: 1,
@@ -133,7 +133,7 @@ export const jobDetailFixture: JobDetail = {
 export const configurationFixture: ActiveConfiguration = {
   environment: "development",
   runtime_profile: "development",
-  application_version: "0.1.0",
+  application_version: "1.0.0",
   llm: { backend: "echo", model: "echo", provider_version: null, credential_configured: null },
   embedding: {
     backend: "hash",

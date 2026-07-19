@@ -28,6 +28,13 @@ export type DocumentPage = components["schemas"]["PaginatedResult_DocumentRespon
 export type JobPage = components["schemas"]["PaginatedResult_JobResponse_"];
 export type ConversationPage = components["schemas"]["PaginatedResult_ConversationResponse_"];
 export type MessagePage = components["schemas"]["PaginatedResult_MessageResponse_"];
+export type WebhookEndpoint = components["schemas"]["WebhookEndpointResponse"];
+export type WebhookEndpointCreated = components["schemas"]["WebhookEndpointCreatedResponse"];
+export type WebhookDelivery = components["schemas"]["WebhookDeliveryResponse"];
+export type WebhookDeliveryDetail = components["schemas"]["WebhookDeliveryDetailResponse"];
+export type WebhookEventType = components["schemas"]["WebhookEventType"];
+export type WebhookEndpointPage = components["schemas"]["PaginatedResult_WebhookEndpointResponse_"];
+export type WebhookDeliveryPage = components["schemas"]["PaginatedResult_WebhookDeliveryResponse_"];
 
 type ApiSuccess<T> = { success: true; data: T | null };
 type ApiFailure = {
@@ -310,4 +317,32 @@ export const operatorApiClient = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ dataset_id: datasetId }),
     }),
+  getWebhookEndpoints: (projectId: string) =>
+    request<WebhookEndpointPage>(`${apiRoot}/projects/${projectId}/webhooks/endpoints`),
+  createWebhookEndpoint: (projectId: string, url: string, eventTypes: WebhookEventType[]) =>
+    request<WebhookEndpointCreated>(`${apiRoot}/projects/${projectId}/webhooks/endpoints`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url, event_types: eventTypes }),
+    }),
+  setWebhookEndpointStatus: (projectId: string, endpointId: string, enabled: boolean) =>
+    request<WebhookEndpoint>(
+      `${apiRoot}/projects/${projectId}/webhooks/endpoints/${endpointId}/status`,
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled }),
+      },
+    ),
+  getWebhookDeliveries: (projectId: string) =>
+    request<WebhookDeliveryPage>(`${apiRoot}/projects/${projectId}/webhooks/deliveries`),
+  getWebhookDelivery: (projectId: string, deliveryId: string) =>
+    request<WebhookDeliveryDetail>(
+      `${apiRoot}/projects/${projectId}/webhooks/deliveries/${deliveryId}`,
+    ),
+  replayWebhookDelivery: (projectId: string, deliveryId: string) =>
+    request<WebhookDelivery>(
+      `${apiRoot}/projects/${projectId}/webhooks/deliveries/${deliveryId}/replay`,
+      { method: "POST" },
+    ),
 };

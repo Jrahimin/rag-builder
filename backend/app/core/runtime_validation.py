@@ -40,6 +40,8 @@ def validate_runtime_config(settings: Settings) -> None:
         errors.append("production requires the taskiq job executor")
     if not settings.jobs.dispatcher_enabled:
         errors.append("production requires the durable outbox dispatcher")
+    if not settings.webhooks.enabled or not settings.webhooks.dispatcher_enabled:
+        errors.append("production requires the webhook dispatcher")
     if settings.storage.backend is not StorageBackend.MINIO:
         errors.append("production requires MinIO/S3-compatible object storage")
     if settings.malware_scan.backend is not MalwareScannerBackend.CLAMAV:
@@ -55,6 +57,12 @@ def validate_runtime_config(settings: Settings) -> None:
 
     _require_secret(errors, "APE_DATABASE__PASSWORD", settings.database.password, {"ape"})
     _require_secret(errors, "APE_REDIS__PASSWORD", settings.redis.password)
+    _require_secret(
+        errors,
+        "APE_WEBHOOKS__SIGNING_KEY",
+        settings.webhooks.signing_key,
+        {"development-only-webhook-signing-key"},
+    )
     _require_secret(errors, "APE_MINIO__ACCESS_KEY", settings.minio.access_key, {"minioadmin"})
     _require_secret(errors, "APE_MINIO__SECRET_KEY", settings.minio.secret_key, {"minioadmin"})
 

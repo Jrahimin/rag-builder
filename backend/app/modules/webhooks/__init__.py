@@ -1,0 +1,2 @@
+"""Project-scoped outbound webhooks."""
+

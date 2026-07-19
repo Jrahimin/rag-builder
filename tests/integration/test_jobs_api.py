@@ -86,7 +86,7 @@ async def test_job_api_is_project_scoped_and_retry_returns_new_identity(
     assert failed_data["failure_details"]["retryable"] is False
 
     retry = await db_client.post(f"/api/v1/projects/{project_id}/jobs/{job_id}/retry")
-    assert retry.status_code == 200
+    assert retry.status_code == 202
     retry_data = retry.json()["data"]
     assert retry_data["id"] != job_id
     assert retry_data["retry_of_job_id"] == job_id

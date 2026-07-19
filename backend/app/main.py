@@ -28,6 +28,7 @@ from app.api.health import router as health_router
 from app.api.metrics import router as metrics_router
 from app.api.v1.router import api_v1_router
 from app.composition.jobs import DurableJobDispatcher, stop_dispatcher_task
+from app.composition.webhooks import WebhookDispatcher, stop_webhook_dispatcher
 from app.core.auth_config_validation import validate_auth_config
 from app.core.config import Settings, get_settings
 from app.core.exception_handlers import register_exception_handlers
@@ -66,6 +67,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.storage = create_storage_provider(settings)
     dispatcher: DurableJobDispatcher | None = None
     dispatcher_task: asyncio.Task[None] | None = None
+    webhook_dispatcher: WebhookDispatcher | None = None
+    webhook_dispatcher_task: asyncio.Task[None] | None = None
     queue = get_job_queue()
     try:
         app.state.preflight = await StartupPreflightService(
@@ -84,6 +87,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 dispatcher.run_forever(),
                 name="durable-job-dispatcher",
             )
+        if settings.webhooks.enabled and settings.webhooks.dispatcher_enabled:
+            webhook_dispatcher = WebhookDispatcher(
+                session_factory=app.state.db.session_factory,
+                settings=settings,
+            )
+            webhook_dispatcher_task = asyncio.create_task(
+                webhook_dispatcher.run_forever(),
+                name="webhook-dispatcher",
+            )
         log.info(
             "application_started",
             runtime_profile=settings.runtime.profile.value,
@@ -93,6 +105,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     finally:
         log.info("application_stopping")
         await stop_dispatcher_task(dispatcher, dispatcher_task)
+        await stop_webhook_dispatcher(webhook_dispatcher, webhook_dispatcher_task)
         if isinstance(queue, TaskiqJobQueue):
             await queue.close()
         await app.state.redis.dispose()

@@ -561,6 +561,39 @@ h3 {
   border-radius: 7px;
   font-size: 0.76rem;
 }
+.webhook-create-toolbar {
+  display: grid;
+  grid-template-columns: minmax(155px, 210px) minmax(0, 1fr);
+  align-items: end;
+}
+.webhook-create-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  min-width: 0;
+  gap: 12px;
+}
+.webhook-create-form .field-control--grow {
+  min-width: 0;
+}
+.webhook-create-form input {
+  width: 100%;
+  min-width: 0;
+}
+.webhook-create-panel > .helper-text {
+  margin: 0;
+  padding: 8px 16px 14px;
+}
+.webhook-create-panel > .success-note,
+.webhook-create-panel > .error-note {
+  margin: 0 16px 14px;
+}
+.webhooks-panel > .query-state {
+  min-height: 250px;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
 .polling-note {
   margin-left: auto;
   padding-bottom: 10px;
@@ -2180,6 +2213,19 @@ code {
   }
   .toolbar,
   .project-summary {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .webhook-create-toolbar {
+    display: flex;
+  }
+  .webhook-create-toolbar > .field-control,
+  .webhook-create-form,
+  .webhook-create-form .field-control {
+    width: 100%;
+  }
+  .webhook-create-form {
+    display: flex;
     align-items: stretch;
     flex-direction: column;
   }
