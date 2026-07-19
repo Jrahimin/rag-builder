@@ -134,19 +134,22 @@ class EvaluationRunnerService:
 
 def _case_result(case: EvaluationCase, profile: str, search: Any, answer: Any) -> dict[str, Any]:
     use_chunks = bool(case.relevant_chunk_ids)
-    result_ids = [
-        str(hit.chunk_id if use_chunks else hit.document_id)
-        for hit in search.hits
-    ]
+    result_ids = [str(hit.chunk_id if use_chunks else hit.document_id) for hit in search.hits]
     relevant_ids = {
         str(value)
         for value in (case.relevant_chunk_ids if use_chunks else case.relevant_document_ids)
     }
     recall, reciprocal_rank, ndcg, relevant_retrieved = rank_metrics(result_ids, relevant_ids)
-    filter_correct = relevant_retrieved and bool(search.hits) and all(
-        (case.document_id is None or hit.document_id == case.document_id)
-        and all(str(hit.metadata.get(key)) == value for key, value in case.metadata_filter.items())
-        for hit in search.hits
+    filter_correct = (
+        relevant_retrieved
+        and bool(search.hits)
+        and all(
+            (case.document_id is None or hit.document_id == case.document_id)
+            and all(
+                str(hit.metadata.get(key)) == value for key, value in case.metadata_filter.items()
+            )
+            for hit in search.hits
+        )
     )
     expected_tokens = {token.lower() for token in case.expected_answer_tokens}
     answer_tokens = set(tokenize(answer.answer, for_query=True))
@@ -286,14 +289,11 @@ def _reranker_comparison(
                 "groundedness_gain": groundedness_gain,
                 "p95_latency_penalty_ms": latency_penalty,
                 "unavailable_count": unavailable_count,
-                "operational_fit": latency_penalty
-                <= config.maximum_reranker_latency_penalty_ms,
+                "operational_fit": latency_penalty <= config.maximum_reranker_latency_penalty_ms,
                 "eligible_for_promotion": candidate_eligible,
             }
         )
-    eligible_candidates = [
-        item for item in comparisons if item["eligible_for_promotion"]
-    ]
+    eligible_candidates = [item for item in comparisons if item["eligible_for_promotion"]]
     recommended = max(
         eligible_candidates,
         key=lambda item: item["ndcg_gain"],

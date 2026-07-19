@@ -33,7 +33,7 @@ services:
       - ./secrets/tls.key:/run/secrets/tls.key:ro
     networks: [ape_private]
     healthcheck:
-      test: ["CMD-SHELL", "wget --no-check-certificate -q -O /dev/null https://127.0.0.1/health || exit 1"]
+      test: ["CMD-SHELL", "wget --no-check-certificate -q -O /dev/null https://127.0.0.1/health/live || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -70,7 +70,7 @@ services:
       clamav: { condition: service_healthy }
     command: ["gunicorn", "app.main:app", "--bind", "0.0.0.0:8000", "--workers", "2", "--worker-class", "uvicorn.workers.UvicornWorker", "--access-logfile", "-"]
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/live', timeout=3)"]
       interval: 20s
       timeout: 5s
       retries: 5

@@ -38,7 +38,7 @@ def _apply_route_security(openapi_schema: dict[str, object]) -> None:
         for method, operation in path_item.items():
             if method.startswith("x-") or not isinstance(operation, dict):
                 continue
-            if path in ("/health", "/ready"):
+            if path in ("/health/live", "/health/ready"):
                 continue
             operation["security"] = security
 

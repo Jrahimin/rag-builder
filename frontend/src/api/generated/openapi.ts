@@ -819,7 +819,7 @@ export interface paths {
         patch: operations["update_endpoint_status_api_v1_projects__project_id__webhooks_endpoints__endpoint_id__status_patch"];
         trace?: never;
     };
-    "/health": {
+    "/health/live": {
         parameters: {
             query?: never;
             header?: never;
@@ -830,7 +830,27 @@ export interface paths {
          * Liveness probe
          * @description Returns 200 while the process is running. Does not touch dependencies.
          */
-        get: operations["health_health_get"];
+        get: operations["live_health_live_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/health/ready": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Readiness probe
+         * @description Probes PostgreSQL (including pgvector), Redis, and object storage, then includes cached startup provider capability results. Returns 200 when every required dependency is healthy, otherwise 503.
+         */
+        get: operations["ready_health_ready_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -848,26 +868,6 @@ export interface paths {
         };
         /** Prometheus-compatible operational metrics */
         get: operations["metrics_metrics_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/ready": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Readiness probe
-         * @description Probes PostgreSQL (including pgvector), Redis, and object storage, then includes cached startup provider capability results. Returns 200 when every required dependency is healthy, otherwise 503.
-         */
-        get: operations["ready_ready_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2792,6 +2792,20 @@ export interface components {
          * @description Sanitized execution facts used by quality evaluation and operators.
          */
         SearchDiagnostics: {
+            /**
+             * Duplicate Suppression Input Count
+             * @default 0
+             */
+            duplicate_suppression_input_count: number;
+            /** Duplicate Suppression Reasons */
+            duplicate_suppression_reasons?: {
+                [key: string]: number;
+            };
+            /**
+             * Duplicate Suppression Removed Count
+             * @default 0
+             */
+            duplicate_suppression_removed_count: number;
             /** Duration Ms */
             duration_ms: number;
             /** Rerank Requested */
@@ -5215,7 +5229,7 @@ export interface operations {
             };
         };
     };
-    health_health_get: {
+    live_health_live_get: {
         parameters: {
             query?: never;
             header?: never;
@@ -5231,6 +5245,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApiResponse_LivenessStatus_"];
+                };
+            };
+        };
+    };
+    ready_health_ready_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_ReadinessStatus_"];
                 };
             };
         };
@@ -5251,26 +5285,6 @@ export interface operations {
                 };
                 content: {
                     "text/plain": string;
-                };
-            };
-        };
-    };
-    ready_ready_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ApiResponse_ReadinessStatus_"];
                 };
             };
         };

@@ -89,9 +89,7 @@ async def test_dataset_and_run_capture_reproducible_versions(db_client: AsyncCli
     )
     assert newer_dataset.status_code == 201
 
-    summary = await db_client.get(
-        f"/api/v1/projects/{project_id}/evaluations/quality"
-    )
+    summary = await db_client.get(f"/api/v1/projects/{project_id}/evaluations/quality")
     assert summary.status_code == 200
     assert summary.json()["data"]["last_run"]["id"] == run["id"]
     assert summary.json()["data"]["dataset"]["id"] == dataset_data["id"]
@@ -152,19 +150,15 @@ async def test_durable_runner_persists_metrics_claims_and_refusal(
     await integration_connection.execute(
         text(
             "UPDATE document_chunks "
-            "SET metadata = metadata || '{\"source\": \"policy\"}'::jsonb "
+            'SET metadata = metadata || \'{"source": "policy"}\'::jsonb '
             "WHERE id = :chunk_id"
         ),
         {"chunk_id": chunk_id},
     )
-    embed = await db_client.post(
-        f"/api/v1/projects/{project_id}/documents/{document_id}/embed"
-    )
+    embed = await db_client.post(f"/api/v1/projects/{project_id}/documents/{document_id}/embed")
     assert embed.status_code == 202
     await run_captured_embed_jobs(integration_connection, captured_jobs)
-    index = await db_client.post(
-        f"/api/v1/projects/{project_id}/documents/{document_id}/index"
-    )
+    index = await db_client.post(f"/api/v1/projects/{project_id}/documents/{document_id}/index")
     assert index.status_code == 202
     await run_captured_index_jobs(integration_connection, captured_jobs)
 
@@ -226,9 +220,7 @@ async def test_durable_runner_persists_metrics_claims_and_refusal(
 
     await run_captured_evaluation_jobs(integration_connection, captured_jobs)
 
-    response = await db_client.get(
-        f"/api/v1/projects/{project_id}/evaluations/runs/{run_id}"
-    )
+    response = await db_client.get(f"/api/v1/projects/{project_id}/evaluations/runs/{run_id}")
     assert response.status_code == 200
     run = response.json()["data"]
     assert run["job_state"] == "succeeded"

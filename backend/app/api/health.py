@@ -17,17 +17,17 @@ router = APIRouter(tags=["system"])
 
 
 @router.get(
-    "/health",
+    "/health/live",
     response_model=ApiResponse[LivenessStatus],
     summary="Liveness probe",
     description="Returns 200 while the process is running. Does not touch dependencies.",
 )
-async def health(service: HealthServiceDep) -> ApiResponse[LivenessStatus]:
+async def live(service: HealthServiceDep) -> ApiResponse[LivenessStatus]:
     return ApiResponse.ok(service.liveness())
 
 
 @router.get(
-    "/ready",
+    "/health/ready",
     response_model=ApiResponse[ReadinessStatus],
     summary="Readiness probe",
     description=(
@@ -41,3 +41,18 @@ async def ready(service: HealthServiceDep, response: Response) -> ApiResponse[Re
     if result.status != "ready":
         response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
     return ApiResponse.ok(result)
+
+
+@router.get("/health", include_in_schema=False, deprecated=True)
+async def legacy_live(service: HealthServiceDep) -> ApiResponse[LivenessStatus]:
+    """Backward-compatible alias; use ``/health/live`` for new integrations."""
+    return await live(service)
+
+
+@router.get("/ready", include_in_schema=False, deprecated=True)
+async def legacy_ready(
+    service: HealthServiceDep,
+    response: Response,
+) -> ApiResponse[ReadinessStatus]:
+    """Backward-compatible alias; use ``/health/ready`` for new integrations."""
+    return await ready(service, response)

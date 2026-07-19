@@ -74,8 +74,8 @@ in client-side code).
 Verify connectivity:
 
 ```bash
-curl -s "$APE_BASE_URL/health" | jq .
-curl -s "$APE_BASE_URL/ready"  | jq .
+curl -s "$APE_BASE_URL/health/live" | jq .
+curl -s "$APE_BASE_URL/health/ready" | jq .
 ```
 
 ### Set shell variables (copy this block)
@@ -96,7 +96,7 @@ All examples below use these variables.
 
 | Tier | Routes | Header |
 | ---- | ------ | ------ |
-| **Public** | `GET /health`, `GET /ready` | None |
+| **Public** | `GET /health/live`, `GET /health/ready` | None |
 | **Admin** | `/api/v1/organizations/**` | `Authorization: Bearer <admin_key>` |
 | **Organization** | `/api/v1/projects/**` and nested routes | See below |
 
@@ -149,19 +149,18 @@ All `/api/v1/*` success responses:
 }
 ```
 
-Read business payloads from `data`. Use `meta.request_id` / `meta.trace_id` when
-reporting issues to your platform team.
+Read business payloads from `data`. Use `meta.request_id` when reporting issues
+to your platform team; deployments may also carry an internal trace ID.
 
 ### Error envelope
 
 ```json
 {
-  "success": false,
   "error": {
     "code": "project_not_found",
     "message": "Project not found.",
-    "trace_id": "…",
-    "details": null
+    "request_id": "…",
+    "details": {}
   }
 }
 ```
@@ -1116,8 +1115,8 @@ your own user authorization before choosing `project_id`.
 
 | Goal | Method | Path |
 | ---- | ------ | ---- |
-| Health check | `GET` | `/health` |
-| Readiness | `GET` | `/ready` |
+| Health check | `GET` | `/health/live` |
+| Readiness | `GET` | `/health/ready` |
 | Create project | `POST` | `/api/v1/projects` |
 | Upload file | `POST` | `/api/v1/projects/{project_id}/documents` |
 | Document status | `GET` | `/api/v1/projects/{project_id}/documents/{id}` |
@@ -1143,10 +1142,10 @@ your own user authorization before choosing `project_id`.
 - [ ] Organization API key stored in secrets manager (not in repo)
 - [ ] Backend proxy — keys never in client apps
 - [ ] Worker process running (`taskiq` worker in Docker or `python worker.py`)
-- [ ] `/ready` returns healthy before routing user traffic
+- [ ] `/health/ready` returns healthy before routing user traffic
 - [ ] Save async `job_id`; poll Document for readiness and JobRun for execution detail
 - [ ] Handle `429` with `Retry-After` backoff
-- [ ] Log `trace_id` from errors for support requests
+- [ ] Log `request_id` from errors for support requests
 - [ ] Hybrid search enabled (`APE_RETRIEVAL__STRATEGY=hybrid` in production `.env`)
 - [ ] Versioned pilot evaluation dataset has a passing stored run before trusted-answer rollout
 - [ ] Client displays insufficient-evidence outcomes and claim/source locations explicitly

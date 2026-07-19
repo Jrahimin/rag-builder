@@ -32,9 +32,7 @@ def test_release_rejects_mutable_image_tag(tmp_path: Path) -> None:
 
 def test_release_accepts_non_placeholder_digest(tmp_path: Path) -> None:
     release = tmp_path / "release.env"
-    release.write_text(
-        _release_lines(f"registry.example/ape@sha256:{'a' * 64}"), encoding="utf-8"
-    )
+    release.write_text(_release_lines(f"registry.example/ape@sha256:{'a' * 64}"), encoding="utf-8")
     assert hostedctl.validate_release(release)["APE_DEPLOYMENT_ID"] == "customer-a"
 
 

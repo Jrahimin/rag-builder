@@ -17,9 +17,7 @@ def compute_profile_metrics(results: list[dict[str, Any]]) -> dict[str, float]:
         "recall_at_k": _mean([float(result["recall"]) for result in answerable]),
         "mrr": _mean([float(result["reciprocal_rank"]) for result in answerable]),
         "ndcg": _mean([float(result["ndcg"]) for result in answerable]),
-        "filtered_correctness": _mean(
-            [float(result["filter_correct"]) for result in filtered]
-        ),
+        "filtered_correctness": _mean([float(result["filter_correct"]) for result in filtered]),
         "no_result_behavior": _mean(
             [float(result["insufficient_evidence_reason"] is not None) for result in no_answer]
         ),

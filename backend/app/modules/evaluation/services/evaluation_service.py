@@ -107,9 +107,7 @@ class EvaluationService:
             )
         top_k = request.top_k or self._config.default_top_k
         corpus = await self._corpus.snapshot(
-            embedding_set_version=int(
-                self._version_snapshot["retrieval"]["embedding_set_version"]
-            ),
+            embedding_set_version=int(self._version_snapshot["retrieval"]["embedding_set_version"]),
             embedding_provider=str(self._version_snapshot["embedding"]["backend"]),
             embedding_model=str(self._version_snapshot["embedding"]["model"]),
         )

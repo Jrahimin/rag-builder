@@ -1,0 +1,15 @@
+{
+  "name": "ci-deterministic-smoke",
+  "version": "1",
+  "schema_version": 1,
+  "description": "Fast provider-free checks for retrieval, filtering, refusal, citations, duplicates, isolation, and Bengali text.",
+  "cases": [
+    {"key":"direct-factual-retrieval","kind":"exact_token","query":"How long is the refund window?","relevant_chunk_ids":["10000000-0000-0000-0000-000000000011"],"expected_answer_tokens":["thirty"]},
+    {"key":"metadata-filtering","kind":"metadata_filter","query":"credential rotation","relevant_document_ids":["20000000-0000-0000-0000-000000000011"],"metadata_filter":{"source":"security"}},
+    {"key":"missing-evidence-refusal","kind":"no_answer","query":"What is the lunar payroll rule?","expected_no_answer":true},
+    {"key":"citation-coverage","kind":"citation","query":"How often do credentials rotate?","relevant_chunk_ids":["10000000-0000-0000-0000-000000000012"],"expected_answer_tokens":["ninety"]},
+    {"key":"duplicate-chunks","kind":"exact_token","query":"refund window","relevant_chunk_ids":["10000000-0000-0000-0000-000000000011"]},
+    {"key":"project-isolation","kind":"metadata_filter","query":"private project secret","relevant_chunk_ids":["10000000-0000-0000-0000-000000000013"],"metadata_filter":{"project":"alpha"}},
+    {"key":"bengali-query","kind":"multilingual","query":"ফেরতের সময়সীমা কত দিন?","relevant_chunk_ids":["10000000-0000-0000-0000-000000000014"],"expected_answer_tokens":["ত্রিশ"]}
+  ]
+}

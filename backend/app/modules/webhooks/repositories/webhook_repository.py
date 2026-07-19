@@ -95,9 +95,7 @@ class WebhookDeliveryRepository(ProjectScopedRepository[WebhookDelivery]):
             or 0
         )
 
-    async def claim_next(
-        self, *, worker_id: str, lease_seconds: int
-    ) -> WebhookDelivery | None:
+    async def claim_next(self, *, worker_id: str, lease_seconds: int) -> WebhookDelivery | None:
         now = datetime.now(UTC)
         delivery = await self._session.scalar(
             select(WebhookDelivery)
@@ -136,9 +134,7 @@ class WebhookDeliveryRepository(ProjectScopedRepository[WebhookDelivery]):
         delivery.attempt_count += 1
         return delivery
 
-    async def lock_owned(
-        self, delivery_id: uuid.UUID, *, worker_id: str
-    ) -> WebhookDelivery | None:
+    async def lock_owned(self, delivery_id: uuid.UUID, *, worker_id: str) -> WebhookDelivery | None:
         return await self._session.scalar(
             self._scoped()
             .where(

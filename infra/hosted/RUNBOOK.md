@@ -12,7 +12,7 @@ This is the operator contract for one isolated customer deployment. Commands run
 3. Run `python hostedctl.py validate`.
 4. Run `docker compose --env-file release.env -f compose.yaml pull`, then
    `docker compose --env-file release.env -f compose.yaml up -d`.
-5. Verify health/readiness, console, active worker, configuration, upload, retrieval,
+5. Verify `/health/live`, `/health/ready`, console, active worker, configuration, upload, retrieval,
    grounded answer/refusal, signed webhook receipt, and a backup.
 
 ## Backup and restore verification
@@ -70,7 +70,7 @@ index rollback API; never reconstruct the former active corpus in place.
 
 ## Incident and support diagnostics
 
-1. Preserve trace/event/job/delivery IDs and the time window. Disable a noisy receiver;
+1. Preserve request/event/job/delivery IDs and the time window. Disable a noisy receiver;
    never delete delivery history.
 2. Check readiness, dependencies, workers, failures, jobs, and webhook attempts.
 3. Run `python hostedctl.py diagnostics diagnostics/<incident-id>`. The bundle contains

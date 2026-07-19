@@ -1,7 +1,7 @@
 # API Reference
 
 Concise endpoint reference for Postman collection preparation. OpenAPI (`/docs`) is the live contract.
-See [versioning-and-errors.md](versioning-and-errors.md) for the stable v1 policy.
+See [versioning-and-errors.md](versioning-and-errors.md) for the pre-1.0 versioning policy.
 
 > **Integrating APE into your application?** Start with the
 > [Platform Integration Guide](../platform-integration-guide.md) — step-by-step flow,
@@ -26,12 +26,11 @@ Error:
 
 ```json
 {
-  "success": false,
   "error": {
     "code": "project_not_found",
     "message": "Project not found.",
-    "trace_id": "…",
-    "details": null
+    "request_id": "…",
+    "details": {}
   }
 }
 ```
@@ -40,7 +39,7 @@ Error:
 
 | Module | File | Prefix |
 | ------ | ---- | ------ |
-| System | [system_api.md](system_api.md) | `/health`, `/ready`, `/metrics` |
+| System | [system_api.md](system_api.md) | `/health/live`, `/health/ready`, `/metrics` |
 | Operator | [operator_api.md](operator_api.md) | `/api/v1/operator` |
 | Organizations | [organization_api.md](organization_api.md) | `/api/v1/organizations` |
 | Projects | [project_api.md](project_api.md) | `/api/v1/projects` |

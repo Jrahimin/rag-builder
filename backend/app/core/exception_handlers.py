@@ -2,8 +2,8 @@
 
 All errors -- expected (:class:`APEError`), framework (validation, HTTP), or
 entirely unexpected -- are funneled through here so clients always receive a
-consistent :class:`ErrorResponse`. Stack traces are logged with a
-``trace_id`` but never leaked to the client.
+consistent :class:`ErrorResponse`. Stack traces are correlated in logs but
+never leaked to the client.
 """
 
 from __future__ import annotations
@@ -34,8 +34,8 @@ _STATUS_CODE_MAP: dict[int, str] = {
 }
 
 
-def _trace_id(request: Request) -> str | None:
-    return getattr(request.state, "trace_id", None)
+def _request_id(request: Request) -> str | None:
+    return getattr(request.state, "request_id", None)
 
 
 def _build_response(
@@ -44,14 +44,14 @@ def _build_response(
     status_code: int,
     code: str,
     message: str,
-    details: list[ErrorDetail] | None = None,
+    details: dict[str, object] | None = None,
 ) -> JSONResponse:
     payload = ErrorResponse(
         error=ErrorInfo(
             code=code,
             message=message,
-            trace_id=_trace_id(request),
-            details=details,
+            request_id=_request_id(request),
+            details=details or {},
         )
     )
     return JSONResponse(status_code=status_code, content=payload.model_dump(exclude_none=True))
@@ -70,7 +70,11 @@ async def _handle_ape_error(request: Request, exc: APEError) -> JSONResponse:
         status_code=exc.status_code,
         code=exc.code,
         message=exc.message,
-        details=exc.details,
+        details=(
+            {"fields": [detail.model_dump(exclude_none=True) for detail in exc.details]}
+            if exc.details
+            else {}
+        ),
     )
     if isinstance(exc, RateLimitError):
         response.headers["Retry-After"] = str(exc.retry_after_seconds)
@@ -105,7 +109,7 @@ async def _handle_validation_error(request: Request, exc: RequestValidationError
         status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
         code="validation_error",
         message="The request failed validation.",
-        details=details,
+        details={"fields": [detail.model_dump(exclude_none=True) for detail in details]},
     )
 
 
@@ -121,7 +125,7 @@ async def _handle_http_exception(request: Request, exc: StarletteHTTPException) 
 
 
 async def _handle_unexpected_error(request: Request, exc: Exception) -> JSONResponse:
-    # Unknown failure: log the full traceback with the trace_id for correlation,
+    # Unknown failure: log the full traceback with correlation context,
     # but return an opaque message so internals never leak to the client.
     log.exception("unhandled_exception", error=str(exc))
     return _build_response(

@@ -29,4 +29,3 @@ class HttpWebhookProvider(WebhookTransport):
             body=response.text,
             latency_ms=(time.perf_counter() - started) * 1000,
         )
-

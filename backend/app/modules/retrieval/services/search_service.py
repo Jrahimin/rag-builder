@@ -16,6 +16,9 @@ from app.modules.retrieval.retrievers.models import RetrievalContext, RetrievalF
 from app.modules.retrieval.retrievers.result_hydrator import ResultHydrator
 from app.modules.retrieval.retrievers.semantic_retriever import SemanticRetriever
 from app.modules.retrieval.schemas.search import SearchDiagnostics, SearchRequest, SearchResponse
+from app.modules.retrieval.services.duplicate_suppression_service import (
+    DuplicateSuppressionService,
+)
 from app.platform.providers.contracts.embedding import BaseEmbeddingProvider
 from app.platform.providers.contracts.reranker import BaseRerankerProvider
 
@@ -40,6 +43,7 @@ class SearchService:
         self._config = retrieval_config
         self._hydrator = ResultHydrator(session, project_id)
         self._builds = IndexBuildRepository(session, project_id)
+        self._duplicate_suppression = DuplicateSuppressionService(retrieval_config)
 
     async def search(self, request: SearchRequest) -> SearchResponse:
         started = time.perf_counter()
@@ -66,6 +70,7 @@ class SearchService:
                 ),
             )
 
+        candidate_top_k = min(max(top_k * 2, top_k + 5), 100)
         context = RetrievalContext(
             project_id=self._project_id,
             query=request.query,
@@ -75,7 +80,7 @@ class SearchService:
                 document_id=request.document_id,
                 metadata=dict(request.metadata_filter),
             ),
-            top_k=top_k,
+            top_k=candidate_top_k,
             strategy=strategy,
             semantic_candidate_top_k=self._config.semantic_candidate_top_k,
             keyword_candidate_top_k=self._config.keyword_candidate_top_k,
@@ -96,7 +101,8 @@ class SearchService:
         retriever = self._build_retriever(strategy)
         candidates = await retriever.retrieve(context)
         results = await self._hydrator.hydrate(candidates)
-        results = results[:top_k]
+        suppression = self._duplicate_suppression.select(results, limit=top_k)
+        results = suppression.results
 
         elapsed_ms = int((time.perf_counter() - started) * 1000)
         logger.info(
@@ -107,6 +113,8 @@ class SearchService:
             top_k=top_k,
             strategy=strategy.value,
             rerank_enabled=rerank_enabled,
+            duplicate_suppression_removed=suppression.suppressed_count,
+            duplicate_suppression_reasons=suppression.suppressed_by_reason,
         )
         rerank_metadata = results[0].metadata if results else {}
         rerank_status = str(
@@ -131,6 +139,9 @@ class SearchService:
                 reranker_provider=_optional_string(rerank_metadata.get("reranker_provider")),
                 reranker_model=_optional_string(rerank_metadata.get("reranker_model")),
                 reranker_version=_optional_string(rerank_metadata.get("reranker_version")),
+                duplicate_suppression_input_count=suppression.input_count,
+                duplicate_suppression_removed_count=suppression.suppressed_count,
+                duplicate_suppression_reasons=suppression.suppressed_by_reason,
             ),
         )
 

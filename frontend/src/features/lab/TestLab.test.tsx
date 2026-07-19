@@ -149,6 +149,8 @@ test("marks expected search words pass and exposes active build and result metad
       duration_ms: 14,
       rerank_requested: false,
       rerank_status: "not_requested",
+      duplicate_suppression_input_count: 1,
+      duplicate_suppression_removed_count: 0,
     },
     results: [
       {
@@ -184,6 +186,8 @@ test("marks expected search words as needs attention when no returned chunk cont
       duration_ms: 8,
       rerank_requested: false,
       rerank_status: "not_requested",
+      duplicate_suppression_input_count: 1,
+      duplicate_suppression_removed_count: 0,
     },
     results: [
       {
@@ -357,7 +361,7 @@ test("renders an explicit valid refusal when retrieval evidence is insufficient"
   expect(screen.getByText("no retrieval results")).toBeInTheDocument();
 });
 
-test("requires the exact filename before enabling irreversible purge and shows API trace facts", async () => {
+test("requires the exact filename before enabling irreversible purge and shows API request facts", async () => {
   mockLabBase();
   renderOperatorComponent(
     <OperatorConsoleApp />,
@@ -372,10 +376,10 @@ test("requires the exact filename before enabling irreversible purge and shows A
   expect(purge).toBeEnabled();
 
   vi.spyOn(operatorApiClient, "purgeDocument").mockRejectedValue(
-    new OperatorApiError("Purge was rejected.", 409, "document_purge_conflict", "trace-123"),
+    new OperatorApiError("Purge was rejected.", 409, "document_purge_conflict", "req-123"),
   );
   await userEvent.click(purge);
   const alert = await screen.findByRole("alert");
   expect(within(alert).getByText("Code: document_purge_conflict")).toBeInTheDocument();
-  expect(within(alert).getByText("Trace ID: trace-123")).toBeInTheDocument();
+  expect(within(alert).getByText("Request ID: req-123")).toBeInTheDocument();
 });

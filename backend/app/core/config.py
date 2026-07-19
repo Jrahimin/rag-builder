@@ -52,7 +52,7 @@ class AppConfig(BaseModel):
     name: str = "AI Platform Engine"
     env: Environment = Environment.DEVELOPMENT
     debug: bool = True
-    version: str = "1.0.0"
+    version: str = "0.9.0"
     api_v1_prefix: str = "/api/v1"
 
     @property
@@ -427,6 +427,9 @@ class RetrievalConfig(BaseModel):
     reranker_backend: RerankerBackend = RerankerBackend.LEXICAL
     fts_regconfig: str = "simple"
     min_ocr_confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+    max_chunks_per_document: int = Field(default=4, ge=1, le=100)
+    max_chunks_per_section: int = Field(default=2, ge=1, le=100)
+    deduplicate_by_content_hash: bool = True
 
     @field_validator("filterable_metadata_keys", mode="before")
     @classmethod

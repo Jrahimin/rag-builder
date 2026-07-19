@@ -28,4 +28,3 @@ def get_webhook_service(
 
 
 WebhookServiceDep = Annotated[WebhookService, Depends(get_webhook_service)]
-

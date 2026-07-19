@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 
@@ -45,12 +47,11 @@ class ErrorInfo(BaseModel):
 
     code: str
     message: str
-    trace_id: str | None = None
-    details: list[ErrorDetail] | None = None
+    request_id: str | None = None
+    details: dict[str, Any] = Field(default_factory=dict)
 
 
 class ErrorResponse(BaseModel):
     """Standard failure envelope returned by all exception handlers."""
 
-    success: bool = Field(default=False)
     error: ErrorInfo

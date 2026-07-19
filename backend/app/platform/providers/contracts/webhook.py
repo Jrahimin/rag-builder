@@ -3,4 +3,3 @@
 from app.platform.webhooks.contracts import WebhookHttpResponse, WebhookTransport
 
 __all__ = ["WebhookHttpResponse", "WebhookTransport"]
-

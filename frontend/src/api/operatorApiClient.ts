@@ -38,16 +38,19 @@ export type WebhookDeliveryPage = components["schemas"]["PaginatedResult_Webhook
 
 type ApiSuccess<T> = { success: true; data: T | null };
 type ApiFailure = {
-  success: false;
-  error: { code: string; message: string; trace_id?: string | null };
+  error: { code: string; message: string; request_id?: string | null; details?: object };
 };
+
+function isApiFailure<T>(payload: ApiSuccess<T> | ApiFailure | null): payload is ApiFailure {
+  return payload !== null && "error" in payload;
+}
 
 export class OperatorApiError extends Error {
   constructor(
     message: string,
     readonly status: number,
     readonly code: string,
-    readonly traceId?: string | null,
+    readonly requestId?: string | null,
   ) {
     super(message);
     this.name = "OperatorApiError";
@@ -89,16 +92,16 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     }
   }
 
-  if (!response.ok || payload?.success === false) {
-    const failure = payload?.success === false ? payload.error : undefined;
+  const failure = isApiFailure(payload) ? payload.error : undefined;
+  if (!response.ok || failure) {
     throw new OperatorApiError(
       failure?.message ?? `Request failed with status ${response.status}.`,
       response.status,
       failure?.code ?? "request_failed",
-      failure?.trace_id,
+      failure?.request_id,
     );
   }
-  if (!payload || payload.data === null) {
+  if (!payload || isApiFailure(payload) || payload.data === null) {
     throw new OperatorApiError("The backend returned no data.", response.status, "empty_response");
   }
   return payload.data;
@@ -245,7 +248,7 @@ export const operatorApiClient = {
         "The streaming response could not be started.",
         response.status,
         "stream_unavailable",
-        response.headers.get("x-trace-id"),
+        response.headers.get("x-request-id"),
       );
     }
 

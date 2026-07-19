@@ -1,258 +1,401 @@
 # RAG Builder
 
-### A private AI knowledge engine your product can Integrate with ease.
+RAG Builder is a technical-preview knowledge engine for products that need
+project-scoped document ingestion, hybrid retrieval, grounded answers, citations,
+and evaluation without rebuilding the complete RAG backend.
 
-RAG Builder is the product-facing name for **APE (AI Platform Engine)**, the reusable backend underneath this repository.
-
-RAG Builder helps software products add document ingestion, search, grounded answers, and citations without rebuilding the entire AI backend from scratch.
+The host application owns users, business workflows, authorization decisions,
+and domain UI. RAG Builder owns knowledge ingestion, processing, retrieval,
+grounded chat, citations, durable corpus/index lifecycle, and evaluation.
 
 ![RAG Builder architecture and product journey](docs/assets/RAG_Builder_Hero_Image.png)
 
-> **One reusable engine. Many product experiences.**
->
-> Your application keeps the UI, users, and workflow. RAG Builder carries the document journey: ingest, parse, chunk, embed, index, retrieve, and generate.
+[Integration guide](docs/platform-integration-guide.md) ·
+[API reference](docs/api/README.md) ·
+[Architecture](docs/architecture/README.md) ·
+[Learning path](docs/learning/rag-from-zero.md)
 
-[Start the learning journey](docs/learning/rag-from-zero.md) · [Integrate the API](docs/platform-integration-guide.md) · [See the architecture](docs/Platform-at-a-glance.md)
+## Project status
 
----
+The current `0.9.0` line is a technical preview intended for:
 
-## Why this exists
+- development and learning;
+- internal applications with an engineering owner;
+- integration into another product;
+- dedicated, customer-specific pilots operated with the supplied runbook.
 
-The moment a product wants to “ask our documents,” it inherits a surprisingly large system:
+It is not yet a public multi-tenant SaaS, a fully supported enterprise
+distribution, a stable `1.0` public API, or a complete enterprise search
+platform. Dedicated deployment tooling is pilot-ready, not a general promise of
+supported customer-operated self-hosting.
+
+Status meanings: **Supported** is implemented and covered by normal repository
+tests; **Preview** is implemented but its operational/API contract may still
+change; **Experimental** is useful for development or comparison only;
+**Planned** is documented future work; **Not supported** is intentionally outside
+the current product.
+
+| Capability | Status | Current boundary |
+| --- | --- | --- |
+| Project-scoped document upload and lifecycle | Supported | PDF, DOCX, TXT, Markdown; validated and processed by durable jobs |
+| PDF/DOCX parsing and parse provenance | Supported | Page-aware PDF fallback and structured DOCX parsing |
+| OCR fallback | Preview | Optional PaddleOCR; disabled by default; stock Bengali OCR is not supported |
+| Structure-aware multilingual chunking | Supported | Token-based strategies with page/offset/section metadata |
+| PostgreSQL/pgvector embeddings and immutable index builds | Supported | Hash provider is development-only; production profiles require real providers |
+| Semantic, keyword, and hybrid retrieval | Supported | PostgreSQL-native vector + BM25/FTS + RRF |
+| Metadata filters and configurable reranking | Supported | Allow-listed metadata; lexical/embedding reranker implementations |
+| Duplicate/adjacent-result control | Preview | Exact-content, per-document, and per-section suppression after ranking |
+| Grounded chat, SSE streaming, citations, and refusal | Supported | Evidence gate and claim-linked citations; API remains pre-1.0 |
+| Index validation, activation, retained rollback | Supported | Atomic Project index pointers and guarded lifecycle jobs |
+| Versioned evaluation datasets and quality runs | Preview | Durable larger runs plus a provider-free CI smoke suite |
+| Signed outcome webhooks | Preview | Versioned events, HMAC, retry/backoff, attempts, disablement, replay |
+| Organization API keys and Project isolation | Supported | M2M organization auth; Project remains the data boundary |
+| React operator console and Test Lab | Preview | Trusted operator surface; no user/login/RBAC subsystem |
+| Docker development environment | Supported | Backend, frontend, worker, PostgreSQL/pgvector, Redis, MinIO |
+| Dedicated hosted pilot profile | Preview | Digest-pinned images, TLS gateway, backup/restore/upgrade/rollback tooling |
+| Customer-operated supported distribution | Planned | Demand-led packaging and support model |
+| Public shared multi-tenant SaaS | Not supported | No shared customer data plane or SaaS control plane |
+| Connector framework/marketplace, GraphRAG, agents, Kubernetes, billing | Not supported | Outside this repository hardening scope |
+
+## What is implemented
+
+### Ingestion and document processing
+
+Uploads are Project-scoped and pass size, extension/MIME, signature,
+corruption/password, and configurable malware checks before durable processing.
+Raw files and parsed artifacts use the storage provider abstraction (local or
+MinIO). PDF extraction tries native PyMuPDF text, assesses page quality, uses
+PDFium for degraded pages, and can invoke OCR only for pages still below the
+quality threshold. The highest-quality page result wins. DOCX, text, and
+Markdown parsing preserve useful structure and provenance.
+
+OCR is optional and worker-only. PaddleOCR is the current implementation; it is
+not installed by the base environment, is disabled by default, and does not ship
+a reliable stock Bengali model. Unicode Bengali text layers, TXT, and DOCX are
+supported by the normal multilingual processing path.
+
+The chunker uses shared Unicode normalization/tokenization, structural signals,
+headings, semantic boundaries, token budgets, overlap, and page/source offsets.
+Embedding providers are abstracted; indexed vectors, keyword rows, term stats,
+and fingerprints remain in PostgreSQL/pgvector under immutable Project index
+builds.
+
+### Retrieval, chat, and evaluation
+
+Search supports semantic, keyword, and hybrid strategies. The hybrid path runs
+semantic and keyword candidate generation, reciprocal-rank fusion, optional
+reranking, metadata/document filters, result hydration, and conservative
+duplicate suppression. Suppression preserves selected rank order, citations,
+and metadata and exposes sanitized reason counts in search diagnostics.
+
+Conversations are stateful and Project-scoped. Streaming and non-streaming turns
+share the evidence gate, refusal reasons, citation snapshots, and claim-to-source
+mappings. Missing or weak evidence produces an explicit insufficient-evidence
+outcome rather than an invented answer.
+
+Evaluation datasets and runs are versioned, corpus-fingerprinted artifacts.
+Durable runs compare retrieval/reranker profiles and record ranking, filtering,
+refusal, grounding, citation, latency, regression, and failure behavior. The
+small CI smoke set is deterministic and does not use paid providers.
+
+### Corpus lifecycle, webhooks, and operations
+
+Corpus-changing work writes private immutable index builds. Validation seals the
+document manifest and fingerprints; activation or rollback swaps Project index
+pointers transactionally. Reprocess, re-embed, reindex, delete, purge, and
+storage reconciliation use durable jobs with leases, heartbeat, retry, progress,
+and idempotency controls.
+
+Terminal document outcomes can stage signed webhooks in the same transaction as
+the job result. Delivery history, bounded response excerpts, exponential
+backoff, endpoint disablement, and replay with stable event IDs are implemented.
+
+The operator console exposes health, jobs, Project/document inspection,
+configuration, metrics, audit, evidence quality, webhooks, and a browser Test
+Lab. It is an internal deployment console, not a domain application or an end-user
+authentication system.
+
+## Architecture
+
+RAG Builder is a modular monolith supported by background workers and local
+infrastructure services:
 
 ```text
-upload -> parse/OCR -> chunk -> embed -> index -> retrieve -> answer -> cite
+Host product (users, workflows, domain authorization and UI)
+                         |
+                 REST + organization API key
+                         v
+RAG Builder FastAPI modular monolith
+  |-- organizations/projects   authentication and isolation
+  |-- knowledge                upload, parse/OCR, chunk, document lifecycle
+  |-- retrieval                embed, index builds, search, ranking
+  |-- conversations            evidence gate, grounded chat, citations
+  |-- evaluation               datasets, quality runs, regressions
+  |-- jobs/operations/webhooks durable execution and operator delivery
+                         |
+  |-- PostgreSQL + pgvector
+  |-- Redis + Taskiq workers
+  |-- local or MinIO object storage
+  `-- provider contracts for LLM, embedding, OCR, reranking, and storage
 ```
 
-That system also needs authentication, project isolation, object storage, background workers, provider integration, migrations, and operational status.
+`Project` is the primary data-isolation boundary: documents, chunks, embeddings,
+search, conversations, jobs, evaluations, index builds, and webhook operations
+are scoped by `project_id`. `Organization` is the M2M authentication boundary
+when API-key auth is enabled; it groups Projects but does not replace Project
+scoping.
 
-RAG Builder is a learning-first implementation of that journey, shaped as a reusable backend for real applications.
+The canonical layer direction is router → service → repository/provider. Services
+own orchestration and transactions, repositories own relational persistence,
+providers contain vendor SDKs, and the composition/dependency packages wire the
+application.
 
-```text
-Your product  ── REST + API key ──►  RAG Builder
-                                      ├─ PostgreSQL + pgvector
-                                      ├─ background workers
-                                      ├─ object storage
-                                      └─ LLM / embedding providers
-```
-
-## What a product gets
-
-- Upload and manage project-scoped documents.
-- Parse PDF, DOCX, TXT, and Markdown content.
-- Optional OCR paths for scanned/image content.
-- Structure-aware chunking with source offsets and page metadata.
-- PostgreSQL-native semantic and keyword retrieval.
-- Hybrid search with rank fusion and reranking hooks.
-- Stateful RAG conversations and SSE streaming.
-- Claim-linked citations, explicit insufficient-evidence answers, and evidence display.
-- Versioned evaluation datasets, durable quality runs, regression metrics, and reranker comparison.
-- Safe corpus changes with durable reprocess/re-embed/reindex jobs, immutable index builds, atomic activation/rollback, and guarded delete/purge.
-- Versioned HMAC webhooks with retry/backoff, delivery history, endpoint disablement, and replay-safe event IDs.
-- A digest-pinned, TLS-fronted dedicated hosted profile with guarded backup, restore, upgrade, rollback, and diagnostics.
-- A browser-based **Test Lab** that verifies upload, durable processing, retrieval, grounded citations or valid refusal, build activation/rollback, and storage reconciliation without Postman.
-- Organization API keys, project boundaries, health/readiness, and background processing foundations.
-
-The repository now reaches the roadmap's dedicated hosted pilot cut. Supported
-self-hosting and customer-specific authorization remain later, demand-led products.
-
-## Small examples of what becomes possible
-
-| Product                    | Instant AI capability                                              |
-| -------------------------- | ------------------------------------------------------------------ |
-| Law firm workspace         | Add matter documents, ask case questions, and return source pages. |
-| Call-center platform       | Search support policies and draft grounded agent replies.          |
-| Audit/compliance SaaS      | Retrieve evidence from policies, reports, and working papers.      |
-| HR platform                | Answer handbook questions for a selected organization or region.   |
-| Document management system | Add “ask this folder” without replacing the existing UI.           |
-| Internal operations tool   | Turn procedures and playbooks into a searchable assistant.         |
-
-The host product owns the experience. RAG Builder owns the knowledge lifecycle.
-
-## The journey inside the engine
-
-```text
-1. Ingest       receive a document and preserve the original
-2. Parse/OCR    turn bytes or pixels into text with provenance
-3. Chunk        split text into useful, citable passages
-4. Embed/Index  represent meaning and build versioned, safely activatable search structures
-5. Retrieve     find and rank evidence with semantic + keyword search
-6. Generate     ask the LLM to answer from the evidence
-```
-
-The most important idea is simple:
-
-> **The model should write from evidence, not pretend the evidence does not matter.**
-
-## Learn it like a story
-
-The learning docs are written for beginners who want to understand both the concepts and the code.
-
-### Start here
-
-[RAG from Zero: Follow One Question Through the Engine](docs/learning/rag-from-zero.md)
-
-You will follow a question such as “What is our refund policy?” through the complete pipeline, then open the source files behind each stage.
-
-### Continue through the building blocks
-
-1. [Knowledge ingestion](docs/learning/knowledge-ingestion-journey.md)
-2. [Parsing and extraction](docs/learning/document-parsing-and-extraction.md)
-3. [OCR fundamentals](docs/learning/ocr-fundamentals.md)
-4. [Chunking](docs/learning/text-chunking-for-rag.md)
-5. [Embeddings](docs/learning/embeddings-fundamentals.md)
-6. [Vector storage and pgvector](docs/learning/vector-storage-and-pgvector.md)
-7. [Semantic and hybrid retrieval](docs/learning/semantic-search-for-rag.md)
-8. [Conversation RAG and prompting](docs/learning/conversation_rag_journey.md)
-9. [Configuration and tuning](docs/learning/configuration-system.md)
-10. [Docker local development](docs/learning/docker-local-development.md)
-
-Each chapter asks you to predict, trace, tweak, observe, and explain. That is how a list of settings becomes engineering understanding.
-
-## Architecture at a glance
-
-```text
-Business application
-        │  REST + organization API key
-        ▼
-FastAPI routes and project access checks
-        │
-        ▼
-Feature services
-  ├── knowledge       upload, parse, chunk, lifecycle
-  ├── retrieval       embeddings, immutable index builds, activation/rollback, search
-  ├── conversations   context, evidence gate, prompts, LLM calls, grounded claims
-  └── evaluation      datasets, quality runs, metrics, regressions
-        │
-        ├── PostgreSQL + pgvector
-        ├── Redis + background workers
-        ├── local/MinIO object storage
-        └── provider contracts for LLM, embeddings, OCR, parsing, storage
-```
-
-The project uses a modular-monolith shape so the core is easy to inspect and deploy. It does not require a microservice for every stage.
-
-## Quick start with Docker
-
-Docker Desktop is the easiest way to explore the full local journey.
-
-```bash
-git clone <repository-url> rag-builder
-cd rag-builder
-
-cp .env.docker.example .env.docker
-docker compose --env-file .env.docker up --build
-```
-
-Local surfaces:
-
-| Surface          | URL                                  |
-| ---------------- | ------------------------------------ |
-| Operator console | `http://localhost:3000/operator/`    |
-| Test Lab         | `http://localhost:3000/operator/lab` |
-| API              | `http://localhost:8000`              |
-| Health           | `http://localhost:8000/health`       |
-| Readiness        | `http://localhost:8000/ready`        |
-| MinIO console    | `http://localhost:9001`              |
-
-The local stack includes the React operator console, FastAPI, a Taskiq worker, PostgreSQL with pgvector, Redis, MinIO, and one-shot migration/bootstrap services. Use the Test Lab as the browser-based end-to-end verification surface: select or create a project, upload a real document, follow its durable job, test retrieval and citations, then exercise corpus lifecycle controls. The console is intentionally open in the current trusted deployment and follows the backend's existing configurable authentication behavior; it does not add users, login, sessions, or browser-stored credentials.
-
-Useful targeted flows use the same Compose file:
-
-```bash
-# Backend, worker, and required infrastructure (no frontend)
-docker compose --env-file .env.docker up --build backend worker
-
-# Frontend only; renders a backend-unavailable state until the API exists
-docker compose --env-file .env.docker up --build --no-deps frontend
-```
-
-For host frontend development with Vite fast refresh:
-
-```bash
-cd frontend
-pnpm install
-pnpm dev
-```
-
-## First API journey
-
-The product flow is intentionally small:
-
-1. Create an organization and API key.
-2. Create a project for a corpus boundary.
-3. Upload a document.
-4. Poll or subscribe to processing status.
-5. Search for evidence.
-6. Ask a grounded question.
-
-The copy-paste integration path is in the [Platform Integration Guide](docs/platform-integration-guide.md). Endpoint contracts live in the [API reference](docs/api/README.md).
-
-## Repository map
+## Repository structure
 
 ```text
 backend/app/
-  api/            HTTP routes, envelopes, health
-  dependencies/   request wiring and access checks
-  models/         shared SQLAlchemy ORM
-  modules/
-    organizations/ organization and API-key lifecycle
-    projects/      project boundaries
-    knowledge/     documents, parsing, chunking
-    retrieval/     embeddings, indexing, search
-    conversations/ RAG chat, prompts, citations
-    evaluation/    versioned datasets and reproducible quality runs
-  platform/       database, providers, jobs, auth, persistence
-  worker/         background task entrypoints
-
-frontend/
-  src/api/        generated OpenAPI contract and one typed API client
-  src/app/        routing, navigation, and query-client composition
-  src/components/ reusable accessible states and primitives
-  src/features/   operator screens grouped by domain
-
-docs/
-  architecture/   boundaries and decision records
-  features/       behavior contracts
-  learning/       concepts, stories, experiments, code journeys
+  api/             HTTP composition, versioned routers, health and metrics
+  cli/             operator-safe commands (`doctor`, reindex helper)
+  composition/     shared API/worker wiring, ORM registry, Alembic migrations
+  core/            configuration, validation, logging, middleware, error envelopes
+  dependencies/    FastAPI dependency composition and access checks
+  models/          shared SQLAlchemy ORM entities
+  modules/         organizations, projects, knowledge, retrieval, conversations,
+                   evaluation, jobs, operations, and webhooks
+  platform/        shared database, providers, persistence, auth, jobs, and health
+  worker/          Taskiq broker and durable job handlers
+frontend/          React/TypeScript/Vite operator console
+infra/hosted/      dedicated pilot Compose profile, gateway, control tool, runbook
+scripts/           repository diagnostics and local helpers
+tests/             unit, architecture, integration, benchmark, and evaluation tests
+docs/              API, architecture/ADRs, feature, learning, operations, and plans
 ```
 
-## What is implemented and what is still evolving
+## Development environment
 
-The repository demonstrates the full conceptual journey from authentication and document upload
-through measured retrieval and grounded chat, plus an internal operator console for deployment
-health, durable work, documents, corpus/index lifecycle, configuration, metrics, evidence quality,
-and audit. It is not a public SaaS product.
+Copy the checked-in example before running Compose:
 
-The most important next development work is:
+```bash
+cp .env.docker.example .env.docker
+```
 
-- first-class asynchronous outcome webhooks;
-- repeatable dedicated deployment operations.
+Build and start the full environment:
 
-The scope is intentionally focused. The next product should not begin with agents, GraphRAG, voice, a connector marketplace, multiple vector databases, or a complex billing control plane.
+```bash
+docker compose --env-file .env.docker up -d --build
+```
 
-## Documentation guide
+The equivalent repository entry point is `make up`.
 
-| Need                               | Start here                                                                  |
-| ---------------------------------- | --------------------------------------------------------------------------- |
-| Understand the product             | [Platform at a Glance](docs/Platform-at-a-glance.md)                        |
-| Integrate an application           | [Platform Integration Guide](docs/platform-integration-guide.md)            |
-| Learn RAG from the beginning       | [RAG from Zero](docs/learning/rag-from-zero.md)                             |
-| Follow document processing         | [Knowledge Ingestion Journey](docs/learning/knowledge-ingestion-journey.md) |
-| Understand search quality          | [Hybrid Retrieval Journey](docs/learning/hybrid-retrieval-journey.md)       |
-| Understand chat grounding          | [Conversation RAG Journey](docs/learning/conversation_rag_journey.md)       |
-| Study architecture                 | [Architecture](docs/architecture/README.md)                                 |
-| Explore behavior                   | [Features](docs/features/README.md)                                         |
-| Operate corpus and index lifecycle | [Safe corpus/index lifecycle](docs/features/safe_corpus_index_lifecycle.md) |
-| Integrate lifecycle APIs           | [Index lifecycle API](docs/api/index_lifecycle_api.md)                      |
-| Operate pgvector                   | [pgvector Operations Runbook](docs/learning/pgvector-operations-runbook.md) |
+| Surface | URL |
+| --- | --- |
+| Operator console | `http://localhost:3000/operator/` |
+| Test Lab | `http://localhost:3000/operator/lab` |
+| API / OpenAPI | `http://localhost:8000` / `http://localhost:8000/docs` |
+| Liveness | `http://localhost:8000/health/live` |
+| Readiness | `http://localhost:8000/health/ready` |
+| MinIO console | `http://localhost:9001` |
 
-## The larger direction
+Liveness only confirms that the API process responds. Readiness checks
+PostgreSQL, the Alembic head, pgvector and its configured dimension, Redis/broker,
+and required storage/bucket access. It includes cached startup provider results
+but never calls an LLM or embedding provider during health polling. Legacy
+`/health` and `/ready` aliases remain temporarily for compatibility.
 
-The strongest product path for this repository is a **dedicated hosted Knowledge API** for document-heavy B2B software vendors. A supported self-hosted edition can follow when the hosted deployment, upgrade, backup, and operational model are repeatable.
+### Lifecycle and logs
 
-For compliance and case-management software vendors, RAG Builder is a private document intelligence and grounded retrieval backend that helps them add reliable, citable AI search and answers without building a RAG platform themselves or sending customer data through a shared AI data plane.
+```bash
+make status
+make logs
+make restart
+make down
+```
+
+The corresponding direct Compose commands are:
+
+```bash
+docker compose --env-file .env.docker ps
+docker compose --env-file .env.docker logs -f --tail=200
+docker compose --env-file .env.docker restart
+docker compose --env-file .env.docker down
+```
+
+After Python or Node dependency changes, rebuild the affected images:
+
+```bash
+docker compose --env-file .env.docker build --no-cache backend worker frontend
+docker compose --env-file .env.docker up -d
+```
+
+### Start services separately
+
+These are real services from `docker-compose.yml`:
+
+```bash
+docker compose --env-file .env.docker up -d postgres
+docker compose --env-file .env.docker up -d redis
+docker compose --env-file .env.docker up -d minio minio-init
+docker compose --env-file .env.docker up -d backend
+docker compose --env-file .env.docker up -d worker
+docker compose --env-file .env.docker up -d --no-deps frontend
+```
+
+Focused Make targets are `up-db`, `up-redis`, `up-storage`, `up-backend`,
+`up-worker`, and `up-frontend`. Compose starts declared dependencies for backend
+and worker automatically.
+
+For host-side frontend development:
+
+```bash
+cd frontend
+pnpm install --frozen-lockfile
+pnpm dev
+```
+
+### Migrations
+
+Apply migrations through the one-shot Compose service:
+
+```bash
+make migrate
+```
+
+Create a reviewed migration while the backend and PostgreSQL are running:
+
+```bash
+make migration-new name="describe the schema change"
+```
+
+Host-side equivalents, after installing backend development requirements, are:
+
+```bash
+cd backend
+python -m alembic upgrade head
+python -m alembic revision --autogenerate -m "describe the schema change"
+```
+
+`make migration-check` validates a single reachable migration head without a
+database. `make migration-drift-check` compares migrated schema and ORM metadata
+against a live configured database.
+
+### Quality and tests
+
+Install backend development dependencies and frontend packages first, then run:
+
+```bash
+make quality
+```
+
+The unified gate verifies Python formatting, lint, mypy, migration graph, unit
+and architecture tests, integration tests, deterministic evaluation smoke cases,
+and frontend formatting, lint, type checks, and tests. Database-backed integration
+tests run when the explicitly disposable PostgreSQL test database is available;
+otherwise they report skips rather than touching an unknown database.
+
+Focused commands:
+
+```bash
+make format
+make format-check
+make lint
+make typecheck
+make test-unit
+make test-integration
+make migration-check
+make eval-smoke
+make frontend-quality
+make frontend-build
+```
+
+Run the safe diagnostic from the backend environment:
+
+```bash
+cd backend
+python -m app.cli doctor
+```
+
+The doctor validates configuration and reports PostgreSQL, migration head,
+pgvector/dimension, Redis, object storage/bucket, broker/worker configuration,
+and embedding/reranker selections. It hides secret values, does not call AI
+providers, and returns non-zero for critical failures.
+
+Check a running application directly:
+
+```bash
+curl --fail --silent http://localhost:8000/health/live
+curl --fail --silent http://localhost:8000/health/ready
+```
+
+## Dedicated pilot deployment commands
+
+These commands use `infra/hosted/compose.yaml`; they are separate from local
+development. Read [the hosted runbook](infra/hosted/RUNBOOK.md) before operating
+a deployment. Copy `release.env.example` to `release.env`, copy
+`secrets/runtime.env.example` to `secrets/runtime.env`, replace every image
+digest/host/secret placeholder, and install TLS files.
+
+From `infra/hosted/`:
+
+```bash
+python hostedctl.py validate
+docker compose --env-file release.env -f compose.yaml pull
+docker compose --env-file release.env -f compose.yaml up -d
+docker compose --env-file release.env -f compose.yaml ps
+docker compose --env-file release.env -f compose.yaml logs --tail=200 backend worker gateway
+```
+
+Guarded operational commands:
+
+```bash
+python hostedctl.py backup
+python hostedctl.py restore backups/<stamp> --confirm RESTORE:<deployment-id>
+python hostedctl.py upgrade
+python hostedctl.py rollback backups/<stamp> --previous-release-env previous-release.env --confirm ROLLBACK:<deployment-id>
+python hostedctl.py diagnostics diagnostics/<incident-id>
+```
+
+Backup briefly quiesces writes and captures PostgreSQL plus object storage with
+an integrity manifest. Restore, upgrade, and rollback validate the deployment ID
+and require explicit confirmation where destructive. This tooling is for the
+dedicated pilot profile; it is not deployment automation or a general supported
+self-hosted distribution.
+
+## API errors and correlation
+
+Public errors use stable machine-readable codes and safe messages:
+
+```json
+{
+  "error": {
+    "code": "document_not_ready",
+    "message": "The document has not completed processing.",
+    "request_id": "req_123",
+    "details": {}
+  }
+}
+```
+
+Validation errors use the same envelope and place field failures under
+`details.fields`. Send or record `X-Request-ID` for support correlation. Stack
+traces, provider responses, infrastructure connection details, and secrets are
+not returned to clients.
+
+## Remaining technical-preview limitations
+
+- API v1 is versioned but not yet a stable `1.0` compatibility promise.
+- The console trusts the deployment boundary and adds no users, login, sessions,
+  complex RBAC, or browser credential store.
+- Stock Bengali OCR is unavailable; use Unicode text-layer PDFs, TXT, or DOCX for
+  Bengali content.
+- Provider capability probes occur at process startup; production startup can
+  depend on configured provider availability, while routine health polling does not.
+- Dedicated operations require an experienced operator and environment-specific
+  secret, TLS, backup, monitoring, and recovery controls.
+- Connectors, public SaaS tenancy, enterprise identity integration, broad search
+  connectors, SDKs, and formal long-term support are not included.
 
 ## License
 
-See [LICENSE](LICENSE) for the current repository license.
+Source code is licensed under the [MIT License](LICENSE). The RAG Builder name,
+logo, and branding remain owned by the project owner; the MIT grant does not
+grant trademark or brand-use rights.

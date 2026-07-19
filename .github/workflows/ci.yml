@@ -1,0 +1,92 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:0.8.1-pg16
+        env:
+          POSTGRES_USER: ape
+          POSTGRES_PASSWORD: ape
+          POSTGRES_DB: ape_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ape -d ape_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      APE_APP__ENV: testing
+      APE_DATABASE__HOST: localhost
+      APE_DATABASE__PORT: "5432"
+      APE_DATABASE__USER: ape
+      APE_DATABASE__PASSWORD: ape
+      APE_DATABASE__NAME: ape_test
+      APE_TEST_DATABASE__NAME: ape_test
+      APE_TEST_DATABASE__ALLOW_MIGRATIONS: "true"
+      APE_REDIS__HOST: localhost
+      APE_REDIS__PORT: "6379"
+      APE_STORAGE__BACKEND: local
+      APE_STORAGE__LOCAL_ROOT: /tmp/rag-builder-ci-storage
+      APE_EMBEDDING__BACKEND: hash
+      APE_EMBEDDING__DIMENSIONS: "384"
+      APE_LLM__BACKEND: echo
+      APE_JOBS__DISPATCHER_ENABLED: "false"
+      APE_WEBHOOKS__DISPATCHER_ENABLED: "false"
+      APE_AUTH__ENABLED: "false"
+      APE_AUTH__VERIFY_CACHE_BACKEND: memory
+      APE_AUTH__RATE_LIMIT_ENABLED: "false"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements/dev.txt
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.4
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - name: Install backend dependencies
+        run: python -m pip install -r backend/requirements/dev.txt
+      - name: Install frontend dependencies
+        run: make frontend-install
+      - name: Apply migrations
+        run: make migrate-local
+      - name: Verify migration/model alignment
+        run: make migration-drift-check
+      - name: Run unified quality gate
+        run: make quality
+
+  docker-builds:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build backend production image
+        run: docker build --target production --tag rag-builder-backend:ci backend
+      - name: Build frontend production image
+        run: docker build --target production --tag rag-builder-frontend:ci frontend

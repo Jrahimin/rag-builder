@@ -8,6 +8,9 @@ through dependency injection (see ``app.dependencies.database``).
 
 from __future__ import annotations
 
+from pathlib import Path
+
+from alembic.script import ScriptDirectory
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
@@ -20,10 +23,15 @@ from app.core.config import Settings
 from app.core.logging import get_logger
 
 log = get_logger(__name__)
+_MIGRATION_ROOT = Path(__file__).resolve().parents[2] / "composition" / "migrations"
 
 
 class PgVectorUnavailableError(RuntimeError):
     """Raised when PostgreSQL is reachable but the vector extension is absent."""
+
+
+class MigrationStateError(RuntimeError):
+    """Raised when the database revision does not match the checked-in migration head."""
 
 
 class Database:
@@ -58,7 +66,32 @@ class Database:
         return self._session_factory
 
     async def check(self) -> None:
-        """Verify connectivity and the deployment's required pgvector extension."""
+        """Verify connectivity, migration compatibility, and pgvector dimensions."""
+        await self.check_connection()
+        await self.check_migrations()
+        await self.check_pgvector()
+
+    async def check_connection(self) -> None:
+        """Verify that PostgreSQL accepts a simple query."""
+        async with self._engine.connect() as conn:
+            await conn.scalar(text("SELECT 1"))
+
+    async def check_migrations(self) -> None:
+        """Require the database Alembic revision to equal the repository head."""
+        expected_heads = set(ScriptDirectory(str(_MIGRATION_ROOT)).get_heads())
+        async with self._engine.connect() as conn:
+            rows = await conn.execute(text("SELECT version_num FROM alembic_version"))
+            current_heads = {str(value) for value in rows.scalars().all()}
+        if current_heads != expected_heads:
+            message = (
+                "Database migrations are not at the repository head "
+                f"(expected {sorted(expected_heads)}, found {sorted(current_heads)}). "
+                "Run `alembic upgrade head` before serving traffic."
+            )
+            raise MigrationStateError(message)
+
+    async def check_pgvector(self) -> None:
+        """Verify pgvector is enabled and its column matches configured dimensions."""
         async with self._engine.connect() as conn:
             extension_version = await conn.scalar(
                 text("SELECT extversion FROM pg_extension WHERE extname = 'vector'")

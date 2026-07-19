@@ -5559,6 +5559,23 @@
       "SearchDiagnostics": {
         "description": "Sanitized execution facts used by quality evaluation and operators.",
         "properties": {
+          "duplicate_suppression_input_count": {
+            "default": 0,
+            "title": "Duplicate Suppression Input Count",
+            "type": "integer"
+          },
+          "duplicate_suppression_reasons": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Duplicate Suppression Reasons",
+            "type": "object"
+          },
+          "duplicate_suppression_removed_count": {
+            "default": 0,
+            "title": "Duplicate Suppression Removed Count",
+            "type": "integer"
+          },
           "duration_ms": {
             "title": "Duration Ms",
             "type": "integer"
@@ -6551,7 +6568,7 @@
   "info": {
     "description": "AI Platform Engine (APE) - deployable, provider-agnostic AI infrastructure exposed as Project-scoped REST APIs.",
     "title": "AI Platform Engine",
-    "version": "1.0.0"
+    "version": "0.9.0"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -10417,10 +10434,10 @@
         ]
       }
     },
-    "/health": {
+    "/health/live": {
       "get": {
         "description": "Returns 200 while the process is running. Does not touch dependencies.",
-        "operationId": "health_health_get",
+        "operationId": "live_health_live_get",
         "responses": {
           "200": {
             "content": {
@@ -10434,6 +10451,28 @@
           }
         },
         "summary": "Liveness probe",
+        "tags": [
+          "system"
+        ]
+      }
+    },
+    "/health/ready": {
+      "get": {
+        "description": "Probes PostgreSQL (including pgvector), Redis, and object storage, then includes cached startup provider capability results. Returns 200 when every required dependency is healthy, otherwise 503.",
+        "operationId": "ready_health_ready_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_ReadinessStatus_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Readiness probe",
         "tags": [
           "system"
         ]
@@ -10463,28 +10502,6 @@
           }
         ],
         "summary": "Prometheus-compatible operational metrics",
-        "tags": [
-          "system"
-        ]
-      }
-    },
-    "/ready": {
-      "get": {
-        "description": "Probes PostgreSQL (including pgvector), Redis, and object storage, then includes cached startup provider capability results. Returns 200 when every required dependency is healthy, otherwise 503.",
-        "operationId": "ready_ready_get",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse_ReadinessStatus_"
-                }
-              }
-            },
-            "description": "Successful Response"
-          }
-        },
-        "summary": "Readiness probe",
         "tags": [
           "system"
         ]

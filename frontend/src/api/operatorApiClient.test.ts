@@ -14,10 +14,10 @@ test("surfaces the backend error envelope without leaking response internals", a
     vi.fn().mockResolvedValue(
       new Response(
         JSON.stringify({
-          success: false,
           error: {
             code: "operator_data_unavailable",
             message: "Operational data is temporarily unavailable.",
+            request_id: "req-test",
           },
         }),
         { status: 503, headers: { "Content-Type": "application/json" } },
@@ -27,6 +27,7 @@ test("surfaces the backend error envelope without leaking response internals", a
   await expect(operatorApiClient.getMetrics()).rejects.toMatchObject({
     code: "operator_data_unavailable",
     status: 503,
+    requestId: "req-test",
   });
 });
 

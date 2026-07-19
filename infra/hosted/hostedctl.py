@@ -159,8 +159,15 @@ def backup(release_env: Path, destination: Path | None = None) -> Path:
             run(
                 args
                 + [
-                    "exec", "-T", "postgres", "pg_dump", "-U",
-                    runtime["POSTGRES_USER"], "-d", database, "-Fc",
+                    "exec",
+                    "-T",
+                    "postgres",
+                    "pg_dump",
+                    "-U",
+                    runtime["POSTGRES_USER"],
+                    "-d",
+                    database,
+                    "-Fc",
                 ],
                 stdout=output,
             )
@@ -290,22 +297,18 @@ def verify_ready(
     poll_seconds: float = 5,
 ) -> None:
     context = (
-        ssl._create_unverified_context()
-        if allow_untrusted_tls
-        else ssl.create_default_context()
+        ssl._create_unverified_context() if allow_untrusted_tls else ssl.create_default_context()
     )
     deadline = time.monotonic() + timeout_seconds
     last_error: Exception | None = None
     while time.monotonic() < deadline:
         try:
             with urllib.request.urlopen(
-                f"https://{host}/ready", timeout=10, context=context
+                f"https://{host}/health/ready", timeout=10, context=context
             ) as response:
                 if response.status == 200:
                     return
-                last_error = HostedOperationError(
-                    f"Readiness returned HTTP {response.status}"
-                )
+                last_error = HostedOperationError(f"Readiness returned HTTP {response.status}")
         except OSError as exc:
             last_error = exc
         time.sleep(poll_seconds)

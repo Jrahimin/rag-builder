@@ -74,7 +74,7 @@ type LabActivity = {
   buildId?: string;
   conversationId?: string;
   code?: string;
-  traceId?: string | null;
+  requestId?: string | null;
   detail?: string;
   result?: Record<string, unknown> | null;
   tab?: LabTab;
@@ -97,8 +97,8 @@ type MessageRun = {
 
 function errorFacts(error: unknown) {
   return error instanceof OperatorApiError
-    ? { code: error.code, traceId: error.traceId, detail: error.message }
-    : { code: "request_failed", traceId: null, detail: (error as Error).message };
+    ? { code: error.code, requestId: error.requestId, detail: error.message }
+    : { code: "request_failed", requestId: null, detail: (error as Error).message };
 }
 
 function ApiFailure({ error }: { error: Error }) {
@@ -107,7 +107,7 @@ function ApiFailure({ error }: { error: Error }) {
     <div className="failure-box lab-failure" role="alert">
       <strong>{error.message}</strong>
       <span>Code: {typed?.code ?? "request_failed"}</span>
-      <span>Trace ID: {typed?.traceId ?? "Not provided"}</span>
+      <span>Request ID: {typed?.requestId ?? "Not provided"}</span>
     </div>
   );
 }
@@ -1554,7 +1554,7 @@ function ActivityDrawer({
     `Test Lab: ${projectName}`,
     ...activities.map(
       (item) =>
-        `${item.timestamp} | ${item.outcome} | ${item.name}${item.jobId ? ` | job ${item.jobId}` : ""}${item.code ? ` | ${item.code}` : ""}${item.traceId ? ` | trace ${item.traceId}` : ""}`,
+        `${item.timestamp} | ${item.outcome} | ${item.name}${item.jobId ? ` | job ${item.jobId}` : ""}${item.code ? ` | ${item.code}` : ""}${item.requestId ? ` | request ${item.requestId}` : ""}`,
     ),
   ].join("\n");
   if (!open) return null;
@@ -1653,10 +1653,10 @@ function ActivityDrawer({
                           <dd>{item.code}</dd>
                         </div>
                       )}
-                      {item.traceId && (
+                      {item.requestId && (
                         <div>
-                          <dt>Trace ID</dt>
-                          <dd>{item.traceId}</dd>
+                          <dt>Request ID</dt>
+                          <dd>{item.requestId}</dd>
                         </div>
                       )}
                     </dl>

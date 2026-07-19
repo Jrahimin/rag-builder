@@ -46,6 +46,9 @@ class SearchDiagnostics(BaseModel):
     reranker_provider: str | None = None
     reranker_model: str | None = None
     reranker_version: str | None = None
+    duplicate_suppression_input_count: int = 0
+    duplicate_suppression_removed_count: int = 0
+    duplicate_suppression_reasons: dict[str, int] = Field(default_factory=dict)
 
 
 class SearchResponse(BaseModel):

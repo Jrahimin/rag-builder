@@ -68,4 +68,3 @@ class WebhookTransport(ABC):
         headers: dict[str, str],
         timeout_seconds: float,
     ) -> WebhookHttpResponse: ...
-

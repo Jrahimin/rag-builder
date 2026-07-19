@@ -7,6 +7,10 @@ ARG PYTHON_VERSION=3.12
 
 # --- Base: shared runtime settings -----------------------------------------
 FROM python:${PYTHON_VERSION}-slim AS base
+ARG APP_VERSION=0.9.0
+LABEL org.opencontainers.image.title="RAG Builder backend" \
+      org.opencontainers.image.version="$APP_VERSION" \
+      org.opencontainers.image.licenses="MIT"
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
@@ -43,7 +47,7 @@ USER ape
 EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')" || exit 1
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/live')" || exit 1
 
 # The local Compose stack explicitly selects this target and overrides the
 # command to enable reload. Keep the production target last so a plain

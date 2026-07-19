@@ -95,9 +95,7 @@ async def test_document_outcome_delivery_retries_is_signed_and_replays_same_even
         expire_on_commit=False,
         join_transaction_mode="create_savepoint",
     ) as session:
-        service = WebhookDeliveryService(
-            session, project_uuid, settings.webhooks, transport
-        )
+        service = WebhookDeliveryService(session, project_uuid, settings.webhooks, transport)
         assert await service.deliver_next(worker_id="integration-webhook")
         persisted = await session.get(WebhookDelivery, uuid.UUID(delivery["id"]))
         assert persisted is not None

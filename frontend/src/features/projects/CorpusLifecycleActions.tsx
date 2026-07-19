@@ -19,7 +19,7 @@ export type LifecycleNotice = {
   jobId?: string;
   buildId?: string;
   code?: string;
-  traceId?: string | null;
+  requestId?: string | null;
   detail?: string;
   result?: Record<string, unknown> | null;
 };
@@ -105,7 +105,7 @@ export function CorpusLifecycleActions({
         name: name === "rollback" ? "Rollback active build" : name,
         outcome: "failed",
         code: typed?.code ?? "request_failed",
-        traceId: typed?.traceId,
+        requestId: typed?.requestId,
         detail: (error as Error).message,
       });
     }
@@ -128,7 +128,7 @@ export function CorpusLifecycleActions({
         outcome: "failed",
         buildId: build.id,
         code: typed?.code ?? "request_failed",
-        traceId: typed?.traceId,
+        requestId: typed?.requestId,
         detail: (error as Error).message,
       });
     }
@@ -260,7 +260,7 @@ export function CorpusLifecycleActions({
           <strong>{mutationError.message}</strong>
           {mutationError instanceof OperatorApiError && (
             <p>
-              Code: {mutationError.code} · Trace ID: {mutationError.traceId ?? "Not provided"}
+              Code: {mutationError.code} · Request ID: {mutationError.requestId ?? "Not provided"}
             </p>
           )}
         </div>

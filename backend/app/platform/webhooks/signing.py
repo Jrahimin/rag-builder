@@ -45,4 +45,3 @@ def verify_webhook_signature(
         body=body,
     )
     return hmac.compare_digest(supplied, expected)
-

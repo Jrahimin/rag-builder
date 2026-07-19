@@ -26,6 +26,6 @@ def test_api_response_ok_with_meta() -> None:
 def test_error_response_shape() -> None:
     err = ErrorResponse(error=ErrorInfo(code="not_found", message="missing"))
     dumped = err.model_dump(exclude_none=True)
-    assert dumped["success"] is False
+    assert set(dumped) == {"error"}
     assert dumped["error"]["code"] == "not_found"
-    assert "details" not in dumped["error"]
+    assert dumped["error"]["details"] == {}

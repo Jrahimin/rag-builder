@@ -2,7 +2,7 @@
 
 Unversioned infrastructure endpoints (not under `/api/v1`).
 
-## GET /health
+## GET /health/live
 
 Liveness — process is running; does not probe dependencies.
 
@@ -14,16 +14,16 @@ Liveness — process is running; does not probe dependencies.
   "data": {
     "status": "ok",
     "service": "ape",
-    "version": "1.0.0",
+    "version": "0.9.0",
     "environment": "development"
   }
 }
 ```
 
-## GET /ready
+## GET /health/ready
 
-Readiness — probes PostgreSQL (including the pgvector extension and configured
-`vector(n)` dimension), Redis, and configured object storage. Startup-only provider
+Readiness — probes PostgreSQL (including the Alembic head, pgvector extension,
+and configured `vector(n)` dimension), Redis, and configured object storage. Startup-only provider
 capability results are included with `cached=true`; health requests never repeat LLM,
 embedding, reranker, or OCR calls.
 
@@ -35,7 +35,7 @@ embedding, reranker, or OCR calls.
   "data": {
     "status": "ready",
     "service": "ape",
-    "version": "1.0.0",
+    "version": "0.9.0",
     "environment": "development",
     "dependencies": [
       { "name": "postgresql", "state": "ok", "detail": null, "latency_ms": 1.2, "cached": false },
@@ -44,6 +44,9 @@ embedding, reranker, or OCR calls.
   }
 }
 ```
+
+`GET /health` and `GET /ready` are temporary compatibility aliases and should
+not be used by new integrations.
 
 ## GET /metrics
 

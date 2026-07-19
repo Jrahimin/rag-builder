@@ -7,6 +7,7 @@ import pytest
 from app.core.config import (
     AppConfig,
     AuthConfig,
+    CORSConfig,
     DatabaseConfig,
     EmbeddingBackend,
     EmbeddingConfig,
@@ -38,6 +39,7 @@ def _production_settings(**updates: object) -> Settings:
     values: dict[str, object] = {
         "app": AppConfig(env=Environment.PRODUCTION),
         "runtime": RuntimeConfig(profile=RuntimeProfile.HOSTED_OPENAI),
+        "cors": CORSConfig(allow_origins=["https://rag-builder.example"]),
         "database": DatabaseConfig(password="database-secret"),
         "redis": RedisConfig(password="redis-secret"),
         "minio": MinioConfig(access_key="storage-user", secret_key="storage-secret"),
@@ -56,7 +58,11 @@ def _production_settings(**updates: object) -> Settings:
             rerank_enabled=True,
             reranker_backend=RerankerBackend.LEXICAL,
         ),
-        "auth": AuthConfig(enabled=True),
+        "auth": AuthConfig(
+            enabled=True,
+            admin_api_key="admin-key-that-is-at-least-thirty-two-bytes",
+            key_pepper="key-pepper-that-is-at-least-thirty-two-bytes",
+        ),
     }
     values.update(updates)
     return Settings(**values)
@@ -114,3 +120,48 @@ def test_private_profile_rejects_hosted_provider_combination() -> None:
                 runtime=RuntimeConfig(profile=RuntimeProfile.PRIVATE_OLLAMA),
             )
         )
+
+
+def test_all_environments_reject_missing_infrastructure_configuration() -> None:
+    with pytest.raises(ProductionConfigurationError, match="APE_REDIS__HOST"):
+        validate_runtime_config(Settings(redis=RedisConfig(host="")))
+
+
+def test_provider_selection_requires_matching_credentials() -> None:
+    with pytest.raises(ProductionConfigurationError, match="OPENAI_API_KEY"):
+        validate_runtime_config(
+            Settings(embedding=EmbeddingConfig(backend=EmbeddingBackend.OPENAI))
+        )
+
+
+def test_known_fixed_embedding_dimension_is_validated() -> None:
+    with pytest.raises(ProductionConfigurationError, match="DIMENSIONS=1536"):
+        validate_runtime_config(
+            Settings(
+                embedding=EmbeddingConfig(
+                    backend=EmbeddingBackend.OPENAI,
+                    model="text-embedding-ada-002",
+                    dimensions=384,
+                    openai_api_key="test-key",
+                )
+            )
+        )
+
+
+def test_webhook_signing_and_retry_relationships_are_validated() -> None:
+    with pytest.raises(ProductionConfigurationError, match="SIGNING_KEY"):
+        validate_runtime_config(Settings(webhooks=WebhooksConfig(signing_key="short")))
+    with pytest.raises(ProductionConfigurationError, match="retry_max_seconds"):
+        validate_runtime_config(
+            Settings(
+                webhooks=WebhooksConfig(
+                    retry_base_seconds=10,
+                    retry_max_seconds=5,
+                )
+            )
+        )
+
+
+def test_production_rejects_wildcard_cors() -> None:
+    with pytest.raises(ProductionConfigurationError, match="wildcard"):
+        validate_runtime_config(_production_settings(cors=CORSConfig()))
