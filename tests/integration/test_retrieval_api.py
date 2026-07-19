@@ -123,7 +123,7 @@ async def test_embed_and_index_document(
     embed = await db_client.post(
         f"/api/v1/projects/{project_id}/documents/{document_id}/embed",
     )
-    assert embed.status_code == 200
+    assert embed.status_code == 202
     assert embed.json()["data"]["status"] == "embedding"
     assert len(captured_jobs) == 1
     assert captured_jobs[0].name == "document.embed"
@@ -142,7 +142,7 @@ async def test_embed_and_index_document(
     index = await db_client.post(
         f"/api/v1/projects/{project_id}/documents/{document_id}/index",
     )
-    assert index.status_code == 200
+    assert index.status_code == 202
     assert index.json()["data"]["status"] == "indexing"
     assert len(captured_jobs) == 1
     assert captured_jobs[0].name == "document.index"

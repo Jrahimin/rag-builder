@@ -42,6 +42,11 @@ const DependencyWorkerHealth = lazy(() =>
     default: module.DependencyWorkerHealth,
   })),
 );
+const WebhookDeliveryInspection = lazy(() =>
+  import("../features/webhooks/WebhookDeliveryInspection").then((module) => ({
+    default: module.WebhookDeliveryInspection,
+  })),
+);
 
 export function OperatorConsoleApp() {
   return (
@@ -108,6 +113,14 @@ export function OperatorConsoleApp() {
           element={
             <Suspense fallback={<LoadingState label="Loading audit" />}>
               <AuditHistory />
+            </Suspense>
+          }
+        />
+        <Route
+          path="webhooks"
+          element={
+            <Suspense fallback={<LoadingState label="Loading webhooks" />}>
+              <WebhookDeliveryInspection />
             </Suspense>
           }
         />

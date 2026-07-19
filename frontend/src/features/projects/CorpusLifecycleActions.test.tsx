@@ -43,7 +43,7 @@ test("confirms and activates only a validated immutable build", async () => {
   await userEvent.click(await screen.findByRole("button", { name: "Activate" }));
 
   expect(activate).toHaveBeenCalledWith(projectFixture.id, build.id);
-  expect(screen.getByRole("button", { name: "Rollback" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: /^Rollback/ })).toBeDisabled();
 });
 
 test("shows the generated lifecycle job immediately and links to its detail", async () => {
@@ -67,7 +67,7 @@ test("shows the generated lifecycle job immediately and links to its detail", as
   renderOperatorComponent(
     <CorpusLifecycleActions projectId={projectFixture.id} onNotice={notice} />,
   );
-  await userEvent.click(await screen.findByRole("button", { name: "Reindex whole corpus" }));
+  await userEvent.click(await screen.findByRole("button", { name: /^Reindex/ }));
   await userEvent.click(screen.getByRole("button", { name: "Confirm action" }));
   const link = await screen.findByRole("link", { name: jobDetailFixture.id });
   expect(link).toHaveAttribute(

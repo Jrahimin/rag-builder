@@ -14,7 +14,7 @@ Liveness — process is running; does not probe dependencies.
   "data": {
     "status": "ok",
     "service": "ape",
-    "version": "0.1.0",
+    "version": "1.0.0",
     "environment": "development"
   }
 }
@@ -35,7 +35,7 @@ embedding, reranker, or OCR calls.
   "data": {
     "status": "ready",
     "service": "ape",
-    "version": "0.1.0",
+    "version": "1.0.0",
     "environment": "development",
     "dependencies": [
       { "name": "postgresql", "state": "ok", "detail": null, "latency_ms": 1.2, "cached": false },

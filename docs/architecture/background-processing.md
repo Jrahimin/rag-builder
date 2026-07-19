@@ -17,6 +17,12 @@ DurableJobDispatcher → Redis / Taskiq → handler(job_id)
                                   lease + heartbeat + progress
                                             │
                            succeeded | retry_scheduled | failed
+                                            │ terminal transaction
+                                            ▼
+                         WebhookEvent + initial WebhookDelivery
+                                            │ commit
+                                            ▼
+                         leased WebhookDispatcher → customer HTTPS
 ```
 
 PostgreSQL is the source of truth for execution. Redis/Taskiq is only the
@@ -86,8 +92,8 @@ All endpoints are authenticated and Project-scoped:
 - `GET /api/v1/projects/{project_id}/jobs/{job_id}`
 - `POST /api/v1/projects/{project_id}/jobs/{job_id}/retry`
 
-Existing asynchronous Document actions keep their status codes and response
-shape and add nullable `job_id`. Manual retry creates a new JobRun linked by
+Asynchronous Document and corpus actions return `202 Accepted` with a durable
+`job_id`. Manual retry creates a new JobRun linked by
 `retry_of_job_id` and reuses the original immutable configuration snapshot.
 
 ## Runtime ownership
@@ -97,10 +103,18 @@ own process-local database/provider construction through `worker/job_runtime.py`
 Retrieval wiring shared by API, workers, CLI, and tests remains in
 `composition/retrieval.py`.
 
+## Webhook handoff
+
+Processing/indexing success and final failure stage a versioned webhook event and
+the subscribed initial deliveries in the terminal job transaction. PostgreSQL is
+the webhook source of truth; its independent dispatcher uses leases, bounded
+exponential backoff, immutable attempt history, endpoint disablement, and
+same-event-ID replay. It does not use Redis or Taskiq and is not a general event bus.
+
 ## Deferred
 
-Cancellation, webhooks, provider registries, extra queue systems, and
-customer billing/entitlements are later-roadmap concerns.
+Cancellation, general provider registries, extra queue systems, customer
+billing/entitlements, and a general event platform remain future concerns.
 
 Interactive chat generation remains synchronous inside the HTTP request; it is
 not a durable ingestion/indexing job.

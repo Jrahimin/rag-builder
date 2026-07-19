@@ -34,9 +34,11 @@ backend/app/
 │   ├── system/             # HealthService
 │   ├── providers/          # Errors + capability reference
 │   ├── jobs/               # durable submission/configuration + executor transport contracts
+│   ├── webhooks/           # versioned event, signing, publisher + transport contracts
 │   └── config/             # ConfigLayer precedence model
 └── modules/                # Feature vertical slices (no HTTP wiring, no ORM)
     ├── jobs/               # JobRun/outbox repositories, service, API schemas
+    ├── webhooks/           # Endpoint config, delivery history, replay, leased delivery
     └── <feature>/
         services/ repositories/ schemas/ [workflows/]
 ```
@@ -105,6 +107,7 @@ Concrete provider interfaces are added with the first implementation.
 | `knowledge` | Ingestion — upload, parse, chunk; ends at `status=chunked` (shipped) |
 | `retrieval` | Embed → index → search (`chunked` → `embedded` → `ready`); hybrid + rerank shipped (ADR-009) |
 | `conversations` | Chat — retrieve → prompt → LLM → answer + citations; stateful conversations (shipped) |
+| `webhooks` | Bounded document processing/index outcome delivery (shipped; ADR-016) |
 | `evaluation` | Quality measurement + feedback |
 
 ### Organizations vs projects
@@ -134,6 +137,10 @@ modules/conversations/   chat (RAG generation)         uses RetrievalPort + Base
 - **Shared composition helpers** (`composition/`) may wire the same service for
   API, worker, CLI, and tests; services themselves do not select concrete
   providers or queue implementations.
+- **Jobs** publish only the four documented terminal webhook outcomes through
+  `WebhookEventPublisher`; they do not import webhook module internals.
+- **Webhook events and initial deliveries** are staged in the same transaction as
+  the terminal job transition. HTTP delivery occurs later behind `WebhookTransport`.
 
 ---
 

@@ -34,6 +34,12 @@ export const operatorQueryKeys = {
     ["operator", "projects", projectId, "conversations"] as const,
   messages: (projectId: string, conversationId: string) =>
     ["operator", "projects", projectId, "conversations", conversationId, "messages"] as const,
+  webhookEndpoints: (projectId: string) =>
+    ["operator", "projects", projectId, "webhook-endpoints"] as const,
+  webhookDeliveries: (projectId: string) =>
+    ["operator", "projects", projectId, "webhook-deliveries"] as const,
+  webhookDelivery: (projectId: string, deliveryId: string) =>
+    ["operator", "projects", projectId, "webhook-deliveries", deliveryId] as const,
 };
 
 export const overviewQueryOptions = queryOptions({

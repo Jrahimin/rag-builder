@@ -28,3 +28,9 @@ from app.models.message import Message  # noqa: F401
 from app.models.organization import Organization  # noqa: F401
 from app.models.organization_api_key import OrganizationApiKey  # noqa: F401
 from app.models.project import Project  # noqa: F401
+from app.models.webhook_endpoint import WebhookEndpoint  # noqa: F401
+from app.models.webhook_event import (  # noqa: F401
+    WebhookDelivery,
+    WebhookDeliveryAttempt,
+    WebhookEvent,
+)

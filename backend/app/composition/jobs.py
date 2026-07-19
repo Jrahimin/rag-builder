@@ -11,6 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.composition.audit import DatabaseAuditRecorder
+from app.composition.webhooks import DatabaseWebhookEventPublisher
 from app.core.config import Settings
 from app.models.document import DocumentStatus
 from app.models.index_build import IndexBuildState
@@ -36,6 +37,7 @@ def build_job_service(
         queue,
         settings.jobs,
         audit=DatabaseAuditRecorder(session, project_id),
+        webhooks=DatabaseWebhookEventPublisher(session, project_id, settings),
     )
 
 

@@ -52,7 +52,7 @@ class AppConfig(BaseModel):
     name: str = "AI Platform Engine"
     env: Environment = Environment.DEVELOPMENT
     debug: bool = True
-    version: str = "0.1.0"
+    version: str = "1.0.0"
     api_v1_prefix: str = "/api/v1"
 
     @property
@@ -247,6 +247,22 @@ class JobsConfig(BaseModel):
             msg = "jobs.heartbeat_seconds must be lower than jobs.lease_seconds"
             raise ValueError(msg)
         return self
+
+
+class WebhooksConfig(BaseModel):
+    """Bounded outbound webhook dispatcher and signing configuration."""
+
+    enabled: bool = True
+    dispatcher_enabled: bool = True
+    signing_key: str = "development-only-webhook-signing-key"
+    dispatcher_poll_seconds: float = Field(default=1.0, ge=0.1, le=60.0)
+    dispatcher_batch_size: int = Field(default=50, ge=1, le=500)
+    delivery_timeout_seconds: float = Field(default=10.0, ge=0.5, le=120.0)
+    delivery_lease_seconds: int = Field(default=60, ge=5, le=600)
+    max_attempts: int = Field(default=6, ge=1, le=20)
+    retry_base_seconds: float = Field(default=5.0, ge=0.1, le=3600.0)
+    retry_max_seconds: float = Field(default=3600.0, ge=1.0, le=86_400.0)
+    response_excerpt_chars: int = Field(default=1000, ge=0, le=10_000)
 
 
 class KnowledgeConfig(BaseModel):
@@ -547,6 +563,7 @@ class Settings(BaseSettings):
     minio: MinioConfig = Field(default_factory=MinioConfig)
     storage: StorageConfig = Field(default_factory=StorageConfig)
     jobs: JobsConfig = Field(default_factory=JobsConfig)
+    webhooks: WebhooksConfig = Field(default_factory=WebhooksConfig)
     knowledge: KnowledgeConfig = Field(default_factory=KnowledgeConfig)
     malware_scan: MalwareScanConfig = Field(default_factory=MalwareScanConfig)
     parsing: ParsingConfig = Field(default_factory=ParsingConfig)

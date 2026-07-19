@@ -11,7 +11,7 @@ primary onboarding path; [api/](api/README.md) remains the endpoint cheat sheet 
 
 ## What you are integrating
 
-APE is a **self-hosted AI microservice** your application calls over REST. Your app
+APE is a **dedicated hosted AI service** your application calls over REST. Your app
 owns users, UI, and business workflows. APE owns the document pipeline:
 
 ```text
@@ -1014,6 +1014,52 @@ Same request body as non-streaming `POST .../messages`.
 
 ---
 
+## Step 6 — Receive document outcomes with signed webhooks
+
+Create one Project-scoped endpoint and store the returned `signing_secret` in your
+application secret manager:
+
+```bash
+curl -s -X POST "$APE_BASE_URL/api/v1/projects/$PROJECT_ID/webhooks/endpoints" \
+  -H "Authorization: Bearer $APE_ORG_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url":"https://your-app.example/webhooks/ape",
+    "event_types":[
+      "document.processing.succeeded.v1",
+      "document.processing.failed.v1",
+      "document.indexing.succeeded.v1",
+      "document.indexing.failed.v1"
+    ]
+  }' | jq .
+```
+
+A minimal Python receiver verifies the raw body before parsing and deduplicates by event ID:
+
+```python
+import hashlib, hmac, json
+
+def receive(headers: dict[str, str], raw_body: bytes, secret: str, already_seen: set[str]):
+    event_id = headers["x-ape-event-id"]
+    timestamp = headers["x-ape-timestamp"]
+    supplied = headers["x-ape-signature"].removeprefix("v1=")
+    signed = timestamp.encode() + b"." + event_id.encode() + b"." + raw_body
+    expected = hmac.new(secret.encode(), signed, hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(supplied, expected):
+        raise PermissionError("invalid webhook signature")
+    if event_id in already_seen:
+        return "duplicate"
+    event = json.loads(raw_body)
+    already_seen.add(event_id)  # persist this transactionally in a real receiver
+    return event["type"], event["data"]["document_id"]
+```
+
+Return any `2xx` only after durably accepting the event. A non-2xx/transport failure is
+retried with backoff. Operators can inspect attempts, disable endpoints, and replay; replay
+uses the original event ID, so the receiver's deduplication remains authoritative.
+
+---
+
 ## Recommended integration patterns
 
 ### Map your tenant model
@@ -1085,6 +1131,9 @@ your own user authorization before choosing `project_id`.
 | Create evaluation dataset | `POST` | `/api/v1/projects/{project_id}/evaluations/datasets` |
 | Queue quality run | `POST` | `/api/v1/projects/{project_id}/evaluations/runs` |
 | Latest quality summary | `GET` | `/api/v1/projects/{project_id}/evaluations/quality` |
+| Create webhook endpoint | `POST` | `/api/v1/projects/{project_id}/webhooks/endpoints` |
+| Delivery history | `GET` | `/api/v1/projects/{project_id}/webhooks/deliveries` |
+| Replay delivery | `POST` | `/api/v1/projects/{project_id}/webhooks/deliveries/{id}/replay` |
 
 ---
 
@@ -1101,6 +1150,7 @@ your own user authorization before choosing `project_id`.
 - [ ] Hybrid search enabled (`APE_RETRIEVAL__STRATEGY=hybrid` in production `.env`)
 - [ ] Versioned pilot evaluation dataset has a passing stored run before trusted-answer rollout
 - [ ] Client displays insufficient-evidence outcomes and claim/source locations explicitly
+- [ ] Webhook receiver verifies raw-body HMAC, checks timestamp, and durably deduplicates event IDs
 
 ---
 
@@ -1115,6 +1165,7 @@ your own user authorization before choosing `project_id`.
 | Search returns empty | Document not `ready` | Poll status; check worker logs |
 | Chat `503 llm_provider_unavailable` | LLM backend down or misconfigured | Check `APE_LLM__*` settings on deployment |
 | `413` on upload | File too large | Split file or raise `APE_KNOWLEDGE__MAX_UPLOAD_BYTES` |
+| Webhook retries/fails | Receiver timeout, non-2xx, TLS/DNS error | Inspect delivery attempts, fix receiver, then replay the same event |
 
 ---
 
@@ -1128,6 +1179,8 @@ your own user authorization before choosing `project_id`.
 | Feature behavior | [features/README.md](features/README.md) |
 | Run locally | [../README.md](../README.md) |
 | Live schema | `{APE_BASE_URL}/docs` |
+| Webhook contract | [api/webhooks_api.md](api/webhooks_api.md) |
+| Hosted operations | [../infra/hosted/RUNBOOK.md](../infra/hosted/RUNBOOK.md) |
 
 ---
 

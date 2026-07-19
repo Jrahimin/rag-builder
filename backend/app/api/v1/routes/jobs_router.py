@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, status
 
 from app.core.http.envelopes import ApiResponse
 from app.dependencies.jobs import JobServiceDep
@@ -82,6 +82,7 @@ async def get_job(
 @router.post(
     "/{job_id}/retry",
     response_model=ApiResponse[JobResponse],
+    status_code=status.HTTP_202_ACCEPTED,
     summary="Retry a failed durable job",
 )
 async def retry_job(
