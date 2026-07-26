@@ -149,5 +149,8 @@ export const configurationFixture: ActiveConfiguration = {
   job_backend: "inline",
   retrieval_strategy: "hybrid",
   embedding_set_version: 1,
+  generation_default_retention: "none",
+  generation_full_retention_allowed: false,
+  generation_max_context_bytes: 204800,
   recent_project_snapshots: [],
 };

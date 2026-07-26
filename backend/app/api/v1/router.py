@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends
 from app.api.v1.routes.conversations_router import router as conversations_router
 from app.api.v1.routes.documents_router import router as documents_router
 from app.api.v1.routes.evaluations_router import router as evaluations_router
+from app.api.v1.routes.generations_router import router as generations_router
 from app.api.v1.routes.index_builds_router import router as index_builds_router
 from app.api.v1.routes.jobs_router import router as jobs_router
 from app.api.v1.routes.operator_router import router as operator_router
@@ -55,6 +56,11 @@ _project_nested_router.include_router(
     evaluations_router,
     prefix="/projects/{project_id}/evaluations",
     tags=["evaluations"],
+)
+_project_nested_router.include_router(
+    generations_router,
+    prefix="/projects/{project_id}/generations",
+    tags=["generations"],
 )
 _project_nested_router.include_router(
     search_router,

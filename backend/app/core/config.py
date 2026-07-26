@@ -468,6 +468,26 @@ class LLMConfig(BaseModel):
     provider_version: str = "1"
 
 
+class GenerationRetentionMode(StrEnum):
+    """Caller payload retention modes for contextual generation traces."""
+
+    NONE = "none"
+    METADATA_ONLY = "metadata_only"
+    FULL = "full"
+
+
+class GenerationConfig(BaseModel):
+    """Synchronous contextual generation limits and retention policy."""
+
+    max_request_bytes: int = Field(default=256 * 1024, ge=1024, le=10 * 1024 * 1024)
+    max_context_bytes: int = Field(default=200 * 1024, ge=1, le=10 * 1024 * 1024)
+    max_schema_bytes: int = Field(default=32 * 1024, ge=128, le=1024 * 1024)
+    max_context_depth: int = Field(default=12, ge=1, le=64)
+    max_context_nodes: int = Field(default=5000, ge=1, le=100_000)
+    default_retention: GenerationRetentionMode = GenerationRetentionMode.NONE
+    allow_full_retention: bool = True
+
+
 class VerifyCacheBackend(StrEnum):
     """Verified-key cache storage backend."""
 
@@ -575,6 +595,7 @@ class Settings(BaseSettings):
     embedding: EmbeddingConfig = Field(default_factory=EmbeddingConfig)
     retrieval: RetrievalConfig = Field(default_factory=RetrievalConfig)
     llm: LLMConfig = Field(default_factory=LLMConfig)
+    generation: GenerationConfig = Field(default_factory=GenerationConfig)
     chat: ChatConfig = Field(default_factory=ChatConfig)
     evaluation: EvaluationConfig = Field(default_factory=EvaluationConfig)
     auth: AuthConfig = Field(default_factory=AuthConfig)

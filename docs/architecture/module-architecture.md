@@ -107,6 +107,7 @@ Concrete provider interfaces are added with the first implementation.
 | `knowledge` | Ingestion — upload, parse, chunk; ends at `status=chunked` (shipped) |
 | `retrieval` | Embed → index → search (`chunked` → `embedded` → `ready`); hybrid + rerank shipped (ADR-009) |
 | `conversations` | Chat — retrieve → prompt → LLM → answer + citations; stateful conversations (shipped) |
+| `generation` | Caller context → versioned prompt/schema → validated LLM output (shipped) |
 | `webhooks` | Bounded document processing/index outcome delivery (shipped; ADR-016) |
 | `evaluation` | Quality measurement + feedback |
 
@@ -126,6 +127,7 @@ Auth verification is **not** in `modules/organizations/` services — it lives i
 modules/knowledge/       upload → parse → chunk       ends at status=chunked
 modules/retrieval/       embed → index → search        chunked → ready → POST /search
 modules/conversations/   chat (RAG generation)         uses RetrievalPort + BaseLLMProvider
+modules/generation/      contextual generation         no ingestion/retrieval dependency
 ```
 
 - **Knowledge** does not import retrieval.
@@ -133,6 +135,9 @@ modules/conversations/   chat (RAG generation)         uses RetrievalPort + Base
 - **Retrieval** owns pgvector SQL and keyword persistence. Model-facing embedding
   calls remain providers; vector persistence is not a provider abstraction.
 - **Conversations** does not import `modules/retrieval/` internals; composition layer wires `RetrievalPort` adapter.
+- **Generation** reuses `BaseLLMProvider` but remains independent from
+  knowledge, retrieval, and conversation internals. Registered use-case prompts
+  prevent a generic raw prompt proxy.
 - **Composition layer** (`dependencies/`) wires delete cascade, worker handoffs, and cross-module adapters.
 - **Shared composition helpers** (`composition/`) may wire the same service for
   API, worker, CLI, and tests; services themselves do not select concrete

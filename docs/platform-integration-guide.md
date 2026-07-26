@@ -28,6 +28,7 @@ your product.
 | File picker, upload UX | Document upload + async processing |
 | Search UI, filters | Hybrid retrieval API |
 | Chat UI, history | Conversations API |
+| Existing calculations / records | Contextual Generation API |
 
 ---
 
@@ -1013,6 +1014,120 @@ Same request body as non-streaming `POST .../messages`.
 
 ---
 
+## Alternative flow — contextual generation without documents
+
+Use contextual generation when your application already owns retrieval,
+calculations, or business rules and only needs RAG Builder to produce a governed
+LLM response.
+
+```text
+Your database / services / calculations
+        ↓ trusted text or JSON
+POST /projects/{project_id}/generations
+        ↓
+registered prompt + resolved schema + existing LLM provider
+        ↓
+validated output + persisted usage/trace
+```
+
+This endpoint does not upload Documents, create embeddings, or search a Project
+corpus. The Project remains the isolation, configuration, and usage boundary.
+
+### Generate a validated decision
+
+```bash
+curl -s -X POST "$APE_BASE_URL/api/v1/projects/$PROJECT_ID/generations" \
+  -H "Authorization: Bearer $APE_ORG_KEY" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: invoice-4821-v1" \
+  -d '{
+    "use_case": "contextual_answer",
+    "input": {"question": "Is this invoice ready for approval?"},
+    "context": {
+      "invoice": {"number": "INV-4821", "total": 1000},
+      "checks": [
+        {"name": "purchase_order_match", "passed": true},
+        {"name": "budget_available", "passed": true}
+      ]
+    },
+    "prompt_version": "v2",
+    "response_schema": {
+      "type": "object",
+      "properties": {
+        "decision": {"type": "string", "enum": ["approve", "review"]},
+        "reason": {"type": "string"}
+      },
+      "required": ["decision", "reason"],
+      "additionalProperties": false
+    },
+    "generation_config": {"temperature": 0.1, "max_tokens": 300},
+    "retention": "none"
+  }' | jq .
+```
+
+The result is in `data.output`. Save `data.id` when you need to retrieve the
+same persisted output and usage trace through:
+
+```http
+GET /api/v1/projects/{project_id}/generations/{generation_id}
+```
+
+### Python backend example
+
+```python
+import httpx
+
+def generate_invoice_decision(
+    *,
+    base_url: str,
+    api_key: str,
+    project_id: str,
+    invoice: dict,
+    checks: list[dict],
+) -> dict:
+    response = httpx.post(
+        f"{base_url}/api/v1/projects/{project_id}/generations",
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Idempotency-Key": f"invoice-{invoice['number']}-v1",
+        },
+        json={
+            "use_case": "contextual_answer",
+            "input": {"question": "Is this invoice ready for approval?"},
+            "context": {"invoice": invoice, "checks": checks},
+            "response_schema": {
+                "type": "object",
+                "properties": {
+                    "decision": {"type": "string", "enum": ["approve", "review"]},
+                    "reason": {"type": "string"},
+                },
+                "required": ["decision", "reason"],
+                "additionalProperties": False,
+            },
+            "retention": "none",
+        },
+        timeout=130,
+    )
+    response.raise_for_status()
+    return response.json()["data"]["output"]
+```
+
+Available built-in use cases are `contextual_answer` and
+`structured_summary`. The use case and prompt version control system behavior;
+there is intentionally no raw-prompt field.
+
+Retention defaults to `none`: raw input/context is not persisted. Use
+`metadata_only` for shape metadata or `full` only when the data classification
+and deployment policy allow it. Output, schema identity, provider/model
+versions, tokens, timing, and correlation IDs are always retained.
+
+On retry, reuse the same `Idempotency-Key` and identical body. A changed body
+with the same key returns `generation_idempotency_conflict`. Provider output
+that fails the resolved schema returns `generation_output_schema_mismatch`; the
+safe failed trace remains available to operators.
+
+---
+
 ## Step 6 — Receive document outcomes with signed webhooks
 
 Create one Project-scoped endpoint and store the returned `signing_secret` in your
@@ -1069,6 +1184,7 @@ Your workspace / matter  ->  APE Project (store project_id in your DB)
 Your uploaded file       ->  APE Document (store document_id)
 Your async operation     ->  APE JobRun (store returned job_id when useful)
 Your chat thread         ->  APE Conversation (store conversation_id)
+Your contextual LLM call ->  APE Generation (store generation_id)
 ```
 
 ### Polling helper (pseudo-code)
@@ -1127,6 +1243,8 @@ your own user authorization before choosing `project_id`.
 | Create chat | `POST` | `/api/v1/projects/{project_id}/conversations` |
 | Send message | `POST` | `/api/v1/projects/{project_id}/conversations/{id}/messages` |
 | Stream message | `POST` | `/api/v1/projects/{project_id}/conversations/{id}/messages/stream` |
+| Contextual generation | `POST` | `/api/v1/projects/{project_id}/generations` |
+| Generation trace | `GET` | `/api/v1/projects/{project_id}/generations/{id}` |
 | Create evaluation dataset | `POST` | `/api/v1/projects/{project_id}/evaluations/datasets` |
 | Queue quality run | `POST` | `/api/v1/projects/{project_id}/evaluations/runs` |
 | Latest quality summary | `GET` | `/api/v1/projects/{project_id}/evaluations/quality` |
@@ -1149,6 +1267,8 @@ your own user authorization before choosing `project_id`.
 - [ ] Hybrid search enabled (`APE_RETRIEVAL__STRATEGY=hybrid` in production `.env`)
 - [ ] Versioned pilot evaluation dataset has a passing stored run before trusted-answer rollout
 - [ ] Client displays insufficient-evidence outcomes and claim/source locations explicitly
+- [ ] Contextual generation callers use registered use cases, response schemas,
+      stable idempotency keys, and the minimum required retention mode
 - [ ] Webhook receiver verifies raw-body HMAC, checks timestamp, and durably deduplicates event IDs
 
 ---

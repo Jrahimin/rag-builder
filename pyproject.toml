@@ -137,6 +137,7 @@ module = [
     "botocore.*",
     "docx.*",
     "fitz",
+    "jsonschema.*",
     "paddleocr.*",
     "PIL.*",
     "pypdfium2.*",
