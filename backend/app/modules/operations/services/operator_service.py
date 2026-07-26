@@ -220,6 +220,9 @@ class OperatorService:
             job_backend=self._settings.jobs.backend.value,
             retrieval_strategy=self._settings.retrieval.strategy.value,
             embedding_set_version=self._settings.retrieval.embedding_set_version,
+            generation_default_retention=self._settings.generation.default_retention.value,
+            generation_full_retention_allowed=self._settings.generation.allow_full_retention,
+            generation_max_context_bytes=self._settings.generation.max_context_bytes,
             recent_project_snapshots=snapshots,
         )
 

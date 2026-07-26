@@ -4,6 +4,7 @@ from app.models.document import Document
 from app.models.document_chunk import DocumentChunk
 from app.models.evaluation_dataset import EvaluationDataset
 from app.models.evaluation_run import EvaluationRun
+from app.models.generation import Generation
 from app.models.index_build import IndexBuild, ProjectIndexPointer
 from app.models.project import Project
 from app.models.webhook_endpoint import WebhookEndpoint
@@ -14,6 +15,7 @@ __all__ = [
     "DocumentChunk",
     "EvaluationDataset",
     "EvaluationRun",
+    "Generation",
     "IndexBuild",
     "Project",
     "ProjectIndexPointer",

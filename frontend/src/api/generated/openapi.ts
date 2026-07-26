@@ -546,6 +546,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{project_id}/generations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Generate a validated response from caller-provided context */
+        post: operations["create_generation_api_v1_projects__project_id__generations_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/generations/{generation_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get a contextual generation trace by id */
+        get: operations["get_generation_api_v1_projects__project_id__generations__generation_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{project_id}/index-builds": {
         parameters: {
             query?: never;
@@ -889,6 +923,12 @@ export interface components {
             embedding_set_version: number;
             /** Environment */
             environment: string;
+            /** Generation Default Retention */
+            generation_default_retention: string;
+            /** Generation Full Retention Allowed */
+            generation_full_retention_allowed: boolean;
+            /** Generation Max Context Bytes */
+            generation_max_context_bytes: number;
             /** Job Backend */
             job_backend: string;
             llm: components["schemas"]["ProviderConfiguration"];
@@ -1098,6 +1138,18 @@ export interface components {
         /** ApiResponse[EvaluationRunResponse] */
         ApiResponse_EvaluationRunResponse_: {
             data?: components["schemas"]["EvaluationRunResponse"] | null;
+            /** Message */
+            message?: string | null;
+            meta?: components["schemas"]["ResponseMeta"] | null;
+            /**
+             * Success
+             * @default true
+             */
+            success: boolean;
+        };
+        /** ApiResponse[GenerationResponse] */
+        ApiResponse_GenerationResponse_: {
+            data?: components["schemas"]["GenerationResponse"] | null;
             /** Message */
             message?: string | null;
             meta?: components["schemas"]["ResponseMeta"] | null;
@@ -2035,6 +2087,140 @@ export interface components {
                 [key: string]: unknown;
             };
         };
+        /**
+         * GenerationCreateRequest
+         * @description Trusted caller input and context for one registered generation use case.
+         */
+        GenerationCreateRequest: {
+            context: components["schemas"]["JsonValue"];
+            generation_config?: components["schemas"]["GenerationRequestConfig"];
+            input: components["schemas"]["JsonValue"];
+            /** Locale */
+            locale?: string | null;
+            /** Prompt Version */
+            prompt_version?: string | null;
+            /** Response Schema */
+            response_schema?: {
+                [key: string]: components["schemas"]["JsonValue"];
+            } | null;
+            retention?: components["schemas"]["GenerationRetentionMode"] | null;
+            /** Use Case */
+            use_case: string;
+        };
+        /**
+         * GenerationFailure
+         * @description Safe persisted terminal failure detail.
+         */
+        GenerationFailure: {
+            /** Code */
+            code: string;
+            /** Message */
+            message: string;
+        };
+        /**
+         * GenerationRequestConfig
+         * @description Bounded caller overrides for model generation.
+         */
+        GenerationRequestConfig: {
+            /** Max Tokens */
+            max_tokens?: number | null;
+            /** Model */
+            model?: string | null;
+            provider?: components["schemas"]["LLMBackend"] | null;
+            /** Temperature */
+            temperature?: number | null;
+        };
+        /**
+         * GenerationResponse
+         * @description Normalized generation result returned by create and get.
+         */
+        GenerationResponse: {
+            /** Completed At */
+            completed_at: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            failure: components["schemas"]["GenerationFailure"] | null;
+            /** Finish Reason */
+            finish_reason: string | null;
+            /** Grounded */
+            grounded: boolean;
+            grounding_status: components["schemas"]["GroundingStatus"];
+            /** Id */
+            id: string;
+            /**
+             * Idempotency Replayed
+             * @default false
+             */
+            idempotency_replayed: boolean;
+            /** Model */
+            model: string;
+            output: components["schemas"]["JsonValue"] | null;
+            /** Payload Retained */
+            payload_retained: boolean;
+            /** Project Id */
+            project_id: string;
+            /** Prompt Version */
+            prompt_version: string;
+            /** Provider */
+            provider: string;
+            /** Provider Version */
+            provider_version: string | null;
+            /** Request Id */
+            request_id: string;
+            retention: components["schemas"]["GenerationRetentionMode"];
+            /** Schema Version */
+            schema_version: string;
+            status: components["schemas"]["GenerationStatus"];
+            timing: components["schemas"]["GenerationTiming"];
+            /** Trace Id */
+            trace_id: string;
+            usage: components["schemas"]["GenerationUsage"];
+            /** Use Case */
+            use_case: string;
+        };
+        /**
+         * GenerationRetentionMode
+         * @description Caller payload retention modes for contextual generation traces.
+         * @enum {string}
+         */
+        GenerationRetentionMode: "none" | "metadata_only" | "full";
+        /**
+         * GenerationStatus
+         * @description Persisted lifecycle for one synchronous generation request.
+         * @enum {string}
+         */
+        GenerationStatus: "processing" | "succeeded" | "failed";
+        /**
+         * GenerationTiming
+         * @description Provider and end-to-end duration.
+         */
+        GenerationTiming: {
+            /** Provider Ms */
+            provider_ms: number | null;
+            /** Total Ms */
+            total_ms: number | null;
+        };
+        /**
+         * GenerationUsage
+         * @description Normalized token counts.
+         */
+        GenerationUsage: {
+            /** Input Tokens */
+            input_tokens: number | null;
+            /** Output Tokens */
+            output_tokens: number | null;
+            /** Total Tokens */
+            total_tokens: number | null;
+        };
+        /**
+         * GroundingStatus
+         * @description How the generation input was grounded.
+         * @enum {string}
+         */
+        GroundingStatus: "context_supplied" | "failed";
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -2309,6 +2495,13 @@ export interface components {
          * @enum {string}
          */
         JobType: "document.process" | "document.embed" | "document.index" | "evaluation.run" | "corpus.reembed" | "corpus.reindex" | "document.delete" | "document.purge" | "storage.reconcile";
+        JsonValue: unknown;
+        /**
+         * LLMBackend
+         * @description Supported LLM provider backends.
+         * @enum {string}
+         */
+        LLMBackend: "echo" | "openai" | "openai_compatible" | "ollama" | "gemini";
         /** LatencyMetric */
         LatencyMetric: {
             /** Average Ms */
@@ -4657,6 +4850,76 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApiResponse_EvaluationRunResponse_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_generation_api_v1_projects__project_id__generations_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Replay key scoped to the Project and normalized request payload. */
+                "Idempotency-Key"?: string | null;
+            };
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GenerationCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_GenerationResponse_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_generation_api_v1_projects__project_id__generations__generation_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+                generation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_GenerationResponse_"];
                 };
             };
             /** @description Validation Error */

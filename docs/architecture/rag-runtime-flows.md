@@ -209,6 +209,30 @@ retrieval and conversation implementations. Evaluation remains Project-scoped
 and asynchronous; no separate evaluation deployment or synchronous HTTP model
 loop exists.
 
+## Contextual generation
+
+```mermaid
+sequenceDiagram
+    participant API as generations router
+    participant Gen as GenerationService
+    participant DB as PostgreSQL
+    participant LLM as BaseLLMProvider
+
+    API->>Gen: use case + input + caller context
+    Gen->>Gen: validate limits and resolve prompt/schema/model
+    Gen->>DB: commit processing trace + idempotency reservation
+    Gen->>LLM: grounded versioned messages (no DB transaction held)
+    Gen->>Gen: parse and validate output schema
+    Gen->>DB: commit output/usage/timing or safe failure
+    Gen-->>API: normalized GenerationResponse
+```
+
+`modules/generation/` is a synchronous AI service for applications that already
+own retrieval and business logic. It does not create Documents, embeddings, or
+index artifacts and does not import other feature modules. Composition reuses
+the existing LLM factory. The trace applies configurable raw-payload retention
+while always preserving hashes, versions, correlation IDs, usage, and timing.
+
 ## Cross-cutting owners after alignment
 
 | Concern | Single owner |

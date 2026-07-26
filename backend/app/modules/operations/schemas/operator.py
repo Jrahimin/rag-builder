@@ -107,6 +107,9 @@ class ActiveConfiguration(BaseModel):
     job_backend: str
     retrieval_strategy: str
     embedding_set_version: int
+    generation_default_retention: str
+    generation_full_retention_allowed: bool
+    generation_max_context_bytes: int
     recent_project_snapshots: list[ConfigurationSnapshotSummary]
 
 

@@ -53,6 +53,9 @@ Your product  ── REST + API key ──►  RAG Builder
 - Rank fusion, metadata filtering, reranking, and duplicate-result suppression.
 - Stateful grounded conversations, SSE streaming, claim-linked citations, and
   evidence-based refusal when the corpus cannot support an answer.
+- Contextual generation from application-owned text or structured data, with
+  versioned use-case prompts, JSON Schema validation, idempotency, and optional
+  zero-payload-retention traces.
 - Versioned evaluation datasets, durable quality runs, regression metrics, and a
   fast provider-free smoke suite for CI.
 - Safe corpus changes through durable jobs, immutable index builds, atomic
@@ -76,6 +79,7 @@ Your product  ── REST + API key ──►  RAG Builder
 | HR platform | Answer handbook questions for a selected organization or region. |
 | Document management system | Add “ask this folder” without replacing the existing UI. |
 | Internal operations tool | Turn procedures and playbooks into a searchable assistant. |
+| Finance or workflow SaaS | Turn trusted calculations and records into a validated decision narrative without document ingestion. |
 
 The host product owns the experience. RAG Builder owns the knowledge lifecycle.
 
@@ -132,6 +136,7 @@ Feature services
   ├── knowledge       upload, parse, chunk, lifecycle
   ├── retrieval       embeddings, index builds, activation/rollback, search
   ├── conversations   context, evidence gate, prompts, LLM calls, citations
+  ├── generation      caller context, versioned prompts/schemas, validated output
   └── evaluation      datasets, quality runs, metrics, regressions
         │
         ├── PostgreSQL + pgvector

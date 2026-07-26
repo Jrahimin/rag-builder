@@ -12,6 +12,7 @@ from app.models.audit_event import AuditEvent
 from app.models.conversation import Conversation
 from app.models.document import Document
 from app.models.document_chunk import DocumentChunk
+from app.models.generation import Generation
 from app.models.job_configuration_snapshot import JobConfigurationSnapshot
 from app.models.job_outbox import JobOutbox, JobOutboxState
 from app.models.job_run import JobRun, JobState
@@ -104,7 +105,7 @@ class OperatorRepository:
     ) -> list[tuple[str, int, float | None, float | None]]:
         value = cast(Message.message_metadata["generation_ms"].astext, Float)
         provider = func.coalesce(Message.provider, Conversation.provider, default_provider)
-        rows = await self._session.execute(
+        chat_rows = await self._session.execute(
             select(provider, func.count(value), func.avg(value), func.max(value))
             .join(
                 Conversation,
@@ -118,13 +119,44 @@ class OperatorRepository:
             .group_by(provider)
             .order_by(provider)
         )
+        generation_rows = await self._session.execute(
+            select(
+                Generation.provider,
+                func.count(Generation.provider_latency_ms),
+                func.avg(Generation.provider_latency_ms),
+                func.max(Generation.provider_latency_ms),
+            )
+            .where(Generation.provider_latency_ms.is_not(None))
+            .group_by(Generation.provider)
+            .order_by(Generation.provider)
+        )
+        aggregates: dict[str, tuple[int, float, float]] = {}
+        for name, count, average, maximum in [*chat_rows.all(), *generation_rows.all()]:
+            resolved_name = str(name)
+            resolved_count = int(count)
+            resolved_average = float(average or 0.0)
+            resolved_maximum = float(maximum or 0.0)
+            previous_count, previous_sum, previous_maximum = aggregates.get(
+                resolved_name,
+                (0, 0.0, 0.0),
+            )
+            aggregates[resolved_name] = (
+                previous_count + resolved_count,
+                previous_sum + (resolved_average * resolved_count),
+                max(previous_maximum, resolved_maximum),
+            )
         return [
-            (str(name), int(count), _float_or_none(average), _float_or_none(maximum))
-            for name, count, average, maximum in rows.all()
+            (
+                name,
+                count,
+                round(total / count, 3) if count else None,
+                round(maximum, 3) if count else None,
+            )
+            for name, (count, total, maximum) in sorted(aggregates.items())
         ]
 
     async def token_usage(self) -> tuple[int, int]:
-        row = (
+        message_row = (
             await self._session.execute(
                 select(
                     func.coalesce(func.sum(Message.input_tokens), 0),
@@ -132,7 +164,18 @@ class OperatorRepository:
                 ).where(Message.role == MessageRole.ASSISTANT)
             )
         ).one()
-        return int(row[0]), int(row[1])
+        generation_row = (
+            await self._session.execute(
+                select(
+                    func.coalesce(func.sum(Generation.input_tokens), 0),
+                    func.coalesce(func.sum(Generation.output_tokens), 0),
+                )
+            )
+        ).one()
+        return (
+            int(message_row[0]) + int(generation_row[0]),
+            int(message_row[1]) + int(generation_row[1]),
+        )
 
     async def corpus_counts(self) -> tuple[int, int, int, int]:
         projects = int(await self._session.scalar(select(func.count(Project.id))) or 0)

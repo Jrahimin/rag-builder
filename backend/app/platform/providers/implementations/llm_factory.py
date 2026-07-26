@@ -92,6 +92,21 @@ def create_llm_provider(
     )
 
 
+def create_llm_provider_for_config(
+    settings: Settings,
+    *,
+    provider: str | None,
+    model: str | None,
+) -> BaseLLMProvider:
+    """Resolve an LLM provider from an output-affecting configuration snapshot."""
+    cfg = settings.llm
+    return _build_llm_provider(
+        settings,
+        backend=LLMBackend(provider or cfg.backend.value),
+        model=model or cfg.model,
+    )
+
+
 def create_llm_provider_for_conversation(
     settings: Settings,
     *,
@@ -99,11 +114,10 @@ def create_llm_provider_for_conversation(
     model: str | None,
 ) -> BaseLLMProvider:
     """Resolve the LLM provider from a conversation config snapshot."""
-    cfg = settings.llm
-    return _build_llm_provider(
+    return create_llm_provider_for_config(
         settings,
-        backend=LLMBackend(provider or cfg.backend.value),
-        model=model or cfg.model,
+        provider=provider,
+        model=model,
     )
 
 

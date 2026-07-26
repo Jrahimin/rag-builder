@@ -18,6 +18,18 @@
             "title": "Environment",
             "type": "string"
           },
+          "generation_default_retention": {
+            "title": "Generation Default Retention",
+            "type": "string"
+          },
+          "generation_full_retention_allowed": {
+            "title": "Generation Full Retention Allowed",
+            "type": "boolean"
+          },
+          "generation_max_context_bytes": {
+            "title": "Generation Max Context Bytes",
+            "type": "integer"
+          },
           "job_backend": {
             "title": "Job Backend",
             "type": "string"
@@ -70,6 +82,9 @@
           "job_backend",
           "retrieval_strategy",
           "embedding_set_version",
+          "generation_default_retention",
+          "generation_full_retention_allowed",
+          "generation_max_context_bytes",
           "recent_project_snapshots"
         ],
         "title": "ActiveConfiguration",
@@ -642,6 +657,48 @@
           }
         },
         "title": "ApiResponse[EvaluationRunResponse]",
+        "type": "object"
+      },
+      "ApiResponse_GenerationResponse_": {
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GenerationResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          },
+          "meta": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ResponseMeta"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "success": {
+            "default": true,
+            "title": "Success",
+            "type": "boolean"
+          }
+        },
+        "title": "ApiResponse[GenerationResponse]",
         "type": "object"
       },
       "ApiResponse_IndexBuildListResponse_": {
@@ -3456,6 +3513,422 @@
         "title": "EvaluationRunResponse",
         "type": "object"
       },
+      "GenerationCreateRequest": {
+        "additionalProperties": false,
+        "description": "Trusted caller input and context for one registered generation use case.",
+        "properties": {
+          "context": {
+            "$ref": "#/components/schemas/JsonValue"
+          },
+          "generation_config": {
+            "$ref": "#/components/schemas/GenerationRequestConfig"
+          },
+          "input": {
+            "$ref": "#/components/schemas/JsonValue"
+          },
+          "locale": {
+            "anyOf": [
+              {
+                "maxLength": 35,
+                "minLength": 2,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Locale"
+          },
+          "prompt_version": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prompt Version"
+          },
+          "response_schema": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/JsonValue"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Response Schema"
+          },
+          "retention": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GenerationRetentionMode"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "use_case": {
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[a-z][a-z0-9_.-]*$",
+            "title": "Use Case",
+            "type": "string"
+          }
+        },
+        "required": [
+          "use_case",
+          "input",
+          "context"
+        ],
+        "title": "GenerationCreateRequest",
+        "type": "object"
+      },
+      "GenerationFailure": {
+        "description": "Safe persisted terminal failure detail.",
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "title": "GenerationFailure",
+        "type": "object"
+      },
+      "GenerationRequestConfig": {
+        "additionalProperties": false,
+        "description": "Bounded caller overrides for model generation.",
+        "properties": {
+          "max_tokens": {
+            "anyOf": [
+              {
+                "maximum": 128000.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Tokens"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "provider": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LLMBackend"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "temperature": {
+            "anyOf": [
+              {
+                "maximum": 2.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Temperature"
+          }
+        },
+        "title": "GenerationRequestConfig",
+        "type": "object"
+      },
+      "GenerationResponse": {
+        "description": "Normalized generation result returned by create and get.",
+        "properties": {
+          "completed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "failure": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GenerationFailure"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "finish_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finish Reason"
+          },
+          "grounded": {
+            "title": "Grounded",
+            "type": "boolean"
+          },
+          "grounding_status": {
+            "$ref": "#/components/schemas/GroundingStatus"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "idempotency_replayed": {
+            "default": false,
+            "title": "Idempotency Replayed",
+            "type": "boolean"
+          },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "output": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/JsonValue"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "payload_retained": {
+            "title": "Payload Retained",
+            "type": "boolean"
+          },
+          "project_id": {
+            "title": "Project Id",
+            "type": "string"
+          },
+          "prompt_version": {
+            "title": "Prompt Version",
+            "type": "string"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          },
+          "provider_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider Version"
+          },
+          "request_id": {
+            "title": "Request Id",
+            "type": "string"
+          },
+          "retention": {
+            "$ref": "#/components/schemas/GenerationRetentionMode"
+          },
+          "schema_version": {
+            "title": "Schema Version",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/GenerationStatus"
+          },
+          "timing": {
+            "$ref": "#/components/schemas/GenerationTiming"
+          },
+          "trace_id": {
+            "title": "Trace Id",
+            "type": "string"
+          },
+          "usage": {
+            "$ref": "#/components/schemas/GenerationUsage"
+          },
+          "use_case": {
+            "title": "Use Case",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "project_id",
+          "use_case",
+          "status",
+          "output",
+          "grounded",
+          "grounding_status",
+          "provider",
+          "model",
+          "provider_version",
+          "prompt_version",
+          "schema_version",
+          "usage",
+          "timing",
+          "request_id",
+          "trace_id",
+          "retention",
+          "payload_retained",
+          "finish_reason",
+          "failure",
+          "created_at",
+          "completed_at"
+        ],
+        "title": "GenerationResponse",
+        "type": "object"
+      },
+      "GenerationRetentionMode": {
+        "description": "Caller payload retention modes for contextual generation traces.",
+        "enum": [
+          "none",
+          "metadata_only",
+          "full"
+        ],
+        "title": "GenerationRetentionMode",
+        "type": "string"
+      },
+      "GenerationStatus": {
+        "description": "Persisted lifecycle for one synchronous generation request.",
+        "enum": [
+          "processing",
+          "succeeded",
+          "failed"
+        ],
+        "title": "GenerationStatus",
+        "type": "string"
+      },
+      "GenerationTiming": {
+        "description": "Provider and end-to-end duration.",
+        "properties": {
+          "provider_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider Ms"
+          },
+          "total_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Ms"
+          }
+        },
+        "required": [
+          "provider_ms",
+          "total_ms"
+        ],
+        "title": "GenerationTiming",
+        "type": "object"
+      },
+      "GenerationUsage": {
+        "description": "Normalized token counts.",
+        "properties": {
+          "input_tokens": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Input Tokens"
+          },
+          "output_tokens": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Output Tokens"
+          },
+          "total_tokens": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Tokens"
+          }
+        },
+        "required": [
+          "input_tokens",
+          "output_tokens",
+          "total_tokens"
+        ],
+        "title": "GenerationUsage",
+        "type": "object"
+      },
+      "GroundingStatus": {
+        "description": "How the generation input was grounded.",
+        "enum": [
+          "context_supplied",
+          "failed"
+        ],
+        "title": "GroundingStatus",
+        "type": "string"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -4259,6 +4732,19 @@
           "storage.reconcile"
         ],
         "title": "JobType",
+        "type": "string"
+      },
+      "JsonValue": {},
+      "LLMBackend": {
+        "description": "Supported LLM provider backends.",
+        "enum": [
+          "echo",
+          "openai",
+          "openai_compatible",
+          "ollama",
+          "gemini"
+        ],
+        "title": "LLMBackend",
         "type": "string"
       },
       "LatencyMetric": {
@@ -9325,6 +9811,148 @@
         "summary": "Get one quality run and its exact versions",
         "tags": [
           "evaluations"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/generations": {
+      "post": {
+        "operationId": "create_generation_api_v1_projects__project_id__generations_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Replay key scoped to the Project and normalized request payload.",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 255,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Replay key scoped to the Project and normalized request payload.",
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GenerationCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_GenerationResponse_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OrganizationBearer": []
+          },
+          {
+            "OrganizationApiKey": []
+          }
+        ],
+        "summary": "Generate a validated response from caller-provided context",
+        "tags": [
+          "generations"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/generations/{generation_id}": {
+      "get": {
+        "operationId": "get_generation_api_v1_projects__project_id__generations__generation_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "generation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Generation Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_GenerationResponse_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OrganizationBearer": []
+          },
+          {
+            "OrganizationApiKey": []
+          }
+        ],
+        "summary": "Get a contextual generation trace by id",
+        "tags": [
+          "generations"
         ]
       }
     },

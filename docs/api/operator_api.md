@@ -33,7 +33,8 @@ Active Taskiq workers, heartbeat age, process identity, version, and queue.
 
 ## GET /api/v1/operator/metrics
 
-Job/queue/retry/failure, latency, token usage, corpus/storage, and active index-version metrics.
+Job/queue/retry/failure, chat and contextual-generation latency, combined LLM
+token usage, corpus/storage, and active index-version metrics.
 
 ## GET /api/v1/operator/configuration
 
