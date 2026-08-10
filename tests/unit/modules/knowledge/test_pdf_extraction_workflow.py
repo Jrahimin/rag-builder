@@ -283,9 +283,7 @@ def test_bangla_route_fails_when_page_cap_is_exceeded(
         "app.platform.providers.implementations.pdf_extraction_workflow.get_ocr_provider",
         lambda **_kwargs: _RecordingBanglaOcrProvider(),
     )
-    workflow = PdfExtractionWorkflow(
-        ocr_config=_bangla_ocr_config(max_ocr_pages_per_document=1)
-    )
+    workflow = PdfExtractionWorkflow(ocr_config=_bangla_ocr_config(max_ocr_pages_per_document=1))
 
     with pytest.raises(ProviderError, match="exceeding the configured limit"):
         workflow.parse(

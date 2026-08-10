@@ -1,6 +1,6 @@
 # Bangla OCR via Google Cloud Vision — Implementation Plan
 
-**Status:** Planned (not yet implemented)
+**Status:** Complete
 
 Resolve a document language (explicit `ocr_lang`, else existing Unicode script detection, else deployment default) and route Bangla documents to Google Cloud Vision as the sole extraction source. One branch inside the existing PDF workflow, one new OCR provider behind the existing contract, no Bangla-specific heuristics, no new dependencies, no changes to `ParseQualityScorer`.
 
@@ -128,7 +128,7 @@ Shared downstream path stays verbatim: `_ocr_page_candidate`, `_register_candida
 New file implementing the unchanged `OCRProvider` contract:
 
 - `provider_name = "google_vision"`
-- `DOCUMENT_TEXT_DETECTION` via `https://vision.googleapis.com/v1/images:annotate?key=...`
+- `DOCUMENT_TEXT_DETECTION` via `https://vision.googleapis.com/v1/images:annotate` with the API key in `x-goog-api-key`
 - **Do not send `languageHints` initially** — let Google auto-detect Bangla + English inside the routed document. Revisit only if later benchmarking proves hints improve quality.
 - Text from `fullTextAnnotation.text` through `normalize_for_storage`
 - `confidence` = mean of block confidences; `lines` from newline splits

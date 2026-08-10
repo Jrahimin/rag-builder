@@ -77,12 +77,15 @@ def test_resolve_document_language_precedence(
     default: str,
     expected: tuple[str, str],
 ) -> None:
-    assert resolve_document_language(
-        explicit=explicit,
-        sample_text=sample,
-        default_lang=default,
-        bangla_min_ratio=0.1,
-    ) == expected
+    assert (
+        resolve_document_language(
+            explicit=explicit,
+            sample_text=sample,
+            default_lang=default,
+            bangla_min_ratio=0.1,
+        )
+        == expected
+    )
     assert is_ocr_first_language("bangla")
 
 

@@ -22,6 +22,11 @@ from app.platform.providers.errors import (
 
 _PROVIDER_NAME = "google_vision"
 _FEATURE_TYPE = "DOCUMENT_TEXT_DETECTION"
+_GOOGLE_RPC_DEADLINE_EXCEEDED = 4
+_GOOGLE_RPC_PERMISSION_DENIED = 7
+_GOOGLE_RPC_RESOURCE_EXHAUSTED = 8
+_GOOGLE_RPC_UNAVAILABLE = 14
+_GOOGLE_RPC_UNAUTHENTICATED = 16
 
 
 class GoogleVisionOCRProvider(OCRProvider):
@@ -66,7 +71,7 @@ class GoogleVisionOCRProvider(OCRProvider):
             try:
                 response = self._client.post(
                     self._endpoint,
-                    params={"key": self._api_key},
+                    headers={"x-goog-api-key": self._api_key},
                     json=payload,
                 )
                 annotation = self._parse_response(response)
@@ -184,17 +189,22 @@ class GoogleVisionOCRProvider(OCRProvider):
                 provider_name=self.provider_name,
             )
         code = error.get("code")
-        if code in {401, 403}:
+        if code in {_GOOGLE_RPC_PERMISSION_DENIED, _GOOGLE_RPC_UNAUTHENTICATED}:
             raise ProviderAuthenticationError(
                 "Google Vision OCR rejected the configured credentials.",
                 provider_name=self.provider_name,
             )
-        if code == 429:
+        if code == _GOOGLE_RPC_RESOURCE_EXHAUSTED:
             raise ProviderRateLimitError(
                 "Google Vision OCR rate limit exceeded.",
                 provider_name=self.provider_name,
             )
-        if isinstance(code, int) and code >= 500:
+        if code == _GOOGLE_RPC_DEADLINE_EXCEEDED:
+            raise ProviderTimeoutError(
+                "Google Vision OCR request timed out.",
+                provider_name=self.provider_name,
+            )
+        if code == _GOOGLE_RPC_UNAVAILABLE:
             raise ProviderUnavailableError(
                 "Google Vision OCR is temporarily unavailable.",
                 provider_name=self.provider_name,
@@ -202,7 +212,7 @@ class GoogleVisionOCRProvider(OCRProvider):
         raise ProviderError(
             "Google Vision OCR rejected the image annotation request.",
             provider_name=self.provider_name,
-            context={"status_code": code},
+            context={"google_rpc_status_code": code},
         )
 
 

@@ -11,7 +11,9 @@ from app.platform.providers.contracts.ocr import OcrImageInput
 from app.platform.providers.errors import (
     ProviderAuthenticationError,
     ProviderError,
+    ProviderRateLimitError,
     ProviderTimeoutError,
+    ProviderUnavailableError,
 )
 from app.platform.providers.implementations.google_vision_ocr_provider import (
     GoogleVisionOCRProvider,
@@ -39,7 +41,8 @@ def _provider(
 def test_google_vision_success_normalizes_text_and_averages_block_confidence() -> None:
     def respond(request: httpx.Request) -> httpx.Response:
         body = json.loads(request.content)
-        assert request.url.params["key"] == "test-key"
+        assert request.url.params == httpx.QueryParams()
+        assert request.headers["x-goog-api-key"] == "test-key"
         assert body["requests"][0]["features"] == [{"type": "DOCUMENT_TEXT_DETECTION"}]
         assert "imageContext" not in body["requests"][0]
         return httpx.Response(
@@ -79,6 +82,37 @@ def test_google_vision_maps_authentication_failure() -> None:
     )
     with pytest.raises(ProviderAuthenticationError):
         provider.recognize(OcrImageInput(data=b"image"))
+
+
+@pytest.mark.parametrize(
+    ("code", "error_type", "retryable"),
+    [
+        (7, ProviderAuthenticationError, False),
+        (16, ProviderAuthenticationError, False),
+        (8, ProviderRateLimitError, True),
+        (4, ProviderTimeoutError, True),
+        (14, ProviderUnavailableError, True),
+    ],
+)
+def test_google_vision_maps_annotation_google_rpc_status_codes(
+    code: int,
+    error_type: type[ProviderError],
+    retryable: bool,
+) -> None:
+    provider = _provider(
+        httpx.MockTransport(
+            lambda _request: httpx.Response(
+                200,
+                json={"responses": [{"error": {"code": code}}]},
+            )
+        ),
+        max_attempts=1,
+    )
+
+    with pytest.raises(error_type) as exc_info:
+        provider.recognize(OcrImageInput(data=b"image"))
+
+    assert exc_info.value.retryable is retryable
 
 
 def test_google_vision_retries_rate_limit_then_succeeds() -> None:

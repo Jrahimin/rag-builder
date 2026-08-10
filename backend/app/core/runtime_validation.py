@@ -177,9 +177,10 @@ def _base_configuration_errors(settings: Settings) -> list[str]:
     if llm.backend is LLMBackend.GEMINI and not llm.gemini_api_key:
         errors.append("APE_LLM__GEMINI_API_KEY is required for the Gemini LLM")
     ocr = settings.ocr
-    if OcrBackend.GOOGLE_VISION in {ocr.backend, ocr.bangla_backend} and not (
-        ocr.google_api_key or ""
-    ).strip():
+    if (
+        OcrBackend.GOOGLE_VISION in {ocr.backend, ocr.bangla_backend}
+        and not (ocr.google_api_key or "").strip()
+    ):
         errors.append("APE_OCR__GOOGLE_API_KEY is required for Google Vision OCR")
     return errors
 
