@@ -102,6 +102,7 @@ class ActiveConfiguration(BaseModel):
     embedding: ProviderConfiguration
     reranker_backend: str
     ocr_backend: str
+    ocr_bangla_backend: str
     ocr_enabled: bool
     storage_backend: str
     job_backend: str

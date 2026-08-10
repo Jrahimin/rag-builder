@@ -25,6 +25,7 @@ export function ActiveConfigurationDetails() {
     ["Retrieval strategy", config.retrieval_strategy],
     ["Reranker", config.reranker_backend],
     ["OCR", config.ocr_enabled ? config.ocr_backend : "disabled"],
+    ["Bangla OCR", config.ocr_enabled ? config.ocr_bangla_backend : "disabled"],
     ["Index version", `v${config.embedding_set_version}`],
   ];
   return (

@@ -9,7 +9,7 @@ APE treats multilingual corpora as first-class through Unicode-property tokeniza
 | Tokenization | `regex` package with `\p{Letter}`, `\p{Number}`, `\p{Mark}` (`unicode_property_v1`) |
 | Normalization | Shared `text_normalizer` for parsers, chunking, BM25, and query paths |
 | Languages | Heuristic script-ratio detection with confidence and mixed-language support |
-| OCR | Optional `OCRProvider` (PaddleOCR via `requirements/ocr.txt`) |
+| OCR | Optional `OCRProvider`: PaddleOCR for the existing pipeline; Google Cloud Vision for Bangla |
 | PDF parsing | Page-level Unicode quality scoring with PyMuPDF → PDFium → OCR fallback |
 | FTS | Configurable `APE_RETRIEVAL__FTS_REGCONFIG` (default `simple`) |
 | Reindex | `python -m app.cli.reindex_cli` after tokenizer upgrades |
@@ -20,7 +20,11 @@ APE treats multilingual corpora as first-class through Unicode-property tokeniza
 APE_CHUNKING__TOKEN_COUNT_METHOD=unicode_property_v1
 APE_OCR__ENABLED=false
 APE_OCR__BACKEND=noop
+APE_OCR__BANGLA_BACKEND=noop
 APE_OCR__LANG=en
+APE_OCR__GOOGLE_API_KEY=
+APE_OCR__BANGLA_MIN_RATIO=0.10
+APE_OCR__MAX_OCR_PAGES_PER_DOCUMENT=100
 APE_RETRIEVAL__FTS_REGCONFIG=simple
 APE_RETRIEVAL__MIN_OCR_CONFIDENCE=
 APE_RETRIEVAL__FILTERABLE_METADATA_KEYS=source,tags,ocr_confidence
@@ -29,50 +33,55 @@ APE_PARSING__MIN_PAGE_QUALITY_SCORE=0.55
 APE_PARSING__MIN_DOCUMENT_SUCCESS_RATIO=0.2
 ```
 
-Enable OCR:
+PaddleOCR requires its optional dependency set:
 
 ```bash
 pip install -r backend/requirements/ocr.txt
 ```
 
-Set `APE_OCR__ENABLED=true` and `APE_OCR__BACKEND=paddle`.
+Set `APE_OCR__ENABLED=true` and `APE_OCR__BACKEND=paddle` for the existing
+English/general fallback. Google Vision uses the base `httpx` dependency; enable the Bangla route
+with `APE_OCR__BANGLA_BACKEND=google_vision` and `APE_OCR__GOOGLE_API_KEY`.
 
 ### Per-document OCR language
 
 | Source | Precedence |
 |--------|------------|
 | `ocr_lang` on upload (form field) or reprocess (query) | Highest — stored on `documents.ocr_lang` |
-| `APE_OCR__LANG` | Deployment default when `documents.ocr_lang` is null |
+| Bengali script ratio in a usable PDF text layer | Second — `bn` when it meets `APE_OCR__BANGLA_MIN_RATIO` |
+| Primary detected script | Third — used when the sample has letters and is not Bangla |
+| `APE_OCR__LANG` | Deployment default for scans, images, and other letterless samples |
 
-Use this when a single deployment ingests mixed scripts (e.g. default `en` for English scans, `ocr_lang=hi` for Hindi/Devanagari image uploads). Aliases are normalized at ingest (`eng`→`en`, `bangla`→`bn`).
+Use an explicit language when the source has no reliable Unicode text layer. Aliases are normalized
+at ingest (`eng`→`en`, `bangla`/`bengali`/`ben`→`bn`). Mixed Unicode Bangla and English routes to
+Bangla when the Bengali ratio reaches the configured threshold.
 
-The worker keeps a small in-process OCR provider pool (keyed by backend + language + GPU flag) so multiple languages do not reload Paddle models on every document.
+The worker keeps a small in-process OCR provider pool keyed by effective backend, language, and GPU
+flag, so Paddle and Vision can coexist without reinitialization on every document.
 
-## Known limitation: Bangla (Bengali) OCR
+<a id="known-limitation-bangla-bengali-ocr"></a>
 
-**Phase 1 does not reliably extract Bangla from scanned or custom-font PDFs.** This is a documented platform limitation, not a configuration bug.
+## Bangla (Bengali) OCR routing and limitations
 
-| Scenario | What happens today |
-| -------- | ------------------ |
-| Digital PDF with valid Unicode Bengali text layer | Works — PyMuPDF/PDFium extract `\p{Bengali}`; chunking, BM25, and semantic search behave normally |
-| Legacy Bangla PDF with broken `/ToUnicode` (custom fonts) | Native extract is Latin glyph soup; parse quality scorer rejects it and OCR fallback runs |
-| `ocr_lang=bn` on upload/reprocess | **Fails** — PaddleOCR 3.7 does not ship stock Bengali models; worker raises `ProviderError` at provider init (`paddle_ocr_langs.py`) |
-| OCR fallback with default `APE_OCR__LANG=en` | Runs, but English recognition on Bangla script produces wrong output (CJK misreads, number fragments, readable English blocks only). May still pass OCR confidence and parse-quality checks |
-| Bangla image upload (`.png`, `.jpg`) with `ocr_lang=bn` | Same as above — `bn` is not supported on the Paddle backend |
+When the resolved language is `bn` and the Bangla backend is enabled, Google Vision
+`DOCUMENT_TEXT_DETECTION` OCRs every PDF page or the whole uploaded image. Native/PDFium text is
+not registered as a candidate on this route; Vision is the sole extraction source. Requests omit
+`languageHints` so mixed Bangla and English content is detected by Vision.
 
-**What works for Bangla corpora today**
+| Document type | Auto-detectable? | How it reaches Google Vision |
+| ------------- | ---------------- | ---------------------------- |
+| Unicode Bangla PDF | Yes — Bengali script in the text layer | Detection or explicit `ocr_lang=bn` / default `APE_OCR__LANG=bn` |
+| Mixed Unicode Bangla + English PDF | Yes — meaningful Bengali presence routes as Bangla | Detection or explicit/default `bn` |
+| Bijoy / custom-font Bangla PDF | **No** — extracts as Latin codepoints | Explicit `ocr_lang=bn` or deployment default `bn` required |
+| Bangla scan / image with no usable text layer | **No** — nothing exists to inspect before OCR | Explicit `ocr_lang=bn` or deployment default `bn` required |
 
-- PDFs that already embed proper Unicode Bengali in the text layer
-- Plain text / DOCX with Bengali content
-- Any ingestion path where parsed text contains real `\p{Bengali}` characters
+APE deliberately does not add Bijoy/font heuristics, encoding penalties, or a preliminary OCR pass
+only to detect language. A Bangla-oriented deployment can set `APE_OCR__LANG=bn`; mixed deployments
+should send `ocr_lang=bn` for scans, images, and custom-font documents.
 
-**Future direction (Phase 1+ / Phase 2)**
-
-- Alternate `OCRProvider` implementation with Bengali support (e.g. Tesseract `ben`, cloud Vision API)
-- Custom PaddleOCR Bengali recognition model wired through the existing provider factory
-- Script-mismatch validation so wrong-language OCR cannot beat native parser candidates
-
-See ADR-010, ADR-011, [OCR fundamentals](../learning/ocr-fundamentals.md), and `platform/providers/implementations/paddle_ocr_langs.py`.
+Google receives rasterized page/image content. Enabling the backend is therefore an explicit
+deployment data-residency decision. `APE_OCR__MAX_OCR_PAGES_PER_DOCUMENT` bounds request volume and
+fails oversized OCR targets rather than silently truncating them.
 
 ### PDF mixed-content handling
 
@@ -82,7 +91,10 @@ See ADR-010, ADR-011, [OCR fundamentals](../learning/ocr-fundamentals.md), and `
 | `APE_OCR__MIN_PAGE_CONFIDENCE` | `0.3` | Discard low-confidence OCR |
 | `APE_OCR__MIN_IMAGE_AREA_RATIO` | `0.08` | Per-image OCR only for images ≥ 8% of page area |
 
-On pages with **both** native text and embedded images: the PDF extraction workflow scores native text first, tries PDFium only for degraded pages, and invokes OCR only when configured and still below quality threshold. OCR output is kept only when it beats the best parser candidate for that page.
+For non-Bangla documents, pages with **both** native text and embedded images retain the existing
+behavior: score native text first, try PDFium only for degraded pages, and invoke the configured
+general OCR backend only when still below threshold. OCR output is kept only when it beats the best
+candidate. The Bangla route instead OCRs every page and does not compete with native candidates.
 
 ## Reindex after upgrades
 
@@ -98,6 +110,8 @@ python -m app.cli.reindex_cli project --project-id <uuid> --dry-run
 - English-only and mixed-language documents behave symmetrically
 - Low OCR confidence chunks filterable via `APE_RETRIEVAL__MIN_OCR_CONFIDENCE`
 - Ellipsis-terminated OCR lines split on sentence boundaries
-- Legacy Bangla scan / custom-font PDF → parse quality gate triggers OCR, but **Bangla OCR output is not production-ready** until a Bengali-capable OCR backend is added (see limitation above)
+- Unicode or mixed Bangla PDF + configured Vision backend → auto-detected and OCR-first
+- Bangla scan / Bijoy PDF + explicit or deployment-default `bn` → Vision OCR-first
+- English corpus → existing PyMuPDF → PDFium → configured general OCR behavior unchanged
 
-See ADR-010, ADR-011, and `docs/learning/multilingual-text-processing.md`.
+See ADR-010, ADR-011, ADR-017, and `docs/learning/multilingual-text-processing.md`.

@@ -40,6 +40,7 @@ The main hook points are:
 - `platform/providers/contracts/ocr.py` — provider contract;
 - `ocr_factory.py` — backend/language resolution and provider pooling;
 - `paddle_ocr_provider.py` — optional PaddleOCR adapter;
+- `google_vision_ocr_provider.py` — REST-based Bangla-capable adapter;
 - `pymupdf_parser.py` and `image_ocr_parser.py` — parser branches;
 - `document_processing.py` — passes document OCR language into parsing.
 
@@ -59,15 +60,16 @@ Confidence is not proof.
 `APE_OCR__LANG` sets the deployment default. An upload/reprocess may provide a document-level language override.
 
 ```text
-document ocr_lang -> provider language
-otherwise         -> deployment OCR language
+document ocr_lang -> Bengali script detection in PDF text -> detected primary -> deployment default
 ```
 
-The provider must actually support the requested script. Setting `bn` on a backend without a Bengali model does not create Bengali OCR; it creates a failure or, worse, wrong-language recognition.
+The effective provider must support the requested script. APE uses `bangla_backend=google_vision`
+for `bn`; the general backend remains independent.
 
-## Current APE limitation
+## Current Bangla detection limitation
 
-Unicode Bengali text can be tokenized and retrieved when the document contains real Bengali characters. Scanned or custom-font Bengali PDFs are different: the current PaddleOCR path does not provide a production-ready Bengali model.
+Scanned images and custom-font/Bijoy PDFs do not expose reliable Bengali Unicode before OCR. They
+need an explicit `ocr_lang=bn` or a deployment default of `bn` to reach Google Vision.
 
 This is an important beginner lesson: **multilingual text handling and multilingual OCR are separate capabilities.**
 

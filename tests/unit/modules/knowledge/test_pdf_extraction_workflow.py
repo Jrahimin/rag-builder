@@ -7,9 +7,13 @@ from dataclasses import dataclass
 import fitz
 import pytest
 
-from app.core.config import OcrConfig, ParsingConfig
+from app.core.config import OcrBackend, OcrConfig, ParsingConfig
 from app.platform.domain.parse_quality import CandidateSelectionStatus, ExtractionMethod
-from app.platform.providers.errors import ProviderError
+from app.platform.providers.errors import (
+    ProviderAuthenticationError,
+    ProviderError,
+    ProviderTimeoutError,
+)
 from app.platform.providers.implementations.pdf_extraction_workflow import PdfExtractionWorkflow
 
 pytestmark = pytest.mark.unit
@@ -19,6 +23,16 @@ def _minimal_pdf(text: str = "PDF text") -> bytes:
     document = fitz.open()
     page = document.new_page()
     page.insert_text((72, 72), text)
+    pdf_bytes = document.tobytes()
+    document.close()
+    return pdf_bytes
+
+
+def _minimal_pdf_pages(page_count: int) -> bytes:
+    document = fitz.open()
+    for page_number in range(1, page_count + 1):
+        page = document.new_page()
+        page.insert_text((72, 72), f"Native page {page_number} with readable English text.")
     pdf_bytes = document.tobytes()
     document.close()
     return pdf_bytes
@@ -102,6 +116,183 @@ class _FakeOcrProvider:
             confidence=self.confidence,
             provider_name=self.provider_name,
             page_number=image.page_number,
+        )
+
+
+class _RecordingBanglaOcrProvider:
+    provider_name = "google_vision"
+
+    def __init__(self) -> None:
+        self.pages: list[int | None] = []
+
+    def recognize(self, image):
+        from app.platform.providers.contracts.ocr import OcrPageResult
+
+        self.pages.append(image.page_number)
+        return OcrPageResult(
+            text=f"বাংলা নথির পৃষ্ঠা {image.page_number} থেকে সঠিকভাবে লেখা উদ্ধার করা হয়েছে।",
+            confidence=0.96,
+            provider_name=self.provider_name,
+            page_number=image.page_number,
+        )
+
+
+def _bangla_ocr_config(**updates: object) -> OcrConfig:
+    return OcrConfig(
+        enabled=True,
+        backend=OcrBackend.NOOP,
+        bangla_backend=OcrBackend.GOOGLE_VISION,
+        google_api_key="test-key",
+        **updates,
+    )
+
+
+def test_bangla_route_ocr_every_page_and_skips_native_and_pdfium(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = _RecordingBanglaOcrProvider()
+    monkeypatch.setattr(
+        "app.platform.providers.implementations.pdf_extraction_workflow.get_ocr_provider",
+        lambda **_kwargs: provider,
+    )
+
+    def fail_pdfium(*_args, **_kwargs):
+        raise AssertionError("PDFium must not run on the Bangla OCR-first route")
+
+    monkeypatch.setattr(
+        "app.platform.providers.implementations.pdf_extraction_workflow.extract_pdfium_pages",
+        fail_pdfium,
+    )
+    workflow = PdfExtractionWorkflow(ocr_config=_bangla_ocr_config())
+
+    result = workflow.parse(
+        data=_minimal_pdf_pages(2),
+        filename="bangla.pdf",
+        content_type="application/pdf",
+        ocr_lang="bn",
+    )
+
+    assert provider.pages == [1, 2]
+    assert result.parser_name == "ocr"
+    assert result.structure_hints["accepted_parser"] == "ocr"
+    assert result.structure_hints["extraction_method"] == ExtractionMethod.OCR.value
+    assert result.structure_hints["language_routing"] == {
+        "resolved_language": "bn",
+        "source": "explicit",
+        "ocr_first": True,
+    }
+    assert all(page["accepted_parser"] == "ocr" for page in result.structure_hints["pages"])
+    selected_attempt = result.structure_hints["pages"][0]["attempts"][0]
+    assert selected_attempt["ocr_model"] == "google_cloud_vision"
+    assert selected_attempt["ocr_version"] == "v1"
+
+
+def test_bangla_route_auto_detects_unicode_text_sample(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.platform.providers.implementations.pdf_page_models import PdfPageExtraction
+
+    provider = _RecordingBanglaOcrProvider()
+    monkeypatch.setattr(
+        "app.platform.providers.implementations.pdf_extraction_workflow.get_ocr_provider",
+        lambda **_kwargs: provider,
+    )
+    monkeypatch.setattr(
+        "app.platform.providers.implementations.pdf_extraction_workflow.extract_pymupdf_pages",
+        lambda _data: (
+            1,
+            (
+                PdfPageExtraction(
+                    page_number=1,
+                    text="এটি একটি ইউনিকোড বাংলা নথির নির্ভরযোগ্য নমুনা লেখা।",
+                ),
+            ),
+        ),
+    )
+    workflow = PdfExtractionWorkflow(ocr_config=_bangla_ocr_config())
+
+    result = workflow.parse(
+        data=_minimal_pdf_pages(1),
+        filename="bangla.pdf",
+        content_type="application/pdf",
+    )
+
+    assert provider.pages == [1]
+    assert result.structure_hints["language_routing"] == {
+        "resolved_language": "bn",
+        "source": "detected",
+        "ocr_first": True,
+    }
+
+
+def test_bangla_route_propagates_retryable_provider_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class TimeoutProvider:
+        provider_name = "google_vision"
+
+        def recognize(self, _image):
+            raise ProviderTimeoutError("timed out", provider_name=self.provider_name)
+
+    monkeypatch.setattr(
+        "app.platform.providers.implementations.pdf_extraction_workflow.get_ocr_provider",
+        lambda **_kwargs: TimeoutProvider(),
+    )
+    workflow = PdfExtractionWorkflow(ocr_config=_bangla_ocr_config())
+
+    with pytest.raises(ProviderTimeoutError):
+        workflow.parse(
+            data=_minimal_pdf_pages(1),
+            filename="bangla.pdf",
+            content_type="application/pdf",
+            ocr_lang="bn",
+        )
+
+
+def test_bangla_route_propagates_authentication_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class AuthenticationFailureProvider:
+        provider_name = "google_vision"
+
+        def recognize(self, _image):
+            raise ProviderAuthenticationError(
+                "invalid credential",
+                provider_name=self.provider_name,
+            )
+
+    monkeypatch.setattr(
+        "app.platform.providers.implementations.pdf_extraction_workflow.get_ocr_provider",
+        lambda **_kwargs: AuthenticationFailureProvider(),
+    )
+    workflow = PdfExtractionWorkflow(ocr_config=_bangla_ocr_config())
+
+    with pytest.raises(ProviderAuthenticationError, match="invalid credential"):
+        workflow.parse(
+            data=_minimal_pdf_pages(1),
+            filename="bangla.pdf",
+            content_type="application/pdf",
+            ocr_lang="bn",
+        )
+
+
+def test_bangla_route_fails_when_page_cap_is_exceeded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "app.platform.providers.implementations.pdf_extraction_workflow.get_ocr_provider",
+        lambda **_kwargs: _RecordingBanglaOcrProvider(),
+    )
+    workflow = PdfExtractionWorkflow(
+        ocr_config=_bangla_ocr_config(max_ocr_pages_per_document=1)
+    )
+
+    with pytest.raises(ProviderError, match="exceeding the configured limit"):
+        workflow.parse(
+            data=_minimal_pdf_pages(2),
+            filename="bangla.pdf",
+            content_type="application/pdf",
+            ocr_lang="bn",
         )
 
 

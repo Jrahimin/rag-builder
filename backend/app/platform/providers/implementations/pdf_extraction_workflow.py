@@ -8,8 +8,9 @@ from dataclasses import dataclass, field
 import fitz
 import structlog
 
-from app.core.config import OcrConfig, ParsingConfig, Settings, get_settings
+from app.core.config import OcrBackend, OcrConfig, ParsingConfig, Settings, get_settings
 from app.platform.domain.language_detection import detect_language
+from app.platform.domain.ocr_language import is_ocr_first_language, resolve_document_language
 from app.platform.domain.parse_quality import (
     CandidateSelectionStatus,
     ExtractionMethod,
@@ -29,7 +30,7 @@ from app.platform.providers.contracts.document_parser import (
     SourceFormat,
 )
 from app.platform.providers.contracts.ocr import OcrImageInput, OCRProvider
-from app.platform.providers.errors import ProviderError
+from app.platform.providers.errors import ProviderAuthenticationError, ProviderError
 from app.platform.providers.implementations.ocr_factory import get_ocr_provider
 from app.platform.providers.implementations.parsed_element_builder import finalize_elements
 from app.platform.providers.implementations.pdf_page_layout import accept_ocr_result
@@ -46,7 +47,7 @@ from app.platform.providers.implementations.pymupdf_page_extractor import (
 logger = structlog.get_logger(__name__)
 
 _WORKFLOW_NAME = "pdf_extraction_workflow"
-_WORKFLOW_VERSION = "1.0.0"
+_WORKFLOW_VERSION = "1.1.0"
 _KNOWN_TEXT_PARSERS = ("pymupdf", "pdfium")
 
 
@@ -106,11 +107,6 @@ class PdfExtractionWorkflow(BaseDocumentParserProvider):
             raise ProviderError(msg, provider_name=_WORKFLOW_NAME)
 
         warnings: list[str] = []
-        ocr_provider = (
-            get_ocr_provider(lang=ocr_lang, settings=self._settings)
-            if self._ocr_cfg.enabled
-            else None
-        )
 
         started = time.perf_counter()
         page_count, pymupdf_pages = extract_pymupdf_pages(data)
@@ -122,20 +118,39 @@ class PdfExtractionWorkflow(BaseDocumentParserProvider):
             page.page_number: _PageState(page_number=page.page_number) for page in pymupdf_pages
         }
 
-        for page in pymupdf_pages:
-            assessment = self._scorer.assess(page.text)
-            candidate = _candidate_from_page(
-                parser_id=pymupdf_name,
-                parser_version=pymupdf_version,
-                page=page,
-                quality_score=assessment.score,
-                duration_ms=per_page_pymupdf_ms,
-                extraction_method=ExtractionMethod.NATIVE_TEXT,
-            )
-            if candidate is not None:
-                _register_candidate(states[page.page_number], candidate, self._scorer)
+        sample_text = "\n".join(page.text for page in pymupdf_pages)
+        resolved_language, language_source = resolve_document_language(
+            explicit=ocr_lang,
+            sample_text=sample_text,
+            default_lang=self._ocr_cfg.lang,
+            bangla_min_ratio=self._ocr_cfg.bangla_min_ratio,
+        )
+        ocr_first = (
+            self._ocr_cfg.enabled
+            and self._ocr_cfg.bangla_backend is not OcrBackend.NOOP
+            and is_ocr_first_language(resolved_language)
+        )
+        ocr_provider = (
+            get_ocr_provider(lang=resolved_language, settings=self._settings)
+            if self._ocr_cfg.enabled
+            else None
+        )
 
-        if "pdfium" in self._parser_order:
+        if not ocr_first:
+            for page in pymupdf_pages:
+                assessment = self._scorer.assess(page.text)
+                candidate = _candidate_from_page(
+                    parser_id=pymupdf_name,
+                    parser_version=pymupdf_version,
+                    page=page,
+                    quality_score=assessment.score,
+                    duration_ms=per_page_pymupdf_ms,
+                    extraction_method=ExtractionMethod.NATIVE_TEXT,
+                )
+                if candidate is not None:
+                    _register_candidate(states[page.page_number], candidate, self._scorer)
+
+        if not ocr_first and "pdfium" in self._parser_order:
             degraded = _degraded_page_numbers(states, self._scorer)
             if degraded:
                 started = time.perf_counter()
@@ -159,8 +174,16 @@ class PdfExtractionWorkflow(BaseDocumentParserProvider):
                         _register_candidate(states[page_number], candidate, self._scorer)
 
         if ocr_provider is not None:
-            degraded = _degraded_page_numbers(states, self._scorer)
-            for page_number in degraded:
+            ocr_targets = (
+                list(states) if ocr_first else _degraded_page_numbers(states, self._scorer)
+            )
+            if len(ocr_targets) > self._ocr_cfg.max_ocr_pages_per_document:
+                msg = (
+                    f"Document requires OCR for {len(ocr_targets)} pages, exceeding "
+                    f"the configured limit of {self._ocr_cfg.max_ocr_pages_per_document}."
+                )
+                raise ProviderError(msg, provider_name=_WORKFLOW_NAME)
+            for page_number in ocr_targets:
                 candidate, failed_attempt = _ocr_page_candidate(
                     data=data,
                     page_number=page_number,
@@ -215,6 +238,11 @@ class PdfExtractionWorkflow(BaseDocumentParserProvider):
             "extraction_method": summary.extraction_method.value,
             "success_ratio": summary.success_ratio,
             "partial_extraction": summary.partial_extraction,
+            "language_routing": {
+                "resolved_language": resolved_language,
+                "source": language_source,
+                "ocr_first": ocr_first,
+            },
         }
 
         logger.info(
@@ -226,6 +254,9 @@ class PdfExtractionWorkflow(BaseDocumentParserProvider):
             ocr_page_count=summary.ocr_page_count,
             fallback_page_count=summary.fallback_page_count,
             partial_extraction=summary.partial_extraction,
+            resolved_language=resolved_language,
+            language_source=language_source,
+            ocr_provider=ocr_provider.provider_name if ocr_provider is not None else None,
         )
 
         return ParsedDocument(
@@ -483,6 +514,8 @@ def _ocr_page_candidate(
             )
         )
     except ProviderError as exc:
+        if exc.retryable or isinstance(exc, ProviderAuthenticationError):
+            raise
         duration_ms = int((time.perf_counter() - started) * 1000)
         return None, ParserAttemptRecord(
             parser_id="ocr",
@@ -543,4 +576,6 @@ def _ocr_provenance(ocr_provider: OCRProvider) -> tuple[str | None, str | None]:
             return "paddleocr", getattr(paddleocr, "__version__", None)
         except ImportError:
             return "paddleocr", None
+    if provider_name == "google_vision":
+        return "google_cloud_vision", "v1"
     return provider_name, None

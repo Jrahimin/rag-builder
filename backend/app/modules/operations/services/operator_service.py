@@ -215,6 +215,7 @@ class OperatorService:
             ),
             reranker_backend=self._settings.retrieval.reranker_backend.value,
             ocr_backend=self._settings.ocr.backend.value,
+            ocr_bangla_backend=self._settings.ocr.bangla_backend.value,
             ocr_enabled=self._settings.ocr.enabled,
             storage_backend=self._settings.storage.backend.value,
             job_backend=self._settings.jobs.backend.value,

@@ -46,16 +46,19 @@ Steps: NFC, OCR line-break cleanup, punctuation unification, mixed-script spacin
 When `APE_OCR__ENABLED=true`:
 
 1. Image uploads route to `ImageOcrParserProvider`
-2. PDF image-only or sparse pages use PaddleOCR via `PyMuPDFParserProvider`
-3. Per-page confidence stored in `structure_hints.ocr_pages`
-4. **Language**: `APE_OCR__LANG` defaults to `en`; optional `documents.ocr_lang` from upload/reprocess overrides per document
-5. **Provider pool**: `ocr_factory.get_ocr_provider(lang=...)` caches Paddle instances per language (bounded pool per worker process)
+2. Non-Bangla PDF image-only or sparse pages use the general fallback (Paddle when configured)
+3. Resolved Bangla PDFs OCR every page through Google Vision when the opt-in backend is configured
+4. Per-page confidence and provider provenance are stored in parsed structure hints
+5. **Language**: explicit `documents.ocr_lang`, then PDF script detection, then `APE_OCR__LANG`
+6. **Provider pool**: `ocr_factory.get_ocr_provider(lang=...)` caches by effective backend and language
 
 Install: `pip install -r backend/requirements/ocr.txt`
 
-### Bangla OCR limitation (Phase 1)
+### Bangla OCR routing
 
-Unicode tokenization and chunking work for Bengali **when the parsed text contains real `\p{Bengali}` characters**. Scanned or custom-font Bangla PDFs are a separate problem: PaddleOCR 3.7 has no stock `bn` model, and English OCR misreads Bangla script. See [multilingual_support.md](../features/multilingual_support.md#known-limitation-bangla-bengali-ocr).
+Unicode Bangla PDFs auto-route to the opt-in Google Vision backend. Scans, images, and custom-font
+Bangla PDFs cannot be auto-detected before OCR, so they require explicit `ocr_lang=bn` or deployment
+default `bn`. See [multilingual support](../features/multilingual_support.md#bangla-bengali-ocr-routing-and-limitations).
 
 ## Mixed-language corpora
 

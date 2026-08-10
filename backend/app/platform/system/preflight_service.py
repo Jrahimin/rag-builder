@@ -186,7 +186,10 @@ class StartupPreflightService:
                 detail="OCR is disabled by deployment configuration.",
                 checked_at=datetime.now(UTC),
             )
-        if self._settings.ocr.backend is OcrBackend.NOOP:
+        if (
+            self._settings.ocr.backend is OcrBackend.NOOP
+            and self._settings.ocr.bangla_backend is OcrBackend.NOOP
+        ):
             return DependencyHealth(
                 name="ocr_provider",
                 state=DependencyState.DOWN,
@@ -200,7 +203,17 @@ class StartupPreflightService:
             # processing.  Constructing a provider directly here made the
             # startup check discard the initialized model, so the first real
             # OCR request could initialize it again (and appear unhealthy).
-            await asyncio.to_thread(get_ocr_provider, settings=self._settings)
+            languages: list[str] = []
+            if self._settings.ocr.backend is not OcrBackend.NOOP:
+                languages.append(self._settings.ocr.lang)
+            if self._settings.ocr.bangla_backend is not OcrBackend.NOOP:
+                languages.append("bn")
+            for language in dict.fromkeys(languages):
+                await asyncio.to_thread(
+                    get_ocr_provider,
+                    lang=language,
+                    settings=self._settings,
+                )
 
         return await self._check(
             "ocr_provider",

@@ -152,7 +152,7 @@ OCR, embedding, and indexing continue asynchronously.
 | Projects | Data isolation boundary for documents, retrieval, and chat | Shipped |
 | Knowledge ingestion | Upload, parse, store, and chunk documents | Shipped |
 | Storage abstraction | Keep raw and parsed artifacts behind a provider | Shipped |
-| OCR contract | Optional OCR provider boundary for image/scanned inputs | Shipped, with Bangla OCR limitation |
+| OCR contract | Optional Paddle fallback plus opt-in Google Vision OCR-first routing for Bangla | Shipped |
 | Embeddings | Convert chunks into model vectors | Shipped |
 | Vector indexing | Persist native pgvector rows in PostgreSQL | Shipped |
 | Keyword indexing | Build BM25 / FTS rows in PostgreSQL | Shipped |
@@ -386,7 +386,7 @@ Advanced
 | Evaluation | Add quality measurement, feedback loops, and RAG regression checks |
 | Observability | Trace retrieval, LLM calls, worker stages, cost, and latency |
 | Operations | Improve worker monitoring, bulk reindexing, and production deployment profiles |
-| OCR | Add better OCR provider options for languages not covered by the current Paddle backend |
+| OCR | Benchmark more scripts/providers and Vision language-hint trade-offs |
 
 ---
 
@@ -394,7 +394,7 @@ Advanced
 
 | Limitation | Current impact | Workaround or future path |
 | ---------- | -------------- | ------------------------- |
-| Bangla OCR | Scanned/custom-font Bangla PDFs are not production-ready with PaddleOCR 3.7 | Use PDFs with Unicode Bengali text, text/docx inputs, or add a Bengali-capable OCR provider |
+| Bangla language auto-detection | Scans, images, and Bijoy/custom-font PDFs have no reliable Bengali Unicode sample | Send `ocr_lang=bn` or set `APE_OCR__LANG=bn`; configure `APE_OCR__BANGLA_BACKEND=google_vision` |
 | Verified-key cache TTL | Revoked keys may remain accepted briefly until cache expiry | Domain events invalidate on revoke/org disable; reduce TTL or disable cache for stricter deployments |
 | Worker crash during parsing | A document can remain in `parsing` | Call the reprocess endpoint |
 | Enterprise connectors | File upload is shipped; broad connector sync is still roadmap work | Build connectors behind the provider contract |

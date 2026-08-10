@@ -31,7 +31,7 @@ readiness never repeats model calls.
   model-facing provider. There is no vector-store provider or external vector client.
 - **Storage** — `BaseStorageProvider` + local / MinIO implementations
 - **Document parsers** — `BaseDocumentParserProvider` + PyMuPDF / plain text / docx / image OCR
-- **OCR** — `OCRProvider` + optional PaddleOCR (`ocr_factory.py`); SDK boundary same as other providers. **Bangla (`bn`) is not supported** on the Paddle backend in Phase 1 — see [multilingual_support.md](../features/multilingual_support.md#known-limitation-bangla-bengali-ocr).
+- **OCR** — `OCRProvider` + optional PaddleOCR for the general fallback and Google Cloud Vision for the opt-in Bangla OCR-first route (`ocr_factory.py`); SDK boundary same as other providers. See [multilingual_support.md](../features/multilingual_support.md#bangla-bengali-ocr-routing-and-limitations).
 - **LLM** — `BaseLLMProvider` + echo / OpenAI-compatible / Ollama / Gemini implementations (Chat module)
 
 ## SDK boundary

@@ -144,6 +144,7 @@ export const configurationFixture: ActiveConfiguration = {
   },
   reranker_backend: "lexical",
   ocr_backend: "disabled",
+  ocr_bangla_backend: "disabled",
   ocr_enabled: false,
   storage_backend: "local",
   job_backend: "inline",

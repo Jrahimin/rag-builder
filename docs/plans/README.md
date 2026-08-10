@@ -11,6 +11,7 @@ design document written before implementation begins.
 | [pgvector_migration_plan.md](./pgvector_migration_plan.md) | Complete | PostgreSQL-native pgvector persistence, lifecycle, deployment, tests, and operations |
 | [conversation_module_plan.md](./conversation_module_plan.md) | Complete | Chat — RAG generation, stateful conversations, SSE streaming |
 | [organization_auth_module_plan.md](./organization_auth_module_plan.md) | Complete | Organization API key auth, multi-key rotation, verified-key cache, Redis rate limiting |
+| [bangla_ocr_google_vision_plan.md](./bangla_ocr_google_vision_plan.md) | Planned | Bangla route via Google Cloud Vision; English pipeline unchanged |
 
 Plans are superseded by `docs/features/` once a capability ships.
 

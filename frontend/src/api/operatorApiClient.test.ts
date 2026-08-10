@@ -41,3 +41,20 @@ test("classifies a development proxy failure as backend unavailable", async () =
     status: 500,
   });
 });
+
+test("forwards OCR language on document reprocess", async () => {
+  const fetchMock = vi.fn().mockResolvedValue(
+    new Response(JSON.stringify({ success: true, data: {} }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    }),
+  );
+  vi.stubGlobal("fetch", fetchMock);
+
+  await operatorApiClient.reprocessDocument("project-1", "document-1", "bn");
+
+  expect(fetchMock).toHaveBeenCalledWith(
+    "/api/v1/projects/project-1/documents/document-1/reprocess?ocr_lang=bn",
+    expect.objectContaining({ method: "POST" }),
+  );
+});
