@@ -2325,3 +2325,41 @@ code {
     transition-duration: 0.01ms !important;
   }
 }
+
+.login-page,
+.auth-loading {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  padding: 24px;
+  color: #e8eef8;
+  background: radial-gradient(circle at top right, #1e4478, transparent 44%), #0a1423;
+}
+.login-card {
+  display: grid;
+  gap: 14px;
+  width: min(100%, 410px);
+  padding: 34px;
+  color: #172033;
+  background: #fff;
+  border: 1px solid #cfd9e8;
+  border-radius: 14px;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.32);
+}
+.login-card h1,
+.login-card p { margin: 0; }
+.login-card > p:not(.eyebrow) { color: #667085; font-size: 0.82rem; line-height: 1.5; }
+.login-brand { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.login-brand > span { display: grid; width: 34px; height: 34px; place-items: center; color: white; background: #2463c5; border-radius: 8px; font-weight: 800; }
+.login-brand strong, .login-brand small { display: block; }
+.login-brand small { color: #667085; font-size: 0.7rem; }
+.login-card label { display: grid; gap: 6px; color: #344054; font-size: 0.75rem; font-weight: 700; }
+.login-card input { min-height: 42px; padding: 9px 11px; border: 1px solid #b9c6d8; border-radius: 7px; font: inherit; }
+.login-card input:focus { outline: 3px solid rgba(36, 99, 197, 0.18); border-color: #2463c5; }
+.login-card button { min-height: 42px; color: white; background: #1f5db8; border: 0; border-radius: 7px; font: inherit; font-weight: 800; }
+.login-card button:disabled { opacity: 0.65; }
+.login-error { padding: 9px; color: #b42318; background: #fef3f2; border: 1px solid #fecdca; border-radius: 6px; font-size: 0.75rem; }
+.admin-account { display: grid; gap: 1px; padding-left: 14px; border-left: 1px solid var(--border); font-size: 0.68rem; }
+.admin-account span { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 700; }
+.admin-account small { color: #667085; font-size: 0.61rem; }
+.admin-account button { width: fit-content; padding: 2px 0; color: #245dad; background: transparent; border: 0; font-size: 0.65rem; font-weight: 800; }

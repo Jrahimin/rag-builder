@@ -79,7 +79,7 @@ def validate_release(release_env: Path, runtime_env: Path | None = None) -> dict
             if runtime.get(key, "").lower() != expected:
                 raise HostedOperationError(f"{key} must be {expected!r} in {runtime_env}")
         for secret in (
-            "APE_AUTH__ADMIN_API_KEY",
+            "APE_AUTH__ADMIN_JWT_SECRET",
             "APE_AUTH__KEY_PEPPER",
             "APE_WEBHOOKS__SIGNING_KEY",
             "APE_DATABASE__PASSWORD",

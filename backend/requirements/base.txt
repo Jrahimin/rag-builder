@@ -36,6 +36,10 @@ regex==2025.11.3
 # --- Structured logging ---
 structlog==26.1.0
 
+# --- Human administrator authentication ---
+argon2-cffi==25.1.0
+PyJWT==2.11.0
+
 # --- HTTP client (readiness checks, future connectors) ---
 httpx==0.28.1
 

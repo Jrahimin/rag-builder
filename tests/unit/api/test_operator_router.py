@@ -34,13 +34,13 @@ async def test_operator_metrics_failure_uses_standard_sanitized_envelope() -> No
     assert "database" not in response.text.lower()
 
 
-async def test_operator_routes_require_admin_key_when_auth_is_enabled() -> None:
+async def test_operator_routes_require_super_admin_session_when_auth_is_enabled() -> None:
     settings = Settings(
         app=AppConfig(env=Environment.TESTING),
         auth=AuthConfig(
             enabled=True,
-            admin_api_key="admin-key-with-at-least-thirty-two-bytes",
             key_pepper="pepper-with-at-least-thirty-two-random-bytes",
+            admin_jwt_secret="admin-jwt-secret-with-at-least-thirty-two-bytes",
         ),
     )
     app = create_app(settings)

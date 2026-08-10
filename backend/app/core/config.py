@@ -21,7 +21,7 @@ from __future__ import annotations
 import os
 from enum import StrEnum
 from functools import lru_cache
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
@@ -496,10 +496,9 @@ class VerifyCacheBackend(StrEnum):
 
 
 class AuthConfig(BaseModel):
-    """Organization API key authentication and rate limiting."""
+    """Machine API-key and browser Super Admin authentication settings."""
 
     enabled: bool = False
-    admin_api_key: str | None = None
     key_pepper: str | None = None
     verify_cache_enabled: bool = True
     verify_cache_ttl_seconds: int = Field(default=60, ge=1, le=3600)
@@ -508,6 +507,12 @@ class AuthConfig(BaseModel):
     rate_limit_requests: int = Field(default=1000, ge=1)
     rate_limit_window_seconds: int = Field(default=60, ge=1)
     rate_limit_fail_open: bool = False
+    admin_jwt_secret: str | None = None
+    admin_access_token_expire_minutes: int = Field(default=15, ge=1, le=120)
+    admin_refresh_token_expire_days: int = Field(default=14, ge=1, le=90)
+    admin_cookie_secure: bool = False
+    admin_cookie_samesite: Literal["lax", "strict", "none"] = "lax"
+    admin_cookie_domain: str | None = None
 
 
 class ChatConfig(BaseModel):

@@ -8,7 +8,7 @@ Start here for the **full auth picture**: why APE uses Organization-scoped API k
 
 ## The 30-second story
 
-1. A deployment operator sets `APE_AUTH__ADMIN_API_KEY` and `APE_AUTH__KEY_PEPPER` in the environment.
+1. A deployment operator sets `APE_AUTH__ADMIN_JWT_SECRET` and `APE_AUTH__KEY_PEPPER` in the environment.
 2. Admin calls `POST /api/v1/organizations` with the admin key → creates a **tenant**.
 3. Admin calls `POST /api/v1/organizations/{id}/api-keys` → receives a named secret (`ape_live_…`) **shown once**.
 4. Integrations call business APIs (`/projects`, `/documents`, `/search`, `/conversations`) with that Organization key.
@@ -50,7 +50,7 @@ This supports both deployment models:
 | Term | Meaning in APE |
 | ---- | -------------- |
 | **M2M auth** | Machine-to-machine — integrations authenticate with long-lived API keys, not interactive login |
-| **Admin key** | Deployment bootstrap credential (`APE_AUTH__ADMIN_API_KEY`) for Organization CRUD only |
+| **Super Admin session** | Browser-authenticated operator credential for organization management |
 | **Organization key** | Tenant credential stored hashed in `organization_api_keys`; used on all business routes |
 | **Key prefix** | Short display hint (`ape_live_abc123…`) — never the full secret |
 | **Pepper** | Server-side secret mixed into HMAC hashing; keys cannot be verified without it |

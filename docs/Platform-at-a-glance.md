@@ -167,8 +167,8 @@ OCR, embedding, and indexing continue asynchronously.
 ### Organizations and Auth
 
 Organizations answer: **who is calling?** They own API keys, rate limits, and the
-tenant boundary. Business routes use Organization keys; admin routes use the
-deployment admin key.
+tenant boundary. Business routes use Organization keys; admin routes use a
+separate Super Admin browser session.
 
 Start here:
 [features/organization_module.md](features/organization_module.md) -
@@ -329,7 +329,7 @@ the AI infrastructure layer that product teams can trust, extend, and deploy.
 | Tier | Auth | Routes |
 | ---- | ---- | ------ |
 | Public | None | `GET /health`, `GET /ready` |
-| Admin | `APE_AUTH__ADMIN_API_KEY` | `/api/v1/organizations/**` |
+| Super Admin | HttpOnly session; `APE_AUTH__ADMIN_JWT_SECRET` signs access tokens | Operator UI and management APIs |
 | Business | Organization API key | `/api/v1/projects/**` and nested modules |
 
 | Module | Reference |

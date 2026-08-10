@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends
 
+from app.api.v1.routes.auth_router import router as auth_router
 from app.api.v1.routes.conversations_router import router as conversations_router
 from app.api.v1.routes.documents_router import router as documents_router
 from app.api.v1.routes.evaluations_router import router as evaluations_router
@@ -25,6 +26,7 @@ from app.dependencies.auth import require_organization_api_key
 from app.dependencies.projects import ensure_project_accessible
 
 api_v1_router = APIRouter()
+api_v1_router.include_router(auth_router)
 api_v1_router.include_router(organizations_router, prefix="/organizations", tags=["organizations"])
 api_v1_router.include_router(operator_router, prefix="/operator", tags=["operator"])
 

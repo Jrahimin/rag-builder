@@ -1,4 +1,5 @@
 import type { components } from "./generated/openapi";
+import { getCsrfHeader } from "../auth/adminAuthApi";
 
 export type OperatorOverview = components["schemas"]["OperatorOverview"];
 export type MetricsSnapshot = components["schemas"]["MetricsSnapshot"];
@@ -62,7 +63,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   try {
     response = await fetch(path, {
       ...init,
-      headers: { Accept: "application/json", ...init?.headers },
+      credentials: "include",
+      headers: { Accept: "application/json", ...(init?.method && !["GET", "HEAD"].includes(init.method) ? getCsrfHeader() : {}), ...init?.headers },
     });
   } catch {
     throw new OperatorApiError(
@@ -232,7 +234,8 @@ export const operatorApiClient = {
         `${apiRoot}/projects/${projectId}/conversations/${conversationId}/messages/stream`,
         {
           method: "POST",
-          headers: { Accept: "text/event-stream", "Content-Type": "application/json" },
+          credentials: "include",
+          headers: { Accept: "text/event-stream", "Content-Type": "application/json", ...getCsrfHeader() },
           body: JSON.stringify({ content, document_id: documentId ?? null, metadata_filter: {} }),
         },
       );

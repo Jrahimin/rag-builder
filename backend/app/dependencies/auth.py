@@ -12,19 +12,19 @@ from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, VerifyCacheBackend
-from app.core.exceptions import RateLimitError, UnauthorizedError
+from app.core.exceptions import ForbiddenError, RateLimitError, UnauthorizedError
 from app.core.logging import get_logger
+from app.dependencies.admin_auth import ADMIN_ACCESS_COOKIE, ADMIN_CSRF_COOKIE, ADMIN_CSRF_HEADER
 from app.dependencies.common import DbSessionDep, SettingsDep, get_redis_connectivity
+from app.modules.admin_auth.repository import AdminAuthRepository
+from app.modules.admin_auth.security import decode_access_token
+from app.modules.admin_auth.service import AdminAuthService
 from app.modules.organizations.repositories.api_key_repository import ApiKeyRepository
 from app.platform.auth.contracts import CachedVerifiedKey, VerifiedKeyCache
 from app.platform.domain.api_key_crypto import hash_key, verify_key
 from app.platform.domain.auth_context import AuthenticatedOrganization
 from app.platform.http.auth_headers import extract_api_key, is_api_key_format
-from app.platform.http.openapi_security import (
-    ADMIN_BEARER_SCHEME,
-    ORG_API_KEY_SCHEME,
-    ORG_BEARER_SCHEME,
-)
+from app.platform.http.openapi_security import ORG_API_KEY_SCHEME, ORG_BEARER_SCHEME
 from app.platform.infra.auth.memory_verified_key_cache import get_memory_verified_key_cache
 from app.platform.infra.auth.redis_verified_key_cache import RedisVerifiedKeyCache
 from app.platform.infra.connectivity.redis import RedisConnectivity
@@ -144,27 +144,6 @@ async def _resolve_organization_from_key(
     )
 
 
-async def require_admin_api_key(
-    request: Request,
-    settings: SettingsDep,
-    _bearer: Annotated[HTTPAuthorizationCredentials | None, Depends(ADMIN_BEARER_SCHEME)] = None,
-) -> None:
-    """Validate the deployment admin bootstrap API key."""
-    if not settings.auth.enabled:
-        return
-
-    raw_key = extract_api_key(request)
-    if raw_key is None:
-        raise _unauthorized()
-
-    admin_key = settings.auth.admin_api_key
-    if not admin_key:
-        raise _unauthorized()
-
-    if not hmac.compare_digest(raw_key, admin_key):
-        raise _unauthorized()
-
-
 async def require_organization_api_key(
     request: Request,
     settings: SettingsDep,
@@ -182,7 +161,39 @@ async def require_organization_api_key(
             organization_is_active=True,
         )
 
+    # The operator console calls selected product-management APIs with its
+    # browser session. This deliberately grants global platform access only
+    # after the separate human Super Admin verifier succeeds; API-key callers
+    # continue down the unchanged organization-resolution path below.
     raw_key = extract_api_key(request)
+    access_token = request.cookies.get(ADMIN_ACCESS_COOKIE)
+    if access_token and raw_key is None:
+        try:
+            payload = decode_access_token(access_token, config=settings.auth)
+            service = AdminAuthService(AdminAuthRepository(session), settings.auth)
+            await service.current_admin(
+                admin_id=uuid.UUID(str(payload["sub"])), session_id=uuid.UUID(str(payload["sid"]))
+            )
+        except (KeyError, ValueError, UnauthorizedError):
+            raise _unauthorized() from None
+        if request.method not in {"GET", "HEAD", "OPTIONS"}:
+            csrf_cookie = request.cookies.get(ADMIN_CSRF_COOKIE)
+            csrf_header = request.headers.get(ADMIN_CSRF_HEADER)
+            if (
+                not csrf_cookie
+                or not csrf_header
+                or not hmac.compare_digest(csrf_cookie, csrf_header)
+            ):
+                raise ForbiddenError("CSRF validation failed.")
+        auth_org = AuthenticatedOrganization(
+            organization_id=None,
+            api_key_id=None,
+            organization_is_active=True,
+            is_platform_admin=True,
+        )
+        request.state.authenticated_organization = auth_org
+        return auth_org
+
     if raw_key is None or not is_api_key_format(raw_key):
         raise _unauthorized()
 

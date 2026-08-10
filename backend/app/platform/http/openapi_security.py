@@ -1,4 +1,4 @@
-"""OpenAPI security scheme definitions for API key authentication."""
+"""OpenAPI security scheme definitions for API-key and browser admin authentication."""
 
 from __future__ import annotations
 
@@ -16,17 +16,12 @@ ORG_API_KEY_SCHEME = APIKeyHeader(
     scheme_name="OrganizationApiKey",
     description="Organization API key via `X-API-Key: ape_live_…`",
 )
-ADMIN_BEARER_SCHEME = HTTPBearer(
-    auto_error=False,
-    scheme_name="AdminBearer",
-    description="Deployment admin bootstrap key for `/organizations/**`.",
-)
 
 _ORG_SECURITY: list[dict[str, list[str]]] = [
     {"OrganizationBearer": []},
     {"OrganizationApiKey": []},
 ]
-_ADMIN_SECURITY: list[dict[str, list[str]]] = [{"AdminBearer": []}]
+_ADMIN_SECURITY: list[dict[str, list[str]]] = [{"AdminCookie": []}]
 
 
 def _apply_route_security(openapi_schema: dict[str, object]) -> None:
@@ -34,7 +29,8 @@ def _apply_route_security(openapi_schema: dict[str, object]) -> None:
     for path, path_item in paths.items():
         if not isinstance(path_item, dict):
             continue
-        security = _ADMIN_SECURITY if "/organizations" in path else _ORG_SECURITY
+        is_admin_path = "/organizations" in path or "/operator" in path or path == "/metrics"
+        security = _ADMIN_SECURITY if is_admin_path else _ORG_SECURITY
         for method, operation in path_item.items():
             if method.startswith("x-") or not isinstance(operation, dict):
                 continue
@@ -70,10 +66,11 @@ def configure_openapi_security(app: object) -> None:
                     "name": "X-API-Key",
                     "description": "Organization API key (`ape_live_…`)",
                 },
-                "AdminBearer": {
-                    "type": "http",
-                    "scheme": "bearer",
-                    "description": "Deployment admin key for organization management",
+                "AdminCookie": {
+                    "type": "apiKey",
+                    "in": "cookie",
+                    "name": "ape_admin_access",
+                    "description": "HttpOnly Super Admin browser session cookie",
                 },
             }
         _apply_route_security(openapi_schema)

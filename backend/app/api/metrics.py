@@ -5,11 +5,11 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends
 from fastapi.responses import PlainTextResponse
 
-from app.dependencies.auth import require_admin_api_key
+from app.dependencies.admin_auth import require_super_admin
 from app.dependencies.operations import OperatorServiceDep
 from app.modules.operations.schemas.operator import MetricsSnapshot
 
-router = APIRouter(tags=["system"], dependencies=[Depends(require_admin_api_key)])
+router = APIRouter(tags=["system"], dependencies=[Depends(require_super_admin)])
 
 
 @router.get(

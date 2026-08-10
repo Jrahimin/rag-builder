@@ -56,7 +56,7 @@ sequenceDiagram
 | Variable | Default | Description |
 | -------- | ------- | ----------- |
 | `APE_AUTH__ENABLED` | `false` | Master on/off (dev/tests) |
-| `APE_AUTH__ADMIN_API_KEY` | — | Bootstrap admin key |
+| `APE_AUTH__ADMIN_JWT_SECRET` | — | Super Admin access-token signing secret |
 | `APE_AUTH__KEY_PEPPER` | — | HMAC pepper (≥32 bytes random) |
 | `APE_AUTH__VERIFY_CACHE_ENABLED` | `true` | Short-lived positive cache |
 | `APE_AUTH__VERIFY_CACHE_TTL_SECONDS` | `60` | Cache TTL |
@@ -68,7 +68,7 @@ sequenceDiagram
 
 ## API surfaces
 
-- **Admin:** `/api/v1/organizations/**` — requires `APE_AUTH__ADMIN_API_KEY`
+- **Super Admin:** `/api/v1/organizations/**` — requires a Super Admin browser session
 - **Business:** `/api/v1/projects/**` and nested routes — requires Organization API key
 - **Public:** `GET /health`, `GET /ready`
 
@@ -99,7 +99,7 @@ See [organization_api.md](../api/organization_api.md).
 
 ## Production considerations
 
-- Set strong random `APE_AUTH__KEY_PEPPER` and `APE_AUTH__ADMIN_API_KEY`; never commit to VCS.
+- Set strong random `APE_AUTH__KEY_PEPPER` and `APE_AUTH__ADMIN_JWT_SECRET`; never commit them to VCS.
 - Use Redis cache backend with multiple API workers.
 - Set `APE_AUTH__RATE_LIMIT_FAIL_OPEN=false` in production.
 - Rotate admin and organization keys through the API; revoke compromised keys immediately.

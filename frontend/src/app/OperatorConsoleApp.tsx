@@ -2,6 +2,8 @@ import { lazy, Suspense } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
 import { LoadingState } from "../components/QueryStatePanel";
 import { OperatorConsoleLayout } from "./OperatorConsoleLayout";
+import { LoginPage } from "../auth/LoginPage";
+import { ProtectedAdminRoute } from "../auth/ProtectedAdminRoute";
 
 const AuditHistory = lazy(() =>
   import("../features/audit/AuditHistory").then((module) => ({ default: module.AuditHistory })),
@@ -51,6 +53,8 @@ const WebhookDeliveryInspection = lazy(() =>
 export function OperatorConsoleApp() {
   return (
     <Routes>
+      <Route path="login" element={<LoginPage />} />
+      <Route element={<ProtectedAdminRoute />}>
       <Route element={<OperatorConsoleLayout />}>
         <Route
           index
@@ -133,6 +137,7 @@ export function OperatorConsoleApp() {
           }
         />
         <Route path="*" element={<Navigate to="/" replace />} />
+      </Route>
       </Route>
     </Routes>
   );
