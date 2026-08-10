@@ -111,4 +111,31 @@ async def test_preflight_warms_cached_ocr_provider(monkeypatch) -> None:
     result = await service._check_ocr()
 
     assert result.state is DependencyState.OK
-    get_provider.assert_called_once_with(settings=settings)
+    get_provider.assert_called_once_with(lang="en", settings=settings)
+
+
+async def test_preflight_warms_bangla_only_backend_without_network_probe(monkeypatch) -> None:
+    settings = Settings(
+        ocr=OcrConfig(
+            enabled=True,
+            backend=OcrBackend.NOOP,
+            bangla_backend=OcrBackend.GOOGLE_VISION,
+            google_api_key="test-key",
+        )
+    )
+    service = StartupPreflightService(
+        settings=settings,
+        database=MagicMock(),
+        redis=MagicMock(),
+        storage=MagicMock(),
+    )
+    get_provider = MagicMock(return_value=MagicMock())
+    monkeypatch.setattr(
+        "app.platform.system.preflight_service.get_ocr_provider",
+        get_provider,
+    )
+
+    result = await service._check_ocr()
+
+    assert result.state is DependencyState.OK
+    get_provider.assert_called_once_with(lang="bn", settings=settings)

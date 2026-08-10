@@ -16,7 +16,8 @@ def test_job_configuration_hash_is_stable_and_excludes_secrets() -> None:
             "backend": "openai",
             "model": "embed-v1",
             "openai_api_key": "never-persist-this",
-        }
+        },
+        ocr={"google_api_key": "never-persist-google-key"},
     )
 
     first = build_job_configuration(settings)
@@ -25,6 +26,8 @@ def test_job_configuration_hash_is_stable_and_excludes_secrets() -> None:
     assert first.digest() == second.digest()
     assert "never-persist-this" not in str(first.model_dump())
     assert "openai_api_key" not in first.index["embedding"]
+    assert "never-persist-google-key" not in str(first.model_dump())
+    assert "google_api_key" not in first.processing["ocr"]
 
 
 def test_apply_job_configuration_restores_typed_values_and_live_secret() -> None:
@@ -33,7 +36,8 @@ def test_apply_job_configuration_restores_typed_values_and_live_secret() -> None
             "backend": "openai",
             "model": "current",
             "openai_api_key": "live-secret",
-        }
+        },
+        ocr={"google_api_key": "live-google-secret"},
     )
     snapshot = build_job_configuration(
         current.model_copy(
@@ -52,3 +56,4 @@ def test_apply_job_configuration_restores_typed_values_and_live_secret() -> None
     assert restored.embedding.backend is EmbeddingBackend.OPENAI
     assert restored.embedding.model == "snapshotted"
     assert restored.embedding.openai_api_key == "live-secret"
+    assert restored.ocr.google_api_key == "live-google-secret"

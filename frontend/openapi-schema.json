@@ -41,6 +41,10 @@
             "title": "Ocr Backend",
             "type": "string"
           },
+          "ocr_bangla_backend": {
+            "title": "Ocr Bangla Backend",
+            "type": "string"
+          },
           "ocr_enabled": {
             "title": "Ocr Enabled",
             "type": "boolean"
@@ -77,6 +81,7 @@
           "embedding",
           "reranker_backend",
           "ocr_backend",
+          "ocr_bangla_backend",
           "ocr_enabled",
           "storage_backend",
           "job_backend",

@@ -934,6 +934,8 @@ export interface components {
             llm: components["schemas"]["ProviderConfiguration"];
             /** Ocr Backend */
             ocr_backend: string;
+            /** Ocr Bangla Backend */
+            ocr_bangla_backend: string;
             /** Ocr Enabled */
             ocr_enabled: boolean;
             /** Recent Project Snapshots */

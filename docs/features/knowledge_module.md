@@ -51,16 +51,21 @@ Owned by the retrieval module: `embedding`, `embedded`, `indexing`, `ready`.
 | `APE_CHUNKING__SIMILARITY_DROP_THRESHOLD` | `0.35` | Semantic boundary threshold for weakly structured docs |
 | `APE_CHUNKING__TOKEN_COUNT_METHOD` | `unicode_property_v1` | Unicode-property token counting |
 | `APE_OCR__ENABLED` | `false` | Enable OCR for image uploads and scanned PDF pages |
-| `APE_OCR__LANG` | `en` | Deployment-default PaddleOCR language; overridable per document via `ocr_lang` on upload/reprocess |
+| `APE_OCR__BACKEND` | `noop` | General page-fallback backend (`paddle` when enabled) |
+| `APE_OCR__BANGLA_BACKEND` | `noop` | Opt-in Bengali backend (`google_vision`) |
+| `APE_OCR__LANG` | `en` | Deployment fallback after explicit language and PDF script detection |
 | `APE_PARSING__PDF_TEXT_PARSERS` | `pymupdf,pdfium` | PDF text parser order before OCR fallback |
 | `APE_PARSING__MIN_PAGE_QUALITY_SCORE` | `0.55` | Minimum Unicode parse quality score to accept a page |
 | `APE_PARSING__MIN_DOCUMENT_SUCCESS_RATIO` | `0.2` | Minimum accepted-page ratio before failing a document |
 
 See [multilingual_support.md](multilingual_support.md) for Bangla/multilingual processing and OCR language overrides.
 
-### Known limitation: Bangla OCR
+### Bangla OCR
 
-The ingestion pipeline (parse quality gate → PDFium → PaddleOCR fallback) is implemented, but **Bangla OCR is not production-ready in Phase 1**. PaddleOCR 3.7 has no stock `bn` models; English OCR on Bangla pages produces unreliable text. Unicode Bengali in the PDF text layer or non-PDF uploads still ingest correctly. Details: [multilingual_support.md — Bangla OCR limitation](multilingual_support.md#known-limitation-bangla-bengali-ocr).
+Bangla documents use an opt-in Google Vision OCR-first route. Unicode Bangla PDFs can auto-route;
+scans, images, and custom-font/Bijoy documents need explicit `ocr_lang=bn` or deployment default
+`bn`. The route OCRs every page and skips native/PDFium candidate selection. Details:
+[multilingual support](multilingual_support.md#bangla-bengali-ocr-routing-and-limitations).
 
 ## API
 

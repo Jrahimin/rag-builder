@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from app.platform.domain.language_detection import detect_language
+
 _OCR_LANG_ALIASES: dict[str, str] = {
     "eng": "en",
     "english": "en",
@@ -27,3 +29,30 @@ def normalize_stored_ocr_lang(value: str | None) -> str | None:
     if not stripped:
         return None
     return resolve_ocr_lang(stripped, "en")
+
+
+def resolve_document_language(
+    *,
+    explicit: str | None,
+    sample_text: str,
+    default_lang: str,
+    bangla_min_ratio: float,
+) -> tuple[str, str]:
+    """Resolve document language and report whether it was explicit, detected, or default."""
+    if explicit is not None and explicit.strip():
+        return resolve_ocr_lang(explicit, default_lang), "explicit"
+
+    detected = detect_language(sample_text)
+    if detected.languages.get("bn", 0.0) >= bangla_min_ratio:
+        return "bn", "detected"
+    if detected.primary_language and detected.primary_language != "mixed":
+        return resolve_ocr_lang(detected.primary_language, default_lang), "detected"
+    if detected.languages:
+        primary = max(detected.languages, key=detected.languages.get)  # type: ignore[arg-type]
+        return resolve_ocr_lang(primary, default_lang), "detected"
+    return resolve_ocr_lang(None, default_lang), "default"
+
+
+def is_ocr_first_language(language: str) -> bool:
+    """Return whether a language uses the document-wide OCR-first route."""
+    return resolve_ocr_lang(language, "en") == "bn"

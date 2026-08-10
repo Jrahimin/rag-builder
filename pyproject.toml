@@ -42,7 +42,11 @@ include = ["app*"]
 line-length = 100
 target-version = "py312"
 src = ["backend", "tests"]
-extend-exclude = ["backend/venv", "backend/app/composition/migrations/versions"]
+extend-exclude = [
+    "backend/venv",
+    "backend/app/composition/migrations/versions",
+    "build_product_service_guide.py",  # standalone Word-document generator, outside application sources
+]
 
 [tool.ruff.lint]
 select = [

@@ -342,11 +342,14 @@ export function useDocumentLifecycleAction(projectId: string) {
     mutationFn: ({
       documentId,
       action,
+      ocrLang,
     }: {
       documentId: string;
       action: "reprocess" | "embed" | "index" | "delete" | "purge";
+      ocrLang?: string;
     }) => {
-      if (action === "reprocess") return operatorApiClient.reprocessDocument(projectId, documentId);
+      if (action === "reprocess")
+        return operatorApiClient.reprocessDocument(projectId, documentId, ocrLang);
       if (action === "embed") return operatorApiClient.embedDocument(projectId, documentId);
       if (action === "index") return operatorApiClient.indexDocument(projectId, documentId);
       if (action === "delete") return operatorApiClient.deleteDocument(projectId, documentId);

@@ -611,6 +611,7 @@ function DocumentsTab({
   const upload = useUploadDocument(projectId);
   const lifecycle = useDocumentLifecycleAction(projectId);
   const [dragging, setDragging] = useState(false);
+  const [ocrLang, setOcrLang] = useState("");
   const [purgeText, setPurgeText] = useState("");
   const [actionAccepted, setActionAccepted] = useState<{
     action: string;
@@ -623,7 +624,7 @@ function DocumentsTab({
   const uploadFile = async (file?: File) => {
     if (!file) return;
     try {
-      const document = await upload.mutateAsync({ file });
+      const document = await upload.mutateAsync({ file, ocrLang: ocrLang || undefined });
       onSelect(document.id);
       if (document.job_id) onJob(document.job_id);
       onActivity({
@@ -649,7 +650,11 @@ function DocumentsTab({
   const runAction = async (action: "reprocess" | "embed" | "index" | "delete" | "purge") => {
     if (!selected) return;
     try {
-      const document = await lifecycle.mutateAsync({ documentId: selected.id, action });
+      const document = await lifecycle.mutateAsync({
+        documentId: selected.id,
+        action,
+        ocrLang: action === "reprocess" ? ocrLang || undefined : undefined,
+      });
       setActionAccepted({ action, document });
       if (document.job_id) onJob(document.job_id);
       onActivity({
@@ -690,6 +695,19 @@ function DocumentsTab({
             </p>
           </div>
         </div>
+        <label className="field">
+          <span>OCR language</span>
+          <select
+            aria-label="OCR language"
+            value={ocrLang}
+            onChange={(event) => setOcrLang(event.target.value)}
+          >
+            <option value="">Auto / deployment default</option>
+            <option value="bn">Bangla (Bengali)</option>
+            <option value="en">English</option>
+          </select>
+          <small>Choose Bangla for scans or custom-font PDFs that cannot be auto-detected.</small>
+        </label>
         <label
           className={`lab-dropzone${dragging ? " lab-dropzone--active" : ""}`}
           onDragEnter={() => setDragging(true)}
@@ -792,6 +810,10 @@ function DocumentsTab({
                 <dd>
                   {selected.page_count ?? "—"} / {selected.language ?? "—"}
                 </dd>
+              </div>
+              <div>
+                <dt>OCR language override</dt>
+                <dd>{selected.ocr_lang ?? "Auto / deployment default"}</dd>
               </div>
               <div>
                 <dt>Updated</dt>

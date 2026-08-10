@@ -134,6 +134,16 @@ def test_provider_selection_requires_matching_credentials() -> None:
             Settings(embedding=EmbeddingConfig(backend=EmbeddingBackend.OPENAI))
         )
 
+    with pytest.raises(ProductionConfigurationError, match="GOOGLE_API_KEY"):
+        validate_runtime_config(
+            Settings(
+                ocr=OcrConfig(
+                    enabled=True,
+                    bangla_backend=OcrBackend.GOOGLE_VISION,
+                )
+            )
+        )
+
 
 def test_known_fixed_embedding_dimension_is_validated() -> None:
     with pytest.raises(ProductionConfigurationError, match="DIMENSIONS=1536"):

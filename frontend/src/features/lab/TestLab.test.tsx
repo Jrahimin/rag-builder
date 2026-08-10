@@ -113,7 +113,7 @@ test("routes to Test Lab, keeps project selection, and derives Journey progress 
 
 test("distinguishes an accepted upload from terminal processing success", async () => {
   mockLabBase();
-  vi.spyOn(operatorApiClient, "uploadDocument").mockResolvedValue({
+  const upload = vi.spyOn(operatorApiClient, "uploadDocument").mockResolvedValue({
     ...documentFixture,
     status: "queued",
   });
@@ -121,6 +121,7 @@ test("distinguishes an accepted upload from terminal processing success", async 
     <OperatorConsoleApp />,
     `/lab?project=${projectFixture.id}&tab=documents`,
   );
+  await userEvent.selectOptions(await screen.findByLabelText("OCR language"), "bn");
   const picker = (await screen.findByText("Drop a document here")).closest("label")!;
   const fileInput = picker.querySelector("input[type=file]") as HTMLInputElement;
   await userEvent.upload(
@@ -128,6 +129,7 @@ test("distinguishes an accepted upload from terminal processing success", async 
     new File(["refund policy"], "policy.txt", { type: "text/plain" }),
   );
   expect(await screen.findByText("Request accepted")).toBeInTheDocument();
+  expect(upload).toHaveBeenCalledWith(projectFixture.id, expect.any(File), "bn");
   expect(screen.getByText("Processing finished successfully")).toBeInTheDocument();
   expect(
     screen
@@ -137,6 +139,23 @@ test("distinguishes an accepted upload from terminal processing success", async 
           link.getAttribute("href") === `/jobs?project=${projectFixture.id}&job=${jobFixture.id}`,
       ),
   ).toBe(true);
+});
+
+test("forwards the selected OCR language when reprocessing", async () => {
+  mockLabBase();
+  const reprocess = vi.spyOn(operatorApiClient, "reprocessDocument").mockResolvedValue({
+    ...documentFixture,
+    status: "queued",
+  });
+  renderOperatorComponent(
+    <OperatorConsoleApp />,
+    `/lab?project=${projectFixture.id}&tab=documents`,
+  );
+
+  await userEvent.selectOptions(await screen.findByLabelText("OCR language"), "bn");
+  await userEvent.click(screen.getByRole("button", { name: "Reprocess" }));
+
+  expect(reprocess).toHaveBeenCalledWith(projectFixture.id, documentFixture.id, "bn");
 });
 
 test("marks expected search words pass and exposes active build and result metadata", async () => {

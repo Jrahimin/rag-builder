@@ -7,6 +7,7 @@ from app.platform.jobs.contracts import JobConfiguration
 
 _EMBEDDING_SECRET_FIELDS = {"openai_api_key", "gemini_api_key"}
 _LLM_SECRET_FIELDS = {"openai_api_key", "gemini_api_key"}
+_OCR_SECRET_FIELDS = {"google_api_key"}
 
 
 def build_job_configuration(settings: Settings) -> JobConfiguration:
@@ -15,7 +16,7 @@ def build_job_configuration(settings: Settings) -> JobConfiguration:
         processing={
             "parsing": settings.parsing.model_dump(mode="json"),
             "chunking": settings.chunking.model_dump(mode="json"),
-            "ocr": settings.ocr.model_dump(mode="json"),
+            "ocr": settings.ocr.model_dump(mode="json", exclude=_OCR_SECRET_FIELDS),
         },
         index={
             "embedding": settings.embedding.model_dump(
@@ -44,7 +45,12 @@ def apply_job_configuration(
         update={
             "parsing": type(settings.parsing).model_validate(processing["parsing"]),
             "chunking": type(settings.chunking).model_validate(processing["chunking"]),
-            "ocr": type(settings.ocr).model_validate(processing["ocr"]),
+            "ocr": type(settings.ocr).model_validate(
+                {
+                    **settings.ocr.model_dump(),
+                    **processing["ocr"],
+                }
+            ),
             "embedding": type(settings.embedding).model_validate(
                 {
                     **settings.embedding.model_dump(),

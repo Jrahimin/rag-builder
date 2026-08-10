@@ -6,7 +6,7 @@ from collections import OrderedDict
 from threading import Lock
 
 from app.core.config import OcrBackend, Settings, get_settings
-from app.platform.domain.ocr_language import resolve_ocr_lang
+from app.platform.domain.ocr_language import is_ocr_first_language, resolve_ocr_lang
 from app.platform.providers.contracts.ocr import OcrImageInput, OcrPageResult, OCRProvider
 from app.platform.providers.errors import ProviderError
 
@@ -23,25 +23,48 @@ class NoopOCRProvider(OCRProvider):
 
     def recognize(self, image: OcrImageInput) -> OcrPageResult:
         del image
-        msg = "OCR is disabled. Set APE_OCR__ENABLED=true and install requirements/ocr.txt."
+        msg = (
+            "OCR is disabled for this language. Set APE_OCR__ENABLED=true and configure "
+            "the matching OCR backend."
+        )
         raise ProviderError(msg, provider_name=self.provider_name)
 
 
 def create_ocr_provider(settings: Settings, *, lang: str | None = None) -> OCRProvider:
     """Build the configured OCR provider for a resolved language."""
     cfg = settings.ocr
-    if not cfg.enabled or cfg.backend is OcrBackend.NOOP:
+    if not cfg.enabled:
         return _get_noop_provider()
     resolved_lang = resolve_ocr_lang(lang, cfg.lang)
-    if cfg.backend is OcrBackend.PADDLE:
+    backend = _effective_backend(settings, resolved_lang)
+    if backend is OcrBackend.NOOP:
+        return _get_noop_provider()
+    if backend is OcrBackend.PADDLE:
         from app.platform.providers.implementations.paddle_ocr_provider import PaddleOCRProvider
 
         return PaddleOCRProvider(
             lang=resolved_lang,
             use_gpu=cfg.use_gpu,
         )
-    msg = f"Unsupported OCR backend: {cfg.backend!r}"
+    if backend is OcrBackend.GOOGLE_VISION:
+        from app.platform.providers.implementations.google_vision_ocr_provider import (
+            GoogleVisionOCRProvider,
+        )
+
+        return GoogleVisionOCRProvider(
+            api_key=cfg.google_api_key,
+            endpoint=cfg.google_endpoint,
+            timeout_seconds=cfg.google_timeout_seconds,
+            max_attempts=cfg.google_max_attempts,
+        )
+    msg = f"Unsupported OCR backend: {backend!r}"
     raise ProviderError(msg, provider_name="ocr_factory")
+
+
+def _effective_backend(settings: Settings, language: str) -> OcrBackend:
+    if is_ocr_first_language(language):
+        return settings.ocr.bangla_backend
+    return settings.ocr.backend
 
 
 class _OcrProviderPool:
@@ -53,7 +76,7 @@ class _OcrProviderPool:
         self._lock = Lock()
 
     def get(self, settings: Settings, lang: str) -> OCRProvider:
-        key = (settings.ocr.backend.value, lang, settings.ocr.use_gpu)
+        key = (_effective_backend(settings, lang).value, lang, settings.ocr.use_gpu)
         with self._lock:
             if key in self._providers:
                 self._providers.move_to_end(key)
@@ -83,9 +106,11 @@ def _get_noop_provider() -> OCRProvider:
 def get_ocr_provider(*, lang: str | None = None, settings: Settings | None = None) -> OCRProvider:
     """Return a cached OCR provider for the resolved language."""
     settings = settings or get_settings()
-    if not settings.ocr.enabled or settings.ocr.backend is OcrBackend.NOOP:
+    if not settings.ocr.enabled:
         return _get_noop_provider()
     resolved = resolve_ocr_lang(lang, settings.ocr.lang)
+    if _effective_backend(settings, resolved) is OcrBackend.NOOP:
+        return _get_noop_provider()
     return _pool.get(settings, resolved)
 
 

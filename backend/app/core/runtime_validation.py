@@ -58,7 +58,11 @@ def validate_runtime_config(settings: Settings) -> None:
         errors.append("production requires reranking to be enabled")
     if settings.retrieval.reranker_backend is RerankerBackend.NOOP:
         errors.append("noop reranking is not allowed in production")
-    if settings.ocr.enabled and settings.ocr.backend is OcrBackend.NOOP:
+    if (
+        settings.ocr.enabled
+        and settings.ocr.backend is OcrBackend.NOOP
+        and settings.ocr.bangla_backend is OcrBackend.NOOP
+    ):
         errors.append("enabled OCR cannot use the noop backend in production")
     if "*" in settings.cors.allow_origins:
         errors.append("production forbids wildcard APE_CORS__ALLOW_ORIGINS")
@@ -73,6 +77,11 @@ def validate_runtime_config(settings: Settings) -> None:
     )
     _require_secret(errors, "APE_MINIO__ACCESS_KEY", settings.minio.access_key, {"minioadmin"})
     _require_secret(errors, "APE_MINIO__SECRET_KEY", settings.minio.secret_key, {"minioadmin"})
+    if OcrBackend.GOOGLE_VISION in {
+        settings.ocr.backend,
+        settings.ocr.bangla_backend,
+    }:
+        _require_secret(errors, "APE_OCR__GOOGLE_API_KEY", settings.ocr.google_api_key)
 
     if not settings.auth.enabled:
         errors.append("production requires organization/admin authentication")
@@ -167,6 +176,12 @@ def _base_configuration_errors(settings: Settings) -> list[str]:
         errors.append("APE_LLM__OPENAI_API_KEY is required for the OpenAI LLM")
     if llm.backend is LLMBackend.GEMINI and not llm.gemini_api_key:
         errors.append("APE_LLM__GEMINI_API_KEY is required for the Gemini LLM")
+    ocr = settings.ocr
+    if (
+        OcrBackend.GOOGLE_VISION in {ocr.backend, ocr.bangla_backend}
+        and not (ocr.google_api_key or "").strip()
+    ):
+        errors.append("APE_OCR__GOOGLE_API_KEY is required for Google Vision OCR")
     return errors
 
 

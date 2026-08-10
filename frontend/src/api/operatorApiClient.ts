@@ -151,10 +151,13 @@ export const operatorApiClient = {
       body,
     });
   },
-  reprocessDocument: (projectId: string, documentId: string) =>
-    request<Document>(`${apiRoot}/projects/${projectId}/documents/${documentId}/reprocess`, {
-      method: "POST",
-    }),
+  reprocessDocument: (projectId: string, documentId: string, ocrLang?: string) =>
+    request<Document>(
+      `${apiRoot}/projects/${projectId}/documents/${documentId}/reprocess${query({ ocr_lang: ocrLang })}`,
+      {
+        method: "POST",
+      },
+    ),
   embedDocument: (projectId: string, documentId: string) =>
     request<Document>(`${apiRoot}/projects/${projectId}/documents/${documentId}/embed`, {
       method: "POST",

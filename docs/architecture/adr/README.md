@@ -22,6 +22,7 @@ guides in this folder elaborate on implementation.
 | [ADR-014](./014-evidence-quality-and-grounded-answers.md) | Persisted evidence quality and deterministic grounding | Accepted |
 | [ADR-015](./015-safe-corpus-index-lifecycle.md) | Immutable retrieval builds with an atomic active pointer | Accepted |
 | [ADR-016](./016-hosted-integration-and-delivery.md) | Transactional outcome webhooks and one dedicated hosted profile | Accepted |
+| [ADR-017](./017-bangla-ocr-google-vision.md) | Google Vision as the opt-in Bangla OCR backend | Accepted |
 
 ## When to add an ADR
 

@@ -12,9 +12,14 @@ TXT/Markdown, PNG, JPEG, TIFF, and WebP. Extension/MIME/signature, corruption,
 password protection, and malware checks run before storage or job creation.
 Enqueues `document.process` (`status=queued`).
 
-Optional form field `ocr_lang` — per-document OCR language for scanned PDFs and image uploads. When omitted, the worker uses deployment default `APE_OCR__LANG` (`en`). Normalized aliases: `eng`→`en`, `bangla`/`bengali`→`bn`.
+Optional form field `ocr_lang` — per-document OCR language for scanned PDFs and image uploads. For
+PDFs, omission allows Unicode script detection before falling back to `APE_OCR__LANG` (`en`).
+Images and scans without a usable text layer go directly to the deployment default. Normalized
+aliases include `eng`→`en` and `bangla`/`bengali`/`ben`→`bn`.
 
-> **Bangla OCR limitation:** `ocr_lang=bn` is accepted at the API but **will fail in the worker** — PaddleOCR 3.7 has no stock Bengali models. English OCR on Bangla scans produces unreliable text. See [multilingual_support.md](../features/multilingual_support.md#known-limitation-bangla-bengali-ocr).
+> **Bangla OCR:** enable `APE_OCR__BANGLA_BACKEND=google_vision` and configure its API key.
+> Unicode Bangla PDFs can auto-route; scans, images, and custom-font/Bijoy PDFs require explicit
+> `ocr_lang=bn` or deployment default `bn`. See [multilingual support](../features/multilingual_support.md#bangla-bengali-ocr-routing-and-limitations).
 
 The response includes `job_id`. Inspect it through the
 [Jobs API](./jobs_api.md), or poll the Document until `status=chunked` (or
@@ -119,7 +124,8 @@ The response includes the new durable `job_id`.
 
 Optional query `ocr_lang` — set or override per-document OCR language for the new run. Pass empty string to clear and fall back to `APE_OCR__LANG`. When omitted, the existing `documents.ocr_lang` is kept.
 
-> `ocr_lang=bn` is not supported on PaddleOCR 3.7 — see Bangla OCR limitation on upload above.
+> `ocr_lang=bn` selects the configured Bangla backend. It fails clearly when Google Vision is
+> selected without a valid credential.
 
 ## DELETE `/{document_id}`
 

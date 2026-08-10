@@ -367,6 +367,7 @@ class OcrBackend(StrEnum):
 
     NOOP = "noop"
     PADDLE = "paddle"
+    GOOGLE_VISION = "google_vision"
 
 
 class OcrConfig(BaseModel):
@@ -374,8 +375,15 @@ class OcrConfig(BaseModel):
 
     enabled: bool = False
     backend: OcrBackend = OcrBackend.NOOP
+    bangla_backend: OcrBackend = OcrBackend.NOOP
     lang: str = "en"
     use_gpu: bool = False
+    google_api_key: str | None = None
+    google_endpoint: str = "https://vision.googleapis.com/v1/images:annotate"
+    google_timeout_seconds: float = Field(default=30.0, gt=0.0, le=300.0)
+    google_max_attempts: int = Field(default=3, ge=1, le=10)
+    bangla_min_ratio: float = Field(default=0.10, ge=0.0, le=1.0)
+    max_ocr_pages_per_document: int = Field(default=100, ge=1, le=10_000)
     min_text_chars: int = Field(default=20, ge=1, le=10_000)
     min_image_area_ratio: float = Field(
         default=0.08,
