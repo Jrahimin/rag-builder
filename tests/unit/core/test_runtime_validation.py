@@ -60,8 +60,9 @@ def _production_settings(**updates: object) -> Settings:
         ),
         "auth": AuthConfig(
             enabled=True,
-            admin_api_key="admin-key-that-is-at-least-thirty-two-bytes",
             key_pepper="key-pepper-that-is-at-least-thirty-two-bytes",
+            admin_jwt_secret="admin-jwt-secret-that-is-at-least-thirty-two-bytes",
+            admin_cookie_secure=True,
         ),
     }
     values.update(updates)

@@ -77,7 +77,7 @@ def validate_runtime_config(settings: Settings) -> None:
     if not settings.auth.enabled:
         errors.append("production requires organization/admin authentication")
     else:
-        _require_secret(errors, "APE_AUTH__ADMIN_API_KEY", settings.auth.admin_api_key)
+        _require_secret(errors, "APE_AUTH__ADMIN_JWT_SECRET", settings.auth.admin_jwt_secret)
         _require_secret(errors, "APE_AUTH__KEY_PEPPER", settings.auth.key_pepper)
 
     if profile is RuntimeProfile.HOSTED_OPENAI:

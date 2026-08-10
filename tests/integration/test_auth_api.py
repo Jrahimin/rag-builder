@@ -16,8 +16,11 @@ from tests.conftest import CapturingJobQueue, _integration_db_allowed
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
-ADMIN_KEY = "ape_live_admin_integration_test_key_32bytes_long"
+ADMIN_JWT_SECRET = "admin-jwt-secret-for-integration-tests-32"
 PEPPER = "integration-test-pepper-32-chars-min"
+ADMIN_EMAIL = "owner@example.com"
+ADMIN_PASSWORD = "correct horse battery staple"
+_admin_csrf_token: str | None = None
 
 
 @pytest_asyncio.fixture
@@ -44,7 +47,7 @@ async def auth_db_client(
         pytest.skip(reason)
 
     monkeypatch.setenv("APE_AUTH__ENABLED", "true")
-    monkeypatch.setenv("APE_AUTH__ADMIN_API_KEY", ADMIN_KEY)
+    monkeypatch.setenv("APE_AUTH__ADMIN_JWT_SECRET", ADMIN_JWT_SECRET)
     monkeypatch.setenv("APE_AUTH__KEY_PEPPER", PEPPER)
     monkeypatch.setenv("APE_AUTH__VERIFY_CACHE_BACKEND", "memory")
     monkeypatch.setenv("APE_AUTH__RATE_LIMIT_ENABLED", "false")
@@ -76,9 +79,34 @@ async def auth_db_client(
     app.dependency_overrides[get_db_session] = override_get_db_session
     app.dependency_overrides[get_job_queue_dep] = lambda: CapturingJobQueue(captured_jobs)
 
+    from app.models.admin_user import AdminRole, AdminUser
+    from app.modules.admin_auth.security import hash_password
+
+    seed_session = AsyncSession(
+        bind=connection,
+        expire_on_commit=False,
+        join_transaction_mode="create_savepoint",
+    )
+    seed_session.add(
+        AdminUser(
+            email=ADMIN_EMAIL,
+            password_hash=hash_password(ADMIN_PASSWORD),
+            role=AdminRole.SUPER_ADMIN.value,
+            is_active=True,
+        )
+    )
+    await seed_session.commit()
+    await seed_session.close()
+
     async with LifespanManager(app):
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://testserver") as ac:
+            global _admin_csrf_token
+            login = await ac.post(
+                "/api/v1/auth/login", json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD}
+            )
+            assert login.status_code == 200
+            _admin_csrf_token = ac.cookies.get("ape_admin_csrf")
             yield ac
 
     app.dependency_overrides.clear()
@@ -88,7 +116,8 @@ async def auth_db_client(
 
 
 def admin_headers() -> dict[str, str]:
-    return {"Authorization": f"Bearer {ADMIN_KEY}"}
+    assert _admin_csrf_token is not None
+    return {"X-CSRF-Token": _admin_csrf_token}
 
 
 async def _create_org_with_key(
@@ -129,11 +158,33 @@ async def _create_project(
     return response.json()["data"]["id"]
 
 
-async def test_organizations_require_admin_key(auth_db_client: AsyncClient) -> None:
+async def test_organizations_require_super_admin_session(auth_db_client: AsyncClient) -> None:
+    auth_db_client.cookies.clear()
     response = await auth_db_client.get("/api/v1/organizations")
     assert response.status_code == 401
     assert response.json()["error"]["code"] == "unauthorized"
     assert response.headers.get("www-authenticate") == 'Bearer realm="APE"'
+
+
+async def test_auth_me_returns_authenticated_super_admin(auth_db_client: AsyncClient) -> None:
+    response = await auth_db_client.get("/api/v1/auth/me")
+    assert response.status_code == 200
+    assert response.json()["data"]["email"] == ADMIN_EMAIL
+    assert response.json()["data"]["role"] == "SUPER_ADMIN"
+
+
+async def test_auth_login_rejects_invalid_password(auth_db_client: AsyncClient) -> None:
+    response = await auth_db_client.post(
+        "/api/v1/auth/login", json={"email": ADMIN_EMAIL, "password": "wrong"}
+    )
+    assert response.status_code == 401
+    assert response.json()["error"]["message"] == "Invalid email or password."
+
+
+async def test_auth_logout_revokes_session(auth_db_client: AsyncClient) -> None:
+    response = await auth_db_client.post("/api/v1/auth/logout", headers=admin_headers())
+    assert response.status_code == 200
+    assert (await auth_db_client.get("/api/v1/auth/me")).status_code == 401
 
 
 async def test_projects_require_org_key_when_auth_enabled(auth_db_client: AsyncClient) -> None:
@@ -386,7 +437,7 @@ async def test_rate_limit_returns_429_with_retry_after(
         pytest.skip(reason)
 
     monkeypatch.setenv("APE_AUTH__ENABLED", "true")
-    monkeypatch.setenv("APE_AUTH__ADMIN_API_KEY", ADMIN_KEY)
+    monkeypatch.setenv("APE_AUTH__ADMIN_JWT_SECRET", ADMIN_JWT_SECRET)
     monkeypatch.setenv("APE_AUTH__KEY_PEPPER", PEPPER)
     monkeypatch.setenv("APE_AUTH__VERIFY_CACHE_BACKEND", "memory")
     monkeypatch.setenv("APE_AUTH__RATE_LIMIT_ENABLED", "true")

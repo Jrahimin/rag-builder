@@ -15,8 +15,9 @@ class AuthenticatedOrganization:
     organization_id: uuid.UUID | None
     api_key_id: uuid.UUID | None
     organization_is_active: bool = True
+    is_platform_admin: bool = False
 
     @property
     def is_auth_bypassed(self) -> bool:
         """True when auth is disabled and no organization was resolved."""
-        return self.organization_id is None
+        return self.organization_id is None and not self.is_platform_admin

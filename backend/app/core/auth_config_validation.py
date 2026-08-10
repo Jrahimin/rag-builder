@@ -29,18 +29,23 @@ def validate_auth_config(settings: Settings) -> None:
             raise AuthConfigurationError(msg)
         return
 
-    if not auth.admin_api_key:
-        msg = "APE_AUTH__ADMIN_API_KEY is required when APE_AUTH__ENABLED=true."
-        raise AuthConfigurationError(msg)
-
-    if _secret_byte_length(auth.admin_api_key) < _MIN_SECRET_BYTES:
-        msg = "APE_AUTH__ADMIN_API_KEY must be at least 32 bytes."
-        raise AuthConfigurationError(msg)
-
     if not auth.key_pepper:
         msg = "APE_AUTH__KEY_PEPPER is required when APE_AUTH__ENABLED=true."
         raise AuthConfigurationError(msg)
 
     if _secret_byte_length(auth.key_pepper) < _MIN_SECRET_BYTES:
         msg = "APE_AUTH__KEY_PEPPER must be at least 32 bytes."
+        raise AuthConfigurationError(msg)
+
+    if not auth.admin_jwt_secret:
+        msg = "APE_AUTH__ADMIN_JWT_SECRET is required when APE_AUTH__ENABLED=true."
+        raise AuthConfigurationError(msg)
+    if _secret_byte_length(auth.admin_jwt_secret) < _MIN_SECRET_BYTES:
+        msg = "APE_AUTH__ADMIN_JWT_SECRET must be at least 32 bytes."
+        raise AuthConfigurationError(msg)
+    if settings.app.is_production and not auth.admin_cookie_secure:
+        msg = "APE_AUTH__ADMIN_COOKIE_SECURE must be true in production."
+        raise AuthConfigurationError(msg)
+    if auth.admin_cookie_samesite == "none" and not auth.admin_cookie_secure:
+        msg = "APE_AUTH__ADMIN_COOKIE_SECURE must be true when SameSite=None."
         raise AuthConfigurationError(msg)

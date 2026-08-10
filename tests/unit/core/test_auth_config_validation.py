@@ -10,7 +10,7 @@ from app.core.config import AppConfig, AuthConfig, Environment, Settings
 pytestmark = pytest.mark.unit
 
 PEPPER = "integration-test-pepper-32-chars-min"
-ADMIN_KEY = "ape_live_admin_integration_test_key_32bytes"
+ADMIN_JWT_SECRET = "admin-jwt-secret-for-integration-tests-32"
 
 
 def _settings(*, auth: AuthConfig, env: Environment = Environment.DEVELOPMENT) -> Settings:
@@ -26,22 +26,22 @@ def test_disabled_auth_rejected_in_production() -> None:
         validate_auth_config(_settings(auth=AuthConfig(enabled=False), env=Environment.PRODUCTION))
 
 
-def test_enabled_auth_requires_admin_key_and_pepper() -> None:
-    with pytest.raises(AuthConfigurationError, match="ADMIN_API_KEY"):
+def test_enabled_auth_requires_jwt_secret_and_pepper() -> None:
+    with pytest.raises(AuthConfigurationError, match="KEY_PEPPER"):
         validate_auth_config(_settings(auth=AuthConfig(enabled=True)))
 
-    with pytest.raises(AuthConfigurationError, match="KEY_PEPPER"):
-        validate_auth_config(_settings(auth=AuthConfig(enabled=True, admin_api_key=ADMIN_KEY)))
+    with pytest.raises(AuthConfigurationError, match="ADMIN_JWT_SECRET"):
+        validate_auth_config(_settings(auth=AuthConfig(enabled=True, key_pepper=PEPPER)))
 
 
 def test_enabled_auth_rejects_short_secrets() -> None:
-    with pytest.raises(AuthConfigurationError, match="ADMIN_API_KEY"):
+    with pytest.raises(AuthConfigurationError, match="ADMIN_JWT_SECRET"):
         validate_auth_config(
             _settings(
                 auth=AuthConfig(
                     enabled=True,
-                    admin_api_key="short",
                     key_pepper=PEPPER,
+                    admin_jwt_secret="short",
                 )
             )
         )
@@ -51,8 +51,8 @@ def test_enabled_auth_rejects_short_secrets() -> None:
             _settings(
                 auth=AuthConfig(
                     enabled=True,
-                    admin_api_key=ADMIN_KEY,
                     key_pepper="short",
+                    admin_jwt_secret=ADMIN_JWT_SECRET,
                 )
             )
         )
@@ -60,5 +60,11 @@ def test_enabled_auth_rejects_short_secrets() -> None:
 
 def test_enabled_auth_accepts_valid_configuration() -> None:
     validate_auth_config(
-        _settings(auth=AuthConfig(enabled=True, admin_api_key=ADMIN_KEY, key_pepper=PEPPER))
+        _settings(
+            auth=AuthConfig(
+                enabled=True,
+                key_pepper=PEPPER,
+                admin_jwt_secret=ADMIN_JWT_SECRET,
+            )
+        )
     )

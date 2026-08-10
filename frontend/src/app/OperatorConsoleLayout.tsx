@@ -1,5 +1,6 @@
-import { Outlet, useLocation } from "react-router-dom";
+import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import { OperatorNavigation } from "./OperatorNavigation";
+import { useAdminAuth } from "../auth/AdminAuthProvider";
 
 const titles: Record<string, { title: string; description: string }> = {
   "/": { title: "Overview", description: "Deployment status and key operational activity" },
@@ -37,6 +38,8 @@ const titles: Record<string, { title: string; description: string }> = {
 
 export function OperatorConsoleLayout() {
   const location = useLocation();
+  const navigate = useNavigate();
+  const { admin, logout } = useAdminAuth();
   const heading = titles[location.pathname] ?? titles["/"]!;
   return (
     <div className="console-shell">
@@ -51,6 +54,7 @@ export function OperatorConsoleLayout() {
           <div className="live-indicator">
             <span aria-hidden="true" /> Live data
           </div>
+          <div className="admin-account"><span>{admin?.email}</span><small>Super Admin</small><button type="button" onClick={() => void logout().then(() => navigate("/login", { replace: true }))}>Log out</button></div>
         </header>
         <Outlet />
       </main>

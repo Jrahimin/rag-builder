@@ -7,7 +7,7 @@ import uuid
 from fastapi import APIRouter, Depends, Query, status
 
 from app.core.http.envelopes import ApiResponse
-from app.dependencies.auth import require_admin_api_key
+from app.dependencies.admin_auth import require_super_admin
 from app.dependencies.organizations import ApiKeyServiceDep, OrganizationServiceDep
 from app.modules.organizations.schemas.api_key import (
     ApiKeyCreate,
@@ -21,7 +21,7 @@ from app.modules.organizations.schemas.organization import (
 )
 from app.platform.http.pagination import ListParams, PaginatedResult
 
-router = APIRouter(dependencies=[Depends(require_admin_api_key)])
+router = APIRouter(dependencies=[Depends(require_super_admin)])
 
 
 @router.post(

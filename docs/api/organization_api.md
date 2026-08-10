@@ -1,11 +1,11 @@
 # Organizations — `/api/v1/organizations`
 
-Organization management and API key lifecycle. Requires deployment **admin** key (`APE_AUTH__ADMIN_API_KEY`).
+Organization management and API key lifecycle. Requires a logged-in **Super Admin** browser session.
 
 **Auth header (admin):**
 
 ```http
-Authorization: Bearer <APE_AUTH__ADMIN_API_KEY>
+Cookie: ape_admin_access=<HttpOnly session cookie>
 ```
 
 ## POST /api/v1/organizations

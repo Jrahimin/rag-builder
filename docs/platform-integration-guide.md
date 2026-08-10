@@ -59,7 +59,7 @@ Projects (e.g. one per client matter, department, or product workspace).
 | ---- | -------- |
 | **Base URL** | All requests, e.g. `https://ape.customer.internal` |
 | **Organization API key** | Every business API call (`ape_live_…`) |
-| **Admin key** | One-time bootstrap only — create orgs/keys (usually not in your app) |
+| **Super Admin login** | Operator-only organization/key management (never in your app) |
 
 Keys are provisioned once by an operator with the deployment admin credential. Your
 integration stores the **Organization key** securely (secrets manager, env var, never
@@ -84,7 +84,6 @@ curl -s "$APE_BASE_URL/health/ready" | jq .
 ```bash
 export APE_BASE_URL="http://localhost:8088"          # or your deployment URL
 export APE_ORG_KEY="ape_live_your_organization_key"  # business API key
-export APE_ADMIN_KEY="your_admin_key"                # bootstrap only
 ```
 
 All examples below use these variables.
@@ -98,7 +97,7 @@ All examples below use these variables.
 | Tier | Routes | Header |
 | ---- | ------ | ------ |
 | **Public** | `GET /health/live`, `GET /health/ready` | None |
-| **Admin** | `/api/v1/organizations/**` | `Authorization: Bearer <admin_key>` |
+| **Super Admin** | Operator UI and management APIs | HttpOnly browser session cookie |
 | **Organization** | `/api/v1/projects/**` and nested routes | See below |
 
 ### Business API header (use on every integration call)

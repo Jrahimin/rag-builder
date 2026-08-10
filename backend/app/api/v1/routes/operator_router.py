@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Query
 
 from app.core.http.envelopes import ApiResponse
-from app.dependencies.auth import require_admin_api_key
+from app.dependencies.admin_auth import require_super_admin
 from app.dependencies.operations import OperatorServiceDep
 from app.modules.operations.schemas.operator import (
     ActiveConfiguration,
@@ -17,7 +17,7 @@ from app.modules.operations.schemas.operator import (
     WorkerOverview,
 )
 
-router = APIRouter(dependencies=[Depends(require_admin_api_key)])
+router = APIRouter(dependencies=[Depends(require_super_admin)])
 
 
 @router.get("/overview", response_model=ApiResponse[OperatorOverview])

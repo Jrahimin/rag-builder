@@ -11,6 +11,8 @@ All SQLAlchemy models live under ``app.models``::
 
 from __future__ import annotations
 
+from app.models.admin_session import AdminSession  # noqa: F401
+from app.models.admin_user import AdminUser  # noqa: F401
 from app.models.audit_event import AuditEvent  # noqa: F401
 from app.models.chunk_embedding import ChunkEmbedding  # noqa: F401
 from app.models.chunk_keyword_index import ChunkKeywordIndex  # noqa: F401
