@@ -64,7 +64,11 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     response = await fetch(path, {
       ...init,
       credentials: "include",
-      headers: { Accept: "application/json", ...(init?.method && !["GET", "HEAD"].includes(init.method) ? getCsrfHeader() : {}), ...init?.headers },
+      headers: {
+        Accept: "application/json",
+        ...(init?.method && !["GET", "HEAD"].includes(init.method) ? getCsrfHeader() : {}),
+        ...init?.headers,
+      },
     });
   } catch {
     throw new OperatorApiError(
@@ -235,7 +239,11 @@ export const operatorApiClient = {
         {
           method: "POST",
           credentials: "include",
-          headers: { Accept: "text/event-stream", "Content-Type": "application/json", ...getCsrfHeader() },
+          headers: {
+            Accept: "text/event-stream",
+            "Content-Type": "application/json",
+            ...getCsrfHeader(),
+          },
           body: JSON.stringify({ content, document_id: documentId ?? null, metadata_filter: {} }),
         },
       );

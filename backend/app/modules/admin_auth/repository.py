@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.admin_session import AdminSession
@@ -38,6 +38,13 @@ class AdminAuthRepository:
                 AdminSession.revoked_at.is_(None),
                 AdminSession.expires_at > datetime.now(UTC),
             )
+        )
+
+    async def revoke_sessions_for_admin(self, admin_id: uuid.UUID) -> None:
+        await self._session.execute(
+            update(AdminSession)
+            .where(AdminSession.admin_user_id == admin_id, AdminSession.revoked_at.is_(None))
+            .values(revoked_at=datetime.now(UTC))
         )
 
     def add(self, entity: AdminUser | AdminSession) -> None:

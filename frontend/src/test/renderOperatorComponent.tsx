@@ -13,7 +13,14 @@ export function renderOperatorComponent(node: ReactNode, route = "/") {
     ...render(
       <QueryClientProvider client={queryClient}>
         <MemoryRouter initialEntries={[route]}>
-          <AdminAuthProvider initialAdmin={{ id: "test-admin", email: "owner@example.com", role: "SUPER_ADMIN", last_login_at: null }}>
+          <AdminAuthProvider
+            initialAdmin={{
+              id: "test-admin",
+              email: "owner@example.com",
+              role: "SUPER_ADMIN",
+              last_login_at: null,
+            }}
+          >
             {node}
           </AdminAuthProvider>
         </MemoryRouter>

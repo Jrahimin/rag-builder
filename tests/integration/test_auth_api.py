@@ -181,6 +181,25 @@ async def test_auth_login_rejects_invalid_password(auth_db_client: AsyncClient) 
     assert response.json()["error"]["message"] == "Invalid email or password."
 
 
+async def test_auth_refresh_requires_csrf(auth_db_client: AsyncClient) -> None:
+    response = await auth_db_client.post("/api/v1/auth/refresh")
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "forbidden"
+
+
+async def test_auth_refresh_rotates_session(auth_db_client: AsyncClient) -> None:
+    response = await auth_db_client.post("/api/v1/auth/refresh", headers=admin_headers())
+    assert response.status_code == 200
+    assert response.headers.get("set-cookie") is not None
+    assert (await auth_db_client.get("/api/v1/auth/me")).status_code == 200
+
+
+async def test_auth_logout_requires_csrf(auth_db_client: AsyncClient) -> None:
+    response = await auth_db_client.post("/api/v1/auth/logout")
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "forbidden"
+
+
 async def test_auth_logout_revokes_session(auth_db_client: AsyncClient) -> None:
     response = await auth_db_client.post("/api/v1/auth/logout", headers=admin_headers())
     assert response.status_code == 200
@@ -492,4 +511,4 @@ async def test_openapi_includes_security_schemes(auth_db_client: AsyncClient) ->
     components = response.json()["components"]["securitySchemes"]
     assert "OrganizationBearer" in components
     assert "OrganizationApiKey" in components
-    assert "AdminBearer" in components
+    assert "AdminCookie" in components

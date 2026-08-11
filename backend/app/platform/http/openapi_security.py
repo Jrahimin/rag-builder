@@ -22,6 +22,11 @@ _ORG_SECURITY: list[dict[str, list[str]]] = [
     {"OrganizationApiKey": []},
 ]
 _ADMIN_SECURITY: list[dict[str, list[str]]] = [{"AdminCookie": []}]
+_ADMIN_OR_ORG_SECURITY: list[dict[str, list[str]]] = [
+    {"AdminCookie": []},
+    {"OrganizationBearer": []},
+    {"OrganizationApiKey": []},
+]
 
 
 def _apply_route_security(openapi_schema: dict[str, object]) -> None:
@@ -29,14 +34,26 @@ def _apply_route_security(openapi_schema: dict[str, object]) -> None:
     for path, path_item in paths.items():
         if not isinstance(path_item, dict):
             continue
-        is_admin_path = "/organizations" in path or "/operator" in path or path == "/metrics"
-        security = _ADMIN_SECURITY if is_admin_path else _ORG_SECURITY
+        if path.endswith("/auth/login"):
+            security: list[dict[str, list[str]]] | None = None
+        elif (
+            "/auth/" in path
+            or "/organizations" in path
+            or "/operator" in path
+            or path == "/metrics"
+        ):
+            security = _ADMIN_SECURITY
+        elif "/projects" in path:
+            security = _ADMIN_OR_ORG_SECURITY
+        else:
+            security = _ORG_SECURITY
         for method, operation in path_item.items():
             if method.startswith("x-") or not isinstance(operation, dict):
                 continue
             if path in ("/health/live", "/health/ready"):
                 continue
-            operation["security"] = security
+            if security is not None:
+                operation["security"] = security
 
 
 def configure_openapi_security(app: object) -> None:

@@ -55,89 +55,89 @@ export function OperatorConsoleApp() {
     <Routes>
       <Route path="login" element={<LoginPage />} />
       <Route element={<ProtectedAdminRoute />}>
-      <Route element={<OperatorConsoleLayout />}>
-        <Route
-          index
-          element={
-            <Suspense fallback={<LoadingState label="Loading overview" />}>
-              <SystemHealthOverview />
-            </Suspense>
-          }
-        />
-        <Route
-          path="lab"
-          element={
-            <Suspense fallback={<LoadingState label="Loading Test Lab" />}>
-              <TestLab />
-            </Suspense>
-          }
-        />
-        <Route
-          path="jobs"
-          element={
-            <Suspense fallback={<LoadingState label="Loading jobs" />}>
-              <JobRuns />
-            </Suspense>
-          }
-        />
-        <Route
-          path="projects"
-          element={
-            <Suspense fallback={<LoadingState label="Loading projects" />}>
-              <ProjectDocumentInspection />
-            </Suspense>
-          }
-        />
-        <Route
-          path="configuration"
-          element={
-            <Suspense fallback={<LoadingState label="Loading configuration" />}>
-              <ActiveConfigurationDetails />
-            </Suspense>
-          }
-        />
-        <Route
-          path="metrics"
-          element={
-            <Suspense fallback={<LoadingState label="Loading metrics" />}>
-              <OperationalMetrics />
-            </Suspense>
-          }
-        />
-        <Route
-          path="quality"
-          element={
-            <Suspense fallback={<LoadingState label="Loading evidence quality" />}>
-              <EvidenceQuality />
-            </Suspense>
-          }
-        />
-        <Route
-          path="audit"
-          element={
-            <Suspense fallback={<LoadingState label="Loading audit" />}>
-              <AuditHistory />
-            </Suspense>
-          }
-        />
-        <Route
-          path="webhooks"
-          element={
-            <Suspense fallback={<LoadingState label="Loading webhooks" />}>
-              <WebhookDeliveryInspection />
-            </Suspense>
-          }
-        />
-        <Route
-          path="health"
-          element={
-            <Suspense fallback={<LoadingState label="Loading system health" />}>
-              <DependencyWorkerHealth />
-            </Suspense>
-          }
-        />
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Route>
+        <Route element={<OperatorConsoleLayout />}>
+          <Route
+            index
+            element={
+              <Suspense fallback={<LoadingState label="Loading overview" />}>
+                <SystemHealthOverview />
+              </Suspense>
+            }
+          />
+          <Route
+            path="lab"
+            element={
+              <Suspense fallback={<LoadingState label="Loading Test Lab" />}>
+                <TestLab />
+              </Suspense>
+            }
+          />
+          <Route
+            path="jobs"
+            element={
+              <Suspense fallback={<LoadingState label="Loading jobs" />}>
+                <JobRuns />
+              </Suspense>
+            }
+          />
+          <Route
+            path="projects"
+            element={
+              <Suspense fallback={<LoadingState label="Loading projects" />}>
+                <ProjectDocumentInspection />
+              </Suspense>
+            }
+          />
+          <Route
+            path="configuration"
+            element={
+              <Suspense fallback={<LoadingState label="Loading configuration" />}>
+                <ActiveConfigurationDetails />
+              </Suspense>
+            }
+          />
+          <Route
+            path="metrics"
+            element={
+              <Suspense fallback={<LoadingState label="Loading metrics" />}>
+                <OperationalMetrics />
+              </Suspense>
+            }
+          />
+          <Route
+            path="quality"
+            element={
+              <Suspense fallback={<LoadingState label="Loading evidence quality" />}>
+                <EvidenceQuality />
+              </Suspense>
+            }
+          />
+          <Route
+            path="audit"
+            element={
+              <Suspense fallback={<LoadingState label="Loading audit" />}>
+                <AuditHistory />
+              </Suspense>
+            }
+          />
+          <Route
+            path="webhooks"
+            element={
+              <Suspense fallback={<LoadingState label="Loading webhooks" />}>
+                <WebhookDeliveryInspection />
+              </Suspense>
+            }
+          />
+          <Route
+            path="health"
+            element={
+              <Suspense fallback={<LoadingState label="Loading system health" />}>
+                <DependencyWorkerHealth />
+              </Suspense>
+            }
+          />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Route>
       </Route>
     </Routes>
   );

@@ -8,7 +8,7 @@
 
 | Scope | Examples |
 | ----- | -------- |
-| **Deployment** | PostgreSQL/pgvector, Redis and storage connections, process config, health probes, auth pepper + admin key |
+| **Deployment** | PostgreSQL/pgvector, Redis and storage connections, process config, health probes, auth secrets + key pepper |
 | **Platform** | Deployment-wide defaults, durable jobs/outbox, executor transport, provider registry (future) |
 | **Organization** | Tenant identity, Organization API keys, org-scoped rate limits |
 | **Project** | Documents, prompts, chats, contextual generations, evaluations, embeddings, webhook endpoints/events/deliveries |
@@ -22,7 +22,7 @@ Organization  →  who is calling (M2M API key)
 Project         →  which corpus (project_id on all business data)
 ```
 
-- **Auth:** `require_organization_api_key` binds `AuthenticatedOrganization`; admin key for `/organizations/**` only.
+- **Auth:** `require_organization_api_key` binds `AuthenticatedOrganization` for integrations; `require_super_admin` protects platform administration. `require_admin_or_organization` is the explicit policy for project routes shared by the operator console and integrations.
 - **Data:** `ProjectScopedMixin` + `ProjectScopedRepository`; nested routes use
   `ensure_project_accessible(project_id, org_id)`. Project aggregate mutations
   use `ensure_project_owned` so ownership remains enforced while deleted-state

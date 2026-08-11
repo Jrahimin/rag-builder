@@ -9,7 +9,10 @@ type Success<T> = { success: true; data: T | null; message?: string | null };
 type Failure = { error: { code: string; message: string } };
 
 export class AdminAuthError extends Error {
-  constructor(readonly status: number, message: string) {
+  constructor(
+    readonly status: number,
+    message: string,
+  ) {
     super(message);
     this.name = "AdminAuthError";
   }
