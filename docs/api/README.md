@@ -39,6 +39,7 @@ Error:
 
 | Module | File | Prefix |
 | ------ | ---- | ------ |
+| Super Admin auth | [authentication_api.md](authentication_api.md) | `/api/v1/auth` |
 | System | [system_api.md](system_api.md) | `/health/live`, `/health/ready`, `/metrics` |
 | Operator | [operator_api.md](operator_api.md) | `/api/v1/operator` |
 | Organizations | [organization_api.md](organization_api.md) | `/api/v1/organizations` |

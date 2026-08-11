@@ -47,7 +47,7 @@ as cached results.
 ## Operator read model
 
 The `modules/operations` slice is read-only and deployment-wide. It is the deliberate exception
-to ordinary project-scoped reads and is reachable only through the deployment admin-key gate.
+to ordinary project-scoped reads and is reachable only through the Super Admin session gate.
 It aggregates:
 
 - durable job states, queue/outbox age, attempts, failures, and job-type latency;

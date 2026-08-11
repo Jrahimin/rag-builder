@@ -47,7 +47,11 @@ Business Application
 
 ## Authenticated request lifecycle
 
-Business routes (`/api/v1/projects/**` and nested modules) depend on `require_organization_api_key` before handlers run. Middleware assigns correlation IDs only — it does not parse API keys.
+Integration requests to business routes (`/api/v1/projects/**` and nested modules)
+depend on `require_organization_api_key`. The operator console uses the explicit
+`require_admin_or_organization` policy for the same management routes; it does
+not change how API-key callers are authenticated or scoped. Middleware assigns
+correlation IDs only — it does not parse credentials.
 
 ```mermaid
 sequenceDiagram

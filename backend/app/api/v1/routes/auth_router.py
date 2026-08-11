@@ -2,60 +2,26 @@
 
 from __future__ import annotations
 
-import hmac
 from typing import Annotated
 
 from fastapi import APIRouter, Cookie, Request, Response
 
 from app.core.http.envelopes import ApiResponse
 from app.dependencies.admin_auth import (
-    ADMIN_ACCESS_COOKIE,
-    ADMIN_CSRF_COOKIE,
-    ADMIN_CSRF_HEADER,
-    ADMIN_REFRESH_COOKIE,
     AdminAuthServiceDep,
+    AdminLoginRateLimiterDep,
     CurrentAdminDep,
+    enforce_admin_login_rate_limit,
 )
 from app.modules.admin_auth.schemas import AdminLoginRequest, CurrentAdminResponse
-from app.modules.admin_auth.service import AdminTokenPair
+from app.platform.http.admin_cookies import (
+    ADMIN_REFRESH_COOKIE,
+    clear_admin_auth_cookies,
+    require_admin_csrf,
+    set_admin_auth_cookies,
+)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
-
-
-def _set_auth_cookies(response: Response, tokens: AdminTokenPair, request: Request) -> None:
-    config = request.app.state.settings.auth
-    common = {
-        "secure": config.admin_cookie_secure,
-        "samesite": config.admin_cookie_samesite,
-        "domain": config.admin_cookie_domain,
-    }
-    response.set_cookie(
-        ADMIN_ACCESS_COOKIE,
-        tokens.access_token,
-        httponly=True,
-        path="/api/v1",
-        **common,
-    )
-    response.set_cookie(
-        ADMIN_REFRESH_COOKIE,
-        tokens.refresh_token,
-        httponly=True,
-        path="/api/v1/auth",
-        **common,
-    )
-    response.set_cookie(ADMIN_CSRF_COOKIE, tokens.csrf_token, httponly=False, path="/", **common)
-
-
-def _clear_auth_cookies(response: Response, request: Request) -> None:
-    config = request.app.state.settings.auth
-    common = {
-        "secure": config.admin_cookie_secure,
-        "samesite": config.admin_cookie_samesite,
-        "domain": config.admin_cookie_domain,
-    }
-    response.delete_cookie(ADMIN_ACCESS_COOKIE, path="/api/v1", **common)
-    response.delete_cookie(ADMIN_REFRESH_COOKIE, path="/api/v1/auth", **common)
-    response.delete_cookie(ADMIN_CSRF_COOKIE, path="/", **common)
 
 
 @router.post("/login", response_model=ApiResponse[CurrentAdminResponse])
@@ -64,9 +30,22 @@ async def login(
     request: Request,
     response: Response,
     service: AdminAuthServiceDep,
+    login_rate_limiter: AdminLoginRateLimiterDep,
 ) -> ApiResponse[CurrentAdminResponse]:
+    await enforce_admin_login_rate_limit(
+        request=request,
+        email=body.email,
+        limiter=login_rate_limiter,
+        settings=request.app.state.settings,
+    )
     tokens = await service.login(email=body.email, password=body.password)
-    _set_auth_cookies(response, tokens, request)
+    set_admin_auth_cookies(
+        response,
+        config=request.app.state.settings.auth,
+        access_token=tokens.access_token,
+        refresh_token=tokens.refresh_token,
+        csrf_token=tokens.csrf_token,
+    )
     admin = await service.current_admin_from_email(body.email)
     return ApiResponse.ok(CurrentAdminResponse.model_validate(admin))
 
@@ -78,12 +57,19 @@ async def refresh(
     service: AdminAuthServiceDep,
     refresh_token: Annotated[str | None, Cookie(alias=ADMIN_REFRESH_COOKIE)] = None,
 ) -> ApiResponse[None]:
+    require_admin_csrf(request)
     if not refresh_token:
         from app.core.exceptions import UnauthorizedError
 
         raise UnauthorizedError("Session is invalid or expired.")
     tokens = await service.refresh(refresh_token)
-    _set_auth_cookies(response, tokens, request)
+    set_admin_auth_cookies(
+        response,
+        config=request.app.state.settings.auth,
+        access_token=tokens.access_token,
+        refresh_token=tokens.refresh_token,
+        csrf_token=tokens.csrf_token,
+    )
     return ApiResponse.ok(message="Session refreshed")
 
 
@@ -94,14 +80,9 @@ async def logout(
     service: AdminAuthServiceDep,
     refresh_token: Annotated[str | None, Cookie(alias=ADMIN_REFRESH_COOKIE)] = None,
 ) -> ApiResponse[None]:
-    csrf_cookie = request.cookies.get(ADMIN_CSRF_COOKIE)
-    csrf_header = request.headers.get(ADMIN_CSRF_HEADER)
-    if csrf_cookie and (not csrf_header or not hmac.compare_digest(csrf_cookie, csrf_header)):
-        from app.core.exceptions import ForbiddenError
-
-        raise ForbiddenError("CSRF validation failed.")
+    require_admin_csrf(request)
     await service.logout(refresh_token)
-    _clear_auth_cookies(response, request)
+    clear_admin_auth_cookies(response, config=request.app.state.settings.auth)
     return ApiResponse.ok(message="Logged out")
 
 

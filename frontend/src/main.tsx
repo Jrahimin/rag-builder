@@ -13,7 +13,9 @@ createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
       <BrowserRouter basename="/operator">
-        <AdminAuthProvider><OperatorConsoleApp /></AdminAuthProvider>
+        <AdminAuthProvider>
+          <OperatorConsoleApp />
+        </AdminAuthProvider>
       </BrowserRouter>
     </QueryClientProvider>
   </StrictMode>,

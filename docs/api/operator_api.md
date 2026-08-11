@@ -1,12 +1,12 @@
 # Operator — deployment operations
 
-All routes require the deployment admin key when authentication is enabled. Responses are
-sanitized and never contain secret values.
+All routes require an authenticated Super Admin browser session when authentication is enabled.
+Responses are sanitized and never contain secret values. The session uses HttpOnly cookies; unsafe
+requests also require the CSRF header described in [Authentication API](./authentication_api.md).
 
-The operator console consumes these endpoints with relative same-origin `/api` requests. In the
-current trusted/internal deployment, leave `APE_AUTH__ENABLED=false`; the console adds no login,
-session, cookie, user, or credential storage. If backend authentication is enabled, the existing
-backend gates remain authoritative and unauthenticated console requests fail normally.
+The operator console consumes these endpoints with relative same-origin `/api` requests. It
+bootstraps the current Super Admin through `/api/v1/auth/me`, refreshes an expired access session
+when possible, and stores no authentication token in browser storage.
 
 The `/operator/lab` Test Lab also reuses the existing project-scoped Projects, Documents, Jobs,
 Index Builds, Search, and Conversations APIs for browser-based end-to-end verification. It does
@@ -52,4 +52,4 @@ Recent immutable job audit events. Query: `limit` (1–200, default 50), `offset
 ## GET /metrics
 
 Lightweight Prometheus-compatible current gauges. This unversioned scraper endpoint uses the same
-admin-key gate.
+Super Admin session gate.

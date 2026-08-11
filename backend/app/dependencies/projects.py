@@ -8,7 +8,7 @@ from typing import Annotated
 from fastapi import Depends, Path
 
 from app.core.exceptions import NotFoundError
-from app.dependencies.auth import AuthenticatedOrganizationDep
+from app.dependencies.access import AdminOrOrganizationDep
 from app.dependencies.common import DbSessionDep
 from app.modules.projects.repositories.project_repository import ProjectRepository
 from app.modules.projects.services.project_service import ProjectService
@@ -23,7 +23,7 @@ def get_project_repository(session: DbSessionDep) -> ProjectRepository:
 async def ensure_project_accessible(
     project_id: ProjectIdPath,
     project_repository: Annotated[ProjectRepository, Depends(get_project_repository)],
-    auth_org: AuthenticatedOrganizationDep,
+    auth_org: AdminOrOrganizationDep,
 ) -> None:
     """Raise when the project is not accessible to the authenticated organization."""
     await _ensure_project_for_organization(
@@ -37,7 +37,7 @@ async def ensure_project_accessible(
 async def ensure_project_owned(
     project_id: ProjectIdPath,
     project_repository: Annotated[ProjectRepository, Depends(get_project_repository)],
-    auth_org: AuthenticatedOrganizationDep,
+    auth_org: AdminOrOrganizationDep,
 ) -> None:
     """Authorize a Project mutation while leaving deleted-state semantics to its service."""
     await _ensure_project_for_organization(
@@ -51,7 +51,7 @@ async def ensure_project_owned(
 async def _ensure_project_for_organization(
     project_id: uuid.UUID,
     project_repository: ProjectRepository,
-    auth_org: AuthenticatedOrganizationDep,
+    auth_org: AdminOrOrganizationDep,
     *,
     include_deleted: bool,
 ) -> None:
@@ -70,7 +70,7 @@ async def _ensure_project_for_organization(
 def get_project_service(
     session: DbSessionDep,
     repository: Annotated[ProjectRepository, Depends(get_project_repository)],
-    auth_org: AuthenticatedOrganizationDep,
+    auth_org: AdminOrOrganizationDep,
 ) -> ProjectService:
     return ProjectService(
         session=session,

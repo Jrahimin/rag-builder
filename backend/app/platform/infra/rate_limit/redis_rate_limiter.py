@@ -27,9 +27,13 @@ class RedisRateLimiter:
         self._window_seconds = window_seconds
 
     async def check(self, organization_id: uuid.UUID) -> RateLimitResult:
+        return await self.check_key(str(organization_id), prefix=_KEY_PREFIX)
+
+    async def check_key(self, key_value: str, *, prefix: str) -> RateLimitResult:
+        """Check an opaque caller identifier under a deliberately named scope."""
         now = int(time.time())
         window_bucket = now // self._window_seconds
-        key = f"{_KEY_PREFIX}{organization_id}:{window_bucket}"
+        key = f"{prefix}{key_value}:{window_bucket}"
 
         count = await self._redis.incr(key)
         if count == 1:

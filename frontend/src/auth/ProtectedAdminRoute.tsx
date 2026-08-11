@@ -1,5 +1,5 @@
 import { Navigate, Outlet, useLocation } from "react-router-dom";
-import { useAdminAuth } from "./AdminAuthProvider";
+import { useAdminAuth } from "./useAdminAuth";
 
 export function ProtectedAdminRoute() {
   const { admin, loading } = useAdminAuth();

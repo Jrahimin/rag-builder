@@ -515,6 +515,8 @@ class AuthConfig(BaseModel):
     rate_limit_requests: int = Field(default=1000, ge=1)
     rate_limit_window_seconds: int = Field(default=60, ge=1)
     rate_limit_fail_open: bool = False
+    admin_login_rate_limit_requests: int = Field(default=5, ge=1, le=100)
+    admin_login_rate_limit_window_seconds: int = Field(default=60, ge=1, le=3600)
     admin_jwt_secret: str | None = None
     admin_access_token_expire_minutes: int = Field(default=15, ge=1, le=120)
     admin_refresh_token_expire_days: int = Field(default=14, ge=1, le=90)

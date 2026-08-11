@@ -4,13 +4,13 @@ Tenant boundary and machine-to-machine authentication for the public REST API.
 
 ## Purpose
 
-**Organization** is the auth/tenant boundary. **Project** remains the data isolation boundary. Organization API keys authenticate business API calls; a deployment admin key bootstraps Organization and key provisioning.
+**Organization** is the auth/tenant boundary. **Project** remains the data isolation boundary. Organization API keys authenticate business API calls; a Super Admin browser session protects organization and API-key provisioning.
 
 ## Architecture
 
 ```text
-api/v1/routes/organizations_router.py     ← admin key (Depends)
-api/v1/router.py                          ← business routers wrapped with org key Depends
+api/v1/routes/organizations_router.py     ← Super Admin session (Depends)
+api/v1/router.py                          ← business routers use explicit admin-or-org policy
         │
         ▼
 dependencies/auth.py                      ← cache → DB verify → rate limit
@@ -69,7 +69,7 @@ sequenceDiagram
 ## API surfaces
 
 - **Super Admin:** `/api/v1/organizations/**` — requires a Super Admin browser session
-- **Business:** `/api/v1/projects/**` and nested routes — requires Organization API key
+- **Business:** `/api/v1/projects/**` and nested routes — Organization API key for integrations, or a Super Admin session for the operator console
 - **Public:** `GET /health`, `GET /ready`
 
 See [organization_api.md](../api/organization_api.md).

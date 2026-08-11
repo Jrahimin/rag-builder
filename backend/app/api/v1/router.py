@@ -22,7 +22,7 @@ from app.api.v1.routes.organizations_router import router as organizations_route
 from app.api.v1.routes.projects_router import router as projects_router
 from app.api.v1.routes.search_router import router as search_router
 from app.api.v1.routes.webhooks_router import router as webhooks_router
-from app.dependencies.auth import require_organization_api_key
+from app.dependencies.access import require_admin_or_organization
 from app.dependencies.projects import ensure_project_accessible
 
 api_v1_router = APIRouter()
@@ -30,7 +30,7 @@ api_v1_router.include_router(auth_router)
 api_v1_router.include_router(organizations_router, prefix="/organizations", tags=["organizations"])
 api_v1_router.include_router(operator_router, prefix="/operator", tags=["operator"])
 
-_business_router = APIRouter(dependencies=[Depends(require_organization_api_key)])
+_business_router = APIRouter(dependencies=[Depends(require_admin_or_organization)])
 _business_router.include_router(projects_router, prefix="/projects", tags=["projects"])
 
 _project_nested_router = APIRouter(dependencies=[Depends(ensure_project_accessible)])

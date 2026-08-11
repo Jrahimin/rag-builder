@@ -61,8 +61,9 @@ index rollback API; never reconstruct the former active corpus in place.
 ## Key rotation
 
 - Organization key: create replacement, deploy to the host app, verify, revoke old.
-- Admin key/key pepper: use maintenance. Pepper rotation invalidates stored hashes;
-  provision replacement organization credentials in the approved change.
+- Super Admin credentials/JWT secret/key pepper: use the approved maintenance procedure. Pepper
+  rotation invalidates stored API-key hashes; provision replacement organization credentials in the
+  approved change. Rotate the Super Admin JWT secret only with a planned operator re-login.
 - Webhook signing key: disable endpoints, rotate the deployment key, recreate endpoints,
   place new secrets in receivers, verify, and enable. All derived secrets change.
 - Provider/DB/Redis/MinIO/TLS: update the secret source, restart affected services, and
