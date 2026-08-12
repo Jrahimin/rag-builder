@@ -65,7 +65,11 @@ response keeps the existing Document contract and adds `job_id`.
 `worker/handlers/document.py` delegates to `worker/job_runtime.py`. The runtime
 acquires the persisted lease, restores the job's secret-free configuration
 snapshot over live credentials, heartbeats in an isolated session, and then
-runs `DocumentProcessingWorkflow`. Duplicate deliveries that cannot acquire the
+runs `DocumentProcessingWorkflow`. The handler receives a detached `JobRun`
+snapshot: it may build payload/result values in memory, while only the terminal
+transition copies them to the freshly locked durable row. This keeps independent
+progress/heartbeat writes from blocking on the operation's own transaction.
+Duplicate deliveries that cannot acquire the
 lease are ignored; Document status is not an execution admission gate.
 
 The workflow records `parsing`, reads raw bytes, and delegates file selection to

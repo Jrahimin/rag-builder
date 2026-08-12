@@ -612,6 +612,7 @@ function DocumentsTab({
   const lifecycle = useDocumentLifecycleAction(projectId);
   const [dragging, setDragging] = useState(false);
   const [ocrLang, setOcrLang] = useState("");
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [purgeText, setPurgeText] = useState("");
   const [actionAccepted, setActionAccepted] = useState<{
     action: string;
@@ -625,6 +626,7 @@ function DocumentsTab({
     if (!file) return;
     try {
       const document = await upload.mutateAsync({ file, ocrLang: ocrLang || undefined });
+      setSelectedFile(null);
       onSelect(document.id);
       if (document.job_id) onJob(document.job_id);
       onActivity({
@@ -695,19 +697,23 @@ function DocumentsTab({
             </p>
           </div>
         </div>
-        <label className="field">
-          <span>OCR language</span>
-          <select
-            aria-label="OCR language"
-            value={ocrLang}
-            onChange={(event) => setOcrLang(event.target.value)}
-          >
-            <option value="">Auto / deployment default</option>
-            <option value="bn">Bangla (Bengali)</option>
-            <option value="en">English</option>
-          </select>
-          <small>Choose Bangla for scans or custom-font PDFs that cannot be auto-detected.</small>
-        </label>
+        <div className="lab-upload-controls">
+          <label className="field-control field-control--grow">
+            <span>OCR language</span>
+            <select
+              aria-label="OCR language"
+              value={ocrLang}
+              onChange={(event) => setOcrLang(event.target.value)}
+            >
+              <option value="">Auto / deployment default</option>
+              <option value="bn">Bangla (Bengali)</option>
+              <option value="en">English</option>
+            </select>
+            <small>
+              Bangla legacy-font PDFs are detected automatically; choose Bangla to override.
+            </small>
+          </label>
+        </div>
         <label
           className={`lab-dropzone${dragging ? " lab-dropzone--active" : ""}`}
           onDragEnter={() => setDragging(true)}
@@ -716,19 +722,29 @@ function DocumentsTab({
           onDrop={(event: DragEvent<HTMLLabelElement>) => {
             event.preventDefault();
             setDragging(false);
-            void uploadFile(event.dataTransfer.files[0]);
+            setSelectedFile(event.dataTransfer.files[0] ?? null);
           }}
         >
           <UploadCloud aria-hidden="true" />
-          <strong>{upload.isPending ? "Uploading and submitting…" : "Drop a document here"}</strong>
-          <span>or choose a file</span>
+          <strong>{selectedFile ? selectedFile.name : "Drop a document here"}</strong>
+          <span>{selectedFile ? "Ready to submit" : "or choose a file"}</span>
           <input
             type="file"
             disabled={upload.isPending}
             accept=".pdf,.docx,.txt,.md,.png,.jpg,.jpeg,.tif,.tiff,.webp"
-            onChange={(event) => void uploadFile(event.target.files?.[0])}
+            onChange={(event) => setSelectedFile(event.target.files?.[0] ?? null)}
           />
         </label>
+        <div className="lab-upload-submit">
+          <button
+            className="button button--primary"
+            type="button"
+            disabled={!selectedFile || upload.isPending}
+            onClick={() => void uploadFile(selectedFile ?? undefined)}
+          >
+            {upload.isPending ? "Submitting…" : "Submit document"}
+          </button>
+        </div>
         {upload.isSuccess && (
           <div className="notice-card lab-request-card" role="status">
             <Check aria-hidden="true" />

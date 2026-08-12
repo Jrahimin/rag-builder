@@ -89,6 +89,19 @@ def test_resolve_document_language_precedence(
     assert is_ocr_first_language("bangla")
 
 
+def test_resolve_document_language_routes_legacy_bangla_fonts_to_bangla_ocr() -> None:
+    assert (
+        resolve_document_language(
+            explicit=None,
+            sample_text="evsjv‡`k †M‡RU AwZwi³ msL¨v",
+            default_lang="en",
+            bangla_min_ratio=0.1,
+            font_names=("SutonnyMJ", "NikoshBAN"),
+        )
+        == ("bn", "legacy_font")
+    )
+
+
 def test_get_ocr_provider_pools_by_language(monkeypatch: pytest.MonkeyPatch) -> None:
     clear_ocr_provider_cache()
     created_langs: list[str] = []

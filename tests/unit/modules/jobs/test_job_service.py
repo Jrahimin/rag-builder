@@ -176,3 +176,22 @@ async def test_success_does_not_publish_child_for_superseded_document_version() 
     assert submission is None
     assert run.state is JobState.SUCCEEDED
     service._outbox.add_intent.assert_not_called()
+
+
+async def test_success_applies_detached_operation_payload_and_result() -> None:
+    run = _run(attempt_count=1)
+    service = _service(run)
+    payload = {**run.payload, "build_id": str(uuid.uuid4())}
+    result = {"document_count": 1, "chunk_count": 3}
+
+    await service.stage_success(
+        run.id,
+        worker_id="worker",
+        payload=payload,
+        result=result,
+    )
+
+    assert run.state is JobState.SUCCEEDED
+    assert run.payload == payload
+    assert run.result == result
+    service._session.commit.assert_awaited_once()

@@ -55,7 +55,11 @@ The stable job types include `document.process`, `document.embed`,
 Taskiq messages contain only the persisted job identity. A handler first
 atomically acquires its lease; duplicate or stale delivery cannot acquire the
 same run and is ignored. A separate session heartbeats the lease and updates
-stage/progress during long work. Transient provider/database/connection failures
+stage/progress during long work. Before business work begins, the runtime detaches
+the operation's `JobRun` snapshot from the long-running SQLAlchemy session. Handler
+payload/result changes remain in memory and are copied onto a freshly locked run
+only in the terminal success transaction. This prevents business autoflushes from
+locking the same job row that an isolated progress update must write. Transient provider/database/connection failures
 are retried by durable state; permanent failures become terminal structured
 failures. Taskiq middleware does not own application retries.
 

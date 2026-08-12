@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+
 from app.platform.domain.language_detection import detect_language
 
 _OCR_LANG_ALIASES: dict[str, str] = {
@@ -11,6 +13,17 @@ _OCR_LANG_ALIASES: dict[str, str] = {
     "bengali": "bn",
     "bangla": "bn",
 }
+
+# These fonts encode Bangla glyphs using legacy Bijoy/ANSI mappings rather
+# than Unicode. PDF text extractors therefore return Latin-looking mojibake,
+# which cannot be language-detected from the extracted text alone.
+_LEGACY_BANGLA_FONT_MARKERS = (
+    "sutonnymj",
+    "sutonnyomj",
+    "bijoy",
+    "boishakhi",
+    "nikoshban",
+)
 
 
 def resolve_ocr_lang(document_ocr_lang: str | None, default_lang: str) -> str:
@@ -37,6 +50,7 @@ def resolve_document_language(
     sample_text: str,
     default_lang: str,
     bangla_min_ratio: float,
+    font_names: Iterable[str] = (),
 ) -> tuple[str, str]:
     """Resolve document language and report whether it was explicit, detected, or default."""
     if explicit is not None and explicit.strip():
@@ -45,12 +59,23 @@ def resolve_document_language(
     detected = detect_language(sample_text)
     if detected.languages.get("bn", 0.0) >= bangla_min_ratio:
         return "bn", "detected"
+    if has_legacy_bangla_font(font_names):
+        return "bn", "legacy_font"
     if detected.primary_language and detected.primary_language != "mixed":
         return resolve_ocr_lang(detected.primary_language, default_lang), "detected"
     if detected.languages:
         primary = max(detected.languages, key=detected.languages.get)  # type: ignore[arg-type]
         return resolve_ocr_lang(primary, default_lang), "detected"
     return resolve_ocr_lang(None, default_lang), "default"
+
+
+def has_legacy_bangla_font(font_names: Iterable[str]) -> bool:
+    """Recognize PDF fonts whose glyph encoding prevents Unicode detection."""
+    return any(
+        marker in font_name.casefold()
+        for font_name in font_names
+        for marker in _LEGACY_BANGLA_FONT_MARKERS
+    )
 
 
 def is_ocr_first_language(language: str) -> bool:

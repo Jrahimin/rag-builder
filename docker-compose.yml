@@ -2,15 +2,15 @@
 # AI Platform Engine - local development stack.
 # Start everything with a single command:
 #
-#     docker compose --env-file .env.docker up --build
+#     docker compose up --build
 #
 # Services: frontend (Vite) + backend (FastAPI) + worker + PostgreSQL/pgvector + Redis + MinIO.
-# Credentials and tunables come from the root `.env.docker` file
-# (see `.env.docker.example`); every value has a sensible default so the
+# Credentials and tunables come from `.env.docker`; the root `.env` file
+# selects it through COMPOSE_ENV_FILES. Every value has a sensible default so the
 # stack runs out of the box. Start with:
 #
 #     cp .env.docker.example .env.docker
-#     docker compose --env-file .env.docker up --build
+#     docker compose up --build
 # ===========================================================================
 
 name: ape
@@ -65,6 +65,11 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
+    # Keep the container configuration aligned with the root Docker env file.
+    # Explicit entries below deliberately override host-local values with
+    # Compose service DNS names (postgres, redis, and minio).
+    env_file:
+      - .env.docker
     environment:
       APE_APP__ENV: ${APE_APP__ENV:-development}
       APE_APP__DEBUG: ${APE_APP__DEBUG:-true}
@@ -146,6 +151,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    env_file:
+      - .env.docker
     environment:
       APE_APP__ENV: ${APE_APP__ENV:-development}
       APE_RUNTIME__PROFILE: ${APE_RUNTIME__PROFILE:-development}
@@ -183,6 +190,10 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
+    # The worker must receive exactly the same provider, OCR, auth, and
+    # pipeline settings as the API because it performs document processing.
+    env_file:
+      - .env.docker
     environment:
       APE_APP__ENV: ${APE_APP__ENV:-development}
       APE_RUNTIME__PROFILE: ${APE_RUNTIME__PROFILE:-development}
@@ -283,21 +294,19 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
-    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:-}"]
-    environment:
-      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
-    ports:
-      - "${REDIS_PORT:-6379}:6379"
-    volumes:
-      - redis_data:/data
+    command: ["redis-server", "--appendonly", "yes"]
     healthcheck:
-      test: ["CMD-SHELL", "redis-cli -a \"$${REDIS_PASSWORD}\" ping"]
+      test: ["CMD-SHELL", "redis-cli ping"]
       interval: 10s
       timeout: 3s
       retries: 5
       start_period: 5s
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
     networks:
       - ape_network
+    volumes:
+      - redis_data:/data
 
   # -------------------------------------------------------------------------
   # MinIO (S3-compatible object storage)

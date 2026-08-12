@@ -298,6 +298,8 @@ class JobService(DurableJobSubmitter):
         *,
         worker_id: str,
         child: JobDefinition | None = None,
+        payload: dict[str, object] | None = None,
+        result: dict[str, object] | None = None,
     ) -> JobSubmission | None:
         run = await self._runs.lock_owned_run(job_id, worker_id=worker_id)
         if run is None:
@@ -313,6 +315,10 @@ class JobService(DurableJobSubmitter):
                 JobConfiguration.model_validate(snapshot.configuration),
                 configuration_snapshot_id=snapshot.id,
             )
+        if payload is not None:
+            run.payload = payload
+        if result is not None:
+            run.result = result
         self._runs.mark_succeeded(run)
         await self._stage_webhook_outcome(run, succeeded=True)
         self._record_job_event(

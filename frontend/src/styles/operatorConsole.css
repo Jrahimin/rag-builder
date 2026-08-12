@@ -1095,6 +1095,19 @@ td small {
   gap: 16px;
   align-items: start;
 }
+.lab-upload-controls {
+  display: flex;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.lab-upload-controls .field-control {
+  min-width: 0;
+}
+.lab-upload-controls small {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 400;
+}
 .lab-dropzone {
   display: grid;
   justify-items: center;
@@ -1125,6 +1138,14 @@ td small {
   width: 1px;
   height: 1px;
   opacity: 0;
+}
+.lab-upload-submit {
+  display: flex;
+  justify-content: flex-end;
+  margin: 0 16px 16px;
+}
+.lab-upload-submit .button {
+  min-height: 38px;
 }
 .lab-request-card {
   margin: 14px 16px;
@@ -2191,6 +2212,13 @@ code {
 }
 
 @media (max-width: 640px) {
+  .lab-upload-controls {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .lab-upload-submit .button {
+    width: 100%;
+  }
   .page-header {
     align-items: flex-start;
   }

@@ -113,6 +113,9 @@ async def run_durable_job(
                     job_id=str(job_uuid),
                 )
                 return
+            # ``rollback()`` expires ORM state. Keep the durable identity as a
+            # plain value so the failure path never triggers an implicit reload.
+            run_id = run.id
             reporter = JobProgressReporter(
                 database=database,
                 settings=settings,
@@ -133,14 +136,21 @@ async def run_durable_job(
                             "actual": run.job_type.value,
                         },
                     )
-                detail = await service.get_detail(run.id)
+                detail = await service.get_detail(run_id)
                 snapshot = JobConfiguration.model_validate(detail.configuration.configuration)
                 effective_settings = apply_job_configuration(settings, snapshot)
+                # Progress and lease heartbeats use independent transactions that
+                # update this JobRun. Keep the operation's copy detached so an
+                # autoflush of business changes cannot also lock the job row and
+                # make a synchronous progress report wait on its own transaction.
+                session.expunge(run)
                 child = await operation(session, run, effective_settings, service, reporter)
                 submission = await service.stage_success(
-                    run.id,
+                    run_id,
                     worker_id=worker_id,
                     child=child,
+                    payload=dict(run.payload),
+                    result=dict(run.result) if run.result is not None else None,
                 )
                 if submission is not None:
                     await service.dispatch(submission.job_id)
@@ -149,7 +159,7 @@ async def run_durable_job(
                 failure = classify_job_failure(exc)
                 try:
                     failed_run, will_retry = await service.stage_failure(
-                        run.id,
+                        run_id,
                         worker_id=worker_id,
                         failure=failure,
                     )

@@ -24,6 +24,17 @@ def extract_pymupdf_pages(data: bytes) -> tuple[int, tuple[PdfPageExtraction, ..
                 page_rect = page.rect
                 page_dict = page.get_text("dict", flags=fitz.TEXT_PRESERVE_WHITESPACE)
                 blocks = page_dict.get("blocks", [])
+                font_names = sorted(
+                    {
+                        str(span["font"])
+                        for block in blocks
+                        if isinstance(block, dict)
+                        for line in block.get("lines", [])
+                        if isinstance(line, dict)
+                        for span in line.get("spans", [])
+                        if isinstance(span, dict) and isinstance(span.get("font"), str)
+                    }
+                )
                 layout = analyze_page_blocks(
                     blocks,
                     page_width=float(page_rect.width),
@@ -56,6 +67,7 @@ def extract_pymupdf_pages(data: bytes) -> tuple[int, tuple[PdfPageExtraction, ..
                         metadata={
                             "text_block_count": layout.text_block_count,
                             "image_block_count": layout.image_block_count,
+                            "font_names": font_names,
                         },
                     )
                 )

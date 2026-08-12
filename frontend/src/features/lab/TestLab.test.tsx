@@ -128,6 +128,8 @@ test("distinguishes an accepted upload from terminal processing success", async 
     fileInput,
     new File(["refund policy"], "policy.txt", { type: "text/plain" }),
   );
+  expect(upload).not.toHaveBeenCalled();
+  await userEvent.click(screen.getByRole("button", { name: "Submit document" }));
   expect(await screen.findByText("Request accepted")).toBeInTheDocument();
   expect(upload).toHaveBeenCalledWith(projectFixture.id, expect.any(File), "bn");
   expect(screen.getByText("Processing finished successfully")).toBeInTheDocument();

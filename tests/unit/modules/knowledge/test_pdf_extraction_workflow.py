@@ -225,6 +225,45 @@ def test_bangla_route_auto_detects_unicode_text_sample(
     }
 
 
+def test_bangla_route_auto_detects_legacy_font_pdf(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.platform.providers.implementations.pdf_page_models import PdfPageExtraction
+
+    provider = _RecordingBanglaOcrProvider()
+    monkeypatch.setattr(
+        "app.platform.providers.implementations.pdf_extraction_workflow.get_ocr_provider",
+        lambda **_kwargs: provider,
+    )
+    monkeypatch.setattr(
+        "app.platform.providers.implementations.pdf_extraction_workflow.extract_pymupdf_pages",
+        lambda _data: (
+            1,
+            (
+                PdfPageExtraction(
+                    page_number=1,
+                    text="evsjv‡`k †M‡RU AwZwi³ msL¨v",
+                    metadata={"font_names": ["SutonnyMJ", "NikoshBAN"]},
+                ),
+            ),
+        ),
+    )
+    workflow = PdfExtractionWorkflow(ocr_config=_bangla_ocr_config())
+
+    result = workflow.parse(
+        data=_minimal_pdf_pages(1),
+        filename="legacy-bangla.pdf",
+        content_type="application/pdf",
+    )
+
+    assert provider.pages == [1]
+    assert result.structure_hints["language_routing"] == {
+        "resolved_language": "bn",
+        "source": "legacy_font",
+        "ocr_first": True,
+    }
+
+
 def test_bangla_route_propagates_retryable_provider_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

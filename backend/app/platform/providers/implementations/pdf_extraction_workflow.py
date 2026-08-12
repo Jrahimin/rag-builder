@@ -119,11 +119,18 @@ class PdfExtractionWorkflow(BaseDocumentParserProvider):
         }
 
         sample_text = "\n".join(page.text for page in pymupdf_pages)
+        font_names = (
+            font_name
+            for page in pymupdf_pages
+            for font_name in page.metadata.get("font_names", [])
+            if isinstance(font_name, str)
+        )
         resolved_language, language_source = resolve_document_language(
             explicit=ocr_lang,
             sample_text=sample_text,
             default_lang=self._ocr_cfg.lang,
             bangla_min_ratio=self._ocr_cfg.bangla_min_ratio,
+            font_names=font_names,
         )
         ocr_first = (
             self._ocr_cfg.enabled
