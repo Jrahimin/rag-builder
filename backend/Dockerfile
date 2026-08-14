@@ -46,14 +46,13 @@ USER ape
 
 EXPOSE 8000
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/live')" || exit 1
-
-# The local Compose stack explicitly selects this target and overrides the
-# command to enable reload. Keep the production target last so a plain
-# `docker build backend` produces the safe, non-reloading runtime image.
+# The development target remains available for explicit image builds. The root
+# Compose stack always selects production; host-side development owns reload.
 FROM runtime AS development
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
 
 FROM runtime AS production
-CMD ["gunicorn", "app.main:app", "--bind", "0.0.0.0:8000", "--workers", "2", "--worker-class", "uvicorn.workers.UvicornWorker"]
+# Uvicorn's worker manager is sufficient for this single-host Compose deployment.
+# Each worker runs the FastAPI lifespan; the durable dispatchers coordinate through
+# PostgreSQL row locks, so multiple workers remain safe.
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]

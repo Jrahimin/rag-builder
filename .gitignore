@@ -38,6 +38,7 @@ ENV/
 # ---------------------------------------------------------------------------
 .env
 .env.*
+!.env
 !.env.docker.example
 backend/.env
 !backend/.env.example

@@ -129,7 +129,7 @@ without PostgreSQL, Redis, or MinIO:
 
 This lets `pytest` pass in CI before Docker services start.
 
-To test against a live stack, run `docker compose up -d` first; `/ready` should
+To test against a local live stack, run `docker compose up -d` first; `/health/ready` should
 report all dependencies as `ok`.
 
 ---

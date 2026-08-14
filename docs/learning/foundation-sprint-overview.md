@@ -72,7 +72,7 @@ main.py         Application factory + lifespan
 ### Docker
 
 - Multi-stage `backend/Dockerfile`.
-- `docker-compose.yml` — full local stack with health checks, named volumes,
+- `docker-compose.yml` — canonical production-like stack with health checks, named volumes,
   auto-migration on boot.
 
 ### Quality

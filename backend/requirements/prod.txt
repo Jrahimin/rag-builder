@@ -3,6 +3,3 @@
 # Install with: pip install -r requirements/prod.txt
 # ===========================================================================
 -r base.txt
-
-# --- Production ASGI process manager (Linux containers) ---
-gunicorn==26.0.0

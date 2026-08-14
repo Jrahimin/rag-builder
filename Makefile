@@ -1,6 +1,6 @@
 PYTHON ?= python
 PNPM ?= pnpm
-COMPOSE = docker compose --env-file .env.docker
+COMPOSE = docker compose
 
 .PHONY: help up down restart status logs rebuild up-backend up-frontend up-worker up-db up-redis up-storage \
 	migrate migrate-local migration-new migration-check migration-drift-check doctor health format format-check \
@@ -68,8 +68,8 @@ doctor:
 	cd backend && $(PYTHON) -m app.cli doctor
 
 health:
-	curl --fail --silent http://localhost:8000/health/live
-	curl --fail --silent http://localhost:8000/health/ready
+	curl --fail --silent http://127.0.0.1:8010/health/live
+	curl --fail --silent http://127.0.0.1:8010/health/ready
 
 format:
 	$(PYTHON) -m ruff format backend tests scripts infra/hosted

@@ -10,14 +10,16 @@ processing.
 
 ## Decision
 
-- **API process:** FastAPI + uvicorn (dev) / gunicorn + uvicorn workers (prod)
+- **API process:** FastAPI + Uvicorn (development reload; two direct Uvicorn
+  workers in the single-VPS production profile)
 - **Worker process:** Taskiq worker consuming Redis queue (Phase 1)
 - Both share `platform/` and `modules/` code; different entrypoints
-- Local dev: API in Docker compose today; worker container added in Phase 1
+- Root Compose uses production images for local full-stack and VPS operation;
+  fast reload runs API/frontend processes on the host.
 
 ## Consequences
 
-- Docker compose will gain a `worker` service
+- Docker Compose runs API and worker as separate services
 - Deployments scale API and worker replicas independently
 - Shared Redis required for queue
 

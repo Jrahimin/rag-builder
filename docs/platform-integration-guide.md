@@ -57,7 +57,7 @@ Projects (e.g. one per client matter, department, or product workspace).
 
 | Item | Used for |
 | ---- | -------- |
-| **Base URL** | All requests, e.g. `https://ape.customer.internal` |
+| **Base URL** | All requests, e.g. `https://rag-builder.example.com` |
 | **Organization API key** | Every business API call (`ape_live_…`) |
 | **Super Admin login** | Operator-only organization/key management (never in your app) |
 
@@ -70,7 +70,7 @@ in client-side code).
 | Mode | Base URL | Auth |
 | ---- | -------- | ---- |
 | Backend in venv | `http://localhost:8088` | Often `APE_AUTH__ENABLED=false` — no key required |
-| Full Docker stack | `http://localhost:8000` | Set `APE_AUTH__ENABLED=true` and provision keys |
+| Full Docker stack | `http://127.0.0.1:8010` | Root production-like Compose stack |
 
 Verify connectivity:
 

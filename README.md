@@ -154,26 +154,27 @@ infrastructure services, keeping the core easy to inspect, extend, and deploy.
 
 ## Quick start with Docker
 
-Docker Desktop is the easiest way to explore the full local journey.
+The root Compose file runs the same production images locally and on an
+ordinary single VPS.
 
 ```bash
 git clone <repository-url> rag-builder
 cd rag-builder
 
 cp .env.docker.example .env.docker
-docker compose --env-file .env.docker up -d --build
+docker compose up -d --build
 ```
 
 Local surfaces:
 
 | Surface | URL |
 | --- | --- |
-| Operator console | `http://localhost:3000/operator/` |
-| Test Lab | `http://localhost:3000/operator/lab` |
-| API / OpenAPI | `http://localhost:8000` / `http://localhost:8000/docs` |
-| Liveness | `http://localhost:8000/health/live` |
-| Readiness | `http://localhost:8000/health/ready` |
-| MinIO console | `http://localhost:9001` |
+| Operator console | `http://127.0.0.1:3010/operator/` |
+| Test Lab | `http://127.0.0.1:3010/operator/lab` |
+| API | `http://127.0.0.1:8010` |
+| Liveness | `http://127.0.0.1:8010/health/live` |
+| Readiness | `http://127.0.0.1:8010/health/ready` |
+| MinIO console | `http://127.0.0.1:9011` |
 
 The local stack includes the React operator console, FastAPI, a Taskiq worker,
 PostgreSQL with pgvector, Redis, MinIO, and one-shot migration/bootstrap
@@ -214,6 +215,12 @@ configuration, PostgreSQL, migration, pgvector, Redis, storage, worker/broker,
 embedding, and reranker readiness without printing secrets or calling AI
 providers.
 
+For a production VPS, use the
+[Cloudflare → host Nginx → Docker Compose guide](infra/vps/README.md). The
+same root stack builds non-reloading images and binds every published port to
+loopback. `infra/hosted` is a separate digest-pinned hosted-pilot contract, not
+the ordinary VPS entrypoint.
+
 For host frontend development with Vite fast refresh:
 
 ```bash
@@ -225,10 +232,10 @@ pnpm dev
 For service-specific Docker work:
 
 ```bash
-docker compose --env-file .env.docker up -d postgres redis
-docker compose --env-file .env.docker up -d minio minio-init
-docker compose --env-file .env.docker up -d backend worker
-docker compose --env-file .env.docker up -d --no-deps frontend
+docker compose up -d postgres redis
+docker compose up -d minio minio-init
+docker compose up -d backend worker
+docker compose up -d --no-deps frontend
 ```
 
 ## First API journey
@@ -274,6 +281,7 @@ backend/app/
   worker/         background task entrypoints
 
 frontend/         React/TypeScript operator console
+infra/vps/        host-Nginx example and single-VPS deployment runbook
 infra/hosted/     dedicated deployment profile, gateway, control tool, runbook
 scripts/          repository diagnostics and local helpers
 docs/             architecture, API, features, learning, and operations guides

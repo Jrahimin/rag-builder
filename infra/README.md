@@ -1,21 +1,14 @@
 # Infrastructure
 
-Deployment assets for local development and operator-managed dedicated hosting.
+The root [`docker-compose.yml`](../docker-compose.yml) is the canonical stack
+for local full-stack use and ordinary single-VPS production. It builds the
+production frontend/backend targets and starts PostgreSQL+pgvector, Redis,
+MinIO, ClamAV, migration/bootstrap jobs, the API, and the Taskiq worker.
 
-The local development stack is defined by the root
-[`docker-compose.yml`](../docker-compose.yml) and the backend image at
-[`backend/Dockerfile`](../backend/Dockerfile):
+Published ports are loopback-only: frontend `3010`, API `8010`, PostgreSQL
+`5433`, Redis `6380`, and MinIO `9010`/`9011`. Follow the
+[`vps/README.md`](vps/README.md) runbook for Cloudflare and host Nginx.
 
-| Service | Image | Purpose | Local port(s) |
-| --- | --- | --- | --- |
-| frontend | `ape-frontend:dev` | React operator console | 3000 |
-| backend | `ape-backend:dev` | FastAPI application and webhook dispatcher | 8000 |
-| worker | `ape-backend:dev` | Durable Taskiq job execution | — |
-| postgres | `pgvector/pgvector:pg16` | Relational, vector, keyword, job, and webhook state | 5432 |
-| redis | `redis:7` | Background-job executor transport | 6379 |
-| minio | `minio/minio` | S3-compatible object storage | 9000 / 9001 |
-| clamav | `clamav/clamav` | Optional upload malware scanning | 3310 |
-
-The supported Phase 6 hosted pilot profile and guarded operations tooling live in
-[`hosted/`](hosted/). This is not customer-operated self-hosted packaging; that remains
-Future F1. Kubernetes remains intentionally out of scope.
+[`hosted/`](hosted/) is a separate, digest-pinned hosted-pilot contract with a
+gateway and guarded recovery tooling. It is not an override or replacement for
+the ordinary root Compose workflow.

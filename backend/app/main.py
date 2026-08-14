@@ -4,7 +4,7 @@
 configuration, structured logging, middleware, exception handlers, routers,
 and lifespan-managed infrastructure (PostgreSQL and Redis).
 
-The module-level ``app`` is the ASGI target used by uvicorn/gunicorn. From
+The module-level ``app`` is the ASGI target used by Uvicorn. From
 ``backend/``, either::
 
     python -m app
