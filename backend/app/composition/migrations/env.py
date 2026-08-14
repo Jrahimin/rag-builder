@@ -26,8 +26,11 @@ if config.config_file_name is not None:
 settings = get_settings()
 target_metadata = Base.metadata
 
-# Inject the async DSN from application settings.
-config.set_main_option("sqlalchemy.url", settings.database.async_dsn)
+# Inject the async DSN from application settings. Alembic stores this value in
+# ConfigParser, whose interpolation treats percent-encoded credentials (for
+# example ``%23``) as formatting directives unless percent signs are doubled.
+# The engine below still receives the original, correctly encoded DSN.
+config.set_main_option("sqlalchemy.url", settings.database.async_dsn.replace("%", "%%"))
 
 
 def run_migrations_offline() -> None:
