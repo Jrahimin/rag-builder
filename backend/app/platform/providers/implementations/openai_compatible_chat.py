@@ -17,9 +17,17 @@ from app.platform.providers.contracts.llm import (
 )
 from app.platform.providers.errors import ProviderError
 
+_FIXED_TEMPERATURE_MODEL_PREFIXES = ("gpt-5.6", "o1", "o3", "o4")
+
 
 def _role_value(role: ChatRole) -> str:
     return role.value
+
+
+def _supports_custom_temperature(model: str) -> bool:
+    """Return whether the selected model accepts a non-default temperature."""
+    normalized = model.strip().lower()
+    return not normalized.startswith(_FIXED_TEMPERATURE_MODEL_PREFIXES)
 
 
 class OpenAICompatibleChatProvider(BaseLLMProvider):
@@ -68,13 +76,15 @@ class OpenAICompatibleChatProvider(BaseLLMProvider):
         max_tokens: int,
         stream: bool,
     ) -> dict[str, object]:
-        return {
+        body: dict[str, object] = {
             "model": self._model,
             "messages": [{"role": _role_value(m.role), "content": m.content} for m in messages],
-            "temperature": temperature,
             "max_completion_tokens": max_tokens,
             "stream": stream,
         }
+        if _supports_custom_temperature(self._model):
+            body["temperature"] = temperature
+        return body
 
     async def generate(
         self,
