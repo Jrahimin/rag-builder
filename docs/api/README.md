@@ -1,6 +1,7 @@
 # API Reference
 
-Concise endpoint reference for Postman collection preparation. OpenAPI (`/docs`) is the live contract.
+Concise endpoint reference for Postman collection preparation. OpenAPI
+(`/openapi.json`) is the live contract; interactive `/docs` is development-only.
 See [versioning-and-errors.md](versioning-and-errors.md) for the pre-1.0 versioning policy.
 
 > **Integrating APE into your application?** Start with the

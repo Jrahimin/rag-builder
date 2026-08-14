@@ -31,9 +31,9 @@ async def live(service: HealthServiceDep) -> ApiResponse[LivenessStatus]:
     response_model=ApiResponse[ReadinessStatus],
     summary="Readiness probe",
     description=(
-        "Probes PostgreSQL (including pgvector), Redis, and object storage, then includes "
-        "cached startup provider capability results. Returns 200 when every required "
-        "dependency is healthy, otherwise 503."
+        "Probes PostgreSQL (including pgvector), Redis, object storage, and ClamAV, then "
+        "includes cached AI capability results. Returns 200 when core dependencies are "
+        "healthy; unavailable external AI capabilities are reported as degraded."
     ),
 )
 async def ready(service: HealthServiceDep, response: Response) -> ApiResponse[ReadinessStatus]:

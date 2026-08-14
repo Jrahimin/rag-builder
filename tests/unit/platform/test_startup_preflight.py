@@ -49,10 +49,35 @@ async def test_preflight_reports_provider_dimension_mismatch(monkeypatch) -> Non
     ).run()
 
     embedding = next(check for check in result.checks if check.name == "embedding_provider")
-    assert result.status == "not_ready"
-    assert embedding.state is DependencyState.DOWN
+    assert result.status == "degraded"
+    assert embedding.state is DependencyState.DEGRADED
     assert "RuntimeError" in (embedding.detail or "")
     assert llm.generate.await_count == 1
+
+
+async def test_core_preflight_does_not_wait_for_external_ai_providers(monkeypatch) -> None:
+    settings = Settings(storage=StorageConfig(local_root="./storage"))
+    database = MagicMock(check=AsyncMock())
+    redis = MagicMock(check=AsyncMock())
+    storage = MagicMock(check=AsyncMock())
+    embedding_factory = MagicMock()
+    monkeypatch.setattr(
+        "app.platform.system.preflight_service.create_embedding_provider",
+        embedding_factory,
+    )
+
+    result = await StartupPreflightService(
+        settings=settings,
+        database=database,
+        redis=redis,
+        storage=storage,
+    ).run_core()
+
+    assert result.status == "ready"
+    assert embedding_factory.call_count == 0
+    assert next(
+        check for check in result.checks if check.name == "embedding_provider"
+    ).state is DependencyState.DEGRADED
 
 
 async def test_preflight_marks_disabled_ocr_as_skipped(monkeypatch) -> None:

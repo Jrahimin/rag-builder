@@ -5,7 +5,8 @@
 This guide walks you from zero to a working RAG integration: authenticate, create a
 knowledge space, ingest documents, search, and chat with citations. Use it as the
 primary onboarding path; [api/](api/README.md) remains the endpoint cheat sheet and
-`/docs` is the live OpenAPI contract.
+`/openapi.json` is the live OpenAPI contract. Interactive `/docs` is available
+only outside production.
 
 ---
 
@@ -1296,11 +1297,11 @@ your own user authorization before choosing `project_id`.
 | Product overview | [Platform-at-a-glance.md](Platform-at-a-glance.md) |
 | Feature behavior | [features/README.md](features/README.md) |
 | Run locally | [../README.md](../README.md) |
-| Live schema | `{APE_BASE_URL}/docs` |
+| Live schema | `{APE_BASE_URL}/openapi.json` |
 | Webhook contract | [api/webhooks_api.md](api/webhooks_api.md) |
 | Hosted operations | [../infra/hosted/RUNBOOK.md](../infra/hosted/RUNBOOK.md) |
 
 ---
 
-*OpenAPI at `/docs` is authoritative for request/response schemas. This guide is the
+*OpenAPI at `/openapi.json` is authoritative for request/response schemas. This guide is the
 recommended path for first integration.*

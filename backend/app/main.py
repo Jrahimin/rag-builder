@@ -69,14 +69,20 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     dispatcher_task: asyncio.Task[None] | None = None
     webhook_dispatcher: WebhookDispatcher | None = None
     webhook_dispatcher_task: asyncio.Task[None] | None = None
+    provider_preflight_task: asyncio.Task[None] | None = None
     queue = get_job_queue()
     try:
-        app.state.preflight = await StartupPreflightService(
+        preflight_service = StartupPreflightService(
             settings=settings,
             database=app.state.db,
             redis=app.state.redis,
             storage=app.state.storage,
-        ).run()
+        )
+        app.state.preflight = await preflight_service.run_core()
+        provider_preflight_task = asyncio.create_task(
+            _refresh_provider_preflight(app, preflight_service),
+            name="provider-capability-preflight",
+        )
         if settings.jobs.dispatcher_enabled:
             dispatcher = DurableJobDispatcher(
                 session_factory=app.state.db.session_factory,
@@ -106,6 +112,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         log.info("application_stopping")
         await stop_dispatcher_task(dispatcher, dispatcher_task)
         await stop_webhook_dispatcher(webhook_dispatcher, webhook_dispatcher_task)
+        if provider_preflight_task is not None:
+            provider_preflight_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await provider_preflight_task
         if isinstance(queue, TaskiqJobQueue):
             await queue.close()
         await app.state.redis.dispose()
@@ -150,6 +160,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(api_v1_router, prefix=settings.app.api_v1_prefix)
 
     return app
+
+
+async def _refresh_provider_preflight(app: FastAPI, service: StartupPreflightService) -> None:
+    """Publish advisory AI capability status after core API startup."""
+    app.state.preflight = await service.run_provider_checks(app.state.preflight)
 
 
 app = create_app()

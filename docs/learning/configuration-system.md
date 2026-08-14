@@ -105,7 +105,9 @@ APE_CHAT__CONTEXT_CHAR_BUDGET=12000
 APE_CHAT__MAX_HISTORY_MESSAGES=20
 ```
 
-The exact supported fields live in `backend/app/core/config.py`. Treat `.env.example` as the starting template and `.env.docker` as the container wiring layer.
+The exact supported fields live in `backend/app/core/config.py`. Treat the root
+`.env.example` as the starting template and ignored root `.env` as the Docker
+runtime configuration file.
 
 ## Development defaults versus meaningful AI
 

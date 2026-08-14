@@ -47,6 +47,7 @@ async def test_ready_reports_dependency_breakdown(client: AsyncClient) -> None:
         "postgresql",
         "redis",
         "object_storage",
+        "malware_scanner",
         "embedding_provider",
         "llm_provider",
         "reranker_provider",

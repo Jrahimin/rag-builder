@@ -87,7 +87,7 @@ services:
       redis: { condition: service_healthy }
       minio: { condition: service_healthy }
       clamav: { condition: service_healthy }
-    command: ["taskiq", "worker", "app.worker.broker:broker", "app.worker.handlers.document", "app.worker.handlers.embedding", "app.worker.handlers.indexing", "app.worker.handlers.evaluation", "app.worker.handlers.corpus", "app.worker.handlers.document_lifecycle", "app.worker.handlers.storage_reconciliation"]
+    command: ["taskiq", "worker", "app.worker.entrypoint:broker"]
 
   migrate:
     image: ${APE_BACKEND_IMAGE:?Set a digest-pinned APE_BACKEND_IMAGE}

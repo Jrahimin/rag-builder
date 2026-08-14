@@ -1,4 +1,4 @@
-"""Ensure the worker CLI registers every durable Taskiq handler module."""
+"""Ensure the worker CLI delegates handler registration to code."""
 
 from __future__ import annotations
 
@@ -9,15 +9,7 @@ import pytest
 pytestmark = pytest.mark.unit
 
 
-def test_worker_entrypoint_includes_all_registered_handler_modules() -> None:
+def test_worker_entrypoint_uses_code_owned_taskiq_target() -> None:
     values = runpy.run_path("backend/worker.py", run_name="worker_entrypoint_test")
 
-    assert values["_HANDLER_MODULES"] == (
-        "app.worker.handlers.document",
-        "app.worker.handlers.embedding",
-        "app.worker.handlers.indexing",
-        "app.worker.handlers.evaluation",
-        "app.worker.handlers.corpus",
-        "app.worker.handlers.document_lifecycle",
-        "app.worker.handlers.storage_reconciliation",
-    )
+    assert "_HANDLER_MODULES" not in values

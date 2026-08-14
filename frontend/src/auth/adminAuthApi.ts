@@ -32,7 +32,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T | nul
     const csrf = csrfToken();
     if (csrf) headers.set("X-CSRF-Token", decodeURIComponent(csrf));
   }
-  const response = await fetch(`/api/v1/auth${path}`, {
+  const response = await fetch(apiUrl(`/api/v1/auth${path}`), {
     ...init,
     headers,
     credentials: "include",
@@ -63,3 +63,4 @@ export function getCsrfHeader(): Record<string, string> {
   const token = csrfToken();
   return token ? { "X-CSRF-Token": decodeURIComponent(token) } : {};
 }
+import { apiUrl } from "../api/apiOrigin";

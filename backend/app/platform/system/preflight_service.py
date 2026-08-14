@@ -1,4 +1,4 @@
-"""Bounded startup capability checks for infrastructure and configured providers."""
+"""Bounded core-readiness and optional AI-capability checks."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from time import perf_counter
 
-from app.core.config import OcrBackend, Settings
+from app.core.config import MalwareScannerBackend, OcrBackend, Settings
 from app.core.logging import get_logger
 from app.platform.db.session import Database, PgVectorUnavailableError
 from app.platform.infra.connectivity.redis import RedisConnectivity
@@ -44,9 +44,9 @@ class StartupPreflightService:
         self._redis = redis
         self._storage = storage
 
-    async def run(self) -> PreflightStatus:
+    async def run_core(self) -> PreflightStatus:
+        """Fail only when the services required to operate the core API are down."""
         dependency_timeout = self._settings.runtime.dependency_timeout_seconds
-        provider_timeout = self._settings.runtime.provider_timeout_seconds
         checks = await asyncio.wait_for(
             asyncio.gather(
                 self._check(
@@ -68,24 +68,11 @@ class StartupPreflightService:
                     action="Verify object-storage credentials and bucket access.",
                 ),
                 self._check(
-                    "embedding_provider",
-                    self._check_embedding,
-                    check_timeout=provider_timeout,
-                    action="Verify embedding endpoint, model, credentials, and dimensions.",
+                    "malware_scanner",
+                    self._check_malware_scanner,
+                    check_timeout=dependency_timeout,
+                    action="Verify the production ClamAV service is reachable.",
                 ),
-                self._check(
-                    "llm_provider",
-                    self._check_llm,
-                    check_timeout=provider_timeout,
-                    action="Verify the configured chat endpoint, model, and credentials.",
-                ),
-                self._check(
-                    "reranker_provider",
-                    self._check_reranker,
-                    check_timeout=provider_timeout,
-                    action="Verify the configured reranker path.",
-                ),
-                self._check_ocr(),
             ),
             timeout=self._settings.runtime.startup_timeout_seconds,
         )
@@ -97,7 +84,7 @@ class StartupPreflightService:
             status="ready" if healthy else "not_ready",
             profile=self._settings.runtime.profile.value,
             checked_at=checked_at,
-            checks=checks,
+            checks=[*checks, *self._pending_provider_checks()],
         )
         if self._settings.app.is_production and not healthy:
             failed = ", ".join(
@@ -106,6 +93,51 @@ class StartupPreflightService:
             raise StartupPreflightError(f"Production startup preflight failed: {failed}")
         return result
 
+    async def run_provider_checks(self, core: PreflightStatus) -> PreflightStatus:
+        """Return cached capability health without changing core readiness.
+
+        Provider connectivity is deliberately not a startup gate: the API can
+        still serve authentication, projects, operator status, and persisted
+        document state while an external AI endpoint recovers.
+        """
+        provider_timeout = self._settings.runtime.provider_timeout_seconds
+        checks = await asyncio.gather(
+            self._check(
+                "embedding_provider",
+                self._check_embedding,
+                check_timeout=provider_timeout,
+                action="Verify embedding endpoint, model, credentials, and dimensions.",
+                failure_state=DependencyState.DEGRADED,
+            ),
+            self._check(
+                "llm_provider",
+                self._check_llm,
+                check_timeout=provider_timeout,
+                action="Verify the configured chat endpoint, model, and credentials.",
+                failure_state=DependencyState.DEGRADED,
+            ),
+            self._check(
+                "reranker_provider",
+                self._check_reranker,
+                check_timeout=provider_timeout,
+                action="Verify the configured reranker path.",
+                failure_state=DependencyState.DEGRADED,
+            ),
+            self._check_ocr(failure_state=DependencyState.DEGRADED),
+        )
+        core_checks = [check for check in core.checks if not check.name.endswith("_provider")]
+        capability_degraded = any(check.state is DependencyState.DEGRADED for check in checks)
+        return PreflightStatus(
+            status="degraded" if core.status == "ready" and capability_degraded else core.status,
+            profile=core.profile,
+            checked_at=datetime.now(UTC),
+            checks=[*core_checks, *checks],
+        )
+
+    async def run(self) -> PreflightStatus:
+        """Run all checks for callers that explicitly need a complete report."""
+        return await self.run_provider_checks(await self.run_core())
+
     async def _check(
         self,
         name: str,
@@ -113,6 +145,7 @@ class StartupPreflightService:
         *,
         check_timeout: float,
         action: str,
+        failure_state: DependencyState = DependencyState.DOWN,
     ) -> DependencyHealth:
         started = perf_counter()
         try:
@@ -127,7 +160,7 @@ class StartupPreflightService:
             )
             return DependencyHealth(
                 name=name,
-                state=DependencyState.DOWN,
+                state=failure_state,
                 detail=_safe_failure_detail(exc),
                 action=action,
                 latency_ms=latency,
@@ -178,7 +211,28 @@ class StartupPreflightService:
             )
         )
 
-    async def _check_ocr(self) -> DependencyHealth:
+    async def _check_malware_scanner(self) -> None:
+        if self._settings.malware_scan.backend is not MalwareScannerBackend.CLAMAV:
+            return
+        reader, writer = await asyncio.open_connection(
+            self._settings.malware_scan.host,
+            self._settings.malware_scan.port,
+        )
+        try:
+            writer.write(b"zPING" + bytes(1))
+            await writer.drain()
+            response = await reader.readuntil(bytes(1))
+            if response != b"PONG" + bytes(1):
+                raise RuntimeError("ClamAV did not acknowledge the health ping.")
+        finally:
+            writer.close()
+            await writer.wait_closed()
+
+    async def _check_ocr(
+        self,
+        *,
+        failure_state: DependencyState = DependencyState.DOWN,
+    ) -> DependencyHealth:
         if not self._settings.ocr.enabled:
             return DependencyHealth(
                 name="ocr_provider",
@@ -192,7 +246,7 @@ class StartupPreflightService:
         ):
             return DependencyHealth(
                 name="ocr_provider",
-                state=DependencyState.DOWN,
+                state=failure_state,
                 detail="Enabled OCR resolved to the noop provider.",
                 action="Configure a real OCR backend or disable OCR.",
                 checked_at=datetime.now(UTC),
@@ -220,7 +274,27 @@ class StartupPreflightService:
             initialize,
             check_timeout=self._settings.runtime.provider_timeout_seconds,
             action="Verify OCR dependencies, model availability, language, and device settings.",
+            failure_state=failure_state,
         )
+
+    @staticmethod
+    def _pending_provider_checks() -> list[DependencyHealth]:
+        checked_at = datetime.now(UTC)
+        return [
+            DependencyHealth(
+                name=name,
+                state=DependencyState.DEGRADED,
+                detail="Capability check is running in the background.",
+                action="Check the operator readiness view after startup.",
+                checked_at=checked_at,
+            )
+            for name in (
+                "embedding_provider",
+                "llm_provider",
+                "reranker_provider",
+                "ocr_provider",
+            )
+        ]
 
 
 def _safe_failure_detail(exc: Exception) -> str:

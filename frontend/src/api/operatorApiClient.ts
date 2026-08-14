@@ -1,5 +1,6 @@
 import type { components } from "./generated/openapi";
 import { getCsrfHeader } from "../auth/adminAuthApi";
+import { apiUrl } from "./apiOrigin";
 
 export type OperatorOverview = components["schemas"]["OperatorOverview"];
 export type MetricsSnapshot = components["schemas"]["MetricsSnapshot"];
@@ -61,7 +62,7 @@ export class OperatorApiError extends Error {
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let response: Response;
   try {
-    response = await fetch(path, {
+    response = await fetch(apiUrl(path), {
       ...init,
       credentials: "include",
       headers: {

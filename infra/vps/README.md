@@ -9,7 +9,7 @@ Internet → Cloudflare (Full strict) → host Nginx :443
                                                                ├─ Taskiq worker
                                                                ├─ PostgreSQL+pgvector
                                                                ├─ Redis
-                                                               ├─ MinIO
+                                                               ├─ S3-compatible storage (MinIO)
                                                                └─ ClamAV
 ```
 
@@ -20,7 +20,7 @@ separate specialized hosted-pilot contract.
 
 1. Install Docker Engine with the Compose plugin and host Nginx. Check out the
    release at `/opt/rag-builder`; never expose the Docker daemon over TCP.
-2. Copy `.env.docker.example` to `.env.docker`. Set the real HTTPS CORS origin
+2. Copy `.env.example` to `.env`. Set the real HTTPS CORS origin
    and replace every placeholder with a unique secret. Rotate any credential
    that has been shared outside the VPS.
 3. Keep `APE_EMBEDDING__DIMENSIONS=384` with the configured
@@ -29,12 +29,23 @@ separate specialized hosted-pilot contract.
 4. Protect the runtime file and validate the resolved Compose model:
 
    ```bash
-   chmod 600 .env.docker
+   chmod 600 .env
    docker compose config --quiet
    ```
 
 5. Install `nginx/rag-builder.conf`, replace the hostname/certificate paths,
-   run `sudo nginx -t`, reload Nginx, and configure Cloudflare SSL/TLS as
+   then generate the host-only Cloudflare real-IP include from the published
+   ranges:
+
+   ```bash
+   { curl -fsSL https://www.cloudflare.com/ips-v4; curl -fsSL https://www.cloudflare.com/ips-v6; } \
+     | sed -e 's#^#set_real_ip_from #' -e 's#$#;#' \
+     | sudo tee /etc/nginx/snippets/cloudflare-realip.conf >/dev/null
+   printf 'real_ip_header CF-Connecting-IP;\nreal_ip_recursive on;\n' \
+     | sudo tee -a /etc/nginx/snippets/cloudflare-realip.conf >/dev/null
+   ```
+
+   Run `sudo nginx -t`, reload Nginx, and configure Cloudflare SSL/TLS as
    **Full (strict)**. Restrict origin HTTP(S) to Cloudflare networks or use an
    equivalent authenticated-origin control before trusting
    `CF-Connecting-IP`.
@@ -48,7 +59,7 @@ separate specialized hosted-pilot contract.
    ```
 
 `migrate` waits only for PostgreSQL. `minio-init` waits only for MinIO. The API
-waits for both gates and healthy PostgreSQL, Redis, MinIO, and ClamAV. The
+waits for both gates and healthy PostgreSQL, Redis, S3-compatible storage, and ClamAV. The
 Taskiq worker waits for the gates and its database, queue, and storage; it does
 not need ClamAV because the API scans each upload before enqueueing work.
 
@@ -68,7 +79,34 @@ docker compose logs -f backend worker
 docker compose ps
 ```
 
-Before an upgrade, take matching PostgreSQL and MinIO backups. Deploy the new
-release with the normal `up -d --build` command and repeat readiness and upload
-smoke tests. Roll back by restoring matching database/object-storage backups;
-do not assume an Alembic downgrade is safe.
+## Backup and restore
+
+Before upgrades, take matching PostgreSQL and object-storage backups and copy
+both off the VPS. Store the database as a portable compressed dump and mirror
+the artifact bucket to an encrypted remote S3-compatible backup bucket:
+
+```bash
+mkdir -p /var/backups/rag-builder
+docker compose exec -T postgres sh -ec 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc' \
+  > /var/backups/rag-builder/postgres-$(date +%F-%H%M).dump
+export BACKUP_S3_ENDPOINT=https://s3.backup.example.com
+export BACKUP_S3_ACCESS_KEY=replace-from-secret-store
+export BACKUP_S3_SECRET_KEY=replace-from-secret-store
+docker compose run --rm --entrypoint /bin/sh \
+  -e BACKUP_S3_ENDPOINT -e BACKUP_S3_ACCESS_KEY -e BACKUP_S3_SECRET_KEY minio-init -ec '
+  mc alias set local http://minio:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD"
+  mc alias set remote-backup "$BACKUP_S3_ENDPOINT" "$BACKUP_S3_ACCESS_KEY" "$BACKUP_S3_SECRET_KEY"
+  mc mirror --overwrite "local/$MINIO_BUCKET" "remote-backup/rag-builder/$MINIO_BUCKET"'
+sha256sum /var/backups/rag-builder/*.dump > /var/backups/rag-builder/SHA256SUMS
+```
+
+Read the `BACKUP_S3_*` values from the host secret store rather than placing
+them in `.env`. The remote bucket must be off-VPS, versioned, and encrypted.
+Retain the dump, matching object mirror, image version, and checksum manifest
+together. Test restore quarterly.
+
+To restore: stop `backend` and `worker`, restore PostgreSQL with `pg_restore`
+into a clean database, mirror the matching object prefix back to MinIO, then run
+`docker compose up -d --build`. Verify Alembic head/vector dimensions,
+`/health/ready`, a worker heartbeat, and a sample document retrieval. Do not
+assume an Alembic downgrade is safe.

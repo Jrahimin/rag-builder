@@ -340,7 +340,8 @@ the AI infrastructure layer that product teams can trust, extend, and deploy.
 | Retrieval | [api/retrieval_api.md](api/retrieval_api.md) |
 | Conversations | [api/conversation_api.md](api/conversation_api.md) |
 
-OpenAPI remains the live contract at `/docs`.
+OpenAPI remains the live contract at `/openapi.json`; interactive `/docs` is
+disabled in production.
 
 For step-by-step integration (auth, polling, copy-paste examples), see
 [platform-integration-guide.md](platform-integration-guide.md).

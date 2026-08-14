@@ -38,8 +38,7 @@ ENV/
 # ---------------------------------------------------------------------------
 .env
 .env.*
-!.env
-!.env.docker.example
+!.env.example
 backend/.env
 !backend/.env.example
 *.pem

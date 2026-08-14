@@ -23,11 +23,14 @@ Liveness — process is running; does not probe dependencies.
 ## GET /health/ready
 
 Readiness — probes PostgreSQL (including the Alembic head, pgvector extension,
-and configured `vector(n)` dimension), Redis, and configured object storage. Startup-only provider
-capability results are included with `cached=true`; health requests never repeat LLM,
-embedding, reranker, or OCR calls.
+and configured `vector(n)` dimension), Redis, configured S3-compatible object
+storage, and ClamAV. Cached provider capability results are included with
+`cached=true`; health requests never repeat LLM, embedding, reranker, or OCR
+calls.
 
-**Response** `200` when all dependencies reachable; `503` when degraded.
+**Response** `200` when all core dependencies are reachable; `503` when a core
+dependency is down. AI provider failures remain visible as `degraded` capability
+entries and do not make the core API unready.
 
 ```json
 {
@@ -39,7 +42,8 @@ embedding, reranker, or OCR calls.
     "environment": "development",
     "dependencies": [
       { "name": "postgresql", "state": "ok", "detail": null, "latency_ms": 1.2, "cached": false },
-      { "name": "llm_provider", "state": "ok", "detail": null, "latency_ms": 91.0, "cached": true }
+      { "name": "malware_scanner", "state": "ok", "detail": null, "latency_ms": 1.2, "cached": false },
+      { "name": "llm_provider", "state": "degraded", "detail": "ProviderError: capability check failed; see structured startup logs.", "cached": true }
     ]
   }
 }

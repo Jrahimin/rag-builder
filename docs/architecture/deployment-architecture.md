@@ -18,19 +18,20 @@ the ordinary root stack.
 ## Canonical root stack
 
 ```bash
-cp .env.docker.example .env.docker
+cp .env.example .env
 docker compose up -d --build
 ```
 
-The tracked `.env` only sets `COMPOSE_ENV_FILES=.env.docker`. Runtime settings
-and secrets live in ignored `.env.docker`; topology lives in Compose.
+`.env` is ignored runtime configuration and the only secret-bearing Compose
+environment file. `.env.example` is the tracked, sanitized template. No
+`--env-file` flag or Compose override is required.
 
 ```text
 Cloudflare → host Nginx :443 → 127.0.0.1:3010 frontend
                                   └→ 127.0.0.1:8010 API (Uvicorn ×2)
                                                      ├→ PostgreSQL + pgvector
                                                      ├→ Redis
-                                                     ├→ MinIO
+                                                     ├→ S3-compatible storage (MinIO)
                                                      └→ ClamAV
                                       Taskiq worker ─┘
 ```
@@ -64,24 +65,30 @@ three 10 MiB files per service.
 ## pgvector dimension contract
 
 `APE_EMBEDDING__DIMENSIONS=384` is read by migration `0015`, which creates a
-`vector(384)` column. API and worker startup preflight subsequently verifies:
+`vector(384)` column. Core readiness verifies:
 
 1. the database is at the checked-in migration head;
 2. pgvector is installed;
 3. the column is `vector(384)`; and
-4. the configured embedding provider returns vectors of length 384.
+4. the configured malware scanner is reachable.
 
-A mismatch prevents the API from serving and the worker from consuming. A
-future dimension change requires a schema migration and full re-embedding; it
-is not an environment-only change.
+Embedding-provider dimension validation runs as an advisory capability check.
+It is reported as degraded without taking down core authentication, project, and
+operator APIs; embedding-dependent operations remain unavailable until fixed. A
+future dimension change still requires a schema migration and full re-embedding;
+it is not an environment-only change.
 
 ## Public edge
 
 Cloudflare uses Full (strict) TLS to host Nginx. Nginx routes `/api/`,
 `/health/`, `/metrics`, `/docs`, and `/openapi.json` to the backend before the
-`/` frontend fallback. Host firewall policy must restrict origin access to
-Cloudflare networks or provide equivalent authenticated-origin protection
-before trusting `CF-Connecting-IP`.
+`/` frontend fallback. The frontend container serves static files only. Host
+Nginx refreshes Cloudflare `real_ip` ranges, replaces forwarded headers, disables
+buffering for API/SSE traffic, and applies the upload and long-generation
+timeouts. `/docs` remains intentionally disabled in production; `/openapi.json`
+is the live integration contract. Uvicorn accepts forwarded headers only because
+the backend is loopback-only and host Nginx overwrites them; exposing `8010`
+publicly would invalidate that trust boundary.
 
 See [`infra/vps/README.md`](../../infra/vps/README.md) and the checked-in
 [Nginx example](../../infra/vps/nginx/rag-builder.conf).
@@ -91,7 +98,7 @@ See [`infra/vps/README.md`](../../infra/vps/README.md) and the checked-in
 | Endpoint | Purpose |
 | --- | --- |
 | `GET /health/live` | API process liveness |
-| `GET /health/ready` | Database/pgvector, Redis, storage, and cached provider readiness |
+| `GET /health/ready` | Database/pgvector, Redis, S3-compatible storage, ClamAV, and cached AI capability status |
 | `GET /metrics` | Admin-gated current metrics |
 | `GET /api/v1/operator/workers` | Active Taskiq heartbeat status |
 
@@ -104,9 +111,8 @@ images for rollback instead of assuming an Alembic downgrade is safe. See the
 | File | Purpose |
 | --- | --- |
 | `docker-compose.yml` | Canonical local/full-stack and ordinary VPS topology |
-| `.env` | Tracked non-secret pointer to `.env.docker` |
-| `.env.docker` | Ignored runtime configuration and secrets |
-| `.env.docker.example` | Sanitized production template |
+| `.env` | Ignored runtime configuration and secrets |
+| `.env.example` | Sanitized runtime template |
 | `backend/Dockerfile` | Shared production API/worker/migration image |
 | `frontend/Dockerfile` | Built operator console served by Nginx |
 | `infra/vps/` | Ordinary VPS runbook and host-Nginx example |

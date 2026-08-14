@@ -4,7 +4,7 @@ name: rag-builder
 
 x-app: &app
   env_file:
-    - .env.docker
+    - .env
   networks: [rag_network]
 
 x-backend-image: &backend-image
@@ -17,16 +17,16 @@ x-backend-image: &backend-image
 x-app-endpoints: &app-endpoints
   APE_DATABASE__HOST: postgres
   APE_DATABASE__PORT: "5432"
-  APE_DATABASE__USER: ${POSTGRES_USER:?Set POSTGRES_USER in .env.docker}
-  APE_DATABASE__PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env.docker}
-  APE_DATABASE__NAME: ${POSTGRES_DB:?Set POSTGRES_DB in .env.docker}
+  APE_DATABASE__USER: ${POSTGRES_USER:?Set POSTGRES_USER in .env}
+  APE_DATABASE__PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+  APE_DATABASE__NAME: ${POSTGRES_DB:?Set POSTGRES_DB in .env}
   APE_REDIS__HOST: redis
   APE_REDIS__PORT: "6379"
-  APE_REDIS__PASSWORD: ${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env.docker}
+  APE_REDIS__PASSWORD: ${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}
   APE_MINIO__ENDPOINT: minio:9000
-  APE_MINIO__ACCESS_KEY: ${MINIO_ROOT_USER:?Set MINIO_ROOT_USER in .env.docker}
-  APE_MINIO__SECRET_KEY: ${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD in .env.docker}
-  APE_MINIO__BUCKET: ${MINIO_BUCKET:?Set MINIO_BUCKET in .env.docker}
+  APE_MINIO__ACCESS_KEY: ${MINIO_ROOT_USER:?Set MINIO_ROOT_USER in .env}
+  APE_MINIO__SECRET_KEY: ${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD in .env}
+  APE_MINIO__BUCKET: ${MINIO_BUCKET:?Set MINIO_BUCKET in .env}
   APE_MALWARE_SCAN__HOST: clamav
   APE_MALWARE_SCAN__PORT: "3310"
 
@@ -42,6 +42,8 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
       target: production
+      args:
+        VITE_API_ORIGIN: ${VITE_API_ORIGIN:-}
     image: rag-builder-frontend:production
     restart: unless-stopped
     init: true
@@ -103,14 +105,7 @@ services:
     command:
       - taskiq
       - worker
-      - app.worker.broker:broker
-      - app.worker.handlers.document
-      - app.worker.handlers.embedding
-      - app.worker.handlers.indexing
-      - app.worker.handlers.evaluation
-      - app.worker.handlers.corpus
-      - app.worker.handlers.document_lifecycle
-      - app.worker.handlers.storage_reconciliation
+      - app.worker.entrypoint:broker
     logging: *default-logging
 
   migrate:
@@ -127,9 +122,9 @@ services:
     image: pgvector/pgvector:0.8.1-pg16
     restart: unless-stopped
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:?Set POSTGRES_USER in .env.docker}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env.docker}
-      POSTGRES_DB: ${POSTGRES_DB:?Set POSTGRES_DB in .env.docker}
+      POSTGRES_USER: ${POSTGRES_USER:?Set POSTGRES_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:?Set POSTGRES_DB in .env}
     ports:
       - "127.0.0.1:5433:5432"
     volumes:
@@ -147,7 +142,7 @@ services:
     image: redis:7-alpine
     restart: unless-stopped
     environment:
-      REDIS_PASSWORD: ${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env.docker}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}
     command: ["sh", "-ec", "exec redis-server --appendonly yes --requirepass \"$$REDIS_PASSWORD\""]
     ports:
       - "127.0.0.1:6380:6379"
@@ -166,8 +161,8 @@ services:
     image: minio/minio:RELEASE.2025-07-23T15-54-02Z
     restart: unless-stopped
     environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?Set MINIO_ROOT_USER in .env.docker}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD in .env.docker}
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?Set MINIO_ROOT_USER in .env}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD in .env}
     command: ["server", "/data", "--console-address", ":9001"]
     ports:
       - "127.0.0.1:9010:9000"
@@ -187,9 +182,9 @@ services:
     image: minio/mc:RELEASE.2025-07-21T05-28-08Z
     restart: "no"
     environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?Set MINIO_ROOT_USER in .env.docker}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD in .env.docker}
-      MINIO_BUCKET: ${MINIO_BUCKET:?Set MINIO_BUCKET in .env.docker}
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?Set MINIO_ROOT_USER in .env}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD in .env}
+      MINIO_BUCKET: ${MINIO_BUCKET:?Set MINIO_BUCKET in .env}
     depends_on:
       minio:
         condition: service_healthy
@@ -200,7 +195,7 @@ services:
     logging: *default-logging
 
   clamav:
-    image: clamav/clamav:1.4.3
+    image: clamav/clamav:1.4.5
     restart: unless-stopped
     volumes:
       - clamav_data:/var/lib/clamav

@@ -2,10 +2,12 @@
 
 ## Purpose
 
-Phase 2 makes an API and worker deployment fail fast when its configured production
-capabilities are fake, incomplete, unreachable, or incompatible. It also gives the deployment
-operator stable, admin-gated visibility without requiring direct database access. Phase 3 adds
-the separate console UI described in [Operator Console MVP](operator_console.md).
+Phase 2 makes an API and worker deployment fail fast when required core services
+or configuration are fake, incomplete, unreachable, or incompatible. External AI
+provider failures are visible as degraded capabilities without taking down core
+API operations. It also gives the deployment operator stable, admin-gated
+visibility without requiring direct database access. Phase 3 adds the separate
+console UI described in [Operator Console MVP](operator_console.md).
 
 ## Certified production profiles
 
@@ -29,20 +31,21 @@ bounded startup preflight
       ├── PostgreSQL + pgvector + vector(n)
       ├── Redis
       ├── object-storage bucket access
-      ├── one embedding probe + dimension validation
-      ├── one LLM probe
-      ├── reranker probe
-      └── configured OCR initialization
+      └── ClamAV reachability
+      ↓
+start core API / worker heartbeat
+      ↓
+background embedding, LLM, reranker, and OCR capability probes
       ↓
 cache provider results for readiness/operator APIs
       ↓
 start dispatcher or worker consumption
 ```
 
-Production aborts before serving or consuming work if a required check fails. Development and
-testing start in a degraded state so `/ready` can explain unavailable local dependencies.
-`/ready` repeats only cheap infrastructure checks; provider calls are startup-only and returned
-as cached results.
+Production aborts before serving or consuming work only if a core check fails.
+Provider-dependent requests and jobs report their provider failure clearly while
+the core API remains available. `/ready` repeats only cheap core infrastructure
+checks; provider calls are advisory, background checks returned as cached results.
 
 ## Operator read model
 

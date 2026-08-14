@@ -17,14 +17,13 @@ operator console -> backend API -> Redis queue -> Taskiq worker
 From the repository root:
 
 ```bash
-cp .env.docker.example .env.docker
+cp .env.example .env
 # Replace every placeholder and set the correct HTTPS CORS origin.
 docker compose up -d --build
 ```
 
-The tracked `.env` contains only `COMPOSE_ENV_FILES=.env.docker`. Compose uses
-that pointer automatically; `.env.docker` remains the sole runtime and secret
-configuration file.
+`.env` is the ignored runtime and secret configuration file. `.env.example` is
+the tracked template, so normal Compose commands need no flags.
 
 | Surface | Loopback URL |
 | --- | --- |
@@ -37,6 +36,14 @@ configuration file.
 
 All bindings are loopback-only. ClamAV remains available only on the Docker
 network.
+
+The production frontend image is static-only: host Nginx owns API routing. For
+the local static console to call the loopback API, set
+`VITE_API_ORIGIN=http://127.0.0.1:8010` in `.env` and allow
+`http://127.0.0.1:3010` in CORS before `docker compose up -d --build`. Host-side
+Vite keeps its development-only `/api` proxy. This local HTTP-only mode also
+requires `APE_AUTH__ADMIN_COOKIE_SECURE=false`; never copy that setting to the
+VPS.
 
 ## Target individual services
 
@@ -93,8 +100,9 @@ Docker deployment configuration and must not be copied to the VPS.
 ## Readiness and persistence
 
 `/health/live` proves the API process is alive. `/health/ready` also checks
-PostgreSQL, migration head, pgvector dimensions, Redis, MinIO, and cached
-provider preflight results. Taskiq workers publish expiring Redis heartbeats
+PostgreSQL, migration head, pgvector dimensions, Redis, S3-compatible storage,
+and ClamAV. Cached external AI provider checks may be `degraded` without making
+the core readiness endpoint fail. Taskiq workers publish expiring Redis heartbeats
 shown by the operator API.
 
 Named volumes preserve database, queue, object, and ClamAV signature data across

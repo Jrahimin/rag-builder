@@ -26,13 +26,8 @@ RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 COPY requirements/ requirements/
 COPY requirements.txt ./
-ARG INSTALL_DEV=false
 RUN pip install --upgrade pip \
-    && if [ "$INSTALL_DEV" = "true" ]; then \
-         pip install -r requirements/dev.txt; \
-       else \
-         pip install -r requirements/prod.txt; \
-       fi
+    && pip install -r requirements/prod.txt
 
 # --- Runtime: minimal image with only what is needed to run ----------------
 FROM base AS runtime
@@ -46,13 +41,8 @@ USER ape
 
 EXPOSE 8000
 
-# The development target remains available for explicit image builds. The root
-# Compose stack always selects production; host-side development owns reload.
-FROM runtime AS development
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
-
 FROM runtime AS production
 # Uvicorn's worker manager is sufficient for this single-host Compose deployment.
 # Each worker runs the FastAPI lifespan; the durable dispatchers coordinate through
 # PostgreSQL row locks, so multiple workers remain safe.
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2", "--proxy-headers", "--forwarded-allow-ips=*"]

@@ -165,7 +165,7 @@ report all dependencies as `ok`.
 | `test_health_returns_ok` | 200, `success: true`, `environment: testing` |
 | `test_health_sets_correlation_headers` | `X-Request-ID`, `X-Trace-ID` present |
 | `test_health_honors_inbound_request_id` | Inbound ID echoed back |
-| `test_ready_reports_dependency_breakdown` | PostgreSQL, Redis, and MinIO listed |
+| `test_ready_reports_dependency_breakdown` | PostgreSQL, Redis, S3-compatible storage, ClamAV, and cached AI capability status listed |
 | `test_unknown_route_returns_standard_error` | 404 `ErrorResponse` envelope |
 
 ---

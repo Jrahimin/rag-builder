@@ -6,7 +6,7 @@ import asyncio
 from collections.abc import Awaitable
 from time import perf_counter
 
-from app.core.config import Settings
+from app.core.config import MalwareScannerBackend, Settings
 from app.core.logging import get_logger
 from app.platform.db.session import Database
 from app.platform.infra.connectivity.redis import RedisConnectivity
@@ -52,6 +52,7 @@ class HealthService:
             self._timed_check("postgresql", self._database.check()),
             self._timed_check("redis", self._redis.check()),
             self._timed_check("object_storage", self._storage.check()),
+            self._timed_check("malware_scanner", self._check_malware_scanner()),
         )
         provider_checks = [
             check.model_copy(update={"cached": True})
@@ -60,7 +61,7 @@ class HealthService:
         ]
         all_dependencies = [*dependencies, *provider_checks]
         healthy = all(
-            dep.state in (DependencyState.OK, DependencyState.SKIPPED) for dep in all_dependencies
+            dep.state in (DependencyState.OK, DependencyState.SKIPPED) for dep in dependencies
         )
         return ReadinessStatus(
             status="ready" if healthy else "not_ready",
@@ -89,3 +90,19 @@ class HealthService:
             )
         elapsed = round((perf_counter() - start) * 1000, 2)
         return DependencyHealth(name=name, state=DependencyState.OK, latency_ms=elapsed)
+
+    async def _check_malware_scanner(self) -> None:
+        if self._settings.malware_scan.backend is not MalwareScannerBackend.CLAMAV:
+            return
+        reader, writer = await asyncio.open_connection(
+            self._settings.malware_scan.host,
+            self._settings.malware_scan.port,
+        )
+        try:
+            writer.write(b"zPING" + bytes(1))
+            await writer.drain()
+            if await reader.readuntil(bytes(1)) != b"PONG" + bytes(1):
+                raise RuntimeError("ClamAV did not acknowledge the health ping.")
+        finally:
+            writer.close()
+            await writer.wait_closed()

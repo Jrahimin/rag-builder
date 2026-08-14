@@ -6,10 +6,10 @@ provider-agnostic.
 
 ## Setup
 
-Copy `.env.docker.example` to `.env.docker`, then start the development stack:
+Copy `.env.example` to ignored `.env`, then start the production-like stack:
 
 ```bash
-docker compose --env-file .env.docker up -d --build
+docker compose up -d --build
 ```
 
 For host-side backend tools, create a Python 3.12 virtual environment and run:

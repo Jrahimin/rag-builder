@@ -114,6 +114,10 @@ database startup/readiness probe requires the pgvector extension and reports an
 actionable error when PostgreSQL is reachable without it or when the configured
 embedding dimension differs from `chunk_embeddings.embedding`.
 
+Core readiness also requires Redis, S3-compatible object storage, and ClamAV.
+External embedding, LLM, reranking, and OCR probes run after startup and are
+reported as degraded capabilities rather than taking down the core API.
+
 Deployment-level health: `platform/system/health_service.py` + `api/health.py`.
 
 Long-running ingestion/indexing is database-first: the originating transaction

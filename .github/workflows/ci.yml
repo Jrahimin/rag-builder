@@ -86,7 +86,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Build backend production image
-        run: docker build --target production --tag rag-builder-backend:ci backend
-      - name: Build frontend production image
-        run: docker build --target production --tag rag-builder-frontend:ci frontend
+      - name: Prepare canonical Compose environment
+        run: cp .env.example .env
+      - name: Validate canonical Compose configuration
+        run: docker compose config --quiet
+      - name: Build canonical production services
+        run: docker compose build backend frontend
+      - name: Verify high-value deployment invariants
+        run: |
+          test "$(grep -c '127.0.0.1:' docker-compose.yml)" -eq 6
+          ! grep -R -E 'gunicorn|UvicornWorker|--reload' docker-compose.yml backend/Dockerfile frontend/Dockerfile
+          ! grep -A 20 '^  worker:' docker-compose.yml | grep -q 'clamav:'

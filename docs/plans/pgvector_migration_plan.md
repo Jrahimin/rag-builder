@@ -209,7 +209,7 @@ tests pass unchanged at the API boundary.
 
 1. Remove the Qdrant service, named volume, host ports, environment variables,
    health check, worker dependency, and backend readiness configuration from
-   `docker-compose.yml` and `.env.docker.example`.
+   `docker-compose.yml` and `.env.example`.
 2. Keep the existing one-shot `migrate` service. It must wait for PostgreSQL
    with pgvector, apply the extension migration, and complete before API and
    worker begin.

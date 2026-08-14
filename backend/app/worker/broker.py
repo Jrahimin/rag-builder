@@ -34,7 +34,7 @@ def get_taskiq_broker() -> ListQueueBroker:
     return ListQueueBroker(url=settings.redis.dsn)
 
 
-# Module-level alias for ``taskiq worker app.worker.broker:broker``.
+# Code-owned worker entrypoint: ``taskiq worker app.worker.entrypoint:broker``.
 broker = get_taskiq_broker()
 
 
@@ -51,7 +51,7 @@ async def startup_worker_heartbeat(state: TaskiqState) -> None:
             database=database,
             redis=connectivity,
             storage=storage,
-        ).run()
+        ).run_core()
     except Exception:
         await connectivity.dispose()
         await database.dispose()

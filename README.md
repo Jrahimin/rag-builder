@@ -161,7 +161,7 @@ ordinary single VPS.
 git clone <repository-url> rag-builder
 cd rag-builder
 
-cp .env.docker.example .env.docker
+cp .env.example .env
 docker compose up -d --build
 ```
 
@@ -177,8 +177,11 @@ Local surfaces:
 | MinIO console | `http://127.0.0.1:9011` |
 
 The local stack includes the React operator console, FastAPI, a Taskiq worker,
-PostgreSQL with pgvector, Redis, MinIO, and one-shot migration/bootstrap
-services. Use the Test Lab as the browser-based end-to-end verification surface.
+PostgreSQL with pgvector, Redis, S3-compatible object storage (MinIO here),
+ClamAV, and one-shot migration/bootstrap services. On a VPS, host Nginx makes
+the console and API same-origin. For a static local console, set
+`VITE_API_ORIGIN=http://127.0.0.1:8010` in `.env` and include the console origin
+in `APE_CORS__ALLOW_ORIGINS` before building.
 
 ### Useful local commands
 
