@@ -33,29 +33,17 @@ separate specialized hosted-pilot contract.
    docker compose config --quiet
    ```
 
-5. Install `nginx/rag-builder.conf`, replace the hostname/certificate paths,
-   then generate the host-only Cloudflare real-IP include from the published
-   ranges:
-
-   ```bash
-   { curl -fsSL https://www.cloudflare.com/ips-v4; curl -fsSL https://www.cloudflare.com/ips-v6; } \
-     | sed -e 's#^#set_real_ip_from #' -e 's#$#;#' \
-     | sudo tee /etc/nginx/snippets/cloudflare-realip.conf >/dev/null
-   printf 'real_ip_header CF-Connecting-IP;\nreal_ip_recursive on;\n' \
-     | sudo tee -a /etc/nginx/snippets/cloudflare-realip.conf >/dev/null
-   ```
-
-   Run `sudo nginx -t`, reload Nginx, and configure Cloudflare SSL/TLS as
-   **Full (strict)**. Restrict origin HTTP(S) to Cloudflare networks or use an
-   equivalent authenticated-origin control before trusting
-   `CF-Connecting-IP`.
+5. Install `nginx/rag-builder.conf` and configure the certificate paths for
+   the Cloudflare Origin Certificate. Run `sudo nginx -t`, reload Nginx, and
+   configure Cloudflare SSL/TLS as **Full (strict)**. Restrict origin HTTP(S)
+   to Cloudflare networks or use an equivalent authenticated-origin control.
 6. Start and verify:
 
    ```bash
    docker compose up -d --build
    docker compose ps
    curl --fail http://127.0.0.1:8010/health/ready
-   curl --fail https://rag-builder.example.com/health/ready
+   curl --fail https://api.omniaskai.com/health/ready
    ```
 
 `migrate` waits only for PostgreSQL. `minio-init` waits only for MinIO. The API

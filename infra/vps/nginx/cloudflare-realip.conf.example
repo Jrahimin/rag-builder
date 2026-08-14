@@ -1,7 +1,0 @@
-# Generated source: https://www.cloudflare.com/ips-v4 and /ips-v6
-# Refresh this host-only file when Cloudflare changes its published ranges.
-# Do not place it in the repository as a static allowlist.
-set_real_ip_from 173.245.48.0/20;
-# Add every current IPv4 and IPv6 Cloudflare CIDR here.
-real_ip_header CF-Connecting-IP;
-real_ip_recursive on;

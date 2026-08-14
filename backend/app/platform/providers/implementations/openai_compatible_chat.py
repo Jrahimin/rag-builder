@@ -72,7 +72,7 @@ class OpenAICompatibleChatProvider(BaseLLMProvider):
             "model": self._model,
             "messages": [{"role": _role_value(m.role), "content": m.content} for m in messages],
             "temperature": temperature,
-            "max_tokens": max_tokens,
+            "max_completion_tokens": max_tokens,
             "stream": stream,
         }
 
