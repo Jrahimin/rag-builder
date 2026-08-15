@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import { adminAuthApi, type CurrentAdmin } from "./adminAuthApi";
+import {
+  ADMIN_AUTH_EXPIRED_EVENT,
+  adminAuthApi,
+  type CurrentAdmin,
+} from "./adminAuthApi";
 import { AdminAuthContext } from "./adminAuthContext";
 
 export function AdminAuthProvider({
@@ -34,6 +38,12 @@ export function AdminAuthProvider({
       active = false;
     };
   }, [initialAdmin]);
+
+  useEffect(() => {
+    const handleExpiredSession = () => setAdmin(null);
+    window.addEventListener(ADMIN_AUTH_EXPIRED_EVENT, handleExpiredSession);
+    return () => window.removeEventListener(ADMIN_AUTH_EXPIRED_EVENT, handleExpiredSession);
+  }, []);
 
   const login = useCallback(async (email: string, password: string) => {
     const current = await adminAuthApi.login(email, password);

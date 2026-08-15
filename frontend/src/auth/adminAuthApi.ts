@@ -64,3 +64,5 @@ export function getCsrfHeader(): Record<string, string> {
   return token ? { "X-CSRF-Token": decodeURIComponent(token) } : {};
 }
 import { apiUrl } from "../api/apiOrigin";
+
+export const ADMIN_AUTH_EXPIRED_EVENT = "ape-admin-auth-expired";

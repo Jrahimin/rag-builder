@@ -1,5 +1,9 @@
 import type { components } from "./generated/openapi";
-import { getCsrfHeader } from "../auth/adminAuthApi";
+import {
+  ADMIN_AUTH_EXPIRED_EVENT,
+  adminAuthApi,
+  getCsrfHeader,
+} from "../auth/adminAuthApi";
 import { apiUrl } from "./apiOrigin";
 
 export type OperatorOverview = components["schemas"]["OperatorOverview"];
@@ -47,6 +51,25 @@ function isApiFailure<T>(payload: ApiSuccess<T> | ApiFailure | null): payload is
   return payload !== null && "error" in payload;
 }
 
+let refreshInFlight: Promise<boolean> | null = null;
+
+function notifyExpiredSession() {
+  window.dispatchEvent(new Event(ADMIN_AUTH_EXPIRED_EVENT));
+}
+
+async function refreshSession(): Promise<boolean> {
+  if (!refreshInFlight) {
+    refreshInFlight = adminAuthApi
+      .refresh()
+      .then(() => true)
+      .catch(() => false)
+      .finally(() => {
+        refreshInFlight = null;
+      });
+  }
+  return refreshInFlight;
+}
+
 export class OperatorApiError extends Error {
   constructor(
     message: string,
@@ -60,9 +83,8 @@ export class OperatorApiError extends Error {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  let response: Response;
-  try {
-    response = await fetch(apiUrl(path), {
+  const send = () =>
+    fetch(apiUrl(path), {
       ...init,
       credentials: "include",
       headers: {
@@ -71,6 +93,14 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
         ...init?.headers,
       },
     });
+
+  let response: Response;
+  try {
+    response = await send();
+    if (response.status === 401) {
+      if (await refreshSession()) response = await send();
+      if (response.status === 401) notifyExpiredSession();
+    }
   } catch {
     throw new OperatorApiError(
       "The backend is unavailable. Start the API service and try again.",
@@ -236,21 +266,25 @@ export const operatorApiClient = {
     onDelta: (delta: string) => void,
     documentId?: string,
   ): Promise<StreamMessageResult> => {
+    const send = () =>
+      fetch(`${apiRoot}/projects/${projectId}/conversations/${conversationId}/messages/stream`, {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          Accept: "text/event-stream",
+          "Content-Type": "application/json",
+          ...getCsrfHeader(),
+        },
+        body: JSON.stringify({ content, document_id: documentId ?? null, metadata_filter: {} }),
+      });
+
     let response: Response;
     try {
-      response = await fetch(
-        `${apiRoot}/projects/${projectId}/conversations/${conversationId}/messages/stream`,
-        {
-          method: "POST",
-          credentials: "include",
-          headers: {
-            Accept: "text/event-stream",
-            "Content-Type": "application/json",
-            ...getCsrfHeader(),
-          },
-          body: JSON.stringify({ content, document_id: documentId ?? null, metadata_filter: {} }),
-        },
-      );
+      response = await send();
+      if (response.status === 401) {
+        if (await refreshSession()) response = await send();
+        if (response.status === 401) notifyExpiredSession();
+      }
     } catch {
       throw new OperatorApiError(
         "The backend is unavailable. Start the API service and try again.",

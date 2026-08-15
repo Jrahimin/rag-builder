@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { vi } from "vitest";
 import { AdminAuthProvider } from "./AdminAuthProvider";
-import { adminAuthApi } from "./adminAuthApi";
+import { ADMIN_AUTH_EXPIRED_EVENT, adminAuthApi } from "./adminAuthApi";
 import { LoginPage } from "./LoginPage";
 import { ProtectedAdminRoute } from "./ProtectedAdminRoute";
 import { useAdminAuth } from "./useAdminAuth";
@@ -84,5 +84,16 @@ test("clears current-admin state even when server logout succeeds", async () => 
   );
 
   fireEvent.click(screen.getByRole("button", { name: "Log out" }));
+  await waitFor(() => expect(screen.getByText("Signed out")).toBeInTheDocument());
+});
+
+test("clears current-admin state when an API request detects an expired session", async () => {
+  render(
+    <AdminAuthProvider initialAdmin={admin}>
+      <LogoutControl />
+    </AdminAuthProvider>,
+  );
+
+  window.dispatchEvent(new Event(ADMIN_AUTH_EXPIRED_EVENT));
   await waitFor(() => expect(screen.getByText("Signed out")).toBeInTheDocument());
 });
