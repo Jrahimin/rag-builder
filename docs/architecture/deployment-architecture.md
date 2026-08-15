@@ -40,6 +40,68 @@ Every published Docker port is bound to loopback. PostgreSQL `5433`, Redis
 `6380`, and MinIO `9010`/`9011` are available for local debugging or SSH
 tunnels without being public. ClamAV remains Docker-network-only.
 
+## End-to-end VPS journey (quick reference)
+
+Use this sequence when provisioning or rebuilding the ordinary single-VPS
+deployment. The detailed commands and operational checks are in the
+[`infra/vps` runbook](../../infra/vps/README.md).
+
+1. **Prepare the VPS.** Install Docker Engine with the Compose plugin and host
+   Nginx, allow only SSH and web traffic at the firewall, and check out the
+   release under `/opt/rag-builder`. Do not expose the Docker daemon over TCP.
+2. **Delegate DNS to Cloudflare.** In Namecheap, replace the domain's
+   nameservers with the two Cloudflare nameservers assigned to the zone. After
+   delegation is active, create the required proxied `A`/`AAAA` record (for
+   example, `api.omniaskai.com`) in Cloudflare DNS; manage records there from
+   this point onward.
+3. **Create the origin certificate.** In Cloudflare, create an Origin
+   Certificate covering the deployed hostname, keep SSL/TLS mode at **Full
+   (strict)**, and install the certificate and private key on the VPS at the
+   paths used by the Nginx example (normally
+   `/etc/ssl/cloudflare/omniaskai.com.pem` and `.key`). Restrict the key to
+   root (`0600`).
+4. **Install and validate host Nginx.** Copy
+   [`rag-builder.conf`](../../infra/vps/nginx/rag-builder.conf) into the host
+   Nginx configuration, confirm the certificate paths and hostname, then run
+   `sudo nginx -t` and reload Nginx. Nginx is the only TLS/reverse-proxy layer:
+   it redirects HTTP to HTTPS, sends backend routes to `127.0.0.1:8010`, and
+   sends the frontend fallback to `127.0.0.1:3010`.
+5. **Create runtime configuration.** From the repository root, copy
+   `.env.example` to the ignored `.env`, set the public HTTPS CORS origin and
+   all production secrets/provider choices, then protect it:
+
+   ```bash
+   cp .env.example .env
+   chmod 600 .env
+   docker compose config --quiet
+   ```
+
+   Keep embedding dimensions aligned with the pgvector migration (`384` in
+   the standard setup); rotate any credential that has been exposed.
+6. **Start the canonical stack.** Run the one normal deployment command:
+
+   ```bash
+   docker compose up -d --build
+   ```
+
+   Compose builds the production images, runs the one-shot migration and
+   MinIO bucket bootstrap, then starts the API, Taskiq worker, frontend, and
+   infrastructure after their health gates succeed.
+7. **Verify through both boundaries.** Check container state and local API
+   readiness first, then check the public Cloudflare/Nginx path:
+
+   ```bash
+   docker compose ps
+   curl --fail http://127.0.0.1:8010/health/ready
+   curl --fail https://api.omniaskai.com/health/ready
+   docker compose logs --since=10m backend worker
+   ```
+
+   Confirm the frontend loads, `/openapi.json` is reachable, `/docs` follows
+   the documented production policy, and the worker reports an active Redis
+   heartbeat. Back up PostgreSQL and object storage off-VPS before future
+   upgrades.
+
 ## Process and readiness model
 
 - The production backend image starts direct Uvicorn with two workers. Its
