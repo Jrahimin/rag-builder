@@ -518,7 +518,9 @@ class AuthConfig(BaseModel):
     admin_login_rate_limit_requests: int = Field(default=5, ge=1, le=100)
     admin_login_rate_limit_window_seconds: int = Field(default=60, ge=1, le=3600)
     admin_jwt_secret: str | None = None
-    admin_access_token_expire_minutes: int = Field(default=15, ge=1, le=120)
+    # Keep access tokens bounded while allowing a workday session. Refresh
+    # tokens remain the preferred way to keep a browser session alive.
+    admin_access_token_expire_minutes: int = Field(default=15, ge=1, le=8 * 60)
     admin_refresh_token_expire_days: int = Field(default=14, ge=1, le=90)
     admin_cookie_secure: bool = False
     admin_cookie_samesite: Literal["lax", "strict", "none"] = "lax"

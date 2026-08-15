@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError
 
 from app.core.auth_config_validation import AuthConfigurationError, validate_auth_config
 from app.core.config import AppConfig, AuthConfig, Environment, Settings
@@ -68,3 +69,10 @@ def test_enabled_auth_accepts_valid_configuration() -> None:
             )
         )
     )
+
+
+def test_access_token_expiry_allows_eight_hours_but_not_more() -> None:
+    config = AuthConfig(admin_access_token_expire_minutes=8 * 60)
+    assert config.admin_access_token_expire_minutes == 8 * 60
+    with pytest.raises(ValidationError):
+        AuthConfig(admin_access_token_expire_minutes=(8 * 60) + 1)
