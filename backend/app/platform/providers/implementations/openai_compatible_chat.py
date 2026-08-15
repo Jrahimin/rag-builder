@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import json
 from collections.abc import AsyncIterator
+from typing import Any
 
 import httpx
 
+from app.core.logging import get_logger
 from app.platform.providers.contracts.llm import (
     BaseLLMProvider,
     ChatCompletionChunk,
@@ -17,9 +19,18 @@ from app.platform.providers.contracts.llm import (
 )
 from app.platform.providers.errors import ProviderError
 
+log = get_logger(__name__)
+
 
 def _role_value(role: ChatRole) -> str:
     return role.value
+
+
+def _safe_error_value(value: object) -> str | None:
+    """Return bounded scalar error data without retaining a response body."""
+    if not isinstance(value, (str, int, float, bool)):
+        return None
+    return str(value)[:500]
 
 
 class OpenAICompatibleChatProvider(BaseLLMProvider):
@@ -78,6 +89,50 @@ class OpenAICompatibleChatProvider(BaseLLMProvider):
             body["temperature"] = temperature
         return body
 
+    async def _http_error(
+        self,
+        response: httpx.Response,
+        *,
+        operation: str,
+    ) -> ProviderError:
+        """Build a diagnostic error from explicitly safe upstream error fields.
+
+        Do not log response headers or the request/response body: either may contain
+        credentials or user-provided content.  OpenAI-compatible APIs conventionally
+        expose these small fields under ``error`` and they are sufficient to diagnose
+        unsupported models or parameters.
+        """
+        body = await response.aread()
+        context: dict[str, Any] = {"http_status": response.status_code}
+        try:
+            payload = json.loads(body)
+        except (TypeError, ValueError):
+            payload = None
+
+        error = payload.get("error") if isinstance(payload, dict) else None
+        if isinstance(error, dict):
+            for source, target in (
+                ("message", "error_message"),
+                ("code", "error_code"),
+                ("type", "error_type"),
+                ("param", "error_param"),
+            ):
+                value = _safe_error_value(error.get(source))
+                if value is not None:
+                    context[target] = value
+
+        log.warning(
+            "openai_compatible_chat_request_failed",
+            provider=self.provider_name,
+            operation=operation,
+            **context,
+        )
+        return ProviderError(
+            f"{self.provider_name} {operation} failed (HTTP {response.status_code})",
+            provider_name=self.provider_name,
+            context=context,
+        )
+
     async def generate(
         self,
         messages: list[ChatMessage],
@@ -98,10 +153,15 @@ class OpenAICompatibleChatProvider(BaseLLMProvider):
                         stream=False,
                     ),
                 )
-                response.raise_for_status()
+                if response.is_error:
+                    raise await self._http_error(response, operation="chat request")
         except httpx.HTTPError as exc:
             msg = f"{self.provider_name} chat request failed"
-            raise ProviderError(msg, provider_name=self.provider_name) from exc
+            raise ProviderError(
+                msg,
+                provider_name=self.provider_name,
+                context={"http_error_type": type(exc).__name__},
+            ) from exc
 
         payload = response.json()
         choices = payload.get("choices")
@@ -148,7 +208,8 @@ class OpenAICompatibleChatProvider(BaseLLMProvider):
                     stream=True,
                 ),
             ) as response:
-                response.raise_for_status()
+                if response.is_error:
+                    raise await self._http_error(response, operation="chat stream")
                 async for line in response.aiter_lines():
                     if not line.startswith("data:"):
                         continue
@@ -172,6 +233,10 @@ class OpenAICompatibleChatProvider(BaseLLMProvider):
                         )
         except httpx.HTTPError as exc:
             msg = f"{self.provider_name} chat stream failed"
-            raise ProviderError(msg, provider_name=self.provider_name) from exc
+            raise ProviderError(
+                msg,
+                provider_name=self.provider_name,
+                context={"http_error_type": type(exc).__name__},
+            ) from exc
         finally:
             await client.aclose()

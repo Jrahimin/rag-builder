@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import httpx
 import pytest
 
 from app.core.config import LLMBackend, LLMConfig, Settings
 from app.platform.providers.contracts.llm import ChatMessage, ChatRole
+from app.platform.providers.errors import ProviderError
 from app.platform.providers.implementations.echo_chat import EchoLLMProvider
 from app.platform.providers.implementations.llm_factory import create_llm_provider
 from app.platform.providers.implementations.openai_chat import OpenAIChatProvider
@@ -83,3 +85,53 @@ def test_openai_chat_model_keeps_temperature() -> None:
 
     assert body["max_completion_tokens"] == 32
     assert body["temperature"] == 0.7
+
+
+async def test_openai_error_exposes_only_safe_upstream_diagnostics(monkeypatch) -> None:
+    class FailingClient:
+        async def __aenter__(self) -> FailingClient:
+            return self
+
+        async def __aexit__(self, *_args: object) -> None:
+            return None
+
+        async def post(self, *_args: object, **_kwargs: object) -> httpx.Response:
+            return httpx.Response(
+                400,
+                json={
+                    "error": {
+                        "message": "Unsupported parameter: 'temperature'.",
+                        "type": "invalid_request_error",
+                        "param": "temperature",
+                        "code": "unsupported_parameter",
+                    }
+                },
+            )
+
+    client = FailingClient()
+    monkeypatch.setattr(
+        "app.platform.providers.implementations.openai_compatible_chat.httpx.AsyncClient",
+        lambda **_kwargs: client,
+    )
+    provider = OpenAIChatProvider(
+        api_key="test-key-that-must-not-leak",
+        model="test-model",
+        provider_version="test",
+    )
+
+    with pytest.raises(ProviderError) as caught:
+        await provider.generate(
+            [ChatMessage(role=ChatRole.USER, content="private prompt")],
+            max_tokens=20,
+        )
+
+    assert str(caught.value) == "openai chat request failed (HTTP 400)"
+    assert caught.value.context == {
+        "http_status": 400,
+        "error_message": "Unsupported parameter: 'temperature'.",
+        "error_type": "invalid_request_error",
+        "error_param": "temperature",
+        "error_code": "unsupported_parameter",
+    }
+    assert "test-key-that-must-not-leak" not in str(caught.value.context)
+    assert "private prompt" not in str(caught.value.context)

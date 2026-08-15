@@ -152,11 +152,13 @@ class StartupPreflightService:
             await asyncio.wait_for(operation(), timeout=check_timeout)
         except Exception as exc:
             latency = round((perf_counter() - started) * 1000, 2)
+            error_context = getattr(exc, "context", None)
             log.warning(
                 "startup_preflight_failed",
                 check=name,
                 error_type=type(exc).__name__,
                 error=str(exc),
+                error_context=error_context if isinstance(error_context, dict) else None,
             )
             return DependencyHealth(
                 name=name,
@@ -189,7 +191,7 @@ class StartupPreflightService:
         provider = create_llm_provider(self._settings)
         await provider.generate(
             [ChatMessage(role=ChatRole.USER, content="Reply OK")],
-            max_tokens=1,
+            max_tokens=20,
         )
 
     async def _check_reranker(self) -> None:
