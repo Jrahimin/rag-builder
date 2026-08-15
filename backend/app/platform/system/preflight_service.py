@@ -189,7 +189,6 @@ class StartupPreflightService:
         provider = create_llm_provider(self._settings)
         await provider.generate(
             [ChatMessage(role=ChatRole.USER, content="Reply OK")],
-            temperature=0.0,
             max_tokens=1,
         )
 

@@ -49,16 +49,16 @@ def test_factory_conversation_override_model() -> None:
     assert provider.model_name == "override-model"
 
 
-def test_openai_reasoning_model_omits_temperature() -> None:
+def test_openai_unset_temperature_is_omitted() -> None:
     provider = OpenAIChatProvider(
         api_key="test-key",
-        model="gpt-5.6-luna",
+        model="any-openai-model",
         provider_version="test",
     )
 
     body = provider._body(
         [ChatMessage(role=ChatRole.USER, content="hello")],
-        temperature=0.0,
+        temperature=None,
         max_tokens=1,
         stream=False,
     )

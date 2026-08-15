@@ -13,7 +13,7 @@ implementations.
     llm = get_llm_provider()
     result = await llm.generate(
         [ChatMessage(role=ChatRole.USER, content="Hello")],
-        temperature=0.7,
+        temperature=None,
         max_tokens=1024,
     )
 
@@ -96,17 +96,17 @@ class BaseLLMProvider(ABC):
         self,
         messages: list[ChatMessage],
         *,
-        temperature: float,
+        temperature: float | None = None,
         max_tokens: int,
     ) -> ChatCompletionResult:
-        """Run a non-streaming chat completion."""
+        """Run a non-streaming chat completion; ``None`` uses provider defaults."""
 
     @abstractmethod
     def stream(
         self,
         messages: list[ChatMessage],
         *,
-        temperature: float,
+        temperature: float | None = None,
         max_tokens: int,
     ) -> AsyncIterator[ChatCompletionChunk]:
-        """Stream chat completion deltas. Must propagate ``asyncio.CancelledError``."""
+        """Stream deltas; ``None`` uses provider defaults."""

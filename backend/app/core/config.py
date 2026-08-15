@@ -465,7 +465,7 @@ class LLMConfig(BaseModel):
 
     backend: LLMBackend = LLMBackend.ECHO
     model: str = "gpt-4o-mini"
-    temperature: float = Field(default=0.7, ge=0.0, le=2.0)
+    temperature: float | None = Field(default=None, ge=0.0, le=2.0)
     max_tokens: int = Field(default=2048, ge=1, le=128_000)
     request_timeout_seconds: float = Field(default=120.0, ge=1.0, le=600.0)
     ollama_base_url: str = "http://localhost:11434"

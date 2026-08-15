@@ -53,6 +53,7 @@ async def test_preflight_reports_provider_dimension_mismatch(monkeypatch) -> Non
     assert embedding.state is DependencyState.DEGRADED
     assert "RuntimeError" in (embedding.detail or "")
     assert llm.generate.await_count == 1
+    assert "temperature" not in llm.generate.await_args.kwargs
 
 
 async def test_core_preflight_does_not_wait_for_external_ai_providers(monkeypatch) -> None:

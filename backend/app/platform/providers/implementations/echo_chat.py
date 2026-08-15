@@ -43,7 +43,7 @@ class EchoLLMProvider(BaseLLMProvider):
         self,
         messages: list[ChatMessage],
         *,
-        temperature: float,
+        temperature: float | None = None,
         max_tokens: int,
     ) -> ChatCompletionResult:
         del temperature, max_tokens
@@ -62,11 +62,11 @@ class EchoLLMProvider(BaseLLMProvider):
         self,
         messages: list[ChatMessage],
         *,
-        temperature: float,
+        temperature: float | None = None,
         max_tokens: int,
     ) -> AsyncIterator[ChatCompletionChunk]:
         del temperature, max_tokens
-        result = await self.generate(messages, temperature=0.0, max_tokens=1)
+        result = await self.generate(messages, temperature=None, max_tokens=1)
         words = result.content.split(" ")
         for index, word in enumerate(words):
             delta = word if index == 0 else f" {word}"

@@ -75,16 +75,18 @@ class GeminiChatProvider(BaseLLMProvider):
         self,
         messages: list[ChatMessage],
         *,
-        temperature: float,
+        temperature: float | None = None,
         max_tokens: int,
     ) -> dict[str, object]:
         system_instruction, contents = self._split_messages(messages)
+        generation_config: dict[str, object] = {
+            "maxOutputTokens": max_tokens,
+        }
+        if temperature is not None:
+            generation_config["temperature"] = temperature
         body: dict[str, object] = {
             "contents": contents,
-            "generationConfig": {
-                "temperature": temperature,
-                "maxOutputTokens": max_tokens,
-            },
+            "generationConfig": generation_config,
         }
         if system_instruction:
             body["systemInstruction"] = {"parts": [{"text": system_instruction}]}
@@ -132,7 +134,7 @@ class GeminiChatProvider(BaseLLMProvider):
         self,
         messages: list[ChatMessage],
         *,
-        temperature: float,
+        temperature: float | None = None,
         max_tokens: int,
     ) -> ChatCompletionResult:
         url = self._url(stream=False)
@@ -155,7 +157,7 @@ class GeminiChatProvider(BaseLLMProvider):
         self,
         messages: list[ChatMessage],
         *,
-        temperature: float,
+        temperature: float | None = None,
         max_tokens: int,
     ) -> AsyncIterator[ChatCompletionChunk]:
         url = self._url(stream=True)

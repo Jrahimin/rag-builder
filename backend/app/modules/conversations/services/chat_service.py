@@ -53,7 +53,7 @@ class _PreparedTurn:
     chunks: list[ContextChunk]
     history: list[Message]
     messages: list[ChatMessage]
-    temperature: float
+    temperature: float | None
     llm: BaseLLMProvider
     retrieval_ms: int
     evidence: EvidenceDecision
@@ -428,7 +428,7 @@ class ChatService:
         """Close any implicit read transaction before slow external I/O."""
         await self._session.rollback()
 
-    def _effective_temperature(self, conversation: Conversation) -> float:
+    def _effective_temperature(self, conversation: Conversation) -> float | None:
         if conversation.temperature is not None:
             return conversation.temperature
         return self._llm_config.temperature

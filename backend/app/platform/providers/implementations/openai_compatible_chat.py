@@ -17,17 +17,9 @@ from app.platform.providers.contracts.llm import (
 )
 from app.platform.providers.errors import ProviderError
 
-_FIXED_TEMPERATURE_MODEL_PREFIXES = ("gpt-5.6", "o1", "o3", "o4")
-
 
 def _role_value(role: ChatRole) -> str:
     return role.value
-
-
-def _supports_custom_temperature(model: str) -> bool:
-    """Return whether the selected model accepts a non-default temperature."""
-    normalized = model.strip().lower()
-    return not normalized.startswith(_FIXED_TEMPERATURE_MODEL_PREFIXES)
 
 
 class OpenAICompatibleChatProvider(BaseLLMProvider):
@@ -72,7 +64,7 @@ class OpenAICompatibleChatProvider(BaseLLMProvider):
         self,
         messages: list[ChatMessage],
         *,
-        temperature: float,
+        temperature: float | None = None,
         max_tokens: int,
         stream: bool,
     ) -> dict[str, object]:
@@ -82,7 +74,7 @@ class OpenAICompatibleChatProvider(BaseLLMProvider):
             "max_completion_tokens": max_tokens,
             "stream": stream,
         }
-        if _supports_custom_temperature(self._model):
+        if temperature is not None:
             body["temperature"] = temperature
         return body
 
@@ -90,7 +82,7 @@ class OpenAICompatibleChatProvider(BaseLLMProvider):
         self,
         messages: list[ChatMessage],
         *,
-        temperature: float,
+        temperature: float | None = None,
         max_tokens: int,
     ) -> ChatCompletionResult:
         url = f"{self._base_url}/v1/chat/completions"
@@ -139,7 +131,7 @@ class OpenAICompatibleChatProvider(BaseLLMProvider):
         self,
         messages: list[ChatMessage],
         *,
-        temperature: float,
+        temperature: float | None = None,
         max_tokens: int,
     ) -> AsyncIterator[ChatCompletionChunk]:
         url = f"{self._base_url}/v1/chat/completions"

@@ -52,17 +52,18 @@ class OllamaChatProvider(BaseLLMProvider):
         self,
         messages: list[ChatMessage],
         *,
-        temperature: float,
+        temperature: float | None = None,
         max_tokens: int,
     ) -> ChatCompletionResult:
         del max_tokens
         url = f"{self._base_url}/api/chat"
-        body = {
+        body: dict[str, object] = {
             "model": self._model,
             "messages": self._ollama_messages(messages),
             "stream": False,
-            "options": {"temperature": temperature},
         }
+        if temperature is not None:
+            body["options"] = {"temperature": temperature}
         try:
             async with httpx.AsyncClient(timeout=self._timeout) as client:
                 response = await client.post(url, json=body)
@@ -90,17 +91,18 @@ class OllamaChatProvider(BaseLLMProvider):
         self,
         messages: list[ChatMessage],
         *,
-        temperature: float,
+        temperature: float | None = None,
         max_tokens: int,
     ) -> AsyncIterator[ChatCompletionChunk]:
         del max_tokens
         url = f"{self._base_url}/api/chat"
-        body = {
+        body: dict[str, object] = {
             "model": self._model,
             "messages": self._ollama_messages(messages),
             "stream": True,
-            "options": {"temperature": temperature},
         }
+        if temperature is not None:
+            body["options"] = {"temperature": temperature}
         client = httpx.AsyncClient(timeout=self._timeout)
         try:
             async with client.stream("POST", url, json=body) as response:
