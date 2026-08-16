@@ -21,6 +21,7 @@ from app.api.v1.routes.operator_router import router as operator_router
 from app.api.v1.routes.organizations_router import router as organizations_router
 from app.api.v1.routes.projects_router import router as projects_router
 from app.api.v1.routes.search_router import router as search_router
+from app.api.v1.routes.sources_router import router as sources_router
 from app.api.v1.routes.webhooks_router import router as webhooks_router
 from app.dependencies.access import require_admin_or_organization
 from app.dependencies.projects import ensure_project_accessible
@@ -43,6 +44,11 @@ _project_nested_router.include_router(
     documents_router,
     prefix="/projects/{project_id}/documents",
     tags=["documents"],
+)
+_project_nested_router.include_router(
+    sources_router,
+    prefix="/projects/{project_id}/sources",
+    tags=["sources"],
 )
 _project_nested_router.include_router(
     jobs_router,

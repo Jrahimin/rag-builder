@@ -55,6 +55,7 @@ class KeywordRetriever(BaseRetriever):
             top_k=context.keyword_candidate_top_k,
             document_id=context.filters.document_id,
             metadata_filter=metadata_filter,
+            source_scope=context.source_scope,
         )
 
         if context.min_ocr_confidence is not None:
@@ -88,7 +89,13 @@ class KeywordRetriever(BaseRetriever):
             )
             if score <= 0:
                 continue
-            scored.append((row.chunk_id, score, dict(row.metadata_snapshot)))
+            scored.append(
+                (
+                    row.chunk_id,
+                    score,
+                    {**row.metadata_snapshot, **row.source_metadata},
+                )
+            )
 
         scored.sort(key=lambda item: (-item[1], str(item[0])))
         candidates = [

@@ -33,6 +33,17 @@ readiness never repeats model calls.
 - **Document parsers** — `BaseDocumentParserProvider` + PyMuPDF / plain text / docx / image OCR
 - **OCR** — `OCRProvider` + optional PaddleOCR for the general fallback and Google Cloud Vision for the opt-in Bangla OCR-first route (`ocr_factory.py`); SDK boundary same as other providers. See [multilingual_support.md](../features/multilingual_support.md#bangla-bengali-ocr-routing-and-limitations).
 - **LLM** — `BaseLLMProvider` + echo / OpenAI-compatible / Ollama / Gemini implementations (Chat module)
+- **LLM capabilities** — versioned provider/model descriptors centralize supported parameters,
+  ranges, safe omission, and vendor token-limit names (`max_completion_tokens`,
+  `maxOutputTokens`, or `num_predict`). Effective Project policy is validated before a request is
+  staged or sent.
+
+Capability-gated wire behavior remains adapter-specific. Streaming usage options are sent only
+when the selected descriptor supports them; a generic OpenAI-compatible endpoint is not assumed
+to accept OpenAI's `stream_options.include_usage`. For Ollama, `num_predict` is the maximum output
+budget and is checked against the configured model's `/api/show` context information (including a
+lower `num_ctx` setting) before a request is sent. APE rejects an over-limit request rather than
+silently truncating it.
 
 ## SDK boundary
 
@@ -62,3 +73,8 @@ resolver; they do not select concrete provider implementations.
 Same pattern for embeddings (`get_embedding_provider`) and storage
 (`get_storage_provider`). Semantic search uses the session-aware retrieval
 repository defined by ADR-013.
+
+Unsupported explicit parameters fail with `unsupported_provider_parameter`; out-of-range values
+fail with `provider_parameter_out_of_range`. A value inherited from deployment defaults may be
+safely omitted only when the descriptor explicitly marks it unsupported. The descriptor version
+is persisted in execution provenance.

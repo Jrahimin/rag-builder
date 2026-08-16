@@ -580,6 +580,44 @@ class EvaluationConfig(BaseModel):
         return value
 
 
+class RequestOverrideMode(StrEnum):
+    """Migration policy for deprecated external AI-policy overrides."""
+
+    COMPATIBILITY = "compatibility"
+    STRICT = "strict"
+
+
+class SourcePolicyDeploymentCap(StrEnum):
+    """Deployment-wide maximum source-policy enforcement level."""
+
+    OFF = "off"
+    OBSERVE = "observe"
+    ENFORCE = "enforce"
+
+
+class AIConfigPolicy(BaseModel):
+    """Deployment safety bounds around Project AI configuration."""
+
+    request_override_mode: RequestOverrideMode = RequestOverrideMode.COMPATIBILITY
+    max_request_top_k: int = Field(default=100, ge=1, le=100)
+    source_policy_deployment_cap: SourcePolicyDeploymentCap = (
+        SourcePolicyDeploymentCap.ENFORCE
+    )
+    enabled_retrieval_strategies: Annotated[list[RetrievalStrategy], NoDecode] = Field(
+        default_factory=lambda: [RetrievalStrategy.SEMANTIC, RetrievalStrategy.HYBRID]
+    )
+
+    @field_validator("enabled_retrieval_strategies", mode="before")
+    @classmethod
+    def _split_enabled_strategies(cls, value: object) -> object:
+        if isinstance(value, str):
+            stripped = value.strip()
+            if not stripped or stripped.startswith("["):
+                return value
+            return [item.strip() for item in stripped.split(",") if item.strip()]
+        return value
+
+
 class Settings(BaseSettings):
     """Root settings object aggregating all configuration sections."""
 
@@ -615,6 +653,7 @@ class Settings(BaseSettings):
     generation: GenerationConfig = Field(default_factory=GenerationConfig)
     chat: ChatConfig = Field(default_factory=ChatConfig)
     evaluation: EvaluationConfig = Field(default_factory=EvaluationConfig)
+    ai_policy: AIConfigPolicy = Field(default_factory=AIConfigPolicy)
     auth: AuthConfig = Field(default_factory=AuthConfig)
 
 

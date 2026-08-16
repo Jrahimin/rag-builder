@@ -34,8 +34,9 @@ async def test_adapter_maps_search_results_to_context_chunks() -> None:
         )
     )
     adapter = SearchServiceRetrievalAdapter(search_service)
-    chunks = await adapter.retrieve(query="refund", top_k=5)
-    assert len(chunks) == 1
-    assert chunks[0].chunk_id == chunk_id
-    assert chunks[0].filename == "policy.txt"
-    assert len(chunks[0].chunk_hash) == 64
+    result = await adapter.retrieve(query="refund", top_k=5)
+    assert len(result.chunks) == 1
+    assert result.chunks[0].chunk_id == chunk_id
+    assert result.chunks[0].filename == "policy.txt"
+    assert len(result.chunks[0].chunk_hash) == 64
+    assert result.diagnostics["source_policy_status"] == "off"

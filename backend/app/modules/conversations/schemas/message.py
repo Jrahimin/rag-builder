@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from enum import StrEnum
 from typing import Any
 
@@ -16,6 +16,7 @@ class CitationSnapshot(BaseModel):
     """Durable citation stored on assistant messages."""
 
     chunk_id: uuid.UUID
+    project_id: uuid.UUID
     document_id: uuid.UUID
     filename: str
     chunk_index: int
@@ -25,6 +26,25 @@ class CitationSnapshot(BaseModel):
     score: float
     chunk_hash: str
     excerpt: str | None = None
+    processing_version: int | None = None
+    index_build_id: uuid.UUID | None = None
+    source_metadata_generation: int | None = None
+    source_revision_id: uuid.UUID | None = None
+    source_group_id: uuid.UUID | None = None
+    source_title: str | None = None
+    source_type: str | None = None
+    source_revision_number: int | None = None
+    source_revision_label: str | None = None
+    source_published_date: date | None = None
+    source_effective_from: date | None = None
+    source_effective_to: date | None = None
+    source_lifecycle_status: str | None = None
+    source_role: str | None = None
+    source_relationships: list[dict[str, Any]] = Field(default_factory=list)
+    config_snapshot_id: uuid.UUID | None = None
+    configuration_hash: str | None = None
+    config_provenance: dict[str, Any] = Field(default_factory=dict)
+    prompt_version: str | None = None
 
 
 class InsufficientEvidenceReason(StrEnum):
@@ -75,6 +95,13 @@ class MessageResponse(BaseModel):
     embedding_set_version: int | None = None
     provider: str | None = None
     model: str | None = None
+    config_snapshot_id: uuid.UUID | None = None
+    index_build_id: uuid.UUID | None = None
+    source_metadata_generation: int | None = None
+    retrieval_latency_ms: int | None = None
+    provider_latency_ms: int | None = None
+    total_latency_ms: int | None = None
+    config_provenance: dict[str, Any] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict, validation_alias="message_metadata")
     citations: list[CitationSnapshot] = Field(default_factory=list)
     claims: list[AnswerClaim] = Field(default_factory=list)
@@ -107,6 +134,7 @@ class MessageSendRequest(BaseModel):
     content: str = Field(min_length=1, max_length=32_000)
     document_id: uuid.UUID | None = None
     metadata_filter: dict[str, str] = Field(default_factory=dict)
+    as_of: datetime | None = None
 
 
 class ChatTurnResponse(BaseModel):

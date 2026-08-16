@@ -35,8 +35,13 @@ const EvidenceQuality = lazy(() =>
   })),
 );
 const ProjectDocumentInspection = lazy(() =>
-  import("../features/projects/ProjectDocumentInspection").then((module) => ({
-    default: module.ProjectDocumentInspection,
+  import("../features/projects/ProjectAdministration").then((module) => ({
+    default: module.ProjectAdministration,
+  })),
+);
+const OrganizationAdministration = lazy(() =>
+  import("../features/organizations/OrganizationAdministration").then((module) => ({
+    default: module.OrganizationAdministration,
   })),
 );
 const DependencyWorkerHealth = lazy(() =>
@@ -77,6 +82,14 @@ export function OperatorConsoleApp() {
             element={
               <Suspense fallback={<LoadingState label="Loading jobs" />}>
                 <JobRuns />
+              </Suspense>
+            }
+          />
+          <Route
+            path="organizations"
+            element={
+              <Suspense fallback={<LoadingState label="Loading Organizations" />}>
+                <OrganizationAdministration />
               </Suspense>
             }
           />

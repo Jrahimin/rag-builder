@@ -12,7 +12,7 @@ from app.core.config import ChatConfig, LLMBackend, LLMConfig, RetrievalConfig
 from app.core.exceptions import ConflictError, NotFoundError, ServiceUnavailableError
 from app.models.conversation import Conversation
 from app.models.message import Message, MessageRole
-from app.modules.conversations.ports import ContextChunk
+from app.modules.conversations.ports import ContextChunk, ContextRetrievalResult
 from app.modules.conversations.schemas.message import MessageSendRequest
 from app.modules.conversations.services.chat_service import ChatService
 from app.platform.providers.errors import ProviderError
@@ -22,25 +22,28 @@ pytestmark = pytest.mark.unit
 
 
 class FakeRetrieval:
-    async def retrieve(self, **kwargs: object) -> list[ContextChunk]:
+    async def retrieve(self, **kwargs: object) -> ContextRetrievalResult:
         del kwargs
-        return [
-            ContextChunk(
-                chunk_id=uuid.uuid4(),
-                document_id=uuid.uuid4(),
-                chunk_index=0,
-                content="refund within 30 days",
-                score=0.9,
-                filename="policy.txt",
-                chunk_hash="hash1",
-            )
-        ]
+        return ContextRetrievalResult(
+            chunks=[
+                ContextChunk(
+                    chunk_id=uuid.uuid4(),
+                    document_id=uuid.uuid4(),
+                    chunk_index=0,
+                    content="refund within 30 days",
+                    score=0.9,
+                    filename="policy.txt",
+                    chunk_hash="hash1",
+                )
+            ],
+            diagnostics={"index_build_id": str(uuid.uuid4())},
+        )
 
 
 class EmptyRetrieval:
-    async def retrieve(self, **kwargs: object) -> list[ContextChunk]:
+    async def retrieve(self, **kwargs: object) -> ContextRetrievalResult:
         del kwargs
-        return []
+        return ContextRetrievalResult(chunks=[], diagnostics={})
 
 
 class FailingLLM(EchoLLMProvider):
@@ -386,6 +389,11 @@ async def test_stream_message_yields_done_event(
     done = next(item for item in events if isinstance(item, dict))
     assert done["event"] == "done"
     assert done["assistant_message_id"]
+    assistant = message_repository.add.call_args_list[-1].args[0]
+    assert assistant.input_tokens is not None
+    assert assistant.output_tokens is not None
+    assert assistant.provider_latency_ms is not None
+    assert assistant.total_latency_ms is not None
 
 
 async def test_stream_cancel_skips_assistant_persist(

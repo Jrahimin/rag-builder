@@ -11,20 +11,43 @@ from app.composition.evaluation import build_evaluation_service
 from app.core.config import get_settings
 from app.dependencies.common import DbSessionDep
 from app.dependencies.jobs import get_job_submitter
+from app.models.project import Project
 from app.modules.evaluation.services.evaluation_service import EvaluationService
+from app.modules.projects.repositories.project_ai_config_repository import (
+    ProjectAIConfigRepository,
+)
+from app.platform.config.project_ai import ConfigRevisionRecord, resolve_project_ai_config
 from app.platform.jobs.contracts import DurableJobSubmitter
 
 
-def get_evaluation_service(
+async def get_evaluation_service(
     session: DbSessionDep,
     project_id: Annotated[uuid.UUID, Path()],
     submitter: Annotated[DurableJobSubmitter, Depends(get_job_submitter)],
 ) -> EvaluationService:
+    settings = get_settings()
+    revision = await ProjectAIConfigRepository(session, project_id).get_active()
+    resolution = resolve_project_ai_config(
+        settings,
+        ConfigRevisionRecord(
+            id=revision.id,
+            revision_number=revision.revision_number,
+            configuration_hash=revision.configuration_hash,
+            configuration=dict(revision.configuration),
+        )
+        if revision is not None
+        else None,
+    )
+    project = await session.get(Project, project_id)
     return build_evaluation_service(
         session=session,
         project_id=project_id,
-        settings=get_settings(),
+        settings=settings,
         submitter=submitter,
+        resolution=resolution,
+        source_metadata_generation=(
+            project.source_metadata_generation if project is not None else 0
+        ),
     )
 
 

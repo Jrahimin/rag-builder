@@ -86,6 +86,7 @@ export const overviewFixture: OperatorOverview = {
 
 export const projectFixture: Project = {
   id: "11111111-1111-1111-1111-111111111111",
+  organization_id: "00000000-0000-0000-0000-000000000001",
   name: "Knowledge Base",
   description: null,
   is_active: true,
@@ -93,6 +94,9 @@ export const projectFixture: Project = {
   deleted_by: null,
   created_at: now,
   updated_at: now,
+  ownership_locked: true,
+  active_ai_config_revision_id: null,
+  source_metadata_generation: 0,
 };
 
 export const jobFixture: Job = {

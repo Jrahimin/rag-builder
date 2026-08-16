@@ -22,6 +22,7 @@ from app.modules.knowledge.repositories.document_repository import DocumentRepos
 from app.modules.knowledge.schemas.chunk import ChunkListParams
 from app.modules.knowledge.schemas.document import DocumentIngestInput, DocumentListParams
 from app.modules.knowledge.services.file_validation_service import FileValidationService
+from app.modules.knowledge.services.source_metadata_service import SourceMetadataService
 from app.platform.audit.contracts import AuditActorType, AuditEventType, AuditOutcome, AuditRecorder
 from app.platform.domain.lifecycle_service import (
     get_or_raise,
@@ -85,6 +86,7 @@ class DocumentService:
         max_upload_bytes: int,
         malware_scanner: BaseMalwareScanner | None = None,
         file_validator: FileValidationService | None = None,
+        source_metadata_service: SourceMetadataService | None = None,
         audit: AuditRecorder | None = None,
     ) -> None:
         self._session = session
@@ -102,6 +104,7 @@ class DocumentService:
         self._job_configuration = job_configuration
         self._job_max_attempts = job_max_attempts
         self._max_upload_bytes = max_upload_bytes
+        self._source_metadata_service = source_metadata_service
         self._audit = audit
 
     async def upload(self, data: DocumentIngestInput) -> Document:
@@ -161,6 +164,14 @@ class DocumentService:
 
             try:
                 await self._repository.flush()
+                if self._source_metadata_service is not None:
+                    _, activation = await self._source_metadata_service.initialize_document(
+                        document,
+                        data.source_metadata,
+                    )
+                    self._job_configuration.provenance["source_metadata_generation"] = (
+                        activation.generation
+                    )
                 return await self._stage_processing(document, operation="ingest")
             except IntegrityError as exc:
                 await self._session.rollback()

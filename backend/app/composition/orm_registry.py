@@ -17,6 +17,7 @@ from app.models.audit_event import AuditEvent  # noqa: F401
 from app.models.chunk_embedding import ChunkEmbedding  # noqa: F401
 from app.models.chunk_keyword_index import ChunkKeywordIndex  # noqa: F401
 from app.models.conversation import Conversation  # noqa: F401
+from app.models.conversation_config_snapshot import ConversationConfigSnapshot  # noqa: F401
 from app.models.document import Document  # noqa: F401
 from app.models.document_chunk import DocumentChunk  # noqa: F401
 from app.models.evaluation_dataset import EvaluationDataset  # noqa: F401
@@ -31,6 +32,13 @@ from app.models.message import Message  # noqa: F401
 from app.models.organization import Organization  # noqa: F401
 from app.models.organization_api_key import OrganizationApiKey  # noqa: F401
 from app.models.project import Project  # noqa: F401
+from app.models.project_ai_config_revision import ProjectAIConfigRevision  # noqa: F401
+from app.models.source_metadata import (  # noqa: F401
+    SourceActivationEvent,
+    SourceGroup,
+    SourceMetadataRevision,
+    SourceRevisionRelationship,
+)
 from app.models.webhook_endpoint import WebhookEndpoint  # noqa: F401
 from app.models.webhook_event import (  # noqa: F401
     WebhookDelivery,

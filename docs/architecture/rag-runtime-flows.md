@@ -144,9 +144,10 @@ flowchart LR
 `SearchService` first resolves the Project's active complete `IndexBuild`, then resolves request overrides against `RetrievalConfig` and builds
 a `RetrievalContext`. Semantic SQL lives only in
 `ChunkEmbeddingRepository`; keyword SQL and BM25 persistence live in retrieval
-repositories. Both paths require matching `project_id` and `index_build_id`, and
-apply allowlisted metadata filters. Document status is not a retrieval activation
-authority; the immutable build manifest/pointer is. Hybrid retrieval runs semantic and keyword candidates concurrently,
+repositories. Both paths require matching `project_id` and `index_build_id`, apply allowlisted
+metadata filters, and join one captured Knowledge-owned source-generation scope. Document status is
+not a retrieval activation authority; the immutable build manifest/pointer is. Hybrid retrieval
+runs semantic and keyword candidates sequentially on the same async session and captured source scope,
 fuses them with RRF, optionally reranks through `BaseRerankerProvider`, and
 falls back to fused order when reranking is unavailable. `ResultHydrator` is the
 single ORM-to-response hydration point. `SearchResponse.diagnostics` records the

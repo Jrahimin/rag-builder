@@ -80,7 +80,7 @@ class IndexLifecycleService:
             operation=operation,
             state=IndexBuildState.BUILDING,
             embedding_set_version=self._embedding_set_version,
-            configuration_hash=self._configuration.digest(),
+            configuration_hash=self._configuration.index_output_digest(),
         )
         self._repository.add(build)
         await self._repository.flush()

@@ -1,9 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
-import {
-  ADMIN_AUTH_EXPIRED_EVENT,
-  adminAuthApi,
-  type CurrentAdmin,
-} from "./adminAuthApi";
+import { ADMIN_AUTH_EXPIRED_EVENT, adminAuthApi, type CurrentAdmin } from "./adminAuthApi";
 import { AdminAuthContext } from "./adminAuthContext";
 
 export function AdminAuthProvider({

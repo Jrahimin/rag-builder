@@ -68,3 +68,9 @@ class OrganizationResponse(BaseModel):
     deleted_by: uuid.UUID | None
     created_at: datetime
     updated_at: datetime
+
+
+class OrganizationStatusUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    is_active: bool

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import date, datetime
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -18,7 +19,8 @@ class SearchRequest(BaseModel):
     document_id: uuid.UUID | None = None
     metadata_filter: dict[str, str] = Field(default_factory=dict)
     strategy: RetrievalStrategy | None = None
-    rerank: bool | None = None
+    rerank: bool | None = Field(default=None, deprecated=True)
+    as_of: datetime | None = None
 
 
 class RetrievalResult(BaseModel):
@@ -49,6 +51,19 @@ class SearchDiagnostics(BaseModel):
     duplicate_suppression_input_count: int = 0
     duplicate_suppression_removed_count: int = 0
     duplicate_suppression_reasons: dict[str, int] = Field(default_factory=dict)
+    compatibility_diagnostics: list[str] = Field(default_factory=list)
+    as_of: datetime | None = None
+    reference_date: date | None = None
+    index_build_id: uuid.UUID | None = None
+    source_metadata_generation: int = 0
+    source_policy_configured_mode: str = "off"
+    source_policy_effective_mode: str = "off"
+    source_policy_deployment_cap: str = "enforce"
+    source_policy_status: str = "off"
+    source_policy_exclusion_reasons: dict[str, int] = Field(default_factory=dict)
+    source_policy_consolidation_reasons: dict[str, int] = Field(default_factory=dict)
+    configuration_hash: str | None = None
+    config_provenance: dict[str, Any] = Field(default_factory=dict)
 
 
 class SearchResponse(BaseModel):

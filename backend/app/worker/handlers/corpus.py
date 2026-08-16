@@ -9,12 +9,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
 from app.models.index_build import IndexBuild, IndexBuildOperation, IndexBuildState
+from app.models.job_configuration_snapshot import JobConfigurationSnapshot
 from app.models.job_run import JobRun, JobType
 from app.modules.jobs.services.job_service import JobService
 from app.modules.retrieval.repositories.index_build_repository import IndexBuildRepository
 from app.modules.retrieval.workflows.index_build_workflow import IndexBuildWorkflow
-from app.platform.jobs.configuration import build_job_configuration
-from app.platform.jobs.contracts import JobDefinition
+from app.platform.jobs.contracts import JobConfiguration, JobDefinition
 from app.platform.jobs.errors import PermanentJobError
 from app.platform.providers.implementations.embedding_factory import create_embedding_provider
 from app.worker.broker import broker
@@ -35,13 +35,20 @@ async def execute_index_build(
     repository = IndexBuildRepository(session, run.project_id)
     raw_build_id = run.payload.get("build_id")
     if raw_build_id is None:
+        snapshot = await session.get(JobConfigurationSnapshot, run.configuration_snapshot_id)
+        if snapshot is None:
+            raise PermanentJobError(
+                "Job configuration snapshot does not exist.",
+                code="job_configuration_snapshot_missing",
+            )
+        staged_configuration = JobConfiguration.model_validate(snapshot.configuration)
         build = IndexBuild(
             project_id=run.project_id,
             job_id=run.id,
             operation=operation,
             state=IndexBuildState.BUILDING,
             embedding_set_version=settings.retrieval.embedding_set_version,
-            configuration_hash=build_job_configuration(settings).digest(),
+            configuration_hash=staged_configuration.index_output_digest(),
         )
         repository.add(build)
         await repository.flush()

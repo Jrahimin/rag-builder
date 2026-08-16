@@ -37,3 +37,9 @@ class OrganizationApiKey(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     key_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    rotated_from_key_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("organization_api_keys.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )

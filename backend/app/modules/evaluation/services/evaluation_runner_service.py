@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import time
 import uuid
 from datetime import UTC, datetime
 from typing import Any
+
+from pydantic import TypeAdapter
 
 from app.core.config import EvaluationConfig
 from app.core.exceptions import NotFoundError
@@ -21,6 +24,8 @@ from app.modules.evaluation.repositories.evaluation_run_repository import Evalua
 from app.modules.evaluation.schemas.evaluation import EvaluationCase
 from app.platform.domain.text_tokenization import tokenize
 from app.platform.jobs.contracts import JobProgressCallback
+
+_JSON_MAPPING = TypeAdapter(dict[str, Any])
 
 
 class EvaluationRunnerService:
@@ -49,6 +54,7 @@ class EvaluationRunnerService:
         *,
         on_progress: JobProgressCallback | None = None,
     ) -> None:
+        started = time.perf_counter()
         run = await self._runs.get_by_id(run_id)
         if run is None:
             raise NotFoundError(
@@ -88,6 +94,7 @@ class EvaluationRunnerService:
                     top_k=run.top_k,
                     document_id=case.document_id,
                     metadata_filter=case.metadata_filter,
+                    as_of=case.as_of,
                 )
                 answer = await self._answerer.answer(question=case.query, hits=search.hits)
                 all_results.append(_case_result(case, profile, search, answer))
@@ -126,6 +133,23 @@ class EvaluationRunnerService:
             primary_profile=primary,
             config=self._config,
         )
+        run.input_tokens = _complete_sum(all_results, "input_tokens")
+        run.output_tokens = _complete_sum(all_results, "output_tokens")
+        run.retrieval_latency_ms = sum(
+            int(result["latency_ms"]) for result in all_results
+        )
+        run.provider_latency_ms = _complete_sum(all_results, "provider_latency_ms")
+        run.total_latency_ms = int((time.perf_counter() - started) * 1000)
+        if run.provider is None:
+            run.provider = next(
+                (str(result["provider"]) for result in all_results if result.get("provider")),
+                None,
+            )
+        if run.model is None:
+            run.model = next(
+                (str(result["model"]) for result in all_results if result.get("model")),
+                None,
+            )
         run.completed_at = datetime.now(UTC)
         await self._runs.flush()
         if on_progress is not None:
@@ -164,6 +188,10 @@ def _case_result(case: EvaluationCase, profile: str, search: Any, answer: Any) -
         "expected_no_answer": case.expected_no_answer,
         "result_chunk_ids": [str(hit.chunk_id) for hit in search.hits],
         "result_document_ids": [str(hit.document_id) for hit in search.hits],
+        "result_source_metadata": [
+            _JSON_MAPPING.dump_python(dict(hit.metadata), mode="json")
+            for hit in search.hits
+        ],
         "recall": recall,
         "reciprocal_rank": reciprocal_rank,
         "ndcg": ndcg,
@@ -174,13 +202,31 @@ def _case_result(case: EvaluationCase, profile: str, search: Any, answer: Any) -
         "reranker_provider": search.reranker_provider,
         "reranker_model": search.reranker_model,
         "reranker_version": search.reranker_version,
+        "retrieval_provenance": search.provenance,
         "answer": answer.answer,
         "insufficient_evidence_reason": answer.insufficient_evidence_reason,
         "grounded": answer.grounded,
         "citation_coverage": answer.citation_coverage,
         "claims": answer.claims,
         "answer_token_coverage": token_coverage,
+        "provider": answer.provider,
+        "model": answer.model,
+        "input_tokens": answer.input_tokens,
+        "output_tokens": answer.output_tokens,
+        "provider_latency_ms": answer.provider_latency_ms,
     }
+
+
+def _complete_sum(rows: list[dict[str, Any]], field: str) -> int | None:
+    if not rows:
+        return None
+    total = 0
+    for row in rows:
+        value = row.get(field)
+        if not isinstance(value, int) or isinstance(value, bool):
+            return None
+        total += value
+    return total
 
 
 def _failed_cases(results: list[dict[str, Any]]) -> list[dict[str, Any]]:

@@ -207,6 +207,7 @@ async def test_auth_logout_revokes_session(auth_db_client: AsyncClient) -> None:
 
 
 async def test_projects_require_org_key_when_auth_enabled(auth_db_client: AsyncClient) -> None:
+    auth_db_client.cookies.clear()
     response = await auth_db_client.post("/api/v1/projects", json={"name": "No Auth"})
     assert response.status_code == 401
 
@@ -349,6 +350,13 @@ async def test_rotate_revoke_old_invalidates_previous_key(auth_db_client: AsyncC
         f"/api/v1/organizations/{org_id}/api-keys/{key_id}/rotate?revoke_old=true",
         headers=admin_headers(),
     )
+    assert rotate.status_code == 422
+
+    rotate = await auth_db_client.post(
+        f"/api/v1/organizations/{org_id}/api-keys/{key_id}/rotate?revoke_old=true",
+        headers=admin_headers(),
+        json={"confirm_immediate_revocation": True},
+    )
     assert rotate.status_code == 201
     new_secret = rotate.json()["data"]["secret"]
 
@@ -488,9 +496,35 @@ async def test_rate_limit_returns_429_with_retry_after(
     app.dependency_overrides[get_db_session] = override_get_db_session
     app.dependency_overrides[get_job_queue_dep] = lambda: CapturingJobQueue(captured_jobs)
 
+    from app.models.admin_user import AdminRole, AdminUser
+    from app.modules.admin_auth.security import hash_password
+
+    seed_session = AsyncSession(
+        bind=connection,
+        expire_on_commit=False,
+        join_transaction_mode="create_savepoint",
+    )
+    seed_session.add(
+        AdminUser(
+            email=ADMIN_EMAIL,
+            password_hash=hash_password(ADMIN_PASSWORD),
+            role=AdminRole.SUPER_ADMIN.value,
+            is_active=True,
+        )
+    )
+    await seed_session.commit()
+    await seed_session.close()
+
     async with LifespanManager(app):
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+            global _admin_csrf_token
+            login = await client.post(
+                "/api/v1/auth/login",
+                json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD},
+            )
+            assert login.status_code == 200
+            _admin_csrf_token = client.cookies.get("ape_admin_csrf")
             _, _, auth_header = await _create_org_with_key(client)
             first = await client.get("/api/v1/projects", headers={"Authorization": auth_header})
             second = await client.get("/api/v1/projects", headers={"Authorization": auth_header})

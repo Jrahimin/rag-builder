@@ -15,10 +15,10 @@ class ConversationCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     title: str | None = Field(default=None, max_length=255)
-    provider: str | None = Field(default=None, max_length=64)
-    model: str | None = Field(default=None, max_length=128)
-    temperature: float | None = Field(default=None, ge=0.0, le=2.0)
-    system_prompt_version: str | None = Field(default=None, max_length=32)
+    provider: str | None = Field(default=None, max_length=64, deprecated=True)
+    model: str | None = Field(default=None, max_length=128, deprecated=True)
+    temperature: float | None = Field(default=None, ge=0.0, le=2.0, deprecated=True)
+    system_prompt_version: str | None = Field(default=None, max_length=32, deprecated=True)
 
     @field_validator("title")
     @classmethod
@@ -35,10 +35,10 @@ class ConversationUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     title: str | None = Field(default=None, max_length=255)
-    provider: str | None = Field(default=None, max_length=64)
-    model: str | None = Field(default=None, max_length=128)
-    temperature: float | None = Field(default=None, ge=0.0, le=2.0)
-    system_prompt_version: str | None = Field(default=None, max_length=32)
+    provider: str | None = Field(default=None, max_length=64, deprecated=True)
+    model: str | None = Field(default=None, max_length=128, deprecated=True)
+    temperature: float | None = Field(default=None, ge=0.0, le=2.0, deprecated=True)
+    system_prompt_version: str | None = Field(default=None, max_length=32, deprecated=True)
 
     @model_validator(mode="before")
     @classmethod
@@ -72,9 +72,19 @@ class ConversationResponse(BaseModel):
     model: str | None
     temperature: float | None
     system_prompt_version: str | None
+    active_config_snapshot_id: uuid.UUID | None
     last_message_at: datetime | None
     is_active: bool
     deleted_at: datetime | None
     deleted_by: uuid.UUID | None
     created_at: datetime
     updated_at: datetime
+
+
+class ConversationConfigRefresh(BaseModel):
+    """Administrative refresh to current effective Project policy."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    expected_active_config_snapshot_id: uuid.UUID | None
+    reason: str = Field(min_length=1, max_length=2000)

@@ -9,6 +9,10 @@ from typing import Any
 import httpx
 
 from app.core.logging import get_logger
+from app.platform.providers.capabilities import (
+    describe_llm_capability,
+    translate_generation_parameters,
+)
 from app.platform.providers.contracts.llm import (
     BaseLLMProvider,
     ChatCompletionChunk,
@@ -82,11 +86,18 @@ class OpenAICompatibleChatProvider(BaseLLMProvider):
         body: dict[str, object] = {
             "model": self._model,
             "messages": [{"role": _role_value(m.role), "content": m.content} for m in messages],
-            "max_completion_tokens": max_tokens,
             "stream": stream,
         }
-        if temperature is not None:
-            body["temperature"] = temperature
+        capability = describe_llm_capability(self.provider_name, self.model_name)
+        if stream and capability.supports_stream_usage:
+            body["stream_options"] = {"include_usage": True}
+        body.update(
+            translate_generation_parameters(
+                capability,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+        )
         return body
 
     async def _http_error(
@@ -173,11 +184,7 @@ class OpenAICompatibleChatProvider(BaseLLMProvider):
         message = choice.get("message") or {}
         content = message.get("content") or ""
         finish_reason = choice.get("finish_reason")
-        usage_raw = payload.get("usage") or {}
-        usage = ChatUsage(
-            input_tokens=int(usage_raw.get("prompt_tokens") or 0),
-            output_tokens=int(usage_raw.get("completion_tokens") or 0),
-        )
+        usage = _openai_usage(payload) or ChatUsage(None, None)
         return ChatCompletionResult(
             content=str(content),
             provider=self.provider_name,
@@ -222,6 +229,9 @@ class OpenAICompatibleChatProvider(BaseLLMProvider):
                         continue
                     choices = payload.get("choices")
                     if not isinstance(choices, list) or not choices:
+                        usage = _openai_usage(payload)
+                        if usage is not None:
+                            yield ChatCompletionChunk(delta="", usage=usage)
                         continue
                     delta_obj = choices[0].get("delta") or {}
                     delta = delta_obj.get("content") or ""
@@ -230,6 +240,7 @@ class OpenAICompatibleChatProvider(BaseLLMProvider):
                         yield ChatCompletionChunk(
                             delta=str(delta),
                             finish_reason=str(finish_reason) if finish_reason else None,
+                            usage=_openai_usage(payload),
                         )
         except httpx.HTTPError as exc:
             msg = f"{self.provider_name} chat stream failed"
@@ -240,3 +251,17 @@ class OpenAICompatibleChatProvider(BaseLLMProvider):
             ) from exc
         finally:
             await client.aclose()
+
+
+def _openai_usage(payload: object) -> ChatUsage | None:
+    if not isinstance(payload, dict):
+        return None
+    usage = payload.get("usage")
+    if not isinstance(usage, dict):
+        return None
+    prompt = usage.get("prompt_tokens")
+    completion = usage.get("completion_tokens")
+    return ChatUsage(
+        input_tokens=int(prompt) if prompt is not None else None,
+        output_tokens=int(completion) if completion is not None else None,
+    )

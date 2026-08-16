@@ -29,6 +29,7 @@ class EvaluationCase(BaseModel):
     relevant_document_ids: list[uuid.UUID] = Field(default_factory=list)
     document_id: uuid.UUID | None = None
     metadata_filter: dict[str, str] = Field(default_factory=dict)
+    as_of: datetime | None = None
     expected_answer_tokens: list[str] = Field(default_factory=list)
     expected_no_answer: bool = False
 
@@ -87,6 +88,16 @@ class EvaluationRunResponse(BaseModel):
     regressions: list[dict[str, Any]]
     failed_cases: list[dict[str, Any]]
     reranker_comparison: dict[str, Any]
+    provider: str | None
+    model: str | None
+    input_tokens: int | None
+    output_tokens: int | None
+    retrieval_latency_ms: int | None
+    provider_latency_ms: int | None
+    total_latency_ms: int | None
+    index_build_id: uuid.UUID | None
+    source_metadata_generation: int | None
+    config_provenance: dict[str, Any]
     completed_at: datetime | None
     created_at: datetime
 

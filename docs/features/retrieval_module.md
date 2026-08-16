@@ -38,7 +38,8 @@ Worker handlers ──► IndexBuildWorkflow
 | **IndexBuildWorkflow** | Writes a complete private vector+keyword snapshot, validates it, and optionally activates it |
 | **IndexLifecycleService** | Durable corpus build staging plus guarded activation/rollback |
 | **SemanticRetriever** / **KeywordRetriever** | Candidate-only retrievers (`chunk_id`, `score`, `source`) |
-| **HybridRetriever** | Concurrent semantic + keyword → RRF → optional rerank |
+| **HybridRetriever** | Semantic + keyword candidates with one captured source scope → RRF → optional rerank |
+| **SourceMetadataReadPort** | Composition seam for Knowledge's canonical source generation/applicability scope |
 | **ResultHydrator** | Single hydration point for chunk/document ORM rows |
 | **RetrievalCleanupService** | Irreversible purge cleanup across retained builds |
 | **Worker handoff** | Successful process/embed atomically stages an idempotent child job using the parent's immutable configuration snapshot |
@@ -66,6 +67,7 @@ then activate the validated build. The prior active build remains the rollback t
 | ------- | -------- | ---- |
 | `EmbeddingConfig` | `APE_EMBEDDING__*` | Backend (`hash`, `ollama`, `openai`, `gemini`), model, dimensions, API keys |
 | `RetrievalConfig` | `APE_RETRIEVAL__*` | `strategy`, candidate pools, `hnsw_ef_search`, RRF weights, reranker, `embedding_set_version`, `filterable_metadata_keys` |
+| `AIConfigPolicy` | `APE_AI_POLICY__SOURCE_POLICY_DEPLOYMENT_CAP` | Emergency maximum for Project `off / observe / enforce` source policy |
 
 `embedding_set_version` is a deployment-level int, independent of
 `Document.version`. Both are captured in a build manifest; search filters by the
@@ -86,6 +88,12 @@ from a versioned dataset rather than ad hoc changes.
 Semantic and keyword SQL apply `project_id`, the resolved active
 `index_build_id`, provider/model configuration, optional document, and allowlisted
 metadata filters before ranking. A partially written build has no query path.
+
+Source metadata is deliberately not copied into either content index. At search start the service
+captures the active index build and Project source generation, then joins the same Knowledge-owned
+selectable in both vector and keyword repositories. This lets metadata activation affect the next
+request without OCR, chunking, embedding, or index construction. Exact index/config/source IDs are
+returned in diagnostics and result metadata for prompts, citations, messages, jobs, and evaluations.
 
 ## Delete policy
 

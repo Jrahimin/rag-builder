@@ -62,6 +62,7 @@ class RetrievalContext:
     min_ocr_confidence: float | None = None
     hnsw_ef_search: int = 100
     metadata: dict[str, Any] = field(default_factory=dict)
+    source_scope: Any | None = None
 
     def sanitized_metadata_filter(self) -> dict[str, str]:
         return {

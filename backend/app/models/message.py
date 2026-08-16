@@ -41,7 +41,13 @@ class Message(Base, UUIDPrimaryKeyMixin, TimestampMixin, ProjectScopedMixin):
             ["conversations.id"],
             ondelete="CASCADE",
         ),
+        ForeignKeyConstraint(
+            ["config_snapshot_id"],
+            ["conversation_config_snapshots.id"],
+            ondelete="RESTRICT",
+        ),
         Index("ix_messages_project_conversation", "project_id", "conversation_id"),
+        Index("ix_messages_project_usage_created", "project_id", "role", "created_at"),
     )
 
     conversation_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
@@ -57,6 +63,18 @@ class Message(Base, UUIDPrimaryKeyMixin, TimestampMixin, ProjectScopedMixin):
     embedding_set_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
     provider: Mapped[str | None] = mapped_column(String(64), nullable=True)
     model: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    config_snapshot_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True, index=True)
+    index_build_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True, index=True)
+    source_metadata_generation: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    retrieval_latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    provider_latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    total_latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    config_provenance: Mapped[dict[str, Any]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=dict,
+        server_default="{}",
+    )
     message_metadata: Mapped[dict[str, Any]] = mapped_column(
         "metadata",
         JSONB,

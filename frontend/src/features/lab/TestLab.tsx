@@ -34,7 +34,6 @@ import {
 } from "../../api/operatorApiClient";
 import {
   useCreateConversation,
-  useCreateProject,
   useDocumentLifecycleAction,
   useDocuments,
   useIndexBuilds,
@@ -232,9 +231,7 @@ export function TestLab() {
         conversationId={conversationId}
         activityCount={activities.length}
         onProjectChange={chooseProject}
-        onProjectCreated={chooseProject}
         onActivity={() => setActivityOpen(true)}
-        onActivityRecord={addActivity}
       />
       {projectId ? (
         <>
@@ -314,8 +311,8 @@ export function TestLab() {
         </>
       ) : (
         <EmptyState
-          title="Create a test project"
-          detail="The Test Lab needs one ordinary project before it can run the end-to-end journey."
+          title="Select a Project from administration"
+          detail="Project creation now lives in canonical Project administration. Lab remains a diagnostic surface."
         />
       )}
       <ActivityDrawer
@@ -338,9 +335,7 @@ function LabHeader({
   conversationId,
   activityCount,
   onProjectChange,
-  onProjectCreated,
   onActivity,
-  onActivityRecord,
 }: {
   projects: Project[];
   projectId: string;
@@ -351,53 +346,17 @@ function LabHeader({
   conversationId: string;
   activityCount: number;
   onProjectChange: (id: string) => void;
-  onProjectCreated: (id: string) => void;
   onActivity: () => void;
-  onActivityRecord: (item: Omit<LabActivity, "id" | "timestamp">) => void;
 }) {
-  const createProject = useCreateProject();
-  const [creating, setCreating] = useState(projects.length === 0);
-  const [name, setName] = useState("");
-  const submit = async (event: FormEvent) => {
-    event.preventDefault();
-    try {
-      const project = await createProject.mutateAsync({
-        name,
-        description: "Browser Test Lab project",
-      });
-      onActivityRecord({
-        name: "Created test project",
-        outcome: "passed",
-        projectId: project.id,
-        detail: project.name,
-        tab: "journey",
-      });
-      setName("");
-      setCreating(false);
-      onProjectCreated(project.id);
-    } catch (error) {
-      onActivityRecord({
-        name: "Create test project",
-        outcome: "failed",
-        projectId: projectId || "not-created",
-        ...errorFacts(error),
-        tab: "journey",
-      });
-    }
-  };
   return (
     <section className="panel lab-header">
       <div className="lab-header__controls">
         {projects.length > 0 && (
           <ProjectSelector projects={projects} value={projectId} onChange={onProjectChange} />
         )}
-        <button
-          className="button button--secondary"
-          type="button"
-          onClick={() => setCreating(true)}
-        >
-          Create test project
-        </button>
+        <Link className="button button--secondary" to="/projects">
+          Manage Projects
+        </Link>
         <button
           className="button button--secondary lab-activity-button"
           type="button"
@@ -407,38 +366,6 @@ function LabHeader({
           {activityCount > 0 && <span>{activityCount}</span>}
         </button>
       </div>
-      {creating && (
-        <form className="lab-create-project" onSubmit={(event) => void submit(event)}>
-          <label className="field-control field-control--grow">
-            <span>Test project name</span>
-            <input
-              autoFocus
-              required
-              maxLength={255}
-              value={name}
-              onChange={(event) => setName(event.target.value)}
-              placeholder="Validation – July 19"
-            />
-          </label>
-          <button
-            className="button button--primary"
-            type="submit"
-            disabled={createProject.isPending}
-          >
-            {createProject.isPending ? "Creating…" : "Create project"}
-          </button>
-          {projects.length > 0 && (
-            <button
-              className="button button--secondary"
-              type="button"
-              onClick={() => setCreating(false)}
-            >
-              Cancel
-            </button>
-          )}
-          {createProject.isError && <ApiFailure error={createProject.error} />}
-        </form>
-      )}
       <div className="lab-session-summary">
         <strong>{selectedProjectName ?? "No project selected"}</strong>
         <SummaryFact label="Document" value={document?.filename ?? "Not selected"} />

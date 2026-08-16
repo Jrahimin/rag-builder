@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -78,6 +79,53 @@ class MetricsSnapshot(BaseModel):
     active_embedding_set_version: int
 
 
+class UsageBucket(StrEnum):
+    HOUR = "hour"
+    DAY = "day"
+    MONTH = "month"
+
+
+class UsageWorkload(StrEnum):
+    CHAT = "chat"
+    CONTEXTUAL_GENERATION = "contextual_generation"
+    EVALUATION = "evaluation"
+
+
+class UsageLatency(BaseModel):
+    samples: int
+    average_ms: float | None
+    maximum_ms: float | None
+
+
+class UsageAggregate(BaseModel):
+    bucket_start: datetime | None = None
+    organization_id: uuid.UUID | None = None
+    organization_name: str | None = None
+    project_id: uuid.UUID | None = None
+    project_name: str | None = None
+    provider: str | None = None
+    model: str | None = None
+    workload: UsageWorkload | None = None
+    request_count: int
+    error_count: int
+    records_with_token_usage: int
+    input_tokens: int | None
+    output_tokens: int | None
+    total_tokens: int | None
+    retrieval_latency: UsageLatency
+    provider_latency: UsageLatency
+    total_latency: UsageLatency
+
+
+class UsageReport(BaseModel):
+    generated_at: datetime
+    start_at: datetime
+    end_at: datetime
+    bucket: UsageBucket
+    totals: UsageAggregate
+    items: list[UsageAggregate]
+
+
 class ProviderConfiguration(BaseModel):
     backend: str
     model: str | None = None
@@ -128,7 +176,8 @@ class RecentFailure(BaseModel):
 
 class AuditEventResponse(BaseModel):
     id: uuid.UUID
-    project_id: uuid.UUID
+    project_id: uuid.UUID | None
+    organization_id: uuid.UUID | None
     event_type: AuditEventType
     actor_type: AuditActorType
     actor_id: str | None

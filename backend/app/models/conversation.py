@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, Float, ForeignKeyConstraint, Index, String
+from sqlalchemy import DateTime, Float, ForeignKey, ForeignKeyConstraint, Index, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.platform.db.base import Base
@@ -42,6 +43,14 @@ class Conversation(
     model: Mapped[str | None] = mapped_column(String(128), nullable=True)
     temperature: Mapped[float | None] = mapped_column(Float, nullable=True)
     system_prompt_version: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    active_config_snapshot_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey(
+            "conversation_config_snapshots.id",
+            ondelete="RESTRICT",
+            use_alter=True,
+        ),
+        nullable=True,
+    )
     last_message_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
         nullable=True,

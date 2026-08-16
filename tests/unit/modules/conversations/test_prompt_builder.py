@@ -26,6 +26,16 @@ def test_build_includes_system_context_and_user_question() -> None:
         score=0.9,
         filename="policy.txt",
         chunk_hash="abc",
+        metadata={
+            "source_title": "Refund policy",
+            "source_revision_label": "2026 edition",
+            "source_lifecycle_status": "active",
+            "source_role": "primary",
+            "source_effective_from": "2026-01-01",
+            "source_relationships": [
+                {"relationship_type": "replaces", "target_revision_id": str(uuid.uuid4())}
+            ],
+        },
     )
     history = [
         Message(
@@ -43,8 +53,19 @@ def test_build_includes_system_context_and_user_question() -> None:
         context_chunks=[chunk],
         history=history,
         user_question="What is the policy?",
+        domain_instructions="Use Acme terminology.",
+        prompt_profile="support",
     )
     assert messages[0].role is ChatRole.SYSTEM
     assert "policy text" in messages[0].content
+    assert "source=Refund policy" in messages[0].content
+    assert "revision=2026 edition" in messages[0].content
+    assert "status=active role=primary" in messages[0].content
+    assert "relationships=replaces:" in messages[0].content
+    assert "Trusted Project prompt profile: support" in messages[0].content
+    assert "Trusted Project domain instructions:\nUse Acme terminology." in messages[0].content
+    assert messages[0].content.index("Use Acme terminology.") < messages[0].content.index(
+        template.template
+    )
     assert messages[-1].role is ChatRole.USER
     assert messages[-1].content == "What is the policy?"

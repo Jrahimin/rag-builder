@@ -7,6 +7,10 @@ from collections.abc import AsyncIterator
 
 import httpx
 
+from app.platform.providers.capabilities import (
+    describe_llm_capability,
+    translate_generation_parameters,
+)
 from app.platform.providers.contracts.llm import (
     BaseLLMProvider,
     ChatCompletionChunk,
@@ -79,11 +83,14 @@ class GeminiChatProvider(BaseLLMProvider):
         max_tokens: int,
     ) -> dict[str, object]:
         system_instruction, contents = self._split_messages(messages)
-        generation_config: dict[str, object] = {
-            "maxOutputTokens": max_tokens,
-        }
-        if temperature is not None:
-            generation_config["temperature"] = temperature
+        generation_config: dict[str, object] = {}
+        generation_config.update(
+            translate_generation_parameters(
+                describe_llm_capability(self.provider_name, self.model_name),
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+        )
         body: dict[str, object] = {
             "contents": contents,
             "generationConfig": generation_config,
@@ -124,8 +131,16 @@ class GeminiChatProvider(BaseLLMProvider):
             model=self.model_name,
             finish_reason=str(candidate.get("finishReason") or "stop"),
             usage=ChatUsage(
-                input_tokens=int(usage_meta.get("promptTokenCount") or 0),
-                output_tokens=int(usage_meta.get("candidatesTokenCount") or 0),
+                input_tokens=(
+                    int(usage_meta["promptTokenCount"])
+                    if usage_meta.get("promptTokenCount") is not None
+                    else None
+                ),
+                output_tokens=(
+                    int(usage_meta["candidatesTokenCount"])
+                    if usage_meta.get("candidatesTokenCount") is not None
+                    else None
+                ),
             ),
             provider_version=self._provider_version,
         )
@@ -163,7 +178,6 @@ class GeminiChatProvider(BaseLLMProvider):
         url = self._url(stream=True)
         body = self._request_body(messages, temperature=temperature, max_tokens=max_tokens)
         client = httpx.AsyncClient(timeout=self._timeout)
-        emitted_length = 0
         try:
             async with client.stream("POST", url, json=body) as response:
                 response.raise_for_status()
@@ -177,16 +191,43 @@ class GeminiChatProvider(BaseLLMProvider):
                         continue
                     if not isinstance(payload, dict):
                         continue
-                    result = self._parse_response(payload)
-                    if result.content:
-                        delta = result.content[emitted_length:]
-                        emitted_length = len(result.content)
-                        if delta:
-                            yield ChatCompletionChunk(delta=delta)
-                    if result.finish_reason:
-                        yield ChatCompletionChunk(delta="", finish_reason=result.finish_reason)
+                    chunk = _gemini_stream_chunk(payload)
+                    if chunk is not None:
+                        yield chunk
         except httpx.HTTPError as exc:
             msg = "Gemini chat stream failed"
             raise ProviderError(msg, provider_name=self.provider_name) from exc
         finally:
             await client.aclose()
+
+
+def _gemini_stream_chunk(payload: dict[str, object]) -> ChatCompletionChunk | None:
+    """Normalize Gemini's incremental chunk and final usage metadata."""
+    candidates = payload.get("candidates")
+    candidate = candidates[0] if isinstance(candidates, list) and candidates else None
+    delta = ""
+    finish_reason: str | None = None
+    if isinstance(candidate, dict):
+        content = candidate.get("content")
+        parts = content.get("parts") if isinstance(content, dict) else None
+        if isinstance(parts, list):
+            delta = "".join(
+                str(part["text"])
+                for part in parts
+                if isinstance(part, dict) and part.get("text") is not None
+            )
+        raw_finish = candidate.get("finishReason")
+        finish_reason = str(raw_finish) if raw_finish is not None else None
+
+    usage_meta = payload.get("usageMetadata")
+    usage: ChatUsage | None = None
+    if isinstance(usage_meta, dict):
+        prompt = usage_meta.get("promptTokenCount")
+        completion = usage_meta.get("candidatesTokenCount")
+        usage = ChatUsage(
+            input_tokens=int(prompt) if prompt is not None else None,
+            output_tokens=int(completion) if completion is not None else None,
+        )
+    if not delta and finish_reason is None and usage is None:
+        return None
+    return ChatCompletionChunk(delta=delta, finish_reason=finish_reason, usage=usage)

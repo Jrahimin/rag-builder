@@ -12,7 +12,7 @@ import structlog
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import GenerationConfig, LLMConfig
+from app.core.config import GenerationConfig, LLMConfig, Settings
 from app.core.exceptions import ConflictError, NotFoundError, ServiceUnavailableError
 from app.models.generation import Generation, GenerationStatus, GroundingStatus
 from app.modules.generation.errors import GenerationOutputValidationError
@@ -28,6 +28,7 @@ from app.modules.generation.services.payload_validation_service import (
     PayloadValidationService,
     sha256_json,
 )
+from app.platform.config.project_ai import ConfigRevisionRecord, resolve_project_ai_config
 from app.platform.domain.transactions import commit_refresh
 from app.platform.providers.contracts.llm import BaseLLMProvider, ChatCompletionResult
 from app.platform.providers.errors import ProviderError
@@ -49,6 +50,9 @@ class GenerationService:
         generation_config: GenerationConfig,
         llm_config: LLMConfig,
         resolve_llm: LLMResolver,
+        settings: Settings | None = None,
+        active_revision: ConfigRevisionRecord | None = None,
+        execution_provenance: dict[str, object] | None = None,
     ) -> None:
         self._session = session
         self._project_id = project_id
@@ -56,6 +60,9 @@ class GenerationService:
         self._generation_config = generation_config
         self._llm_config = llm_config
         self._resolve_llm = resolve_llm
+        self._settings = settings or Settings(llm=llm_config, generation=generation_config)
+        self._active_revision = active_revision
+        self._execution_provenance = execution_provenance or {}
         self._payloads = PayloadValidationService(generation_config)
         self._outputs = OutputValidationService()
         self._prompts = GenerationPromptBuilder()
@@ -70,9 +77,28 @@ class GenerationService:
     ) -> GenerationResponse:
         started = time.perf_counter()
         payload = self._payloads.validate(request)
+        request_config = request.generation_config
+        explicit_generation_fields = request_config.model_fields_set
+        deprecated_overrides = {
+            field: (
+                getattr(request_config, field).value
+                if field == "provider" and getattr(request_config, field) is not None
+                else getattr(request_config, field)
+            )
+            for field in explicit_generation_fields
+        }
+        prompt_version_field = "prompt_version"
+        prompt_version = getattr(request, prompt_version_field)
+        if prompt_version_field in request.model_fields_set:
+            deprecated_overrides[prompt_version_field] = prompt_version
+        resolution = resolve_project_ai_config(
+            self._settings,
+            self._active_revision,
+            deprecated_overrides=deprecated_overrides,
+        )
         spec = resolve_generation_spec(
             use_case=request.use_case,
-            prompt_version=request.prompt_version,
+            prompt_version=prompt_version,
             response_schema=(
                 dict(request.response_schema) if request.response_schema is not None else None
             ),
@@ -80,22 +106,19 @@ class GenerationService:
         self._payloads.validate_schema_size(spec.response_schema)
         self._outputs.validate_schema(spec.response_schema)
 
-        request_config = request.generation_config
-        provider = (
-            request_config.provider.value
-            if request_config.provider is not None
-            else self._llm_config.backend.value
-        )
-        model = request_config.model or self._llm_config.model
-        temperature = (
-            request_config.temperature
-            if request_config.temperature is not None
-            else self._llm_config.temperature
-        )
-        max_tokens = min(
-            request_config.max_tokens or self._llm_config.max_tokens,
-            self._llm_config.max_tokens,
-        )
+        provider = resolution.configuration.llm.provider.value
+        model = resolution.configuration.llm.model
+        temperature = resolution.configuration.llm.temperature
+        max_tokens = resolution.configuration.llm.max_tokens
+        provenance = {
+            **resolution.provenance.model_dump(mode="json"),
+            **self._execution_provenance,
+        }
+        provenance["prompt_versions"] = {
+            **provenance["prompt_versions"],
+            "generation": spec.prompt.prompt_version,
+            "generation_schema": spec.schema_version,
+        }
         request_hash = sha256_json(
             {
                 "use_case": request.use_case,
@@ -108,6 +131,9 @@ class GenerationService:
                 "model": model,
                 "temperature": temperature,
                 "max_tokens": max_tokens,
+                "configuration_hash": resolution.configuration_hash,
+                "domain_instructions": resolution.configuration.domain_instructions,
+                "prompt_profile": resolution.configuration.prompt_profile,
                 "retention": payload.retention.value,
             }
         )
@@ -116,6 +142,8 @@ class GenerationService:
             canonical_input=payload.canonical_input,
             canonical_context=payload.canonical_context,
             locale=request.locale,
+            domain_instructions=resolution.configuration.domain_instructions,
+            prompt_profile=resolution.configuration.prompt_profile,
         )
 
         idempotency_hash = (
@@ -141,6 +169,23 @@ class GenerationService:
                 "temperature": temperature,
                 "max_tokens": max_tokens,
             },
+            configuration_hash=resolution.configuration_hash,
+            index_build_id=(
+                uuid.UUID(str(self._execution_provenance["active_index_build_id"]))
+                if self._execution_provenance.get("active_index_build_id")
+                else None
+            ),
+            source_metadata_generation=_optional_int(
+                self._execution_provenance.get("source_metadata_generation")
+            ),
+            config_snapshot={
+                **resolution.secret_free_snapshot(),
+                "workload": "contextual_generation",
+                "prompt_version": spec.prompt.prompt_version,
+                "schema_version": spec.schema_version,
+                "execution_provenance": self._execution_provenance,
+            },
+            config_provenance=provenance,
             retention_mode=payload.retention,
             retained_input=payload.retained_input,
             retained_context=payload.retained_context,
@@ -348,3 +393,11 @@ class GenerationService:
 
     def _elapsed_ms(self, started: float) -> int:
         return int((time.perf_counter() - started) * 1000)
+
+
+def _optional_int(value: object) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, str)):
+        raise TypeError("Source generations must be integer-compatible values")
+    return int(value)

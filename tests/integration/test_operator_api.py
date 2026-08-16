@@ -21,8 +21,22 @@ async def test_operator_backend_exposes_runtime_without_secrets(db_client: Async
         files={"file": ("operator.txt", b"operator runtime", "text/plain")},
     )
     assert upload.status_code == 201
+    generation = await db_client.post(
+        f"/api/v1/projects/{project_id}/generations",
+        json={
+            "use_case": "contextual_answer",
+            "input": {"question": "What does the operator runtime show?"},
+            "context": {"summary": "Operator usage integration coverage"},
+        },
+        headers={"Idempotency-Key": f"operator-usage-{uuid.uuid4()}"},
+    )
+    assert generation.status_code == 201
 
     metrics = await db_client.get("/api/v1/operator/metrics")
+    usage = await db_client.get(
+        "/api/v1/operator/usage",
+        params={"project_id": project_id, "workload": "contextual_generation"},
+    )
     configuration = await db_client.get("/api/v1/operator/configuration")
     failures = await db_client.get("/api/v1/operator/failures")
     audit = await db_client.get("/api/v1/operator/audit-events")
@@ -30,6 +44,13 @@ async def test_operator_backend_exposes_runtime_without_secrets(db_client: Async
 
     assert metrics.status_code == 200
     assert metrics.json()["data"]["jobs"]["total"] >= 1
+    assert usage.status_code == 200
+    usage_data = usage.json()["data"]
+    assert usage_data["totals"]["request_count"] == 1
+    assert usage_data["totals"]["records_with_token_usage"] == 1
+    assert usage_data["totals"]["total_tokens"] is not None
+    assert usage_data["items"][0]["project_id"] == project_id
+    assert usage_data["items"][0]["workload"] == "contextual_generation"
     assert configuration.status_code == 200
     serialized_configuration = configuration.text.lower()
     assert "api_key" not in serialized_configuration

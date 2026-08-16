@@ -100,14 +100,14 @@ class IndexingService:
         return (
             f"document.embed:{document.project_id}:{document.id}:"
             f"v{document.version}:esv{self._config.embedding_set_version}:"
-            f"cfg{self._job_configuration.digest()[:16]}"
+            f"cfg{self._job_configuration.output_digest()[:16]}"
         )
 
     def _index_idempotency_key(self, document: Document) -> str:
         return (
             f"document.index:{document.project_id}:{document.id}:"
             f"v{document.version}:esv{self._config.embedding_set_version}:"
-            f"cfg{self._job_configuration.digest()[:16]}"
+            f"cfg{self._job_configuration.output_digest()[:16]}"
         )
 
     def build_embed_job(self, document: Document) -> JobDefinition:

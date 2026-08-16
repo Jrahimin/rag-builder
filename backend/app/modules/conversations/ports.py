@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any, Protocol
 
 
@@ -24,6 +25,14 @@ class ContextChunk:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass(frozen=True, slots=True)
+class ContextRetrievalResult:
+    """Ranked context plus the captured retrieval execution provenance."""
+
+    chunks: list[ContextChunk]
+    diagnostics: dict[str, Any] = field(default_factory=dict)
+
+
 class RetrievalPort(Protocol):
     """Project-scoped retrieval seam — ranking owned by the adapter implementation."""
 
@@ -34,4 +43,5 @@ class RetrievalPort(Protocol):
         top_k: int,
         document_id: uuid.UUID | None = None,
         metadata_filter: dict[str, str] | None = None,
-    ) -> list[ContextChunk]: ...
+        as_of: datetime | None = None,
+    ) -> ContextRetrievalResult: ...

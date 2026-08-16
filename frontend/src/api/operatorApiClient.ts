@@ -1,19 +1,33 @@
 import type { components } from "./generated/openapi";
-import {
-  ADMIN_AUTH_EXPIRED_EVENT,
-  adminAuthApi,
-  getCsrfHeader,
-} from "../auth/adminAuthApi";
+import { ADMIN_AUTH_EXPIRED_EVENT, adminAuthApi, getCsrfHeader } from "../auth/adminAuthApi";
 import { apiUrl } from "./apiOrigin";
 
 export type OperatorOverview = components["schemas"]["OperatorOverview"];
 export type MetricsSnapshot = components["schemas"]["MetricsSnapshot"];
+export type UsageReport = components["schemas"]["UsageReport"];
+export type UsageBucket = components["schemas"]["UsageBucket"];
+export type UsageWorkload = components["schemas"]["UsageWorkload"];
 export type ActiveConfiguration = components["schemas"]["ActiveConfiguration"];
 export type DependencyOverview = components["schemas"]["DependencyOverview"];
 export type WorkerOverview = components["schemas"]["WorkerOverview"];
 export type RecentFailure = components["schemas"]["RecentFailure"];
 export type AuditEvent = components["schemas"]["AuditEventResponse"];
+export type Organization = components["schemas"]["OrganizationResponse"];
+export type OrganizationPage = components["schemas"]["PaginatedResult_OrganizationResponse_"];
+export type ApiKey = components["schemas"]["ApiKeyResponse"];
+export type ApiKeySecret = components["schemas"]["ApiKeySecretResponse"];
+export type ApiKeyPage = components["schemas"]["PaginatedResult_ApiKeyResponse_"];
 export type Project = components["schemas"]["ProjectResponse"];
+export type ProjectOwnershipMigration = components["schemas"]["ProjectOwnershipMigrationStatus"];
+export type ProjectOwnershipPreflight = components["schemas"]["ProjectOwnershipPreflight"];
+export type EffectiveProjectAIConfig = components["schemas"]["EffectiveProjectAIConfigResponse"];
+export type ProjectAIConfig = components["schemas"]["ProjectAIConfig"];
+export type ProjectAIConfigRevision = components["schemas"]["ProjectAIConfigRevisionResponse"];
+export type SourceRevisionCreate = components["schemas"]["SourceRevisionCreate"];
+export type SourceRevision = components["schemas"]["SourceRevisionResponse"];
+export type SourceRevisionCreated = components["schemas"]["SourceRevisionCreateResponse"];
+export type SourceActivation = components["schemas"]["SourceActivationResponse"];
+export type SourceState = components["schemas"]["SourceStateResponse"];
 export type Document = components["schemas"]["DocumentResponse"];
 export type Job = components["schemas"]["JobResponse"];
 export type JobDetail = components["schemas"]["JobDetailResponse"];
@@ -41,6 +55,17 @@ export type WebhookDeliveryDetail = components["schemas"]["WebhookDeliveryDetail
 export type WebhookEventType = components["schemas"]["WebhookEventType"];
 export type WebhookEndpointPage = components["schemas"]["PaginatedResult_WebhookEndpointResponse_"];
 export type WebhookDeliveryPage = components["schemas"]["PaginatedResult_WebhookDeliveryResponse_"];
+
+export type UsageFilters = {
+  startAt?: string;
+  endAt?: string;
+  bucket?: UsageBucket;
+  organizationId?: string;
+  projectId?: string;
+  provider?: string;
+  model?: string;
+  workload?: UsageWorkload;
+};
 
 type ApiSuccess<T> = { success: true; data: T | null };
 type ApiFailure = {
@@ -144,6 +169,27 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return payload.data;
 }
 
+async function getAllOrganizations(includeDeleted = true): Promise<OrganizationPage> {
+  const pageSize = 100;
+  const items: Organization[] = [];
+  let offset = 0;
+  let total = 0;
+  do {
+    const page = await request<OrganizationPage>(
+      `${apiRoot}/organizations${query({
+        limit: pageSize,
+        offset,
+        include_deleted: String(includeDeleted),
+      })}`,
+    );
+    items.push(...page.items);
+    total = page.total;
+    offset += page.items.length;
+    if (page.items.length === 0) break;
+  } while (items.length < total);
+  return { items, total, limit: pageSize, offset: 0 };
+}
+
 function query(params: Record<string, string | number | undefined>): string {
   const values = new URLSearchParams();
   for (const [key, value] of Object.entries(params)) {
@@ -158,6 +204,19 @@ const apiRoot = "/api/v1";
 export const operatorApiClient = {
   getOverview: () => request<OperatorOverview>(`${apiRoot}/operator/overview`),
   getMetrics: () => request<MetricsSnapshot>(`${apiRoot}/operator/metrics`),
+  getUsage: (filters: UsageFilters = {}) =>
+    request<UsageReport>(
+      `${apiRoot}/operator/usage${query({
+        start_at: filters.startAt,
+        end_at: filters.endAt,
+        bucket: filters.bucket,
+        organization_id: filters.organizationId,
+        project_id: filters.projectId,
+        provider: filters.provider,
+        model: filters.model,
+        workload: filters.workload,
+      })}`,
+    ),
   getConfiguration: () => request<ActiveConfiguration>(`${apiRoot}/operator/configuration`),
   getDependencies: () => request<DependencyOverview>(`${apiRoot}/operator/dependencies`),
   getWorkers: () => request<WorkerOverview>(`${apiRoot}/operator/workers`),
@@ -165,27 +224,216 @@ export const operatorApiClient = {
     request<RecentFailure[]>(`${apiRoot}/operator/failures${query({ limit })}`),
   getAuditEvents: (limit = 100, offset = 0) =>
     request<AuditEvent[]>(`${apiRoot}/operator/audit-events${query({ limit, offset })}`),
-  getProjects: (limit = 100, offset = 0) =>
-    request<ProjectPage>(`${apiRoot}/projects${query({ limit, offset })}`),
-  createProject: (name: string, description?: string) =>
-    request<Project>(`${apiRoot}/projects`, {
+  getOrganizations: (includeDeleted = true) => getAllOrganizations(includeDeleted),
+  getOrganization: (organizationId: string, includeDeleted = true) =>
+    request<Organization>(
+      `${apiRoot}/organizations/${organizationId}${query({ include_deleted: String(includeDeleted) })}`,
+    ),
+  createOrganization: (name: string, description?: string) =>
+    request<Organization>(`${apiRoot}/organizations`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name, description }),
+      body: JSON.stringify({ name, description: description || null }),
     }),
+  updateOrganization: (organizationId: string, name: string, description?: string) =>
+    request<Organization>(`${apiRoot}/organizations/${organizationId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, description: description || null }),
+    }),
+  setOrganizationStatus: (organizationId: string, isActive: boolean) =>
+    request<Organization>(`${apiRoot}/organizations/${organizationId}/status`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ is_active: isActive }),
+    }),
+  archiveOrganization: (organizationId: string) =>
+    request<Organization>(`${apiRoot}/organizations/${organizationId}/archive`, {
+      method: "POST",
+    }),
+  restoreOrganization: (organizationId: string) =>
+    request<Organization>(`${apiRoot}/organizations/${organizationId}/restore`, {
+      method: "POST",
+    }),
+  getOrganizationProjects: (organizationId: string) =>
+    request<ProjectPage>(`${apiRoot}/organizations/${organizationId}/projects`),
+  getApiKeys: (organizationId: string) =>
+    request<ApiKeyPage>(`${apiRoot}/organizations/${organizationId}/api-keys?limit=100`),
+  createApiKey: (organizationId: string, name: string) =>
+    request<ApiKeySecret>(`${apiRoot}/organizations/${organizationId}/api-keys`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
+    }),
+  rotateApiKey: (
+    organizationId: string,
+    keyId: string,
+    replacementName?: string,
+    revokeOld = false,
+  ) =>
+    request<ApiKeySecret>(`${apiRoot}/organizations/${organizationId}/api-keys/${keyId}/rotate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        replacement_name: replacementName || null,
+        revoke_old: revokeOld,
+        confirm_immediate_revocation: revokeOld,
+      }),
+    }),
+  revokeApiKey: (organizationId: string, keyId: string) =>
+    request<ApiKey>(`${apiRoot}/organizations/${organizationId}/api-keys/${keyId}`, {
+      method: "DELETE",
+    }),
+  getProjects: (limit = 100, offset = 0) =>
+    request<ProjectPage>(`${apiRoot}/projects${query({ limit, offset })}`),
+  getAllOperatorProjects: (limit = 500, offset = 0) =>
+    request<ProjectPage>(
+      `${apiRoot}/operator/projects${query({ limit, offset, include_deleted: "true" })}`,
+    ),
+  getOperatorProject: (projectId: string) =>
+    request<Project>(`${apiRoot}/operator/projects/${projectId}`),
+  createProject: (name: string, organizationId: string, description?: string) =>
+    request<Project>(`${apiRoot}/operator/projects`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name,
+        description: description || null,
+        organization_id: organizationId,
+      }),
+    }),
+  updateProject: (projectId: string, name: string, description?: string) =>
+    request<Project>(`${apiRoot}/operator/projects/${projectId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, description: description || null }),
+    }),
+  setProjectStatus: (projectId: string, isActive: boolean) =>
+    request<Project>(`${apiRoot}/operator/projects/${projectId}/status`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ is_active: isActive }),
+    }),
+  archiveProject: (projectId: string) =>
+    request<Project>(`${apiRoot}/operator/projects/${projectId}/archive`, { method: "POST" }),
+  restoreProject: (projectId: string) =>
+    request<Project>(`${apiRoot}/operator/projects/${projectId}/restore`, { method: "POST" }),
+  getProjectOwnershipMigration: () =>
+    request<ProjectOwnershipMigration>(`${apiRoot}/operator/projects/ownership-migration`),
+  getProjectOwnershipPreflight: (projectId: string, targetOrganizationId: string) =>
+    request<ProjectOwnershipPreflight>(
+      `${apiRoot}/operator/projects/${projectId}/ownership/preflight${query({ target_organization_id: targetOrganizationId })}`,
+    ),
+  reassignProjectOwnership: (
+    projectId: string,
+    currentOrganizationId: string,
+    targetOrganizationId: string,
+    reason: string,
+  ) =>
+    request<Project>(`${apiRoot}/operator/projects/${projectId}/ownership/reassign`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        expected_current_organization_id: currentOrganizationId,
+        target_organization_id: targetOrganizationId,
+        reason,
+      }),
+    }),
+  confirmProjectOwnership: (projectId: string, organizationId: string, reason: string) =>
+    request<Project>(`${apiRoot}/operator/projects/${projectId}/ownership/confirm`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ expected_current_organization_id: organizationId, reason }),
+    }),
+  getProjectHistory: (projectId: string) =>
+    request<AuditEvent[]>(`${apiRoot}/operator/projects/${projectId}/history`),
+  getProjectAIConfig: (projectId: string) =>
+    request<EffectiveProjectAIConfig>(`${apiRoot}/operator/projects/${projectId}/ai-config`),
+  getProjectAIConfigHistory: (projectId: string) =>
+    request<ProjectAIConfigRevision[]>(
+      `${apiRoot}/operator/projects/${projectId}/ai-config/revisions`,
+    ),
+  createProjectAIConfig: (
+    projectId: string,
+    configuration: ProjectAIConfig,
+    expectedActiveRevisionId: string | null,
+    reason: string,
+  ) =>
+    request<ProjectAIConfigRevision>(
+      `${apiRoot}/operator/projects/${projectId}/ai-config/revisions`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          configuration,
+          expected_active_revision_id: expectedActiveRevisionId,
+          reason,
+        }),
+      },
+    ),
+  restoreProjectAIConfig: (
+    projectId: string,
+    revisionId: string,
+    expectedActiveRevisionId: string | null,
+    reason: string,
+  ) =>
+    request<ProjectAIConfigRevision>(
+      `${apiRoot}/operator/projects/${projectId}/ai-config/revisions/${revisionId}/restore`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ expected_active_revision_id: expectedActiveRevisionId, reason }),
+      },
+    ),
+  getProviderCapabilities: () =>
+    request<Record<string, unknown>[]>(`${apiRoot}/operator/provider-capabilities`),
   getDocuments: (projectId: string, limit = 100, offset = 0) =>
     request<DocumentPage>(`${apiRoot}/projects/${projectId}/documents${query({ limit, offset })}`),
   getDocument: (projectId: string, documentId: string) =>
     request<Document>(`${apiRoot}/projects/${projectId}/documents/${documentId}`),
-  uploadDocument: (projectId: string, file: File, ocrLang?: string) => {
+  uploadDocument: (
+    projectId: string,
+    file: File,
+    ocrLang?: string,
+    sourceMetadata?: SourceRevisionCreate,
+  ) => {
     const body = new FormData();
     body.append("file", file);
     if (ocrLang) body.append("ocr_lang", ocrLang);
+    if (sourceMetadata) body.append("source_metadata", JSON.stringify(sourceMetadata));
     return request<Document>(`${apiRoot}/projects/${projectId}/documents`, {
       method: "POST",
       body,
     });
   },
+  getSourceState: (projectId: string, generation?: number) =>
+    request<SourceState>(`${apiRoot}/projects/${projectId}/sources${query({ generation })}`),
+  getSourceRevisions: (projectId: string, documentId: string) =>
+    request<SourceRevision[]>(
+      `${apiRoot}/projects/${projectId}/sources/documents/${documentId}/revisions`,
+    ),
+  createSourceRevision: (projectId: string, documentId: string, revision: SourceRevisionCreate) =>
+    request<SourceRevisionCreated>(
+      `${apiRoot}/projects/${projectId}/sources/documents/${documentId}/revisions`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(revision),
+      },
+    ),
+  activateSourceRevision: (projectId: string, revisionId: string, reason: string) =>
+    request<SourceActivation>(
+      `${apiRoot}/projects/${projectId}/sources/revisions/${revisionId}/activate`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason }),
+      },
+    ),
+  getSourceActivations: (projectId: string, documentId?: string) =>
+    request<SourceActivation[]>(
+      `${apiRoot}/projects/${projectId}/sources/activations${query({ document_id: documentId })}`,
+    ),
   reprocessDocument: (projectId: string, documentId: string, ocrLang?: string) =>
     request<Document>(
       `${apiRoot}/projects/${projectId}/documents/${documentId}/reprocess${query({ ocr_lang: ocrLang })}`,

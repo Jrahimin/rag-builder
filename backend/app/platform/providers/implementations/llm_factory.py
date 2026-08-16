@@ -12,6 +12,7 @@ from __future__ import annotations
 from functools import lru_cache
 
 from app.core.config import LLMBackend, Settings, get_settings
+from app.platform.providers.capabilities import describe_llm_capability
 from app.platform.providers.contracts.llm import BaseLLMProvider
 from app.platform.providers.errors import ProviderError
 from app.platform.providers.implementations.echo_chat import EchoLLMProvider
@@ -30,6 +31,7 @@ def _build_llm_provider(
     model: str,
 ) -> BaseLLMProvider:
     llm = cfg.llm
+    describe_llm_capability(backend.value, model)
     if backend is LLMBackend.ECHO:
         return EchoLLMProvider(model=model, provider_version=llm.provider_version)
     if backend is LLMBackend.OLLAMA:

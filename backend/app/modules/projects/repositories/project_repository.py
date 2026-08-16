@@ -90,3 +90,36 @@ class ProjectRepository(AsyncRepository[Project]):
         stmt = select(func.count()).select_from(Project).where(*clauses)
         result = await self._session.execute(stmt)
         return int(result.scalar_one())
+
+    async def list_unlocked(self, *, limit: int = 500) -> list[Project]:
+        result = await self._session.execute(
+            select(Project)
+            .where(Project.deleted_at.is_(None), Project.ownership_locked.is_(False))
+            .order_by(Project.created_at, Project.id)
+            .limit(limit)
+        )
+        return list(result.scalars().all())
+
+    async def count_locked(self, *, locked: bool) -> int:
+        from sqlalchemy import func
+
+        value = await self._session.scalar(
+            select(func.count())
+            .select_from(Project)
+            .where(Project.deleted_at.is_(None), Project.ownership_locked.is_(locked))
+        )
+        return int(value or 0)
+
+    async def count_default_organization_unlocked(self, default_organization_id: uuid.UUID) -> int:
+        from sqlalchemy import func
+
+        value = await self._session.scalar(
+            select(func.count())
+            .select_from(Project)
+            .where(
+                Project.deleted_at.is_(None),
+                Project.ownership_locked.is_(False),
+                Project.organization_id == default_organization_id,
+            )
+        )
+        return int(value or 0)

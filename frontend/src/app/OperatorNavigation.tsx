@@ -1,5 +1,6 @@
 import {
   Activity,
+  Building2,
   BriefcaseBusiness,
   ClipboardList,
   FileStack,
@@ -19,7 +20,8 @@ const navigation = [
   { to: "/", label: "Overview", icon: Gauge, end: true },
   { to: "/lab", label: "Test Lab", icon: FlaskConical },
   { to: "/jobs", label: "Jobs", icon: BriefcaseBusiness },
-  { to: "/projects", label: "Projects / Documents", icon: FileStack },
+  { to: "/organizations", label: "Organizations", icon: Building2 },
+  { to: "/projects", label: "Projects", icon: FileStack },
   { to: "/configuration", label: "Configuration", icon: Settings2 },
   { to: "/metrics", label: "Metrics", icon: Activity },
   { to: "/quality", label: "Evidence Quality", icon: ShieldCheck },

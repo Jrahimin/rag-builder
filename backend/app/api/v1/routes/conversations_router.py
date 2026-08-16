@@ -8,13 +8,15 @@ import uuid
 from collections.abc import AsyncIterator
 
 import structlog
-from fastapi import APIRouter, Query, Request, status
+from fastapi import APIRouter, Depends, Query, Request, status
 from fastapi.responses import StreamingResponse
 
 from app.core.exceptions import APEError
 from app.core.http.envelopes import ApiResponse
+from app.dependencies.admin_auth import require_super_admin
 from app.dependencies.conversations import ChatServiceDep, ConversationServiceDep
 from app.modules.conversations.schemas.conversation import (
+    ConversationConfigRefresh,
     ConversationCreate,
     ConversationResponse,
     ConversationUpdate,
@@ -122,6 +124,27 @@ async def update_conversation(
 ) -> ApiResponse[ConversationResponse]:
     del project_id
     conversation = await service.update(conversation_id, body)
+    return ApiResponse.ok(ConversationResponse.model_validate(conversation))
+
+
+@router.post(
+    "/{conversation_id}/config",
+    response_model=ApiResponse[ConversationResponse],
+    dependencies=[Depends(require_super_admin)],
+    summary="Refresh a conversation to the current effective Project policy",
+)
+async def refresh_conversation_config(
+    project_id: uuid.UUID,
+    conversation_id: uuid.UUID,
+    body: ConversationConfigRefresh,
+    service: ConversationServiceDep,
+) -> ApiResponse[ConversationResponse]:
+    del project_id
+    conversation = await service.refresh_config(
+        conversation_id,
+        expected_active_config_snapshot_id=body.expected_active_config_snapshot_id,
+        reason=body.reason,
+    )
     return ApiResponse.ok(ConversationResponse.model_validate(conversation))
 
 

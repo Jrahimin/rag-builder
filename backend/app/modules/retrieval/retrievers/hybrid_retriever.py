@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import time
 import uuid
 
@@ -45,10 +44,10 @@ class HybridRetriever(BaseRetriever):
 
     async def retrieve(self, context: RetrievalContext) -> list[CandidateHit]:
         started = time.perf_counter()
-        semantic_hits, keyword_hits = await asyncio.gather(
-            self._semantic.retrieve(context),
-            self._keyword.retrieve(context),
-        )
+        # Both repositories intentionally share one AsyncSession and transaction so
+        # the active build/source generation snapshot cannot drift between branches.
+        semantic_hits = await self._semantic.retrieve(context)
+        keyword_hits = await self._keyword.retrieve(context)
 
         fusion_top_k = (
             max(context.rerank_top_n, context.top_k) if context.rerank_enabled else context.top_k

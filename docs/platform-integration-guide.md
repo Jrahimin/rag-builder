@@ -50,6 +50,13 @@ The Organization API key proves **which tenant** is calling. The `project_id` in
 path selects **which document corpus** to use. A single Organization can own many
 Projects (e.g. one per client matter, department, or product workspace).
 
+Project ownership is explicit and locked when the Project is created. AI provider/model, prompts,
+generation settings, reranking, evidence, citations, and grounding are operator-controlled Project
+policy—not end-user request preferences. Existing request fields remain temporarily accepted in
+deployment `compatibility` mode and are recorded as deprecated diagnostics; strict deployments
+return `request_policy_override_forbidden`. Integrations should only override bounded `top_k`, an
+enabled retrieval strategy, allowlisted metadata filters, and explicit `as_of`.
+
 ---
 
 ## Before you start

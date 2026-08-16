@@ -30,6 +30,23 @@ def test_job_configuration_hash_is_stable_and_excludes_secrets() -> None:
     assert "google_api_key" not in first.processing["ocr"]
 
 
+def test_output_hash_ignores_observed_active_index_but_keeps_full_provenance() -> None:
+    settings = Settings()
+    first = build_job_configuration(
+        settings,
+        active_index_build_id="first",
+        source_metadata_generation=1,
+    )
+    second = build_job_configuration(
+        settings,
+        active_index_build_id="second",
+        source_metadata_generation=2,
+    )
+
+    assert first.digest() != second.digest()
+    assert first.output_digest() == second.output_digest()
+
+
 def test_apply_job_configuration_restores_typed_values_and_live_secret() -> None:
     current = Settings(
         embedding={

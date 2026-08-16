@@ -61,15 +61,25 @@ Update name/description.
 
 ---
 
-## PATCH /api/v1/organizations/{organization_id}/status
+## PUT /api/v1/organizations/{organization_id}/status
 
-Toggle `is_active` (no body).
+Set the operational state explicitly with `{ "is_active": true|false }`. Disabling blocks new
+Project and API-key creation and API-key rotation without losing history.
 
 ---
 
 ## DELETE /api/v1/organizations/{organization_id}
 
 Soft-delete organization.
+
+## POST /api/v1/organizations/{organization_id}/restore
+
+Restore an archived organization in the disabled state. An explicit status update is required to
+re-enable it.
+
+## GET /api/v1/organizations/{organization_id}/projects
+
+List Projects associated with this client boundary, including inactive Projects for administration.
 
 ---
 
@@ -114,7 +124,11 @@ List API keys (metadata only; no secrets).
 
 ## POST /api/v1/organizations/{organization_id}/api-keys/{key_id}/rotate
 
-Create a new key. Old key remains valid unless `?revoke_old=true`.
+Create a named replacement key first. The old key remains valid by default, allowing callers to
+deploy the replacement before explicitly revoking the old credential. Emergency replace-and-revoke
+requires `revoke_old=true` and an explicit confirmation in the request body. Key metadata exposes
+`status`, `last_used_at`, `created_by`, and `rotated_from_key_id`; only the new secret is returned,
+and only in this response.
 
 **Response** `201` — same shape as create (includes new `secret`).
 

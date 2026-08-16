@@ -13,8 +13,12 @@ const titles: Record<string, { title: string; description: string }> = {
     description: "Browser-based end-to-end product verification",
   },
   "/projects": {
-    title: "Projects / Documents",
-    description: "Inspect corpus scope and document processing lifecycle",
+    title: "Projects",
+    description: "Canonical ownership, AI policy, documents, and source administration",
+  },
+  "/organizations": {
+    title: "Organizations",
+    description: "Client records, credentials, lifecycle, and associated Projects",
   },
   "/configuration": {
     title: "Configuration",

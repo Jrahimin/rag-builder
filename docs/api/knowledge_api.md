@@ -12,6 +12,10 @@ TXT/Markdown, PNG, JPEG, TIFF, and WebP. Extension/MIME/signature, corruption,
 password protection, and malware checks run before storage or job creation.
 Enqueues `document.process` (`status=queued`).
 
+Optional multipart field `source_metadata` accepts a JSON source-revision create document. When it
+is omitted, Knowledge creates and activates a neutral immutable revision automatically, so every
+Document has source history. Source metadata activation does not change `document.version`.
+
 Optional form field `ocr_lang` — per-document OCR language for scanned PDFs and image uploads. For
 PDFs, omission allows Unicode script detection before falling back to `APE_OCR__LANG` (`en`).
 Images and scans without a usable text layer go directly to the deployment default. Normalized
@@ -139,3 +143,20 @@ Stages a durable irreversible purge and returns `202` with `job_id`. After an
 excluding build is active, the job removes all document chunks, vectors, keyword
 rows, raw/parsed storage objects, and the document row. Retained builds that
 reference the document are superseded and cannot be reactivated.
+
+## Source metadata — `/api/v1/projects/{project_id}/sources`
+
+- `GET /state?generation=` returns the current or historical Project source state.
+- `GET /documents/{document_id}` returns the active revision.
+- `GET|POST /documents/{document_id}/revisions` lists or appends immutable revisions.
+- `GET /revisions/{revision_id}` returns one revision and its relationships.
+- `POST /revisions/{revision_id}/activate` atomically increments the Project source generation.
+- `GET /activations` returns append-only activation history.
+
+Revisions include effective dates, lifecycle status, source role, optional source group, and
+`replaces`/`modifies` relationships. Relationships are Project-scoped and validated: `replaces`
+requires the same group and `modifies` requires a distinct group. Overlapping effective intervals
+produce operator-visible warnings. These APIs maintain metadata and activation history only;
+retrieval captures an immutable source generation and applies the shared source contract to both
+semantic and keyword candidates. The configured `off` / `observe` / `enforce` policy remains
+bounded by the deployment safety cap.
