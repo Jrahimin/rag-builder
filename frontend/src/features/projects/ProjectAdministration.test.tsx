@@ -161,7 +161,11 @@ test("keeps inherited AI values sparse and can clear a Project override", async 
   await userEvent.click(screen.getByRole("button", { name: "Create and activate revision" }));
 
   await waitFor(() => expect(create).toHaveBeenCalled());
-  const saved = create.mock.calls[0][1];
+  const firstCreateCall = create.mock.calls[0];
+  if (!firstCreateCall) {
+    throw new Error("Expected a project AI-config revision to be created");
+  }
+  const saved = firstCreateCall[1];
   expect(saved.retrieval).toEqual({ rerank_top_n: 42 });
   expect(saved.chat).toEqual({ context_char_budget: 20_000 });
   expect(saved.llm).toEqual({});
@@ -247,6 +251,10 @@ test("uploads a document into an existing source group or a modifying group", as
       },
     ],
   };
+  const sourceItem = sourceState.items[0];
+  if (!sourceItem) {
+    throw new Error("Expected an existing source fixture");
+  }
   vi.spyOn(operatorApiClient, "getDocuments").mockResolvedValue({
     items: [document],
     total: 1,
@@ -255,10 +263,10 @@ test("uploads a document into an existing source group or a modifying group", as
   });
   vi.spyOn(operatorApiClient, "getSourceState").mockResolvedValue(sourceState);
   vi.spyOn(operatorApiClient, "getSourceRevisions").mockResolvedValue([
-    sourceState.items[0].revision,
+    sourceItem.revision,
   ]);
   vi.spyOn(operatorApiClient, "getSourceActivations").mockResolvedValue([
-    sourceState.items[0].activation,
+    sourceItem.activation,
   ]);
   const upload = vi.spyOn(operatorApiClient, "uploadDocument").mockResolvedValue(document);
 
@@ -267,7 +275,7 @@ test("uploads a document into an existing source group or a modifying group", as
     `/projects?project=${projectFixture.id}&section=sources`,
   );
 
-  const target = sourceState.items[0].revision;
+  const target = sourceItem.revision;
   await screen.findByText("Upload document and optional source metadata");
   await userEvent.upload(
     screen.getByLabelText("File"),
@@ -280,7 +288,11 @@ test("uploads a document into an existing source group or a modifying group", as
   fireEvent.submit(screen.getByRole("button", { name: "Upload" }).closest("form")!);
 
   await waitFor(() => expect(upload).toHaveBeenCalledTimes(1));
-  expect(upload.mock.calls[0][3]).toMatchObject({
+  const firstUploadCall = upload.mock.calls[0];
+  if (!firstUploadCall) {
+    throw new Error("Expected the revision upload to be submitted");
+  }
+  expect(firstUploadCall[3]).toMatchObject({
     create_new_group: false,
     source_group_id: target.source_group_id,
     relationships: [{ relationship_type: "replaces", target_revision_id: target.id }],
@@ -295,11 +307,15 @@ test("uploads a document into an existing source group or a modifying group", as
   fireEvent.submit(screen.getByRole("button", { name: "Upload" }).closest("form")!);
 
   await waitFor(() => expect(upload).toHaveBeenCalledTimes(2));
-  expect(upload.mock.calls[1][3]).toMatchObject({
+  const secondUploadCall = upload.mock.calls[1];
+  if (!secondUploadCall) {
+    throw new Error("Expected the modifying upload to be submitted");
+  }
+  expect(secondUploadCall[3]).toMatchObject({
     create_new_group: true,
     relationships: [{ relationship_type: "modifies", target_revision_id: target.id }],
   });
-  expect(upload.mock.calls[1][3]).not.toHaveProperty("source_group_id");
+  expect(secondUploadCall[3]).not.toHaveProperty("source_group_id");
 
   await userEvent.upload(
     screen.getByLabelText("File"),
@@ -312,7 +328,11 @@ test("uploads a document into an existing source group or a modifying group", as
   fireEvent.submit(screen.getByRole("button", { name: "Upload" }).closest("form")!);
 
   await waitFor(() => expect(upload).toHaveBeenCalledTimes(3));
-  expect(upload.mock.calls[2][3]).toMatchObject({
+  const thirdUploadCall = upload.mock.calls[2];
+  if (!thirdUploadCall) {
+    throw new Error("Expected the independent upload to be submitted");
+  }
+  expect(thirdUploadCall[3]).toMatchObject({
     create_new_group: true,
     relationships: [],
     title: "Independent source",
