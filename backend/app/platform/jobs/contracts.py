@@ -39,14 +39,66 @@ class JobDefinition(BaseModel):
 class JobConfiguration(BaseModel):
     """Normalized, secret-free processing, indexing, and quality configuration."""
 
-    schema_version: int = 2
+    schema_version: int = 3
     processing: dict[str, Any]
     index: dict[str, Any]
     quality: dict[str, Any]
+    execution: dict[str, Any] = Field(default_factory=dict)
+    provenance: dict[str, Any] = Field(default_factory=dict)
 
     def digest(self) -> str:
+        """Hash the complete immutable snapshot, including observed provenance."""
         payload = json.dumps(
             self.model_dump(mode="json"),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        return hashlib.sha256(payload).hexdigest()
+
+    def output_digest(self) -> str:
+        """Hash settings that can change output, excluding the observed active index.
+
+        The active index pointer is captured so a job can explain the world it was
+        staged in, but it is not an input to document embedding/indexing. Including
+        it in idempotency keys makes activation itself spuriously create new work.
+        Source metadata is joined at retrieval time and therefore cannot change
+        processing, chunking, vector, or keyword index output.
+        """
+        payload = json.dumps(
+            {
+                "schema_version": self.schema_version,
+                "processing": self.processing,
+                "index": self.index,
+                "quality": self.quality,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        return hashlib.sha256(payload).hexdigest()
+
+    def index_output_digest(self) -> str:
+        """Hash only settings that can change corpus index artifacts.
+
+        Retrieval ranking defaults and Project chat/LLM policy are execution-time
+        concerns. They must not make an otherwise identical vector/keyword corpus
+        appear to be a different build.
+        """
+        retrieval = {
+            key: value
+            for key, value in self.index["retrieval"].items()
+            if key != "default_top_k"
+        }
+        payload = json.dumps(
+            {
+                "schema_version": self.schema_version,
+                "processing": self.processing,
+                "index": {
+                    "embedding": self.index["embedding"],
+                    "retrieval": retrieval,
+                },
+            },
             ensure_ascii=False,
             sort_keys=True,
             separators=(",", ":"),

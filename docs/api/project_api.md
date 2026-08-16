@@ -37,6 +37,14 @@ Create a project.
 
 **Errors:** `project_name_conflict` (409)
 
+New Projects are ownership-locked at creation. Organization callers may omit `organization_id`
+because it is taken from their API key. Super Admin callers must supply it explicitly. Responses
+also include `organization_id`, `ownership_locked`, `active_ai_config_revision_id`, and
+`source_metadata_generation`.
+
+Project AI policy is not administered through Organization-authenticated Project routes. See the
+Super-Admin endpoints in [operator_api.md](operator_api.md).
+
 ---
 
 ## GET /api/v1/projects

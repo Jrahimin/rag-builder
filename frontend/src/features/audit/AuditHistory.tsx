@@ -61,7 +61,7 @@ export function AuditHistory() {
                 <td>
                   {event.resource_type} · {shortId(event.resource_id)}
                 </td>
-                <td>{shortId(event.project_id)}</td>
+                <td>{event.project_id ? shortId(event.project_id) : "—"}</td>
                 <td>
                   <code className="detail-json">{JSON.stringify(event.detail)}</code>
                 </td>

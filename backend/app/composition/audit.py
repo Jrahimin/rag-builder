@@ -19,9 +19,15 @@ from app.platform.audit.contracts import (
 class DatabaseAuditRecorder(AuditRecorder):
     """Add audit events to a caller-owned SQLAlchemy transaction."""
 
-    def __init__(self, session: AsyncSession, project_id: uuid.UUID) -> None:
+    def __init__(
+        self,
+        session: AsyncSession,
+        project_id: uuid.UUID | None = None,
+        organization_id: uuid.UUID | None = None,
+    ) -> None:
         self._session = session
         self._project_id = project_id
+        self._organization_id = organization_id
 
     def record(
         self,
@@ -33,10 +39,15 @@ class DatabaseAuditRecorder(AuditRecorder):
         outcome: AuditOutcome,
         actor_id: str | None = None,
         detail: dict[str, Any] | None = None,
+        organization_id: uuid.UUID | None = None,
+        project_id: uuid.UUID | None = None,
     ) -> None:
         self._session.add(
             AuditEvent(
-                project_id=self._project_id,
+                project_id=project_id if project_id is not None else self._project_id,
+                organization_id=(
+                    organization_id if organization_id is not None else self._organization_id
+                ),
                 event_type=event_type,
                 actor_type=actor_type,
                 actor_id=actor_id,

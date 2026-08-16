@@ -32,7 +32,10 @@ class JobConfigurationRepository:
         self,
         configuration: JobConfiguration,
     ) -> JobConfigurationSnapshot:
-        configuration_hash = configuration.digest()
+        # Execution/provenance records explain staging, but do not alter job
+        # output. In particular, active index and source-generation pointers
+        # must not defeat content-addressed snapshot deduplication.
+        configuration_hash = configuration.output_digest()
         snapshot_id = uuid.uuid4()
         stmt = (
             insert(JobConfigurationSnapshot)

@@ -172,6 +172,11 @@ test("marks expected search words pass and exposes active build and result metad
       rerank_status: "not_requested",
       duplicate_suppression_input_count: 1,
       duplicate_suppression_removed_count: 0,
+      source_metadata_generation: 0,
+      source_policy_configured_mode: "off",
+      source_policy_deployment_cap: "enforce",
+      source_policy_effective_mode: "off",
+      source_policy_status: "off",
     },
     results: [
       {
@@ -209,6 +214,11 @@ test("marks expected search words as needs attention when no returned chunk cont
       rerank_status: "not_requested",
       duplicate_suppression_input_count: 1,
       duplicate_suppression_removed_count: 0,
+      source_metadata_generation: 0,
+      source_policy_configured_mode: "off",
+      source_policy_deployment_cap: "enforce",
+      source_policy_effective_mode: "off",
+      source_policy_status: "off",
     },
     results: [
       {
@@ -246,6 +256,7 @@ test("renders grounded citations instead of inferring grounding from answer text
     model: null,
     temperature: null,
     system_prompt_version: null,
+    active_config_snapshot_id: null,
     last_message_at: null,
     is_active: true,
     deleted_at: null,
@@ -292,6 +303,7 @@ test("renders grounded citations instead of inferring grounding from answer text
         {
           chunk_id: "77777777-7777-7777-7777-777777777777",
           document_id: documentFixture.id,
+          project_id: projectFixture.id,
           filename: documentFixture.filename,
           chunk_index: 0,
           page_number: 1,
@@ -326,6 +338,7 @@ test("renders an explicit valid refusal when retrieval evidence is insufficient"
     model: null,
     temperature: null,
     system_prompt_version: null,
+    active_config_snapshot_id: null,
     last_message_at: null,
     is_active: true,
     deleted_at: null,

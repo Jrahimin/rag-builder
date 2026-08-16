@@ -12,9 +12,10 @@ from app.core.config import ChatConfig, LLMBackend, LLMConfig, RetrievalConfig
 from app.core.exceptions import ConflictError, NotFoundError, ServiceUnavailableError
 from app.models.conversation import Conversation
 from app.models.message import Message, MessageRole
-from app.modules.conversations.ports import ContextChunk
+from app.modules.conversations.ports import ContextChunk, ContextRetrievalResult
 from app.modules.conversations.schemas.message import MessageSendRequest
 from app.modules.conversations.services.chat_service import ChatService
+from app.platform.providers.contracts.llm import ChatCompletionChunk
 from app.platform.providers.errors import ProviderError
 from app.platform.providers.implementations.echo_chat import EchoLLMProvider
 
@@ -22,30 +23,40 @@ pytestmark = pytest.mark.unit
 
 
 class FakeRetrieval:
-    async def retrieve(self, **kwargs: object) -> list[ContextChunk]:
+    async def retrieve(self, **kwargs: object) -> ContextRetrievalResult:
         del kwargs
-        return [
-            ContextChunk(
-                chunk_id=uuid.uuid4(),
-                document_id=uuid.uuid4(),
-                chunk_index=0,
-                content="refund within 30 days",
-                score=0.9,
-                filename="policy.txt",
-                chunk_hash="hash1",
-            )
-        ]
+        return ContextRetrievalResult(
+            chunks=[
+                ContextChunk(
+                    chunk_id=uuid.uuid4(),
+                    document_id=uuid.uuid4(),
+                    chunk_index=0,
+                    content="refund within 30 days",
+                    score=0.9,
+                    filename="policy.txt",
+                    chunk_hash="hash1",
+                )
+            ],
+            diagnostics={"index_build_id": str(uuid.uuid4())},
+        )
 
 
 class EmptyRetrieval:
-    async def retrieve(self, **kwargs: object) -> list[ContextChunk]:
+    async def retrieve(self, **kwargs: object) -> ContextRetrievalResult:
         del kwargs
-        return []
+        return ContextRetrievalResult(chunks=[], diagnostics={})
 
 
 class FailingLLM(EchoLLMProvider):
     async def generate(self, messages, *, temperature, max_tokens):
         del messages, temperature, max_tokens
+        raise ProviderError("boom", provider_name="echo")
+
+
+class FailingStreamingLLM(EchoLLMProvider):
+    async def stream(self, messages, *, temperature, max_tokens):
+        del messages, temperature, max_tokens
+        yield ChatCompletionChunk(delta="partial ")
         raise ProviderError("boom", provider_name="echo")
 
 
@@ -201,7 +212,7 @@ async def test_send_message_commits_user_before_assistant(
     assert conversation_repository.get_by_id.return_value.title is not None
 
 
-async def test_send_message_llm_failure_leaves_user_only(
+async def test_send_message_llm_failure_persists_failed_execution(
     session: AsyncMock,
     conversation_repository: AsyncMock,
     message_repository: AsyncMock,
@@ -217,7 +228,40 @@ async def test_send_message_llm_failure_leaves_user_only(
             conversation_repository.get_by_id.return_value.id,
             MessageSendRequest(content="question"),
         )
-    assert session.commit.await_count == 1
+    assert session.commit.await_count == 2
+    assistant = message_repository.add.call_args_list[-1].args[0]
+    assert assistant.role is MessageRole.ASSISTANT
+    assert assistant.finish_reason == "error"
+    assert assistant.input_tokens is None
+    assert assistant.output_tokens is None
+    assert assistant.message_metadata["execution_status"] == "failed"
+    assert assistant.message_metadata["execution_error_code"] == "provider_error"
+
+
+async def test_stream_failure_persists_partial_failed_execution(
+    session: AsyncMock,
+    conversation_repository: AsyncMock,
+    message_repository: AsyncMock,
+) -> None:
+    service = _service(
+        session,
+        conversation_repository,
+        message_repository,
+        FailingStreamingLLM(model="test", provider_version="1"),
+    )
+
+    with pytest.raises(ServiceUnavailableError, match="temporarily unavailable"):
+        async for _ in service.stream_message(
+            conversation_repository.get_by_id.return_value.id,
+            MessageSendRequest(content="question"),
+        ):
+            pass
+
+    assert session.commit.await_count == 2
+    assistant = message_repository.add.call_args_list[-1].args[0]
+    assert assistant.content == "partial "
+    assert assistant.finish_reason == "error"
+    assert assistant.message_metadata["execution_status"] == "failed"
 
 
 async def test_insufficient_evidence_skips_generation_and_persists_refusal(
@@ -386,6 +430,11 @@ async def test_stream_message_yields_done_event(
     done = next(item for item in events if isinstance(item, dict))
     assert done["event"] == "done"
     assert done["assistant_message_id"]
+    assistant = message_repository.add.call_args_list[-1].args[0]
+    assert assistant.input_tokens is not None
+    assert assistant.output_tokens is not None
+    assert assistant.provider_latency_ms is not None
+    assert assistant.total_latency_ms is not None
 
 
 async def test_stream_cancel_skips_assistant_persist(

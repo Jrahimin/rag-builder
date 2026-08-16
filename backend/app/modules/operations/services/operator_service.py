@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from sqlalchemy.exc import SQLAlchemyError
 
-from app.core.config import EmbeddingBackend, LLMBackend, Settings
-from app.core.exceptions import ServiceUnavailableError
+from app.core.config import Settings
+from app.core.exceptions import BadRequestError, ServiceUnavailableError
 from app.core.logging import get_logger
 from app.models.job_configuration_snapshot import JobConfigurationSnapshot
 from app.modules.operations.repositories.operator_repository import (
@@ -29,10 +30,19 @@ from app.modules.operations.schemas.operator import (
     ProviderConfiguration,
     RecentFailure,
     TokenUsageMetrics,
+    UsageAggregate,
+    UsageBucket,
+    UsageLatency,
+    UsageReport,
+    UsageWorkload,
     WorkerOverview,
     WorkerStatus,
 )
 from app.platform.jobs.worker_registry import WorkerRegistry
+from app.platform.providers.capabilities import (
+    embedding_credential_configured,
+    llm_credential_configured,
+)
 from app.platform.system.health_service import HealthService
 from app.platform.system.schemas import PreflightStatus
 
@@ -178,6 +188,51 @@ class OperatorService:
             active_embedding_set_version=self._settings.retrieval.embedding_set_version,
         )
 
+    async def usage(
+        self,
+        *,
+        start_at: datetime | None,
+        end_at: datetime | None,
+        bucket: UsageBucket,
+        organization_id: uuid.UUID | None,
+        project_id: uuid.UUID | None,
+        provider: str | None,
+        model: str | None,
+        workload: UsageWorkload | None,
+    ) -> UsageReport:
+        resolved_end = _as_utc(end_at) if end_at is not None else datetime.now(UTC)
+        resolved_start = (
+            _as_utc(start_at)
+            if start_at is not None
+            else (resolved_end - timedelta(days=30))
+        )
+        if resolved_start >= resolved_end:
+            raise BadRequestError(
+                message="start_at must be earlier than end_at.",
+                code="usage_time_range_invalid",
+            )
+        try:
+            rows, total = await self._repository.usage_aggregates(
+                start_at=resolved_start,
+                end_at=resolved_end,
+                bucket=bucket,
+                organization_id=organization_id,
+                project_id=project_id,
+                provider=provider,
+                model=model,
+                workload=workload,
+            )
+        except SQLAlchemyError as exc:
+            self._raise_operator_database_unavailable(exc)
+        return UsageReport(
+            generated_at=datetime.now(UTC),
+            start_at=resolved_start,
+            end_at=resolved_end,
+            bucket=bucket,
+            totals=_usage_aggregate(total),
+            items=[_usage_aggregate(row) for row in rows],
+        )
+
     async def active_configuration(self) -> ActiveConfiguration:
         try:
             rows = await self._repository.recent_configuration_snapshots()
@@ -204,14 +259,16 @@ class OperatorService:
                 backend=self._settings.llm.backend.value,
                 model=self._settings.llm.model,
                 provider_version=self._settings.llm.provider_version,
-                credential_configured=_llm_credential_configured(self._settings),
+                credential_configured=llm_credential_configured(self._settings.llm),
             ),
             embedding=ProviderConfiguration(
                 backend=self._settings.embedding.backend.value,
                 model=self._settings.embedding.model,
                 dimensions=self._settings.embedding.dimensions,
                 provider_version=self._settings.embedding.provider_version,
-                credential_configured=_embedding_credential_configured(self._settings),
+                credential_configured=embedding_credential_configured(
+                    self._settings.embedding
+                ),
             ),
             reranker_backend=self._settings.retrieval.reranker_backend.value,
             ocr_backend=self._settings.ocr.backend.value,
@@ -247,9 +304,21 @@ class OperatorService:
             for row in rows
         ]
 
-    async def audit_events(self, *, limit: int, offset: int) -> list[AuditEventResponse]:
+    async def audit_events(
+        self,
+        *,
+        limit: int,
+        offset: int,
+        organization_id: uuid.UUID | None = None,
+        project_id: uuid.UUID | None = None,
+    ) -> list[AuditEventResponse]:
         try:
-            rows = await self._repository.recent_audit_events(limit=limit, offset=offset)
+            rows = await self._repository.recent_audit_events(
+                limit=limit,
+                offset=offset,
+                organization_id=organization_id,
+                project_id=project_id,
+            )
         except SQLAlchemyError as exc:
             self._raise_operator_database_unavailable(exc)
         return [AuditEventResponse.model_validate(row) for row in rows]
@@ -277,17 +346,57 @@ class OperatorService:
         ) from exc
 
 
-def _llm_credential_configured(settings: Settings) -> bool | None:
-    if settings.llm.backend in {LLMBackend.OPENAI, LLMBackend.OPENAI_COMPATIBLE}:
-        return bool(settings.llm.openai_api_key)
-    if settings.llm.backend is LLMBackend.GEMINI:
-        return bool(settings.llm.gemini_api_key)
-    return None
+def _usage_aggregate(row: dict[str, Any]) -> UsageAggregate:
+    input_tokens = _optional_int(row.get("input_tokens"))
+    output_tokens = _optional_int(row.get("output_tokens"))
+    return UsageAggregate(
+        bucket_start=row.get("bucket_start"),
+        organization_id=row.get("organization_id"),
+        organization_name=_optional_string(row.get("organization_name")),
+        project_id=row.get("project_id"),
+        project_name=_optional_string(row.get("project_name")),
+        provider=_optional_string(row.get("provider")),
+        model=_optional_string(row.get("model")),
+        workload=_optional_workload(row.get("workload")),
+        request_count=int(row.get("request_count") or 0),
+        error_count=int(row.get("error_count") or 0),
+        records_with_token_usage=int(row.get("records_with_token_usage") or 0),
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        total_tokens=(
+            input_tokens + output_tokens
+            if input_tokens is not None and output_tokens is not None
+            else None
+        ),
+        retrieval_latency=_usage_latency(row, "retrieval"),
+        provider_latency=_usage_latency(row, "provider"),
+        total_latency=_usage_latency(row, "total"),
+    )
 
 
-def _embedding_credential_configured(settings: Settings) -> bool | None:
-    if settings.embedding.backend is EmbeddingBackend.OPENAI:
-        return bool(settings.embedding.openai_api_key)
-    if settings.embedding.backend is EmbeddingBackend.GEMINI:
-        return bool(settings.embedding.gemini_api_key)
-    return None
+def _usage_latency(row: dict[str, Any], prefix: str) -> UsageLatency:
+    average = row.get(f"{prefix}_average_ms")
+    maximum = row.get(f"{prefix}_maximum_ms")
+    return UsageLatency(
+        samples=int(row.get(f"{prefix}_samples") or 0),
+        average_ms=round(float(average), 3) if average is not None else None,
+        maximum_ms=round(float(maximum), 3) if maximum is not None else None,
+    )
+
+
+def _optional_int(value: Any) -> int | None:
+    return int(value) if value is not None else None
+
+
+def _optional_string(value: Any) -> str | None:
+    return str(value) if value is not None else None
+
+
+def _optional_workload(value: Any) -> UsageWorkload | None:
+    return UsageWorkload(str(value)) if value is not None else None
+
+
+def _as_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)

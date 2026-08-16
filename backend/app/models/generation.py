@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from datetime import datetime
 from enum import StrEnum
 from typing import Any
@@ -101,6 +102,21 @@ class Generation(Base, UUIDPrimaryKeyMixin, TimestampMixin, ProjectScopedMixin):
     model: Mapped[str] = mapped_column(String(128), nullable=False)
     provider_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
     generation_config: Mapped[dict[str, Any]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=dict,
+        server_default=text("'{}'::jsonb"),
+    )
+    configuration_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    index_build_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True, index=True)
+    source_metadata_generation: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    config_snapshot: Mapped[dict[str, Any]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=dict,
+        server_default=text("'{}'::jsonb"),
+    )
+    config_provenance: Mapped[dict[str, Any]] = mapped_column(
         JSONB,
         nullable=False,
         default=dict,

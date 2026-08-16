@@ -21,13 +21,24 @@ class GenerationPromptBuilder:
         canonical_input: str,
         canonical_context: str,
         locale: str | None,
+        domain_instructions: str = "",
+        prompt_profile: str = "default",
     ) -> list[ChatMessage]:
         locale_instruction = (
             f"Write human-readable text in locale {locale}. " if locale is not None else ""
         )
         schema_text = self._schema_text(spec)
+        trusted_policy: list[str] = []
+        if prompt_profile != "default":
+            trusted_policy.append(f"Trusted Project prompt profile: {prompt_profile}")
+        if domain_instructions.strip():
+            trusted_policy.append(
+                "Trusted Project domain instructions:\n" + domain_instructions.strip()
+            )
+        trusted_policy.append(spec.prompt.template)
+        policy_text = "\n\n".join(trusted_policy)
         system = (
-            f"{spec.prompt.template}\n\n"
+            f"{policy_text}\n\n"
             f"{locale_instruction}"
             "Return only an output matching the following JSON Schema. "
             "For a string schema, return the string directly. For every other schema, "

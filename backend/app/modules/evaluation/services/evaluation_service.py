@@ -53,6 +53,8 @@ class EvaluationService:
         config: EvaluationConfig,
         version_snapshot: dict[str, Any],
         job_max_attempts: int,
+        execution_snapshot: dict[str, Any] | None = None,
+        execution_provenance: dict[str, Any] | None = None,
     ) -> None:
         self._session = session
         self._project_id = project_id
@@ -61,6 +63,8 @@ class EvaluationService:
         self._config = config
         self._version_snapshot = version_snapshot
         self._job_max_attempts = job_max_attempts
+        self._execution_snapshot = execution_snapshot or {}
+        self._execution_provenance = execution_provenance or {}
         self._datasets = EvaluationDatasetRepository(session, project_id)
         self._runs = EvaluationRunRepository(session, project_id)
         self._corpus = EvaluationCorpusRepository(session, project_id)
@@ -126,12 +130,34 @@ class EvaluationService:
                 "top_k": top_k,
             },
         }
+        effective_configuration = self._execution_snapshot.get("configuration", {})
+        llm_configuration = (
+            effective_configuration.get("llm", {})
+            if isinstance(effective_configuration, dict)
+            else {}
+        )
+        index_build_id = corpus.get("index_build_id")
+        source_generation = self._job_configuration.provenance.get(
+            "source_metadata_generation"
+        )
         run = EvaluationRun(
             project_id=self._project_id,
             dataset_id=dataset.id,
             top_k=top_k,
             configuration_hash=_digest(versions),
+            provider=llm_configuration.get("provider"),
+            model=llm_configuration.get("model"),
+            index_build_id=(uuid.UUID(str(index_build_id)) if index_build_id else None),
+            source_metadata_generation=(
+                int(source_generation) if source_generation is not None else None
+            ),
             versions=versions,
+            config_snapshot=self._execution_snapshot,
+            config_provenance={
+                **self._execution_provenance,
+                "active_index_build_id": index_build_id,
+                "source_metadata_generation": source_generation,
+            },
             metrics={},
             case_results=[],
             regressions=[],
@@ -140,6 +166,14 @@ class EvaluationService:
         )
         self._runs.add(run)
         await self._runs.flush()
+        staged_configuration = self._job_configuration.model_copy(
+            update={
+                "provenance": {
+                    **self._job_configuration.provenance,
+                    "active_index_build_id": corpus.get("index_build_id"),
+                }
+            }
+        )
         submission = await self._submitter.stage(
             JobDefinition(
                 name=EVALUATION_RUN,
@@ -149,7 +183,7 @@ class EvaluationService:
                 idempotency_key=f"evaluation.run:{run.id}",
                 retry=RetryPolicy(max_attempts=self._job_max_attempts),
             ),
-            self._job_configuration,
+            staged_configuration,
         )
         run.job_id = submission.job_id
         await self._runs.flush()
@@ -224,6 +258,16 @@ def _run_response(record: EvaluationRunRecord) -> EvaluationRunResponse:
         regressions=list(run.regressions),
         failed_cases=list(run.failed_cases),
         reranker_comparison=dict(run.reranker_comparison),
+        provider=run.provider,
+        model=run.model,
+        input_tokens=run.input_tokens,
+        output_tokens=run.output_tokens,
+        retrieval_latency_ms=run.retrieval_latency_ms,
+        provider_latency_ms=run.provider_latency_ms,
+        total_latency_ms=run.total_latency_ms,
+        index_build_id=run.index_build_id,
+        source_metadata_generation=run.source_metadata_generation,
+        config_provenance=dict(run.config_provenance),
         completed_at=run.completed_at,
         created_at=run.created_at,
     )

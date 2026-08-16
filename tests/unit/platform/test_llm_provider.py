@@ -9,8 +9,13 @@ from app.core.config import LLMBackend, LLMConfig, Settings
 from app.platform.providers.contracts.llm import ChatMessage, ChatRole
 from app.platform.providers.errors import ProviderError
 from app.platform.providers.implementations.echo_chat import EchoLLMProvider
+from app.platform.providers.implementations.gemini_chat import _gemini_stream_chunk
 from app.platform.providers.implementations.llm_factory import create_llm_provider
+from app.platform.providers.implementations.ollama_chat import _context_window_from_show
 from app.platform.providers.implementations.openai_chat import OpenAIChatProvider
+from app.platform.providers.implementations.openai_compatible_chat import (
+    OpenAICompatibleChatProvider,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -37,6 +42,29 @@ async def test_echo_stream_yields_tokens() -> None:
         )
     ]
     assert "".join(chunk.delta for chunk in chunks if chunk.delta) == "[echo] hi there"
+    assert chunks[-1].usage is not None
+
+
+def test_gemini_stream_preserves_incremental_text_and_final_usage() -> None:
+    first = _gemini_stream_chunk(
+        {"candidates": [{"content": {"parts": [{"text": "first "}]}}]}
+    )
+    final = _gemini_stream_chunk(
+        {
+            "candidates": [
+                {"content": {"parts": [{"text": "second"}]}, "finishReason": "STOP"}
+            ],
+            "usageMetadata": {"promptTokenCount": 7, "candidatesTokenCount": 2},
+        }
+    )
+
+    assert first is not None and first.delta == "first "
+    assert first.finish_reason is None
+    assert final is not None and final.delta == "second"
+    assert final.finish_reason == "STOP"
+    assert final.usage is not None
+    assert final.usage.input_tokens == 7
+    assert final.usage.output_tokens == 2
 
 
 def test_factory_echo_backend() -> None:
@@ -85,6 +113,37 @@ def test_openai_chat_model_keeps_temperature() -> None:
 
     assert body["max_completion_tokens"] == 32
     assert body["temperature"] == 0.7
+
+
+def test_stream_usage_is_only_sent_when_provider_capability_allows_it() -> None:
+    openai = OpenAIChatProvider(
+        api_key="test-key",
+        model="gpt-4o-mini",
+        provider_version="test",
+    )
+    compatible = OpenAICompatibleChatProvider(
+        provider_name="openai_compatible",
+        api_key="test-key",
+        base_url="https://compatible.invalid",
+        model="custom-model",
+        provider_version="test",
+        request_timeout_seconds=1,
+    )
+    messages = [ChatMessage(role=ChatRole.USER, content="hello")]
+
+    assert openai._body(messages, max_tokens=10, stream=True)["stream_options"] == {
+        "include_usage": True
+    }
+    assert "stream_options" not in compatible._body(messages, max_tokens=10, stream=True)
+
+
+def test_ollama_context_uses_reported_model_limit_and_lower_num_ctx() -> None:
+    payload = {
+        "model_info": {"llama.context_length": 131072},
+        "parameters": "temperature 0.7\nnum_ctx 8192",
+    }
+
+    assert _context_window_from_show(payload) == 8192
 
 
 async def test_openai_error_exposes_only_safe_upstream_diagnostics(monkeypatch) -> None:

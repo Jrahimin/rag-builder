@@ -82,8 +82,9 @@ class _Retrieval:
         top_k: int,
         document_id: uuid.UUID | None,
         metadata_filter: dict[str, str],
+        as_of: object | None,
     ) -> QualitySearchResult:
-        del top_k
+        del top_k, as_of
         self.calls.append((profile, query, document_id, metadata_filter))
         if query == "unanswerable":
             hits: list[QualityHit] = []
@@ -148,6 +149,13 @@ def _run_and_dataset() -> tuple[SimpleNamespace, SimpleNamespace]:
         regressions=[],
         failed_cases=[],
         reranker_comparison={},
+        provider=None,
+        model=None,
+        input_tokens=None,
+        output_tokens=None,
+        retrieval_latency_ms=None,
+        provider_latency_ms=None,
+        total_latency_ms=None,
         completed_at=None,
     )
     dataset = SimpleNamespace(

@@ -2,22 +2,27 @@
 
 from __future__ import annotations
 
+import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import Float, cast, func, select
+from sqlalchemy import Integer, and_, case, func, literal, select, union_all
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql.selectable import CompoundSelect
 
 from app.models.audit_event import AuditEvent
 from app.models.conversation import Conversation
 from app.models.document import Document
 from app.models.document_chunk import DocumentChunk
-from app.models.generation import Generation
+from app.models.evaluation_run import EvaluationRun
+from app.models.generation import Generation, GenerationStatus
 from app.models.job_configuration_snapshot import JobConfigurationSnapshot
 from app.models.job_outbox import JobOutbox, JobOutboxState
 from app.models.job_run import JobRun, JobState
 from app.models.message import Message, MessageRole
+from app.models.organization import Organization
 from app.models.project import Project
+from app.modules.operations.schemas.operator import UsageBucket, UsageWorkload
 
 
 class OperatorRepository:
@@ -88,12 +93,16 @@ class OperatorRepository:
         self,
         metric_name: str,
     ) -> tuple[int, float | None, float | None]:
-        value = cast(Message.message_metadata[metric_name].astext, Float)
+        value = {
+            "retrieval_ms": Message.retrieval_latency_ms,
+            "generation_ms": Message.provider_latency_ms,
+            "total_ms": Message.total_latency_ms,
+        }[metric_name]
         row = (
             await self._session.execute(
                 select(func.count(value), func.avg(value), func.max(value)).where(
                     Message.role == MessageRole.ASSISTANT,
-                    Message.message_metadata.has_key(metric_name),
+                    value.is_not(None),
                 )
             )
         ).one()
@@ -103,7 +112,7 @@ class OperatorRepository:
         self,
         default_provider: str,
     ) -> list[tuple[str, int, float | None, float | None]]:
-        value = cast(Message.message_metadata["generation_ms"].astext, Float)
+        value = Message.provider_latency_ms
         provider = func.coalesce(Message.provider, Conversation.provider, default_provider)
         chat_rows = await self._session.execute(
             select(provider, func.count(value), func.avg(value), func.max(value))
@@ -114,7 +123,7 @@ class OperatorRepository:
             )
             .where(
                 Message.role == MessageRole.ASSISTANT,
-                Message.message_metadata.has_key("generation_ms"),
+                Message.provider_latency_ms.is_not(None),
             )
             .group_by(provider)
             .order_by(provider)
@@ -177,6 +186,65 @@ class OperatorRepository:
             int(message_row[1]) + int(generation_row[1]),
         )
 
+    async def usage_aggregates(
+        self,
+        *,
+        start_at: datetime,
+        end_at: datetime,
+        bucket: UsageBucket,
+        organization_id: uuid.UUID | None,
+        project_id: uuid.UUID | None,
+        provider: str | None,
+        model: str | None,
+        workload: UsageWorkload | None,
+    ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        executions = _usage_execution_union().subquery("usage_executions")
+        clauses = [
+            executions.c.occurred_at >= start_at,
+            executions.c.occurred_at < end_at,
+        ]
+        if organization_id is not None:
+            clauses.append(Project.organization_id == organization_id)
+        if project_id is not None:
+            clauses.append(executions.c.project_id == project_id)
+        if provider is not None:
+            clauses.append(executions.c.provider == provider)
+        if model is not None:
+            clauses.append(executions.c.model == model)
+        if workload is not None:
+            clauses.append(executions.c.workload == workload.value)
+
+        bucket_start = func.date_trunc(bucket.value, executions.c.occurred_at)
+        dimensions = (
+            bucket_start.label("bucket_start"),
+            Project.organization_id.label("organization_id"),
+            Organization.name.label("organization_name"),
+            executions.c.project_id,
+            Project.name.label("project_name"),
+            executions.c.provider,
+            executions.c.model,
+            executions.c.workload,
+        )
+        grouped = (
+            select(*dimensions, *_usage_aggregate_columns(executions))
+            .select_from(executions)
+            .join(Project, Project.id == executions.c.project_id)
+            .join(Organization, Organization.id == Project.organization_id)
+            .where(*clauses)
+            .group_by(*dimensions)
+            .order_by(bucket_start.desc(), Organization.name, Project.name)
+        )
+        total = (
+            select(*_usage_aggregate_columns(executions))
+            .select_from(executions)
+            .join(Project, Project.id == executions.c.project_id)
+            .join(Organization, Organization.id == Project.organization_id)
+            .where(*clauses)
+        )
+        rows = await self._session.execute(grouped)
+        total_row = (await self._session.execute(total)).mappings().one()
+        return [dict(row) for row in rows.mappings().all()], dict(total_row)
+
     async def corpus_counts(self) -> tuple[int, int, int, int]:
         projects = int(await self._session.scalar(select(func.count(Project.id))) or 0)
         document_row = (
@@ -198,10 +266,21 @@ class OperatorRepository:
         )
         return list(rows.scalars().all())
 
-    async def recent_audit_events(self, *, limit: int, offset: int) -> list[AuditEvent]:
+    async def recent_audit_events(
+        self,
+        *,
+        limit: int,
+        offset: int,
+        organization_id: uuid.UUID | None = None,
+        project_id: uuid.UUID | None = None,
+    ) -> list[AuditEvent]:
+        stmt = select(AuditEvent)
+        if organization_id is not None:
+            stmt = stmt.where(AuditEvent.organization_id == organization_id)
+        if project_id is not None:
+            stmt = stmt.where(AuditEvent.project_id == project_id)
         rows = await self._session.execute(
-            select(AuditEvent)
-            .order_by(AuditEvent.created_at.desc(), AuditEvent.id.desc())
+            stmt.order_by(AuditEvent.created_at.desc(), AuditEvent.id.desc())
             .offset(offset)
             .limit(limit)
         )
@@ -234,3 +313,111 @@ def _float_or_none(value: Any) -> float | None:
 
 def last_24_hours() -> datetime:
     return datetime.now(UTC) - timedelta(hours=24)
+
+
+def _usage_execution_union() -> CompoundSelect[Any]:
+    chat = (
+        select(
+            Message.id.label("record_id"),
+            Message.project_id,
+            Message.created_at.label("occurred_at"),
+            func.coalesce(Message.provider, Conversation.provider).label("provider"),
+            func.coalesce(Message.model, Conversation.model).label("model"),
+            literal(UsageWorkload.CHAT.value).label("workload"),
+            Message.input_tokens,
+            Message.output_tokens,
+            Message.retrieval_latency_ms,
+            Message.provider_latency_ms,
+            Message.total_latency_ms,
+            case((Message.finish_reason == "error", 1), else_=0).label("error_count"),
+        )
+        .join(
+            Conversation,
+            and_(
+                Conversation.id == Message.conversation_id,
+                Conversation.project_id == Message.project_id,
+            ),
+        )
+        .where(Message.role == MessageRole.ASSISTANT)
+    )
+    contextual = select(
+        Generation.id.label("record_id"),
+        Generation.project_id,
+        Generation.created_at.label("occurred_at"),
+        Generation.provider,
+        Generation.model,
+        literal(UsageWorkload.CONTEXTUAL_GENERATION.value).label("workload"),
+        Generation.input_tokens,
+        Generation.output_tokens,
+        literal(None).cast(Integer).label("retrieval_latency_ms"),
+        Generation.provider_latency_ms,
+        Generation.total_latency_ms,
+        case((Generation.status == GenerationStatus.FAILED, 1), else_=0).label(
+            "error_count"
+        ),
+    )
+    evaluation = (
+        select(
+            EvaluationRun.id.label("record_id"),
+            EvaluationRun.project_id,
+            EvaluationRun.created_at.label("occurred_at"),
+            EvaluationRun.provider,
+            EvaluationRun.model,
+            literal(UsageWorkload.EVALUATION.value).label("workload"),
+            EvaluationRun.input_tokens,
+            EvaluationRun.output_tokens,
+            EvaluationRun.retrieval_latency_ms,
+            EvaluationRun.provider_latency_ms,
+            EvaluationRun.total_latency_ms,
+            case((JobRun.state == JobState.FAILED, 1), else_=0).label("error_count"),
+        )
+        .join(
+            JobRun,
+            and_(
+                JobRun.id == EvaluationRun.job_id,
+                JobRun.project_id == EvaluationRun.project_id,
+            ),
+        )
+    )
+    return union_all(chat, contextual, evaluation)
+
+
+def _usage_aggregate_columns(executions: Any) -> tuple[Any, ...]:
+    requests = func.count(executions.c.record_id)
+    token_records = func.count(executions.c.input_tokens)
+    input_tokens = case(
+        (token_records == requests, func.sum(executions.c.input_tokens)),
+        else_=None,
+    ).label("input_tokens")
+    output_records = func.count(executions.c.output_tokens)
+    output_tokens = case(
+        (output_records == requests, func.sum(executions.c.output_tokens)),
+        else_=None,
+    ).label("output_tokens")
+    complete_token_records = func.count(
+        case(
+            (
+                and_(
+                    executions.c.input_tokens.is_not(None),
+                    executions.c.output_tokens.is_not(None),
+                ),
+                1,
+            )
+        )
+    )
+    return (
+        requests.label("request_count"),
+        func.coalesce(func.sum(executions.c.error_count), 0).label("error_count"),
+        complete_token_records.label("records_with_token_usage"),
+        input_tokens,
+        output_tokens,
+        func.count(executions.c.retrieval_latency_ms).label("retrieval_samples"),
+        func.avg(executions.c.retrieval_latency_ms).label("retrieval_average_ms"),
+        func.max(executions.c.retrieval_latency_ms).label("retrieval_maximum_ms"),
+        func.count(executions.c.provider_latency_ms).label("provider_samples"),
+        func.avg(executions.c.provider_latency_ms).label("provider_average_ms"),
+        func.max(executions.c.provider_latency_ms).label("provider_maximum_ms"),
+        func.count(executions.c.total_latency_ms).label("total_samples"),
+        func.avg(executions.c.total_latency_ms).label("total_average_ms"),
+        func.max(executions.c.total_latency_ms).label("total_maximum_ms"),
+    )

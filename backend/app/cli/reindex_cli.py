@@ -7,14 +7,22 @@ import asyncio
 import uuid
 
 import structlog
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.composition.jobs import build_job_service
 from app.core.config import get_settings
 from app.models.document import DocumentStatus
+from app.models.index_build import ProjectIndexPointer
+from app.models.project import Project
 from app.modules.knowledge.repositories.document_repository import DocumentRepository
 from app.modules.knowledge.services.document_service import DocumentService
+from app.modules.projects.repositories.project_ai_config_repository import (
+    ProjectAIConfigRepository,
+)
+from app.platform.config.project_ai import ConfigRevisionRecord, resolve_project_ai_config
 from app.platform.db.session import Database
 from app.platform.jobs.configuration import build_job_configuration
+from app.platform.jobs.contracts import JobConfiguration
 from app.platform.jobs.implementations.job_queue_factory import create_job_queue
 from app.platform.providers.implementations.storage_factory import create_storage_provider
 
@@ -39,7 +47,10 @@ async def _reprocess_document(project_id: uuid.UUID, document_id: uuid.UUID) -> 
                 repository=repository,
                 storage=create_storage_provider(settings),
                 job_submitter=jobs,
-                job_configuration=build_job_configuration(settings),
+                job_configuration=await _project_job_configuration(
+                    session,
+                    project_id=project_id,
+                ),
                 job_max_attempts=settings.jobs.max_attempts,
                 max_upload_bytes=settings.knowledge.max_upload_bytes,
             )
@@ -77,7 +88,10 @@ async def _reprocess_project(
                 repository=repository,
                 storage=create_storage_provider(settings),
                 job_submitter=jobs,
-                job_configuration=build_job_configuration(settings),
+                job_configuration=await _project_job_configuration(
+                    session,
+                    project_id=project_id,
+                ),
                 job_max_attempts=settings.jobs.max_attempts,
                 max_upload_bytes=settings.knowledge.max_upload_bytes,
             )
@@ -100,6 +114,39 @@ async def _reprocess_project(
     finally:
         await database.dispose()
     return count
+
+
+async def _project_job_configuration(
+    session: AsyncSession,
+    *,
+    project_id: uuid.UUID,
+) -> JobConfiguration:
+    """Capture the same Project config/index/source provenance as HTTP submissions."""
+    settings = get_settings()
+    revision = await ProjectAIConfigRepository(session, project_id).get_active()
+    project = await session.get(Project, project_id)
+    pointer = await session.get(ProjectIndexPointer, project_id)
+    resolution = resolve_project_ai_config(
+        settings,
+        ConfigRevisionRecord(
+            id=revision.id,
+            revision_number=revision.revision_number,
+            configuration_hash=revision.configuration_hash,
+            configuration=dict(revision.configuration),
+        )
+        if revision is not None
+        else None,
+    )
+    return build_job_configuration(
+        settings,
+        resolution=resolution,
+        active_index_build_id=(
+            str(pointer.active_build_id) if pointer and pointer.active_build_id else None
+        ),
+        source_metadata_generation=(
+            project.source_metadata_generation if project is not None else 0
+        ),
+    )
 
 
 def _build_parser() -> argparse.ArgumentParser:

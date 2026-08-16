@@ -16,6 +16,7 @@ class ProjectCreate(BaseModel):
 
     name: str = Field(..., min_length=1, max_length=255)
     description: str | None = Field(default=None, max_length=2000)
+    organization_id: uuid.UUID | None = None
 
     @field_validator("name")
     @classmethod
@@ -61,6 +62,7 @@ class ProjectResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
+    organization_id: uuid.UUID
     name: str
     description: str | None
     is_active: bool
@@ -68,3 +70,20 @@ class ProjectResponse(BaseModel):
     deleted_by: uuid.UUID | None
     created_at: datetime
     updated_at: datetime
+    ownership_locked: bool
+    active_ai_config_revision_id: uuid.UUID | None
+    source_metadata_generation: int
+
+
+class ProjectStatusUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    is_active: bool
+
+
+class ProjectOwnershipMigrationStatus(BaseModel):
+    total_projects: int
+    locked_projects: int
+    legacy_unlocked_projects: int
+    default_organization_unlocked_projects: int
+    projects: list[ProjectResponse]

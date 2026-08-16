@@ -6,7 +6,9 @@ import uuid
 from collections.abc import AsyncIterator
 
 from fastapi import APIRouter, Form, Query, UploadFile, status
+from pydantic import ValidationError as PydanticValidationError
 
+from app.core.exceptions import BadRequestError
 from app.core.http.envelopes import ApiResponse
 from app.dependencies.knowledge import DocumentServiceDep
 from app.dependencies.retrieval import IndexingServiceDep
@@ -16,6 +18,7 @@ from app.modules.knowledge.schemas.document import (
     DocumentListParams,
     DocumentResponse,
 )
+from app.modules.knowledge.schemas.source_metadata import SourceRevisionCreate
 from app.platform.http.pagination import PaginatedResult
 
 router = APIRouter()
@@ -40,13 +43,25 @@ async def upload_document(
     file: UploadFile,
     service: DocumentServiceDep,
     ocr_lang: str | None = Form(default=None),
+    source_metadata: str | None = Form(default=None),
 ) -> ApiResponse[DocumentResponse]:
     del project_id
+    parsed_source_metadata: SourceRevisionCreate | None = None
+    if source_metadata:
+        try:
+            parsed_source_metadata = SourceRevisionCreate.model_validate_json(source_metadata)
+        except PydanticValidationError as exc:
+            raise BadRequestError(
+                message="source_metadata must be valid JSON source metadata.",
+                code="source_metadata_invalid",
+                context={"validation_errors": exc.errors(include_url=False)},
+            ) from exc
     ingest = DocumentIngestInput(
         filename=file.filename or "upload",
         content_type=file.content_type,
         stream=_file_stream(file),
         ocr_lang=ocr_lang,
+        source_metadata=parsed_source_metadata,
     )
     document = await service.upload(ingest)
     return ApiResponse.ok(DocumentResponse.model_validate(document))

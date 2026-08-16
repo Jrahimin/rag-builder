@@ -10,12 +10,30 @@ export const operatorQueryKeys = {
   all: ["operator"] as const,
   overview: ["operator", "overview"] as const,
   metrics: ["operator", "metrics"] as const,
+  usage: (filters: object) => ["operator", "usage", filters] as const,
   configuration: ["operator", "configuration"] as const,
   dependencies: ["operator", "dependencies"] as const,
   workers: ["operator", "workers"] as const,
   failures: ["operator", "failures"] as const,
   audit: ["operator", "audit"] as const,
+  organizations: ["operator", "organizations"] as const,
+  organization: (organizationId: string) => ["operator", "organizations", organizationId] as const,
+  organizationProjects: (organizationId: string) =>
+    ["operator", "organizations", organizationId, "projects"] as const,
+  apiKeys: (organizationId: string) =>
+    ["operator", "organizations", organizationId, "api-keys"] as const,
   projects: ["operator", "projects"] as const,
+  projectsAll: ["operator", "projects", "all"] as const,
+  ownershipMigration: ["operator", "projects", "ownership-migration"] as const,
+  projectConfig: (projectId: string) => ["operator", "projects", projectId, "ai-config"] as const,
+  projectConfigHistory: (projectId: string) =>
+    ["operator", "projects", projectId, "ai-config", "history"] as const,
+  projectHistory: (projectId: string) => ["operator", "projects", projectId, "history"] as const,
+  sourceState: (projectId: string) => ["operator", "projects", projectId, "sources"] as const,
+  sourceHistory: (projectId: string, documentId: string) =>
+    ["operator", "projects", projectId, "sources", documentId, "history"] as const,
+  sourceActivations: (projectId: string, documentId = "") =>
+    ["operator", "projects", projectId, "sources", "activations", documentId] as const,
   documents: (projectId: string) => ["operator", "projects", projectId, "documents"] as const,
   document: (projectId: string, documentId: string) =>
     ["operator", "projects", projectId, "documents", documentId] as const,
@@ -56,13 +74,57 @@ export function useProjects() {
   });
 }
 
+export function useAllOperatorProjects() {
+  return useQuery({
+    queryKey: operatorQueryKeys.projectsAll,
+    queryFn: () => operatorApiClient.getAllOperatorProjects(),
+    staleTime: 15_000,
+  });
+}
+
+export function useOrganizations() {
+  return useQuery({
+    queryKey: operatorQueryKeys.organizations,
+    queryFn: () => operatorApiClient.getOrganizations(),
+    staleTime: 15_000,
+  });
+}
+
+export function useOrganizationProjects(organizationId: string) {
+  return useQuery({
+    queryKey: operatorQueryKeys.organizationProjects(organizationId),
+    queryFn: () => operatorApiClient.getOrganizationProjects(organizationId),
+    enabled: Boolean(organizationId),
+  });
+}
+
+export function useApiKeys(organizationId: string) {
+  return useQuery({
+    queryKey: operatorQueryKeys.apiKeys(organizationId),
+    queryFn: () => operatorApiClient.getApiKeys(organizationId),
+    enabled: Boolean(organizationId),
+  });
+}
+
 export function useCreateProject() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ name, description }: { name: string; description?: string }) =>
-      operatorApiClient.createProject(name, description),
+    mutationFn: ({
+      name,
+      organizationId,
+      description,
+    }: {
+      name: string;
+      organizationId: string;
+      description?: string;
+    }) => operatorApiClient.createProject(name, organizationId, description),
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: operatorQueryKeys.projects });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: operatorQueryKeys.projects }),
+        queryClient.invalidateQueries({ queryKey: operatorQueryKeys.projectsAll }),
+        queryClient.invalidateQueries({ queryKey: operatorQueryKeys.ownershipMigration }),
+        queryClient.invalidateQueries({ queryKey: operatorQueryKeys.organizations }),
+      ]);
     },
   });
 }
@@ -91,14 +153,49 @@ export function useDocument(projectId: string, documentId: string) {
 export function useUploadDocument(projectId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ file, ocrLang }: { file: File; ocrLang?: string }) =>
-      operatorApiClient.uploadDocument(projectId, file, ocrLang),
+    mutationFn: ({
+      file,
+      ocrLang,
+      sourceMetadata,
+    }: {
+      file: File;
+      ocrLang?: string;
+      sourceMetadata?: Parameters<typeof operatorApiClient.uploadDocument>[3];
+    }) =>
+      sourceMetadata
+        ? operatorApiClient.uploadDocument(projectId, file, ocrLang, sourceMetadata)
+        : operatorApiClient.uploadDocument(projectId, file, ocrLang),
     onSuccess: async () => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: operatorQueryKeys.documents(projectId) }),
         queryClient.invalidateQueries({ queryKey: operatorQueryKeys.jobsBase(projectId) }),
+        queryClient.invalidateQueries({ queryKey: operatorQueryKeys.sourceState(projectId) }),
       ]);
     },
+  });
+}
+
+export function useSourceState(projectId: string) {
+  return useQuery({
+    queryKey: operatorQueryKeys.sourceState(projectId),
+    queryFn: () => operatorApiClient.getSourceState(projectId),
+    enabled: Boolean(projectId),
+  });
+}
+
+export function useSourceHistory(projectId: string, documentId: string) {
+  return useQuery({
+    queryKey: operatorQueryKeys.sourceHistory(projectId, documentId),
+    queryFn: () => operatorApiClient.getSourceRevisions(projectId, documentId),
+    enabled: Boolean(projectId && documentId),
+  });
+}
+
+export function useSourceActivations(projectId: string, documentId = "") {
+  return useQuery({
+    queryKey: operatorQueryKeys.sourceActivations(projectId, documentId),
+    queryFn: () => operatorApiClient.getSourceActivations(projectId, documentId || undefined),
+    enabled: Boolean(projectId),
   });
 }
 

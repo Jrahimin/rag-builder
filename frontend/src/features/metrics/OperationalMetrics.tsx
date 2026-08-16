@@ -1,22 +1,46 @@
 import { useQuery } from "@tanstack/react-query";
 import { Activity, Boxes, Clock3, Database, Gauge, Sigma } from "lucide-react";
+import { useState } from "react";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { operatorApiClient } from "../../api/operatorApiClient";
+import {
+  operatorApiClient,
+  type UsageBucket,
+  type UsageFilters,
+  type UsageWorkload,
+} from "../../api/operatorApiClient";
 import { operatorQueryKeys } from "../../api/operatorConsoleQueries";
 import { ErrorState, LoadingState } from "../../components/QueryStatePanel";
 import { MetricCard } from "../../components/MetricCard";
 import { formatBytes, formatDuration, formatNumber } from "../../shared/formatters";
 
 export function OperationalMetrics() {
+  const [bucket, setBucket] = useState<UsageBucket>("day");
+  const [workload, setWorkload] = useState<UsageWorkload | "">("");
+  const [provider, setProvider] = useState("");
+  const [model, setModel] = useState("");
+  const usageFilters: UsageFilters = {
+    bucket,
+    workload: workload || undefined,
+    provider: provider || undefined,
+    model: model || undefined,
+  };
   const metrics = useQuery({
     queryKey: operatorQueryKeys.metrics,
     queryFn: operatorApiClient.getMetrics,
     refetchInterval: 15_000,
   });
-  if (metrics.isPending) return <LoadingState label="Loading operational metrics" />;
+  const usage = useQuery({
+    queryKey: operatorQueryKeys.usage(usageFilters),
+    queryFn: () => operatorApiClient.getUsage(usageFilters),
+    refetchInterval: 30_000,
+  });
+  if (metrics.isPending || usage.isPending)
+    return <LoadingState label="Loading operational metrics" />;
   if (metrics.isError)
     return <ErrorState error={metrics.error} retry={() => void metrics.refetch()} />;
+  if (usage.isError) return <ErrorState error={usage.error} retry={() => void usage.refetch()} />;
   const data = metrics.data;
+  const usageData = usage.data;
   const chart = data.job_latency.map((metric) => ({
     name: metric.name.replace("document.", ""),
     average: metric.average_ms ?? 0,
@@ -33,8 +57,8 @@ export function OperationalMetrics() {
         />
         <MetricCard
           label="Token usage"
-          value={formatNumber(data.token_usage.total_tokens)}
-          detail={`${formatNumber(data.token_usage.input_tokens)} input · ${formatNumber(data.token_usage.output_tokens)} output`}
+          value={formatNullableNumber(usageData.totals.total_tokens)}
+          detail={`${usageData.totals.records_with_token_usage}/${usageData.totals.request_count} requests reported usage`}
           icon={Sigma}
         />
         <MetricCard
@@ -107,6 +131,134 @@ export function OperationalMetrics() {
         </section>
       </div>
       <section className="panel">
+        <div className="panel__heading usage-heading">
+          <div>
+            <h2>Execution usage</h2>
+            <p>
+              Organization, Project, provider, model, workload, and time aggregates. Missing
+              provider usage remains unknown.
+            </p>
+          </div>
+          <div className="usage-filters" aria-label="Usage filters">
+            <label className="field-control">
+              <span>Bucket</span>
+              <select
+                value={bucket}
+                onChange={(event) => setBucket(event.target.value as UsageBucket)}
+              >
+                <option value="hour">Hour</option>
+                <option value="day">Day</option>
+                <option value="month">Month</option>
+              </select>
+            </label>
+            <label className="field-control">
+              <span>Workload</span>
+              <select
+                value={workload}
+                onChange={(event) => setWorkload(event.target.value as UsageWorkload | "")}
+              >
+                <option value="">All workloads</option>
+                <option value="chat">Chat</option>
+                <option value="contextual_generation">Contextual generation</option>
+                <option value="evaluation">Evaluation</option>
+              </select>
+            </label>
+            <label className="field-control">
+              <span>Provider</span>
+              <input
+                value={provider}
+                onChange={(event) => setProvider(event.target.value)}
+                placeholder="All providers"
+              />
+            </label>
+            <label className="field-control">
+              <span>Model</span>
+              <input
+                value={model}
+                onChange={(event) => setModel(event.target.value)}
+                placeholder="All models"
+              />
+            </label>
+          </div>
+        </div>
+        <dl className="configuration-grid usage-summary">
+          <div>
+            <dt>Requests</dt>
+            <dd>{formatNumber(usageData.totals.request_count)}</dd>
+          </div>
+          <div>
+            <dt>Errors</dt>
+            <dd>{formatNumber(usageData.totals.error_count)}</dd>
+          </div>
+          <div>
+            <dt>Input tokens</dt>
+            <dd>{formatNullableNumber(usageData.totals.input_tokens)}</dd>
+          </div>
+          <div>
+            <dt>Output tokens</dt>
+            <dd>{formatNullableNumber(usageData.totals.output_tokens)}</dd>
+          </div>
+          <div>
+            <dt>Provider average</dt>
+            <dd>{formatDuration(usageData.totals.provider_latency.average_ms)}</dd>
+          </div>
+          <div>
+            <dt>Total average</dt>
+            <dd>{formatDuration(usageData.totals.total_latency.average_ms)}</dd>
+          </div>
+        </dl>
+        {usageData.items.length === 0 ? (
+          <div className="inline-empty">No executions matched the selected usage filters.</div>
+        ) : (
+          <div className="table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>Period</th>
+                  <th>Organization / Project</th>
+                  <th>Provider / Model</th>
+                  <th>Workload</th>
+                  <th>Requests</th>
+                  <th>Tokens</th>
+                  <th>Provider latency</th>
+                  <th>Total latency</th>
+                </tr>
+              </thead>
+              <tbody>
+                {usageData.items.map((item, index) => (
+                  <tr
+                    key={`${item.bucket_start ?? "total"}-${item.project_id ?? "unknown"}-${item.provider ?? "unknown"}-${item.model ?? "unknown"}-${item.workload ?? "unknown"}-${index}`}
+                  >
+                    <td>{formatPeriod(item.bucket_start)}</td>
+                    <td>
+                      <strong>{item.organization_name ?? "Unknown organization"}</strong>
+                      <small>{item.project_name ?? "Unknown Project"}</small>
+                    </td>
+                    <td>
+                      <strong>{item.provider ?? "Unknown provider"}</strong>
+                      <small>{item.model ?? "Unknown model"}</small>
+                    </td>
+                    <td>{formatWorkload(item.workload)}</td>
+                    <td>
+                      {formatNumber(item.request_count)}
+                      {item.error_count ? ` · ${item.error_count} errors` : ""}
+                    </td>
+                    <td>
+                      {formatNullableNumber(item.total_tokens)}
+                      <small>
+                        {item.records_with_token_usage}/{item.request_count} reported
+                      </small>
+                    </td>
+                    <td>{formatDuration(item.provider_latency.average_ms)}</td>
+                    <td>{formatDuration(item.total_latency.average_ms)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+      <section className="panel">
         <div className="panel__heading">
           <div>
             <h2>Queue and dispatch</h2>
@@ -147,4 +299,17 @@ export function OperationalMetrics() {
       </section>
     </div>
   );
+}
+
+function formatNullableNumber(value: number | null) {
+  return value === null ? "Unknown" : formatNumber(value);
+}
+
+function formatPeriod(value?: string | null) {
+  if (!value) return "—";
+  return new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(new Date(value));
+}
+
+function formatWorkload(value?: string | null) {
+  return value ? value.replaceAll("_", " ") : "Unknown";
 }

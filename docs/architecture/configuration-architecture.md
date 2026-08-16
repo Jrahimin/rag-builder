@@ -5,9 +5,10 @@
 ## Layers (precedence, lowest → highest)
 
 ```text
-1. Deployment  — core.config.Settings (APE_* env vars) ✅ active
-2. Platform    — DB-backed defaults (future)
-3. Project     — per-Project overrides (future)
+1. Deployment  — `core.config.Settings` (`APE_*` env vars)
+2. Project     — active immutable `project_ai_config_revisions` row
+3. Request     — fixed external allowlist only
+4. Safety      — deployment bounds and provider/model capabilities
 ```
 
 `RuntimeConfig` adds the certified production profile, bounded preflight timeouts, and worker
@@ -17,29 +18,48 @@ explicit allowlist and credential-presence flags; it never dumps `Settings`.
 
 `ConfigLayer` + `CONFIG_PRECEDENCE_ORDER` in `platform/config/contracts.py`.
 
-## Durable job snapshots
+Project revisions are sparse, typed documents. Effective resolution records an origin for each
+value, the active revision ID/hash, a secret-free global fingerprint, provider-capability version,
+and prompt versions. A Project without an active revision resolves exactly to deployment defaults.
+
+The external request allowlist is `top_k`, an enabled retrieval strategy, existing allowlisted
+metadata filters, and explicit `as_of`. Provider/model, temperature, token limits, reranking,
+prompts, evidence, citation, and grounding values remain Project policy. Deprecated legacy fields
+are observable in `compatibility` mode and fail with `request_policy_override_forbidden` in
+`strict` mode (`APE_AI_POLICY__REQUEST_OVERRIDE_MODE`).
+
+## Immutable execution snapshots
 
 Every durable ingestion/indexing job references an immutable,
 Project-scoped `JobConfigurationSnapshot`. The snapshot is normalized and
-content-addressed by SHA-256, includes the parsing/chunking/OCR/embedding/
-retrieval values that determine outputs, and deliberately excludes credentials.
+content-addressed by an output SHA-256, includes the parsing/chunking/OCR/embedding/
+retrieval values that determine outputs, effective Project AI policy, active config revision/hash,
+global fingerprint, provider/prompt versions, active index build, and source-metadata generation.
+It deliberately excludes credentials.
 Workers combine that snapshot with live deployment secrets. Retries therefore
 reproduce the original processing choices without persisting secret material.
 
-This is execution provenance, not a generic configuration override system.
+Execution and provenance facts, including the observed active index build and source-metadata
+generation, do not change snapshot deduplication identity. Corpus `IndexBuild.configuration_hash`
+uses a narrower index-artifact identity: chat/LLM policy and retrieval `top_k` do not create a new
+content index identity. The worker always restores the staged snapshot before it performs work; it
+does not re-resolve changed Project policy from deployment defaults.
 
-## What is deferred
+Conversation creation similarly appends an immutable `conversation_config_snapshots` row. Messages
+reference that row, so later Project or deployment changes cannot alter an existing conversation.
+An explicit Super-Admin refresh appends a new snapshot for future messages. Contextual generations
+and evaluation runs persist the same secret-free effective configuration and provenance.
 
-- Generic key/value `ConfigResolver`
-- Typed Project configuration schemas
+## Deliberate exclusions
 
-Introduce a typed resolver with the Projects module (first consumer).
+Project policy does not include embedding models/dimensions or chunking because those values are
+coupled to global vector schema and index artifact contracts. Generic key/value configuration is
+not used.
 
 ## Rules
 
 - Nothing AI-related hardcoded in services
 - Project overrides cannot weaken deployment security
-- Output-affecting job configuration is immutable and hash-addressed; generic
-  configuration changes and audit history remain deferred
+- Output-affecting Project revisions and execution snapshots are immutable and hash-addressed
 - API and worker composition pass one explicit `Settings` snapshot when wiring a
   service. Provider/config selection does not live inside module services.

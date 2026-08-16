@@ -12,6 +12,7 @@ from app.core.config import Settings
 from app.core.exceptions import ServiceUnavailableError
 from app.models.job_configuration_snapshot import JobConfigurationSnapshot
 from app.modules.operations.repositories.operator_repository import OperatorRepository
+from app.modules.operations.schemas.operator import UsageBucket, UsageWorkload
 from app.modules.operations.services.operator_service import OperatorService
 from app.platform.jobs.worker_registry import WorkerHeartbeat
 from app.platform.system.schemas import PreflightStatus
@@ -118,3 +119,80 @@ async def test_metrics_database_failure_is_sanitized() -> None:
         assert "secret" not in exc.message
     else:
         raise AssertionError("Expected a sanitized service-unavailable error")
+
+
+async def test_usage_preserves_dimensions_and_unknown_provider_tokens() -> None:
+    organization_id = uuid.uuid4()
+    project_id = uuid.uuid4()
+    started = datetime(2026, 8, 1, tzinfo=UTC)
+    ended = datetime(2026, 8, 2, tzinfo=UTC)
+    repository = MagicMock(spec=OperatorRepository)
+    row = {
+        "bucket_start": started,
+        "organization_id": organization_id,
+        "organization_name": "Example Org",
+        "project_id": project_id,
+        "project_name": "Example Project",
+        "provider": "gemini",
+        "model": "gemini-test",
+        "workload": "chat",
+        "request_count": 2,
+        "error_count": 0,
+        "records_with_token_usage": 1,
+        "input_tokens": None,
+        "output_tokens": None,
+        "retrieval_samples": 2,
+        "retrieval_average_ms": 12.5,
+        "retrieval_maximum_ms": 15,
+        "provider_samples": 2,
+        "provider_average_ms": 20,
+        "provider_maximum_ms": 25,
+        "total_samples": 2,
+        "total_average_ms": 32.5,
+        "total_maximum_ms": 40,
+    }
+    repository.usage_aggregates = AsyncMock(return_value=([row], row))
+
+    result = await _service(repository).usage(
+        start_at=started,
+        end_at=ended,
+        bucket=UsageBucket.DAY,
+        organization_id=organization_id,
+        project_id=project_id,
+        provider="gemini",
+        model="gemini-test",
+        workload=UsageWorkload.CHAT,
+    )
+
+    assert result.items[0].organization_id == organization_id
+    assert result.items[0].project_id == project_id
+    assert result.items[0].workload is UsageWorkload.CHAT
+    assert result.items[0].input_tokens is None
+    assert result.items[0].total_tokens is None
+    assert result.items[0].records_with_token_usage == 1
+    assert result.items[0].provider_latency.average_ms == 20.0
+    repository.usage_aggregates.assert_awaited_once_with(
+        start_at=started,
+        end_at=ended,
+        bucket=UsageBucket.DAY,
+        organization_id=organization_id,
+        project_id=project_id,
+        provider="gemini",
+        model="gemini-test",
+        workload=UsageWorkload.CHAT,
+    )
+
+    repository.usage_aggregates.reset_mock()
+    await _service(repository).usage(
+        start_at=started.replace(tzinfo=None),
+        end_at=ended.replace(tzinfo=None),
+        bucket=UsageBucket.DAY,
+        organization_id=organization_id,
+        project_id=project_id,
+        provider="gemini",
+        model="gemini-test",
+        workload=UsageWorkload.CHAT,
+    )
+    normalized = repository.usage_aggregates.await_args.kwargs
+    assert normalized["start_at"] == started
+    assert normalized["end_at"] == ended

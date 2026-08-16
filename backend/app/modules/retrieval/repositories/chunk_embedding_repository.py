@@ -8,8 +8,13 @@ from typing import Any
 from sqlalchemy import delete, literal, select, text
 
 from app.models.chunk_embedding import ChunkEmbedding
-from app.models.document_chunk import DocumentChunk
+from app.models.chunk_keyword_index import ChunkKeywordIndex
 from app.modules.retrieval.retrievers.models import CandidateHit, CandidateSource
+from app.modules.retrieval.source_policy import (
+    SOURCE_METADATA_COLUMNS,
+    SourceMetadataScope,
+    source_metadata_from_row,
+)
 from app.platform.persistence.project_scoped_repository import ProjectScopedRepository
 
 
@@ -85,6 +90,7 @@ class ChunkEmbeddingRepository(ProjectScopedRepository[ChunkEmbedding]):
         metadata_filter: dict[str, str] | None = None,
         score_threshold: float | None = None,
         hnsw_ef_search: int = 100,
+        source_scope: SourceMetadataScope | None = None,
     ) -> list[CandidateHit]:
         """Return nearest native-vector candidates with all filters inside SQL."""
         await self._session.execute(
@@ -94,25 +100,45 @@ class ChunkEmbeddingRepository(ProjectScopedRepository[ChunkEmbedding]):
 
         distance = self.model.embedding.cosine_distance(query_vector)
         score = (literal(1.0) - distance).label("score")
+        source_columns = (
+            [source_scope.selectable.c[name] for name in SOURCE_METADATA_COLUMNS]
+            if source_scope is not None and source_scope.selectable is not None
+            else []
+        )
         stmt = (
-            select(self.model.chunk_id, score, DocumentChunk.chunk_metadata)
+            select(
+                self.model.chunk_id,
+                score,
+                ChunkKeywordIndex.metadata_snapshot,
+                *source_columns,
+            )
             .join(
-                DocumentChunk,
-                (DocumentChunk.id == self.model.chunk_id)
-                & (DocumentChunk.project_id == self.model.project_id),
+                ChunkKeywordIndex,
+                (ChunkKeywordIndex.chunk_id == self.model.chunk_id)
+                & (ChunkKeywordIndex.project_id == self.model.project_id)
+                & (ChunkKeywordIndex.index_build_id == self.model.index_build_id)
+                & (
+                    ChunkKeywordIndex.embedding_set_version
+                    == self.model.embedding_set_version
+                ),
             )
             .where(self.model.project_id == self._project_id)
-            .where(DocumentChunk.project_id == self._project_id)
+            .where(ChunkKeywordIndex.project_id == self._project_id)
             .where(self.model.embedding_set_version == embedding_set_version)
             .where(self.model.provider == provider)
             .where(self.model.model == model)
         )
+        if source_scope is not None and source_scope.selectable is not None:
+            stmt = stmt.join(
+                source_scope.selectable,
+                source_scope.selectable.c.source_document_id == self.model.document_id,
+            )
         if index_build_id is not None:
             stmt = stmt.where(self.model.index_build_id == index_build_id)
         if document_id is not None:
             stmt = stmt.where(self.model.document_id == document_id)
         for key, value in (metadata_filter or {}).items():
-            stmt = stmt.where(DocumentChunk.chunk_metadata[key].astext == value)
+            stmt = stmt.where(ChunkKeywordIndex.metadata_snapshot[key].astext == value)
         if score_threshold is not None:
             stmt = stmt.where(distance <= 1.0 - score_threshold)
         stmt = stmt.order_by(distance, self.model.chunk_id).limit(top_k)
@@ -123,7 +149,10 @@ class ChunkEmbeddingRepository(ProjectScopedRepository[ChunkEmbedding]):
                 chunk_id=row.chunk_id,
                 score=float(row.score),
                 source=CandidateSource.SEMANTIC,
-                metadata=dict(_metadata_dict(row.chunk_metadata)),
+                metadata={
+                    **_metadata_dict(row.metadata_snapshot),
+                    **source_metadata_from_row(row),
+                },
             )
             for row in result
         ]

@@ -49,8 +49,8 @@ class ChatMessage:
 class ChatUsage:
     """Token usage from an LLM completion."""
 
-    input_tokens: int
-    output_tokens: int
+    input_tokens: int | None
+    output_tokens: int | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,6 +71,7 @@ class ChatCompletionChunk:
 
     delta: str
     finish_reason: str | None = None
+    usage: ChatUsage | None = None
 
 
 class BaseLLMProvider(ABC):

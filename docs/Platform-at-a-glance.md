@@ -150,6 +150,9 @@ OCR, embedding, and indexing continue asynchronously.
 | Organizations | Tenant and machine-to-machine auth boundary | Shipped |
 | Organization API keys | Authenticate business integrations | Shipped |
 | Projects | Data isolation boundary for documents, retrieval, and chat | Shipped |
+| Immutable Project AI policy | Operator-owned revisions, capabilities, and provenance | Shipped |
+| Reproducible execution | Conversation, generation, evaluation, and job snapshots | Shipped |
+| Explicit Project ownership | Creation lock plus safe legacy confirmation/reassignment | Shipped |
 | Knowledge ingestion | Upload, parse, store, and chunk documents | Shipped |
 | Storage abstraction | Keep raw and parsed artifacts behind a provider | Shipped |
 | OCR contract | Optional Paddle fallback plus opt-in Google Vision OCR-first routing for Bangla | Shipped |

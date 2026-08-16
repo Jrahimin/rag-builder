@@ -15,14 +15,14 @@ _LOCALE_PATTERN = re.compile(r"^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$")
 
 
 class GenerationRequestConfig(BaseModel):
-    """Bounded caller overrides for model generation."""
+    """Deprecated compatibility fields; Project policy owns these values."""
 
     model_config = ConfigDict(extra="forbid")
 
-    provider: LLMBackend | None = None
-    model: Annotated[str | None, Field(min_length=1, max_length=128)] = None
-    temperature: float | None = Field(default=None, ge=0.0, le=2.0)
-    max_tokens: int | None = Field(default=None, ge=1, le=128_000)
+    provider: LLMBackend | None = Field(default=None, deprecated=True)
+    model: Annotated[str | None, Field(min_length=1, max_length=128, deprecated=True)] = None
+    temperature: float | None = Field(default=None, ge=0.0, le=2.0, deprecated=True)
+    max_tokens: int | None = Field(default=None, ge=1, le=128_000, deprecated=True)
 
 
 class GenerationCreateRequest(BaseModel):
@@ -36,7 +36,9 @@ class GenerationCreateRequest(BaseModel):
     ]
     input: JsonValue
     context: JsonValue
-    prompt_version: Annotated[str | None, Field(min_length=1, max_length=64)] = None
+    prompt_version: Annotated[str | None, Field(min_length=1, max_length=64, deprecated=True)] = (
+        None
+    )
     response_schema: dict[str, JsonValue] | None = None
     locale: Annotated[str | None, Field(min_length=2, max_length=35)] = None
     generation_config: GenerationRequestConfig = Field(default_factory=GenerationRequestConfig)
@@ -109,6 +111,10 @@ class GenerationResponse(BaseModel):
     idempotency_replayed: bool = False
     finish_reason: str | None
     failure: GenerationFailure | None
+    configuration_hash: str | None
+    config_provenance: dict[str, object]
+    index_build_id: str | None
+    source_metadata_generation: int | None
     created_at: datetime
     completed_at: datetime | None
 
@@ -119,10 +125,9 @@ class GenerationResponse(BaseModel):
         *,
         idempotency_replayed: bool = False,
     ) -> GenerationResponse:
-        token_values = (generation.input_tokens, generation.output_tokens)
         total_tokens = (
-            sum(value for value in token_values if value is not None)
-            if any(value is not None for value in token_values)
+            generation.input_tokens + generation.output_tokens
+            if generation.input_tokens is not None and generation.output_tokens is not None
             else None
         )
         failure = (
@@ -164,6 +169,10 @@ class GenerationResponse(BaseModel):
             idempotency_replayed=idempotency_replayed,
             finish_reason=generation.finish_reason,
             failure=failure,
+            configuration_hash=generation.configuration_hash,
+            config_provenance=dict(generation.config_provenance),
+            index_build_id=(str(generation.index_build_id) if generation.index_build_id else None),
+            source_metadata_generation=generation.source_metadata_generation,
             created_at=generation.created_at,
             completed_at=generation.completed_at,
         )

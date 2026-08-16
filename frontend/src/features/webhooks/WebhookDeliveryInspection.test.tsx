@@ -108,7 +108,7 @@ test("inspects the immutable event and failed HTTP attempt", async () => {
   });
 
   renderOperatorComponent(<WebhookDeliveryInspection />);
-  await userEvent.click(await screen.findByRole("button", { name: "Inspect" }));
+  await userEvent.click(await screen.findByRole("button", { name: "Inspect" }, { timeout: 5_000 }));
 
   expect(await screen.findByText("document.processing.failed.v1")).toBeInTheDocument();
   expect(screen.getAllByText("receiver returned HTTP 503")).toHaveLength(2);

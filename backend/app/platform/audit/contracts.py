@@ -9,6 +9,26 @@ from typing import Any
 
 
 class AuditEventType(StrEnum):
+    ORGANIZATION_CREATED = "organization.created"
+    ORGANIZATION_UPDATED = "organization.updated"
+    ORGANIZATION_STATUS_CHANGED = "organization.status_changed"
+    ORGANIZATION_ARCHIVED = "organization.archived"
+    ORGANIZATION_RESTORED = "organization.restored"
+    API_KEY_CREATED = "api_key.created"
+    API_KEY_ROTATED = "api_key.rotated"
+    API_KEY_REVOKED = "api_key.revoked"
+    PROJECT_CREATED = "project.created"
+    PROJECT_UPDATED = "project.updated"
+    PROJECT_STATUS_CHANGED = "project.status_changed"
+    PROJECT_ARCHIVED = "project.archived"
+    PROJECT_RESTORED = "project.restored"
+    PROJECT_OWNERSHIP_REASSIGNED = "project.ownership_reassigned"
+    PROJECT_OWNERSHIP_CONFIRMED = "project.ownership_confirmed"
+    PROJECT_CONFIG_REVISION_CREATED = "project_config.revision_created"
+    PROJECT_CONFIG_REVISION_RESTORED = "project_config.revision_restored"
+    CONVERSATION_CONFIG_UPDATED = "conversation.config_updated"
+    SOURCE_METADATA_REVISION_CREATED = "source_metadata.revision_created"
+    SOURCE_METADATA_REVISION_ACTIVATED = "source_metadata.revision_activated"
     JOB_SUBMITTED = "job.submitted"
     JOB_RETRIED = "job.retried"
     JOB_STARTED = "job.started"
@@ -41,7 +61,7 @@ class AuditOutcome(StrEnum):
 
 
 class AuditRecorder(ABC):
-    """Stage a sanitized, project-scoped audit record in the current transaction."""
+    """Stage a sanitized administrative event in the current transaction."""
 
     @abstractmethod
     def record(
@@ -54,4 +74,6 @@ class AuditRecorder(ABC):
         outcome: AuditOutcome,
         actor_id: str | None = None,
         detail: dict[str, Any] | None = None,
+        organization_id: uuid.UUID | None = None,
+        project_id: uuid.UUID | None = None,
     ) -> None: ...

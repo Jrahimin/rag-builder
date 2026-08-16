@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import uuid
+from dataclasses import dataclass
+from typing import Any
 
 from sqlalchemy import delete, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,7 +16,21 @@ from app.modules.retrieval.keyword.tokenizer import (
     term_frequencies,
     tokenize,
 )
+from app.modules.retrieval.source_policy import (
+    SOURCE_METADATA_COLUMNS,
+    SourceMetadataScope,
+    source_metadata_from_row,
+)
 from app.platform.persistence.project_scoped_repository import ProjectScopedRepository
+
+
+@dataclass(frozen=True, slots=True)
+class KeywordCandidateRow:
+    chunk_id: uuid.UUID
+    token_count: int
+    term_frequencies: dict[str, Any]
+    metadata_snapshot: dict[str, Any]
+    source_metadata: dict[str, Any]
 
 
 class ChunkKeywordIndexRepository(ProjectScopedRepository[ChunkKeywordIndex]):
@@ -97,12 +113,18 @@ class ChunkKeywordIndexRepository(ProjectScopedRepository[ChunkKeywordIndex]):
         top_k: int,
         document_id: uuid.UUID | None = None,
         metadata_filter: dict[str, str] | None = None,
-    ) -> list[ChunkKeywordIndex]:
+        source_scope: SourceMetadataScope | None = None,
+    ) -> list[KeywordCandidateRow]:
         """FTS candidate narrowing — BM25 scoring happens in the retriever."""
         normalized_query = normalize_for_query(query)
         ts_query = func.plainto_tsquery(self._fts_regconfig, normalized_query)
+        source_columns = (
+            [source_scope.selectable.c[name] for name in SOURCE_METADATA_COLUMNS]
+            if source_scope is not None and source_scope.selectable is not None
+            else []
+        )
         stmt = (
-            select(self.model)
+            select(self.model, *source_columns)
             .where(
                 self.model.project_id == self._project_id,
                 self.model.embedding_set_version == embedding_set_version,
@@ -111,6 +133,11 @@ class ChunkKeywordIndexRepository(ProjectScopedRepository[ChunkKeywordIndex]):
             .order_by(func.ts_rank_cd(self.model.search_vector, ts_query).desc())
             .limit(top_k)
         )
+        if source_scope is not None and source_scope.selectable is not None:
+            stmt = stmt.join(
+                source_scope.selectable,
+                source_scope.selectable.c.source_document_id == self.model.document_id,
+            )
         if index_build_id is not None:
             stmt = stmt.where(self.model.index_build_id == index_build_id)
         if document_id is not None:
@@ -119,7 +146,16 @@ class ChunkKeywordIndexRepository(ProjectScopedRepository[ChunkKeywordIndex]):
             for key, value in metadata_filter.items():
                 stmt = stmt.where(self.model.metadata_snapshot[key].astext == value)
         result = await self._session.execute(stmt)
-        return list(result.scalars().all())
+        return [
+            KeywordCandidateRow(
+                chunk_id=row[0].chunk_id,
+                token_count=row[0].token_count,
+                term_frequencies=dict(row[0].term_frequencies),
+                metadata_snapshot=dict(row[0].metadata_snapshot),
+                source_metadata=source_metadata_from_row(row),
+            )
+            for row in result.all()
+        ]
 
     async def map_content_by_ids(
         self, chunk_ids: list[uuid.UUID], *, index_build_id: uuid.UUID | None = None

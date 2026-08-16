@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import time
 import uuid
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.composition.jobs import build_job_service
+from app.composition.source_metadata import KnowledgeRetrievalSourceMetadataAdapter
 from app.core.config import RerankerBackend, RetrievalStrategy, Settings
 from app.modules.conversations.context_builder import ContextBuilder
 from app.modules.conversations.grounding_service import GroundingService
@@ -32,6 +35,12 @@ from app.modules.evaluation.services.evaluation_runner_service import Evaluation
 from app.modules.evaluation.services.evaluation_service import EvaluationService
 from app.modules.retrieval.schemas.search import SearchRequest
 from app.modules.retrieval.services.search_service import SearchService
+from app.platform.config.project_ai import (
+    EffectiveConfigResolution,
+    SourcePolicyMode,
+    apply_effective_ai_config,
+    resolve_project_ai_config,
+)
 from app.platform.domain.content_hash import content_hash
 from app.platform.jobs.configuration import build_job_configuration
 from app.platform.jobs.contracts import DurableJobSubmitter, JobQueue
@@ -56,8 +65,19 @@ class SearchEvaluationAdapter(EvaluationRetrievalPort):
         project_id: uuid.UUID,
         settings: Settings,
         embedder: BaseEmbeddingProvider,
+        source_policy_mode: SourcePolicyMode = SourcePolicyMode.OFF,
+        source_metadata_generation: int | None = None,
+        index_build_id: uuid.UUID | None = None,
+        configuration_hash: str | None = None,
+        config_provenance: dict[str, Any] | None = None,
     ) -> None:
         self._settings = settings
+        self._source_metadata = KnowledgeRetrievalSourceMetadataAdapter(session)
+        self._source_policy_mode = source_policy_mode
+        self._source_metadata_generation = source_metadata_generation
+        self._index_build_id = index_build_id
+        self._configuration_hash = configuration_hash
+        self._config_provenance = config_provenance or {}
         self._services: dict[str, SearchService] = {
             "semantic": self._service(session, project_id, embedder, NoopRerankerProvider()),
             "hybrid": self._service(session, project_id, embedder, NoopRerankerProvider()),
@@ -116,6 +136,7 @@ class SearchEvaluationAdapter(EvaluationRetrievalPort):
         top_k: int,
         document_id: uuid.UUID | None,
         metadata_filter: dict[str, str],
+        as_of: datetime | None,
     ) -> QualitySearchResult:
         service = self._services[profile]
         semantic = profile == "semantic"
@@ -127,6 +148,7 @@ class SearchEvaluationAdapter(EvaluationRetrievalPort):
                 metadata_filter=metadata_filter,
                 strategy=(RetrievalStrategy.SEMANTIC if semantic else RetrievalStrategy.HYBRID),
                 rerank=profile.startswith("reranked_"),
+                as_of=as_of,
             )
         )
         return QualitySearchResult(
@@ -150,6 +172,7 @@ class SearchEvaluationAdapter(EvaluationRetrievalPort):
             reranker_provider=response.diagnostics.reranker_provider,
             reranker_model=response.diagnostics.reranker_model,
             reranker_version=response.diagnostics.reranker_version,
+            provenance=response.diagnostics.model_dump(mode="json"),
         )
 
     def _service(
@@ -165,18 +188,34 @@ class SearchEvaluationAdapter(EvaluationRetrievalPort):
             embedder=embedder,
             reranker=reranker,
             retrieval_config=self._settings.retrieval,
+            ai_policy=self._settings.ai_policy,
+            source_metadata=self._source_metadata,
+            configured_source_policy_mode=self._source_policy_mode,
+            configuration_hash=self._configuration_hash,
+            config_provenance=self._config_provenance,
+            pinned_source_metadata_generation=self._source_metadata_generation,
+            pinned_index_build_id=self._index_build_id,
         )
 
 
 class GroundedEvaluationAnswerAdapter(EvaluationAnswerPort):
     """Exercise the same prompt, context, refusal, and claim mapping as chat."""
 
-    def __init__(self, *, settings: Settings, llm: BaseLLMProvider) -> None:
+    def __init__(
+        self,
+        *,
+        settings: Settings,
+        llm: BaseLLMProvider,
+        domain_instructions: str = "",
+        prompt_profile: str = "default",
+    ) -> None:
         self._settings = settings
         self._llm = llm
         self._context = ContextBuilder(settings.chat)
         self._prompt = PromptBuilder()
         self._grounding = GroundingService(settings.chat)
+        self._domain_instructions = domain_instructions
+        self._prompt_profile = prompt_profile
 
     async def answer(self, *, question: str, hits: list[QualityHit]) -> QualityAnswer:
         selected = self._context.select([_context_chunk(hit) for hit in hits])
@@ -192,18 +231,27 @@ class GroundedEvaluationAnswerAdapter(EvaluationAnswerPort):
                 grounded=False,
                 citation_coverage=1.0,
                 claims=[],
+                provider=self._llm.provider_name,
+                model=self._llm.model_name,
+                input_tokens=0,
+                output_tokens=0,
+                provider_latency_ms=0,
             )
         messages = self._prompt.build(
             template=require_prompt_template(self._settings.chat.system_prompt_version),
             context_chunks=selected,
             history=[],
             user_question=question,
+            domain_instructions=self._domain_instructions,
+            prompt_profile=self._prompt_profile,
         )
+        provider_started = time.perf_counter()
         completion = await self._llm.generate(
             messages,
             temperature=self._settings.llm.temperature,
             max_tokens=self._settings.llm.max_tokens,
         )
+        provider_latency_ms = int((time.perf_counter() - provider_started) * 1000)
         result = self._grounding.map_claims(completion.content, selected)
         return QualityAnswer(
             answer=completion.content,
@@ -211,6 +259,11 @@ class GroundedEvaluationAnswerAdapter(EvaluationAnswerPort):
             grounded=result.grounded,
             citation_coverage=result.citation_coverage,
             claims=result.claims,
+            provider=completion.provider,
+            model=completion.model,
+            input_tokens=completion.usage.input_tokens,
+            output_tokens=completion.usage.output_tokens,
+            provider_latency_ms=provider_latency_ms,
         )
 
 
@@ -221,22 +274,32 @@ def build_evaluation_service(
     settings: Settings,
     submitter: DurableJobSubmitter | None = None,
     queue: JobQueue | None = None,
+    resolution: EffectiveConfigResolution | None = None,
+    source_metadata_generation: int = 0,
 ) -> EvaluationService:
-    effective_queue = queue if queue is not None else create_job_queue(settings)
+    effective_resolution = resolution or resolve_project_ai_config(settings, None)
+    effective_settings = apply_effective_ai_config(settings, effective_resolution)
+    effective_queue = queue if queue is not None else create_job_queue(effective_settings)
     effective_submitter = submitter or build_job_service(
         session=session,
         project_id=project_id,
-        settings=settings,
+        settings=effective_settings,
         queue=effective_queue,
     )
     return EvaluationService(
         session=session,
         project_id=project_id,
         submitter=effective_submitter,
-        job_configuration=build_job_configuration(settings),
-        config=settings.evaluation,
-        version_snapshot=build_quality_version_snapshot(settings),
-        job_max_attempts=settings.jobs.max_attempts,
+        job_configuration=build_job_configuration(
+            settings,
+            resolution=effective_resolution,
+            source_metadata_generation=source_metadata_generation,
+        ),
+        config=effective_settings.evaluation,
+        version_snapshot=build_quality_version_snapshot(effective_settings),
+        job_max_attempts=effective_settings.jobs.max_attempts,
+        execution_snapshot=effective_resolution.secret_free_snapshot(),
+        execution_provenance=effective_resolution.provenance.model_dump(mode="json"),
     )
 
 
@@ -247,6 +310,13 @@ def build_evaluation_runner(
     settings: Settings,
     embedder: BaseEmbeddingProvider | None = None,
     llm: BaseLLMProvider | None = None,
+    source_policy_mode: SourcePolicyMode = SourcePolicyMode.OFF,
+    source_metadata_generation: int | None = None,
+    index_build_id: uuid.UUID | None = None,
+    configuration_hash: str | None = None,
+    config_provenance: dict[str, Any] | None = None,
+    domain_instructions: str = "",
+    prompt_profile: str = "default",
 ) -> EvaluationRunnerService:
     effective_embedder = embedder or create_embedding_provider(settings)
     retrieval = SearchEvaluationAdapter(
@@ -254,10 +324,17 @@ def build_evaluation_runner(
         project_id=project_id,
         settings=settings,
         embedder=effective_embedder,
+        source_policy_mode=source_policy_mode,
+        source_metadata_generation=source_metadata_generation,
+        index_build_id=index_build_id,
+        configuration_hash=configuration_hash,
+        config_provenance=config_provenance,
     )
     answerer = GroundedEvaluationAnswerAdapter(
         settings=settings,
         llm=llm or create_llm_provider(settings),
+        domain_instructions=domain_instructions,
+        prompt_profile=prompt_profile,
     )
     return EvaluationRunnerService(
         runs=EvaluationRunRepository(session, project_id),

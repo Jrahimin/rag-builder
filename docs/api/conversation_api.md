@@ -9,7 +9,15 @@ path for grounded answers.
 
 Create a conversation (`title` optional; auto-set after first answer). Returns **201**.
 
-Per-conversation `provider`, `model`, `temperature`, and `system_prompt_version` are snapshotted at create time and used for subsequent chat turns.
+Conversation creation resolves deployment defaults plus active Project policy and stores an
+immutable, secret-free configuration snapshot. Messages reference the active snapshot, so later
+deployment or Project changes do not alter prior conversation behavior. `provider`, `model`,
+`temperature`, and `system_prompt_version` remain deprecated compatibility fields; strict policy
+rejects them with `request_policy_override_forbidden`.
+
+Super Admins can explicitly refresh future messages with
+`POST /api/v1/projects/{project_id}/conversations/{conversation_id}/config`, supplying the expected
+active snapshot ID and an audit reason. The operation appends a snapshot rather than mutating one.
 
 **Request:**
 

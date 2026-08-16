@@ -55,6 +55,7 @@ class SemanticRetriever(BaseRetriever):
                 metadata_filter=context.sanitized_metadata_filter(),
                 score_threshold=context.score_threshold,
                 hnsw_ef_search=context.hnsw_ef_search,
+                source_scope=context.source_scope,
             )
         except ProviderError:
             raise

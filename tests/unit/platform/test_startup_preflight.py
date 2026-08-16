@@ -77,9 +77,10 @@ async def test_core_preflight_does_not_wait_for_external_ai_providers(monkeypatc
 
     assert result.status == "ready"
     assert embedding_factory.call_count == 0
-    assert next(
-        check for check in result.checks if check.name == "embedding_provider"
-    ).state is DependencyState.DEGRADED
+    assert (
+        next(check for check in result.checks if check.name == "embedding_provider").state
+        is DependencyState.DEGRADED
+    )
 
 
 async def test_preflight_marks_disabled_ocr_as_skipped(monkeypatch) -> None:

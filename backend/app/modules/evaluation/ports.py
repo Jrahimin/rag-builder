@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any, Protocol
 
 
@@ -29,6 +30,7 @@ class QualitySearchResult:
     reranker_provider: str | None = None
     reranker_model: str | None = None
     reranker_version: str | None = None
+    provenance: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,6 +40,11 @@ class QualityAnswer:
     grounded: bool
     citation_coverage: float
     claims: list[dict[str, Any]]
+    provider: str | None = None
+    model: str | None = None
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    provider_latency_ms: int | None = None
 
 
 class EvaluationRetrievalPort(Protocol):
@@ -58,6 +65,7 @@ class EvaluationRetrievalPort(Protocol):
         top_k: int,
         document_id: uuid.UUID | None,
         metadata_filter: dict[str, str],
+        as_of: datetime | None,
     ) -> QualitySearchResult: ...
 
 

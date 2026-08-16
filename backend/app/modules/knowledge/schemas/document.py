@@ -10,6 +10,7 @@ from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.models.document import DocumentStatus
+from app.modules.knowledge.schemas.source_metadata import SourceRevisionCreate
 
 
 @dataclass(frozen=True, slots=True)
@@ -20,6 +21,7 @@ class DocumentIngestInput:
     content_type: str | None
     stream: AsyncIterator[bytes]
     ocr_lang: str | None = None
+    source_metadata: SourceRevisionCreate | None = None
 
 
 class DocumentResponse(BaseModel):

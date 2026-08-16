@@ -4,6 +4,10 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 
+from app.platform.providers.capabilities import (
+    describe_llm_capability,
+    validate_generation_parameters,
+)
 from app.platform.providers.contracts.llm import (
     BaseLLMProvider,
     ChatCompletionChunk,
@@ -46,7 +50,11 @@ class EchoLLMProvider(BaseLLMProvider):
         temperature: float | None = None,
         max_tokens: int,
     ) -> ChatCompletionResult:
-        del temperature, max_tokens
+        validate_generation_parameters(
+            describe_llm_capability(self.provider_name, self.model_name),
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
         user_text = self._last_user_content(messages)
         content = f"[echo] {user_text}"
         return ChatCompletionResult(
@@ -65,10 +73,14 @@ class EchoLLMProvider(BaseLLMProvider):
         temperature: float | None = None,
         max_tokens: int,
     ) -> AsyncIterator[ChatCompletionChunk]:
-        del temperature, max_tokens
+        validate_generation_parameters(
+            describe_llm_capability(self.provider_name, self.model_name),
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
         result = await self.generate(messages, temperature=None, max_tokens=1)
         words = result.content.split(" ")
         for index, word in enumerate(words):
             delta = word if index == 0 else f" {word}"
             yield ChatCompletionChunk(delta=delta)
-        yield ChatCompletionChunk(delta="", finish_reason="stop")
+        yield ChatCompletionChunk(delta="", finish_reason="stop", usage=result.usage)

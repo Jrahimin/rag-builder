@@ -11,18 +11,28 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.platform.audit.contracts import AuditActorType, AuditEventType, AuditOutcome
 from app.platform.db.base import Base
-from app.platform.domain.mixins import ProjectScopedMixin, TimestampMixin, UUIDPrimaryKeyMixin
+from app.platform.domain.mixins import TimestampMixin, UUIDPrimaryKeyMixin
 
 
-class AuditEvent(Base, UUIDPrimaryKeyMixin, TimestampMixin, ProjectScopedMixin):
+class AuditEvent(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     """Append-only sanitized event for operator-visible state changes."""
 
     __tablename__ = "audit_events"
     __table_args__ = (
-        ForeignKeyConstraint(["project_id"], ["projects.id"], ondelete="CASCADE"),
+        ForeignKeyConstraint(["project_id"], ["projects.id"], ondelete="SET NULL"),
+        ForeignKeyConstraint(["organization_id"], ["organizations.id"], ondelete="SET NULL"),
         Index("ix_audit_events_project_created", "project_id", "created_at", "id"),
+        Index(
+            "ix_audit_events_organization_created",
+            "organization_id",
+            "created_at",
+            "id",
+        ),
         Index("ix_audit_events_type_created", "event_type", "created_at"),
     )
+
+    project_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
+    organization_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
 
     event_type: Mapped[AuditEventType] = mapped_column(
         Enum(AuditEventType, name="audit_event_type", native_enum=False, length=64),

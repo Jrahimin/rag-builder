@@ -6,13 +6,28 @@ import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import ChatConfig, LLMBackend, LLMConfig
-from app.core.exceptions import BadRequestError
+from app.core.config import ChatConfig, LLMBackend, LLMConfig, Settings
+from app.core.exceptions import BadRequestError, ConflictError
 from app.models.conversation import Conversation
+from app.models.conversation_config_snapshot import ConversationConfigSnapshot
 from app.modules.conversations.prompts.registry import require_prompt_template
+from app.modules.conversations.repositories.config_snapshot_repository import (
+    ConversationConfigSnapshotRepository,
+)
 from app.modules.conversations.repositories.conversation_repository import ConversationRepository
 from app.modules.conversations.repositories.message_repository import MessageRepository
 from app.modules.conversations.schemas.conversation import ConversationCreate, ConversationUpdate
+from app.platform.audit.contracts import (
+    AuditActorType,
+    AuditEventType,
+    AuditOutcome,
+    AuditRecorder,
+)
+from app.platform.config.project_ai import (
+    ConfigRevisionRecord,
+    EffectiveConfigResolution,
+    resolve_project_ai_config,
+)
 from app.platform.domain.lifecycle_service import (
     get_or_raise,
     list_paginated,
@@ -60,6 +75,10 @@ class ConversationService:
         *,
         llm_config: LLMConfig,
         chat_config: ChatConfig,
+        settings: Settings | None = None,
+        active_revision: ConfigRevisionRecord | None = None,
+        actor_id: str = "external",
+        audit: AuditRecorder | None = None,
     ) -> None:
         self._session = session
         self._project_id = project_id
@@ -67,30 +86,47 @@ class ConversationService:
         self._message_repository = message_repository
         self._llm_config = llm_config
         self._chat_config = chat_config
+        self._settings = settings or Settings(llm=llm_config, chat=chat_config)
+        self._active_revision = active_revision
+        self._actor_id = actor_id
+        self._audit = audit
+        self._snapshots = ConversationConfigSnapshotRepository(session, project_id)
 
     async def create(self, data: ConversationCreate) -> Conversation:
-        provider = _validate_provider(data.provider) or self._llm_config.backend.value
+        provider_value = getattr(data, "provider", None)
+        if provider_value is not None:
+            _validate_provider(provider_value)
+        config_fields = {
+            "provider",
+            "model",
+            "temperature",
+            "system_prompt_version",
+        } & data.model_fields_set
+        resolution = self._resolve({field: getattr(data, field, None) for field in config_fields})
         prompt_version = _validate_prompt_version(
-            data.system_prompt_version,
+            resolution.configuration.prompt_version,
             default=self._chat_config.system_prompt_version,
         )
         conversation = Conversation(
             project_id=self._project_id,
             title=data.title,
-            provider=provider,
-            model=data.model or self._llm_config.model,
-            temperature=(
-                data.temperature if data.temperature is not None else self._llm_config.temperature
-            ),
+            provider=resolution.configuration.llm.provider.value,
+            model=resolution.configuration.llm.model,
+            temperature=resolution.configuration.llm.temperature,
             system_prompt_version=prompt_version,
             is_active=True,
         )
         self._conversation_repository.add(conversation)
-        return await flush_commit_refresh(
-            self._session,
-            self._conversation_repository,
+        await self._conversation_repository.flush()
+        snapshot = await self._append_snapshot(
             conversation,
+            resolution,
+            reason="Conversation creation",
         )
+        conversation.active_config_snapshot_id = snapshot.id
+        await self._session.commit()
+        await self._session.refresh(conversation)
+        return conversation
 
     async def get(self, conversation_id: uuid.UUID) -> Conversation:
         return await get_or_raise(
@@ -114,23 +150,111 @@ class ConversationService:
 
         if "title" in data.model_fields_set:
             conversation.title = data.title
-        if "provider" in data.model_fields_set:
-            conversation.provider = _validate_provider(data.provider)
-        if "model" in data.model_fields_set:
-            conversation.model = data.model
-        if "temperature" in data.model_fields_set:
-            conversation.temperature = data.temperature
-        if "system_prompt_version" in data.model_fields_set:
+        config_fields = {
+            "provider",
+            "model",
+            "temperature",
+            "system_prompt_version",
+        } & data.model_fields_set
+        if config_fields:
+            provider_value = getattr(data, "provider", None)
+            if provider_value is not None:
+                _validate_provider(provider_value)
+            resolution = self._resolve(
+                {field: getattr(data, field, None) for field in config_fields}
+            )
+            conversation.provider = resolution.configuration.llm.provider.value
+            conversation.model = resolution.configuration.llm.model
+            conversation.temperature = resolution.configuration.llm.temperature
             conversation.system_prompt_version = _validate_prompt_version(
-                data.system_prompt_version,
+                resolution.configuration.prompt_version,
                 default=self._chat_config.system_prompt_version,
             )
+            snapshot = await self._append_snapshot(
+                conversation,
+                resolution,
+                reason="Deprecated request compatibility update",
+            )
+            conversation.active_config_snapshot_id = snapshot.id
 
         return await flush_commit_refresh(
             self._session,
             self._conversation_repository,
             conversation,
         )
+
+    async def refresh_config(
+        self,
+        conversation_id: uuid.UUID,
+        *,
+        expected_active_config_snapshot_id: uuid.UUID | None,
+        reason: str,
+    ) -> Conversation:
+        conversation = await self._require_mutable(conversation_id)
+        if conversation.active_config_snapshot_id != expected_active_config_snapshot_id:
+            raise ConflictError(
+                message="The active conversation configuration changed.",
+                code="conversation_config_snapshot_conflict",
+            )
+        resolution = self._resolve({})
+        snapshot = await self._append_snapshot(
+            conversation,
+            resolution,
+            reason=reason,
+        )
+        conversation.active_config_snapshot_id = snapshot.id
+        conversation.provider = resolution.configuration.llm.provider.value
+        conversation.model = resolution.configuration.llm.model
+        conversation.temperature = resolution.configuration.llm.temperature
+        conversation.system_prompt_version = resolution.configuration.prompt_version
+        if self._audit is not None:
+            self._audit.record(
+                event_type=AuditEventType.CONVERSATION_CONFIG_UPDATED,
+                actor_type=AuditActorType.OPERATOR,
+                actor_id=self._actor_id,
+                project_id=self._project_id,
+                resource_type="conversation_config_snapshot",
+                resource_id=snapshot.id,
+                outcome=AuditOutcome.SUCCESS,
+                detail={
+                    "conversation_id": str(conversation.id),
+                    "configuration_hash": snapshot.configuration_hash,
+                    "reason": reason.strip(),
+                },
+            )
+        await self._session.commit()
+        await self._session.refresh(conversation)
+        return conversation
+
+    def _resolve(self, deprecated_overrides: dict[str, object]) -> EffectiveConfigResolution:
+        return resolve_project_ai_config(
+            self._settings,
+            self._active_revision,
+            deprecated_overrides=deprecated_overrides,
+        )
+
+    async def _append_snapshot(
+        self,
+        conversation: Conversation,
+        resolution: EffectiveConfigResolution,
+        *,
+        reason: str,
+    ) -> ConversationConfigSnapshot:
+        snapshot = ConversationConfigSnapshot(
+            project_id=self._project_id,
+            conversation_id=conversation.id,
+            sequence=await self._snapshots.next_sequence(conversation.id),
+            configuration_hash=resolution.configuration_hash,
+            configuration=resolution.configuration.model_dump(mode="json"),
+            provenance=resolution.provenance.model_dump(mode="json"),
+            origins=resolution.origins,
+            compatibility_diagnostics=resolution.compatibility_diagnostics,
+            created_by=self._actor_id,
+            reason=reason,
+        )
+        await self._snapshots.add(snapshot)
+        await self._session.flush()
+        return snapshot
 
     async def toggle_status(self, conversation_id: uuid.UUID) -> Conversation:
         return await toggle_active_status(

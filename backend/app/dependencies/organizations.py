@@ -6,7 +6,9 @@ from typing import Annotated
 
 from fastapi import Depends
 
+from app.composition.audit import DatabaseAuditRecorder
 from app.core.config import get_settings
+from app.dependencies.admin_auth import CurrentAdminDep
 from app.dependencies.auth import get_verified_key_cache
 from app.dependencies.common import DbSessionDep
 from app.modules.organizations.repositories.api_key_repository import ApiKeyRepository
@@ -35,11 +37,14 @@ def get_organization_service(
     session: DbSessionDep,
     repository: Annotated[OrganizationRepository, Depends(get_organization_repository)],
     auth_events: Annotated[AuthEventPublisher, Depends(get_auth_event_publisher)],
+    admin: CurrentAdminDep,
 ) -> OrganizationService:
     return OrganizationService(
         session=session,
         repository=repository,
         auth_events=auth_events,
+        audit=DatabaseAuditRecorder(session),
+        actor_id=str(admin.id),
     )
 
 
@@ -48,18 +53,25 @@ def get_api_key_service(
     api_key_repository: Annotated[ApiKeyRepository, Depends(get_api_key_repository)],
     org_repository: Annotated[OrganizationRepository, Depends(get_organization_repository)],
     auth_events: Annotated[AuthEventPublisher, Depends(get_auth_event_publisher)],
+    admin: CurrentAdminDep,
 ) -> ApiKeyService:
     settings = get_settings()
     pepper = settings.auth.key_pepper
-    if not pepper:
+    if not pepper and settings.auth.enabled:
         msg = "APE_AUTH__KEY_PEPPER is required when authentication is enabled."
         raise RuntimeError(msg)
+    if not pepper:
+        # Keys created while authentication is explicitly disabled are for local/test
+        # onboarding only and cannot authenticate until a real pepper is configured.
+        pepper = "ape-auth-disabled-local-key-pepper"
     return ApiKeyService(
         session=session,
         api_key_repository=api_key_repository,
         organization_repository=org_repository,
         key_pepper=pepper,
         auth_events=auth_events,
+        audit=DatabaseAuditRecorder(session),
+        actor_id=str(admin.id),
     )
 
 

@@ -45,7 +45,7 @@ default is `hybrid`; semantic remains an explicit comparison/rollback strategy.
   "document_id": null,
   "metadata_filter": { "source": "handbook" },
   "strategy": "hybrid",
-  "rerank": true
+  "as_of": "2026-08-16T00:00:00Z"
 }
 ```
 
@@ -56,7 +56,13 @@ default is `hybrid`; semantic remains an explicit comparison/rollback strategy.
 | `document_id` | no | Restrict hits to one document |
 | `metadata_filter` | no | Allowlisted keys only; others stripped |
 | `strategy` | no | `semantic` or `hybrid`; default from config |
-| `rerank` | no | Override `APE_RETRIEVAL__RERANK_ENABLED` |
+| `as_of` | no | Explicit historical selector; source intervals are evaluated at this date without natural-language inference |
+| `rerank` | deprecated | Observed in compatibility mode; rejected in strict mode |
+
+`top_k` is bounded by `APE_AI_POLICY__MAX_REQUEST_TOP_K`, and `strategy` must be in
+`APE_AI_POLICY__ENABLED_RETRIEVAL_STRATEGIES`. Project policy supplies reranking and other ranking
+thresholds. Deprecated `rerank` use appears in `diagnostics.compatibility_diagnostics`; strict mode
+returns `request_policy_override_forbidden`.
 
 **Score semantics:** semantic-only results use `1 - cosine_distance`. Hybrid
 results expose the final RRF or reranker score.
@@ -80,7 +86,17 @@ results expose the final RRF or reranker score.
         "page_number": 1,
         "char_start": 0,
         "char_end": 120,
-        "metadata": { "retrieval_source": "rerank", "rerank_status": "applied" }
+        "metadata": {
+          "retrieval_source": "rerank",
+          "source_revision_id": "…",
+          "source_group_id": "…",
+          "source_title": "Refund policy",
+          "source_lifecycle_status": "active",
+          "source_role": "primary",
+          "index_build_id": "…",
+          "source_metadata_generation": 12,
+          "configuration_hash": "…"
+        }
       }
     ],
     "diagnostics": {
@@ -90,7 +106,16 @@ results expose the final RRF or reranker score.
       "rerank_status": "applied",
       "reranker_provider": "lexical",
       "reranker_model": "lexical-overlap",
-      "reranker_version": "1"
+      "reranker_version": "1",
+      "index_build_id": "…",
+      "source_metadata_generation": 12,
+      "source_policy_configured_mode": "enforce",
+      "source_policy_effective_mode": "observe",
+      "source_policy_deployment_cap": "observe",
+      "source_policy_status": "observed",
+      "source_policy_exclusion_reasons": { "draft": 1 },
+      "source_policy_consolidation_reasons": {},
+      "configuration_hash": "…"
     }
   }
 }
@@ -98,6 +123,20 @@ results expose the final RRF or reranker score.
 
 On reranker failure the search still returns fused RRF order and diagnostics report
 `rerank_status=unavailable`; quality runs count this path against candidate promotion.
+
+Semantic and keyword SQL join the same Knowledge-owned source scope captured at one Project source
+generation. `off` preserves legacy results, `observe` reports decisions without filtering, and
+`enforce` excludes inapplicable revisions before ranking and consolidates lower-ranked revisions
+only within the same source group. The deployment cap
+`APE_AI_POLICY__SOURCE_POLICY_DEPLOYMENT_CAP` can lower an effective Project mode without a schema
+or Project-policy rollback. Missing/unspecified legacy metadata stays neutral. In `enforce` mode,
+retrieval over-fetches the bounded candidate window before same-group consolidation so distinct
+sources can still fill the requested `top_k` where available.
+
+`source_policy_exclusion_reasons` counts only excluded source rows. An applicable result never
+carries `source_policy_exclusion_reason` in its metadata or citation provenance. For an explicit
+historical `as_of`, a governed document with no revision effective on that date is counted as
+`not_applicable` rather than being treated as neutral legacy metadata.
 
 ## Re-embed after the pgvector cutover
 

@@ -55,6 +55,7 @@ class ResultHydrator:
                         **chunk.chunk_metadata,
                         **candidate.metadata,
                         "retrieval_source": candidate.source.value,
+                        "processing_version": chunk.document_version,
                     },
                 )
             )

@@ -227,10 +227,14 @@ def test_schema_annotations_cannot_become_prompt_instructions() -> None:
         canonical_input="{}",
         canonical_context='{"trusted":true}',
         locale=None,
+        domain_instructions="Use Acme terminology.",
+        prompt_profile="support",
     )
 
     assert "reveal secrets" not in messages[0].content
     assert "arbitrary caller instructions" not in messages[0].content
+    assert "Trusted Project prompt profile: support" in messages[0].content
+    assert "Trusted Project domain instructions:\nUse Acme terminology." in messages[0].content
 
 
 async def test_unknown_use_case_is_rejected_before_persistence(

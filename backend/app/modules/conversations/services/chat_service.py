@@ -31,7 +31,7 @@ from app.modules.conversations.schemas.message import (
 )
 from app.platform.domain.lifecycle_service import get_or_raise, require_not_deleted
 from app.platform.domain.transactions import commit_refresh
-from app.platform.providers.contracts.llm import BaseLLMProvider, ChatMessage
+from app.platform.providers.contracts.llm import BaseLLMProvider, ChatMessage, ChatUsage
 from app.platform.providers.errors import ProviderError
 
 logger = structlog.get_logger(__name__)
@@ -57,6 +57,7 @@ class _PreparedTurn:
     llm: BaseLLMProvider
     retrieval_ms: int
     evidence: EvidenceDecision
+    retrieval_diagnostics: dict[str, Any]
 
 
 class ChatService:
@@ -74,6 +75,10 @@ class ChatService:
         llm_config: LLMConfig,
         *,
         resolve_llm: LLMProviderResolver,
+        config_snapshot_id: uuid.UUID | None = None,
+        config_provenance: dict[str, Any] | None = None,
+        domain_instructions: str = "",
+        prompt_profile: str = "default",
     ) -> None:
         self._session = session
         self._project_id = project_id
@@ -84,6 +89,10 @@ class ChatService:
         self._retrieval_config = retrieval_config
         self._llm_config = llm_config
         self._resolve_llm = resolve_llm
+        self._config_snapshot_id = config_snapshot_id
+        self._config_provenance = config_provenance or {}
+        self._domain_instructions = domain_instructions
+        self._prompt_profile = prompt_profile
         self._context_builder = ContextBuilder(chat_config)
         self._prompt_builder = PromptBuilder()
         self._grounding = GroundingService(chat_config)
@@ -146,6 +155,16 @@ class ChatService:
                 max_tokens=self._llm_max_tokens(),
             )
         except ProviderError as exc:
+            await self._record_failed_execution(
+                conversation=conversation,
+                prepared=prepared,
+                exc=exc,
+                content="",
+                generation_ms=int((time.perf_counter() - generation_started) * 1000),
+                total_ms=int((time.perf_counter() - started) * 1000),
+                user_content_for_title=request.content,
+                streamed=False,
+            )
             self._log_provider_failure(conversation_id, exc)
             raise self._provider_unavailable(exc) from exc
 
@@ -226,6 +245,7 @@ class ChatService:
         generation_started = time.perf_counter()
         content_parts: list[str] = []
         finish_reason: str | None = None
+        final_usage: ChatUsage | None = None
 
         try:
             async for chunk in prepared.llm.stream(
@@ -240,7 +260,19 @@ class ChatService:
                     yield chunk.delta
                 if chunk.finish_reason:
                     finish_reason = chunk.finish_reason
+                if chunk.usage is not None:
+                    final_usage = chunk.usage
         except ProviderError as exc:
+            await self._record_failed_execution(
+                conversation=conversation,
+                prepared=prepared,
+                exc=exc,
+                content="".join(content_parts),
+                generation_ms=int((time.perf_counter() - generation_started) * 1000),
+                total_ms=int((time.perf_counter() - started) * 1000),
+                user_content_for_title=request.content,
+                streamed=True,
+            )
             self._log_provider_failure(conversation_id, exc)
             raise self._provider_unavailable(exc) from exc
 
@@ -256,16 +288,16 @@ class ChatService:
             prepared=prepared,
             content=full_content,
             finish_reason=finish_reason or "stop",
-            input_tokens=None,
-            output_tokens=None,
+            input_tokens=final_usage.input_tokens if final_usage is not None else None,
+            output_tokens=final_usage.output_tokens if final_usage is not None else None,
             provider=prepared.llm.provider_name,
             model=prepared.llm.model_name,
             generation_ms=generation_ms,
             total_ms=total_ms,
             user_content_for_title=request.content,
             streamed=True,
-            input_tokens_logged=None,
-            output_tokens_logged=None,
+            input_tokens_logged=final_usage.input_tokens if final_usage is not None else None,
+            output_tokens_logged=final_usage.output_tokens if final_usage is not None else None,
         )
 
         yield self._done_event(assistant_message, conversation)
@@ -279,12 +311,14 @@ class ChatService:
         request: MessageSendRequest,
     ) -> _PreparedTurn:
         retrieval_started = time.perf_counter()
-        chunks = await self._retrieval.retrieve(
+        retrieval_result = await self._retrieval.retrieve(
             query=request.content,
             top_k=self._chat_config.retrieval_top_k,
             document_id=request.document_id,
             metadata_filter=request.metadata_filter or None,
+            as_of=request.as_of,
         )
+        chunks = retrieval_result.chunks
         retrieval_ms = int((time.perf_counter() - retrieval_started) * 1000)
         selected = self._context_builder.select(chunks)
         evidence = self._grounding.assess(request.content, selected)
@@ -307,6 +341,8 @@ class ChatService:
             context_chunks=selected,
             history=history,
             user_question=request.content,
+            domain_instructions=self._domain_instructions,
+            prompt_profile=self._prompt_profile,
         )
         llm = self._resolve_llm(conversation)
         temperature = self._effective_temperature(conversation)
@@ -324,6 +360,7 @@ class ChatService:
             llm=llm,
             retrieval_ms=retrieval_ms,
             evidence=evidence,
+            retrieval_diagnostics=retrieval_result.diagnostics,
         )
 
     async def _persist_assistant_turn(
@@ -355,6 +392,7 @@ class ChatService:
             total_ms=total_ms,
             retrieved_count=len(prepared.chunks),
             selected_count=len(prepared.selected),
+            retrieval_diagnostics=prepared.retrieval_diagnostics,
         )
         metadata.update(
             {
@@ -365,7 +403,14 @@ class ChatService:
                 "insufficient_evidence_reason": reason_value,
             }
         )
-        citations = [] if reason_value is not None else self._citations_for(prepared.selected)
+        citations = (
+            []
+            if reason_value is not None
+            else self._citations_for(
+                prepared.selected,
+                prompt_version=prepared.prompt_version,
+            )
+        )
         assistant_message = await self._commit_assistant_message(
             conversation=conversation,
             content=content,
@@ -404,6 +449,63 @@ class ChatService:
         logger.info("chat_complete", **log_kwargs)
         return assistant_message
 
+    async def _record_failed_execution(
+        self,
+        *,
+        conversation: Conversation,
+        prepared: _PreparedTurn,
+        exc: ProviderError,
+        content: str,
+        generation_ms: int,
+        total_ms: int,
+        user_content_for_title: str,
+        streamed: bool,
+    ) -> None:
+        """Persist a safe usage/error record without replacing the provider failure."""
+        metadata = self._build_metadata(
+            retrieval_ms=prepared.retrieval_ms,
+            generation_ms=generation_ms,
+            total_ms=total_ms,
+            retrieved_count=len(prepared.chunks),
+            selected_count=len(prepared.selected),
+            retrieval_diagnostics=prepared.retrieval_diagnostics,
+        )
+        metadata.update(
+            {
+                "execution_status": "failed",
+                "execution_error_code": exc.code,
+                "execution_retryable": exc.retryable,
+                "grounded": False,
+                "citation_coverage": 0.0,
+            }
+        )
+        try:
+            await self._commit_assistant_message(
+                conversation=conversation,
+                content=content,
+                finish_reason="error",
+                input_tokens=None,
+                output_tokens=None,
+                prompt_version=prepared.prompt_version,
+                provider=exc.provider_name or prepared.llm.provider_name,
+                model=prepared.llm.model_name,
+                metadata=metadata,
+                citations=[],
+                claims=[],
+                grounded=False,
+                insufficient_evidence_reason=None,
+                user_content_for_title=user_content_for_title,
+            )
+        except Exception:
+            await self._session.rollback()
+            logger.exception(
+                "chat_failure_record_persist_failed",
+                project_id=str(self._project_id),
+                conversation_id=str(conversation.id),
+                provider=exc.provider_name,
+                streamed=streamed,
+            )
+
     def _done_event(self, message: Message, conversation: Conversation) -> dict[str, Any]:
         response = self._to_response(
             message,
@@ -419,10 +521,22 @@ class ChatService:
             "insufficient_evidence_reason": response.insufficient_evidence_reason,
         }
 
-    def _citations_for(self, selected: list[ContextChunk]) -> list[dict]:
+    def _citations_for(
+        self,
+        selected: list[ContextChunk],
+        *,
+        prompt_version: str,
+    ) -> list[dict]:
         if not self._chat_config.include_citations:
             return []
-        return build_citation_snapshots(selected, config=self._chat_config)
+        return build_citation_snapshots(
+            selected,
+            config=self._chat_config,
+            project_id=self._project_id,
+            config_snapshot_id=self._config_snapshot_id,
+            config_provenance=self._config_provenance,
+            prompt_version=prompt_version,
+        )
 
     async def _release_read_transaction(self) -> None:
         """Close any implicit read transaction before slow external I/O."""
@@ -461,6 +575,8 @@ class ChatService:
             content=content,
             citations=[],
             claims=[],
+            config_snapshot_id=self._config_snapshot_id,
+            config_provenance=self._config_provenance,
         )
         conversation.last_message_at = datetime.now(UTC)
         self._message_repository.add(user_message)
@@ -505,7 +621,16 @@ class ChatService:
             embedding_set_version=self._retrieval_config.embedding_set_version,
             provider=provider_override,
             model=model_override,
+            config_snapshot_id=self._config_snapshot_id,
+            config_provenance=self._config_provenance,
             message_metadata=metadata,
+            index_build_id=_optional_uuid(metadata.get("index_build_id")),
+            source_metadata_generation=_optional_int(
+                metadata.get("source_metadata_generation")
+            ),
+            retrieval_latency_ms=_optional_int(metadata.get("retrieval_time_ms")),
+            provider_latency_ms=_optional_int(metadata.get("generation_time_ms")),
+            total_latency_ms=_optional_int(metadata.get("total_time_ms")),
             citations=citations,
             claims=claims,
             grounded=grounded,
@@ -535,6 +660,7 @@ class ChatService:
         total_ms: int,
         retrieved_count: int,
         selected_count: int,
+        retrieval_diagnostics: dict[str, Any],
     ) -> dict[str, Any]:
         return {
             "retrieval_time_ms": retrieval_ms,
@@ -544,6 +670,28 @@ class ChatService:
             "retrieval_top_k": self._chat_config.retrieval_top_k,
             "retrieved_chunk_count": retrieved_count,
             "selected_chunk_count": selected_count,
+            "index_build_id": retrieval_diagnostics.get("index_build_id"),
+            "source_metadata_generation": retrieval_diagnostics.get(
+                "source_metadata_generation"
+            ),
+            "source_policy": {
+                "configured_mode": retrieval_diagnostics.get(
+                    "source_policy_configured_mode"
+                ),
+                "effective_mode": retrieval_diagnostics.get("source_policy_effective_mode"),
+                "deployment_cap": retrieval_diagnostics.get(
+                    "source_policy_deployment_cap"
+                ),
+                "status": retrieval_diagnostics.get("source_policy_status"),
+                "exclusion_reasons": retrieval_diagnostics.get(
+                    "source_policy_exclusion_reasons", {}
+                ),
+                "consolidation_reasons": retrieval_diagnostics.get(
+                    "source_policy_consolidation_reasons", {}
+                ),
+            },
+            "retrieval_reference_date": retrieval_diagnostics.get("reference_date"),
+            "retrieval_as_of": retrieval_diagnostics.get("as_of"),
         }
 
     def _llm_max_tokens(self) -> int:
@@ -577,3 +725,15 @@ class ChatService:
             conversation_provider=conversation_provider,
             conversation_model=conversation_model,
         )
+
+
+def _optional_uuid(value: object) -> uuid.UUID | None:
+    return uuid.UUID(str(value)) if value is not None else None
+
+
+def _optional_int(value: object) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, str)):
+        raise TypeError("Execution measurements must be integer-compatible values")
+    return int(value)

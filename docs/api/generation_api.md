@@ -75,8 +75,12 @@ structured context can be sent as array items. Context size, request size,
 nesting depth, node count, schema size, and schema validity are checked before
 the provider is called.
 
-`generation_config` accepts bounded `provider`, `model`, `temperature`, and
-`max_tokens` overrides. `max_tokens` cannot exceed the deployment maximum.
+`generation_config` retains deprecated `provider`, `model`, `temperature`, and
+`max_tokens` fields for the migration window. Compatibility mode records and snapshots explicit
+use; strict mode rejects it with `request_policy_override_forbidden`. Effective provider/model and
+generation parameters come from Project policy and are validated against the versioned capability
+descriptor before the provider is called. The generation trace persists the secret-free effective
+configuration hash and provenance.
 
 Retention modes:
 
