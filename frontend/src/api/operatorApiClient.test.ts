@@ -85,6 +85,23 @@ test("serializes every usage aggregation filter", async () => {
   );
 });
 
+test("requests capabilities for the selected provider and model", async () => {
+  const fetchMock = vi.fn().mockResolvedValue(
+    new Response(JSON.stringify({ success: true, data: [] }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    }),
+  );
+  vi.stubGlobal("fetch", fetchMock);
+
+  await operatorApiClient.getProviderCapabilities("openai", "o1-test");
+
+  expect(fetchMock).toHaveBeenCalledWith(
+    "/api/v1/operator/provider-capabilities?provider=openai&model=o1-test",
+    expect.objectContaining({ credentials: "include" }),
+  );
+});
+
 test("paginates Organizations with the API's 100-row limit", async () => {
   const first = Array.from({ length: 100 }, (_, index) => ({ id: `org-${index}` }));
   const second = [{ id: "org-100" }];

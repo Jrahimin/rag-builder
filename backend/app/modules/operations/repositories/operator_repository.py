@@ -329,7 +329,7 @@ def _usage_execution_union() -> CompoundSelect[Any]:
             Message.retrieval_latency_ms,
             Message.provider_latency_ms,
             Message.total_latency_ms,
-            literal(0).label("error_count"),
+            case((Message.finish_reason == "error", 1), else_=0).label("error_count"),
         )
         .join(
             Conversation,

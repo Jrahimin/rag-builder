@@ -229,6 +229,43 @@ async def test_search_metadata_filter(
     assert matching.status_code == 200
     assert matching.json()["data"]["results"]
 
+    # Both semantic and keyword retrieval use the active index build's metadata
+    # snapshot. A later mutable chunk-row change cannot split hybrid truth.
+    async with AsyncSession(
+        bind=integration_connection,
+        expire_on_commit=False,
+        join_transaction_mode="create_savepoint",
+    ) as session:
+        await session.execute(
+            update(DocumentChunk)
+            .where(DocumentChunk.document_id == uuid.UUID(document_id))
+            .values(chunk_metadata={"source": "changed-after-index"})
+        )
+        await session.commit()
+
+    for strategy in ("semantic", "hybrid"):
+        snapshot_match = await db_client.post(
+            f"/api/v1/projects/{project_id}/search",
+            json={
+                "query": _UNIQUE_PHRASE,
+                "metadata_filter": {"source": "handbook"},
+                "strategy": strategy,
+            },
+        )
+        assert snapshot_match.status_code == 200
+        assert snapshot_match.json()["data"]["results"]
+
+        live_row_only = await db_client.post(
+            f"/api/v1/projects/{project_id}/search",
+            json={
+                "query": _UNIQUE_PHRASE,
+                "metadata_filter": {"source": "changed-after-index"},
+                "strategy": strategy,
+            },
+        )
+        assert live_row_only.status_code == 200
+        assert live_row_only.json()["data"]["results"] == []
+
     # A filterable key ("source") with a non-matching value excludes every hit.
     filtered = await db_client.post(
         f"/api/v1/projects/{project_id}/search",

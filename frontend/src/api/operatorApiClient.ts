@@ -23,6 +23,23 @@ export type ProjectOwnershipPreflight = components["schemas"]["ProjectOwnershipP
 export type EffectiveProjectAIConfig = components["schemas"]["EffectiveProjectAIConfigResponse"];
 export type ProjectAIConfig = components["schemas"]["ProjectAIConfig"];
 export type ProjectAIConfigRevision = components["schemas"]["ProjectAIConfigRevisionResponse"];
+export type ProviderParameterCapability = {
+  supported: boolean;
+  wire_name: string | null;
+  minimum: number | null;
+  maximum: number | null;
+  omit_when_none: boolean;
+};
+export type ProviderCapability = {
+  provider: string;
+  model: string;
+  capability_version: string;
+  supports_stream_usage: boolean;
+  parameters: {
+    temperature: ProviderParameterCapability;
+    max_tokens: ProviderParameterCapability;
+  };
+};
 export type SourceRevisionCreate = components["schemas"]["SourceRevisionCreate"];
 export type SourceRevision = components["schemas"]["SourceRevisionResponse"];
 export type SourceRevisionCreated = components["schemas"]["SourceRevisionCreateResponse"];
@@ -385,8 +402,10 @@ export const operatorApiClient = {
         body: JSON.stringify({ expected_active_revision_id: expectedActiveRevisionId, reason }),
       },
     ),
-  getProviderCapabilities: () =>
-    request<Record<string, unknown>[]>(`${apiRoot}/operator/provider-capabilities`),
+  getProviderCapabilities: (provider?: string, model?: string) =>
+    request<ProviderCapability[]>(
+      `${apiRoot}/operator/provider-capabilities${query({ provider, model })}`,
+    ),
   getDocuments: (projectId: string, limit = 100, offset = 0) =>
     request<DocumentPage>(`${apiRoot}/projects/${projectId}/documents${query({ limit, offset })}`),
   getDocument: (projectId: string, documentId: string) =>

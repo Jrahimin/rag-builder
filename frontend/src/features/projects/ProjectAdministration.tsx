@@ -10,6 +10,7 @@ import {
   type ProjectAIConfig,
   type ProjectAIConfigRevision,
   type ProjectOwnershipPreflight,
+  type ProviderCapability,
   type SourceRevisionCreate,
 } from "../../api/operatorApiClient";
 import {
@@ -28,6 +29,122 @@ import { formatBytes, formatDate, shortId } from "../../shared/formatters";
 
 const tabs = ["details", "ai-config", "sources", "history"] as const;
 type ProjectTab = (typeof tabs)[number];
+
+type ProjectConfigForm = {
+  provider: string;
+  model: string;
+  temperature: string;
+  maxTokens: string;
+  domain: string;
+  topK: string;
+  strategy: string;
+  rerank: boolean;
+  evidence: string;
+  citations: boolean;
+  sourcePolicy: string;
+  reason: string;
+};
+
+type ProjectConfigOverride = Exclude<keyof ProjectConfigForm, "reason">;
+type ProjectConfigOverrides = Record<ProjectConfigOverride, boolean>;
+
+const inheritedProjectConfig: ProjectConfigOverrides = {
+  provider: false,
+  model: false,
+  temperature: false,
+  maxTokens: false,
+  domain: false,
+  topK: false,
+  strategy: false,
+  rerank: false,
+  evidence: false,
+  citations: false,
+  sourcePolicy: false,
+};
+
+function configFormFromEffective(config: EffectiveProjectAIConfig): ProjectConfigForm {
+  return {
+    provider: config.configuration.llm.provider,
+    model: config.configuration.llm.model,
+    temperature:
+      config.configuration.llm.temperature === null
+        ? ""
+        : String(config.configuration.llm.temperature),
+    maxTokens: String(config.configuration.llm.max_tokens),
+    domain: config.configuration.domain_instructions,
+    topK: String(config.configuration.retrieval.top_k),
+    strategy: config.configuration.retrieval.strategy,
+    rerank: config.configuration.retrieval.rerank_enabled,
+    evidence: String(config.configuration.retrieval.evidence_score_threshold),
+    citations: config.configuration.chat.include_citations,
+    sourcePolicy: config.configuration.source_policy_mode,
+    reason: "",
+  };
+}
+
+function hasValue(value: object | undefined, key: string) {
+  return value !== undefined && Object.prototype.hasOwnProperty.call(value, key);
+}
+
+function configOverridesFromStored(stored: ProjectAIConfig): ProjectConfigOverrides {
+  return {
+    provider: hasValue(stored.llm, "provider"),
+    model: hasValue(stored.llm, "model"),
+    temperature: hasValue(stored.llm, "temperature") && stored.llm?.temperature !== null,
+    maxTokens: hasValue(stored.llm, "max_tokens"),
+    domain: hasValue(stored, "domain_instructions"),
+    topK: hasValue(stored.retrieval, "top_k"),
+    strategy: hasValue(stored.retrieval, "strategy"),
+    rerank: hasValue(stored.retrieval, "rerank_enabled"),
+    evidence: hasValue(stored.retrieval, "evidence_score_threshold"),
+    citations: hasValue(stored.chat, "include_citations"),
+    sourcePolicy: hasValue(stored, "source_policy_mode"),
+  };
+}
+
+function setSparseValue(
+  target: Record<string, unknown>,
+  key: string,
+  include: boolean,
+  value: unknown,
+) {
+  if (include) target[key] = value;
+  else delete target[key];
+}
+
+function buildSparseProjectConfig(
+  stored: ProjectAIConfig,
+  form: ProjectConfigForm,
+  overrides: ProjectConfigOverrides,
+  capability: ProviderCapability | undefined,
+): ProjectAIConfig {
+  const configuration = { ...stored } as Record<string, unknown>;
+  const llm = { ...(stored.llm ?? {}) } as Record<string, unknown>;
+  const retrieval = { ...(stored.retrieval ?? {}) } as Record<string, unknown>;
+  const chat = { ...(stored.chat ?? {}) } as Record<string, unknown>;
+
+  setSparseValue(llm, "provider", overrides.provider, form.provider);
+  setSparseValue(llm, "model", overrides.model, form.model);
+  setSparseValue(
+    llm,
+    "temperature",
+    overrides.temperature && capability?.parameters.temperature.supported !== false,
+    form.temperature === "" ? null : Number(form.temperature),
+  );
+  setSparseValue(llm, "max_tokens", overrides.maxTokens, Number(form.maxTokens));
+  setSparseValue(retrieval, "top_k", overrides.topK, Number(form.topK));
+  setSparseValue(retrieval, "strategy", overrides.strategy, form.strategy);
+  setSparseValue(retrieval, "rerank_enabled", overrides.rerank, form.rerank);
+  setSparseValue(retrieval, "evidence_score_threshold", overrides.evidence, Number(form.evidence));
+  setSparseValue(chat, "include_citations", overrides.citations, form.citations);
+  setSparseValue(configuration, "domain_instructions", overrides.domain, form.domain);
+  setSparseValue(configuration, "source_policy_mode", overrides.sourcePolicy, form.sourcePolicy);
+
+  configuration.llm = llm;
+  configuration.retrieval = retrieval;
+  configuration.chat = chat;
+  return configuration;
+}
 
 function projectStatus(project: Project) {
   if (project.deleted_at) return "archived";
@@ -479,11 +596,37 @@ function ProjectDetails({
   );
 }
 
+function InheritanceToggle({
+  field,
+  overridden,
+  onChange,
+  disabled = false,
+}: {
+  field: string;
+  overridden: boolean;
+  onChange: (overridden: boolean) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <label className="check-control">
+      <input
+        aria-label={`${field}: inherit global`}
+        type="checkbox"
+        checked={!overridden}
+        disabled={disabled}
+        onChange={(event) => onChange(!event.target.checked)}
+      />{" "}
+      Inherit global
+    </label>
+  );
+}
+
 function ProjectConfig({ project }: { project: Project }) {
   const [effective, setEffective] = useState<EffectiveProjectAIConfig | null>(null);
   const [history, setHistory] = useState<ProjectAIConfigRevision[]>([]);
-  const [capabilities, setCapabilities] = useState<Record<string, unknown>[]>([]);
-  const [form, setForm] = useState({
+  const [capabilities, setCapabilities] = useState<ProviderCapability[]>([]);
+  const [overrides, setOverrides] = useState<ProjectConfigOverrides>(inheritedProjectConfig);
+  const [form, setForm] = useState<ProjectConfigForm>({
     provider: "echo",
     model: "",
     temperature: "",
@@ -500,36 +643,48 @@ function ProjectConfig({ project }: { project: Project }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const load = useCallback(async () => {
-    const [config, revisions, providerCapabilities] = await Promise.all([
+    const [config, revisions] = await Promise.all([
       operatorApiClient.getProjectAIConfig(project.id),
       operatorApiClient.getProjectAIConfigHistory(project.id),
-      operatorApiClient.getProviderCapabilities(),
     ]);
+    const providerCapabilities = await operatorApiClient.getProviderCapabilities(
+      config.configuration.llm.provider,
+      config.configuration.llm.model,
+    );
+    const activeRevision = revisions.find((revision) => revision.id === config.active_revision_id);
+    if (config.active_revision_id && !activeRevision) {
+      throw new Error("The active AI configuration revision is unavailable. Reload and try again.");
+    }
     setEffective(config);
     setHistory(revisions);
     setCapabilities(providerCapabilities);
-    setForm({
-      provider: config.configuration.llm.provider,
-      model: config.configuration.llm.model,
-      temperature:
-        config.configuration.llm.temperature === null
-          ? ""
-          : String(config.configuration.llm.temperature),
-      maxTokens: String(config.configuration.llm.max_tokens),
-      domain: config.configuration.domain_instructions,
-      topK: String(config.configuration.retrieval.top_k),
-      strategy: config.configuration.retrieval.strategy,
-      rerank: config.configuration.retrieval.rerank_enabled,
-      evidence: String(config.configuration.retrieval.evidence_score_threshold),
-      citations: config.configuration.chat.include_citations,
-      sourcePolicy: config.configuration.source_policy_mode,
-      reason: "",
-    });
+    setOverrides(
+      activeRevision
+        ? configOverridesFromStored(activeRevision.configuration)
+        : inheritedProjectConfig,
+    );
+    setForm(configFormFromEffective(config));
   }, [project.id]);
   useEffect(() => {
     setError("");
     void load().catch((caught: Error) => setError(caught.message));
   }, [load]);
+  useEffect(() => {
+    const model = form.model.trim();
+    if (!model) return;
+    const timer = window.setTimeout(() => {
+      void operatorApiClient
+        .getProviderCapabilities(form.provider, model)
+        .then((items) => {
+          setCapabilities(items);
+          if (items[0]?.parameters.temperature.supported === false) {
+            setOverrides((current) => ({ ...current, temperature: false }));
+          }
+        })
+        .catch((caught: Error) => setError(caught.message));
+    }, 200);
+    return () => window.clearTimeout(timer);
+  }, [form.model, form.provider]);
   if (!effective && !error) return <LoadingState label="Resolving Project AI configuration" />;
   if (error && !effective)
     return (
@@ -550,26 +705,10 @@ function ProjectConfig({ project }: { project: Project }) {
       return;
     }
     const stored = activeRevision?.configuration ?? {};
-    const configuration: ProjectAIConfig = {
-      ...stored,
-      llm: {
-        ...(stored.llm ?? {}),
-        provider: form.provider as "echo" | "openai" | "openai_compatible" | "ollama" | "gemini",
-        model: form.model,
-        temperature: form.temperature === "" ? null : Number(form.temperature),
-        max_tokens: Number(form.maxTokens),
-      },
-      domain_instructions: form.domain,
-      retrieval: {
-        ...(stored.retrieval ?? {}),
-        top_k: Number(form.topK),
-        strategy: form.strategy as "semantic" | "hybrid",
-        rerank_enabled: form.rerank,
-        evidence_score_threshold: Number(form.evidence),
-      },
-      chat: { ...(stored.chat ?? {}), include_citations: form.citations },
-      source_policy_mode: form.sourcePolicy as "off" | "observe" | "enforce",
-    };
+    const selectedCapability = capabilities.find(
+      (item) => item.provider === form.provider && item.model === form.model,
+    );
+    const configuration = buildSparseProjectConfig(stored, form, overrides, selectedCapability);
     try {
       await operatorApiClient.createProjectAIConfig(
         project.id,
@@ -582,6 +721,18 @@ function ProjectConfig({ project }: { project: Project }) {
       setError((caught as Error).message);
     } finally {
       setBusy(false);
+    }
+  };
+  const selectedCapability = capabilities.find(
+    (item) => item.provider === form.provider && item.model === form.model,
+  );
+  const temperatureCapability = selectedCapability?.parameters.temperature;
+  const tokenCapability = selectedCapability?.parameters.max_tokens;
+  const setOverride = (key: ProjectConfigOverride, enabled: boolean) => {
+    setOverrides((current) => ({ ...current, [key]: enabled }));
+    if (!enabled && effective) {
+      const inherited = configFormFromEffective(effective);
+      setForm((current) => ({ ...current, [key]: inherited[key] }));
     }
   };
   return (
@@ -618,128 +769,220 @@ function ProjectConfig({ project }: { project: Project }) {
         </div>
       )}
       <form className="panel progressive-form" onSubmit={(event) => void submit(event)}>
+        <p className="muted-copy">
+          Fields marked Inherit global are omitted from the Project revision. Clear that checkbox
+          only when this Project should own an explicit override.
+        </p>
         <fieldset>
           <legend>
             <Settings2 size={17} /> Provider, model, and domain
           </legend>
           <div className="form-grid">
-            <label className="field-control">
+            <div className="field-control">
               <span>Provider</span>
               <select
+                aria-label="Provider"
                 value={form.provider}
+                disabled={!overrides.provider}
                 onChange={(event) => setForm({ ...form, provider: event.target.value })}
               >
                 {["echo", "openai", "openai_compatible", "ollama", "gemini"].map((value) => (
                   <option key={value}>{value}</option>
                 ))}
               </select>
-            </label>
-            <label className="field-control">
+              <InheritanceToggle
+                field="Provider"
+                overridden={overrides.provider}
+                onChange={(enabled) => setOverride("provider", enabled)}
+              />
+            </div>
+            <div className="field-control">
               <span>Model</span>
               <input
+                aria-label="Model"
                 required
                 value={form.model}
+                disabled={!overrides.model}
                 onChange={(event) => setForm({ ...form, model: event.target.value })}
               />
-            </label>
-            <label className="field-control field-control--wide">
+              <InheritanceToggle
+                field="Model"
+                overridden={overrides.model}
+                onChange={(enabled) => setOverride("model", enabled)}
+              />
+            </div>
+            <div className="field-control field-control--wide">
               <span>Domain instructions</span>
               <textarea
+                aria-label="Domain instructions"
                 value={form.domain}
+                disabled={!overrides.domain}
                 onChange={(event) => setForm({ ...form, domain: event.target.value })}
               />
-            </label>
+              <InheritanceToggle
+                field="Domain instructions"
+                overridden={overrides.domain}
+                onChange={(enabled) => setOverride("domain", enabled)}
+              />
+            </div>
           </div>
         </fieldset>
         <fieldset>
           <legend>Generation and chat defaults</legend>
           <div className="form-grid">
-            <label className="field-control">
+            <div className="field-control">
               <span>Temperature</span>
               <input
+                aria-label="Temperature"
                 type="number"
                 step="0.1"
+                min={temperatureCapability?.minimum ?? undefined}
+                max={temperatureCapability?.maximum ?? undefined}
                 value={form.temperature}
+                disabled={!overrides.temperature || temperatureCapability?.supported === false}
                 onChange={(event) => setForm({ ...form, temperature: event.target.value })}
               />
-            </label>
-            <label className="field-control">
+              <InheritanceToggle
+                field="Temperature"
+                overridden={overrides.temperature}
+                disabled={temperatureCapability?.supported === false}
+                onChange={(enabled) => setOverride("temperature", enabled)}
+              />
+              {temperatureCapability?.supported === false && (
+                <small>This provider/model does not support temperature.</small>
+              )}
+            </div>
+            <div className="field-control">
               <span>Maximum output tokens</span>
               <input
+                aria-label="Maximum output tokens"
                 type="number"
-                min="1"
+                min={tokenCapability?.minimum ?? 1}
+                max={tokenCapability?.maximum ?? undefined}
                 value={form.maxTokens}
+                disabled={!overrides.maxTokens}
                 onChange={(event) => setForm({ ...form, maxTokens: event.target.value })}
               />
-            </label>
-            <label className="check-control">
-              <input
-                type="checkbox"
-                checked={form.citations}
-                onChange={(event) => setForm({ ...form, citations: event.target.checked })}
-              />{" "}
-              Include citations
-            </label>
+              <InheritanceToggle
+                field="Maximum output tokens"
+                overridden={overrides.maxTokens}
+                onChange={(enabled) => setOverride("maxTokens", enabled)}
+              />
+            </div>
+            <div className="field-control">
+              <span>Citations</span>
+              <label className="check-control">
+                <input
+                  type="checkbox"
+                  checked={form.citations}
+                  disabled={!overrides.citations}
+                  onChange={(event) => setForm({ ...form, citations: event.target.checked })}
+                />{" "}
+                Include citations
+              </label>
+              <InheritanceToggle
+                field="Citations"
+                overridden={overrides.citations}
+                onChange={(enabled) => setOverride("citations", enabled)}
+              />
+            </div>
           </div>
         </fieldset>
         <fieldset>
           <legend>Retrieval, citation, and evidence defaults</legend>
           <div className="form-grid">
-            <label className="field-control">
+            <div className="field-control">
               <span>Strategy</span>
               <select
+                aria-label="Strategy"
                 value={form.strategy}
+                disabled={!overrides.strategy}
                 onChange={(event) => setForm({ ...form, strategy: event.target.value })}
               >
                 <option value="semantic">Semantic</option>
                 <option value="hybrid">Hybrid</option>
               </select>
-            </label>
-            <label className="field-control">
+              <InheritanceToggle
+                field="Strategy"
+                overridden={overrides.strategy}
+                onChange={(enabled) => setOverride("strategy", enabled)}
+              />
+            </div>
+            <div className="field-control">
               <span>Top K</span>
               <input
+                aria-label="Top K"
                 type="number"
                 min="1"
                 value={form.topK}
+                disabled={!overrides.topK}
                 onChange={(event) => setForm({ ...form, topK: event.target.value })}
               />
-            </label>
-            <label className="field-control">
+              <InheritanceToggle
+                field="Top K"
+                overridden={overrides.topK}
+                onChange={(enabled) => setOverride("topK", enabled)}
+              />
+            </div>
+            <div className="field-control">
               <span>Evidence threshold</span>
               <input
+                aria-label="Evidence threshold"
                 type="number"
                 min="0"
                 max="1"
                 step="0.01"
                 value={form.evidence}
+                disabled={!overrides.evidence}
                 onChange={(event) => setForm({ ...form, evidence: event.target.value })}
               />
-            </label>
-            <label className="check-control">
-              <input
-                type="checkbox"
-                checked={form.rerank}
-                onChange={(event) => setForm({ ...form, rerank: event.target.checked })}
-              />{" "}
-              Enable reranking
-            </label>
+              <InheritanceToggle
+                field="Evidence threshold"
+                overridden={overrides.evidence}
+                onChange={(enabled) => setOverride("evidence", enabled)}
+              />
+            </div>
+            <div className="field-control">
+              <span>Reranking</span>
+              <label className="check-control">
+                <input
+                  type="checkbox"
+                  checked={form.rerank}
+                  disabled={!overrides.rerank}
+                  onChange={(event) => setForm({ ...form, rerank: event.target.checked })}
+                />{" "}
+                Enable reranking
+              </label>
+              <InheritanceToggle
+                field="Reranking"
+                overridden={overrides.rerank}
+                onChange={(enabled) => setOverride("rerank", enabled)}
+              />
+            </div>
           </div>
         </fieldset>
         <fieldset>
           <legend>
             <ShieldCheck size={17} /> Advanced source policy
           </legend>
-          <label className="field-control">
+          <div className="field-control">
             <span>Rollout mode</span>
             <select
+              aria-label="Source policy"
               value={form.sourcePolicy}
+              disabled={!overrides.sourcePolicy}
               onChange={(event) => setForm({ ...form, sourcePolicy: event.target.value })}
             >
               <option value="off">Off — legacy-neutral</option>
               <option value="observe">Observe — diagnostics only</option>
               <option value="enforce">Enforce — filter and consolidate applicable sources</option>
             </select>
-          </label>
+            <InheritanceToggle
+              field="Source policy"
+              overridden={overrides.sourcePolicy}
+              onChange={(enabled) => setOverride("sourcePolicy", enabled)}
+            />
+          </div>
           <p className="muted-copy">
             The effective mode may be lowered by the deployment safety cap without changing this
             stored Project policy.
@@ -831,6 +1074,10 @@ function ProjectSources({ project }: { project: Project }) {
   const current = sourceState.data?.items.find((item) => item.document_id === selectedDocument?.id);
   const [file, setFile] = useState<File | null>(null);
   const [uploadTitle, setUploadTitle] = useState("");
+  const [uploadMode, setUploadMode] = useState<"independent" | "revision" | "modifies">(
+    "independent",
+  );
+  const [uploadTarget, setUploadTarget] = useState("");
   const [form, setForm] = useState({
     title: "",
     label: "Revision",
@@ -869,20 +1116,48 @@ function ProjectSources({ project }: { project: Project }) {
     if (!file) return;
     setError("");
     try {
-      const metadata = uploadTitle
-        ? {
-            activate: true,
-            change_reason: "Governed Operator upload",
-            create_new_group: true,
-            lifecycle_status: "active" as const,
-            revision_label: "Initial",
-            source_role: "primary" as const,
-            title: uploadTitle,
-          }
-        : undefined;
+      const target = sourceState.data?.items.find((item) => item.revision.id === uploadTarget);
+      if (uploadMode !== "independent" && !target) {
+        setError("Select the existing source revision this upload relates to.");
+        return;
+      }
+      const metadata: SourceRevisionCreate | undefined =
+        uploadMode === "independent" && !uploadTitle
+          ? undefined
+          : {
+              activate: true,
+              change_reason:
+                uploadMode === "revision"
+                  ? "Uploaded as a new revision of an existing source"
+                  : uploadMode === "modifies"
+                    ? "Uploaded as a modifying source"
+                    : "Governed Operator upload",
+              create_new_group: uploadMode !== "revision",
+              ...(uploadMode === "revision" && target
+                ? { source_group_id: target.revision.source_group_id }
+                : {}),
+              lifecycle_status: "active",
+              revision_label:
+                uploadMode === "revision" && target
+                  ? `Revision ${target.revision.revision_number + 1}`
+                  : "Initial",
+              source_role: "primary",
+              title: uploadTitle || file.name,
+              relationships:
+                uploadMode === "independent" || !target
+                  ? []
+                  : [
+                      {
+                        relationship_type: uploadMode === "revision" ? "replaces" : "modifies",
+                        target_revision_id: target.revision.id,
+                      },
+                    ],
+            };
       await upload.mutateAsync({ file, sourceMetadata: metadata });
       setFile(null);
       setUploadTitle("");
+      setUploadMode("independent");
+      setUploadTarget("");
       await refresh();
     } catch (caught) {
       setError((caught as Error).message);
@@ -943,20 +1218,60 @@ function ProjectSources({ project }: { project: Project }) {
           <h3>Upload document and optional source metadata</h3>
           <span>Metadata is optional</span>
         </div>
-        <form className="inline-form" onSubmit={(event) => void uploadFile(event)}>
-          <label className="field-control field-control--grow">
-            <span>File</span>
-            <input
-              required
-              type="file"
-              onChange={(event) => setFile(event.target.files?.[0] ?? null)}
-            />
-          </label>
-          <label className="field-control field-control--grow">
-            <span>Source title (optional quick active defaults)</span>
-            <input value={uploadTitle} onChange={(event) => setUploadTitle(event.target.value)} />
-          </label>
-          <button className="button button--primary" disabled={!file || upload.isPending}>
+        <form className="stack-form" onSubmit={(event) => void uploadFile(event)}>
+          <div className="form-grid">
+            <label className="field-control field-control--grow">
+              <span>File</span>
+              <input
+                required
+                type="file"
+                onChange={(event) => setFile(event.target.files?.[0] ?? null)}
+              />
+            </label>
+            <label className="field-control field-control--grow">
+              <span>Source title (optional quick active defaults)</span>
+              <input value={uploadTitle} onChange={(event) => setUploadTitle(event.target.value)} />
+            </label>
+            <label className="field-control">
+              <span>Source treatment</span>
+              <select
+                value={uploadMode}
+                onChange={(event) => {
+                  setUploadMode(event.target.value as typeof uploadMode);
+                  setUploadTarget("");
+                }}
+              >
+                <option value="independent">New independent source</option>
+                <option value="revision">New revision of an existing source</option>
+                <option value="modifies">New source that modifies an existing source</option>
+              </select>
+            </label>
+            {uploadMode !== "independent" && (
+              <label className="field-control">
+                <span>Existing source revision</span>
+                <select
+                  required
+                  value={uploadTarget}
+                  onChange={(event) => setUploadTarget(event.target.value)}
+                >
+                  <option value="">Select source</option>
+                  {sourceState.data?.items.map((item) => (
+                    <option key={item.revision.id} value={item.revision.id}>
+                      {item.revision.title} · r{item.revision.revision_number}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+          </div>
+          <p className="muted-copy">
+            A new revision stays in the selected source group and replaces its target. A modifying
+            source receives its own group and records a modifies relationship.
+          </p>
+          <button
+            className="button button--primary"
+            disabled={!file || upload.isPending || (uploadMode !== "independent" && !uploadTarget)}
+          >
             Upload
           </button>
         </form>

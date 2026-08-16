@@ -15,6 +15,7 @@ from app.models.message import Message, MessageRole
 from app.modules.conversations.ports import ContextChunk, ContextRetrievalResult
 from app.modules.conversations.schemas.message import MessageSendRequest
 from app.modules.conversations.services.chat_service import ChatService
+from app.platform.providers.contracts.llm import ChatCompletionChunk
 from app.platform.providers.errors import ProviderError
 from app.platform.providers.implementations.echo_chat import EchoLLMProvider
 
@@ -49,6 +50,13 @@ class EmptyRetrieval:
 class FailingLLM(EchoLLMProvider):
     async def generate(self, messages, *, temperature, max_tokens):
         del messages, temperature, max_tokens
+        raise ProviderError("boom", provider_name="echo")
+
+
+class FailingStreamingLLM(EchoLLMProvider):
+    async def stream(self, messages, *, temperature, max_tokens):
+        del messages, temperature, max_tokens
+        yield ChatCompletionChunk(delta="partial ")
         raise ProviderError("boom", provider_name="echo")
 
 
@@ -204,7 +212,7 @@ async def test_send_message_commits_user_before_assistant(
     assert conversation_repository.get_by_id.return_value.title is not None
 
 
-async def test_send_message_llm_failure_leaves_user_only(
+async def test_send_message_llm_failure_persists_failed_execution(
     session: AsyncMock,
     conversation_repository: AsyncMock,
     message_repository: AsyncMock,
@@ -220,7 +228,40 @@ async def test_send_message_llm_failure_leaves_user_only(
             conversation_repository.get_by_id.return_value.id,
             MessageSendRequest(content="question"),
         )
-    assert session.commit.await_count == 1
+    assert session.commit.await_count == 2
+    assistant = message_repository.add.call_args_list[-1].args[0]
+    assert assistant.role is MessageRole.ASSISTANT
+    assert assistant.finish_reason == "error"
+    assert assistant.input_tokens is None
+    assert assistant.output_tokens is None
+    assert assistant.message_metadata["execution_status"] == "failed"
+    assert assistant.message_metadata["execution_error_code"] == "provider_error"
+
+
+async def test_stream_failure_persists_partial_failed_execution(
+    session: AsyncMock,
+    conversation_repository: AsyncMock,
+    message_repository: AsyncMock,
+) -> None:
+    service = _service(
+        session,
+        conversation_repository,
+        message_repository,
+        FailingStreamingLLM(model="test", provider_version="1"),
+    )
+
+    with pytest.raises(ServiceUnavailableError, match="temporarily unavailable"):
+        async for _ in service.stream_message(
+            conversation_repository.get_by_id.return_value.id,
+            MessageSendRequest(content="question"),
+        ):
+            pass
+
+    assert session.commit.await_count == 2
+    assistant = message_repository.add.call_args_list[-1].args[0]
+    assert assistant.content == "partial "
+    assert assistant.finish_reason == "error"
+    assert assistant.message_metadata["execution_status"] == "failed"
 
 
 async def test_insufficient_evidence_skips_generation_and_persists_refusal(

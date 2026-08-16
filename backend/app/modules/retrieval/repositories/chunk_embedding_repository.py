@@ -8,7 +8,7 @@ from typing import Any
 from sqlalchemy import delete, literal, select, text
 
 from app.models.chunk_embedding import ChunkEmbedding
-from app.models.document_chunk import DocumentChunk
+from app.models.chunk_keyword_index import ChunkKeywordIndex
 from app.modules.retrieval.retrievers.models import CandidateHit, CandidateSource
 from app.modules.retrieval.source_policy import (
     SOURCE_METADATA_COLUMNS,
@@ -106,14 +106,24 @@ class ChunkEmbeddingRepository(ProjectScopedRepository[ChunkEmbedding]):
             else []
         )
         stmt = (
-            select(self.model.chunk_id, score, DocumentChunk.chunk_metadata, *source_columns)
+            select(
+                self.model.chunk_id,
+                score,
+                ChunkKeywordIndex.metadata_snapshot,
+                *source_columns,
+            )
             .join(
-                DocumentChunk,
-                (DocumentChunk.id == self.model.chunk_id)
-                & (DocumentChunk.project_id == self.model.project_id),
+                ChunkKeywordIndex,
+                (ChunkKeywordIndex.chunk_id == self.model.chunk_id)
+                & (ChunkKeywordIndex.project_id == self.model.project_id)
+                & (ChunkKeywordIndex.index_build_id == self.model.index_build_id)
+                & (
+                    ChunkKeywordIndex.embedding_set_version
+                    == self.model.embedding_set_version
+                ),
             )
             .where(self.model.project_id == self._project_id)
-            .where(DocumentChunk.project_id == self._project_id)
+            .where(ChunkKeywordIndex.project_id == self._project_id)
             .where(self.model.embedding_set_version == embedding_set_version)
             .where(self.model.provider == provider)
             .where(self.model.model == model)
@@ -128,7 +138,7 @@ class ChunkEmbeddingRepository(ProjectScopedRepository[ChunkEmbedding]):
         if document_id is not None:
             stmt = stmt.where(self.model.document_id == document_id)
         for key, value in (metadata_filter or {}).items():
-            stmt = stmt.where(DocumentChunk.chunk_metadata[key].astext == value)
+            stmt = stmt.where(ChunkKeywordIndex.metadata_snapshot[key].astext == value)
         if score_threshold is not None:
             stmt = stmt.where(distance <= 1.0 - score_threshold)
         stmt = stmt.order_by(distance, self.model.chunk_id).limit(top_k)
@@ -140,7 +150,7 @@ class ChunkEmbeddingRepository(ProjectScopedRepository[ChunkEmbedding]):
                 score=float(row.score),
                 source=CandidateSource.SEMANTIC,
                 metadata={
-                    **_metadata_dict(row.chunk_metadata),
+                    **_metadata_dict(row.metadata_snapshot),
                     **source_metadata_from_row(row),
                 },
             )

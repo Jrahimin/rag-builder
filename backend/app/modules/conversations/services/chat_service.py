@@ -155,6 +155,16 @@ class ChatService:
                 max_tokens=self._llm_max_tokens(),
             )
         except ProviderError as exc:
+            await self._record_failed_execution(
+                conversation=conversation,
+                prepared=prepared,
+                exc=exc,
+                content="",
+                generation_ms=int((time.perf_counter() - generation_started) * 1000),
+                total_ms=int((time.perf_counter() - started) * 1000),
+                user_content_for_title=request.content,
+                streamed=False,
+            )
             self._log_provider_failure(conversation_id, exc)
             raise self._provider_unavailable(exc) from exc
 
@@ -253,6 +263,16 @@ class ChatService:
                 if chunk.usage is not None:
                     final_usage = chunk.usage
         except ProviderError as exc:
+            await self._record_failed_execution(
+                conversation=conversation,
+                prepared=prepared,
+                exc=exc,
+                content="".join(content_parts),
+                generation_ms=int((time.perf_counter() - generation_started) * 1000),
+                total_ms=int((time.perf_counter() - started) * 1000),
+                user_content_for_title=request.content,
+                streamed=True,
+            )
             self._log_provider_failure(conversation_id, exc)
             raise self._provider_unavailable(exc) from exc
 
@@ -428,6 +448,63 @@ class ChatService:
             log_kwargs["output_tokens"] = output_tokens_logged
         logger.info("chat_complete", **log_kwargs)
         return assistant_message
+
+    async def _record_failed_execution(
+        self,
+        *,
+        conversation: Conversation,
+        prepared: _PreparedTurn,
+        exc: ProviderError,
+        content: str,
+        generation_ms: int,
+        total_ms: int,
+        user_content_for_title: str,
+        streamed: bool,
+    ) -> None:
+        """Persist a safe usage/error record without replacing the provider failure."""
+        metadata = self._build_metadata(
+            retrieval_ms=prepared.retrieval_ms,
+            generation_ms=generation_ms,
+            total_ms=total_ms,
+            retrieved_count=len(prepared.chunks),
+            selected_count=len(prepared.selected),
+            retrieval_diagnostics=prepared.retrieval_diagnostics,
+        )
+        metadata.update(
+            {
+                "execution_status": "failed",
+                "execution_error_code": exc.code,
+                "execution_retryable": exc.retryable,
+                "grounded": False,
+                "citation_coverage": 0.0,
+            }
+        )
+        try:
+            await self._commit_assistant_message(
+                conversation=conversation,
+                content=content,
+                finish_reason="error",
+                input_tokens=None,
+                output_tokens=None,
+                prompt_version=prepared.prompt_version,
+                provider=exc.provider_name or prepared.llm.provider_name,
+                model=prepared.llm.model_name,
+                metadata=metadata,
+                citations=[],
+                claims=[],
+                grounded=False,
+                insufficient_evidence_reason=None,
+                user_content_for_title=user_content_for_title,
+            )
+        except Exception:
+            await self._session.rollback()
+            logger.exception(
+                "chat_failure_record_persist_failed",
+                project_id=str(self._project_id),
+                conversation_id=str(conversation.id),
+                provider=exc.provider_name,
+                streamed=streamed,
+            )
 
     def _done_event(self, message: Message, conversation: Conversation) -> dict[str, Any]:
         response = self._to_response(
