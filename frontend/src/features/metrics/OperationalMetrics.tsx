@@ -42,7 +42,7 @@ export function OperationalMetrics() {
   const data = metrics.data;
   const usageData = usage.data;
   const chart = data.job_latency.map((metric) => ({
-    name: metric.name.replace("document.", ""),
+    name: shortJobName(metric.name),
     average: metric.average_ms ?? 0,
     maximum: metric.maximum_ms ?? 0,
   }));
@@ -81,6 +81,14 @@ export function OperationalMetrics() {
               <h2>Job latency</h2>
               <p>Average and maximum completed-run duration</p>
             </div>
+            <div className="chart-legend" aria-hidden="true">
+              <span>
+                <i className="chart-legend__swatch chart-legend__swatch--average" /> Average
+              </span>
+              <span>
+                <i className="chart-legend__swatch chart-legend__swatch--maximum" /> Maximum
+              </span>
+            </div>
           </div>
           {chart.length === 0 ? (
             <div className="inline-empty">
@@ -89,13 +97,33 @@ export function OperationalMetrics() {
           ) : (
             <div className="chart-container" aria-label="Job latency chart">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={chart} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
+                <BarChart data={chart} margin={{ top: 8, right: 12, left: 4, bottom: 28 }}>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-                  <XAxis dataKey="name" tickLine={false} axisLine={false} />
-                  <YAxis tickLine={false} axisLine={false} unit="ms" width={58} />
-                  <Tooltip formatter={(value) => `${Number(value).toFixed(0)} ms`} />
-                  <Bar dataKey="average" fill="#2f6feb" radius={[4, 4, 0, 0]} />
-                  <Bar dataKey="maximum" fill="#9db8f3" radius={[4, 4, 0, 0]} />
+                  <XAxis
+                    dataKey="name"
+                    tickLine={false}
+                    axisLine={false}
+                    interval={0}
+                    angle={-28}
+                    textAnchor="end"
+                    height={56}
+                    tick={{ fontSize: 11 }}
+                  />
+                  <YAxis
+                    tickLine={false}
+                    axisLine={false}
+                    width={44}
+                    tickFormatter={formatAxisMs}
+                    tick={{ fontSize: 11 }}
+                  />
+                  <Tooltip
+                    formatter={(value, name) => [
+                      formatDuration(Number(value)),
+                      name === "average" ? "Average" : "Maximum",
+                    ]}
+                  />
+                  <Bar dataKey="average" name="average" fill="#2f6feb" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="maximum" name="maximum" fill="#9db8f3" radius={[4, 4, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -131,7 +159,7 @@ export function OperationalMetrics() {
         </section>
       </div>
       <section className="panel">
-        <div className="panel__heading usage-heading">
+        <div className="panel__heading">
           <div>
             <h2>Execution usage</h2>
             <p>
@@ -139,47 +167,47 @@ export function OperationalMetrics() {
               provider usage remains unknown.
             </p>
           </div>
-          <div className="usage-filters" aria-label="Usage filters">
-            <label className="field-control">
-              <span>Bucket</span>
-              <select
-                value={bucket}
-                onChange={(event) => setBucket(event.target.value as UsageBucket)}
-              >
-                <option value="hour">Hour</option>
-                <option value="day">Day</option>
-                <option value="month">Month</option>
-              </select>
-            </label>
-            <label className="field-control">
-              <span>Workload</span>
-              <select
-                value={workload}
-                onChange={(event) => setWorkload(event.target.value as UsageWorkload | "")}
-              >
-                <option value="">All workloads</option>
-                <option value="chat">Chat</option>
-                <option value="contextual_generation">Contextual generation</option>
-                <option value="evaluation">Evaluation</option>
-              </select>
-            </label>
-            <label className="field-control">
-              <span>Provider</span>
-              <input
-                value={provider}
-                onChange={(event) => setProvider(event.target.value)}
-                placeholder="All providers"
-              />
-            </label>
-            <label className="field-control">
-              <span>Model</span>
-              <input
-                value={model}
-                onChange={(event) => setModel(event.target.value)}
-                placeholder="All models"
-              />
-            </label>
-          </div>
+        </div>
+        <div className="usage-toolbar" aria-label="Usage filters">
+          <label className="field-control">
+            <span>Bucket</span>
+            <select
+              value={bucket}
+              onChange={(event) => setBucket(event.target.value as UsageBucket)}
+            >
+              <option value="hour">Hour</option>
+              <option value="day">Day</option>
+              <option value="month">Month</option>
+            </select>
+          </label>
+          <label className="field-control">
+            <span>Workload</span>
+            <select
+              value={workload}
+              onChange={(event) => setWorkload(event.target.value as UsageWorkload | "")}
+            >
+              <option value="">All workloads</option>
+              <option value="chat">Chat</option>
+              <option value="contextual_generation">Contextual generation</option>
+              <option value="evaluation">Evaluation</option>
+            </select>
+          </label>
+          <label className="field-control">
+            <span>Provider</span>
+            <input
+              value={provider}
+              onChange={(event) => setProvider(event.target.value)}
+              placeholder="All providers"
+            />
+          </label>
+          <label className="field-control">
+            <span>Model</span>
+            <input
+              value={model}
+              onChange={(event) => setModel(event.target.value)}
+              placeholder="All models"
+            />
+          </label>
         </div>
         <dl className="configuration-grid usage-summary">
           <div>
@@ -210,7 +238,7 @@ export function OperationalMetrics() {
         {usageData.items.length === 0 ? (
           <div className="inline-empty">No executions matched the selected usage filters.</div>
         ) : (
-          <div className="table-scroll">
+          <div className="table-scroll usage-table">
             <table>
               <thead>
                 <tr>
@@ -299,6 +327,16 @@ export function OperationalMetrics() {
       </section>
     </div>
   );
+}
+
+function shortJobName(name: string) {
+  return name.replace(/^(document|corpus|index|plus)\./, "");
+}
+
+function formatAxisMs(value: number) {
+  if (value >= 60_000) return `${Math.round(value / 60_000)}m`;
+  if (value >= 1000) return `${Math.round(value / 1000)}s`;
+  return `${Math.round(value)}`;
 }
 
 function formatNullableNumber(value: number | null) {

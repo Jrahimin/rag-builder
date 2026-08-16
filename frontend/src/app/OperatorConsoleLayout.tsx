@@ -1,4 +1,5 @@
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
+import { LogOut } from "lucide-react";
 import { OperatorNavigation } from "./OperatorNavigation";
 import { useAdminAuth } from "../auth/useAdminAuth";
 
@@ -50,28 +51,34 @@ export function OperatorConsoleLayout() {
       <OperatorNavigation />
       <main className="console-main" id="main-content">
         <header className="page-header">
-          <div>
+          <div className="page-header__title">
             <p className="eyebrow">Operator console</p>
             <h1>{heading.title}</h1>
             <p>{heading.description}</p>
           </div>
-          <div className="live-indicator">
-            <span aria-hidden="true" /> Live data
-          </div>
-          <div className="admin-account">
-            <span>{auth.admin?.email}</span>
-            <small>Super Admin</small>
-            <button
-              type="button"
-              onClick={() => {
-                void auth.logout().then(
-                  () => void navigate("/login", { replace: true }),
-                  () => void navigate("/login", { replace: true }),
-                );
-              }}
-            >
-              Log out
-            </button>
+          <div className="page-header__meta">
+            <div className="admin-account">
+              <div className="live-indicator" title="Console is showing live deployment data">
+                <span aria-hidden="true" /> Live data
+              </div>
+              <div className="admin-account__identity">
+                <span>{auth.admin?.email}</span>
+                <small>Super Admin</small>
+              </div>
+              <button
+                className="button button--logout"
+                type="button"
+                onClick={() => {
+                  void auth.logout().then(
+                    () => void navigate("/login", { replace: true }),
+                    () => void navigate("/login", { replace: true }),
+                  );
+                }}
+              >
+                <LogOut size={14} aria-hidden="true" />
+                Log out
+              </button>
+            </div>
           </div>
         </header>
         <Outlet />

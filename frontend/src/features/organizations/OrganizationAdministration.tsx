@@ -79,7 +79,11 @@ export function OrganizationAdministration() {
           />
         )}
         {organizations.data.items.length === 0 ? (
-          <EmptyState title="No clients yet" detail="Create the first Organization to begin." />
+          <EmptyState
+            compact
+            title="No clients yet"
+            detail="Create the first Organization to begin."
+          />
         ) : (
           <div className="admin-rail__list">
             {organizations.data.items.map((organization) => (
@@ -112,6 +116,7 @@ export function OrganizationAdministration() {
           />
         ) : (
           <EmptyState
+            compact
             title="Select an Organization"
             detail="Client details, keys, and associated Projects appear here."
           />
@@ -157,7 +162,11 @@ function CreateOrganization({
       </label>
       <label className="field-control">
         <span>Description</span>
-        <textarea value={description} onChange={(event) => setDescription(event.target.value)} />
+        <textarea
+          rows={3}
+          value={description}
+          onChange={(event) => setDescription(event.target.value)}
+        />
       </label>
       {error && (
         <p className="form-error" role="alert">
@@ -244,6 +253,155 @@ function OrganizationDetail({
           {error}
         </div>
       )}
+      <section className="panel credentials-panel">
+        <div className="section-heading">
+          <div>
+            <h3>API keys</h3>
+            <p>Replacement keys remain active beside the old key until explicit revocation.</p>
+          </div>
+          <KeyRound size={20} aria-hidden="true" />
+        </div>
+        <div className="panel-body">
+          <form className="inline-form" onSubmit={(event) => void issueKey(event)}>
+            <label className="field-control field-control--grow">
+              <span>New key name</span>
+              <input
+                required
+                maxLength={64}
+                value={keyName}
+                onChange={(event) => setKeyName(event.target.value)}
+                placeholder="production"
+              />
+            </label>
+            <button
+              className="button button--primary"
+              type="submit"
+              disabled={!organization.is_active || Boolean(organization.deleted_at) || Boolean(busy)}
+            >
+              Issue named key
+            </button>
+          </form>
+          {keys.isPending ? (
+            <LoadingState label="Loading API keys" />
+          ) : keys.data?.items.length ? (
+            <div className="credential-list">
+              {keys.data.items.map((key) => (
+                <article key={key.id} className="credential-card">
+                  <div className="credential-card__header">
+                    <div>
+                      <strong>{key.name}</strong>
+                      <small>
+                        {key.key_prefix} · {shortId(key.id)}
+                      </small>
+                      <small className="credential-card__dates">
+                        Created {formatDate(key.created_at)} · Last used{" "}
+                        {key.last_used_at ? formatDate(key.last_used_at) : "never"}
+                      </small>
+                    </div>
+                    <StatusBadge status={key.status} />
+                  </div>
+                  {key.status === "active" && (
+                    <div className="button-row">
+                      <button
+                        className="button button--secondary"
+                        type="button"
+                        disabled={!organization.is_active || Boolean(busy)}
+                        onClick={() => {
+                          void (async () => {
+                            const replacementName = window.prompt(
+                              "Replacement key name",
+                              `${key.name}-next`,
+                            );
+                            if (!replacementName) return;
+                            setBusy(`rotate-${key.id}`);
+                            setError("");
+                            try {
+                              setHandoff(
+                                await operatorApiClient.rotateApiKey(
+                                  organization.id,
+                                  key.id,
+                                  replacementName,
+                                ),
+                              );
+                              await keys.refetch();
+                            } catch (caught) {
+                              setError((caught as Error).message);
+                            } finally {
+                              setBusy("");
+                            }
+                          })();
+                        }}
+                      >
+                        <RotateCw size={14} /> Replace
+                      </button>
+                      <button
+                        className="button button--danger"
+                        type="button"
+                        disabled={!organization.is_active || Boolean(busy)}
+                        onClick={() => {
+                          const confirmed = window.confirm(
+                            `Emergency rotation will revoke ${key.name} immediately. Continue?`,
+                          );
+                          if (!confirmed) return;
+                          const replacementName = window.prompt(
+                            "Emergency replacement key name",
+                            `${key.name}-emergency`,
+                          );
+                          if (!replacementName) return;
+                          void (async () => {
+                            setBusy(`emergency-${key.id}`);
+                            setError("");
+                            try {
+                              setHandoff(
+                                await operatorApiClient.rotateApiKey(
+                                  organization.id,
+                                  key.id,
+                                  replacementName,
+                                  true,
+                                ),
+                              );
+                              await keys.refetch();
+                            } catch (caught) {
+                              setError((caught as Error).message);
+                            } finally {
+                              setBusy("");
+                            }
+                          })();
+                        }}
+                      >
+                        Emergency rotate
+                      </button>
+                      <button
+                        className="button button--danger"
+                        type="button"
+                        disabled={Boolean(busy)}
+                        onClick={() => {
+                          if (
+                            window.confirm(
+                              `Revoke ${key.name}? Requests using it will fail immediately.`,
+                            )
+                          )
+                            void run(`revoke-${key.id}`, () =>
+                              operatorApiClient.revokeApiKey(organization.id, key.id),
+                            );
+                        }}
+                      >
+                        Revoke
+                      </button>
+                    </div>
+                  )}
+                </article>
+              ))}
+            </div>
+          ) : (
+            <EmptyState
+              compact
+              title="No API keys"
+              detail="Issue a named credential for this client."
+            />
+          )}
+        </div>
+      </section>
       <div className="detail-grid">
         <section className="panel">
           <div className="section-heading">
@@ -251,7 +409,7 @@ function OrganizationDetail({
             <span>Updated {formatDate(organization.updated_at)}</span>
           </div>
           <form
-            className="stack-form"
+            className="stack-form panel-body"
             onSubmit={(event) => {
               event.preventDefault();
               void run("save", () =>
@@ -266,6 +424,7 @@ function OrganizationDetail({
             <label className="field-control">
               <span>Description</span>
               <textarea
+                rows={3}
                 value={description}
                 onChange={(event) => setDescription(event.target.value)}
               />
@@ -334,197 +493,39 @@ function OrganizationDetail({
             <h3>Associated Projects</h3>
             <span>{projects.data?.total ?? 0} total</span>
           </div>
-          {projects.isPending ? (
-            <LoadingState label="Loading Projects" />
-          ) : projects.data?.items.length ? (
-            <div className="record-list">
-              {projects.data.items.map((project) => (
-                <Link
-                  key={project.id}
-                  className="record-row"
-                  to={`/projects?project=${project.id}`}
-                >
-                  <span>
-                    <strong>{project.name}</strong>
-                    <small>{shortId(project.id)}</small>
-                  </span>
-                  <StatusBadge
-                    status={
-                      project.deleted_at ? "archived" : project.is_active ? "active" : "disabled"
-                    }
-                  />
-                </Link>
-              ))}
-            </div>
-          ) : (
-            <EmptyState
-              title="No Projects"
-              detail="Create a Project from canonical Project administration."
-            />
-          )}
+          <div className="panel-body">
+            {projects.isPending ? (
+              <LoadingState label="Loading Projects" />
+            ) : projects.data?.items.length ? (
+              <div className="record-list">
+                {projects.data.items.map((project) => (
+                  <Link
+                    key={project.id}
+                    className="record-row"
+                    to={`/projects?project=${project.id}`}
+                  >
+                    <span>
+                      <strong>{project.name}</strong>
+                      <small>{shortId(project.id)}</small>
+                    </span>
+                    <StatusBadge
+                      status={
+                        project.deleted_at ? "archived" : project.is_active ? "active" : "disabled"
+                      }
+                    />
+                  </Link>
+                ))}
+              </div>
+            ) : (
+              <EmptyState
+                compact
+                title="No Projects"
+                detail="Create a Project from canonical Project administration."
+              />
+            )}
+          </div>
         </section>
       </div>
-      <section className="panel">
-        <div className="section-heading">
-          <div>
-            <h3>API keys</h3>
-            <p>Replacement keys remain active beside the old key until explicit revocation.</p>
-          </div>
-          <KeyRound size={20} />
-        </div>
-        <form className="inline-form" onSubmit={(event) => void issueKey(event)}>
-          <label className="field-control field-control--grow">
-            <span>New key name</span>
-            <input
-              required
-              maxLength={64}
-              value={keyName}
-              onChange={(event) => setKeyName(event.target.value)}
-              placeholder="production"
-            />
-          </label>
-          <button
-            className="button button--primary"
-            type="submit"
-            disabled={!organization.is_active || Boolean(organization.deleted_at) || Boolean(busy)}
-          >
-            Issue named key
-          </button>
-        </form>
-        {keys.isPending ? (
-          <LoadingState label="Loading API keys" />
-        ) : keys.data?.items.length ? (
-          <div className="table-scroll">
-            <table>
-              <thead>
-                <tr>
-                  <th>Name / identifier</th>
-                  <th>Status</th>
-                  <th>Created</th>
-                  <th>Last used</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {keys.data.items.map((key) => (
-                  <tr key={key.id}>
-                    <td>
-                      <strong>{key.name}</strong>
-                      <br />
-                      <small>
-                        {key.key_prefix} · {shortId(key.id)}
-                      </small>
-                    </td>
-                    <td>
-                      <StatusBadge status={key.status} />
-                    </td>
-                    <td>{formatDate(key.created_at)}</td>
-                    <td>{key.last_used_at ? formatDate(key.last_used_at) : "Never"}</td>
-                    <td>
-                      <div className="button-row">
-                        {key.status === "active" && (
-                          <button
-                            className="button button--secondary"
-                            type="button"
-                            disabled={!organization.is_active || Boolean(busy)}
-                            onClick={() => {
-                              void (async () => {
-                                const replacementName = window.prompt(
-                                  "Replacement key name",
-                                  `${key.name}-next`,
-                                );
-                                if (!replacementName) return;
-                                setBusy(`rotate-${key.id}`);
-                                setError("");
-                                try {
-                                  setHandoff(
-                                    await operatorApiClient.rotateApiKey(
-                                      organization.id,
-                                      key.id,
-                                      replacementName,
-                                    ),
-                                  );
-                                  await keys.refetch();
-                                } catch (caught) {
-                                  setError((caught as Error).message);
-                                } finally {
-                                  setBusy("");
-                                }
-                              })();
-                            }}
-                          >
-                            <RotateCw size={14} /> Replace
-                          </button>
-                        )}
-                        {key.status === "active" && (
-                          <button
-                            className="button button--danger"
-                            type="button"
-                            disabled={!organization.is_active || Boolean(busy)}
-                            onClick={() => {
-                              const confirmed = window.confirm(
-                                `Emergency rotation will revoke ${key.name} immediately. Continue?`,
-                              );
-                              if (!confirmed) return;
-                              const replacementName = window.prompt(
-                                "Emergency replacement key name",
-                                `${key.name}-emergency`,
-                              );
-                              if (!replacementName) return;
-                              void (async () => {
-                                setBusy(`emergency-${key.id}`);
-                                setError("");
-                                try {
-                                  setHandoff(
-                                    await operatorApiClient.rotateApiKey(
-                                      organization.id,
-                                      key.id,
-                                      replacementName,
-                                      true,
-                                    ),
-                                  );
-                                  await keys.refetch();
-                                } catch (caught) {
-                                  setError((caught as Error).message);
-                                } finally {
-                                  setBusy("");
-                                }
-                              })();
-                            }}
-                          >
-                            Emergency rotate
-                          </button>
-                        )}
-                        {key.status === "active" && (
-                          <button
-                            className="button button--danger"
-                            type="button"
-                            disabled={Boolean(busy)}
-                            onClick={() => {
-                              if (
-                                window.confirm(
-                                  `Revoke ${key.name}? Requests using it will fail immediately.`,
-                                )
-                              )
-                                void run(`revoke-${key.id}`, () =>
-                                  operatorApiClient.revokeApiKey(organization.id, key.id),
-                                );
-                            }}
-                          >
-                            Revoke
-                          </button>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        ) : (
-          <EmptyState title="No API keys" detail="Issue a named credential for this client." />
-        )}
-      </section>
       {handoff && (
         <CredentialHandoff
           organizationName={organization.name}

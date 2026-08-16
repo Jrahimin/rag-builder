@@ -10,9 +10,17 @@ export function LoadingState({ label = "Loading operational data" }: { label?: s
   );
 }
 
-export function EmptyState({ title, detail }: { title: string; detail: string }) {
+export function EmptyState({
+  title,
+  detail,
+  compact = false,
+}: {
+  title: string;
+  detail: string;
+  compact?: boolean;
+}) {
   return (
-    <div className="query-state">
+    <div className={compact ? "query-state query-state--compact" : "query-state"}>
       <Inbox aria-hidden="true" />
       <h2>{title}</h2>
       <p>{detail}</p>

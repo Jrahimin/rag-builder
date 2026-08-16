@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import unicodedata
 import uuid
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
@@ -19,7 +20,11 @@ from app.core.exceptions import (
 from app.models.document import Document, DocumentStatus
 from app.modules.knowledge.repositories.document_repository import DocumentRepository
 from app.modules.knowledge.schemas.document import DocumentIngestInput
-from app.modules.knowledge.services.document_service import DocumentService
+from app.modules.knowledge.services.document_service import (
+    DocumentService,
+    display_filename,
+    safe_filename,
+)
 from app.platform.jobs.configuration import build_job_configuration
 from app.platform.jobs.contracts import DurableJobSubmitter, JobSubmission
 from app.platform.providers.contracts.malware_scanner import MalwareScanResult
@@ -27,6 +32,21 @@ from app.platform.providers.contracts.storage import BaseStorageProvider
 from app.platform.providers.errors import ProviderConnectionError
 
 pytestmark = pytest.mark.unit
+
+
+BANGLA_ORDINANCE = "অর্থ সংক্রান্ত কতিপয় আইন (দ্বিতীয় সংশোধন) অধ্যাদেশ, ২০২৫.pdf"
+
+
+def test_display_filename_preserves_bangla_letters_marks_and_punctuation() -> None:
+    expected = unicodedata.normalize("NFC", BANGLA_ORDINANCE)
+    assert display_filename(BANGLA_ORDINANCE) == expected
+    assert "_" not in display_filename(BANGLA_ORDINANCE)
+    assert safe_filename(rf"C:\uploads\{BANGLA_ORDINANCE}") == expected
+
+
+def test_display_filename_strips_path_separators_and_controls() -> None:
+    assert display_filename("../notes.txt") == "notes.txt"
+    assert display_filename("a\nb.pdf") == "a_b.pdf"
 
 
 async def _stream(data: bytes) -> AsyncIterator[bytes]:
@@ -131,6 +151,31 @@ async def test_upload_persists_and_stores_bytes(
     assert definition.payload == {"document_version": 1, "operation": "ingest"}
     job_submitter.dispatch.assert_awaited_once_with(result.job_id)
     session.commit.assert_awaited_once()
+
+
+async def test_upload_keeps_bangla_display_filename(
+    service: DocumentService,
+    repository: AsyncMock,
+) -> None:
+    documents: list[Document] = []
+    repository.add.side_effect = lambda entity: documents.append(entity) or entity
+    repository.get_by_id = AsyncMock(
+        side_effect=lambda *_a, **_k: documents[-1] if documents else None
+    )
+    bangla_name = "অর্থ সংক্রান্ত কতিপয় আইন (দ্বিতীয় সংশোধন) অধ্যাদেশ, ২০২৫.txt"
+
+    result = await service.upload(
+        DocumentIngestInput(
+            filename=bangla_name,
+            content_type="text/plain",
+            stream=_stream(b"bangla ordinance"),
+        )
+    )
+
+    stored = unicodedata.normalize("NFC", bangla_name)
+    assert result.filename == stored
+    assert "_" not in result.filename
+    assert result.storage_key.endswith(f"/{stored}")
 
 
 async def test_upload_duplicate_content_raises_conflict(

@@ -186,25 +186,57 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return payload.data;
 }
 
-async function getAllOrganizations(includeDeleted = true): Promise<OrganizationPage> {
-  const pageSize = 100;
-  const items: Organization[] = [];
+async function getAllPages<T>(
+  fetchPage: (limit: number, offset: number) => Promise<{ items: T[]; total: number }>,
+  pageSize = 100,
+): Promise<{ items: T[]; total: number; limit: number; offset: number }> {
+  const items: T[] = [];
   let offset = 0;
   let total = 0;
   do {
-    const page = await request<OrganizationPage>(
-      `${apiRoot}/organizations${query({
-        limit: pageSize,
-        offset,
-        include_deleted: String(includeDeleted),
-      })}`,
-    );
+    const page = await fetchPage(pageSize, offset);
     items.push(...page.items);
     total = page.total;
     offset += page.items.length;
     if (page.items.length === 0) break;
   } while (items.length < total);
   return { items, total, limit: pageSize, offset: 0 };
+}
+
+async function getAllOrganizations(includeDeleted = true): Promise<OrganizationPage> {
+  return getAllPages((limit, offset) =>
+    request<OrganizationPage>(
+      `${apiRoot}/organizations${query({
+        limit,
+        offset,
+        include_deleted: String(includeDeleted),
+      })}`,
+    ),
+  );
+}
+
+async function getAllOperatorProjects(): Promise<ProjectPage> {
+  return getAllPages((limit, offset) =>
+    request<ProjectPage>(
+      `${apiRoot}/operator/projects${query({
+        limit,
+        offset,
+        include_deleted: "true",
+      })}`,
+    ),
+  );
+}
+
+async function getAllOrganizationProjects(organizationId: string): Promise<ProjectPage> {
+  return getAllPages((limit, offset) =>
+    request<ProjectPage>(
+      `${apiRoot}/organizations/${organizationId}/projects${query({
+        limit,
+        offset,
+        include_deleted: "true",
+      })}`,
+    ),
+  );
 }
 
 function query(params: Record<string, string | number | undefined>): string {
@@ -272,8 +304,7 @@ export const operatorApiClient = {
     request<Organization>(`${apiRoot}/organizations/${organizationId}/restore`, {
       method: "POST",
     }),
-  getOrganizationProjects: (organizationId: string) =>
-    request<ProjectPage>(`${apiRoot}/organizations/${organizationId}/projects`),
+  getOrganizationProjects: (organizationId: string) => getAllOrganizationProjects(organizationId),
   getApiKeys: (organizationId: string) =>
     request<ApiKeyPage>(`${apiRoot}/organizations/${organizationId}/api-keys?limit=100`),
   createApiKey: (organizationId: string, name: string) =>
@@ -303,10 +334,7 @@ export const operatorApiClient = {
     }),
   getProjects: (limit = 100, offset = 0) =>
     request<ProjectPage>(`${apiRoot}/projects${query({ limit, offset })}`),
-  getAllOperatorProjects: (limit = 500, offset = 0) =>
-    request<ProjectPage>(
-      `${apiRoot}/operator/projects${query({ limit, offset, include_deleted: "true" })}`,
-    ),
+  getAllOperatorProjects: () => getAllOperatorProjects(),
   getOperatorProject: (projectId: string) =>
     request<Project>(`${apiRoot}/operator/projects/${projectId}`),
   createProject: (name: string, organizationId: string, description?: string) =>

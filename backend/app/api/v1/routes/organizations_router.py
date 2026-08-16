@@ -23,7 +23,7 @@ from app.modules.organizations.schemas.organization import (
     OrganizationUpdate,
 )
 from app.modules.projects.schemas.project import ProjectResponse
-from app.platform.http.pagination import ListParams, PaginatedResult
+from app.platform.http.pagination import ListParams, OperatorListParams, PaginatedResult
 
 router = APIRouter(dependencies=[Depends(require_super_admin)])
 
@@ -183,7 +183,7 @@ async def list_organization_projects(
     await organization_service.get(organization_id, include_deleted=True)
     page = await project_service.list_for_organization(
         organization_id,
-        ListParams(limit=limit, offset=offset, include_deleted=include_deleted),
+        OperatorListParams(limit=limit, offset=offset, include_deleted=include_deleted),
     )
     return ApiResponse.ok(
         PaginatedResult[ProjectResponse](

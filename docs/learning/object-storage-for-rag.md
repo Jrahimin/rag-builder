@@ -70,7 +70,7 @@ Parsed text:  {project_id}/{document_id}/parsed/v{version}.txt
 | ---- | --- |
 | `project_id` prefix | Tenant isolation; bucket policies per customer |
 | `document_id` | Stable path even if filename changes on re-upload |
-| `safe_filename` | Basename only; unsafe chars stripped (`safe_filename()`) |
+| `safe_filename` | Basename only; path separators and control characters stripped. Unicode scripts such as Bangla are preserved. |
 | `parsed/v{N}.txt` | Version bumps on reprocess — old parsed file can be replaced |
 
 ---

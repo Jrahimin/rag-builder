@@ -43,7 +43,7 @@ from app.modules.projects.schemas.project import (
     ProjectStatusUpdate,
     ProjectUpdate,
 )
-from app.platform.http.pagination import ListParams, PaginatedResult
+from app.platform.http.pagination import OperatorListParams, PaginatedResult
 from app.platform.providers.capabilities import describe_llm_capability
 
 router = APIRouter(dependencies=[Depends(require_super_admin)])
@@ -156,7 +156,7 @@ async def list_operator_projects(
     is_active: bool | None = Query(default=None),
 ) -> ApiResponse[PaginatedResult[ProjectResponse]]:
     page = await service.list(
-        ListParams(
+        OperatorListParams(
             limit=limit,
             offset=offset,
             include_deleted=include_deleted,

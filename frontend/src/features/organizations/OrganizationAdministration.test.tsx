@@ -58,3 +58,29 @@ test("shows a client record, associated Projects, and non-secret key metadata", 
   expect(screen.getByText(projectFixture.name)).toBeInTheDocument();
   expect(screen.queryByText(/full_key_shown_once/)).not.toBeInTheDocument();
 });
+
+test("shows a compact empty credential state when an Organization has no API keys", async () => {
+  vi.spyOn(operatorApiClient, "getOrganizations").mockResolvedValue({
+    items: [organization],
+    total: 1,
+    limit: 100,
+    offset: 0,
+  });
+  vi.spyOn(operatorApiClient, "getOrganizationProjects").mockResolvedValue({
+    items: [],
+    total: 0,
+    limit: 100,
+    offset: 0,
+  });
+  vi.spyOn(operatorApiClient, "getApiKeys").mockResolvedValue({
+    items: [],
+    total: 0,
+    limit: 100,
+    offset: 0,
+  });
+
+  renderOperatorComponent(<OperatorConsoleApp />, `/organizations?organization=${organization.id}`);
+  expect(await screen.findByRole("heading", { name: "No API keys" })).toBeInTheDocument();
+  expect(screen.getByText("Issue a named credential for this client.")).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "No Projects" })).toBeInTheDocument();
+});

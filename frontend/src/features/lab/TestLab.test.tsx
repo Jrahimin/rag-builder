@@ -97,6 +97,12 @@ function mockLabBase({
     active_build_id: buildFixture.id,
     previous_build_id: null,
   });
+  vi.spyOn(operatorApiClient, "getSourceState").mockResolvedValue({
+    project_id: projectFixture.id,
+    generation: 1,
+    current_generation: 1,
+    items: [],
+  });
 }
 
 test("routes to Test Lab, keeps project selection, and derives Journey progress from backend state", async () => {
@@ -107,6 +113,10 @@ test("routes to Test Lab, keeps project selection, and derives Journey progress 
   expect(
     await screen.findByText(/policy.txt is ready/, {}, { timeout: 5_000 }),
   ).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "Processing" })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "Retrieval" })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "Chat" })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "Results" })).toBeInTheDocument();
   expect(screen.getByRole("combobox", { name: "Project" })).toHaveValue(projectFixture.id);
   expect(screen.getByText(/Active build is 88888888/)).toBeInTheDocument();
 });
@@ -323,7 +333,7 @@ test("renders grounded citations instead of inferring grounding from answer text
   await userEvent.type(await screen.findByLabelText("Message"), "What is the policy?");
   await userEvent.click(screen.getByRole("button", { name: "Send message" }));
   expect(await screen.findByText("Answer with citations")).toBeInTheDocument();
-  expect(screen.getByText("[1] policy.txt")).toBeInTheDocument();
+  expect(screen.getByLabelText("1 citations")).toHaveTextContent("[1] policy.txt");
   expect(screen.getByText(/Refund requests are accepted/)).toBeInTheDocument();
 });
 
@@ -403,11 +413,15 @@ test("requires the exact filename before enabling irreversible purge and shows A
   );
   const purge = await screen.findByRole("button", { name: "Purge" });
   expect(purge).toBeDisabled();
+  expect(
+    screen.getByText(/Type the exact filename to enable Purge/),
+  ).toBeInTheDocument();
   await userEvent.type(screen.getByLabelText("Purge confirmation"), "wrong.txt");
   expect(purge).toBeDisabled();
   await userEvent.clear(screen.getByLabelText("Purge confirmation"));
   await userEvent.type(screen.getByLabelText("Purge confirmation"), documentFixture.filename);
   expect(purge).toBeEnabled();
+  expect(screen.getByText("Filename confirmed. This cannot be undone.")).toBeInTheDocument();
 
   vi.spyOn(operatorApiClient, "purgeDocument").mockRejectedValue(
     new OperatorApiError("Purge was rejected.", 409, "document_purge_conflict", "req-123"),
@@ -416,4 +430,107 @@ test("requires the exact filename before enabling irreversible purge and shows A
   const alert = await screen.findByRole("alert");
   expect(within(alert).getByText("Code: document_purge_conflict")).toBeInTheDocument();
   expect(within(alert).getByText("Request ID: req-123")).toBeInTheDocument();
+});
+
+test("keeps Bangla filenames matchable for purge confirmation", async () => {
+  const banglaName = "অর্থ সংক্রান্ত কতিপয় আইন (দ্বিতীয় সংশোধন) অধ্যাদেশ, ২০২৫.pdf";
+  mockLabBase({ documents: [{ ...documentFixture, filename: banglaName }] });
+  const writeText = vi.fn().mockResolvedValue(undefined);
+  Object.defineProperty(navigator, "clipboard", {
+    configurable: true,
+    value: { writeText },
+  });
+  renderOperatorComponent(
+    <OperatorConsoleApp />,
+    `/lab?project=${projectFixture.id}&tab=documents`,
+  );
+  expect(await screen.findByRole("heading", { name: banglaName })).toBeInTheDocument();
+  const purge = await screen.findByRole("button", { name: "Purge" });
+  expect(purge).toBeDisabled();
+  await userEvent.click(screen.getByRole("button", { name: "Copy filename" }));
+  expect(writeText).toHaveBeenCalledWith(banglaName);
+  await userEvent.type(screen.getByLabelText("Purge confirmation"), banglaName);
+  expect(purge).toBeEnabled();
+});
+
+test("uploads a file as the latest revision of an existing source", async () => {
+  mockLabBase();
+  const revisionId = "55555555-5555-5555-5555-555555555555";
+  vi.spyOn(operatorApiClient, "getSourceState").mockResolvedValue({
+    project_id: projectFixture.id,
+    generation: 1,
+    current_generation: 1,
+    items: [
+      {
+        document_id: documentFixture.id,
+        activation: {
+          id: "44444444-4444-4444-4444-444444444444",
+          project_id: projectFixture.id,
+          document_id: documentFixture.id,
+          source_revision_id: revisionId,
+          generation: 1,
+          activated_by: "test-admin",
+          reason: "Initial",
+          created_at: now,
+        },
+        revision: {
+          id: revisionId,
+          project_id: projectFixture.id,
+          document_id: documentFixture.id,
+          source_group_id: "66666666-6666-6666-6666-666666666666",
+          revision_number: 1,
+          revision_label: "Initial",
+          title: "Existing ordinance",
+          source_type: null,
+          published_date: null,
+          effective_from: null,
+          effective_to: null,
+          lifecycle_status: "active",
+          source_role: "primary",
+          change_reason: "Initial",
+          created_by: "test-admin",
+          content_hash: "d".repeat(64),
+          created_at: now,
+          relationships: [],
+          warnings: [],
+        },
+      },
+    ],
+  });
+  const upload = vi.spyOn(operatorApiClient, "uploadDocument").mockResolvedValue({
+    ...documentFixture,
+    id: "99999999-9999-9999-9999-999999999999",
+    status: "queued",
+  });
+  renderOperatorComponent(
+    <OperatorConsoleApp />,
+    `/lab?project=${projectFixture.id}&tab=documents`,
+  );
+  await userEvent.click(await screen.findByText("Source versioning"));
+  await userEvent.selectOptions(
+    screen.getByLabelText("Source treatment"),
+    "Latest revision of an existing source",
+  );
+  await userEvent.selectOptions(screen.getByLabelText("Existing source"), revisionId);
+  const picker = screen.getByText("Drop a document here").closest("label")!;
+  const fileInput = picker.querySelector("input[type=file]") as HTMLInputElement;
+  await userEvent.upload(
+    fileInput,
+    new File(["revised ordinance"], "ordinance-v2.pdf", { type: "application/pdf" }),
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Submit document" }));
+  expect(upload).toHaveBeenCalledWith(
+    projectFixture.id,
+    expect.any(File),
+    undefined,
+    expect.objectContaining({
+      activate: true,
+      create_new_group: false,
+      source_group_id: "66666666-6666-6666-6666-666666666666",
+      source_role: "primary",
+      relationships: [
+        { relationship_type: "replaces", target_revision_id: revisionId },
+      ],
+    }),
+  );
 });

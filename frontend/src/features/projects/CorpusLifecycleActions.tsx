@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ArchiveRestore, DatabaseZap, RefreshCw, ShieldCheck } from "lucide-react";
+import { ArchiveRestore, CircleHelp, DatabaseZap, RefreshCw, ShieldCheck, X } from "lucide-react";
 import { Link } from "react-router-dom";
 import { OperatorApiError, type IndexBuild, type LifecycleJob } from "../../api/operatorApiClient";
 import {
@@ -30,6 +30,154 @@ function isLifecycleJob(value: LifecycleJob | IndexBuild): value is LifecycleJob
   return "job_id" in value;
 }
 
+function LifecycleGuide({ onClose }: { onClose: () => void }) {
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+  return (
+    <>
+      <button
+        className="lab-drawer-scrim"
+        type="button"
+        aria-label="Close lifecycle guide"
+        onClick={onClose}
+      />
+      <section
+        className="lifecycle-guide"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="lifecycle-guide-title"
+      >
+        <header>
+          <div>
+            <p className="eyebrow">Operator guide</p>
+            <h2 id="lifecycle-guide-title">How corpus lifecycle works</h2>
+          </div>
+          <button className="icon-button" type="button" aria-label="Close" onClick={onClose}>
+            <X size={16} aria-hidden="true" />
+          </button>
+        </header>
+        <div className="lifecycle-guide__body">
+          <p>
+            Search and chat never read a live, half-updated index. They only read one frozen
+            snapshot: the <strong>active build</strong>. New work is built privately, then you
+            choose when it becomes searchable.
+          </p>
+          <h3>What a build contains</h3>
+          <ul>
+            <li>
+              <strong>Chunks</strong> — text passages from ready documents.
+            </li>
+            <li>
+              <strong>Vectors</strong> — embeddings used for meaning (semantic) search.
+            </li>
+            <li>
+              <strong>Keywords</strong> — lexical index used for exact-word (BM25) search.
+            </li>
+          </ul>
+          <p>
+            Hybrid search fuses both. Counts like <code>7 / 7 / 7</code> mean that snapshot has 7
+            of each. <code>0 / 0 / 0</code> is an empty corpus at that moment (for example after
+            purge), not a broken row.
+          </p>
+          <h3>States</h3>
+          <dl>
+            <div>
+              <dt>Building</dt>
+              <dd>Private write in progress. Not searchable.</dd>
+            </div>
+            <div>
+              <dt>Validated</dt>
+              <dd>Complete snapshot, still not live. Ready for Activate.</dd>
+            </div>
+            <div>
+              <dt>Active</dt>
+              <dd>The only snapshot search and chat use right now.</dd>
+            </div>
+            <div>
+              <dt>Retained</dt>
+              <dd>
+                Kept after a later activation. The previous pointer is the rollback target.
+              </dd>
+            </div>
+            <div>
+              <dt>Failed</dt>
+              <dd>Incomplete. Never activated.</dd>
+            </div>
+            <div>
+              <dt>Superseded</dt>
+              <dd>
+                Cannot be activated (for example a build that still contains a purged document).
+              </dd>
+            </div>
+          </dl>
+          <h3>Top actions</h3>
+          <dl>
+            <div>
+              <dt>Re-embed</dt>
+              <dd>
+                Rebuild vectors and keywords from current chunks. Use after embedding-model
+                changes or if semantic search looks wrong. Success means a new validated snapshot
+                — it is not live until Activate.
+              </dd>
+            </div>
+            <div>
+              <dt>Reindex</dt>
+              <dd>
+                Rebuild the snapshot without re-parsing documents. Use after tokenizer or FTS
+                config changes. Also needs Activate.
+              </dd>
+            </div>
+            <div>
+              <dt>Reconcile</dt>
+              <dd>
+                Compare database records with object storage. Read-only audit. Does not change the
+                active index.
+              </dd>
+            </div>
+            <div>
+              <dt>Rollback</dt>
+              <dd>
+                Instantly make the previous retained build active. No rebuild. Use when a newly
+                activated snapshot is worse.
+              </dd>
+            </div>
+          </dl>
+          <h3>Table columns</h3>
+          <dl>
+            <div>
+              <dt>Operation</dt>
+              <dd>
+                Why this snapshot exists: <code>ingest</code> (upload finished),{" "}
+                <code>delete</code> / <code>purge</code> (document removed from corpus),{" "}
+                <code>reembed</code> / <code>reindex</code> (operator rebuild).
+              </dd>
+            </div>
+            <div>
+              <dt>Activate</dt>
+              <dd>
+                Swap the active pointer to this validated or retained snapshot. The current active
+                row stays disabled because it is already live.
+              </dd>
+            </div>
+          </dl>
+          <h3>Typical sequence</h3>
+          <ol>
+            <li>Upload and process a document until Ready. Ingest usually creates and activates a build.</li>
+            <li>Re-embed or Reindex when you need a new snapshot. Confirm, wait for the job, then Activate.</li>
+            <li>Delete removes a document from the next active corpus but keeps artifacts for rollback.</li>
+            <li>Purge does the same, then permanently deletes files, chunks, and embeddings.</li>
+          </ol>
+        </div>
+      </section>
+    </>
+  );
+}
+
 export function CorpusLifecycleActions({
   projectId,
   onNotice,
@@ -43,6 +191,7 @@ export function CorpusLifecycleActions({
   const [acceptedJob, setAcceptedJob] = useState("");
   const [acceptedBuild, setAcceptedBuild] = useState("");
   const [pendingConfirmation, setPendingConfirmation] = useState<LifecycleAction | null>(null);
+  const [guideOpen, setGuideOpen] = useState(false);
   const notifiedTerminal = useRef("");
   const job = useJob(projectId, acceptedJob);
 
@@ -152,7 +301,18 @@ export function CorpusLifecycleActions({
       <div className="section-heading lifecycle-heading">
         <div>
           <p className="eyebrow">Safe corpus lifecycle</p>
-          <h2>Immutable index builds</h2>
+          <div className="lifecycle-title-row">
+            <h2>Immutable index builds</h2>
+            <button
+              className="icon-button"
+              type="button"
+              aria-label="Open lifecycle guide"
+              title="How actions, states, and builds work"
+              onClick={() => setGuideOpen(true)}
+            >
+              <CircleHelp size={18} aria-hidden="true" />
+            </button>
+          </div>
           <p>Validate a private build, deliberately activate it, and verify the active pointer.</p>
         </div>
         <div className="lifecycle-actions">
@@ -207,6 +367,7 @@ export function CorpusLifecycleActions({
           </button>
         </div>
       </div>
+      {guideOpen && <LifecycleGuide onClose={() => setGuideOpen(false)} />}
       <div className="build-pointer-grid">
         <article>
           <span>Active build</span>

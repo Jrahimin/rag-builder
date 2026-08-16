@@ -28,6 +28,22 @@ const build: IndexBuild = {
   updated_at: now,
 };
 
+test("opens a lifecycle guide that explains actions and states", async () => {
+  vi.spyOn(operatorApiClient, "getIndexBuilds").mockResolvedValue({
+    items: [build],
+    active_build_id: null,
+    previous_build_id: null,
+  });
+  renderOperatorComponent(<CorpusLifecycleActions projectId={projectFixture.id} />);
+  await userEvent.click(await screen.findByRole("button", { name: "Open lifecycle guide" }));
+  const dialog = await screen.findByRole("dialog", { name: "How corpus lifecycle works" });
+  expect(dialog).toHaveTextContent("The only snapshot search and chat use right now.");
+  expect(dialog).toHaveTextContent("Re-embed");
+  expect(dialog).toHaveTextContent("Retained");
+  await userEvent.click(screen.getByRole("button", { name: "Close" }));
+  expect(screen.queryByRole("dialog", { name: "How corpus lifecycle works" })).not.toBeInTheDocument();
+});
+
 test("confirms and activates only a validated immutable build", async () => {
   vi.spyOn(operatorApiClient, "getIndexBuilds").mockResolvedValue({
     items: [build],

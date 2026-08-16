@@ -31,7 +31,7 @@ function mockProjectShell() {
   vi.spyOn(operatorApiClient, "getAllOperatorProjects").mockResolvedValue({
     items: [projectFixture],
     total: 1,
-    limit: 500,
+    limit: 100,
     offset: 0,
   });
   vi.spyOn(operatorApiClient, "getOrganizations").mockResolvedValue({

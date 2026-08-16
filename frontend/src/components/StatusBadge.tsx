@@ -5,10 +5,14 @@ const healthyStates = new Set([
   "ok",
   "healthy",
   "active",
+  "success",
   "succeeded",
   "completed",
   "embedded",
   "chunked",
+  "locked",
+  "passed",
+  "grounded",
 ]);
 const warningStates = new Set([
   "degraded",
@@ -20,14 +24,19 @@ const warningStates = new Set([
   "chunking",
   "embedding",
   "indexing",
+  "deferred",
+  "migration required",
+  "needs_attention",
+  "deleting",
+  "purging",
 ]);
-const dangerStates = new Set(["down", "failed", "unavailable", "offline"]);
+const dangerStates = new Set(["down", "failed", "failure", "unavailable", "offline"]);
 
 function statusTone(status: string): StatusTone {
   if (healthyStates.has(status)) return "healthy";
   if (warningStates.has(status)) return "warning";
   if (dangerStates.has(status)) return "danger";
-  if (status === "running" || status === "uploaded") return "info";
+  if (status === "running" || status === "uploaded" || status === "in_progress") return "info";
   return "neutral";
 }
 

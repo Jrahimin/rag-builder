@@ -40,29 +40,34 @@ Job deep links accept `project` and `job` query parameters. The Test Lab persist
 
 The persistent Lab header contains the primary project selector, an ordinary **Create test project** action, a compact document/job/build/conversation session summary, and the Activity drawer button.
 
-The default Journey tab derives five states from actual project data and the current browser session:
+The default Journey tab derives six states from actual project data and the current browser session:
 
-1. Select project.
-2. Upload and process a document.
-3. Verify search.
-4. Verify a grounded message and citations, or a valid insufficient-evidence refusal.
-5. Refresh or change the corpus.
+1. Project.
+2. Upload a document.
+3. Process until the document is ready.
+4. Verify retrieval.
+5. Verify a grounded chat/generation reply and citations, or a valid insufficient-evidence refusal.
+6. Inspect results (hits, citations, timing, and failures).
 
-Journey status never treats an accepted request as completed work. Document and lifecycle requests first show **Request accepted**, then follow the returned durable `job_id`; only a terminal job or authoritative build/document state can pass a processing step.
+A compact corpus strip links to Lifecycle. Journey status never treats an accepted request as completed work. Document and lifecycle requests first show **Request accepted**, then follow the returned durable `job_id`; only a terminal job or authoritative build/document state can pass a processing step.
+
+Purge is irreversible complete deletion of the document, related chunks, embeddings, and stored files. The backend accepts purge without extra confirmation; the Lab keeps the Purge button disabled until the operator types the exact filename.
 
 ## Direct tabs
 
 ### Documents
 
 - Drag/drop and picker upload for the backend-supported PDF, DOCX, text/Markdown, and image formats.
-- Real document status, version, parser, page/language facts, error detail, and related durable jobs.
+- Optional **Source versioning** on upload: new independent source, latest revision of an existing source (`replaces` in the same source group), or a modifying source. Source role (primary / supporting / reference) and title map to the existing `source_metadata` upload field. Processing `document.version` is separate and increments only on reprocess.
+- Filenames keep Unicode scripts such as Bangla. Purge stays disabled until the typed name matches the stored filename (Unicode NFC); Copy filename fills the clipboard for exact confirmation.
+- Real document status, processing version, parser, page/language facts, active source role/revision, error detail, and related durable jobs.
 - State-guarded Reprocess, Embed, Index, Delete, and Purge actions.
 - Delete explains retained corpus-level reversibility. Purge requires the exact filename; browser confirmation alone is not accepted.
 - Every accepted action links to the generated job and distinguishes running, succeeded, and failed outcomes.
 
 ### Search
 
-- One query, optional expected-word assertion, and collapsed safe document/strategy filters.
+- One multi-line query, optional expected-word assertion, and collapsed safe document/strategy filters.
 - Ranked real hits with score, filename, page/source offsets, excerpt, chunk identifier, request/backend timing, and the active build captured for that run.
 - No results are a valid outcome. Expected words pass only when at least one returned chunk contains the entered phrase.
 
@@ -76,6 +81,7 @@ Journey status never treats an accepted request as completed work. Document and 
 ### Lifecycle
 
 - Re-embed whole corpus, Reindex whole corpus, Activate validated build, Rollback, and Reconcile storage reuse the existing Phase 5 lifecycle component.
+- A lifecycle guide (info control on the heading) explains actions, build states, operations, and when Activate is required.
 - Active and previous pointers, build state/operation/counts/times, validation readiness, and failure details are visible together.
 - Activation is enabled only for validated/retained builds. Rollback names the exact build that will become active.
 - Lifecycle jobs appear immediately and remain linked to full Jobs details. Reconciliation `expected`, `actual`, `missing`, `orphan`, and `consistent` results render as a structured report.

@@ -19,6 +19,12 @@ class ListParams(PaginationParams):
     is_active: bool | None = None
 
 
+class OperatorListParams(ListParams):
+    """Admin list parameters. Console bulk views may request a larger page."""
+
+    limit: int = Field(default=100, ge=1, le=500)
+
+
 class PaginatedResult[T](BaseModel):
     """A page of items with total count for deterministic list responses."""
 

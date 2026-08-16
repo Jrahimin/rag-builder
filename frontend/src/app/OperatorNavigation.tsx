@@ -13,7 +13,7 @@ import {
   Webhook,
   X,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { NavLink } from "react-router-dom";
 
 const navigation = [
@@ -33,6 +33,24 @@ const navigation = [
 export function OperatorNavigation() {
   const [open, setOpen] = useState(false);
   const [expanded, setExpanded] = useState(false);
+  const ignoreHoverRef = useRef(false);
+
+  useEffect(() => {
+    const collapse = () => {
+      ignoreHoverRef.current = true;
+      setExpanded(false);
+    };
+    const onVisibility = () => {
+      if (document.hidden) collapse();
+    };
+    window.addEventListener("blur", collapse);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.removeEventListener("blur", collapse);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, []);
+
   return (
     <>
       <button
@@ -54,9 +72,13 @@ export function OperatorNavigation() {
       )}
       <aside
         className={`sidebar ${open ? "sidebar--open" : ""} ${expanded ? "sidebar--expanded" : ""}`}
-        onMouseEnter={() => setExpanded(true)}
-        onMouseLeave={() => setExpanded(false)}
-        onFocusCapture={() => setExpanded(true)}
+        onMouseEnter={() => {
+          if (!ignoreHoverRef.current) setExpanded(true);
+        }}
+        onMouseLeave={() => {
+          ignoreHoverRef.current = false;
+          setExpanded(false);
+        }}
       >
         <div className="brand">
           <div className="brand__mark" aria-hidden="true">

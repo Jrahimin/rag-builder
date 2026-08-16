@@ -6,6 +6,7 @@ import hashlib
 import os
 import re
 import tempfile
+import unicodedata
 import uuid
 from collections.abc import AsyncIterator
 from typing import BinaryIO, cast
@@ -44,7 +45,10 @@ from app.platform.providers.errors import ProviderError
 
 logger = structlog.get_logger(__name__)
 
-_UNSAFE_FILENAME = re.compile(r"[^\w.\-]+")
+# Strip path separators and control characters only. Keep letters, combining
+# marks (Bangla kar/hasanta), spaces, and punctuation so display/purge names
+# stay matchable. Object-storage keys reuse the same basename.
+_UNSAFE_FILENAME = re.compile(r"[\x00-\x1f\x7f\\/]+")
 _NOT_FOUND = {"message": "Document not found.", "code": "document_not_found"}
 _DELETED = {"message": "Cannot process a deleted document.", "code": "document_deleted"}
 
@@ -53,11 +57,25 @@ _SPOOL_MAX_MEMORY_BYTES = 4 * 1024 * 1024
 _REPLAY_CHUNK_BYTES = 64 * 1024
 
 
+def _clip_filename(value: str, limit: int) -> str:
+    if len(value) <= limit:
+        return value
+    clipped = value[:limit]
+    while clipped and unicodedata.combining(clipped[-1]):
+        clipped = clipped[:-1]
+    return clipped or value[:limit]
+
+
+def display_filename(name: str) -> str:
+    """Preserve Unicode basenames for API display and purge confirmation."""
+    base = os.path.basename(name.replace("\\", "/")).strip() or "upload"
+    cleaned = _UNSAFE_FILENAME.sub("_", unicodedata.normalize("NFC", base)).strip(" .")
+    return _clip_filename(cleaned or "upload", 512)
+
+
 def safe_filename(name: str) -> str:
-    """Return a basename safe for object storage keys."""
-    base = os.path.basename(name).strip() or "upload"
-    cleaned = _UNSAFE_FILENAME.sub("_", base)
-    return cleaned[:255]
+    """Return a basename safe for object storage keys without destroying scripts."""
+    return _clip_filename(display_filename(name), 255)
 
 
 def build_storage_key(project_id: uuid.UUID, document_id: uuid.UUID, filename: str) -> str:
@@ -137,7 +155,7 @@ class DocumentService:
             document = Document(
                 id=document_id,
                 project_id=self._repository.project_id,
-                filename=safe_filename(data.filename),
+                filename=display_filename(data.filename),
                 content_type=content_type,
                 size_bytes=size_bytes,
                 storage_key=storage_key,

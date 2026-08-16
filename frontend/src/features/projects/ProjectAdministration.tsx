@@ -292,6 +292,7 @@ export function ProjectAdministration() {
           </>
         ) : (
           <EmptyState
+            compact
             title="No Projects"
             detail="Create a Project with explicit Organization ownership."
           />
@@ -350,7 +351,11 @@ function CreateProject({
       </label>
       <label className="field-control">
         <span>Description</span>
-        <textarea value={description} onChange={(event) => setDescription(event.target.value)} />
+        <textarea
+          rows={3}
+          value={description}
+          onChange={(event) => setDescription(event.target.value)}
+        />
       </label>
       {error && (
         <p className="form-error" role="alert">
@@ -418,7 +423,7 @@ function ProjectDetails({
             <span>Created {formatDate(project.created_at)}</span>
           </div>
           <form
-            className="stack-form"
+            className="stack-form panel-body"
             onSubmit={(event) => {
               event.preventDefault();
               void run("save", () =>
@@ -433,6 +438,7 @@ function ProjectDetails({
             <label className="field-control">
               <span>Description</span>
               <textarea
+                rows={3}
                 value={description}
                 onChange={(event) => setDescription(event.target.value)}
               />
@@ -486,48 +492,50 @@ function ProjectDetails({
             <h3>Ownership</h3>
             <StatusBadge status={project.ownership_locked ? "locked" : "migration required"} />
           </div>
-          <dl className="fact-grid">
-            <div>
-              <dt>Organization</dt>
-              <dd>{owner?.name ?? shortId(project.organization_id)}</dd>
-            </div>
-            <div>
-              <dt>Boundary</dt>
-              <dd>{project.ownership_locked ? "Immutable" : "Legacy unlocked"}</dd>
-            </div>
-          </dl>
-          {project.ownership_locked ? (
-            <p className="muted-copy">
-              Ownership is confirmed. General Project moves are not permitted.
-            </p>
-          ) : (
-            <div className="stack-form">
-              <label className="field-control">
-                <span>Target Organization</span>
-                <select
-                  value={target}
-                  onChange={(event) => {
-                    setTarget(event.target.value);
-                    setPreflight(null);
-                  }}
-                >
-                  {organizations
-                    .filter((item) => item.is_active && !item.deleted_at)
-                    .map((item) => (
-                      <option key={item.id} value={item.id}>
-                        {item.name}
-                      </option>
-                    ))}
-                </select>
-              </label>
-              <label className="field-control">
-                <span>Audit reason</span>
-                <textarea
-                  required
-                  value={reason}
-                  onChange={(event) => setReason(event.target.value)}
-                />
-              </label>
+          <div className="panel-body">
+            <dl className="fact-grid">
+              <div>
+                <dt>Organization</dt>
+                <dd>{owner?.name ?? shortId(project.organization_id)}</dd>
+              </div>
+              <div>
+                <dt>Boundary</dt>
+                <dd>{project.ownership_locked ? "Immutable" : "Legacy unlocked"}</dd>
+              </div>
+            </dl>
+            {project.ownership_locked ? (
+              <p className="muted-copy">
+                Ownership is confirmed. General Project moves are not permitted.
+              </p>
+            ) : (
+              <div className="stack-form">
+                <label className="field-control">
+                  <span>Target Organization</span>
+                  <select
+                    value={target}
+                    onChange={(event) => {
+                      setTarget(event.target.value);
+                      setPreflight(null);
+                    }}
+                  >
+                    {organizations
+                      .filter((item) => item.is_active && !item.deleted_at)
+                      .map((item) => (
+                        <option key={item.id} value={item.id}>
+                          {item.name}
+                        </option>
+                      ))}
+                  </select>
+                </label>
+                <label className="field-control">
+                  <span>Audit reason</span>
+                  <textarea
+                    required
+                    rows={3}
+                    value={reason}
+                    onChange={(event) => setReason(event.target.value)}
+                  />
+                </label>
               <div className="button-row">
                 <button
                   className="button button--secondary"
@@ -590,6 +598,7 @@ function ProjectDetails({
               )}
             </div>
           )}
+          </div>
         </section>
       </div>
     </>
