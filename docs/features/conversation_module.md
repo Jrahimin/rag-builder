@@ -38,7 +38,7 @@ POST /messages
   → load history + retrieve (read txn rolled back before LLM)
   → ContextBuilder → GroundingService evidence gate
   → insufficient: skip LLM and persist stable reason
-  → sufficient: PromptBuilder v2 → LLM generate / stream → map claims
+  → sufficient: PromptBuilder v3 → LLM generate / stream → map claims
   → Tx2: persist assistant (+ claims, citations, metadata, auto-title) → commit
 ```
 
@@ -52,8 +52,9 @@ LLM failure after Tx1: user message retained, no assistant row.
 | `ChatConfig` | `APE_CHAT__*` | Retrieval top-k, context budgets, history window, prompt version |
 | `RetrievalConfig` | `APE_RETRIEVAL__EMBEDDING_SET_VERSION` | Snapshotted on assistant messages |
 
-Notable `ChatConfig` keys: `citation_excerpt_max_chars`, `minimum_evidence_score`,
-`minimum_query_token_coverage`, `minimum_claim_token_coverage`, and `include_citations`.
+Notable `ChatConfig` keys: `citation_excerpt_max_chars`, `minimum_semantic_evidence_score`,
+`lexical_corroboration_floor_score`, `lexical_corroboration_coverage`,
+`minimum_claim_token_coverage`, and `include_citations`.
 
 ## Data model
 
@@ -73,7 +74,7 @@ See [conversation API reference](../api/conversation_api.md).
 
 | Decision | Rationale |
 | -------- | --------- |
-| Per-conversation LLM snapshot | Reproducible turns; provider resolved per conversation at chat time |
+| Per-conversation LLM snapshot | Reproducible turns; provider resolved per conversation at chat time. Super Admins refresh future messages with `POST .../conversations/{id}/config` after evidence-mode or threshold changes. |
 | Tx1/Tx2 split | Avoid holding DB transactions during retrieval/LLM (ADR-008) |
 | Retrieval through port | Chat stays decoupled from retrieval internals while supporting hybrid search |
 | Messages kept on soft-delete | Audit/history without hard-delete cascade |

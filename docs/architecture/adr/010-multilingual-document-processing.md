@@ -43,3 +43,12 @@ Phase 1 chunking and retrieval used Latin-only tokenization (`[a-z0-9]+`) and Po
 | Per-language PostgreSQL dictionaries | Operational complexity; BM25 on Unicode tokens is sufficient for Phase 1 |
 | Bangla-specific chunk strategy | Violates Unicode-first design |
 | OCR microservice | Over-engineering for self-hosted Phase 1 |
+
+## Amendment: OCR structure preservation (2026-08-17)
+
+The OCR contract may carry provider-neutral block, paragraph, word, confidence, and normalized
+geometry data. Parsers preserve those elements through candidate selection. Conservative geometric
+table inference is language-neutral; ambiguous layout remains paragraphs. Typed tables select
+structure chunking, oversized tables split by row groups with repeated captions/headers, and tiny
+fragments merge adjacently. Parsed-document version 2.0.0 and chunker version 3.0.0 require
+reprocessing before a new immutable index build.

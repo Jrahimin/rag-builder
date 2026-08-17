@@ -137,9 +137,7 @@ class EvaluationService:
             else {}
         )
         index_build_id = corpus.get("index_build_id")
-        source_generation = self._job_configuration.provenance.get(
-            "source_metadata_generation"
-        )
+        source_generation = self._job_configuration.provenance.get("source_metadata_generation")
         run = EvaluationRun(
             project_id=self._project_id,
             dataset_id=dataset.id,
@@ -225,8 +223,12 @@ class EvaluationService:
             last_run=_run_response(run) if run is not None else None,
             acceptance_thresholds={
                 "minimum_recall_at_k": self._config.minimum_recall_at_k,
+                "minimum_cross_lingual_recall_at_k": (
+                    self._config.minimum_cross_lingual_recall_at_k
+                ),
                 "minimum_filtered_correctness": self._config.minimum_filtered_correctness,
-                "minimum_refusal_accuracy": self._config.minimum_refusal_accuracy,
+                "maximum_false_refusal_rate": self._config.maximum_false_refusal_rate,
+                "maximum_false_accept_rate": self._config.maximum_false_accept_rate,
                 "minimum_groundedness": self._config.minimum_groundedness,
                 "minimum_citation_coverage": self._config.minimum_citation_coverage,
                 "maximum_p95_latency_ms": self._config.maximum_p95_latency_ms,

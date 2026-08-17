@@ -18,6 +18,7 @@ FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "multilingual"
     [
         ("bangla_refund.txt", "রিফান্ড"),
         ("english_refund.txt", "refund"),
+        ("french_refund.txt", "remboursement"),
         ("mixed_refund.txt", "রিফান্ড"),
     ],
 )

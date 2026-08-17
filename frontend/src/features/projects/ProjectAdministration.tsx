@@ -75,7 +75,7 @@ function configFormFromEffective(config: EffectiveProjectAIConfig): ProjectConfi
     topK: String(config.configuration.retrieval.top_k),
     strategy: config.configuration.retrieval.strategy,
     rerank: config.configuration.retrieval.rerank_enabled,
-    evidence: String(config.configuration.retrieval.evidence_score_threshold),
+    evidence: String(config.configuration.retrieval.semantic_evidence_score_threshold),
     citations: config.configuration.chat.include_citations,
     sourcePolicy: config.configuration.source_policy_mode,
     reason: "",

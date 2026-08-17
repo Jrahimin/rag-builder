@@ -20,8 +20,18 @@ def test_rrf_prefers_chunks_ranked_high_in_both_lists() -> None:
         [
             RankedList(
                 hits=[
-                    CandidateHit(shared, 0.9, CandidateSource.SEMANTIC),
-                    CandidateHit(semantic_only, 0.8, CandidateSource.SEMANTIC),
+                    CandidateHit(
+                        shared,
+                        0.9,
+                        CandidateSource.SEMANTIC,
+                        semantic_score=0.9,
+                    ),
+                    CandidateHit(
+                        semantic_only,
+                        0.8,
+                        CandidateSource.SEMANTIC,
+                        semantic_score=0.8,
+                    ),
                 ],
                 weight=1.0,
             ),
@@ -38,6 +48,8 @@ def test_rrf_prefers_chunks_ranked_high_in_both_lists() -> None:
     )
     assert fused[0].chunk_id == shared
     assert fused[0].source is CandidateSource.HYBRID
+    assert fused[0].semantic_score == 0.9
+    assert next(item for item in fused if item.chunk_id == keyword_only).semantic_score is None
 
 
 def test_rrf_tie_breaks_by_best_source_rank_then_chunk_id() -> None:

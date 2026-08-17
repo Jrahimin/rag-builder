@@ -117,10 +117,7 @@ class ChunkEmbeddingRepository(ProjectScopedRepository[ChunkEmbedding]):
                 (ChunkKeywordIndex.chunk_id == self.model.chunk_id)
                 & (ChunkKeywordIndex.project_id == self.model.project_id)
                 & (ChunkKeywordIndex.index_build_id == self.model.index_build_id)
-                & (
-                    ChunkKeywordIndex.embedding_set_version
-                    == self.model.embedding_set_version
-                ),
+                & (ChunkKeywordIndex.embedding_set_version == self.model.embedding_set_version),
             )
             .where(self.model.project_id == self._project_id)
             .where(ChunkKeywordIndex.project_id == self._project_id)
@@ -149,6 +146,7 @@ class ChunkEmbeddingRepository(ProjectScopedRepository[ChunkEmbedding]):
                 chunk_id=row.chunk_id,
                 score=float(row.score),
                 source=CandidateSource.SEMANTIC,
+                semantic_score=float(row.score),
                 metadata={
                     **_metadata_dict(row.metadata_snapshot),
                     **source_metadata_from_row(row),
@@ -177,6 +175,33 @@ class ChunkEmbeddingRepository(ProjectScopedRepository[ChunkEmbedding]):
         result = await self._session.execute(stmt)
         rows = list(result.scalars().all())
         return {row.chunk_id: row for row in rows}
+
+    async def score_chunk_ids(
+        self,
+        chunk_ids: list[uuid.UUID],
+        *,
+        query_vector: list[float],
+        index_build_id: uuid.UUID,
+        embedding_set_version: int,
+        provider: str,
+        model: str,
+    ) -> dict[uuid.UUID, float]:
+        """Return calibrated cosine similarities for a bounded candidate set."""
+        if not chunk_ids:
+            return {}
+        distance = self.model.embedding.cosine_distance(query_vector)
+        score = (literal(1.0) - distance).label("score")
+        stmt = (
+            select(self.model.chunk_id, score)
+            .where(self.model.project_id == self._project_id)
+            .where(self.model.chunk_id.in_(chunk_ids))
+            .where(self.model.index_build_id == index_build_id)
+            .where(self.model.embedding_set_version == embedding_set_version)
+            .where(self.model.provider == provider)
+            .where(self.model.model == model)
+        )
+        result = await self._session.execute(stmt)
+        return {row.chunk_id: float(row.score) for row in result}
 
 
 def _metadata_dict(value: Any) -> dict[str, Any]:

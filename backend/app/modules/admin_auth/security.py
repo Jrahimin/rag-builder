@@ -37,6 +37,7 @@ def hash_token(value: str) -> str:
 
 def create_access_token(*, admin_id: UUID, email: str, session_id: UUID, config: AuthConfig) -> str:
     now = datetime.now(UTC)
+    secret = _jwt_secret(config)
     return jwt.encode(
         {
             "sub": str(admin_id),
@@ -47,16 +48,22 @@ def create_access_token(*, admin_id: UUID, email: str, session_id: UUID, config:
             "iat": now,
             "exp": now + timedelta(minutes=config.admin_access_token_expire_minutes),
         },
-        config.admin_jwt_secret,
+        secret,
         algorithm="HS256",
     )
 
 
 def decode_access_token(token: str, *, config: AuthConfig) -> dict[str, object]:
     try:
-        payload = jwt.decode(token, config.admin_jwt_secret, algorithms=["HS256"])
+        payload = jwt.decode(token, _jwt_secret(config), algorithms=["HS256"])
     except jwt.InvalidTokenError as exc:
         raise ValueError("Invalid access token") from exc
     if payload.get("type") != "admin_access" or not payload.get("sub") or not payload.get("sid"):
         raise ValueError("Invalid access token")
     return payload
+
+
+def _jwt_secret(config: AuthConfig) -> str:
+    if config.admin_jwt_secret is None:
+        raise ValueError("Admin JWT secret is not configured")
+    return config.admin_jwt_secret

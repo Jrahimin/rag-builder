@@ -34,7 +34,7 @@ def _database(*scalar_values: object) -> Database:
     connection = AsyncMock()
     connection.scalar = AsyncMock(side_effect=scalar_values)
     database = object.__new__(Database)
-    database._embedding_dimensions = 384
+    database._embedding_dimensions = 1024
     database._engine = _Engine(connection)
     return database
 
@@ -45,12 +45,12 @@ async def test_check_rejects_missing_pgvector_extension() -> None:
 
 
 async def test_check_rejects_wrong_vector_dimension() -> None:
-    with pytest.raises(PgVectorUnavailableError, match=r"expected vector\(384\)"):
+    with pytest.raises(PgVectorUnavailableError, match=r"expected vector\(1024\)"):
         await _database("0.8.1", "vector(1536)").check_pgvector()
 
 
 async def test_check_accepts_matching_extension_and_dimension() -> None:
-    await _database("0.8.1", "vector(384)").check_pgvector()
+    await _database("0.8.1", "vector(1024)").check_pgvector()
 
 
 class _ScalarRows:

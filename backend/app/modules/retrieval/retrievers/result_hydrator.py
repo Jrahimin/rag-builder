@@ -47,6 +47,17 @@ class ResultHydrator:
                     chunk_index=chunk.chunk_index,
                     content=chunk.content,
                     score=candidate.score,
+                    semantic_score=candidate.semantic_score,
+                    passage_semantic_score=_optional_float(
+                        candidate.metadata.get("passage_semantic_score")
+                    ),
+                    passage_char_start=_optional_int(
+                        candidate.metadata.get("passage_char_start")
+                    ),
+                    passage_char_end=_optional_int(candidate.metadata.get("passage_char_end")),
+                    passage_score_method=_optional_string(
+                        candidate.metadata.get("passage_score_method")
+                    ),
                     filename=document.filename,
                     page_number=chunk.page_number,
                     char_start=chunk.char_start,
@@ -60,3 +71,15 @@ class ResultHydrator:
                 )
             )
         return results
+
+
+def _optional_float(value: object) -> float | None:
+    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+
+def _optional_int(value: object) -> int | None:
+    return int(value) if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def _optional_string(value: object) -> str | None:
+    return str(value) if value is not None else None

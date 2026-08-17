@@ -70,6 +70,39 @@ def _markdown_parsed() -> ParsedDocument:
     )
 
 
+def _table_parsed(
+    *,
+    caption: str,
+    header: str,
+    rows: list[str],
+    page_start: int,
+    page_end: int,
+) -> ParsedDocument:
+    table_text = "\n".join((caption, header, *rows))
+    return ParsedDocument(
+        text=table_text,
+        page_count=max(page_end, 1),
+        parser_name="ocr",
+        parser_version="2.0.0",
+        elements=(
+            ParsedElement(
+                text=table_text,
+                element_type=ParsedElementType.TABLE,
+                page_start=page_start,
+                page_end=page_end,
+                metadata={
+                    "table_caption": caption,
+                    "table_header": header,
+                    "table_rows": rows,
+                },
+            ),
+        ),
+        source_format=SourceFormat.PDF,
+        parser_confidence=0.9,
+        ocr_quality=0.9,
+    )
+
+
 @pytest.mark.asyncio
 async def test_split_document_uses_markdown_strategy_for_markdown() -> None:
     service = ChunkingService.from_settings(
@@ -124,6 +157,98 @@ def test_selector_chooses_semantic_for_plain_text() -> None:
     analysis = StructureAnalyzerService().analyze(parsed)
     strategy = ChunkStrategySelectorService().select(parsed, analysis, ChunkingConfig())
     assert strategy is ChunkingStrategy.SEMANTIC
+
+
+@pytest.mark.asyncio
+async def test_structure_chunking_repeats_table_caption_and_header_for_row_groups() -> None:
+    rows = [f"row {index} contains several source tax category values" for index in range(30)]
+    caption = "Source tax collection categories"
+    header = "Category | Rate"
+    parsed = _table_parsed(
+        caption=caption,
+        header=header,
+        rows=rows,
+        page_start=1,
+        page_end=1,
+    )
+    service = ChunkingService(
+        config=ChunkingConfig(
+            strategy=ChunkingStrategy.AUTO,
+            target_tokens=80,
+            max_tokens=100,
+            min_tokens=1,
+        )
+    )
+
+    chunks, run_metadata = await service.split_document(parsed)
+
+    assert run_metadata.strategy_used is ChunkingStrategy.STRUCTURE
+    assert len(chunks) > 1
+    assert all(chunk.content.startswith(f"{caption}\n{header}") for chunk in chunks)
+    assert all(chunk.page_number == 1 for chunk in chunks)
+
+
+@pytest.mark.asyncio
+async def test_structure_chunking_keeps_table_row_groups_within_max_tokens() -> None:
+    rows = [
+        (
+            f"row {index} lists a distinct source tax category, applicable person, "
+            "collection rate, and statutory cross reference for the gazette table"
+        )
+        for index in range(40)
+    ]
+    parsed = _table_parsed(
+        caption="Source tax collection categories",
+        header="Category | Rate | Person | Section",
+        rows=rows,
+        page_start=1,
+        page_end=1,
+    )
+    service = ChunkingService(
+        config=ChunkingConfig(
+            strategy=ChunkingStrategy.STRUCTURE,
+            target_tokens=80,
+            max_tokens=100,
+            min_tokens=1,
+        )
+    )
+
+    chunks, _run_metadata = await service.split_document(parsed)
+
+    assert len(chunks) > 1
+    assert all(chunk.token_count <= 100 for chunk in chunks)
+
+
+@pytest.mark.asyncio
+async def test_structure_chunking_preserves_page_span_for_multipage_table() -> None:
+    rows = [
+        (
+            f"row {index} continues the source tax category list across pages "
+            "with person, rate, and statutory cross reference text"
+        )
+        for index in range(30)
+    ]
+    parsed = _table_parsed(
+        caption="Source tax collection categories",
+        header="Category | Rate",
+        rows=rows,
+        page_start=2,
+        page_end=3,
+    )
+    service = ChunkingService(
+        config=ChunkingConfig(
+            strategy=ChunkingStrategy.STRUCTURE,
+            target_tokens=80,
+            max_tokens=100,
+            min_tokens=1,
+        )
+    )
+
+    chunks, _run_metadata = await service.split_document(parsed)
+
+    assert len(chunks) > 1
+    assert all(chunk.page_start == 2 for chunk in chunks)
+    assert all(chunk.page_end == 3 for chunk in chunks)
 
 
 def test_validation_preserves_order_when_merging_tiny_chunks() -> None:

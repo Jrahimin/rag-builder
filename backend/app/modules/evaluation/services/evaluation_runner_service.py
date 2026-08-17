@@ -22,6 +22,7 @@ from app.modules.evaluation.repositories.evaluation_dataset_repository import (
 )
 from app.modules.evaluation.repositories.evaluation_run_repository import EvaluationRunRepository
 from app.modules.evaluation.schemas.evaluation import EvaluationCase
+from app.platform.domain.text_normalizer import normalize_for_indexing
 from app.platform.domain.text_tokenization import tokenize
 from app.platform.jobs.contracts import JobProgressCallback
 
@@ -96,7 +97,11 @@ class EvaluationRunnerService:
                     metadata_filter=case.metadata_filter,
                     as_of=case.as_of,
                 )
-                answer = await self._answerer.answer(question=case.query, hits=search.hits)
+                answer = await self._answerer.answer(
+                    profile=profile,
+                    question=case.query,
+                    hits=search.hits,
+                )
                 all_results.append(_case_result(case, profile, search, answer))
                 completed_steps += 1
                 if on_progress is not None:
@@ -118,11 +123,15 @@ class EvaluationRunnerService:
         )
         run.metrics = metrics
         run.case_results = all_results
-        run.regressions = _regressions(
-            current=metrics.get(primary, {}),
-            previous=(previous.metrics.get(primary, {}) if previous is not None else {}),
-            tolerance=self._config.maximum_metric_regression,
-        )
+        primary_metrics = metrics.get(primary, {})
+        run.regressions = [
+            *_regressions(
+                current=primary_metrics,
+                previous=(previous.metrics.get(primary, {}) if previous is not None else {}),
+                tolerance=self._config.maximum_metric_regression,
+            ),
+            *_acceptance_failures(primary_metrics, self._config),
+        ]
         run.failed_cases = _failed_cases(
             [result for result in all_results if result["profile"] == primary]
         )
@@ -135,9 +144,7 @@ class EvaluationRunnerService:
         )
         run.input_tokens = _complete_sum(all_results, "input_tokens")
         run.output_tokens = _complete_sum(all_results, "output_tokens")
-        run.retrieval_latency_ms = sum(
-            int(result["latency_ms"]) for result in all_results
-        )
+        run.retrieval_latency_ms = sum(int(result["latency_ms"]) for result in all_results)
         run.provider_latency_ms = _complete_sum(all_results, "provider_latency_ms")
         run.total_latency_ms = int((time.perf_counter() - started) * 1000)
         if run.provider is None:
@@ -157,13 +164,42 @@ class EvaluationRunnerService:
 
 
 def _case_result(case: EvaluationCase, profile: str, search: Any, answer: Any) -> dict[str, Any]:
-    use_chunks = bool(case.relevant_chunk_ids)
+    use_chunks = bool(case.relevant_chunk_ids or case.relevant_evidence_phrases)
     result_ids = [str(hit.chunk_id if use_chunks else hit.document_id) for hit in search.hits]
-    relevant_ids = {
-        str(value)
-        for value in (case.relevant_chunk_ids if use_chunks else case.relevant_document_ids)
-    }
+    if case.relevant_evidence_phrases:
+        relevant_ids = {
+            str(hit.chunk_id)
+            for hit in search.hits
+            if _matches_evidence_phrases(hit.content, case.relevant_evidence_phrases)
+        }
+        if not relevant_ids:
+            relevant_ids = {"__expected_evidence_phrase__"}
+    else:
+        relevant_ids = {
+            str(value)
+            for value in (case.relevant_chunk_ids if use_chunks else case.relevant_document_ids)
+        }
     recall, reciprocal_rank, ndcg, relevant_retrieved = rank_metrics(result_ids, relevant_ids)
+    relevant_semantic_scores = [
+        float(hit.semantic_score)
+        for hit, result_id in zip(search.hits, result_ids, strict=True)
+        if result_id in relevant_ids and hit.semantic_score is not None
+    ]
+    hard_negative_semantic_scores = [
+        float(hit.semantic_score)
+        for hit, result_id in zip(search.hits, result_ids, strict=True)
+        if result_id not in relevant_ids and hit.semantic_score is not None
+    ]
+    relevant_passage_scores = [
+        float(hit.passage_semantic_score)
+        for hit, result_id in zip(search.hits, result_ids, strict=True)
+        if result_id in relevant_ids and hit.passage_semantic_score is not None
+    ]
+    hard_negative_passage_scores = [
+        float(hit.passage_semantic_score)
+        for hit, result_id in zip(search.hits, result_ids, strict=True)
+        if result_id not in relevant_ids and hit.passage_semantic_score is not None
+    ]
     filter_correct = (
         relevant_retrieved
         and bool(search.hits)
@@ -185,29 +221,51 @@ def _case_result(case: EvaluationCase, profile: str, search: Any, answer: Any) -
         "kind": case.kind.value,
         "profile": profile,
         "query": case.query,
+        "query_language": case.query_language,
+        "expected_evidence_language": case.expected_evidence_language,
         "expected_no_answer": case.expected_no_answer,
         "result_chunk_ids": [str(hit.chunk_id) for hit in search.hits],
         "result_document_ids": [str(hit.document_id) for hit in search.hits],
         "result_source_metadata": [
-            _JSON_MAPPING.dump_python(dict(hit.metadata), mode="json")
-            for hit in search.hits
+            _JSON_MAPPING.dump_python(dict(hit.metadata), mode="json") for hit in search.hits
         ],
         "recall": recall,
         "reciprocal_rank": reciprocal_rank,
         "ndcg": ndcg,
         "relevant_retrieved": relevant_retrieved,
+        "rank_1_relevant": bool(result_ids and result_ids[0] in relevant_ids),
+        "accepted_without_relevant_evidence": (
+            not case.expected_no_answer
+            and answer.insufficient_evidence_reason is None
+            and not relevant_retrieved
+        ),
+        "relevant_evidence_phrases": list(case.relevant_evidence_phrases),
+        "best_relevant_semantic_score": (
+            max(relevant_semantic_scores) if relevant_semantic_scores else None
+        ),
+        "best_hard_negative_semantic_score": (
+            max(hard_negative_semantic_scores) if hard_negative_semantic_scores else None
+        ),
+        "best_relevant_passage_semantic_score": (
+            max(relevant_passage_scores) if relevant_passage_scores else None
+        ),
+        "best_hard_negative_passage_semantic_score": (
+            max(hard_negative_passage_scores) if hard_negative_passage_scores else None
+        ),
         "filter_correct": filter_correct,
         "latency_ms": search.latency_ms,
         "rerank_status": search.rerank_status,
         "reranker_provider": search.reranker_provider,
         "reranker_model": search.reranker_model,
         "reranker_version": search.reranker_version,
+        "reranker_score_scale": search.reranker_score_scale,
         "retrieval_provenance": search.provenance,
         "answer": answer.answer,
         "insufficient_evidence_reason": answer.insufficient_evidence_reason,
         "grounded": answer.grounded,
         "citation_coverage": answer.citation_coverage,
         "claims": answer.claims,
+        "unverified_claim_rate": _unverified_claim_rate(answer.claims),
         "answer_token_coverage": token_coverage,
         "provider": answer.provider,
         "model": answer.model,
@@ -215,6 +273,15 @@ def _case_result(case: EvaluationCase, profile: str, search: Any, answer: Any) -
         "output_tokens": answer.output_tokens,
         "provider_latency_ms": answer.provider_latency_ms,
     }
+
+
+def _matches_evidence_phrases(content: str, phrases: list[str]) -> bool:
+    normalized_content = normalize_for_indexing(content)
+    return any(
+        normalized_phrase in normalized_content
+        for phrase in phrases
+        if (normalized_phrase := normalize_for_indexing(phrase))
+    )
 
 
 def _complete_sum(rows: list[dict[str, Any]], field: str) -> int | None:
@@ -227,6 +294,12 @@ def _complete_sum(rows: list[dict[str, Any]], field: str) -> int | None:
             return None
         total += value
     return total
+
+
+def _unverified_claim_rate(claims: list[dict[str, Any]]) -> float:
+    if not claims:
+        return 0.0
+    return sum(claim.get("verification") == "unverified" for claim in claims) / len(claims)
 
 
 def _failed_cases(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -260,10 +333,10 @@ def _regressions(
     regressions: list[dict[str, Any]] = []
     for metric in (
         "recall_at_k",
+        "rank_1_accuracy",
         "mrr",
         "ndcg",
         "filtered_correctness",
-        "refusal_accuracy",
         "groundedness",
         "citation_coverage",
     ):
@@ -279,7 +352,77 @@ def _regressions(
                     "delta": delta,
                 }
             )
+    for metric in (
+        "false_refusal_rate",
+        "false_accept_rate",
+        "accepted_without_relevant_evidence_rate",
+    ):
+        if metric not in previous or metric not in current:
+            continue
+        delta = float(current[metric]) - float(previous[metric])
+        if delta > tolerance:
+            regressions.append(
+                {
+                    "metric": metric,
+                    "previous": previous[metric],
+                    "current": current[metric],
+                    "delta": delta,
+                }
+            )
     return regressions
+
+
+def _acceptance_failures(
+    metrics: dict[str, Any],
+    config: EvaluationConfig,
+) -> list[dict[str, Any]]:
+    failures: list[dict[str, Any]] = []
+    checks: list[tuple[str, float, str]] = [
+        ("recall_at_k", config.minimum_recall_at_k, "minimum"),
+        ("rank_1_accuracy", config.minimum_rank_1_accuracy, "minimum"),
+        ("filtered_correctness", config.minimum_filtered_correctness, "minimum"),
+        ("false_refusal_rate", config.maximum_false_refusal_rate, "maximum"),
+        ("false_accept_rate", config.maximum_false_accept_rate, "maximum"),
+        (
+            "accepted_without_relevant_evidence_rate",
+            config.maximum_accepted_without_relevant_evidence_rate,
+            "maximum",
+        ),
+        ("groundedness", config.minimum_groundedness, "minimum"),
+        ("citation_coverage", config.minimum_citation_coverage, "minimum"),
+        ("latency_p95_ms", config.maximum_p95_latency_ms, "maximum"),
+    ]
+    language_pairs = metrics.get("language_pairs", {})
+    cross_pair_recalls = [
+        float(pair_metrics["recall_at_k"])
+        for pair, pair_metrics in language_pairs.items()
+        if pair.split("->", maxsplit=1)[0] != pair.split("->", maxsplit=1)[-1]
+    ]
+    if cross_pair_recalls:
+        checks.append(
+            (
+                "minimum_language_pair_recall_at_k",
+                config.minimum_cross_lingual_recall_at_k,
+                "minimum",
+            )
+        )
+        metrics = {**metrics, "minimum_language_pair_recall_at_k": min(cross_pair_recalls)}
+    for metric, threshold, direction in checks:
+        if metric not in metrics:
+            continue
+        value = float(metrics[metric])
+        failed = value < threshold if direction == "minimum" else value > threshold
+        if failed:
+            failures.append(
+                {
+                    "metric": metric,
+                    "current": value,
+                    "threshold": threshold,
+                    "type": "acceptance_threshold",
+                    "direction": direction,
+                }
+            )
+    return failures
 
 
 def _reranker_comparison(

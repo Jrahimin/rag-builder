@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import math
-
 import regex
 
 from app.platform.providers.contracts.embedding import BaseEmbeddingProvider
@@ -12,7 +10,9 @@ from app.platform.providers.contracts.reranker import (
     RerankRequest,
     RerankResponse,
     RerankResult,
+    RerankScoreScale,
 )
+from app.platform.providers.embedding_similarity import cosine_similarity
 
 _SENTENCE_BOUNDARY = regex.compile(
     r"(?<=[.!?।॥。\uff01\uff1f…])\s+",
@@ -63,7 +63,7 @@ class EmbeddingRerankerProvider(BaseRerankerProvider):
         query_vector = embedded.vectors[0]
         best_scores = [-1.0] * len(request.candidates)
         for owner, vector in zip(passage_owners, embedded.vectors[1:], strict=True):
-            similarity = _cosine_similarity(query_vector, vector)
+            similarity = cosine_similarity(query_vector, vector)
             best_scores[owner] = max(best_scores[owner], similarity)
 
         results = [
@@ -84,6 +84,7 @@ class EmbeddingRerankerProvider(BaseRerankerProvider):
             provider=self.provider_name,
             model=self.model_name,
             provider_version=self.provider_version,
+            score_scale=RerankScoreScale.COSINE_SIMILARITY_01,
         )
 
     def _passages(self, text: str) -> list[str]:
@@ -91,12 +92,3 @@ class EmbeddingRerankerProvider(BaseRerankerProvider):
             return [text]
         sentences = [part.strip() for part in _SENTENCE_BOUNDARY.split(text) if part.strip()]
         return sentences or [text]
-
-
-def _cosine_similarity(left: list[float], right: list[float]) -> float:
-    dot = sum(a * b for a, b in zip(left, right, strict=True))
-    left_norm = math.sqrt(sum(value * value for value in left))
-    right_norm = math.sqrt(sum(value * value for value in right))
-    if left_norm == 0.0 or right_norm == 0.0:
-        return 0.0
-    return dot / (left_norm * right_norm)

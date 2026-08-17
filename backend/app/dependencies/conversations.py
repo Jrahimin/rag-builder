@@ -81,6 +81,11 @@ class SearchServiceRetrievalAdapter:
                     score=result.score,
                     filename=result.filename,
                     chunk_hash=content_hash(result.content),
+                    semantic_score=result.semantic_score,
+                    passage_semantic_score=result.passage_semantic_score,
+                    passage_char_start=result.passage_char_start,
+                    passage_char_end=result.passage_char_end,
+                    passage_score_method=result.passage_score_method,
                     page_number=result.page_number,
                     char_start=result.char_start,
                     char_end=result.char_end,
@@ -204,9 +209,7 @@ async def get_chat_service(
             retrieval_config=effective_settings.retrieval,
             ai_policy=settings.ai_policy,
             source_metadata=KnowledgeRetrievalSourceMetadataAdapter(session),
-            configured_source_policy_mode=(
-                resolution.provenance.configured_source_policy_mode
-            ),
+            configured_source_policy_mode=(resolution.provenance.configured_source_policy_mode),
             configuration_hash=resolution.configuration_hash,
             config_provenance=resolution.provenance.model_dump(mode="json"),
         )

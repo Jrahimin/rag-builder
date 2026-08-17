@@ -10,7 +10,15 @@ from typing import Any
 import httpx
 
 from app.platform.domain.text_normalizer import normalize_for_storage
-from app.platform.providers.contracts.ocr import OcrImageInput, OcrPageResult, OCRProvider
+from app.platform.providers.contracts.ocr import (
+    OcrBlock,
+    OcrBoundingBox,
+    OcrImageInput,
+    OcrPageResult,
+    OcrParagraph,
+    OCRProvider,
+    OcrWord,
+)
 from app.platform.providers.errors import (
     ProviderAuthenticationError,
     ProviderConnectionError,
@@ -132,6 +140,7 @@ class GoogleVisionOCRProvider(OCRProvider):
             confidence=confidence,
             provider_name=self.provider_name,
             lines=lines,
+            blocks=_layout_blocks(full_text),
             page_number=image.page_number,
         )
 
@@ -237,3 +246,167 @@ def _mean_block_confidence(full_text: dict[str, Any]) -> float:
     if not confidences:
         return 0.0
     return round(sum(confidences) / len(confidences), 4)
+
+
+def _layout_blocks(full_text: object) -> tuple[OcrBlock, ...]:
+    """Map Vision layout into provider-neutral, normalized geometry."""
+    if not isinstance(full_text, dict):
+        return ()
+    output: list[OcrBlock] = []
+    pages = full_text.get("pages", [])
+    if not isinstance(pages, list):
+        return ()
+    for page in pages:
+        if not isinstance(page, dict):
+            continue
+        width = _positive_number(page.get("width"))
+        height = _positive_number(page.get("height"))
+        raw_blocks = page.get("blocks", [])
+        if not isinstance(raw_blocks, list):
+            continue
+        for raw_block in raw_blocks:
+            if not isinstance(raw_block, dict):
+                continue
+            paragraphs = _layout_paragraphs(raw_block, width=width, height=height)
+            text = "\n".join(paragraph.text for paragraph in paragraphs if paragraph.text)
+            if not text:
+                continue
+            output.append(
+                OcrBlock(
+                    text=text,
+                    paragraphs=paragraphs,
+                    bounding_box=_normalized_box(
+                        raw_block.get("boundingBox"),
+                        width=width,
+                        height=height,
+                    ),
+                    confidence=_optional_confidence(raw_block.get("confidence")),
+                )
+            )
+    return tuple(output)
+
+
+def _layout_paragraphs(
+    raw_block: dict[str, Any],
+    *,
+    width: float | None,
+    height: float | None,
+) -> tuple[OcrParagraph, ...]:
+    raw_paragraphs = raw_block.get("paragraphs", [])
+    if not isinstance(raw_paragraphs, list):
+        return ()
+    output: list[OcrParagraph] = []
+    for raw_paragraph in raw_paragraphs:
+        if not isinstance(raw_paragraph, dict):
+            continue
+        words = _layout_words(raw_paragraph, width=width, height=height)
+        text = " ".join(word.text for word in words if word.text)
+        if not text:
+            continue
+        output.append(
+            OcrParagraph(
+                text=normalize_for_storage(text),
+                words=words,
+                bounding_box=_normalized_box(
+                    raw_paragraph.get("boundingBox"),
+                    width=width,
+                    height=height,
+                ),
+                confidence=_optional_confidence(raw_paragraph.get("confidence")),
+            )
+        )
+    return tuple(output)
+
+
+def _layout_words(
+    raw_paragraph: dict[str, Any],
+    *,
+    width: float | None,
+    height: float | None,
+) -> tuple[OcrWord, ...]:
+    raw_words = raw_paragraph.get("words", [])
+    if not isinstance(raw_words, list):
+        return ()
+    output: list[OcrWord] = []
+    for raw_word in raw_words:
+        if not isinstance(raw_word, dict):
+            continue
+        symbols = raw_word.get("symbols", [])
+        text = "".join(
+            str(symbol.get("text", ""))
+            for symbol in symbols
+            if isinstance(symbol, dict)
+        )
+        normalized = normalize_for_storage(text)
+        if not normalized:
+            continue
+        output.append(
+            OcrWord(
+                text=normalized,
+                bounding_box=_normalized_box(
+                    raw_word.get("boundingBox"),
+                    width=width,
+                    height=height,
+                ),
+                confidence=_optional_confidence(raw_word.get("confidence")),
+            )
+        )
+    return tuple(output)
+
+
+def _normalized_box(
+    raw_box: object,
+    *,
+    width: float | None,
+    height: float | None,
+) -> OcrBoundingBox | None:
+    if not isinstance(raw_box, dict):
+        return None
+    normalized_vertices = raw_box.get("normalizedVertices")
+    if isinstance(normalized_vertices, list):
+        points = _points(normalized_vertices, x_scale=1.0, y_scale=1.0)
+    else:
+        vertices = raw_box.get("vertices")
+        if width is None or height is None or not isinstance(vertices, list):
+            return None
+        points = _points(vertices, x_scale=width, y_scale=height)
+    if not points:
+        return None
+    xs = [point[0] for point in points]
+    ys = [point[1] for point in points]
+    return OcrBoundingBox(
+        x_min=max(0.0, min(xs)),
+        y_min=max(0.0, min(ys)),
+        x_max=min(1.0, max(xs)),
+        y_max=min(1.0, max(ys)),
+    )
+
+
+def _points(
+    vertices: list[object],
+    *,
+    x_scale: float,
+    y_scale: float,
+) -> list[tuple[float, float]]:
+    points: list[tuple[float, float]] = []
+    for vertex in vertices:
+        if not isinstance(vertex, dict):
+            continue
+        x = vertex.get("x", 0)
+        y = vertex.get("y", 0)
+        if not isinstance(x, (int, float)) or not isinstance(y, (int, float)):
+            continue
+        points.append((float(x) / x_scale, float(y) / y_scale))
+    return points
+
+
+def _positive_number(value: object) -> float | None:
+    if isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0:
+        return float(value)
+    return None
+
+
+def _optional_confidence(value: object) -> float | None:
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return None
+    return max(0.0, min(float(value), 1.0))

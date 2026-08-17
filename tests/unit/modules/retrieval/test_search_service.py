@@ -50,6 +50,7 @@ async def test_search_service_uses_request_strategy_override() -> None:
                 chunk_index=0,
                 content="x",
                 score=0.5,
+                semantic_score=0.72,
                 filename="f.txt",
             )
         ]
@@ -59,6 +60,10 @@ async def test_search_service_uses_request_strategy_override() -> None:
 
     service._build_retriever.assert_called_once_with(RetrievalStrategy.HYBRID)
     assert response.top_k == config.default_top_k
+    assert response.diagnostics.best_semantic_score == 0.72
+    assert response.diagnostics.candidate_trace == response.diagnostics.selected_trace
+    assert response.diagnostics.selected_trace[0]["semantic_score"] == 0.72
+    assert "content" not in response.diagnostics.selected_trace[0]
 
 
 async def test_source_policy_read_failure_fails_closed_only_in_enforce_mode() -> None:

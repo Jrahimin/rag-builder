@@ -35,9 +35,14 @@ private full build --validate--> validated
 
 - Reprocess increments `document.version`, regenerates parse/chunk artifacts,
   then creates and activates a full corpus build.
-- Re-embed and reindex create new full builds beside the active build. The
-  manual Project actions stop at `validated`; an operator explicitly activates
-  them.
+- Parser 2.0.0 / chunker 3.0.0 OCR structure changes require that reprocess before
+  a new build can contain typed table chunks. Historical conversation snapshots
+  stay immutable; refresh or create a conversation after activation so chat uses
+  the new evidence configuration.
+- Rebuild index (`POST .../reembed`) creates a new full vector+keyword snapshot
+  beside the active build. The Project action stops at `validated`; an operator
+  explicitly activates it. Activation also marks included documents `ready`.
+  `POST .../reindex` remains an equivalent compatibility alias.
 - Delete is reversible. Its job builds and activates a corpus excluding the
   document, then sets `deleted_at`. The retained prior build and document
   artifacts make rollback possible.

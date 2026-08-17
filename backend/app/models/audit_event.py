@@ -9,6 +9,7 @@ from sqlalchemy import Enum, ForeignKeyConstraint, Index, String, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
+from app.models.organization import Organization  # noqa: F401 — FK target for organization_id
 from app.platform.audit.contracts import AuditActorType, AuditEventType, AuditOutcome
 from app.platform.db.base import Base
 from app.platform.domain.mixins import TimestampMixin, UUIDPrimaryKeyMixin

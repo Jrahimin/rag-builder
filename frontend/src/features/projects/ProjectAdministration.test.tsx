@@ -85,7 +85,7 @@ function effectiveConfig(activeRevisionId: string | null): EffectiveProjectAICon
         rerank_enabled: true,
         rerank_top_n: 20,
         rerank_score_threshold: null,
-        evidence_score_threshold: 0.5,
+        semantic_evidence_score_threshold: 0.5,
       },
       chat: {
         max_context_chunks: 8,
@@ -93,7 +93,8 @@ function effectiveConfig(activeRevisionId: string | null): EffectiveProjectAICon
         max_history_messages: 10,
         include_citations: true,
         citation_excerpt_max_chars: 500,
-        minimum_query_token_coverage: 0.2,
+        lexical_corroboration_floor_score: 0.35,
+        lexical_corroboration_coverage: 0.2,
         minimum_claim_token_coverage: 0.2,
       },
       domain_instructions: "",

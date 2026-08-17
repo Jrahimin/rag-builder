@@ -19,7 +19,12 @@ from app.modules.retrieval.retrievers.hybrid_retriever import HybridRetriever
 from app.modules.retrieval.retrievers.models import RetrievalContext, RetrievalFilters
 from app.modules.retrieval.retrievers.result_hydrator import ResultHydrator
 from app.modules.retrieval.retrievers.semantic_retriever import SemanticRetriever
-from app.modules.retrieval.schemas.search import SearchDiagnostics, SearchRequest, SearchResponse
+from app.modules.retrieval.schemas.search import (
+    RetrievalResult,
+    SearchDiagnostics,
+    SearchRequest,
+    SearchResponse,
+)
 from app.modules.retrieval.services.duplicate_suppression_service import (
     DuplicateSuppressionService,
 )
@@ -156,6 +161,10 @@ class SearchService:
             fts_regconfig=self._config.fts_regconfig,
             min_ocr_confidence=self._config.min_ocr_confidence,
             hnsw_ef_search=self._config.hnsw_ef_search,
+            passage_scoring_enabled=self._config.passage_scoring_enabled,
+            passage_window_tokens=self._config.passage_window_tokens,
+            passage_overlap_tokens=self._config.passage_overlap_tokens,
+            passage_min_tokens=self._config.passage_min_tokens,
             metadata={"request_strategy": strategy.value},
             source_scope=source_scope,
         )
@@ -170,8 +179,12 @@ class SearchService:
             configuration_hash=self._configuration_hash,
             config_provenance=self._config_provenance,
         )
-        results = await self._hydrator.hydrate(candidates)
-        suppression = self._duplicate_suppression.select(results, limit=top_k)
+        hydrated_results = await self._hydrator.hydrate(candidates)
+        candidate_trace = [
+            _result_trace(result, rank=index)
+            for index, result in enumerate(hydrated_results, start=1)
+        ]
+        suppression = self._duplicate_suppression.select(hydrated_results, limit=top_k)
         results = suppression.results
 
         elapsed_ms = int((time.perf_counter() - started) * 1000)
@@ -185,6 +198,8 @@ class SearchService:
             rerank_enabled=rerank_enabled,
             duplicate_suppression_removed=suppression.suppressed_count,
             duplicate_suppression_reasons=suppression.suppressed_by_reason,
+            diversity_deferred_reasons=suppression.deferred_by_reason,
+            diversity_backfilled_count=suppression.backfilled_count,
         )
         rerank_metadata = results[0].metadata if results else {}
         rerank_status = str(
@@ -209,9 +224,41 @@ class SearchService:
                 reranker_provider=_optional_string(rerank_metadata.get("reranker_provider")),
                 reranker_model=_optional_string(rerank_metadata.get("reranker_model")),
                 reranker_version=_optional_string(rerank_metadata.get("reranker_version")),
+                reranker_score_scale=_optional_string(rerank_metadata.get("reranker_score_scale")),
+                best_semantic_score=max(
+                    (
+                        result.semantic_score
+                        for result in results
+                        if result.semantic_score is not None
+                    ),
+                    default=None,
+                ),
+                best_passage_semantic_score=max(
+                    (
+                        result.passage_semantic_score
+                        for result in results
+                        if result.passage_semantic_score is not None
+                    ),
+                    default=None,
+                ),
+                passage_score_method=next(
+                    (
+                        result.passage_score_method
+                        for result in results
+                        if result.passage_score_method is not None
+                    ),
+                    None,
+                ),
                 duplicate_suppression_input_count=suppression.input_count,
                 duplicate_suppression_removed_count=suppression.suppressed_count,
                 duplicate_suppression_reasons=suppression.suppressed_by_reason,
+                diversity_deferred_reasons=suppression.deferred_by_reason,
+                diversity_backfilled_count=suppression.backfilled_count,
+                candidate_trace=candidate_trace,
+                selected_trace=[
+                    _result_trace(result, rank=index)
+                    for index, result in enumerate(results, start=1)
+                ],
                 compatibility_diagnostics=diagnostics,
                 as_of=request.as_of,
                 source_policy_consolidation_reasons=policy.consolidation_counts,
@@ -336,3 +383,25 @@ class SearchService:
 
 def _optional_string(value: object) -> str | None:
     return str(value) if value is not None else None
+
+
+def _result_trace(result: RetrievalResult, *, rank: int) -> dict[str, Any]:
+    """Return stable, sanitized retrieval facts without content or vectors."""
+    return {
+        "rank": rank,
+        "chunk_id": str(result.chunk_id),
+        "document_id": str(result.document_id),
+        "chunk_index": result.chunk_index,
+        "retrieval_source": result.metadata.get("retrieval_source"),
+        "score": result.score,
+        "score_scale": result.metadata.get(
+            "reranker_score_scale",
+            "reciprocal_rank_fusion",
+        ),
+        "semantic_score": result.semantic_score,
+        "passage_semantic_score": result.passage_semantic_score,
+        "passage_score_method": result.passage_score_method,
+        "passage_char_start": result.passage_char_start,
+        "passage_char_end": result.passage_char_end,
+        "rerank_status": result.metadata.get("rerank_status"),
+    }

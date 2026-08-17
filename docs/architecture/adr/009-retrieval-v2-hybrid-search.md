@@ -37,6 +37,25 @@ Ship **Retrieval v2** as the production retrieval path with:
 - With reranker disabled: fused RRF score.
 - With reranker enabled: reranker relevance score; fused score as tie-breaker.
 
+## Amendment: calibrated evidence and multilingual ranking (2026-08-17)
+
+`RetrievalResult.score` remains a ranking score only. Candidate and result DTOs now also carry
+`semantic_score`, always `1 - cosine_distance` against the active build. Keyword-only RRF
+candidates receive that score through a bounded pgvector lookup using the already-computed query
+vector. RRF and reranker scores must never be interpreted as semantic confidence.
+
+The production default remains hybrid BM25 + dense retrieval + RRF. The rerank stage stays
+enabled; its occupant is the `noop` pass-through so fused RRF order is retained,
+`rerank_status=passthrough`, and `score_scale=reciprocal_rank_fusion` is declared without a
+content-load round-trip. The lexical reranker remains an
+offline/provider-free comparison and uses query coverage instead of length-biased Jaccard.
+A true multilingual cross-encoder may replace the default only after a persisted quality and
+latency comparison; re-sorting by the same bi-encoder similarity is not treated as reranking.
+
+The dense baseline is `text-embedding-3-large` at 1024 dimensions, embedding set version 2.
+Migration `0026_multilingual_embeddings` changes the fixed pgvector contract and deliberately
+invalidates old retrieval builds.
+
 ### Production default
 
 - `.env.example` documents `APE_RETRIEVAL__STRATEGY=hybrid`.

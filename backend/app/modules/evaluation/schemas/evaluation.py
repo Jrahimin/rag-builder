@@ -15,6 +15,8 @@ class EvaluationCaseKind(StrEnum):
     PARAPHRASE = "paraphrase"
     METADATA_FILTER = "metadata_filter"
     MULTILINGUAL = "multilingual"
+    CROSS_LINGUAL = "cross_lingual"
+    CODE_SWITCHED = "code_switched"
     NO_ANSWER = "no_answer"
     CITATION = "citation"
 
@@ -27,18 +29,25 @@ class EvaluationCase(BaseModel):
     query: str = Field(min_length=1, max_length=4096)
     relevant_chunk_ids: list[uuid.UUID] = Field(default_factory=list)
     relevant_document_ids: list[uuid.UUID] = Field(default_factory=list)
+    relevant_evidence_phrases: list[str] = Field(default_factory=list)
     document_id: uuid.UUID | None = None
     metadata_filter: dict[str, str] = Field(default_factory=dict)
     as_of: datetime | None = None
     expected_answer_tokens: list[str] = Field(default_factory=list)
     expected_no_answer: bool = False
+    query_language: str | None = Field(default=None, min_length=2, max_length=35)
+    expected_evidence_language: str | None = Field(default=None, min_length=2, max_length=35)
 
     @model_validator(mode="after")
     def validate_expectation(self) -> EvaluationCase:
         if self.expected_no_answer:
             return self
-        if not self.relevant_chunk_ids and not self.relevant_document_ids:
-            msg = "Answerable cases require a relevant chunk or document id"
+        if (
+            not self.relevant_chunk_ids
+            and not self.relevant_document_ids
+            and not self.relevant_evidence_phrases
+        ):
+            msg = "Answerable cases require a relevant chunk, document, or evidence phrase"
             raise ValueError(msg)
         return self
 

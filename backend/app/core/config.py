@@ -333,7 +333,7 @@ class ChunkingConfig(BaseModel):
     long_block_token_threshold: int = Field(default=600, ge=100, le=8192)
     similarity_drop_threshold: float = Field(default=0.35, ge=0.0, le=1.0)
     semantic_batch_size: int = Field(default=32, ge=1, le=256)
-    chunker_version: str = "2.0.0"
+    chunker_version: str = "3.0.0"
     token_count_method: str = "unicode_property_v1"
     ocr_confidence_threshold: float = Field(default=0.5, ge=0.0, le=1.0)
 
@@ -351,8 +351,8 @@ class EmbeddingConfig(BaseModel):
     """Embedding provider configuration."""
 
     backend: EmbeddingBackend = EmbeddingBackend.HASH
-    model: str = "nomic-embed-text"
-    dimensions: int = Field(default=384, ge=1, le=2000)
+    model: str = "text-embedding-3-large"
+    dimensions: int = Field(default=1024, ge=1, le=2000)
     batch_size: int = Field(default=32, ge=1, le=256)
     ollama_base_url: str = "http://localhost:11434"
     openai_api_key: str | None = None
@@ -411,6 +411,13 @@ class RerankerBackend(StrEnum):
     EMBEDDING_MAX = "embedding_max"
 
 
+class EvidenceScoreMode(StrEnum):
+    """Calibrated semantic score used by the pre-generation evidence gate."""
+
+    WHOLE_CHUNK = "whole_chunk"
+    PASSAGE_MAX = "passage_max"
+
+
 class RetrievalConfig(BaseModel):
     """Retrieval pipeline and search defaults."""
 
@@ -418,7 +425,7 @@ class RetrievalConfig(BaseModel):
     auto_index: bool = True
     default_top_k: int = Field(default=10, ge=1, le=100)
     score_threshold: float | None = Field(default=None, ge=0.0, le=1.0)
-    embedding_set_version: int = Field(default=1, ge=1)
+    embedding_set_version: int = Field(default=2, ge=1)
     filterable_metadata_keys: Annotated[list[str], NoDecode] = Field(
         default_factory=lambda: ["source", "tags", "ocr_confidence"]
     )
@@ -432,12 +439,16 @@ class RetrievalConfig(BaseModel):
     rerank_enabled: bool = True
     rerank_top_n: int = Field(default=20, ge=1, le=100)
     rerank_score_threshold: float | None = Field(default=None, ge=0.0, le=1.0)
-    reranker_backend: RerankerBackend = RerankerBackend.LEXICAL
+    reranker_backend: RerankerBackend = RerankerBackend.NOOP
     fts_regconfig: str = "simple"
     min_ocr_confidence: float | None = Field(default=None, ge=0.0, le=1.0)
     max_chunks_per_document: int = Field(default=4, ge=1, le=100)
     max_chunks_per_section: int = Field(default=2, ge=1, le=100)
     deduplicate_by_content_hash: bool = True
+    passage_scoring_enabled: bool = False
+    passage_window_tokens: int = Field(default=96, ge=16, le=512)
+    passage_overlap_tokens: int = Field(default=24, ge=0, le=256)
+    passage_min_tokens: int = Field(default=32, ge=8, le=256)
 
     @field_validator("filterable_metadata_keys", mode="before")
     @classmethod
@@ -448,6 +459,14 @@ class RetrievalConfig(BaseModel):
                 return value
             return [item.strip() for item in stripped.split(",") if item.strip()]
         return value
+
+    @model_validator(mode="after")
+    def validate_passage_windows(self) -> RetrievalConfig:
+        if self.passage_overlap_tokens >= self.passage_window_tokens:
+            raise ValueError("passage_overlap_tokens must be smaller than passage_window_tokens")
+        if self.passage_min_tokens > self.passage_window_tokens:
+            raise ValueError("passage_min_tokens must not exceed passage_window_tokens")
+        return self
 
 
 class LLMBackend(StrEnum):
@@ -534,27 +553,61 @@ class ChatConfig(BaseModel):
     max_context_chunks: int = Field(default=8, ge=1, le=50)
     context_char_budget: int = Field(default=12_000, ge=500, le=200_000)
     max_history_messages: int = Field(default=20, ge=0, le=200)
-    system_prompt_version: str = "v2"
+    system_prompt_version: str = "v4"
     include_citations: bool = True
     citation_excerpt_max_chars: int = Field(default=200, ge=0, le=2000)
-    minimum_evidence_score: float = Field(default=0.01, ge=0.0, le=1.0)
-    minimum_query_token_coverage: float = Field(default=0.15, ge=0.0, le=1.0)
+    evidence_score_mode: EvidenceScoreMode = EvidenceScoreMode.WHOLE_CHUNK
+    minimum_semantic_evidence_score: float = Field(default=0.35, ge=0.0, le=1.0)
+    # Below the primary bar so same-language OCR/table hits that land just under
+    # 0.35 can still pass when query tokens strongly overlap the evidence.
+    # Cross-language near-misses typically have ~0 coverage, so they still refuse.
+    lexical_corroboration_floor_score: float = Field(default=0.30, ge=0.0, le=1.0)
+    lexical_corroboration_coverage: float = Field(default=0.50, ge=0.0, le=1.0)
+    minimum_evidence_score: float | None = Field(default=None, deprecated=True)
+    minimum_query_token_coverage: float | None = Field(default=None, deprecated=True)
     minimum_claim_token_coverage: float = Field(default=0.35, ge=0.0, le=1.0)
     insufficient_evidence_message: str = (
         "I don't have enough evidence in the indexed sources to answer that question."
     )
     auto_title_max_chars: int = Field(default=80, ge=10, le=255)
 
+    @model_validator(mode="after")
+    def reject_deprecated_evidence_thresholds(self) -> ChatConfig:
+        deprecated = []
+        if self.__dict__.get("minimum_evidence_score") is not None:
+            deprecated.append("APE_CHAT__MINIMUM_EVIDENCE_SCORE")
+        if self.__dict__.get("minimum_query_token_coverage") is not None:
+            deprecated.append("APE_CHAT__MINIMUM_QUERY_TOKEN_COVERAGE")
+        if deprecated:
+            msg = (
+                f"{', '.join(deprecated)} is deprecated; configure "
+                "APE_CHAT__MINIMUM_SEMANTIC_EVIDENCE_SCORE and the "
+                "APE_CHAT__LEXICAL_CORROBORATION_* settings instead"
+            )
+            raise ValueError(msg)
+        if self.lexical_corroboration_floor_score > self.minimum_semantic_evidence_score:
+            msg = (
+                "lexical_corroboration_floor_score must not exceed minimum_semantic_evidence_score"
+            )
+            raise ValueError(msg)
+        return self
+
 
 class EvaluationConfig(BaseModel):
     """Reproducible quality-run defaults and acceptance thresholds."""
 
-    evaluator_version: str = "quality-v1"
+    evaluator_version: str = "quality-v3"
     default_top_k: int = Field(default=5, ge=1, le=100)
     max_cases_per_dataset: int = Field(default=500, ge=1, le=10_000)
     minimum_recall_at_k: float = Field(default=0.80, ge=0.0, le=1.0)
+    minimum_rank_1_accuracy: float = Field(default=0.80, ge=0.0, le=1.0)
+    minimum_cross_lingual_recall_at_k: float = Field(default=0.75, ge=0.0, le=1.0)
     minimum_filtered_correctness: float = Field(default=0.95, ge=0.0, le=1.0)
-    minimum_refusal_accuracy: float = Field(default=0.90, ge=0.0, le=1.0)
+    maximum_false_refusal_rate: float = Field(default=0.10, ge=0.0, le=1.0)
+    maximum_false_accept_rate: float = Field(default=0.0, ge=0.0, le=1.0)
+    maximum_accepted_without_relevant_evidence_rate: float = Field(
+        default=0.0, ge=0.0, le=1.0
+    )
     minimum_groundedness: float = Field(default=0.80, ge=0.0, le=1.0)
     minimum_citation_coverage: float = Field(default=0.80, ge=0.0, le=1.0)
     maximum_p95_latency_ms: float = Field(default=750.0, ge=1.0)
@@ -600,9 +653,7 @@ class AIConfigPolicy(BaseModel):
 
     request_override_mode: RequestOverrideMode = RequestOverrideMode.COMPATIBILITY
     max_request_top_k: int = Field(default=100, ge=1, le=100)
-    source_policy_deployment_cap: SourcePolicyDeploymentCap = (
-        SourcePolicyDeploymentCap.ENFORCE
-    )
+    source_policy_deployment_cap: SourcePolicyDeploymentCap = SourcePolicyDeploymentCap.ENFORCE
     enabled_retrieval_strategies: Annotated[list[RetrievalStrategy], NoDecode] = Field(
         default_factory=lambda: [RetrievalStrategy.SEMANTIC, RetrievalStrategy.HYBRID]
     )

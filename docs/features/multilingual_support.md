@@ -12,6 +12,8 @@ APE treats multilingual corpora as first-class through Unicode-property tokeniza
 | OCR | Optional `OCRProvider`: PaddleOCR for the existing pipeline; Google Cloud Vision for Bangla |
 | PDF parsing | Page-level Unicode quality scoring with PyMuPDF → PDFium → OCR fallback |
 | FTS | Configurable `APE_RETRIEVAL__FTS_REGCONFIG` (default `simple`) |
+| Dense retrieval | `text-embedding-3-large` at 1024 dimensions; one multilingual space for every query/evidence direction |
+| Evidence gate | Calibrated semantic relevance is authoritative; lexical overlap is supplementary and rescue-only |
 | Reindex | `python -m app.cli.reindex_cli` after tokenizer upgrades |
 
 ## Configuration
@@ -28,6 +30,12 @@ APE_OCR__MAX_OCR_PAGES_PER_DOCUMENT=100
 APE_RETRIEVAL__FTS_REGCONFIG=simple
 APE_RETRIEVAL__MIN_OCR_CONFIDENCE=
 APE_RETRIEVAL__FILTERABLE_METADATA_KEYS=source,tags,ocr_confidence
+APE_EMBEDDING__MODEL=text-embedding-3-large
+APE_EMBEDDING__DIMENSIONS=1024
+APE_RETRIEVAL__EMBEDDING_SET_VERSION=2
+APE_CHAT__MINIMUM_SEMANTIC_EVIDENCE_SCORE=0.35
+APE_CHAT__LEXICAL_CORROBORATION_FLOOR_SCORE=0.30
+APE_CHAT__LEXICAL_CORROBORATION_COVERAGE=0.50
 APE_PARSING__PDF_TEXT_PARSERS=pymupdf,pdfium
 APE_PARSING__MIN_PAGE_QUALITY_SCORE=0.55
 APE_PARSING__MIN_DOCUMENT_SUCCESS_RATIO=0.2
@@ -83,6 +91,12 @@ Google receives rasterized page/image content. Enabling the backend is therefore
 deployment data-residency decision. `APE_OCR__MAX_OCR_PAGES_PER_DOCUMENT` bounds request volume and
 fails oversized OCR targets rather than silently truncating them.
 
+Vision block/paragraph/word geometry is normalized into provider-neutral coordinates and preserved
+through the PDF parser. Consecutive rows with conservative aligned-column evidence become typed
+table elements; ambiguous layout remains ordinary paragraphs. This behavior is script-neutral and
+does not contain Bangla vocabulary rules. Reprocessing is required to obtain these elements for
+documents parsed by workflow version 1.x.
+
 ### PDF mixed-content handling
 
 | Setting | Default | Effect |
@@ -98,6 +112,17 @@ candidate. The Bangla route instead OCRs every page and does not compete with na
 
 ## Reindex after upgrades
 
+Embedding dimension changes require the Alembic migration before startup. Migration `0026`
+invalidates existing index builds and pointers because vectors of different dimensions cannot share
+one pgvector column. After migration, create and activate a complete build through **Rebuild index**
+in Lifecycle (`POST .../index-builds/reembed`), then Activate. Documents return
+to `chunked` during the migration and become `ready` when that snapshot is
+activated.
+
+Parser 2.0.0 / chunker 3.0.0 also require **document reprocess** (not only Rebuild index) so OCR
+pages keep layout elements and table chunks. After activation, create a new conversation or refresh
+the conversation snapshot; old snapshots keep the previous evidence mode and thresholds.
+
 ```bash
 python -m app.cli.reindex_cli document --project-id <uuid> --document-id <uuid>
 python -m app.cli.reindex_cli project --project-id <uuid> --full
@@ -107,11 +132,17 @@ python -m app.cli.reindex_cli project --project-id <uuid> --dry-run
 ## Acceptance scenarios
 
 - Unicode Bengali text (valid text layer or `.txt`/`.docx`) + Bangla query → non-zero tokens; hybrid retrieval returns relevant chunks
+- English query + Bengali evidence and Bengali query + English evidence → dense recall without translation
+- Same-script cross-language pairs (for example English/French) behave like different-script pairs
+- Code-switched queries are evaluated without runtime language or script routing
+- Topically near but wrong cross-language evidence remains below the false-accept gate
 - English-only and mixed-language documents behave symmetrically
 - Low OCR confidence chunks filterable via `APE_RETRIEVAL__MIN_OCR_CONFIDENCE`
 - Ellipsis-terminated OCR lines split on sentence boundaries
 - Unicode or mixed Bangla PDF + configured Vision backend → auto-detected and OCR-first
 - Bangla scan / Bijoy PDF + explicit or deployment-default `bn` → Vision OCR-first
+- OCR tables retain page provenance; oversized tables repeat captions and headers across row groups
+- Tiny OCR fragments merge into adjacent chunks instead of occupying retrieval slots
 - English corpus → existing PyMuPDF → PDFium → configured general OCR behavior unchanged
 
 See ADR-010, ADR-011, ADR-017, and `docs/learning/multilingual-text-processing.md`.

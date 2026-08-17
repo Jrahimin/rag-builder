@@ -24,6 +24,7 @@ from collections.abc import AsyncIterator
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+import app.composition.orm_registry as _orm_registry  # noqa: F401
 from app.api.health import router as health_router
 from app.api.metrics import router as metrics_router
 from app.api.v1.router import api_v1_router

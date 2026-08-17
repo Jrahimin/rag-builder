@@ -62,10 +62,16 @@ async def test_hydrator_preserves_candidate_order_and_drops_orphans() -> None:
     results = await hydrator.hydrate(
         [
             CandidateHit(missing, 0.5, CandidateSource.HYBRID),
-            CandidateHit(present.id, 0.9, CandidateSource.HYBRID),
+            CandidateHit(
+                present.id,
+                0.9,
+                CandidateSource.HYBRID,
+                semantic_score=0.72,
+            ),
         ]
     )
 
     assert len(results) == 1
     assert results[0].chunk_id == present.id
     assert results[0].filename == "doc.txt"
+    assert results[0].semantic_score == 0.72

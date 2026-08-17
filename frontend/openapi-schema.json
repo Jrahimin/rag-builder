@@ -160,12 +160,16 @@
           "text": {
             "title": "Text",
             "type": "string"
+          },
+          "verification": {
+            "$ref": "#/components/schemas/ClaimVerification"
           }
         },
         "required": [
           "claim_id",
           "text",
-          "grounded"
+          "grounded",
+          "verification"
         ],
         "title": "AnswerClaim",
         "type": "object"
@@ -3587,6 +3591,16 @@
         "title": "ClaimEvidence",
         "type": "object"
       },
+      "ClaimVerification": {
+        "description": "What the deterministic validator can establish about one claim.",
+        "enum": [
+          "supported",
+          "unverified",
+          "unsupported"
+        ],
+        "title": "ClaimVerification",
+        "type": "string"
+      },
       "ConfigProvenance": {
         "properties": {
           "configured_source_policy_mode": {
@@ -3643,7 +3657,7 @@
             "type": "object"
           },
           "provider_capability_version": {
-            "default": "2026-08-16.v1",
+            "default": "2026-08-16.v2",
             "title": "Provider Capability Version",
             "type": "string"
           },
@@ -4430,6 +4444,14 @@
             "title": "Include Citations",
             "type": "boolean"
           },
+          "lexical_corroboration_coverage": {
+            "title": "Lexical Corroboration Coverage",
+            "type": "number"
+          },
+          "lexical_corroboration_floor_score": {
+            "title": "Lexical Corroboration Floor Score",
+            "type": "number"
+          },
           "max_context_chunks": {
             "title": "Max Context Chunks",
             "type": "integer"
@@ -4441,10 +4463,6 @@
           "minimum_claim_token_coverage": {
             "title": "Minimum Claim Token Coverage",
             "type": "number"
-          },
-          "minimum_query_token_coverage": {
-            "title": "Minimum Query Token Coverage",
-            "type": "number"
           }
         },
         "required": [
@@ -4453,7 +4471,8 @@
           "max_history_messages",
           "include_citations",
           "citation_excerpt_max_chars",
-          "minimum_query_token_coverage",
+          "lexical_corroboration_floor_score",
+          "lexical_corroboration_coverage",
           "minimum_claim_token_coverage"
         ],
         "title": "EffectiveChatPolicy",
@@ -4582,10 +4601,6 @@
       },
       "EffectiveRetrievalPolicy": {
         "properties": {
-          "evidence_score_threshold": {
-            "title": "Evidence Score Threshold",
-            "type": "number"
-          },
           "rerank_enabled": {
             "title": "Rerank Enabled",
             "type": "boolean"
@@ -4605,6 +4620,10 @@
             "title": "Rerank Top N",
             "type": "integer"
           },
+          "semantic_evidence_score_threshold": {
+            "title": "Semantic Evidence Score Threshold",
+            "type": "number"
+          },
           "strategy": {
             "$ref": "#/components/schemas/RetrievalStrategy"
           },
@@ -4619,7 +4638,7 @@
           "rerank_enabled",
           "rerank_top_n",
           "rerank_score_threshold",
-          "evidence_score_threshold"
+          "semantic_evidence_score_threshold"
         ],
         "title": "EffectiveRetrievalPolicy",
         "type": "object"
@@ -4658,6 +4677,19 @@
             "title": "Expected Answer Tokens",
             "type": "array"
           },
+          "expected_evidence_language": {
+            "anyOf": [
+              {
+                "maxLength": 35,
+                "minLength": 2,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Evidence Language"
+          },
           "expected_no_answer": {
             "default": false,
             "title": "Expected No Answer",
@@ -4685,6 +4717,19 @@
             "minLength": 1,
             "title": "Query",
             "type": "string"
+          },
+          "query_language": {
+            "anyOf": [
+              {
+                "maxLength": 35,
+                "minLength": 2,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Query Language"
           },
           "relevant_chunk_ids": {
             "items": {
@@ -4717,6 +4762,8 @@
           "paraphrase",
           "metadata_filter",
           "multilingual",
+          "cross_lingual",
+          "code_switched",
           "no_answer",
           "citation"
         ],
@@ -7546,6 +7593,19 @@
             ],
             "title": "Include Citations"
           },
+          "lexical_corroboration_floor_score": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lexical Corroboration Floor Score"
+          },
           "max_context_chunks": {
             "anyOf": [
               {
@@ -8349,6 +8409,17 @@
           "score": {
             "title": "Score",
             "type": "number"
+          },
+          "semantic_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Semantic Score"
           }
         },
         "required": [
@@ -8385,6 +8456,17 @@
               }
             ],
             "title": "As Of"
+          },
+          "best_semantic_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Best Semantic Score"
           },
           "compatibility_diagnostics": {
             "items": {
@@ -8483,6 +8565,17 @@
               }
             ],
             "title": "Reranker Provider"
+          },
+          "reranker_score_scale": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reranker Score Scale"
           },
           "reranker_version": {
             "anyOf": [

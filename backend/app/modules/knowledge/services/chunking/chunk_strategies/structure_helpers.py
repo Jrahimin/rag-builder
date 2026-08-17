@@ -35,7 +35,7 @@ def element_to_draft(element: ParsedElement, *, section_title: str | None) -> Dr
         page_end=element.page_end,
         section_title=section_title,
         heading_level=element.heading_level,
-        metadata={"element_type": element.element_type.value},
+        metadata={**element.metadata, "element_type": element.element_type.value},
     )
 
 
@@ -67,14 +67,11 @@ def pack_elements(
                 buffer = None
             if token_count > context.config.max_tokens:
                 chunks.extend(
-                    fallback.split_text(
-                        draft.content,
-                        config=context.config,
-                        base_metadata=draft.metadata,
-                        page_start=draft.page_start,
-                        page_end=draft.page_end,
-                        section_title=draft.section_title,
-                        heading_level=draft.heading_level,
+                    _split_table_rows(
+                        draft,
+                        context=context,
+                        token_counter=token_counter,
+                        fallback=fallback,
                     )
                 )
             else:
@@ -125,6 +122,83 @@ def pack_elements(
     return chunks
 
 
+def _split_table_rows(
+    draft: DraftChunk,
+    *,
+    context: ChunkingContext,
+    token_counter: TokenCountingService,
+    fallback: RecursiveFallbackChunkStrategy,
+) -> list[DraftChunk]:
+    caption = draft.metadata.get("table_caption")
+    header = draft.metadata.get("table_header")
+    rows = draft.metadata.get("table_rows")
+    if not isinstance(rows, list) or not all(isinstance(row, str) for row in rows):
+        return fallback.split_text(
+            draft.content,
+            config=context.config,
+            base_metadata=draft.metadata,
+            page_start=draft.page_start,
+            page_end=draft.page_end,
+            section_title=draft.section_title,
+            heading_level=draft.heading_level,
+        )
+    prefix = "\n".join(
+        value.strip()
+        for value in (caption, header)
+        if isinstance(value, str) and value.strip()
+    )
+    groups: list[list[str]] = []
+    current: list[str] = []
+    for row in rows:
+        candidate_rows = [*current, row]
+        candidate = "\n".join(part for part in (prefix, *candidate_rows) if part)
+        if current and token_counter.count(candidate) > context.config.max_tokens:
+            groups.append(current)
+            current = [row]
+        else:
+            current = candidate_rows
+    if current:
+        groups.append(current)
+
+    chunks: list[DraftChunk] = []
+    row_offset = 0
+    for group in groups:
+        content = "\n".join(part for part in (prefix, *group) if part)
+        metadata = {
+            **draft.metadata,
+            "table_row_start": row_offset,
+            "table_row_end": row_offset + len(group) - 1,
+            "table_row_group": True,
+        }
+        if token_counter.count(content) > context.config.max_tokens:
+            chunks.extend(
+                fallback.split_text(
+                    content,
+                    config=context.config,
+                    base_metadata=metadata,
+                    page_start=draft.page_start,
+                    page_end=draft.page_end,
+                    section_title=draft.section_title,
+                    heading_level=draft.heading_level,
+                )
+            )
+        else:
+            chunks.append(
+                DraftChunk(
+                    content=content,
+                    char_start=draft.char_start,
+                    char_end=draft.char_end,
+                    page_start=draft.page_start,
+                    page_end=draft.page_end,
+                    section_title=draft.section_title,
+                    heading_level=draft.heading_level,
+                    metadata=metadata,
+                )
+            )
+        row_offset += len(group)
+    return chunks
+
+
 def chunk_by_sections(
     context: ChunkingContext,
     *,
@@ -136,7 +210,8 @@ def chunk_by_sections(
     chunks: list[DraftChunk] = []
     for section in sections:
         section_tokens = sum(token_counter.count(element.text) for element in section)
-        if section_tokens <= context.config.max_tokens:
+        has_table = any(element.element_type is ParsedElementType.TABLE for element in section)
+        if section_tokens <= context.config.max_tokens and not has_table:
             section_title = _section_title(section)
             combined_text = "\n\n".join(
                 element.text.strip() for element in section if element.text.strip()

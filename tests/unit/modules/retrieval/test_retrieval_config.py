@@ -13,15 +13,16 @@ def test_retrieval_config_defaults_to_production_hybrid_strategy() -> None:
     config = RetrievalConfig()
     assert config.strategy is RetrievalStrategy.HYBRID
     assert config.rerank_enabled is True
-    assert config.reranker_backend is RerankerBackend.LEXICAL
+    assert config.reranker_backend is RerankerBackend.NOOP
     assert config.hnsw_ef_search == 100
 
 
 def test_retrieval_config_accepts_hybrid_strategy_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("APE_RETRIEVAL__STRATEGY", "hybrid")
-    monkeypatch.setenv("APE_RETRIEVAL__RERANK_ENABLED", "false")
+    monkeypatch.setenv("APE_RETRIEVAL__RERANK_ENABLED", "true")
     from app.core.config import Settings
 
     settings = Settings()
     assert settings.retrieval.strategy is RetrievalStrategy.HYBRID
-    assert settings.retrieval.rerank_enabled is False
+    assert settings.retrieval.rerank_enabled is True
+    assert settings.retrieval.reranker_backend is RerankerBackend.NOOP

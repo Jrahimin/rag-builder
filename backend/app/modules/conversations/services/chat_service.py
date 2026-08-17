@@ -321,7 +321,9 @@ class ChatService:
         chunks = retrieval_result.chunks
         retrieval_ms = int((time.perf_counter() - retrieval_started) * 1000)
         selected = self._context_builder.select(chunks)
-        evidence = self._grounding.assess(request.content, selected)
+        selected_ids = {chunk.chunk_id for chunk in selected}
+        evidence_chunks = [chunk for chunk in chunks if chunk.chunk_id in selected_ids]
+        evidence = self._grounding.assess(request.content, evidence_chunks)
 
         prompt_version = (
             conversation.system_prompt_version or self._chat_config.system_prompt_version
@@ -393,13 +395,25 @@ class ChatService:
             retrieved_count=len(prepared.chunks),
             selected_count=len(prepared.selected),
             retrieval_diagnostics=prepared.retrieval_diagnostics,
+            selected_chunks=prepared.selected,
         )
         metadata.update(
             {
                 "grounded": grounding.grounded,
                 "citation_coverage": grounding.citation_coverage,
-                "evidence_best_score": prepared.evidence.best_score,
+                "unverified_claim_rate": grounding.unverified_claim_rate,
+                "best_semantic_evidence_score": prepared.evidence.best_score,
+                "best_evidence_score": prepared.evidence.best_score,
+                "evidence_score_method": prepared.evidence.evidence_score_method,
+                "winning_evidence_chunk_id": (
+                    str(prepared.evidence.winning_chunk_id)
+                    if prepared.evidence.winning_chunk_id is not None
+                    else None
+                ),
+                "winning_evidence_char_start": prepared.evidence.evidence_char_start,
+                "winning_evidence_char_end": prepared.evidence.evidence_char_end,
                 "query_evidence_token_coverage": prepared.evidence.query_token_coverage,
+                "lexically_corroborated": prepared.evidence.lexically_corroborated,
                 "insufficient_evidence_reason": reason_value,
             }
         )
@@ -469,6 +483,7 @@ class ChatService:
             retrieved_count=len(prepared.chunks),
             selected_count=len(prepared.selected),
             retrieval_diagnostics=prepared.retrieval_diagnostics,
+            selected_chunks=prepared.selected,
         )
         metadata.update(
             {
@@ -625,9 +640,7 @@ class ChatService:
             config_provenance=self._config_provenance,
             message_metadata=metadata,
             index_build_id=_optional_uuid(metadata.get("index_build_id")),
-            source_metadata_generation=_optional_int(
-                metadata.get("source_metadata_generation")
-            ),
+            source_metadata_generation=_optional_int(metadata.get("source_metadata_generation")),
             retrieval_latency_ms=_optional_int(metadata.get("retrieval_time_ms")),
             provider_latency_ms=_optional_int(metadata.get("generation_time_ms")),
             total_latency_ms=_optional_int(metadata.get("total_time_ms")),
@@ -661,6 +674,7 @@ class ChatService:
         retrieved_count: int,
         selected_count: int,
         retrieval_diagnostics: dict[str, Any],
+        selected_chunks: list[ContextChunk],
     ) -> dict[str, Any]:
         return {
             "retrieval_time_ms": retrieval_ms,
@@ -670,18 +684,48 @@ class ChatService:
             "retrieval_top_k": self._chat_config.retrieval_top_k,
             "retrieved_chunk_count": retrieved_count,
             "selected_chunk_count": selected_count,
+            "retrieval_trace": {
+                "candidates": retrieval_diagnostics.get("candidate_trace", []),
+                "retrieval_selected": retrieval_diagnostics.get("selected_trace", []),
+                "context_selected": [
+                    {
+                        "rank": index,
+                        "chunk_id": str(chunk.chunk_id),
+                        "document_id": str(chunk.document_id),
+                        "chunk_index": chunk.chunk_index,
+                        "score": chunk.score,
+                        "semantic_score": chunk.semantic_score,
+                        "passage_semantic_score": chunk.passage_semantic_score,
+                        "passage_score_method": chunk.passage_score_method,
+                    }
+                    for index, chunk in enumerate(selected_chunks, start=1)
+                ],
+                "suppression": {
+                    "input_count": retrieval_diagnostics.get(
+                        "duplicate_suppression_input_count", 0
+                    ),
+                    "removed_count": retrieval_diagnostics.get(
+                        "duplicate_suppression_removed_count", 0
+                    ),
+                    "reasons": retrieval_diagnostics.get(
+                        "duplicate_suppression_reasons", {}
+                    ),
+                    "diversity_deferred_reasons": retrieval_diagnostics.get(
+                        "diversity_deferred_reasons", {}
+                    ),
+                    "diversity_backfilled_count": retrieval_diagnostics.get(
+                        "diversity_backfilled_count", 0
+                    ),
+                },
+                "rerank_status": retrieval_diagnostics.get("rerank_status"),
+                "reranker_score_scale": retrieval_diagnostics.get("reranker_score_scale"),
+            },
             "index_build_id": retrieval_diagnostics.get("index_build_id"),
-            "source_metadata_generation": retrieval_diagnostics.get(
-                "source_metadata_generation"
-            ),
+            "source_metadata_generation": retrieval_diagnostics.get("source_metadata_generation"),
             "source_policy": {
-                "configured_mode": retrieval_diagnostics.get(
-                    "source_policy_configured_mode"
-                ),
+                "configured_mode": retrieval_diagnostics.get("source_policy_configured_mode"),
                 "effective_mode": retrieval_diagnostics.get("source_policy_effective_mode"),
-                "deployment_cap": retrieval_diagnostics.get(
-                    "source_policy_deployment_cap"
-                ),
+                "deployment_cap": retrieval_diagnostics.get("source_policy_deployment_cap"),
                 "status": retrieval_diagnostics.get("source_policy_status"),
                 "exclusion_reasons": retrieval_diagnostics.get(
                     "source_policy_exclusion_reasons", {}

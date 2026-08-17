@@ -89,7 +89,7 @@ APE_MINIO__ENDPOINT=localhost:9000
 
 # Embeddings: use a real provider for semantic experiments
 APE_EMBEDDING__BACKEND=openai
-APE_EMBEDDING__MODEL=text-embedding-3-small
+APE_EMBEDDING__MODEL=text-embedding-3-large
 APE_EMBEDDING__DIMENSIONS=1536
 
 # Retrieval

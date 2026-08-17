@@ -149,6 +149,7 @@ class PageExtractionRecord:
     accepted_parser: str
     extraction_method: ExtractionMethod
     attempts: tuple[ParserAttemptRecord, ...] = field(default_factory=tuple)
+    elements: tuple[Any, ...] = field(default_factory=tuple, repr=False)
     char_count: int = 0
 
     def to_dict(self) -> dict[str, Any]:
@@ -159,6 +160,13 @@ class PageExtractionRecord:
             "accepted_parser": self.accepted_parser,
             "extraction_method": self.extraction_method.value,
             "char_count": self.char_count,
+            "element_count": len(self.elements),
+            "element_types": sorted(
+                {
+                    str(getattr(getattr(element, "element_type", None), "value", "unknown"))
+                    for element in self.elements
+                }
+            ),
             "attempts": [attempt.to_dict() for attempt in self.attempts],
         }
 

@@ -24,6 +24,7 @@ def reciprocal_rank_fusion(
 ) -> list[CandidateHit]:
     """Fuse multiple ranked lists using weighted reciprocal rank fusion."""
     fused_scores: dict[uuid.UUID, float] = {}
+    semantic_scores: dict[uuid.UUID, float] = {}
     best_ranks: dict[uuid.UUID, int] = {}
     metadata_by_chunk: dict[uuid.UUID, dict] = {}
 
@@ -32,6 +33,11 @@ def reciprocal_rank_fusion(
             fused_scores[hit.chunk_id] = fused_scores.get(hit.chunk_id, 0.0) + (
                 ranked.weight / (rrf_k + rank)
             )
+            if hit.semantic_score is not None:
+                semantic_scores[hit.chunk_id] = max(
+                    semantic_scores.get(hit.chunk_id, hit.semantic_score),
+                    hit.semantic_score,
+                )
             best_ranks[hit.chunk_id] = min(best_ranks.get(hit.chunk_id, rank), rank)
             metadata_by_chunk.setdefault(hit.chunk_id, {}).update(hit.metadata)
 
@@ -49,6 +55,7 @@ def reciprocal_rank_fusion(
             chunk_id=chunk_id,
             score=fused_scores[chunk_id],
             source=CandidateSource.HYBRID,
+            semantic_score=semantic_scores.get(chunk_id),
             metadata=dict(metadata_by_chunk.get(chunk_id, {})),
         )
         for chunk_id in ordered_ids

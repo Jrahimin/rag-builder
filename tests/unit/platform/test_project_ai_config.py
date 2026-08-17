@@ -187,6 +187,95 @@ def test_job_snapshot_captures_project_policy_provenance_and_no_secrets() -> Non
     assert restored.llm.model == "project-model"
 
 
+def test_legacy_rrf_scale_evidence_threshold_is_ignored() -> None:
+    revision = _revision({"retrieval": {"evidence_score_threshold": 0.01}})
+
+    resolution = resolve_project_ai_config(Settings(), revision)
+
+    assert resolution.configuration.retrieval.semantic_evidence_score_threshold == 0.35
+    assert resolution.origins["retrieval.evidence_score_threshold"] == "global"
+
+
+def test_legacy_query_coverage_override_is_ignored() -> None:
+    revision = _revision({"chat": {"minimum_query_token_coverage": 0.15}})
+
+    resolution = resolve_project_ai_config(Settings(), revision)
+
+    assert resolution.configuration.chat.lexical_corroboration_coverage == 0.50
+    assert resolution.origins["chat.minimum_query_token_coverage"] == "global"
+
+
+def test_project_can_raise_semantic_threshold_and_set_rescue_floor() -> None:
+    revision = _revision(
+        {
+            "retrieval": {"evidence_score_threshold": 0.5},
+            "chat": {"lexical_corroboration_floor_score": 0.3},
+        }
+    )
+    resolution = resolve_project_ai_config(Settings(), revision)
+    restored = apply_effective_ai_config(Settings(), resolution)
+
+    assert resolution.configuration.retrieval.semantic_evidence_score_threshold == 0.5
+    assert resolution.configuration.chat.lexical_corroboration_floor_score == 0.3
+    assert restored.chat.minimum_semantic_evidence_score == 0.5
+    assert restored.chat.lexical_corroboration_floor_score == 0.3
+
+
+def test_rescue_floor_above_semantic_bar_is_rejected() -> None:
+    revision = _revision({"chat": {"lexical_corroboration_floor_score": 0.5}})
+
+    with pytest.raises(BadRequestError) as caught:
+        resolve_project_ai_config(Settings(), revision)
+
+    assert caught.value.code == "invalid_evidence_thresholds"
+
+
+def test_effective_policy_applies_the_lexical_rescue_floor() -> None:
+    settings = Settings()
+    revision = _revision({"retrieval": {"evidence_score_threshold": 0.5}})
+    resolution = resolve_project_ai_config(settings, revision)
+    restored = apply_effective_ai_config(settings, resolution)
+
+    assert resolution.configuration.retrieval.semantic_evidence_score_threshold == 0.5
+    assert resolution.configuration.chat.lexical_corroboration_floor_score == 0.30
+    assert restored.chat.minimum_semantic_evidence_score == 0.5
+    assert restored.chat.lexical_corroboration_floor_score == 0.30
+
+
+def test_passage_evidence_mode_is_versioned_in_effective_snapshot() -> None:
+    revision = _revision(
+        {
+            "retrieval": {
+                "passage_scoring_enabled": True,
+                "passage_window_tokens": 80,
+                "passage_overlap_tokens": 20,
+                "passage_min_tokens": 30,
+            },
+            "chat": {"evidence_score_mode": "passage_max"},
+        }
+    )
+
+    resolution = resolve_project_ai_config(Settings(), revision)
+    restored = apply_effective_ai_config(Settings(), resolution)
+
+    assert resolution.configuration.chat.evidence_score_mode == "passage_max"
+    assert resolution.configuration.retrieval.passage_window_tokens == 80
+    assert restored.chat.evidence_score_mode == "passage_max"
+    assert restored.retrieval.passage_scoring_enabled is True
+    assert resolution.secret_free_snapshot()["configuration"]["chat"][
+        "evidence_score_mode"
+    ] == "passage_max"
+
+
+def test_passage_evidence_mode_requires_passage_scoring() -> None:
+    revision = _revision({"chat": {"evidence_score_mode": "passage_max"}})
+
+    with pytest.raises(BadRequestError) as caught:
+        resolve_project_ai_config(Settings(), revision)
+
+    assert caught.value.code == "passage_evidence_scoring_disabled"
+
+
 def test_index_hash_ignores_project_chat_llm_and_top_k_policy() -> None:
     settings = Settings(retrieval={"default_top_k": 7})
     first = build_job_configuration(

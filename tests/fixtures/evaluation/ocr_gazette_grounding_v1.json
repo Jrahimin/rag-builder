@@ -1,0 +1,101 @@
+{
+  "name": "OCR Gazette Grounding",
+  "version": "1.0.2",
+  "schema_version": 2,
+  "description": "Structure, cross-lingual retrieval, candidate-local grounding, and numeral-decoy regression set for the Bangla Google OCR gazette.",
+  "cases": [
+    {
+      "key": "gazette.table.bn.exact",
+      "kind": "multilingual",
+      "query": "উৎসে কর সংগ্রহের খাত কি?",
+      "relevant_evidence_phrases": [
+        "সঞ্চয়পত্র হইতে অর্জিত",
+        "রপ্তানির বিপরীতে",
+        "অধিগ্রহণ",
+        "হস্তান্তর",
+        "মোটরযান"
+      ],
+      "expected_answer_tokens": ["সঞ্চয়পত্র", "সম্পত্তি", "রপ্তানি", "মোটরযান"],
+      "query_language": "bn",
+      "expected_evidence_language": "bn"
+    },
+    {
+      "key": "gazette.table.bn.synonym",
+      "kind": "paraphrase",
+      "query": "উৎসে কর কর্তনের খাতগুলো কী কী?",
+      "relevant_evidence_phrases": [
+        "সঞ্চয়পত্র হইতে অর্জিত",
+        "রপ্তানির বিপরীতে",
+        "অধিগ্রহণ",
+        "হস্তান্তর",
+        "মোটরযান"
+      ],
+      "expected_answer_tokens": ["সঞ্চয়পত্র", "সম্পত্তি", "রপ্তানি", "মোটরযান"],
+      "query_language": "bn",
+      "expected_evidence_language": "bn"
+    },
+    {
+      "key": "gazette.table.en.cross-lingual",
+      "kind": "cross_lingual",
+      "query": "what are the source tax deduction areas?",
+      "relevant_evidence_phrases": [
+        "সঞ্চয়পত্র হইতে অর্জিত",
+        "রপ্তানির বিপরীতে",
+        "অধিগ্রহণ",
+        "হস্তান্তর",
+        "মোটরযান"
+      ],
+      "expected_answer_tokens": ["savings", "property", "export", "vehicle"],
+      "query_language": "en",
+      "expected_evidence_language": "bn"
+    },
+    {
+      "key": "gazette.table.en.clean-paraphrase",
+      "kind": "cross_lingual",
+      "query": "what are the tax deducted at source categories?",
+      "relevant_evidence_phrases": [
+        "সঞ্চয়পত্র হইতে অর্জিত",
+        "রপ্তানির বিপরীতে",
+        "অধিগ্রহণ",
+        "হস্তান্তর",
+        "মোটরযান"
+      ],
+      "expected_answer_tokens": ["savings", "property", "export", "vehicle"],
+      "query_language": "en",
+      "expected_evidence_language": "bn"
+    },
+    {
+      "key": "gazette.section106.en.true-positive",
+      "kind": "cross_lingual",
+      "query": "tell me about law section 12 sub section 106 update",
+      "relevant_evidence_phrases": ["১০৬"],
+      "expected_answer_tokens": ["106"],
+      "query_language": "en",
+      "expected_evidence_language": "bn"
+    },
+    {
+      "key": "gazette.decoy.act12-section163",
+      "kind": "no_answer",
+      "query": "What criminal penalty does Act 12 section 163 impose on unregistered exporters?",
+      "expected_no_answer": true,
+      "query_language": "en",
+      "expected_evidence_language": "bn"
+    },
+    {
+      "key": "gazette.decoy.section106-recipient-rate",
+      "kind": "no_answer",
+      "query": "Does section 106 set a 15% company recipient rate for savings certificates and export subsidies?",
+      "expected_no_answer": true,
+      "query_language": "en",
+      "expected_evidence_language": "bn"
+    },
+    {
+      "key": "gazette.decoy.unrelated",
+      "kind": "no_answer",
+      "query": "What is the employee vacation approval policy?",
+      "expected_no_answer": true,
+      "query_language": "en",
+      "expected_evidence_language": "bn"
+    }
+  ]
+}

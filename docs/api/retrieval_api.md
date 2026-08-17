@@ -64,8 +64,11 @@ default is `hybrid`; semantic remains an explicit comparison/rollback strategy.
 thresholds. Deprecated `rerank` use appears in `diagnostics.compatibility_diagnostics`; strict mode
 returns `request_policy_override_forbidden`.
 
-**Score semantics:** semantic-only results use `1 - cosine_distance`. Hybrid
-results expose the final RRF or reranker score.
+**Score semantics:** `score` is used only to order results: semantic-only returns
+`1 - cosine_distance`, while hybrid returns the final RRF or reranker score.
+`semantic_score` is always calibrated as `1 - cosine_distance` against the active
+build and is the only score allowed to drive evidence sufficiency. RRF and reranker
+scores are not confidence probabilities.
 
 **Response:**
 
@@ -81,13 +84,17 @@ results expose the final RRF or reranker score.
         "document_id": "…",
         "chunk_index": 0,
         "content": "…",
-        "score": 0.87,
+        "score": 0.0317,
+        "semantic_score": 0.68,
         "filename": "handbook.txt",
         "page_number": 1,
         "char_start": 0,
         "char_end": 120,
         "metadata": {
-          "retrieval_source": "rerank",
+          "retrieval_source": "hybrid",
+          "rerank_status": "passthrough",
+          "reranker_provider": "noop",
+          "reranker_score_scale": "reciprocal_rank_fusion",
           "source_revision_id": "…",
           "source_group_id": "…",
           "source_title": "Refund policy",
@@ -103,10 +110,12 @@ results expose the final RRF or reranker score.
       "strategy": "hybrid",
       "duration_ms": 42,
       "rerank_requested": true,
-      "rerank_status": "applied",
-      "reranker_provider": "lexical",
-      "reranker_model": "lexical-overlap",
+      "rerank_status": "passthrough",
+      "reranker_provider": "noop",
+      "reranker_model": "noop",
       "reranker_version": "1",
+      "reranker_score_scale": "reciprocal_rank_fusion",
+      "best_semantic_score": 0.68,
       "index_build_id": "…",
       "source_metadata_generation": 12,
       "source_policy_configured_mode": "enforce",
@@ -121,7 +130,10 @@ results expose the final RRF or reranker score.
 }
 ```
 
-On reranker failure the search still returns fused RRF order and diagnostics report
+The production default keeps fused RRF order through the enabled rerank stage with a
+`noop` occupant (`rerank_status=passthrough`, `reranker_score_scale=reciprocal_rank_fusion`).
+Pass-through does not load chunk text or rewrite ranking scores. On an enabled
+reranker failure, search still returns fused RRF order and diagnostics report
 `rerank_status=unavailable`; quality runs count this path against candidate promotion.
 
 Semantic and keyword SQL join the same Knowledge-owned source scope captured at one Project source
@@ -138,10 +150,11 @@ carries `source_policy_exclusion_reason` in its metadata or citation provenance.
 historical `as_of`, a governed document with no revision effective on that date is counted as
 `not_applicable` rather than being treated as neutral legacy metadata.
 
-## Re-embed after the pgvector cutover
+## Re-embed after an embedding dimension change
 
-The native-vector migration returns documents with legacy packed embeddings to
-`chunked`. Rebuild them through the unchanged endpoints:
+Migration `0026` changes the deployment-wide column to `vector(1024)`, clears
+incompatible retrieval artifacts, invalidates builds/pointers, and returns affected
+documents to `chunked`. Rebuild them through the unchanged lifecycle endpoints:
 
 1. `POST /api/v1/projects/{project_id}/documents/{document_id}/embed`
 2. Poll until `embedded`, then call `POST .../index`

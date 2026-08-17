@@ -1,4 +1,4 @@
-import { screen, within } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { vi } from "vitest";
 import {
@@ -335,6 +335,15 @@ test("renders grounded citations instead of inferring grounding from answer text
   expect(await screen.findByText("Answer with citations")).toBeInTheDocument();
   expect(screen.getByLabelText("1 citations")).toHaveTextContent("[1] policy.txt");
   expect(screen.getByText(/Refund requests are accepted/)).toBeInTheDocument();
+});
+
+test("allows grounded chat when an active build exists even if documents are still chunked", async () => {
+  mockLabBase({ documents: [{ ...documentFixture, status: "chunked" }] });
+  renderOperatorComponent(<OperatorConsoleApp />, `/lab?project=${projectFixture.id}&tab=messages`);
+  expect(await screen.findByRole("heading", { name: "Ask the corpus" })).toBeInTheDocument();
+  await waitFor(() => {
+    expect(screen.queryByText("No active searchable corpus")).not.toBeInTheDocument();
+  });
 });
 
 test("renders an explicit valid refusal when retrieval evidence is insufficient", async () => {

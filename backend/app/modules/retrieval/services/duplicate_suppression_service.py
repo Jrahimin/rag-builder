@@ -18,6 +18,8 @@ class DuplicateSuppressionResult:
     results: list[RetrievalResult]
     input_count: int
     suppressed_by_reason: dict[str, int]
+    deferred_by_reason: dict[str, int]
+    backfilled_count: int = 0
 
     @property
     def suppressed_count(self) -> int:
@@ -37,21 +39,23 @@ class DuplicateSuppressionService:
         limit: int,
     ) -> DuplicateSuppressionResult:
         selected: list[RetrievalResult] = []
+        deferred: list[tuple[RetrievalResult, str]] = []
         seen_hashes: set[str] = set()
         document_counts: Counter[object] = Counter()
         section_counts: Counter[tuple[object, str]] = Counter()
         suppressed: Counter[str] = Counter()
+        deferred_counts: Counter[str] = Counter()
+        rank_by_chunk = {result.chunk_id: rank for rank, result in enumerate(results)}
 
         for result in results:
-            if len(selected) >= limit:
-                break
-
             digest = content_hash(normalize_for_indexing(result.content))
             if self._config.deduplicate_by_content_hash and digest in seen_hashes:
                 suppressed["content_hash"] += 1
                 continue
+            seen_hashes.add(digest)
             if document_counts[result.document_id] >= self._config.max_chunks_per_document:
-                suppressed["document_limit"] += 1
+                deferred.append((result, "document_limit"))
+                deferred_counts["document_limit"] += 1
                 continue
 
             section_title = result.metadata.get("section_title")
@@ -59,17 +63,28 @@ class DuplicateSuppressionService:
             if isinstance(section_title, str) and section_title.strip():
                 section_key = (result.document_id, section_title.strip())
                 if section_counts[section_key] >= self._config.max_chunks_per_section:
-                    suppressed["section_limit"] += 1
+                    deferred.append((result, "section_limit"))
+                    deferred_counts["section_limit"] += 1
                     continue
 
+            if len(selected) >= limit:
+                suppressed["result_limit"] += 1
+                continue
             selected.append(result)
-            seen_hashes.add(digest)
             document_counts[result.document_id] += 1
             if section_key is not None:
                 section_counts[section_key] += 1
+
+        backfilled = deferred[: max(limit - len(selected), 0)]
+        selected.extend(result for result, _reason in backfilled)
+        selected.sort(key=lambda result: rank_by_chunk[result.chunk_id])
+        for _result, reason in deferred[len(backfilled) :]:
+            suppressed[reason] += 1
 
         return DuplicateSuppressionResult(
             results=selected,
             input_count=len(results),
             suppressed_by_reason=dict(sorted(suppressed.items())),
+            deferred_by_reason=dict(sorted(deferred_counts.items())),
+            backfilled_count=len(backfilled),
         )

@@ -31,6 +31,11 @@ class RetrievalResult(BaseModel):
     chunk_index: int
     content: str
     score: float
+    semantic_score: float | None = None
+    passage_semantic_score: float | None = None
+    passage_char_start: int | None = None
+    passage_char_end: int | None = None
+    passage_score_method: str | None = None
     filename: str
     page_number: int | None = None
     char_start: int | None = None
@@ -48,9 +53,17 @@ class SearchDiagnostics(BaseModel):
     reranker_provider: str | None = None
     reranker_model: str | None = None
     reranker_version: str | None = None
+    reranker_score_scale: str | None = None
+    best_semantic_score: float | None = None
+    best_passage_semantic_score: float | None = None
+    passage_score_method: str | None = None
     duplicate_suppression_input_count: int = 0
     duplicate_suppression_removed_count: int = 0
     duplicate_suppression_reasons: dict[str, int] = Field(default_factory=dict)
+    diversity_deferred_reasons: dict[str, int] = Field(default_factory=dict)
+    diversity_backfilled_count: int = 0
+    candidate_trace: list[dict[str, Any]] = Field(default_factory=list)
+    selected_trace: list[dict[str, Any]] = Field(default_factory=list)
     compatibility_diagnostics: list[str] = Field(default_factory=list)
     as_of: datetime | None = None
     reference_date: date | None = None

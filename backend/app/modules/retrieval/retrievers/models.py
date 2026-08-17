@@ -35,6 +35,7 @@ class CandidateHit:
     score: float
     source: CandidateSource
     metadata: dict[str, Any] = field(default_factory=dict)
+    semantic_score: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,6 +62,10 @@ class RetrievalContext:
     fts_regconfig: str = "simple"
     min_ocr_confidence: float | None = None
     hnsw_ef_search: int = 100
+    passage_scoring_enabled: bool = False
+    passage_window_tokens: int = 96
+    passage_overlap_tokens: int = 24
+    passage_min_tokens: int = 32
     metadata: dict[str, Any] = field(default_factory=dict)
     source_scope: Any | None = None
 

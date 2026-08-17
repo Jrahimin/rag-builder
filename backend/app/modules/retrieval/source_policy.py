@@ -142,6 +142,7 @@ def add_retrieval_provenance(
             chunk_id=candidate.chunk_id,
             score=candidate.score,
             source=candidate.source,
+            semantic_score=candidate.semantic_score,
             metadata={**candidate.metadata, **shared},
         )
         for candidate in candidates

@@ -12,8 +12,16 @@ Create an immutable dataset version. Returns **201**.
 {
   "name": "pilot-quality",
   "version": "1.0.0",
-  "schema_version": 1,
+  "schema_version": 2,
   "cases": [
+    {
+      "key": "english-to-bangla",
+      "kind": "cross_lingual",
+      "query": "How long is the refund window?",
+      "query_language": "en",
+      "expected_evidence_language": "bn",
+      "relevant_chunk_ids": ["<bangla-chunk-uuid>"]
+    },
     {
       "key": "refund-citation",
       "kind": "citation",
@@ -51,6 +59,8 @@ the [Jobs API](jobs_api.md).
 ## GET `/runs`
 
 List runs newest first, including metrics, regressions, failed cases, and reranker comparison.
+Metrics include false-refusal and false-accept rates, unverified-claim rate, per-language-pair
+Recall@k/nDCG, and semantic-score positive/hard-negative calibration distributions.
 
 ## GET `/runs/{run_id}`
 

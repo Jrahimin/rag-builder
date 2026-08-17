@@ -61,7 +61,8 @@ Purge is irreversible complete deletion of the document, related chunks, embeddi
 - Optional **Source versioning** on upload: new independent source, latest revision of an existing source (`replaces` in the same source group), or a modifying source. Source role (primary / supporting / reference) and title map to the existing `source_metadata` upload field. Processing `document.version` is separate and increments only on reprocess.
 - Filenames keep Unicode scripts such as Bangla. Purge stays disabled until the typed name matches the stored filename (Unicode NFC); Copy filename fills the clipboard for exact confirmation.
 - Real document status, processing version, parser, page/language facts, active source role/revision, error detail, and related durable jobs.
-- State-guarded Reprocess, Embed, Index, Delete, and Purge actions.
+- State-guarded Reprocess, Build search index, Delete, and Purge actions.
+  Build search index writes vectors and keywords in one full snapshot.
 - Delete explains retained corpus-level reversibility. Purge requires the exact filename; browser confirmation alone is not accepted.
 - Every accepted action links to the generated job and distinguishes running, succeeded, and failed outcomes.
 
@@ -80,11 +81,23 @@ Purge is irreversible complete deletion of the document, related chunks, embeddi
 
 ### Lifecycle
 
-- Re-embed whole corpus, Reindex whole corpus, Activate validated build, Rollback, and Reconcile storage reuse the existing Phase 5 lifecycle component.
+- Rebuild index, Activate validated build, Rollback, and Reconcile storage reuse
+  the existing Phase 5 lifecycle component. Rebuild writes vectors and keywords
+  together; Re-embed and Reindex are not separate operator actions.
 - A lifecycle guide (info control on the heading) explains actions, build states, operations, and when Activate is required.
 - Active and previous pointers, build state/operation/counts/times, validation readiness, and failure details are visible together.
 - Activation is enabled only for validated/retained builds. Rollback names the exact build that will become active.
 - Lifecycle jobs appear immediately and remain linked to full Jobs details. Reconciliation `expected`, `actual`, `missing`, `orphan`, and `consistent` results render as a structured report.
+
+After an OCR/parser or chunker version change (`parser_version` 2.0.0,
+`chunker_version` 3.0.0, or later), reprocess the affected documents with the
+same `ocr_lang`, wait until they are `ready`, and inspect chunk `element_type`
+plus page metadata. If the reprocess job did not auto-activate a build, use
+**Activate** on the validated snapshot. Run the versioned `ocr-gazette-grounding`
+dataset against that corpus fingerprint before trusting chat. Create a new
+conversation, or refresh the snapshot with
+`POST /api/v1/projects/{project_id}/conversations/{conversation_id}/config`, so
+historical snapshots do not keep the previous evidence mode or thresholds.
 
 The Jobs type filter includes `corpus.reembed`, `corpus.reindex`, `document.delete`, `document.purge`, and `storage.reconcile`.
 

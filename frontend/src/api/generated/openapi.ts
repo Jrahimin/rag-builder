@@ -1483,6 +1483,7 @@ export interface components {
             grounded: boolean;
             /** Text */
             text: string;
+            verification: components["schemas"]["ClaimVerification"];
         };
         /**
          * ApiKeyCreate
@@ -2524,6 +2525,12 @@ export interface components {
             /** Page Number */
             page_number?: number | null;
         };
+        /**
+         * ClaimVerification
+         * @description What the deterministic validator can establish about one claim.
+         * @enum {string}
+         */
+        ClaimVerification: "supported" | "unverified" | "unsupported";
         /** ConfigProvenance */
         ConfigProvenance: {
             /** @default off */
@@ -2544,7 +2551,7 @@ export interface components {
             };
             /**
              * Provider Capability Version
-             * @default 2026-08-16.v1
+             * @default 2026-08-16.v2
              */
             provider_capability_version: string;
             /** @default enforce */
@@ -2825,14 +2832,16 @@ export interface components {
             context_char_budget: number;
             /** Include Citations */
             include_citations: boolean;
+            /** Lexical Corroboration Coverage */
+            lexical_corroboration_coverage: number;
+            /** Lexical Corroboration Floor Score */
+            lexical_corroboration_floor_score: number;
             /** Max Context Chunks */
             max_context_chunks: number;
             /** Max History Messages */
             max_history_messages: number;
             /** Minimum Claim Token Coverage */
             minimum_claim_token_coverage: number;
-            /** Minimum Query Token Coverage */
-            minimum_query_token_coverage: number;
         };
         /** EffectiveLLMPolicy */
         EffectiveLLMPolicy: {
@@ -2877,14 +2886,14 @@ export interface components {
         };
         /** EffectiveRetrievalPolicy */
         EffectiveRetrievalPolicy: {
-            /** Evidence Score Threshold */
-            evidence_score_threshold: number;
             /** Rerank Enabled */
             rerank_enabled: boolean;
             /** Rerank Score Threshold */
             rerank_score_threshold: number | null;
             /** Rerank Top N */
             rerank_top_n: number;
+            /** Semantic Evidence Score Threshold */
+            semantic_evidence_score_threshold: number;
             strategy: components["schemas"]["RetrievalStrategy"];
             /** Top K */
             top_k: number;
@@ -2897,6 +2906,8 @@ export interface components {
             document_id?: string | null;
             /** Expected Answer Tokens */
             expected_answer_tokens?: string[];
+            /** Expected Evidence Language */
+            expected_evidence_language?: string | null;
             /**
              * Expected No Answer
              * @default false
@@ -2911,6 +2922,8 @@ export interface components {
             };
             /** Query */
             query: string;
+            /** Query Language */
+            query_language?: string | null;
             /** Relevant Chunk Ids */
             relevant_chunk_ids?: string[];
             /** Relevant Document Ids */
@@ -2920,7 +2933,7 @@ export interface components {
          * EvaluationCaseKind
          * @enum {string}
          */
-        EvaluationCaseKind: "exact_token" | "paraphrase" | "metadata_filter" | "multilingual" | "no_answer" | "citation";
+        EvaluationCaseKind: "exact_token" | "paraphrase" | "metadata_filter" | "multilingual" | "cross_lingual" | "code_switched" | "no_answer" | "citation";
         /** EvaluationDatasetCreate */
         EvaluationDatasetCreate: {
             /** Cases */
@@ -3897,6 +3910,8 @@ export interface components {
             context_char_budget?: number | null;
             /** Include Citations */
             include_citations?: boolean | null;
+            /** Lexical Corroboration Floor Score */
+            lexical_corroboration_floor_score?: number | null;
             /** Max Context Chunks */
             max_context_chunks?: number | null;
             /** Max History Messages */
@@ -4174,6 +4189,8 @@ export interface components {
             page_number?: number | null;
             /** Score */
             score: number;
+            /** Semantic Score */
+            semantic_score?: number | null;
         };
         /**
          * RetrievalStrategy
@@ -4188,6 +4205,8 @@ export interface components {
         SearchDiagnostics: {
             /** As Of */
             as_of?: string | null;
+            /** Best Semantic Score */
+            best_semantic_score?: number | null;
             /** Compatibility Diagnostics */
             compatibility_diagnostics?: string[];
             /** Config Provenance */
@@ -4224,6 +4243,8 @@ export interface components {
             reranker_model?: string | null;
             /** Reranker Provider */
             reranker_provider?: string | null;
+            /** Reranker Score Scale */
+            reranker_score_scale?: string | null;
             /** Reranker Version */
             reranker_version?: string | null;
             /**

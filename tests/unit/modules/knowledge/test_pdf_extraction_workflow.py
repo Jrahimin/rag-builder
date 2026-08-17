@@ -225,6 +225,104 @@ def test_bangla_route_auto_detects_unicode_text_sample(
     }
 
 
+def test_ocr_layout_elements_survive_page_candidate_selection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.platform.providers.contracts.document_parser import ParsedElementType
+    from app.platform.providers.contracts.ocr import (
+        OcrBlock,
+        OcrBoundingBox,
+        OcrPageResult,
+        OcrParagraph,
+        OcrWord,
+    )
+
+    def word(text: str, x1: float, y1: float, x2: float, y2: float) -> OcrWord:
+        return OcrWord(text, OcrBoundingBox(x1, y1, x2, y2), 0.95)
+
+    class LayoutProvider:
+        provider_name = "google_vision"
+
+        def recognize(self, image):
+            words = (
+                word("Category", 0.1, 0.1, 0.25, 0.12),
+                word("Rate", 0.7, 0.1, 0.8, 0.12),
+                word("Savings", 0.1, 0.2, 0.25, 0.22),
+                word("10", 0.7, 0.2, 0.75, 0.22),
+                word("Property", 0.1, 0.3, 0.25, 0.32),
+                word("5", 0.7, 0.3, 0.75, 0.32),
+                word("Export", 0.1, 0.4, 0.25, 0.42),
+                word("2", 0.7, 0.4, 0.75, 0.42),
+            )
+            return OcrPageResult(
+                text="Category Rate Savings certificates 10 Property transfer 5",
+                confidence=0.95,
+                provider_name=self.provider_name,
+                blocks=(
+                    OcrBlock(
+                        text="table",
+                        paragraphs=(OcrParagraph(text="table", words=words),),
+                    ),
+                ),
+                page_number=image.page_number,
+            )
+
+    monkeypatch.setattr(
+        "app.platform.providers.implementations.pdf_extraction_workflow.get_ocr_provider",
+        lambda **_kwargs: LayoutProvider(),
+    )
+    workflow = PdfExtractionWorkflow(ocr_config=_bangla_ocr_config())
+
+    result = workflow.parse(
+        data=_minimal_pdf_pages(1),
+        filename="layout.pdf",
+        content_type="application/pdf",
+        ocr_lang="bn",
+    )
+
+    assert any(element.element_type is ParsedElementType.TABLE for element in result.elements)
+    assert result.structure_hints["pages"][0]["element_types"] == ["table"]
+
+
+def test_ocr_without_layout_falls_back_to_page_paragraphs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.platform.providers.contracts.document_parser import ParsedElementType
+    from app.platform.providers.contracts.ocr import OcrPageResult
+
+    class TextOnlyProvider:
+        provider_name = "paddle"
+
+        def recognize(self, image):
+            return OcrPageResult(
+                text="Category Rate\nSavings 10",
+                confidence=0.9,
+                provider_name=self.provider_name,
+                lines=("Category Rate", "Savings 10"),
+                blocks=(),
+                page_number=image.page_number,
+            )
+
+    monkeypatch.setattr(
+        "app.platform.providers.implementations.pdf_extraction_workflow.get_ocr_provider",
+        lambda **_kwargs: TextOnlyProvider(),
+    )
+    workflow = PdfExtractionWorkflow(ocr_config=_bangla_ocr_config())
+
+    result = workflow.parse(
+        data=_minimal_pdf_pages(1),
+        filename="text-only.pdf",
+        content_type="application/pdf",
+        ocr_lang="bn",
+    )
+
+    assert [element.element_type for element in result.elements] == [
+        ParsedElementType.PARAGRAPH,
+        ParsedElementType.PARAGRAPH,
+    ]
+    assert "table" not in result.structure_hints["pages"][0]["element_types"]
+
+
 def test_bangla_route_auto_detects_legacy_font_pdf(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

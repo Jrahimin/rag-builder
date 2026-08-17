@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 import uuid
+from dataclasses import dataclass
 
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,6 +17,16 @@ from app.platform.providers.contracts.embedding import BaseEmbeddingProvider
 from app.platform.providers.errors import ProviderError
 
 logger = structlog.get_logger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class SemanticRetrievalBatch:
+    """Semantic candidates plus the query embedding provenance used to score them."""
+
+    hits: list[CandidateHit]
+    query_vector: list[float]
+    provider: str
+    model: str
 
 
 class SemanticRetriever(BaseRetriever):
@@ -34,6 +45,10 @@ class SemanticRetriever(BaseRetriever):
         self._repository = repository or ChunkEmbeddingRepository(session, project_id)
 
     async def retrieve(self, context: RetrievalContext) -> list[CandidateHit]:
+        return (await self.retrieve_batch(context)).hits
+
+    async def retrieve_batch(self, context: RetrievalContext) -> SemanticRetrievalBatch:
+        """Retrieve candidates and retain the query vector for hybrid score backfill."""
         started = time.perf_counter()
         effective_top_k = (
             context.semantic_candidate_top_k
@@ -68,4 +83,27 @@ class SemanticRetriever(BaseRetriever):
             candidate_count=len(candidates),
             top_k=effective_top_k,
         )
-        return candidates
+        return SemanticRetrievalBatch(
+            hits=candidates,
+            query_vector=query_vector,
+            provider=embedded.provider,
+            model=embedded.model,
+        )
+
+    async def score_chunk_ids(
+        self,
+        context: RetrievalContext,
+        chunk_ids: list[uuid.UUID],
+        *,
+        query_vector: list[float],
+        provider: str,
+        model: str,
+    ) -> dict[uuid.UUID, float]:
+        return await self._repository.score_chunk_ids(
+            chunk_ids,
+            query_vector=query_vector,
+            index_build_id=context.index_build_id,
+            embedding_set_version=context.embedding_set_version,
+            provider=provider,
+            model=model,
+        )

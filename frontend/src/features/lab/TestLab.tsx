@@ -251,6 +251,8 @@ export function TestLab() {
   const selectedProject = projects.data?.items.find((project) => project.id === projectId);
   const selectedDocument = pickLabDocument(documents.data?.items ?? [], selectedDocumentId);
   const latestJob = jobs.data?.items.find((job) => job.id === latestJobId) ?? jobs.data?.items[0];
+  const activeBuild = builds.data?.items.find((build) => build.id === builds.data.active_build_id);
+  const hasActiveCorpus = Boolean(activeBuild && activeBuild.chunk_count > 0);
 
   const addActivity = useCallback((item: Omit<LabActivity, "id" | "timestamp">) => {
     setActivities((current) => [
@@ -388,10 +390,7 @@ export function TestLab() {
             <MessagesTab
               projectId={projectId}
               conversationId={conversationId}
-              hasActiveCorpus={Boolean(
-                builds.data?.active_build_id &&
-                documents.data?.items.some((document) => document.status === "ready"),
-              )}
+              hasActiveCorpus={hasActiveCorpus}
               onConversation={setConversationId}
               onRun={setMessageRun}
               onNavigate={chooseTab}
@@ -1104,18 +1103,19 @@ function DocumentsTab({
                   onClick={() => void runAction("reprocess")}
                 />
                 <ActionButton
-                  label="Embed"
-                  disabled={lifecycle.isPending || selected.status !== "chunked"}
-                  reason="Embedding requires a chunked document."
+                  label="Build search index"
+                  disabled={
+                    lifecycle.isPending ||
+                    !["chunked", "embedded", "ready"].includes(selected.status)
+                  }
+                  reason="Indexing requires a chunked document. Reprocess first if parsing is incomplete."
                   onClick={() => void runAction("embed")}
                 />
-                <ActionButton
-                  label="Index"
-                  disabled={lifecycle.isPending || selected.status !== "embedded"}
-                  reason="Indexing requires an embedded document."
-                  onClick={() => void runAction("index")}
-                />
               </div>
+              <p className="lab-help">
+                Build search index writes vectors and keywords together. Reprocess starts from
+                parse and chunk when the source text needs to change.
+              </p>
             </section>
             <section>
               <h3>Remove from corpus</h3>

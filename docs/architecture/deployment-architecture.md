@@ -76,8 +76,8 @@ deployment. The detailed commands and operational checks are in the
    docker compose config --quiet
    ```
 
-   Keep embedding dimensions aligned with the pgvector migration (`384` in
-   the standard setup); rotate any credential that has been exposed.
+   Keep embedding dimensions aligned with the pgvector migration (`1024` in
+   the standard `text-embedding-3-large` setup); rotate any credential that has been exposed.
 6. **Start the canonical stack.** Run the one normal deployment command:
 
    ```bash
@@ -126,12 +126,13 @@ three 10 MiB files per service.
 
 ## pgvector dimension contract
 
-`APE_EMBEDDING__DIMENSIONS=384` is read by migration `0015`, which creates a
-`vector(384)` column. Core readiness verifies:
+Migration `0026_multilingual_embeddings` fixes the current production contract at
+`APE_EMBEDDING__DIMENSIONS=1024` and `vector(1024)`. Unlike migration `0015`, the
+dimension is a literal in migration history rather than environment-dependent. Core readiness verifies:
 
 1. the database is at the checked-in migration head;
 2. pgvector is installed;
-3. the column is `vector(384)`; and
+3. the column dimension exactly matches configured embedding dimensions; and
 4. the configured malware scanner is reachable.
 
 Embedding-provider dimension validation runs as an advisory capability check.

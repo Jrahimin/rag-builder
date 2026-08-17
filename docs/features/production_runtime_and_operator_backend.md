@@ -16,8 +16,9 @@ console UI described in [Operator Console MVP](operator_console.md).
 | `hosted_openai` | `openai` | `openai` | Hosted OpenAI-compatible API and embedding endpoints |
 | `private_ollama` | `ollama` | `ollama` | Private Ollama-compatible model endpoint |
 
-Production also requires Taskiq, the durable dispatcher, hybrid retrieval, a non-noop
-reranker, MinIO/S3-compatible storage, authentication, and non-default database, Redis, and
+Production also requires Taskiq, the durable dispatcher, hybrid retrieval with the
+rerank stage enabled (pass-through RRF via the `noop` occupant is the certified default),
+MinIO/S3-compatible storage, authentication, and non-default database, Redis, and
 storage credentials. Enabled OCR must resolve to a real backend. Gemini and mixed production
 provider combinations remain non-certified; development and tests retain hash/echo/local/noop
 defaults.

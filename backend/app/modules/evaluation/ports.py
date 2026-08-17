@@ -16,6 +16,11 @@ class QualityHit:
     score: float
     filename: str
     chunk_index: int
+    semantic_score: float | None = None
+    passage_semantic_score: float | None = None
+    passage_char_start: int | None = None
+    passage_char_end: int | None = None
+    passage_score_method: str | None = None
     page_number: int | None = None
     char_start: int | None = None
     char_end: int | None = None
@@ -30,6 +35,7 @@ class QualitySearchResult:
     reranker_provider: str | None = None
     reranker_model: str | None = None
     reranker_version: str | None = None
+    reranker_score_scale: str | None = None
     provenance: dict[str, Any] = field(default_factory=dict)
 
 
@@ -70,4 +76,10 @@ class EvaluationRetrievalPort(Protocol):
 
 
 class EvaluationAnswerPort(Protocol):
-    async def answer(self, *, question: str, hits: list[QualityHit]) -> QualityAnswer: ...
+    async def answer(
+        self,
+        *,
+        profile: str,
+        question: str,
+        hits: list[QualityHit],
+    ) -> QualityAnswer: ...

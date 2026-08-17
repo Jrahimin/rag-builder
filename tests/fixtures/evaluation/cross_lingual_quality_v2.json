@@ -1,0 +1,84 @@
+{
+  "name": "multilingual-retrieval",
+  "version": "2.0.0",
+  "schema_version": 2,
+  "description": "Same-language, cross-language, same-script, code-switched, exact-identifier, false-refusal, and false-accept coverage.",
+  "cases": [
+    {
+      "key": "control-en-en",
+      "kind": "multilingual",
+      "query": "What is the refund deadline?",
+      "query_language": "en",
+      "expected_evidence_language": "en",
+      "relevant_chunk_ids": ["30000000-0000-0000-0000-000000000001"],
+      "expected_answer_tokens": ["thirty"]
+    },
+    {
+      "key": "control-bn-bn",
+      "kind": "multilingual",
+      "query": "রিফান্ডের সময়সীমা কত দিন?",
+      "query_language": "bn",
+      "expected_evidence_language": "bn",
+      "relevant_chunk_ids": ["30000000-0000-0000-0000-000000000002"],
+      "expected_answer_tokens": ["ত্রিশ"]
+    },
+    {
+      "key": "en-to-bn",
+      "kind": "cross_lingual",
+      "query": "How many days do customers have to request a refund?",
+      "query_language": "en",
+      "expected_evidence_language": "bn",
+      "relevant_chunk_ids": ["30000000-0000-0000-0000-000000000002"]
+    },
+    {
+      "key": "bn-to-en",
+      "kind": "cross_lingual",
+      "query": "গ্রাহক কত দিনের মধ্যে রিফান্ড চাইতে পারেন?",
+      "query_language": "bn",
+      "expected_evidence_language": "en",
+      "relevant_chunk_ids": ["30000000-0000-0000-0000-000000000001"]
+    },
+    {
+      "key": "en-to-fr-same-script",
+      "kind": "cross_lingual",
+      "query": "Which reference code is required for refunds?",
+      "query_language": "en",
+      "expected_evidence_language": "fr",
+      "relevant_chunk_ids": ["30000000-0000-0000-0000-000000000003"],
+      "expected_answer_tokens": ["RF-30"]
+    },
+    {
+      "key": "fr-to-en-same-script",
+      "kind": "cross_lingual",
+      "query": "Quel est le délai pour demander un remboursement?",
+      "query_language": "fr",
+      "expected_evidence_language": "en",
+      "relevant_chunk_ids": ["30000000-0000-0000-0000-000000000001"]
+    },
+    {
+      "key": "code-switched-refund",
+      "kind": "code_switched",
+      "query": "Refund request করতে কত দিন সময় আছে?",
+      "query_language": "bn-Latn-mixed",
+      "expected_evidence_language": "bn",
+      "relevant_chunk_ids": ["30000000-0000-0000-0000-000000000002"]
+    },
+    {
+      "key": "exact-identifier-rescue",
+      "kind": "exact_token",
+      "query": "RF-30",
+      "query_language": "und",
+      "expected_evidence_language": "fr",
+      "relevant_chunk_ids": ["30000000-0000-0000-0000-000000000003"],
+      "expected_answer_tokens": ["RF-30"]
+    },
+    {
+      "key": "cross-lingual-false-accept",
+      "kind": "no_answer",
+      "query": "What is the refund deadline for lunar purchases?",
+      "query_language": "en",
+      "expected_evidence_language": "bn",
+      "expected_no_answer": true
+    }
+  ]
+}

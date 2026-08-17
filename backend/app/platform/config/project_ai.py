@@ -9,9 +9,12 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Any
 
+import structlog
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.core.config import (
+    ChatConfig,
+    EvidenceScoreMode,
     LLMBackend,
     RequestOverrideMode,
     RetrievalStrategy,
@@ -24,6 +27,8 @@ from app.platform.providers.capabilities import (
     describe_llm_capability,
     validate_generation_parameters,
 )
+
+logger = structlog.get_logger(__name__)
 
 
 class SourcePolicyMode(StrEnum):
@@ -50,6 +55,10 @@ class ProjectRetrievalPolicy(BaseModel):
     rerank_top_n: int | None = Field(default=None, ge=1, le=100)
     rerank_score_threshold: float | None = Field(default=None, ge=0.0, le=1.0)
     evidence_score_threshold: float | None = Field(default=None, ge=0.0, le=1.0)
+    passage_scoring_enabled: bool | None = None
+    passage_window_tokens: int | None = Field(default=None, ge=16, le=512)
+    passage_overlap_tokens: int | None = Field(default=None, ge=0, le=256)
+    passage_min_tokens: int | None = Field(default=None, ge=8, le=256)
 
 
 class ProjectChatPolicy(BaseModel):
@@ -60,6 +69,8 @@ class ProjectChatPolicy(BaseModel):
     max_history_messages: int | None = Field(default=None, ge=0, le=200)
     include_citations: bool | None = None
     citation_excerpt_max_chars: int | None = Field(default=None, ge=0, le=2000)
+    evidence_score_mode: EvidenceScoreMode | None = None
+    lexical_corroboration_floor_score: float | None = Field(default=None, ge=0.0, le=1.0)
     minimum_query_token_coverage: float | None = Field(default=None, ge=0.0, le=1.0)
     minimum_claim_token_coverage: float | None = Field(default=None, ge=0.0, le=1.0)
 
@@ -91,7 +102,11 @@ class EffectiveRetrievalPolicy(BaseModel):
     rerank_enabled: bool
     rerank_top_n: int
     rerank_score_threshold: float | None
-    evidence_score_threshold: float
+    semantic_evidence_score_threshold: float
+    passage_scoring_enabled: bool = False
+    passage_window_tokens: int = 96
+    passage_overlap_tokens: int = 24
+    passage_min_tokens: int = 32
 
 
 class EffectiveChatPolicy(BaseModel):
@@ -100,7 +115,9 @@ class EffectiveChatPolicy(BaseModel):
     max_history_messages: int
     include_citations: bool
     citation_excerpt_max_chars: int
-    minimum_query_token_coverage: float
+    evidence_score_mode: EvidenceScoreMode = EvidenceScoreMode.WHOLE_CHUNK
+    lexical_corroboration_floor_score: float
+    lexical_corroboration_coverage: float
     minimum_claim_token_coverage: float
 
 
@@ -123,9 +140,7 @@ class ConfigProvenance(BaseModel):
     prompt_versions: dict[str, str]
     configured_source_policy_mode: SourcePolicyMode = SourcePolicyMode.OFF
     effective_source_policy_mode: SourcePolicyMode = SourcePolicyMode.OFF
-    source_policy_deployment_cap: SourcePolicyDeploymentCap = (
-        SourcePolicyDeploymentCap.ENFORCE
-    )
+    source_policy_deployment_cap: SourcePolicyDeploymentCap = SourcePolicyDeploymentCap.ENFORCE
 
 
 class EffectiveConfigResolution(BaseModel):
@@ -174,6 +189,22 @@ def resolve_project_ai_config(
         origins[path] = "project"
         return project_value
 
+    semantic_threshold = _inherit_semantic_evidence_threshold(
+        project.retrieval.evidence_score_threshold,
+        settings.chat.minimum_semantic_evidence_score,
+        origins,
+    )
+    rescue_floor = inherited(
+        "chat.lexical_corroboration_floor_score",
+        project.chat.lexical_corroboration_floor_score,
+        settings.chat.lexical_corroboration_floor_score,
+    )
+    rescue_coverage = _inherit_lexical_corroboration_coverage(
+        project.chat.minimum_query_token_coverage,
+        settings.chat.lexical_corroboration_coverage,
+        origins,
+    )
+
     config = EffectiveProjectAIConfig(
         llm=EffectiveLLMPolicy(
             provider=inherited("llm.provider", project.llm.provider, settings.llm.backend),
@@ -205,10 +236,26 @@ def resolve_project_ai_config(
                 project.retrieval.rerank_score_threshold,
                 settings.retrieval.rerank_score_threshold,
             ),
-            evidence_score_threshold=inherited(
-                "retrieval.evidence_score_threshold",
-                project.retrieval.evidence_score_threshold,
-                settings.chat.minimum_evidence_score,
+            semantic_evidence_score_threshold=semantic_threshold,
+            passage_scoring_enabled=inherited(
+                "retrieval.passage_scoring_enabled",
+                project.retrieval.passage_scoring_enabled,
+                settings.retrieval.passage_scoring_enabled,
+            ),
+            passage_window_tokens=inherited(
+                "retrieval.passage_window_tokens",
+                project.retrieval.passage_window_tokens,
+                settings.retrieval.passage_window_tokens,
+            ),
+            passage_overlap_tokens=inherited(
+                "retrieval.passage_overlap_tokens",
+                project.retrieval.passage_overlap_tokens,
+                settings.retrieval.passage_overlap_tokens,
+            ),
+            passage_min_tokens=inherited(
+                "retrieval.passage_min_tokens",
+                project.retrieval.passage_min_tokens,
+                settings.retrieval.passage_min_tokens,
             ),
         ),
         chat=EffectiveChatPolicy(
@@ -237,11 +284,13 @@ def resolve_project_ai_config(
                 project.chat.citation_excerpt_max_chars,
                 settings.chat.citation_excerpt_max_chars,
             ),
-            minimum_query_token_coverage=inherited(
-                "chat.minimum_query_token_coverage",
-                project.chat.minimum_query_token_coverage,
-                settings.chat.minimum_query_token_coverage,
+            evidence_score_mode=inherited(
+                "chat.evidence_score_mode",
+                project.chat.evidence_score_mode,
+                settings.chat.evidence_score_mode,
             ),
+            lexical_corroboration_floor_score=rescue_floor,
+            lexical_corroboration_coverage=rescue_coverage,
             minimum_claim_token_coverage=inherited(
                 "chat.minimum_claim_token_coverage",
                 project.chat.minimum_claim_token_coverage,
@@ -257,6 +306,33 @@ def resolve_project_ai_config(
             "source_policy_mode", project.source_policy_mode, SourcePolicyMode.OFF
         ),
     )
+    if (
+        config.chat.lexical_corroboration_floor_score
+        > config.retrieval.semantic_evidence_score_threshold
+    ):
+        raise BadRequestError(
+            message=(
+                "lexical_corroboration_floor_score must not exceed "
+                "the semantic evidence score threshold."
+            ),
+            code="invalid_evidence_thresholds",
+        )
+    if (
+        config.chat.evidence_score_mode is EvidenceScoreMode.PASSAGE_MAX
+        and not config.retrieval.passage_scoring_enabled
+    ):
+        raise BadRequestError(
+            message="passage_max evidence mode requires passage scoring to be enabled.",
+            code="passage_evidence_scoring_disabled",
+        )
+    if (
+        config.chat.evidence_score_mode is EvidenceScoreMode.PASSAGE_MAX
+        and config.retrieval.strategy is not RetrievalStrategy.HYBRID
+    ):
+        raise BadRequestError(
+            message="passage_max evidence mode currently requires hybrid retrieval.",
+            code="passage_evidence_requires_hybrid",
+        )
     configured_source_policy_mode = config.source_policy_mode
     effective_source_policy_mode = cap_source_policy_mode(
         configured_source_policy_mode,
@@ -369,10 +445,15 @@ def apply_effective_ai_config(
                     "rerank_enabled": effective.retrieval.rerank_enabled,
                     "rerank_top_n": effective.retrieval.rerank_top_n,
                     "rerank_score_threshold": effective.retrieval.rerank_score_threshold,
+                    "passage_scoring_enabled": effective.retrieval.passage_scoring_enabled,
+                    "passage_window_tokens": effective.retrieval.passage_window_tokens,
+                    "passage_overlap_tokens": effective.retrieval.passage_overlap_tokens,
+                    "passage_min_tokens": effective.retrieval.passage_min_tokens,
                 }
             ),
-            "chat": settings.chat.model_copy(
-                update={
+            "chat": ChatConfig.model_validate(
+                {
+                    **settings.chat.model_dump(),
                     "retrieval_top_k": effective.retrieval.top_k,
                     "max_context_chunks": effective.chat.max_context_chunks,
                     "context_char_budget": effective.chat.context_char_budget,
@@ -380,9 +461,17 @@ def apply_effective_ai_config(
                     "system_prompt_version": effective.prompt_version,
                     "include_citations": effective.chat.include_citations,
                     "citation_excerpt_max_chars": effective.chat.citation_excerpt_max_chars,
-                    "minimum_evidence_score": effective.retrieval.evidence_score_threshold,
-                    "minimum_query_token_coverage": (effective.chat.minimum_query_token_coverage),
-                    "minimum_claim_token_coverage": (effective.chat.minimum_claim_token_coverage),
+                    "evidence_score_mode": effective.chat.evidence_score_mode,
+                    "minimum_semantic_evidence_score": (
+                        effective.retrieval.semantic_evidence_score_threshold
+                    ),
+                    "lexical_corroboration_floor_score": (
+                        effective.chat.lexical_corroboration_floor_score
+                    ),
+                    "lexical_corroboration_coverage": (
+                        effective.chat.lexical_corroboration_coverage
+                    ),
+                    "minimum_claim_token_coverage": effective.chat.minimum_claim_token_coverage,
                 }
             ),
         }
@@ -411,6 +500,51 @@ def stable_hash(value: object) -> str:
         default=_json_default,
     ).encode("utf-8")
     return hashlib.sha256(payload).hexdigest()
+
+
+_LEGACY_RANKING_SCORE_CEILING = 0.15
+
+
+def _inherit_semantic_evidence_threshold(
+    project_value: float | None,
+    global_value: float,
+    origins: dict[str, str],
+) -> float:
+    """Ignore leftover RRF-scale project thresholds instead of failing chat."""
+    if project_value is None:
+        origins["retrieval.evidence_score_threshold"] = "global"
+        return global_value
+    if project_value < _LEGACY_RANKING_SCORE_CEILING:
+        origins["retrieval.evidence_score_threshold"] = "global"
+        logger.info(
+            "ignored_legacy_evidence_score_threshold",
+            project_value=project_value,
+            applied_value=global_value,
+        )
+        return global_value
+    origins["retrieval.evidence_score_threshold"] = "project"
+    return project_value
+
+
+def _inherit_lexical_corroboration_coverage(
+    project_value: float | None,
+    global_value: float,
+    origins: dict[str, str],
+) -> float:
+    """Ignore leftover rejection-gate coverage values that would loosen rescue."""
+    if project_value is None:
+        origins["chat.minimum_query_token_coverage"] = "global"
+        return global_value
+    if project_value < global_value:
+        origins["chat.minimum_query_token_coverage"] = "global"
+        logger.info(
+            "ignored_legacy_query_token_coverage",
+            project_value=project_value,
+            applied_value=global_value,
+        )
+        return global_value
+    origins["chat.minimum_query_token_coverage"] = "project"
+    return project_value
 
 
 def cap_source_policy_mode(

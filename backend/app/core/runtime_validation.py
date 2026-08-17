@@ -8,7 +8,6 @@ from app.core.config import (
     LLMBackend,
     MalwareScannerBackend,
     OcrBackend,
-    RerankerBackend,
     RetrievalStrategy,
     RuntimeProfile,
     Settings,
@@ -55,9 +54,7 @@ def validate_runtime_config(settings: Settings) -> None:
     if settings.retrieval.strategy is not RetrievalStrategy.HYBRID:
         errors.append("production requires hybrid retrieval")
     if not settings.retrieval.rerank_enabled:
-        errors.append("production requires reranking to be enabled")
-    if settings.retrieval.reranker_backend is RerankerBackend.NOOP:
-        errors.append("noop reranking is not allowed in production")
+        errors.append("production requires the rerank stage to be enabled")
     if (
         settings.ocr.enabled
         and settings.ocr.backend is OcrBackend.NOOP

@@ -48,7 +48,7 @@ jobs:
       APE_STORAGE__BACKEND: local
       APE_STORAGE__LOCAL_ROOT: /tmp/rag-builder-ci-storage
       APE_EMBEDDING__BACKEND: hash
-      APE_EMBEDDING__DIMENSIONS: "384"
+      APE_EMBEDDING__DIMENSIONS: "1024"
       APE_LLM__BACKEND: echo
       APE_JOBS__DISPATCHER_ENABLED: "false"
       APE_WEBHOOKS__DISPATCHER_ENABLED: "false"

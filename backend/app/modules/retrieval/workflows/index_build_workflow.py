@@ -174,9 +174,6 @@ class IndexBuildWorkflow:
         await self._report("validated", 90)
         if auto_activate:
             await activate_index_build(self._session, self._project_id, build)
-            for document in documents:
-                document.status = DocumentStatus.READY
-                document.error_message = None
             await self._report("active", 100)
         return build
 
@@ -297,6 +294,55 @@ class IndexBuildWorkflow:
             await self._on_progress(stage, progress)
 
 
+_READY_AFTER_ACTIVATION = {
+    DocumentStatus.CHUNKED,
+    DocumentStatus.EMBEDDED,
+    DocumentStatus.EMBEDDING,
+    DocumentStatus.INDEXING,
+    DocumentStatus.READY,
+}
+
+
+def document_ids_from_build_manifest(manifest: object) -> dict[uuid.UUID, int]:
+    """Return document_id → version from an IndexBuild manifest."""
+    raw = manifest.get("documents") if isinstance(manifest, dict) else None
+    if not isinstance(raw, list):
+        return {}
+    versions: dict[uuid.UUID, int] = {}
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        try:
+            document_id = uuid.UUID(str(item.get("document_id")))
+            versions[document_id] = int(item["document_version"])
+        except (KeyError, TypeError, ValueError):
+            continue
+    return versions
+
+
+async def mark_included_documents_ready(
+    session: AsyncSession, project_id: uuid.UUID, build: IndexBuild
+) -> None:
+    """Documents in an activated snapshot are searchable, so they become ready."""
+    expected_versions = document_ids_from_build_manifest(build.manifest)
+    if not expected_versions:
+        return
+    result = await session.execute(
+        select(Document).where(
+            Document.project_id == project_id,
+            Document.id.in_(tuple(expected_versions)),
+            Document.deleted_at.is_(None),
+        )
+    )
+    for document in result.scalars():
+        if expected_versions.get(document.id) != document.version:
+            continue
+        if document.status not in _READY_AFTER_ACTIVATION:
+            continue
+        document.status = DocumentStatus.READY
+        document.error_message = None
+
+
 async def activate_index_build(
     session: AsyncSession, project_id: uuid.UUID, build: IndexBuild
 ) -> ProjectIndexPointer:
@@ -320,6 +366,8 @@ async def activate_index_build(
             "Only validated retained builds can be activated.", code="index_build_not_activatable"
         )
     if pointer.active_build_id == build.id:
+        await mark_included_documents_ready(session, project_id, build)
+        await session.flush()
         return pointer
     old_active = (
         await repository.get_by_id(pointer.active_build_id, for_update=True)
@@ -332,5 +380,6 @@ async def activate_index_build(
         old_active.state = IndexBuildState.RETAINED
     build.state = IndexBuildState.ACTIVE
     build.activated_at = datetime.now(UTC)
+    await mark_included_documents_ready(session, project_id, build)
     await session.flush()
     return pointer

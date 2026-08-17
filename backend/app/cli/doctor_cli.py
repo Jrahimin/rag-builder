@@ -88,19 +88,14 @@ def _configuration_results(settings: Settings) -> list[DoctorResult]:
                 critical=False,
             )
         )
-    reranker_state = (
-        "WARN"
-        if settings.retrieval.rerank_enabled
-        and settings.retrieval.reranker_backend is RerankerBackend.NOOP
-        else "PASS"
-    )
     results.append(
         DoctorResult(
             "reranker_provider",
-            reranker_state,
+            "PASS",
             (
-                "noop reranker selected while reranking is enabled"
-                if reranker_state == "WARN"
+                f"{settings.retrieval.reranker_backend.value}; "
+                "pass-through RRF, no reordering"
+                if settings.retrieval.reranker_backend is RerankerBackend.NOOP
                 else settings.retrieval.reranker_backend.value
             ),
             critical=False,

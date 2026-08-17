@@ -7,7 +7,7 @@ from datetime import date, datetime
 from enum import StrEnum
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.models.message import MessageRole
 
@@ -52,7 +52,16 @@ class InsufficientEvidenceReason(StrEnum):
 
     NO_RETRIEVAL_RESULTS = "no_retrieval_results"
     BELOW_RELEVANCE_THRESHOLD = "below_relevance_threshold"
+    # Historical persisted value. The semantic-only rejection gate never emits it.
     LOW_QUERY_EVIDENCE_COVERAGE = "low_query_evidence_coverage"
+
+
+class ClaimVerification(StrEnum):
+    """What the deterministic validator can establish about one claim."""
+
+    SUPPORTED = "supported"
+    UNVERIFIED = "unverified"
+    UNSUPPORTED = "unsupported"
 
 
 class ClaimEvidence(BaseModel):
@@ -75,7 +84,22 @@ class AnswerClaim(BaseModel):
     claim_id: str
     text: str
     grounded: bool
+    verification: ClaimVerification
     evidence: list[ClaimEvidence] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def backfill_legacy_verification(cls, value: Any) -> Any:
+        if isinstance(value, dict) and "verification" not in value:
+            value = {
+                **value,
+                "verification": (
+                    ClaimVerification.SUPPORTED
+                    if value.get("grounded")
+                    else ClaimVerification.UNSUPPORTED
+                ),
+            }
+        return value
 
 
 class MessageResponse(BaseModel):

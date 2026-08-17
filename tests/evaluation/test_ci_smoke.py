@@ -156,6 +156,7 @@ def test_provider_free_retrieval_grounding_and_isolation_smoke() -> None:
         score=1.0,
         filename="policy.txt",
         chunk_hash="deterministic",
+        semantic_score=1.0,
     )
     claims = grounding.map_claims("Credentials rotate every ninety days. [1]", [context])
     assert claims.grounded is True

@@ -35,6 +35,7 @@ class FakeRetrieval:
                     score=0.9,
                     filename="policy.txt",
                     chunk_hash="hash1",
+                    semantic_score=0.9,
                 )
             ],
             diagnostics={"index_build_id": str(uuid.uuid4())},
