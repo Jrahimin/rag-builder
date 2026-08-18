@@ -33,6 +33,21 @@ validation. Password-protected/corrupt files fail before expensive processing. I
 require real OCR. Stock Paddle does not support Bangla OCR; Unicode Bengali text layers
 and UTF-8 text documents remain supported.
 
+## Embedding cutover workflow
+
+Configuration → rebuild → validate → activate → retrieve/diagnose → rollback.
+
+Live `APE_EMBEDDING__*` is the **next build target**. Search, chat grounding, and
+message `embedding_set_version` follow the **active** build identity. Keep the
+previous provider key until the retained rollback target is retired. Translation
+and rerank remain independently overridable per Project; they degrade on provider
+failure. Embedding incompatibility does not degrade.
+
+Evidence and claim-grounding thresholds are calibration for the active
+embed/rerank pair. Keep `APE_CHAT__EVIDENCE_GATE_MODE=observe` until Test Lab
+smoke confirms the current pair; do not treat `0.40` as calibrated for
+`embed-v4.0` + `rerank-v4.0-pro`.
+
 ## Responsibility boundary
 
 | Operator owns | Customer/host application owns |

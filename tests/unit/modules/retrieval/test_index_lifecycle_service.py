@@ -68,3 +68,19 @@ async def test_verified_build_activation_uses_single_pointer_transition() -> Non
     assert result is build
     activate.assert_awaited_once_with(service._session, service._project_id, build)
     service._session.commit.assert_awaited_once()
+
+
+async def test_rollback_activates_retained_previous_build() -> None:
+    service = _service()
+    retained = _build(IndexBuildState.RETAINED)
+    pointer = MagicMock(previous_build_id=retained.id)
+    service._repository.get_pointer = AsyncMock(return_value=pointer)
+    service._repository.get_by_id = AsyncMock(return_value=retained)
+    with patch(
+        "app.modules.retrieval.services.index_lifecycle_service.activate_index_build",
+        new_callable=AsyncMock,
+    ) as activate:
+        result = await service.rollback()
+    assert result is retained
+    activate.assert_awaited_once_with(service._session, service._project_id, retained)
+    service._audit.record.assert_called()

@@ -107,4 +107,3 @@ async def test_hydrator_strips_translated_query_from_result_metadata() -> None:
     assert "translated_query" not in results[0].metadata
     assert results[0].metadata["translation_status"] == "applied"
     assert results[0].metadata["rrf_contributions"][0]["branch_id"] == "translated_dense:bn"
-

@@ -32,7 +32,11 @@ readiness never repeats model calls.
 - `ProviderError` hierarchy
 - **Embeddings** — `BaseEmbeddingProvider` + Cohere / Ollama / OpenAI / Gemini / hash implementations.
   Call sites pass vendor-neutral `QUERY` or `DOCUMENT`; only Cohere maps those to `search_query` /
-  `search_document`.
+  `search_document`. Query search constructs the embedder from the active index-build identity;
+  live settings are the target for new builds.
+- **Cohere HTTP** — shared credential/base URL (`APE_COHERE__*`) plus reusable clients keyed by
+  timeout so embed (120s) and rerank (15s) do not share one request budget. Feature models stay
+  on `APE_EMBEDDING__MODEL` and `APE_RERANKER__COHERE_MODEL`.
 - **Semantic persistence** — retrieval-owned pgvector repository; it is not a
   model-facing provider. There is no vector-store provider or external vector client.
 - **Storage** — `BaseStorageProvider` + local / MinIO implementations

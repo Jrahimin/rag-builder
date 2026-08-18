@@ -65,14 +65,50 @@ activate the validated build. Activation marks included documents `ready`.
 `/index-builds/reindex` is the same snapshot job under a different label.
 The prior active build remains the rollback target.
 
+## Operator workflow: configuration → build → activation → retrieval → diagnostics → rollback
+
+Query embeddings always follow the **active** index build
+(`embedding_set_version` + provider + model + dimensions). Live
+`APE_EMBEDDING__*` settings are the **target** for the next rebuild only.
+
+1. **Configure the target.** Set embedding backend/model/dimensions and bump
+   `APE_RETRIEVAL__EMBEDDING_SET_VERSION`. Keep the previous provider credentials
+   until rollback is no longer needed. Project AI policy may override translation
+   and `rerank_mode`; it does not own embedding identity.
+2. **Build.** `POST .../index-builds/reembed` writes a private snapshot with the
+   target embedder. Job configuration captures that target so a later worker
+   cannot mix spaces. Validate must pass (`vector_count == chunk_count`).
+3. **Activate.** `POST .../index-builds/{id}/activate` atomically swaps
+   `ProjectIndexPointer`. Search, chat grounding, and message `embedding_set_version`
+   now use the new identity.
+4. **Retrieve and inspect diagnostics.** Search/chat diagnostics report
+   `embedding_identity_status=matched` plus provider/model/dimensions/esv,
+   translation status, and rerank status. Translation or reranker failure degrades
+   (original-query retrieval; RRF + cosine; `rerank_status=unavailable`). Embedding
+   incompatibility does **not** degrade: unlabeled, mixed, or unmatched identity
+   returns `409 embedding_identity_unlabeled` / `embedding_identity_incompatible`
+   or `503 embedding_provider_unavailable`.
+5. **Roll back** with `POST .../index-builds/rollback`. The retained previous
+   build keeps its own identity; query embeddings switch back to that space.
+
+OpenAI → Cohere: set Cohere as the live target and bump esv to 3, rebuild,
+validate, activate. Until activation, queries still use the OpenAI active
+build. After rollback, they use OpenAI again. Do not delete the OpenAI key
+while a retained OpenAI build is a rollback target.
+
+Evidence fallback and claim-grounding thresholds stay provider-specific
+calibration. `hosted_managed` keeps `APE_CHAT__EVIDENCE_GATE_MODE=observe`
+until Test Lab smoke confirms the current embed/rerank pair.
+
 ## Configuration
 
 | Section | Key vars | Role |
 | ------- | -------- | ---- |
-| `EmbeddingConfig` | `APE_EMBEDDING__*` | Backend (`hash`, `ollama`, `openai`, `gemini`), model, dimensions, API keys |
+| `EmbeddingConfig` | `APE_EMBEDDING__*` | Target backend (`hash`, `ollama`, `openai`, `gemini`, `cohere`), model, dimensions, API keys. Query search uses the active build identity, not this live target. |
 | `RetrievalConfig` | `APE_RETRIEVAL__*` | `strategy`, candidate pools, `hnsw_ef_search`, RRF weights, reranker windows, diversity caps, optional passage scoring, `embedding_set_version`, language-metadata schema |
 | `QueryTranslationConfig` | `APE_QUERY_TRANSLATION__*` | Query-only translation; default off; model `gpt-5-nano` |
-| `RerankerProviderConfig` | `APE_RERANKER__*` | Cohere credentials used only when `reranker_backend=cohere` |
+| `CohereConfig` | `APE_COHERE__*` | Shared credential and base URL for embed and rerank |
+| `RerankerProviderConfig` | `APE_RERANKER__*` | Rerank model/timeout; missing key or API failure degrades to RRF + cosine |
 | `AIConfigPolicy` | `APE_AI_POLICY__SOURCE_POLICY_DEPLOYMENT_CAP` | Emergency maximum for Project `off / observe / enforce` source policy |
 
 `embedding_set_version` is a deployment-level int, independent of

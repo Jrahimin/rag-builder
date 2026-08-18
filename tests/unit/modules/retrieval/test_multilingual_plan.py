@@ -76,8 +76,7 @@ async def test_plan_always_keeps_original_dense_and_lexical() -> None:
     }
     assert all(branch.query == "উৎসে কর সংগ্রহের খাত" for branch in translated)
     assert all(
-        branch.language_scope is not None
-        and "bn" in branch.language_scope.include_languages
+        branch.language_scope is not None and "bn" in branch.language_scope.include_languages
         for branch in translated
     )
     assert all(

@@ -80,3 +80,30 @@ def test_apply_job_configuration_restores_typed_values_and_live_secret() -> None
     assert restored.embedding.model == "snapshotted"
     assert restored.embedding.openai_api_key == "live-secret"
     assert restored.ocr.google_api_key == "live-google-secret"
+
+
+def test_apply_job_configuration_keeps_target_embedding_backend_for_new_builds() -> None:
+    live = Settings(
+        embedding={
+            "backend": "cohere",
+            "model": "embed-v4.0",
+            "openai_api_key": "live-openai",
+        },
+        cohere={"api_key": "live-cohere"},
+    )
+    openai_snapshot = build_job_configuration(
+        Settings(
+            embedding={
+                "backend": "openai",
+                "model": "text-embedding-3-large",
+                "openai_api_key": "ignored",
+            }
+        )
+    )
+
+    restored = apply_job_configuration(live, openai_snapshot)
+
+    assert restored.embedding.backend is EmbeddingBackend.OPENAI
+    assert restored.embedding.model == "text-embedding-3-large"
+    assert restored.embedding.openai_api_key == "live-openai"
+    assert restored.resolved_cohere_api_key() == "live-cohere"

@@ -59,8 +59,13 @@ The dense baseline is `text-embedding-3-large` at 1024 dimensions, embedding set
 `hosted_managed` uses Cohere `embed-v4.0` at 1024 dimensions and `embedding_set_version=3`.
 `hosted_openai` compatibility stays on esv=2 + OpenAI large. Changing provider or model requires
 an immutable rebuild and atomic activation; mixing OpenAI and Cohere vectors in one active set is
-forbidden. If the active build's stored provider/model does not match the live embedder, search
-returns a clear mismatch diagnostic.
+forbidden. Query embeddings follow the active build identity
+(`embedding_set_version`, provider, model, dimensions). Live settings are the
+target for the next rebuild. Unlabeled, mixed, or unmatched identity is a
+configuration error (`embedding_identity_unlabeled` /
+`embedding_identity_incompatible`), not an empty hit list. Missing credentials
+for the active identity return `embedding_provider_unavailable`. Translation and
+reranker failures still degrade. Rollback restores the retained build's identity.
 Migration `0026_multilingual_embeddings` changes the fixed pgvector contract and deliberately
 invalidates old retrieval builds.
 

@@ -101,6 +101,8 @@ class SearchDiagnostics(BaseModel):
     embedding_identity_status: str | None = None
     embedding_provider: str | None = None
     embedding_model: str | None = None
+    embedding_dimensions: int | None = None
+    embedding_set_version: int | None = None
     reranker_latency_ms: int | None = None
     reranker_usage: dict[str, Any] = Field(default_factory=dict)
 

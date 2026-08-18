@@ -143,9 +143,7 @@ def _split_table_rows(
             heading_level=draft.heading_level,
         )
     prefix = "\n".join(
-        value.strip()
-        for value in (caption, header)
-        if isinstance(value, str) and value.strip()
+        value.strip() for value in (caption, header) if isinstance(value, str) and value.strip()
     )
     groups: list[list[str]] = []
     current: list[str] = []

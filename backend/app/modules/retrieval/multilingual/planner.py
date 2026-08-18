@@ -73,9 +73,7 @@ def language_inventory_from_manifest(manifest: object) -> LanguageInventory:
             is_legacy=True,
         )
     chunk_counts = {
-        str(key): int(value)
-        for key, value in raw_counts.items()
-        if isinstance(value, (int, float))
+        str(key): int(value) for key, value in raw_counts.items() if isinstance(value, (int, float))
     }
     document_counts = (
         {

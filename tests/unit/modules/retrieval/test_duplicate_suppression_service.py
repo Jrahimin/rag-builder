@@ -85,16 +85,12 @@ def test_single_document_backfills_to_requested_limit_without_weakening_dedup() 
         _result(document_id=document_id, chunk_index=index, content=f"unique-{index}")
         for index in range(7)
     ]
-    ranked.append(
-        _result(document_id=document_id, chunk_index=7, content="unique-6")
-    )
+    ranked.append(_result(document_id=document_id, chunk_index=7, content="unique-6"))
     config = RetrievalConfig(max_chunks_per_document=4, max_chunks_per_section=2)
 
     selected = DuplicateSuppressionService(config).select(ranked, limit=7)
 
-    assert [item.content for item in selected.results] == [
-        f"unique-{index}" for index in range(7)
-    ]
+    assert [item.content for item in selected.results] == [f"unique-{index}" for index in range(7)]
     assert selected.backfilled_count == 3
     assert selected.suppressed_by_reason == {"content_hash": 1}
 

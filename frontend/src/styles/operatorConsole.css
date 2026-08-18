@@ -1162,7 +1162,9 @@ td small {
   color: #315b9b;
   background: transparent;
   border: 0;
-  font: 600 0.7rem/1 ui-monospace, monospace;
+  font:
+    600 0.7rem/1 ui-monospace,
+    monospace;
 }
 .lab-id code {
   font: inherit;
@@ -1397,7 +1399,9 @@ td small {
   margin-top: 8px;
 }
 .lab-filename {
-  font-family: "Nirmala UI", "Noto Sans Bengali", "Bangla Sangam MN", Inter, ui-sans-serif, system-ui, sans-serif;
+  font-family:
+    "Nirmala UI", "Noto Sans Bengali", "Bangla Sangam MN", Inter, ui-sans-serif, system-ui,
+    sans-serif;
   overflow-wrap: break-word;
   word-break: normal;
   line-height: 1.55;
@@ -1840,8 +1844,7 @@ td small {
   min-height: 0;
   overflow: hidden;
   background:
-    radial-gradient(1200px 240px at 20% 0%, rgba(47, 111, 235, 0.05), transparent 60%),
-    #f4f7fb;
+    radial-gradient(1200px 240px at 20% 0%, rgba(47, 111, 235, 0.05), transparent 60%), #f4f7fb;
 }
 .lab-chat-pane {
   display: grid;

@@ -41,7 +41,9 @@ test("opens a lifecycle guide that explains actions and states", async () => {
   expect(dialog).toHaveTextContent("Rebuild index");
   expect(dialog).toHaveTextContent("Retained");
   await userEvent.click(screen.getByRole("button", { name: "Close" }));
-  expect(screen.queryByRole("dialog", { name: "How corpus lifecycle works" })).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("dialog", { name: "How corpus lifecycle works" }),
+  ).not.toBeInTheDocument();
 });
 
 test("confirms and activates only a validated immutable build", async () => {

@@ -203,9 +203,7 @@ test("does not create an AI revision when every control inherits", async () => {
   await userEvent.click(screen.getByRole("button", { name: "Create and activate revision" }));
 
   expect(create).not.toHaveBeenCalled();
-  expect(
-    await screen.findByText(/All fields inherit deployment defaults/i),
-  ).toBeInTheDocument();
+  expect(await screen.findByText(/All fields inherit deployment defaults/i)).toBeInTheDocument();
 });
 
 test("saves query translation and rerank mode as sparse Project overrides", async () => {
@@ -218,7 +216,9 @@ test("saves query translation and rerank mode as sparse Project overrides", asyn
     project_id: projectFixture.id,
     revision_number: 1,
     configuration_hash: "b".repeat(64),
-    configuration: { retrieval: { query_translation_enabled: true, rerank_mode: "cross_language" } },
+    configuration: {
+      retrieval: { query_translation_enabled: true, rerank_mode: "cross_language" },
+    },
     reason: "Enable multilingual retrieval",
     created_by: "test-admin",
     restored_from_revision_id: null,
@@ -265,7 +265,9 @@ test("keeps a created Project when optional AI settings fail to save", async () 
 
   await waitFor(() => expect(createProject).toHaveBeenCalled());
   await waitFor(() => expect(createConfig).toHaveBeenCalled());
-  expect(await screen.findByText(/Project created. AI settings were not saved/i)).toBeInTheDocument();
+  expect(
+    await screen.findByText(/Project created. AI settings were not saved/i),
+  ).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Open AI configuration" })).toBeInTheDocument();
 });
 
@@ -358,12 +360,8 @@ test("uploads a document into an existing source group or a modifying group", as
     offset: 0,
   });
   vi.spyOn(operatorApiClient, "getSourceState").mockResolvedValue(sourceState);
-  vi.spyOn(operatorApiClient, "getSourceRevisions").mockResolvedValue([
-    sourceItem.revision,
-  ]);
-  vi.spyOn(operatorApiClient, "getSourceActivations").mockResolvedValue([
-    sourceItem.activation,
-  ]);
+  vi.spyOn(operatorApiClient, "getSourceRevisions").mockResolvedValue([sourceItem.revision]);
+  vi.spyOn(operatorApiClient, "getSourceActivations").mockResolvedValue([sourceItem.activation]);
   const upload = vi.spyOn(operatorApiClient, "uploadDocument").mockResolvedValue(document);
 
   renderOperatorComponent(

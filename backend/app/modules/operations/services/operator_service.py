@@ -202,9 +202,7 @@ class OperatorService:
     ) -> UsageReport:
         resolved_end = _as_utc(end_at) if end_at is not None else datetime.now(UTC)
         resolved_start = (
-            _as_utc(start_at)
-            if start_at is not None
-            else (resolved_end - timedelta(days=30))
+            _as_utc(start_at) if start_at is not None else (resolved_end - timedelta(days=30))
         )
         if resolved_start >= resolved_end:
             raise BadRequestError(

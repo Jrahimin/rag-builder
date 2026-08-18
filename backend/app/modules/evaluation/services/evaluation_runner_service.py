@@ -207,9 +207,7 @@ def _case_result(case: EvaluationCase, profile: str, search: Any, answer: Any) -
         )
     ]
     hard_negative_semantic_scores = [
-        float(hit.semantic_score)
-        for hit in hard_negative_hits
-        if hit.semantic_score is not None
+        float(hit.semantic_score) for hit in hard_negative_hits if hit.semantic_score is not None
     ]
     hard_negative_passage_scores = [
         float(hit.passage_semantic_score)

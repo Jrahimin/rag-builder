@@ -211,6 +211,38 @@ class ChunkEmbeddingRepository(ProjectScopedRepository[ChunkEmbedding]):
         result = await self._session.execute(stmt)
         return {row.chunk_id: float(row.score) for row in result}
 
+    async def list_distinct_identities(
+        self, index_build_id: uuid.UUID
+    ) -> list[tuple[int, str, str, int]]:
+        """Return unique (esv, provider, model, dimensions) tuples for one build."""
+        stmt = (
+            select(
+                self.model.embedding_set_version,
+                self.model.provider,
+                self.model.model,
+                self.model.dimensions,
+            )
+            .where(self.model.project_id == self._project_id)
+            .where(self.model.index_build_id == index_build_id)
+            .distinct()
+            .order_by(
+                self.model.embedding_set_version,
+                self.model.provider,
+                self.model.model,
+                self.model.dimensions,
+            )
+        )
+        result = await self._session.execute(stmt)
+        return [
+            (
+                int(row.embedding_set_version),
+                str(row.provider),
+                str(row.model),
+                int(row.dimensions),
+            )
+            for row in result.all()
+        ]
+
 
 def _metadata_dict(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}

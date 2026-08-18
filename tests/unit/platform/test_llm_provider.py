@@ -46,14 +46,10 @@ async def test_echo_stream_yields_tokens() -> None:
 
 
 def test_gemini_stream_preserves_incremental_text_and_final_usage() -> None:
-    first = _gemini_stream_chunk(
-        {"candidates": [{"content": {"parts": [{"text": "first "}]}}]}
-    )
+    first = _gemini_stream_chunk({"candidates": [{"content": {"parts": [{"text": "first "}]}}]})
     final = _gemini_stream_chunk(
         {
-            "candidates": [
-                {"content": {"parts": [{"text": "second"}]}, "finishReason": "STOP"}
-            ],
+            "candidates": [{"content": {"parts": [{"text": "second"}]}, "finishReason": "STOP"}],
             "usageMetadata": {"promptTokenCount": 7, "candidatesTokenCount": 2},
         }
     )

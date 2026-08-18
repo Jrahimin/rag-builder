@@ -566,9 +566,7 @@ class QueryTranslationConfig(BaseModel):
     max_output_tokens: int = Field(default=1024, ge=16, le=2048)
     request_timeout_seconds: float = Field(default=15.0, ge=1.0, le=120.0)
     retry_max_attempts: int = Field(default=1, ge=0, le=3)
-    target_languages: Annotated[list[str], NoDecode] = Field(
-        default_factory=lambda: ["bn", "en"]
-    )
+    target_languages: Annotated[list[str], NoDecode] = Field(default_factory=lambda: ["bn", "en"])
 
     @field_validator("target_languages", mode="before")
     @classmethod
@@ -582,24 +580,26 @@ class QueryTranslationConfig(BaseModel):
 
 
 class CohereConfig(BaseModel):
-    """Shared Cohere credential for embeddings and reranking.
+    """Shared Cohere credential and base connection for embeddings and reranking.
 
-    Canonical secret is ``APE_COHERE__API_KEY``. Embedding and rerank models
-    stay on their own configs. ``APE_RERANKER__COHERE_API_KEY`` is a temporary
-    fallback for older rerank-only deploys.
+    Canonical secret is ``APE_COHERE__API_KEY``. Feature-specific models stay on
+    ``APE_EMBEDDING__MODEL`` and ``APE_RERANKER__COHERE_MODEL``.
+    ``APE_RERANKER__COHERE_API_KEY`` / ``APE_RERANKER__COHERE_BASE_URL`` remain
+    temporary fallbacks for older rerank-only deploys.
     """
 
     api_key: str | None = None
+    base_url: str = "https://api.cohere.com"
 
 
 class RerankerProviderConfig(BaseModel):
-    """Managed reranker connection settings (model/endpoint, not the canonical key).
+    """Managed reranker model and timeout (not the canonical key or base URL).
 
     Hosted_managed uses ``rerank-v4.0-pro``. Missing key or provider failure
     degrades to RRF + cosine evidence; it must not block API startup.
     """
 
-    # Legacy fallback only. Prefer APE_COHERE__API_KEY.
+    # Legacy fallback only. Prefer APE_COHERE__API_KEY and APE_COHERE__BASE_URL.
     cohere_api_key: str | None = None
     cohere_base_url: str = "https://api.cohere.com"
     cohere_model: str = "rerank-v4.0-pro"
@@ -662,9 +662,11 @@ class ChatConfig(BaseModel):
     """Chat / RAG orchestration defaults.
 
     Evidence gate: when a true reranker applied, its relevance is the only
-    learned admit signal; cosine + lexical rescue are fallbacks. Hosted_managed
-    ships ``observe`` until Test Lab smoke confirms the pro-reranker threshold,
-    then operators switch to ``enforce``.
+    learned admit signal; cosine + lexical rescue are fallbacks. Thresholds are
+    provider-specific calibration, not universal constants. Hosted_managed ships
+    ``observe`` until Test Lab smoke confirms the current embed/rerank pair,
+    then operators switch to ``enforce``. Do not treat ``0.40`` as calibrated
+    for Cohere embed-v4 + rerank-v4.0-pro.
     """
 
     retrieval_top_k: int = Field(default=10, ge=1, le=100)
@@ -682,6 +684,7 @@ class ChatConfig(BaseModel):
     # Cross-language near-misses typically have ~0 coverage, so they still refuse.
     lexical_corroboration_floor_score: float = Field(default=0.30, ge=0.0, le=1.0)
     lexical_corroboration_coverage: float = Field(default=0.50, ge=0.0, le=1.0)
+    # Provider-specific calibration. Keep observe until this pair is measured.
     minimum_reranker_evidence_score: float = Field(default=0.40, ge=0.0, le=1.0)
     minimum_evidence_score: float | None = Field(default=None, deprecated=True)
     minimum_query_token_coverage: float | None = Field(default=None, deprecated=True)
@@ -730,9 +733,7 @@ class EvaluationConfig(BaseModel):
     minimum_filtered_correctness: float = Field(default=0.95, ge=0.0, le=1.0)
     maximum_false_refusal_rate: float = Field(default=0.10, ge=0.0, le=1.0)
     maximum_false_accept_rate: float = Field(default=0.0, ge=0.0, le=1.0)
-    maximum_accepted_without_relevant_evidence_rate: float = Field(
-        default=0.0, ge=0.0, le=1.0
-    )
+    maximum_accepted_without_relevant_evidence_rate: float = Field(default=0.0, ge=0.0, le=1.0)
     minimum_groundedness: float = Field(default=0.80, ge=0.0, le=1.0)
     minimum_citation_coverage: float = Field(default=0.80, ge=0.0, le=1.0)
     maximum_p95_latency_ms: float = Field(default=750.0, ge=1.0)
@@ -841,6 +842,13 @@ class Settings(BaseSettings):
         if canonical:
             return canonical
         return (self.reranker.cohere_api_key or "").strip()
+
+    def resolved_cohere_base_url(self) -> str:
+        """Canonical shared Cohere base URL, then legacy reranker-only base URL."""
+        shared = self.cohere.base_url.rstrip("/")
+        if shared != "https://api.cohere.com":
+            return self.cohere.base_url
+        return self.reranker.cohere_base_url
 
 
 @lru_cache

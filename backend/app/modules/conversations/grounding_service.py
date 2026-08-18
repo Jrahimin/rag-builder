@@ -31,7 +31,9 @@ _LEADING_CITATIONS_PATTERN = regex.compile(r"^((?:\[\d+\]\s*)+)(.*)$", regex.DOT
 _MARKDOWN_HEADING_PATTERN = regex.compile(r"^#{1,6}\s+\S.*$")
 _MARKDOWN_ORDINAL_PATTERN = regex.compile(r"^(?:[-*+]\s*)?\p{Number}+[.)]?$")
 _MARKDOWN_TABLE_DIVIDER_PATTERN = regex.compile(r"^\|?[\s:|-]+\|?$")
-_LIST_PREAMBLE_PATTERN = regex.compile(r"^[^.\n!?।॥。\uff01\uff1f…]+[:：—–]\s*$")
+_LIST_PREAMBLE_PATTERN = regex.compile(
+    r"^[^.\n!?।॥。\uff01\uff1f…]+[:：—–]\s*$",  # noqa: RUF001
+)
 _POLARITY_PATTERN = regex.compile(r"^(?:yes|no|না|হ্যাঁ)[.\u0964]?\s*$", regex.IGNORECASE)
 _INSUFFICIENCY_MARKER = "not enough indexed evidence"
 _ENGLISH_STOPWORDS = {
@@ -134,9 +136,7 @@ class GroundingService:
             )
         best = max(scored, key=lambda item: (item[0], item[1], str(item[2].chunk_id)))
         direct = [
-            item
-            for item in scored
-            if item[0] >= self._config.minimum_semantic_evidence_score
+            item for item in scored if item[0] >= self._config.minimum_semantic_evidence_score
         ]
         if direct:
             winner = max(direct, key=lambda item: (item[0], item[1], str(item[2].chunk_id)))

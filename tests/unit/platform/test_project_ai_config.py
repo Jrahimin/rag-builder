@@ -262,9 +262,10 @@ def test_passage_evidence_mode_is_versioned_in_effective_snapshot() -> None:
     assert resolution.configuration.retrieval.passage_window_tokens == 80
     assert restored.chat.evidence_score_mode == "passage_max"
     assert restored.retrieval.passage_scoring_enabled is True
-    assert resolution.secret_free_snapshot()["configuration"]["chat"][
-        "evidence_score_mode"
-    ] == "passage_max"
+    assert (
+        resolution.secret_free_snapshot()["configuration"]["chat"]["evidence_score_mode"]
+        == "passage_max"
+    )
 
 
 def test_evidence_gate_mode_is_inherited_into_chat_config() -> None:

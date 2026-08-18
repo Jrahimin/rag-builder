@@ -13,7 +13,7 @@ from app.composition.source_metadata import KnowledgeRetrievalSourceMetadataAdap
 from app.core.config import get_settings
 from app.dependencies.access import AdminOrOrganizationDep
 from app.dependencies.common import DbSessionDep
-from app.dependencies.retrieval import get_search_service
+from app.dependencies.retrieval import get_search_service, query_embedder_factory_for
 from app.models.conversation import Conversation
 from app.modules.conversations.ports import ContextChunk, ContextRetrievalResult, RetrievalPort
 from app.modules.conversations.repositories.config_snapshot_repository import (
@@ -55,6 +55,10 @@ class SearchServiceRetrievalAdapter:
 
     def __init__(self, search_service: SearchService) -> None:
         self._search_service = search_service
+
+    @property
+    def query_embedder(self) -> BaseEmbeddingProvider | None:
+        return self._search_service.resolved_query_embedder
 
     async def retrieve(
         self,
@@ -228,6 +232,7 @@ async def get_chat_service(
             config_provenance=resolution.provenance.model_dump(mode="json"),
             query_translator=translator,
             query_translation_config=effective_settings.query_translation,
+            query_embedder_factory=query_embedder_factory_for(settings),
         )
     )
 

@@ -48,9 +48,10 @@ The preferred production profile is `hosted_managed`:
 - Generation: OpenAI `gpt-5.6-luna`. Conditional query translation remains at most one
   `gpt-5-nano` rewrite; the original query always runs.
 - `embedding_set_version=3` for this stack. Never mix OpenAI and Cohere vectors in one active
-  set. Cutover uses the existing immutable rebuild → validate → activate path. A live embedder
-  that does not match the active build manifest returns a mismatch diagnostic, not an empty hit
-  list.
+  set. Cutover uses the existing immutable rebuild → validate → activate path. Query embeddings
+  follow the active build identity. Live settings are the next-build target. Unlabeled or mixed
+  identity is a configuration error, not an empty hit list. Rollback restores the retained
+  build's provider/model/dimensions. Keep previous provider credentials until rollback is retired.
 - `hosted_openai` remains a deprecated compatibility profile (OpenAI LLM + OpenAI embeddings)
   and must not require Cohere.
 

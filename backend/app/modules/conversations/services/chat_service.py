@@ -332,7 +332,13 @@ class ChatService:
         selected = self._context_builder.select(chunks)
         selected_ids = {chunk.chunk_id for chunk in selected}
         evidence_chunks = [chunk for chunk in chunks if chunk.chunk_id in selected_ids]
-        evidence = self._grounding.assess(request.content, evidence_chunks)
+        query_embedder = getattr(self._retrieval, "query_embedder", None)
+        grounding = (
+            GroundingService(self._chat_config, embedder=query_embedder)
+            if query_embedder is not None
+            else self._grounding
+        )
+        evidence = grounding.assess(request.content, evidence_chunks)
 
         prompt_version = (
             conversation.system_prompt_version or self._chat_config.system_prompt_version
@@ -652,7 +658,8 @@ class ChatService:
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             prompt_version=prompt_version,
-            embedding_set_version=self._retrieval_config.embedding_set_version,
+            embedding_set_version=_optional_int(metadata.get("embedding_set_version"))
+            or self._retrieval_config.embedding_set_version,
             provider=provider_override,
             model=model_override,
             config_snapshot_id=self._config_snapshot_id,
@@ -728,9 +735,7 @@ class ChatService:
                     "removed_count": retrieval_diagnostics.get(
                         "duplicate_suppression_removed_count", 0
                     ),
-                    "reasons": retrieval_diagnostics.get(
-                        "duplicate_suppression_reasons", {}
-                    ),
+                    "reasons": retrieval_diagnostics.get("duplicate_suppression_reasons", {}),
                     "diversity_deferred_reasons": retrieval_diagnostics.get(
                         "diversity_deferred_reasons", {}
                     ),
@@ -758,32 +763,30 @@ class ChatService:
                     "status": retrieval_diagnostics.get("translation_status"),
                     "failure_reason": retrieval_diagnostics.get("translation_failure_reason"),
                     "skipped_reason": retrieval_diagnostics.get("skipped_reason"),
-                    "source_language": retrieval_diagnostics.get(
-                        "translation_source_language"
-                    ),
-                    "target_language": retrieval_diagnostics.get(
-                        "translation_target_language"
-                    ),
-                    "query_language_profile": retrieval_diagnostics.get(
-                        "query_language_profile"
-                    ),
+                    "source_language": retrieval_diagnostics.get("translation_source_language"),
+                    "target_language": retrieval_diagnostics.get("translation_target_language"),
+                    "query_language_profile": retrieval_diagnostics.get("query_language_profile"),
                     "translated_query": retrieval_diagnostics.get("translated_query"),
                     "provider": retrieval_diagnostics.get("translation_provider"),
                     "model": retrieval_diagnostics.get("translation_model"),
-                    "prompt_version": retrieval_diagnostics.get(
-                        "translation_prompt_version"
-                    ),
+                    "prompt_version": retrieval_diagnostics.get("translation_prompt_version"),
                     "latency_ms": retrieval_diagnostics.get("translation_latency_ms"),
                     "usage": retrieval_diagnostics.get("translation_usage") or {},
                 },
                 "executed_branches": retrieval_diagnostics.get("executed_branches") or [],
                 "skipped_branches": retrieval_diagnostics.get("skipped_branches") or [],
-                "branch_candidate_counts": retrieval_diagnostics.get(
-                    "branch_candidate_counts"
-                )
+                "branch_candidate_counts": retrieval_diagnostics.get("branch_candidate_counts")
                 or {},
             },
             "index_build_id": retrieval_diagnostics.get("index_build_id"),
+            "embedding_set_version": retrieval_diagnostics.get("embedding_set_version"),
+            "embedding": {
+                "identity_status": retrieval_diagnostics.get("embedding_identity_status"),
+                "provider": retrieval_diagnostics.get("embedding_provider"),
+                "model": retrieval_diagnostics.get("embedding_model"),
+                "dimensions": retrieval_diagnostics.get("embedding_dimensions"),
+                "set_version": retrieval_diagnostics.get("embedding_set_version"),
+            },
             "source_metadata_generation": retrieval_diagnostics.get("source_metadata_generation"),
             "source_policy": {
                 "configured_mode": retrieval_diagnostics.get("source_policy_configured_mode"),

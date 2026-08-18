@@ -122,9 +122,7 @@ class OllamaChatProvider(BaseLLMProvider):
                     else None
                 ),
                 output_tokens=(
-                    int(payload["eval_count"])
-                    if payload.get("eval_count") is not None
-                    else None
+                    int(payload["eval_count"]) if payload.get("eval_count") is not None else None
                 ),
             ),
             provider_version=self._provider_version,
@@ -198,9 +196,7 @@ def _context_window_from_show(payload: object) -> int | None:
         [
             int(value)
             for key, value in model_info.items()
-            if str(key).endswith(".context_length")
-            and isinstance(value, int)
-            and value > 0
+            if str(key).endswith(".context_length") and isinstance(value, int) and value > 0
         ]
         if isinstance(model_info, dict)
         else []

@@ -17,6 +17,7 @@ from app.platform.providers.errors import (
     ProviderRateLimitError,
     ProviderTimeoutError,
 )
+from app.platform.providers.implementations import cohere_http
 from app.platform.providers.implementations.cohere_reranker_provider import CohereRerankerProvider
 
 pytestmark = pytest.mark.unit
@@ -31,6 +32,10 @@ def _request() -> RerankRequest:
         ],
         top_n=2,
     )
+
+
+def _patch_client(monkeypatch: pytest.MonkeyPatch, client: object) -> None:
+    monkeypatch.setattr(cohere_http, "shared_cohere_client", lambda **kwargs: client)
 
 
 async def test_cohere_maps_relevance_scores_and_indexes(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -50,22 +55,13 @@ async def test_cohere_maps_relevance_scores_and_indexes(monkeypatch: pytest.Monk
             }
 
     class _Client:
-        def __init__(self, timeout: object) -> None:
-            del timeout
-
-        async def __aenter__(self) -> _Client:
-            return self
-
-        async def __aexit__(self, *args: object) -> None:
-            return None
-
         async def post(self, url: str, headers: dict, json: dict) -> _Response:
             assert "/v2/rerank" in url
             assert json["model"] == "rerank-v4.0-pro"
             assert json["query"] == "source tax"
             return _Response()
 
-    monkeypatch.setattr(httpx, "AsyncClient", _Client)
+    _patch_client(monkeypatch, _Client())
     provider = CohereRerankerProvider(api_key="secret")
     response = await provider.rerank(request)
     assert response.score_scale is RerankScoreScale.MODEL_RELEVANCE
@@ -83,44 +79,30 @@ async def test_cohere_auth_and_rate_limit_errors(monkeypatch: pytest.MonkeyPatch
             return {}
 
     class _Client:
-        def __init__(self, timeout: object) -> None:
-            del timeout
-
-        async def __aenter__(self) -> _Client:
-            return self
-
-        async def __aexit__(self, *args: object) -> None:
-            return None
+        def __init__(self) -> None:
+            self.status = 401
 
         async def post(self, *args: object, **kwargs: object) -> _Response:
-            return _Response(self.status)  # type: ignore[attr-defined]
+            del args, kwargs
+            return _Response(self.status)
 
-    client_cls = _Client
-    monkeypatch.setattr(httpx, "AsyncClient", client_cls)
+    client = _Client()
+    _patch_client(monkeypatch, client)
     provider = CohereRerankerProvider(api_key="secret")
-    client_cls.status = 401
     with pytest.raises(ProviderAuthenticationError):
         await provider.rerank(_request())
-    client_cls.status = 429
+    client.status = 429
     with pytest.raises(ProviderRateLimitError):
         await provider.rerank(_request())
 
 
 async def test_cohere_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
     class _Client:
-        def __init__(self, timeout: object) -> None:
-            del timeout
-
-        async def __aenter__(self) -> _Client:
-            return self
-
-        async def __aexit__(self, *args: object) -> None:
-            return None
-
         async def post(self, *args: object, **kwargs: object) -> None:
+            del args, kwargs
             raise httpx.TimeoutException("slow")
 
-    monkeypatch.setattr(httpx, "AsyncClient", _Client)
+    _patch_client(monkeypatch, _Client())
     provider = CohereRerankerProvider(api_key="secret")
     with pytest.raises(ProviderTimeoutError):
         await provider.rerank(_request())

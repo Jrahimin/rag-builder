@@ -56,9 +56,7 @@ class ResultHydrator:
                     passage_semantic_score=_optional_float(
                         candidate.metadata.get("passage_semantic_score")
                     ),
-                    passage_char_start=_optional_int(
-                        candidate.metadata.get("passage_char_start")
-                    ),
+                    passage_char_start=_optional_int(candidate.metadata.get("passage_char_start")),
                     passage_char_end=_optional_int(candidate.metadata.get("passage_char_end")),
                     passage_score_method=_optional_string(
                         candidate.metadata.get("passage_score_method")
@@ -84,9 +82,7 @@ _PRIVATE_CANDIDATE_METADATA_KEYS = frozenset({"translated_query"})
 def _public_candidate_metadata(metadata: dict[str, object]) -> dict[str, object]:
     """Drop retrieval artifacts that must not appear on hydrated hits or citations."""
     return {
-        key: value
-        for key, value in metadata.items()
-        if key not in _PRIVATE_CANDIDATE_METADATA_KEYS
+        key: value for key, value in metadata.items() if key not in _PRIVATE_CANDIDATE_METADATA_KEYS
     }
 
 

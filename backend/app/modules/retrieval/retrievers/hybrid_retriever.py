@@ -23,7 +23,10 @@ from app.modules.retrieval.retrievers.candidate_content_loader import CandidateC
 from app.modules.retrieval.retrievers.keyword_retriever import KeywordRetriever
 from app.modules.retrieval.retrievers.models import CandidateHit, CandidateSource, RetrievalContext
 from app.modules.retrieval.retrievers.rrf_fusion import RankedList, reciprocal_rank_fusion
-from app.modules.retrieval.retrievers.semantic_retriever import SemanticRetriever
+from app.modules.retrieval.retrievers.semantic_retriever import (
+    SemanticRetrievalBatch,
+    SemanticRetriever,
+)
 from app.platform.providers.contracts.embedding import BaseEmbeddingProvider, EmbeddingPurpose
 from app.platform.providers.contracts.reranker import (
     BaseRerankerProvider,
@@ -74,9 +77,13 @@ class HybridRetriever(BaseRetriever):
         multilingual_diagnostics: dict[str, object] = {}
 
         if isinstance(plan, MultilingualRetrievalPlan):
-            ranked_lists, original_batch, branch_counts, executed_branches, skipped_branches = (
-                await self._retrieve_planned_branches(context, plan)
-            )
+            (
+                ranked_lists,
+                original_batch,
+                branch_counts,
+                executed_branches,
+                skipped_branches,
+            ) = await self._retrieve_planned_branches(context, plan)
             original_query_vector = original_batch.query_vector if original_batch else None
             original_provider = original_batch.provider if original_batch else None
             original_model = original_batch.model if original_batch else None
@@ -212,7 +219,7 @@ class HybridRetriever(BaseRetriever):
         plan: MultilingualRetrievalPlan,
     ) -> tuple[
         list[RankedList],
-        object,
+        SemanticRetrievalBatch | None,
         dict[str, int],
         list[str],
         list[str],
@@ -221,7 +228,7 @@ class HybridRetriever(BaseRetriever):
         branch_counts: dict[str, int] = {}
         executed: list[str] = []
         skipped = list(plan.skipped_branches)
-        original_batch = None
+        original_batch: SemanticRetrievalBatch | None = None
         for branch in plan.branches:
             try:
                 hits, batch = await self._execute_branch(context, branch)
@@ -258,7 +265,7 @@ class HybridRetriever(BaseRetriever):
         self,
         context: RetrievalContext,
         branch: RetrievalBranch,
-    ) -> tuple[list[CandidateHit], object]:
+    ) -> tuple[list[CandidateHit], SemanticRetrievalBatch | None]:
         if branch.family in {BRANCH_ORIGINAL_DENSE, BRANCH_TRANSLATED_DENSE}:
             batch = await self._semantic.retrieve_batch(
                 context,
@@ -477,6 +484,5 @@ def _annotate_candidates(
     **metadata: object,
 ) -> list[CandidateHit]:
     return [
-        replace(candidate, metadata={**candidate.metadata, **metadata})
-        for candidate in candidates
+        replace(candidate, metadata={**candidate.metadata, **metadata}) for candidate in candidates
     ]

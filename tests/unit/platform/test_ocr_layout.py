@@ -94,9 +94,7 @@ def test_layout_recognizes_wrapped_table_after_centered_short_caption() -> None:
     elements = ocr_result_to_elements(result, page_number=3)
 
     assert any(element.element_type is ParsedElementType.TABLE for element in elements)
-    table = next(
-        element for element in elements if element.element_type is ParsedElementType.TABLE
-    )
+    table = next(element for element in elements if element.element_type is ParsedElementType.TABLE)
     assert table.metadata["table_caption"] == "Table"
     assert "Property" in table.text
 

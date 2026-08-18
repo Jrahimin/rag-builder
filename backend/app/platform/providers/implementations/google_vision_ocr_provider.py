@@ -333,9 +333,7 @@ def _layout_words(
             continue
         symbols = raw_word.get("symbols", [])
         text = "".join(
-            str(symbol.get("text", ""))
-            for symbol in symbols
-            if isinstance(symbol, dict)
+            str(symbol.get("text", "")) for symbol in symbols if isinstance(symbol, dict)
         )
         normalized = normalize_for_storage(text)
         if not normalized:

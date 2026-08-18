@@ -43,6 +43,11 @@ private full build --validate--> validated
   beside the active build. The Project action stops at `validated`; an operator
   explicitly activates it. Activation also marks included documents `ready`.
   `POST .../reindex` remains an equivalent compatibility alias.
+- Query search uses the active build's embedding identity. A new rebuild may
+  target a different provider from live settings; activate, then search uses
+  that identity. Rollback restores the retained build without mixing vector
+  spaces. Unlabeled or mixed active builds fail closed with a configuration
+  error instead of empty retrieval.
 - Delete is reversible. Its job builds and activates a corpus excluding the
   document, then sets `deleted_at`. The retained prior build and document
   artifacts make rollback possible.

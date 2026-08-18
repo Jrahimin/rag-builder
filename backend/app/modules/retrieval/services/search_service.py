@@ -20,7 +20,19 @@ from app.core.config import (
     RetrievalStrategy,
 )
 from app.core.exceptions import BadRequestError, ServiceUnavailableError
+from app.models.index_build import IndexBuild
+from app.modules.retrieval.embedding_identity import (
+    EmbeddingIdentity,
+    QueryEmbedderFactory,
+    identity_from_manifest,
+    identity_from_vector_rows,
+    incompatible_identity_error,
+    unlabeled_identity_error,
+)
 from app.modules.retrieval.multilingual.translation import resolve_multilingual_plan
+from app.modules.retrieval.repositories.chunk_embedding_repository import (
+    ChunkEmbeddingRepository,
+)
 from app.modules.retrieval.repositories.index_build_repository import IndexBuildRepository
 from app.modules.retrieval.retrievers.base_retriever import BaseRetriever
 from app.modules.retrieval.retrievers.hybrid_retriever import HybridRetriever
@@ -46,6 +58,7 @@ from app.platform.config.project_ai import SourcePolicyMode, cap_source_policy_m
 from app.platform.providers.contracts.embedding import BaseEmbeddingProvider
 from app.platform.providers.contracts.query_translation import BaseQueryTranslationProvider
 from app.platform.providers.contracts.reranker import BaseRerankerProvider
+from app.platform.providers.errors import ProviderError
 
 logger = structlog.get_logger(__name__)
 
@@ -70,10 +83,12 @@ class SearchService:
         query_translator: BaseQueryTranslationProvider | None = None,
         query_translation_config: QueryTranslationConfig | None = None,
         persist_translation_text: bool = False,
+        query_embedder_factory: QueryEmbedderFactory | None = None,
     ) -> None:
         self._session = session
         self._project_id = project_id
         self._embedder = embedder
+        self._query_embedder_factory = query_embedder_factory
         self._reranker = reranker
         self._config = retrieval_config
         self._ai_policy = ai_policy or AIConfigPolicy()
@@ -88,7 +103,9 @@ class SearchService:
         self._persist_translation_text = persist_translation_text
         self._hydrator = ResultHydrator(session, project_id)
         self._builds = IndexBuildRepository(session, project_id)
+        self._embeddings = ChunkEmbeddingRepository(session, project_id)
         self._duplicate_suppression = DuplicateSuppressionService(retrieval_config)
+        self.resolved_query_embedder: BaseEmbeddingProvider | None = None
 
     async def search(self, request: SearchRequest) -> SearchResponse:
         started = time.perf_counter()
@@ -138,6 +155,10 @@ class SearchService:
                     compatibility_diagnostics=diagnostics,
                     as_of=request.as_of,
                     embedding_identity_status="empty_corpus",
+                    embedding_provider=None,
+                    embedding_model=None,
+                    embedding_dimensions=None,
+                    embedding_set_version=None,
                     **self._source_diagnostics(
                         source_scope,
                         index_build_id=None,
@@ -146,37 +167,8 @@ class SearchService:
                 ),
             )
 
-        identity_status, build_provider, build_model = _embedding_identity(
-            active_build.manifest,
-            live_provider=self._embedder.provider_name,
-            live_model=self._embedder.model_name,
-        )
-        if identity_status == "mismatch":
-            elapsed_ms = int((time.perf_counter() - started) * 1000)
-            return SearchResponse(
-                results=[],
-                query=request.query,
-                top_k=top_k,
-                diagnostics=SearchDiagnostics(
-                    strategy=strategy,
-                    duration_ms=elapsed_ms,
-                    rerank_requested=False,
-                    rerank_status="embedding_identity_mismatch",
-                    reranker_provider=None,
-                    reranker_model=None,
-                    reranker_version=None,
-                    compatibility_diagnostics=diagnostics,
-                    as_of=request.as_of,
-                    embedding_identity_status="mismatch",
-                    embedding_provider=build_provider,
-                    embedding_model=build_model,
-                    **self._source_diagnostics(
-                        source_scope,
-                        index_build_id=active_build.id,
-                        status=source_policy_status,
-                    ),
-                ),
-            )
+        identity, query_embedder = await self._resolve_query_embedder(active_build)
+        self.resolved_query_embedder = query_embedder
 
         candidate_top_k = min(max(top_k * 2, top_k + 5), 100)
         if source_scope.effective_mode is SourcePolicyMode.ENFORCE:
@@ -231,7 +223,7 @@ class SearchService:
             persist_translation_text=self._persist_translation_text,
         )
 
-        retriever = self._build_retriever(strategy)
+        retriever = self._build_retriever(strategy, query_embedder)
         candidates = await retriever.retrieve(context)
         policy = apply_source_policy(candidates, mode=source_scope.effective_mode)
         candidates = add_retrieval_provenance(
@@ -349,14 +341,14 @@ class SearchService:
                         else None
                     )
                 ),
-                translation_provider=_optional_string(
-                    translation_meta.get("translation_provider")
-                ),
+                translation_provider=_optional_string(translation_meta.get("translation_provider")),
                 translation_model=_optional_string(translation_meta.get("translation_model")),
                 translation_prompt_version=_optional_string(
                     translation_meta.get("translation_prompt_version")
                 ),
-                translation_latency_ms=_optional_int(translation_meta.get("translation_latency_ms")),
+                translation_latency_ms=_optional_int(
+                    translation_meta.get("translation_latency_ms")
+                ),
                 translation_usage=_any_dict(translation_meta.get("translation_usage")),
                 translation_target_language=_optional_string(
                     translation_meta.get("translation_target_language")
@@ -376,17 +368,15 @@ class SearchService:
                     if multilingual_plan is not None
                     else []
                 ),
-                branch_candidate_counts=_int_dict(
-                    translation_meta.get("branch_candidate_counts")
-                ),
+                branch_candidate_counts=_int_dict(translation_meta.get("branch_candidate_counts")),
                 language_routing_status=_optional_string(
                     translation_meta.get("language_routing_status")
                 ),
-                embedding_identity_status=identity_status,
-                embedding_provider=_provider_name(build_provider)
-                or _provider_name(self._embedder.provider_name),
-                embedding_model=_provider_name(build_model)
-                or _provider_name(self._embedder.model_name),
+                embedding_identity_status="matched",
+                embedding_provider=identity.provider,
+                embedding_model=identity.model,
+                embedding_dimensions=identity.dimensions,
+                embedding_set_version=identity.embedding_set_version,
                 reranker_latency_ms=_optional_int(rerank_metadata.get("reranker_latency_ms")),
                 reranker_usage=_any_dict(rerank_metadata.get("reranker_usage")),
                 **self._source_diagnostics(
@@ -492,51 +482,60 @@ class SearchService:
             "config_provenance": dict(self._config_provenance),
         }
 
-    def _build_retriever(self, strategy: RetrievalStrategy) -> BaseRetriever:
+    async def _resolve_query_embedder(
+        self, active_build: IndexBuild
+    ) -> tuple[EmbeddingIdentity, BaseEmbeddingProvider]:
+        identity = identity_from_manifest(active_build)
+        if identity is None:
+            rows = await self._embeddings.list_distinct_identities(active_build.id)
+            identity = identity_from_vector_rows(active_build, rows)
+        if identity is None:
+            raise unlabeled_identity_error(index_build_id=getattr(active_build, "id", None))
+        if self._query_embedder_factory is not None:
+            try:
+                embedder = self._query_embedder_factory(identity)
+            except ProviderError as exc:
+                raise ServiceUnavailableError(
+                    "The active index build requires an embedding provider that is not "
+                    "available. Keep the previous provider credentials until rollback is "
+                    "no longer needed, or rebuild and activate a new index.",
+                    code="embedding_provider_unavailable",
+                    context={
+                        "provider": identity.provider,
+                        "model": identity.model,
+                        "dimensions": identity.dimensions,
+                        "embedding_set_version": identity.embedding_set_version,
+                        "provider_error": str(exc),
+                    },
+                ) from exc
+        else:
+            embedder = self._embedder
+        if not identity.matches(embedder):
+            raise incompatible_identity_error(identity)
+        return identity, embedder
+
+    def _build_retriever(
+        self,
+        strategy: RetrievalStrategy,
+        embedder: BaseEmbeddingProvider,
+    ) -> BaseRetriever:
         if strategy is RetrievalStrategy.HYBRID:
             return HybridRetriever(
                 self._session,
                 self._project_id,
-                self._embedder,
+                embedder,
                 self._reranker,
                 fts_regconfig=self._config.fts_regconfig,
             )
         return SemanticRetriever(
             self._session,
             self._project_id,
-            self._embedder,
+            embedder,
         )
 
 
 def _optional_string(value: object) -> str | None:
     return str(value) if value is not None else None
-
-
-def _provider_name(value: object) -> str | None:
-    if isinstance(value, str) and value.strip():
-        return value.strip()
-    return None
-
-
-def _embedding_identity(
-    manifest: object,
-    *,
-    live_provider: str,
-    live_model: str,
-) -> tuple[str, str | None, str | None]:
-    if not isinstance(manifest, dict):
-        return "legacy_unlabeled", None, None
-    provider = manifest.get("embedding_provider")
-    model = manifest.get("embedding_model")
-    if not isinstance(provider, str) or not provider.strip():
-        return "legacy_unlabeled", None, None
-    stored_provider = provider.strip()
-    stored_model = model.strip() if isinstance(model, str) else None
-    if stored_provider != live_provider or (
-        stored_model is not None and stored_model != live_model
-    ):
-        return "mismatch", stored_provider, stored_model
-    return "matched", stored_provider, stored_model
 
 
 def _optional_int(value: object) -> int | None:

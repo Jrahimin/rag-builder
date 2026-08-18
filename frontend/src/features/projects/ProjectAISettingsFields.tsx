@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components -- helpers shared by Create Project and AI Configuration */
 import type {
   EffectiveProjectAIConfig,
   ProjectAIConfig,

@@ -73,7 +73,7 @@ def create_reranker_provider(
             )
         return CohereRerankerProvider(
             api_key=api_key,
-            base_url=settings.reranker.cohere_base_url,
+            base_url=settings.resolved_cohere_base_url(),
             model=settings.reranker.cohere_model,
             provider_version=settings.reranker.provider_version,
             request_timeout_seconds=settings.reranker.request_timeout_seconds,

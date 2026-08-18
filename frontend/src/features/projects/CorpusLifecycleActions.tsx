@@ -80,8 +80,8 @@ function LifecycleGuide({ onClose }: { onClose: () => void }) {
             </li>
           </ul>
           <p>
-            Hybrid search fuses both. Counts like <code>7 / 7 / 7</code> mean that snapshot has 7
-            of each. <code>0 / 0 / 0</code> is an empty corpus at that moment (for example after
+            Hybrid search fuses both. Counts like <code>7 / 7 / 7</code> mean that snapshot has 7 of
+            each. <code>0 / 0 / 0</code> is an empty corpus at that moment (for example after
             purge), not a broken row.
           </p>
           <h3>States</h3>
@@ -100,9 +100,7 @@ function LifecycleGuide({ onClose }: { onClose: () => void }) {
             </div>
             <div>
               <dt>Retained</dt>
-              <dd>
-                Kept after a later activation. The previous pointer is the rollback target.
-              </dd>
+              <dd>Kept after a later activation. The previous pointer is the rollback target.</dd>
             </div>
             <div>
               <dt>Failed</dt>
@@ -121,8 +119,8 @@ function LifecycleGuide({ onClose }: { onClose: () => void }) {
               <dt>Rebuild index</dt>
               <dd>
                 Rebuild vectors and keywords from current chunks into a new private snapshot. Use
-                after embedding-model, tokenizer, or FTS changes. Success means a validated
-                snapshot — it is not live until Activate.
+                after embedding-model, tokenizer, or FTS changes. Success means a validated snapshot
+                — it is not live until Activate.
               </dd>
             </div>
             <div>
@@ -145,9 +143,9 @@ function LifecycleGuide({ onClose }: { onClose: () => void }) {
             <div>
               <dt>Operation</dt>
               <dd>
-                Why this snapshot exists: <code>ingest</code> (upload finished),{" "}
-                <code>delete</code> / <code>purge</code> (document removed from corpus),{" "}
-                <code>reembed</code> (operator rebuild of vectors and keywords).
+                Why this snapshot exists: <code>ingest</code> (upload finished), <code>delete</code>{" "}
+                / <code>purge</code> (document removed from corpus), <code>reembed</code> (operator
+                rebuild of vectors and keywords).
               </dd>
             </div>
             <div>
@@ -160,9 +158,17 @@ function LifecycleGuide({ onClose }: { onClose: () => void }) {
           </dl>
           <h3>Typical sequence</h3>
           <ol>
-            <li>Upload and process a document until Ready. Ingest usually creates and activates a build.</li>
-            <li>Rebuild index when you need a new snapshot. Confirm, wait for the job, then Activate.</li>
-            <li>Delete removes a document from the next active corpus but keeps artifacts for rollback.</li>
+            <li>
+              Upload and process a document until Ready. Ingest usually creates and activates a
+              build.
+            </li>
+            <li>
+              Rebuild index when you need a new snapshot. Confirm, wait for the job, then Activate.
+            </li>
+            <li>
+              Delete removes a document from the next active corpus but keeps artifacts for
+              rollback.
+            </li>
             <li>Purge does the same, then permanently deletes files, chunks, and embeddings.</li>
           </ol>
         </div>
@@ -441,7 +447,9 @@ export function CorpusLifecycleActions({
           <tbody>
             {builds.data.items.length === 0 && (
               <tr>
-                <td colSpan={8}>No index builds exist yet. Rebuild index to create an isolated build.</td>
+                <td colSpan={8}>
+                  No index builds exist yet. Rebuild index to create an isolated build.
+                </td>
               </tr>
             )}
             {builds.data.items.map((build) => {

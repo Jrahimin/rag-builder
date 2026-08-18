@@ -10,7 +10,7 @@ from fastapi import Depends, Path
 from app.composition.audit import DatabaseAuditRecorder
 from app.composition.retrieval import build_indexing_service
 from app.composition.source_metadata import KnowledgeRetrievalSourceMetadataAdapter
-from app.core.config import get_settings
+from app.core.config import Settings, get_settings
 from app.dependencies.common import DbSessionDep
 from app.dependencies.jobs import get_job_submitter
 from app.models.index_build import ProjectIndexPointer
@@ -18,6 +18,7 @@ from app.models.project import Project
 from app.modules.projects.repositories.project_ai_config_repository import (
     ProjectAIConfigRepository,
 )
+from app.modules.retrieval.embedding_identity import EmbeddingIdentity, QueryEmbedderFactory
 from app.modules.retrieval.services.index_lifecycle_service import IndexLifecycleService
 from app.modules.retrieval.services.indexing_service import IndexingService
 from app.modules.retrieval.services.search_service import SearchService
@@ -30,11 +31,28 @@ from app.platform.jobs.configuration import build_job_configuration
 from app.platform.jobs.contracts import DurableJobSubmitter
 from app.platform.providers.contracts.embedding import BaseEmbeddingProvider
 from app.platform.providers.errors import ProviderError
-from app.platform.providers.implementations.embedding_factory import get_embedding_provider
+from app.platform.providers.implementations.embedding_factory import (
+    create_embedding_provider_for_identity,
+    get_embedding_provider,
+)
 from app.platform.providers.implementations.query_translation_factory import (
     create_query_translation_provider,
 )
 from app.platform.providers.implementations.reranker_factory import create_reranker_provider
+
+
+def query_embedder_factory_for(settings: Settings) -> QueryEmbedderFactory:
+    """Build the query embedder from the active or retained index-build identity."""
+
+    def factory(identity: EmbeddingIdentity) -> BaseEmbeddingProvider:
+        return create_embedding_provider_for_identity(
+            settings,
+            provider=identity.provider,
+            model=identity.model,
+            dimensions=identity.dimensions,
+        )
+
+    return factory
 
 
 async def get_indexing_service(
@@ -112,6 +130,7 @@ async def get_search_service(
         config_provenance=resolution.provenance.model_dump(mode="json"),
         query_translator=translator,
         query_translation_config=effective.query_translation,
+        query_embedder_factory=query_embedder_factory_for(settings),
     )
 
 

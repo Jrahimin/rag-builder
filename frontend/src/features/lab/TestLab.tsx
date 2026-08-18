@@ -537,7 +537,11 @@ function JourneyTab({
         : document.status === "ready"
           ? "passed"
           : "in_progress";
-  const retrievalState = searchRun ? (searchRun.passed ? "passed" : "needs_attention") : "not_started";
+  const retrievalState = searchRun
+    ? searchRun.passed
+      ? "passed"
+      : "needs_attention"
+    : "not_started";
   const chatState = messageRun ? (messageRun.passed ? "passed" : "needs_attention") : "not_started";
   const resultsState =
     !searchRun && !messageRun
@@ -700,9 +704,7 @@ function DocumentsTab({
     document: Document;
   } | null>(null);
   const selected = pickLabDocument(documents, selectedId);
-  const selectedSource = selected
-    ? sourceForDocument(sourceState.data, selected.id)
-    : undefined;
+  const selectedSource = selected ? sourceForDocument(sourceState.data, selected.id) : undefined;
   const relatedJobs = jobs
     .filter((job) => job.document_id === selected?.id || job.id === selected?.job_id)
     .slice(0, 6);
@@ -898,9 +900,7 @@ function DocumentsTab({
               <select
                 aria-label="Source role"
                 value={sourceRole}
-                onChange={(event) =>
-                  setSourceRole(event.target.value as typeof sourceRole)
-                }
+                onChange={(event) => setSourceRole(event.target.value as typeof sourceRole)}
               >
                 <option value="primary">Primary (authoritative / latest)</option>
                 <option value="supporting">Supporting</option>
@@ -919,8 +919,8 @@ function DocumentsTab({
           </div>
           <p className="lab-help">
             Processing version increments on reprocess. To mark this file as the latest edition of
-            an existing source, choose “Latest revision of an existing source”. Full source
-            history lives on Projects → Sources.
+            an existing source, choose “Latest revision of an existing source”. Full source history
+            lives on Projects → Sources.
           </p>
         </details>
         <div className="lab-upload-submit">
@@ -939,7 +939,9 @@ function DocumentsTab({
           <button
             className="button button--primary"
             type="button"
-            disabled={!selectedFile || upload.isPending || (uploadMode !== "independent" && !uploadTarget)}
+            disabled={
+              !selectedFile || upload.isPending || (uploadMode !== "independent" && !uploadTarget)
+            }
             onClick={() => void uploadFile(selectedFile ?? undefined)}
           >
             {upload.isPending ? "Submitting…" : "Submit document"}
@@ -951,7 +953,8 @@ function DocumentsTab({
             <div>
               <strong>Request accepted</strong>
               <p>
-                Document <Filename name={upload.data.filename} /> was accepted. Processing is not complete until job{" "}
+                Document <Filename name={upload.data.filename} /> was accepted. Processing is not
+                complete until job{" "}
                 {upload.data.job_id ? (
                   <Link to={`/jobs?project=${projectId}&job=${upload.data.job_id}`}>
                     {shortId(upload.data.job_id)}
@@ -976,23 +979,23 @@ function DocumentsTab({
             {documents.map((document) => {
               const source = sourceForDocument(sourceState.data, document.id);
               return (
-              <li key={document.id} className={document.id === selected?.id ? "selected" : ""}>
-                <button type="button" onClick={() => onSelect(document.id)}>
-                  <FileText aria-hidden="true" />
-                  <span>
-                    <strong>
-                      <Filename name={document.filename} />
-                    </strong>
-                    <small>
-                      processing v{document.version} · {formatBytes(document.size_bytes)}
-                      {source
-                        ? ` · ${source.revision.source_role} r${source.revision.revision_number}`
-                        : ""}
-                    </small>
-                  </span>
-                  <StatusBadge status={document.status} />
-                </button>
-              </li>
+                <li key={document.id} className={document.id === selected?.id ? "selected" : ""}>
+                  <button type="button" onClick={() => onSelect(document.id)}>
+                    <FileText aria-hidden="true" />
+                    <span>
+                      <strong>
+                        <Filename name={document.filename} />
+                      </strong>
+                      <small>
+                        processing v{document.version} · {formatBytes(document.size_bytes)}
+                        {source
+                          ? ` · ${source.revision.source_role} r${source.revision.revision_number}`
+                          : ""}
+                      </small>
+                    </span>
+                    <StatusBadge status={document.status} />
+                  </button>
+                </li>
               );
             })}
           </ul>
@@ -1113,8 +1116,8 @@ function DocumentsTab({
                 />
               </div>
               <p className="lab-help">
-                Build search index writes vectors and keywords together. Reprocess starts from
-                parse and chunk when the source text needs to change.
+                Build search index writes vectors and keywords together. Reprocess starts from parse
+                and chunk when the source text needs to change.
               </p>
             </section>
             <section>
@@ -1372,7 +1375,10 @@ function SearchTab({
           <p>Query the active immutable build and inspect ranked chunks, scores, and timing.</p>
         </div>
       </div>
-      <form className="lab-test-form lab-test-form--search" onSubmit={(event) => void submit(event)}>
+      <form
+        className="lab-test-form lab-test-form--search"
+        onSubmit={(event) => void submit(event)}
+      >
         <label className="field-control field-control--grow">
           <span>Query</span>
           <textarea
@@ -1470,6 +1476,21 @@ function SearchResults({ run, projectId }: { run: SearchRun; projectId: string }
               <dt>Strategy</dt>
               <dd>{run.response.diagnostics.strategy}</dd>
             </div>
+            {(run.response.diagnostics.embedding_identity_status ||
+              run.response.diagnostics.embedding_provider) && (
+              <div>
+                <dt>Embedding</dt>
+                <dd>
+                  {run.response.diagnostics.embedding_identity_status}
+                  {run.response.diagnostics.embedding_provider
+                    ? ` · ${run.response.diagnostics.embedding_provider}`
+                    : ""}
+                  {run.response.diagnostics.embedding_model
+                    ? ` · ${run.response.diagnostics.embedding_model}`
+                    : ""}
+                </dd>
+              </div>
+            )}
             <div>
               <dt>Rerank</dt>
               <dd>
@@ -1536,10 +1557,7 @@ function SearchResults({ run, projectId }: { run: SearchRun; projectId: string }
               <div>
                 <dt>Index build</dt>
                 <dd>
-                  <CopyableId
-                    value={run.response.diagnostics.index_build_id}
-                    label="Index build"
-                  />
+                  <CopyableId value={run.response.diagnostics.index_build_id} label="Index build" />
                 </dd>
               </div>
             )}
@@ -1555,51 +1573,53 @@ function SearchResults({ run, projectId }: { run: SearchRun; projectId: string }
           {run.response.results.map((result, index) => {
             const trace = run.response.diagnostics?.selected_trace?.[index];
             return (
-            <li key={result.chunk_id}>
-              <div className="search-result-heading">
-                <span className="search-rank">#{index + 1}</span>
-                <div>
-                  <strong>
-                    <Filename name={result.filename} />
-                  </strong>
-                  <small>
-                    Page {result.page_number ?? "—"} · chunk {result.chunk_index} · score{" "}
-                    {result.score.toFixed(4)}
-                  </small>
+              <li key={result.chunk_id}>
+                <div className="search-result-heading">
+                  <span className="search-rank">#{index + 1}</span>
+                  <div>
+                    <strong>
+                      <Filename name={result.filename} />
+                    </strong>
+                    <small>
+                      Page {result.page_number ?? "—"} · chunk {result.chunk_index} · score{" "}
+                      {result.score.toFixed(4)}
+                    </small>
+                  </div>
+                  <Link
+                    to={`/lab?project=${projectId}&tab=documents&document=${result.document_id}`}
+                  >
+                    Document
+                  </Link>
                 </div>
-                <Link to={`/lab?project=${projectId}&tab=documents&document=${result.document_id}`}>
-                  Document
-                </Link>
-              </div>
-              <p>{result.content}</p>
-              <BranchProvenanceList trace={trace} />
-              <details className="lab-advanced">
-                <summary>
-                  Chunk {shortId(result.chunk_id)} · chars {result.char_start ?? "—"}–
-                  {result.char_end ?? "—"}
-                </summary>
-                <dl className="detail-list">
-                  <div>
-                    <dt>Chunk ID</dt>
-                    <dd>
-                      <CopyableId value={result.chunk_id} label="Chunk ID" />
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>Document ID</dt>
-                    <dd>
-                      <CopyableId value={result.document_id} label="Document ID" />
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>Source offsets</dt>
-                    <dd>
-                      {result.char_start ?? "—"}–{result.char_end ?? "—"}
-                    </dd>
-                  </div>
-                </dl>
-              </details>
-            </li>
+                <p>{result.content}</p>
+                <BranchProvenanceList trace={trace} />
+                <details className="lab-advanced">
+                  <summary>
+                    Chunk {shortId(result.chunk_id)} · chars {result.char_start ?? "—"}–
+                    {result.char_end ?? "—"}
+                  </summary>
+                  <dl className="detail-list">
+                    <div>
+                      <dt>Chunk ID</dt>
+                      <dd>
+                        <CopyableId value={result.chunk_id} label="Chunk ID" />
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Document ID</dt>
+                      <dd>
+                        <CopyableId value={result.document_id} label="Document ID" />
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Source offsets</dt>
+                      <dd>
+                        {result.char_start ?? "—"}–{result.char_end ?? "—"}
+                      </dd>
+                    </div>
+                  </dl>
+                </details>
+              </li>
             );
           })}
         </ol>
@@ -1828,18 +1848,13 @@ function MessagesTab({
                     </span>
                     <p>No messages yet. Ask one focused validation question.</p>
                     <div className="lab-prompt-chips">
-                      {[
-                        "What is this document about?",
-                        "Quote the key requirement or policy.",
-                      ].map((prompt) => (
-                        <button
-                          key={prompt}
-                          type="button"
-                          onClick={() => setContent(prompt)}
-                        >
-                          {prompt}
-                        </button>
-                      ))}
+                      {["What is this document about?", "Quote the key requirement or policy."].map(
+                        (prompt) => (
+                          <button key={prompt} type="button" onClick={() => setContent(prompt)}>
+                            {prompt}
+                          </button>
+                        ),
+                      )}
                     </div>
                   </div>
                 )}
@@ -2052,7 +2067,13 @@ function MessageInspector({
         </span>
         <span>
           <Sparkles size={13} aria-hidden="true" />
-          {refusal ? "Refusal" : message.grounded ? "Grounded" : citations.length ? "Cited" : "Ungrounded"}
+          {refusal
+            ? "Refusal"
+            : message.grounded
+              ? "Grounded"
+              : citations.length
+                ? "Cited"
+                : "Ungrounded"}
         </span>
         <span>
           <Quote size={13} aria-hidden="true" />
@@ -2071,7 +2092,11 @@ function MessageInspector({
           {citations.slice(0, 5).map((citation, index) => (
             <li
               key={`${citation.chunk_id}-${index}`}
-              className={focused?.chunk_id === citation.chunk_id && index === activeCitation ? "is-active" : undefined}
+              className={
+                focused?.chunk_id === citation.chunk_id && index === activeCitation
+                  ? "is-active"
+                  : undefined
+              }
             >
               <button type="button" onClick={() => onCite?.(index)}>
                 <strong>
@@ -2084,7 +2109,9 @@ function MessageInspector({
                 <span
                   className="cite-score"
                   aria-hidden="true"
-                  style={{ ["--score" as string]: `${Math.round(Math.min(1, Math.max(0, citation.score)) * 100)}%` }}
+                  style={{
+                    ["--score" as string]: `${Math.round(Math.min(1, Math.max(0, citation.score)) * 100)}%`,
+                  }}
                 >
                   <i />
                 </span>
@@ -2246,15 +2273,18 @@ function asRecord(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
+function displayText(value: unknown, fallback = "—"): string {
+  if (typeof value === "string" || typeof value === "number") {
+    return String(value);
+  }
+  return fallback;
+}
+
 function formatScore(value: unknown): string {
   return typeof value === "number" ? value.toFixed(4) : "—";
 }
 
-function BranchProvenanceList({
-  trace,
-}: {
-  trace?: { [key: string]: unknown };
-}) {
+function BranchProvenanceList({ trace }: { trace?: { [key: string]: unknown } }) {
   const provenance = asRecord(trace?.branch_provenance);
   if (!provenance || Object.keys(provenance).length === 0) {
     return null;
@@ -2292,11 +2322,7 @@ function BranchProvenanceList({
   );
 }
 
-function TranslationDiagnostics({
-  metadata,
-}: {
-  metadata?: { [key: string]: unknown };
-}) {
+function TranslationDiagnostics({ metadata }: { metadata?: { [key: string]: unknown } }) {
   const trace = asRecord(metadata?.retrieval_trace);
   const translation = asRecord(trace?.translation);
   if (!translation?.status) {
@@ -2312,9 +2338,13 @@ function TranslationDiagnostics({
         <div>
           <dt>Status</dt>
           <dd>
-            {String(translation.status)}
-            {typeof translation.source_language === "string" ? ` · ${translation.source_language}` : ""}
-            {typeof translation.target_language === "string" ? ` → ${translation.target_language}` : ""}
+            {displayText(translation.status)}
+            {typeof translation.source_language === "string"
+              ? ` · ${translation.source_language}`
+              : ""}
+            {typeof translation.target_language === "string"
+              ? ` → ${translation.target_language}`
+              : ""}
             {typeof translation.model === "string" ? ` · ${translation.model}` : ""}
             {typeof translation.provider === "string" ? ` · ${translation.provider}` : ""}
             {typeof translation.latency_ms === "number" ? ` · ${translation.latency_ms} ms` : ""}
@@ -2334,9 +2364,9 @@ function TranslationDiagnostics({
         )}
       </dl>
       {candidates.slice(0, 5).map((candidate, index) => (
-        <div key={String(candidate.chunk_id ?? index)}>
+        <div key={displayText(candidate.chunk_id, String(index))}>
           <small>
-            #{index + 1} chunk {String(candidate.chunk_index ?? "—")}
+            #{index + 1} chunk {displayText(candidate.chunk_index)}
           </small>
           <BranchProvenanceList trace={candidate} />
         </div>
@@ -2345,11 +2375,7 @@ function TranslationDiagnostics({
   );
 }
 
-function RerankDiagnostics({
-  metadata,
-}: {
-  metadata?: { [key: string]: unknown };
-}) {
+function RerankDiagnostics({ metadata }: { metadata?: { [key: string]: unknown } }) {
   const trace = asRecord(metadata?.retrieval_trace);
   const rerank = asRecord(trace?.rerank);
   if (!rerank?.status) {
@@ -2362,7 +2388,7 @@ function RerankDiagnostics({
         <div>
           <dt>Status</dt>
           <dd>
-            {String(rerank.status)}
+            {displayText(rerank.status)}
             {typeof rerank.provider === "string" ? ` · ${rerank.provider}` : ""}
             {typeof rerank.model === "string" ? ` · ${rerank.model}` : ""}
             {typeof rerank.latency_ms === "number" ? ` · ${rerank.latency_ms} ms` : ""}

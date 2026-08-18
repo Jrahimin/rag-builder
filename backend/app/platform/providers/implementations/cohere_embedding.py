@@ -20,6 +20,7 @@ from app.platform.providers.errors import (
     ProviderTimeoutError,
     ProviderUnavailableError,
 )
+from app.platform.providers.implementations.cohere_http import cohere_post
 
 _PURPOSE_TO_INPUT_TYPE = {
     EmbeddingPurpose.QUERY: "search_query",
@@ -77,23 +78,20 @@ class CohereEmbeddingProvider(BaseEmbeddingProvider):
                 dimensions=self._dimensions,
                 provider_version=self._provider_version,
             )
-        url = f"{self._base_url}/v2/embed"
         try:
-            async with httpx.AsyncClient(timeout=self._timeout) as client:
-                response = await client.post(
-                    url,
-                    headers={
-                        "Authorization": f"Bearer {self._api_key}",
-                        "Content-Type": "application/json",
-                    },
-                    json={
-                        "model": self._model,
-                        "texts": texts,
-                        "input_type": _PURPOSE_TO_INPUT_TYPE[purpose],
-                        "embedding_types": ["float"],
-                        "output_dimension": self._dimensions,
-                    },
-                )
+            response = await cohere_post(
+                base_url=self._base_url,
+                path="/v2/embed",
+                api_key=self._api_key,
+                payload={
+                    "model": self._model,
+                    "texts": texts,
+                    "input_type": _PURPOSE_TO_INPUT_TYPE[purpose],
+                    "embedding_types": ["float"],
+                    "output_dimension": self._dimensions,
+                },
+                request_timeout_seconds=self._timeout,
+            )
         except httpx.TimeoutException as exc:
             raise ProviderTimeoutError(
                 "Cohere embed timed out.",

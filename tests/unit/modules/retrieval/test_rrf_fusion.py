@@ -115,4 +115,3 @@ def test_rrf_records_per_branch_rank_score_and_contribution() -> None:
     assert contributions["translated_dense:bn"]["raw_score"] == 0.71
     assert contributions["translated_lexical:bn"]["rank"] == 1
     assert fused[0].score == pytest.approx(sum(item["rrf"] for item in contributions.values()))
-

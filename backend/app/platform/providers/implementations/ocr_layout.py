@@ -155,9 +155,7 @@ def _caption_led_table_indexes(rows: list[_LayoutRow]) -> set[int]:
     """Recognize wrapped tables after a short centered caption-like row."""
     selected: set[int] = set()
     for caption_index, caption in enumerate(rows[:-5]):
-        boxes = [
-            word.bounding_box for word in caption.words if word.bounding_box is not None
-        ]
+        boxes = [word.bounding_box for word in caption.words if word.bounding_box is not None]
         if not boxes or len(caption.words) > 3:
             continue
         x_min = min(box.x_min for box in boxes)
@@ -167,9 +165,7 @@ def _caption_led_table_indexes(rows: list[_LayoutRow]) -> set[int]:
             continue
         lookahead = rows[caption_index + 1 : caption_index + 9]
         multi_column_count = sum(len(row.columns) >= 2 for row in lookahead)
-        numeric_count = sum(
-            any(character.isdigit() for character in row.text) for row in lookahead
-        )
+        numeric_count = sum(any(character.isdigit() for character in row.text) for row in lookahead)
         if multi_column_count < 2 or numeric_count < 2:
             continue
 

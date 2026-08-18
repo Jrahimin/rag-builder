@@ -22,6 +22,7 @@ from app.platform.providers.errors import (
     ProviderTimeoutError,
     ProviderUnavailableError,
 )
+from app.platform.providers.implementations.cohere_http import cohere_post
 
 
 class CohereRerankerProvider(BaseRerankerProvider):
@@ -64,23 +65,20 @@ class CohereRerankerProvider(BaseRerankerProvider):
                 score_scale=RerankScoreScale.MODEL_RELEVANCE,
             )
         documents = [candidate.text for candidate in request.candidates]
-        url = f"{self._base_url}/v2/rerank"
         started = time.perf_counter()
         try:
-            async with httpx.AsyncClient(timeout=self._timeout) as client:
-                response = await client.post(
-                    url,
-                    headers={
-                        "Authorization": f"Bearer {self._api_key}",
-                        "Content-Type": "application/json",
-                    },
-                    json={
-                        "model": self._model,
-                        "query": request.query,
-                        "documents": documents,
-                        "top_n": min(request.top_n, len(documents)),
-                    },
-                )
+            response = await cohere_post(
+                base_url=self._base_url,
+                path="/v2/rerank",
+                api_key=self._api_key,
+                payload={
+                    "model": self._model,
+                    "query": request.query,
+                    "documents": documents,
+                    "top_n": min(request.top_n, len(documents)),
+                },
+                request_timeout_seconds=self._timeout,
+            )
         except httpx.TimeoutException as exc:
             raise ProviderTimeoutError(
                 "Cohere rerank timed out.",

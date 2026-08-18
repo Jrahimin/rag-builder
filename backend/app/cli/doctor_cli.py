@@ -93,8 +93,7 @@ def _configuration_results(settings: Settings) -> list[DoctorResult]:
             "reranker_provider",
             "PASS",
             (
-                f"{settings.retrieval.reranker_backend.value}; "
-                "pass-through RRF, no reordering"
+                f"{settings.retrieval.reranker_backend.value}; pass-through RRF, no reordering"
                 if settings.retrieval.reranker_backend is RerankerBackend.NOOP
                 else settings.retrieval.reranker_backend.value
             ),

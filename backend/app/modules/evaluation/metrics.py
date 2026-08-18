@@ -84,25 +84,19 @@ def compute_profile_metrics(results: list[dict[str, Any]]) -> dict[str, Any]:
         "translated_branch_recall": _mean(
             [float(result.get("translated_branch_contributed", False)) for result in answerable]
         ),
-        "translation_latency_p50_ms": _optional_latency_median(
-            results, "translation_latency_ms"
-        ),
+        "translation_latency_p50_ms": _optional_latency_median(results, "translation_latency_ms"),
         "translation_latency_p95_ms": _optional_latency_percentile(
             results, "translation_latency_ms"
         ),
         "reranker_latency_p50_ms": _optional_latency_median(results, "reranker_latency_ms"),
-        "reranker_latency_p95_ms": _optional_latency_percentile(
-            results, "reranker_latency_ms"
-        ),
+        "reranker_latency_p95_ms": _optional_latency_percentile(results, "reranker_latency_ms"),
     }
     language_groups = _group_language_pairs(answerable)
     metrics["language_pairs"] = {
-        pair: _pair_metrics(rows)
-        for pair, rows in language_groups.items()
+        pair: _pair_metrics(rows) for pair, rows in language_groups.items()
     }
     metrics["query_forms"] = {
-        form: _pair_metrics(rows)
-        for form, rows in _group_query_forms(answerable).items()
+        form: _pair_metrics(rows) for form, rows in _group_query_forms(answerable).items()
     }
     metrics["semantic_score_calibration"] = _semantic_score_calibration(results)
     metrics["passage_semantic_score_calibration"] = _passage_semantic_score_calibration(results)
@@ -226,9 +220,7 @@ def _score_calibration(
 ) -> dict[str, Any]:
     def summarize(rows: list[dict[str, Any]]) -> dict[str, float]:
         positives = [
-            float(row[positive_field])
-            for row in rows
-            if row.get(positive_field) is not None
+            float(row[positive_field]) for row in rows if row.get(positive_field) is not None
         ]
         hard_negatives = [
             float(row[hard_negative_field])

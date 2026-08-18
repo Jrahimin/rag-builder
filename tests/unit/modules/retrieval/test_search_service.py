@@ -11,10 +11,12 @@ from sqlalchemy.exc import SQLAlchemyError
 from app.core.config import (
     AIConfigPolicy,
     QueryTranslationConfig,
+    RerankMode,
     RetrievalConfig,
     RetrievalStrategy,
 )
-from app.core.exceptions import ServiceUnavailableError
+from app.core.exceptions import ConflictError, ServiceUnavailableError
+from app.modules.retrieval.embedding_identity import EmbeddingIdentity
 from app.modules.retrieval.multilingual.planner import (
     BRANCH_ORIGINAL_DENSE,
     BRANCH_ORIGINAL_LEXICAL,
@@ -29,33 +31,73 @@ from app.modules.retrieval.schemas.search import RetrievalResult, SearchRequest
 from app.modules.retrieval.services.search_service import SearchService
 from app.platform.config.project_ai import SourcePolicyMode
 from app.platform.domain.language_detection import detect_query_language_profile
+from app.platform.providers.errors import ProviderError
 
 pytestmark = pytest.mark.unit
 
 
-async def test_search_service_uses_request_strategy_override() -> None:
-    project_id = uuid.uuid4()
-    session = AsyncMock()
+def _embedder(
+    *,
+    provider: str = "hash",
+    model: str = "text-embedding-3-large",
+    dimensions: int = 1024,
+) -> MagicMock:
     embedder = MagicMock()
-    reranker = MagicMock()
-    config = RetrievalConfig(strategy=RetrievalStrategy.SEMANTIC)
+    embedder.provider_name = provider
+    embedder.model_name = model
+    embedder.dimensions = dimensions
+    return embedder
 
-    service = SearchService(
-        session=session,
-        project_id=project_id,
-        embedder=embedder,
-        reranker=reranker,
-        retrieval_config=config,
+
+def _labeled_build(
+    *,
+    embedding_set_version: int = 2,
+    provider: str = "hash",
+    model: str = "text-embedding-3-large",
+    dimensions: int = 1024,
+    manifest: dict | None = None,
+) -> MagicMock:
+    return MagicMock(
+        id=uuid.uuid4(),
+        embedding_set_version=embedding_set_version,
+        manifest=manifest
+        if manifest is not None
+        else {
+            "embedding_provider": provider,
+            "embedding_model": model,
+            "embedding_dimensions": dimensions,
+            "embedding_set_version": embedding_set_version,
+        },
     )
 
+
+def _search_service(
+    *,
+    embedder: MagicMock | None = None,
+    retrieval_config: RetrievalConfig | None = None,
+    query_embedder_factory=None,
+    **kwargs,
+) -> SearchService:
+    return SearchService(
+        session=AsyncMock(),
+        project_id=uuid.uuid4(),
+        embedder=embedder or _embedder(),
+        reranker=kwargs.pop("reranker", MagicMock()),
+        retrieval_config=retrieval_config or RetrievalConfig(),
+        query_embedder_factory=query_embedder_factory,
+        **kwargs,
+    )
+
+
+def _ready_search(service: SearchService, *, build: MagicMock | None = None) -> MagicMock:
+    active_build = build or _labeled_build()
+    service._builds = MagicMock()
+    service._builds.get_active = AsyncMock(return_value=active_build)
     retriever = MagicMock()
     retriever.retrieve = AsyncMock(
         return_value=[CandidateHit(uuid.uuid4(), 0.5, CandidateSource.SEMANTIC)]
     )
     service._build_retriever = MagicMock(return_value=retriever)  # type: ignore[method-assign]
-    active_build = MagicMock(id=uuid.uuid4(), embedding_set_version=1)
-    service._builds = MagicMock()
-    service._builds.get_active = AsyncMock(return_value=active_build)
     service._hydrator = MagicMock()
     service._hydrator.hydrate = AsyncMock(
         return_value=[
@@ -70,15 +112,23 @@ async def test_search_service_uses_request_strategy_override() -> None:
             )
         ]
     )
+    return retriever
+
+
+async def test_search_service_uses_request_strategy_override() -> None:
+    config = RetrievalConfig(strategy=RetrievalStrategy.SEMANTIC)
+    service = _search_service(retrieval_config=config)
+    _ready_search(service)
 
     response = await service.search(SearchRequest(query="test", strategy=RetrievalStrategy.HYBRID))
 
-    service._build_retriever.assert_called_once_with(RetrievalStrategy.HYBRID)
+    assert service._build_retriever.call_args.args[0] is RetrievalStrategy.HYBRID
     assert response.top_k == config.default_top_k
     assert response.diagnostics.best_semantic_score == 0.72
     assert response.diagnostics.candidate_trace == response.diagnostics.selected_trace
     assert response.diagnostics.selected_trace[0]["semantic_score"] == 0.72
     assert "content" not in response.diagnostics.selected_trace[0]
+    assert response.diagnostics.embedding_identity_status == "matched"
 
 
 async def test_source_policy_read_failure_fails_closed_only_in_enforce_mode() -> None:
@@ -87,7 +137,7 @@ async def test_source_policy_read_failure_fails_closed_only_in_enforce_mode() ->
     enforce = SearchService(
         session=AsyncMock(),
         project_id=uuid.uuid4(),
-        embedder=MagicMock(),
+        embedder=_embedder(),
         reranker=MagicMock(),
         retrieval_config=RetrievalConfig(),
         source_metadata=source_metadata,
@@ -102,7 +152,7 @@ async def test_source_policy_read_failure_fails_closed_only_in_enforce_mode() ->
     observe = SearchService(
         session=AsyncMock(),
         project_id=uuid.uuid4(),
-        embedder=MagicMock(),
+        embedder=_embedder(),
         reranker=MagicMock(),
         retrieval_config=RetrievalConfig(),
         ai_policy=AIConfigPolicy(source_policy_deployment_cap="observe"),
@@ -121,7 +171,7 @@ async def test_source_policy_off_skips_metadata_capture() -> None:
     service = SearchService(
         session=AsyncMock(),
         project_id=uuid.uuid4(),
-        embedder=MagicMock(),
+        embedder=_embedder(),
         reranker=MagicMock(),
         retrieval_config=RetrievalConfig(),
         source_metadata=source_metadata,
@@ -153,15 +203,13 @@ async def test_enforce_overfetches_before_revision_consolidation_to_fill_top_k()
     service = SearchService(
         session=AsyncMock(),
         project_id=project_id,
-        embedder=MagicMock(),
+        embedder=_embedder(),
         reranker=MagicMock(),
         retrieval_config=RetrievalConfig(),
         source_metadata=source_metadata,
         configured_source_policy_mode=SourcePolicyMode.ENFORCE,
     )
-    active_build = MagicMock(id=uuid.uuid4(), embedding_set_version=1)
-    service._builds = MagicMock()
-    service._builds.get_active = AsyncMock(return_value=active_build)
+    retriever = MagicMock()
     common_group = uuid.uuid4()
     candidates = [
         CandidateHit(
@@ -187,8 +235,9 @@ async def test_enforce_overfetches_before_revision_consolidation_to_fill_top_k()
         )
         for index in range(10)
     )
-    retriever = MagicMock()
     retriever.retrieve = AsyncMock(side_effect=lambda context: candidates[: context.top_k])
+    service._builds = MagicMock()
+    service._builds.get_active = AsyncMock(return_value=_labeled_build())
     service._build_retriever = MagicMock(return_value=retriever)  # type: ignore[method-assign]
     service._hydrator = MagicMock()
     service._hydrator.hydrate = AsyncMock(
@@ -269,7 +318,7 @@ async def test_search_diagnostics_expose_translation_query_and_branch_provenance
     service = SearchService(
         session=AsyncMock(),
         project_id=project_id,
-        embedder=MagicMock(),
+        embedder=_embedder(),
         reranker=MagicMock(),
         retrieval_config=RetrievalConfig(strategy=RetrievalStrategy.HYBRID),
         query_translation_config=QueryTranslationConfig(enabled=True),
@@ -281,9 +330,7 @@ async def test_search_diagnostics_expose_translation_query_and_branch_provenance
     )
     service._build_retriever = MagicMock(return_value=retriever)  # type: ignore[method-assign]
     service._builds = MagicMock()
-    service._builds.get_active = AsyncMock(
-        return_value=MagicMock(id=uuid.uuid4(), embedding_set_version=2, manifest={})
-    )
+    service._builds.get_active = AsyncMock(return_value=_labeled_build())
     service._hydrator = MagicMock()
     service._hydrator.hydrate = AsyncMock(
         return_value=[
@@ -350,38 +397,189 @@ async def test_search_diagnostics_expose_translation_query_and_branch_provenance
     assert f"{BRANCH_TRANSLATED_DENSE}:bn" in trace["branch_provenance"]
 
 
-async def test_search_returns_mismatch_diagnostic_when_live_embedder_differs() -> None:
-    embedder = MagicMock()
-    embedder.provider_name = "cohere"
-    embedder.model_name = "embed-v4.0"
-    service = SearchService(
-        session=AsyncMock(),
-        project_id=uuid.uuid4(),
-        embedder=embedder,
-        reranker=MagicMock(),
-        retrieval_config=RetrievalConfig(),
+async def test_search_uses_active_openai_identity_while_target_settings_are_cohere() -> None:
+    live = _embedder(provider="cohere", model="embed-v4.0")
+    openai = _embedder(provider="openai", model="text-embedding-3-large")
+    seen: list[EmbeddingIdentity] = []
+
+    def factory(identity: EmbeddingIdentity):
+        seen.append(identity)
+        return openai
+
+    service = _search_service(embedder=live, query_embedder_factory=factory)
+    build = _labeled_build(provider="openai", model="text-embedding-3-large")
+    retriever = _ready_search(service, build=build)
+
+    response = await service.search(SearchRequest(query="policy"))
+
+    assert seen[0].provider == "openai"
+    assert service._build_retriever.call_args.args[1] is openai
+    assert response.diagnostics.embedding_provider == "openai"
+    assert response.diagnostics.embedding_model == "text-embedding-3-large"
+    assert response.diagnostics.embedding_dimensions == 1024
+    assert response.diagnostics.embedding_set_version == 2
+    assert response.results
+    retriever.retrieve.assert_awaited()
+
+
+async def test_search_after_activation_uses_cohere_identity() -> None:
+    live = _embedder(provider="cohere", model="embed-v4.0")
+    cohere = _embedder(provider="cohere", model="embed-v4.0")
+
+    def factory(identity: EmbeddingIdentity):
+        assert identity.provider == "cohere"
+        return cohere
+
+    service = _search_service(embedder=live, query_embedder_factory=factory)
+    _ready_search(
+        service,
+        build=_labeled_build(
+            embedding_set_version=3,
+            provider="cohere",
+            model="embed-v4.0",
+        ),
     )
+
+    response = await service.search(SearchRequest(query="policy"))
+
+    assert response.diagnostics.embedding_provider == "cohere"
+    assert response.diagnostics.embedding_set_version == 3
+    assert service._build_retriever.call_args.args[1] is cohere
+
+
+async def test_search_rollback_uses_retained_openai_identity() -> None:
+    live = _embedder(provider="cohere", model="embed-v4.0")
+    openai = _embedder(provider="openai", model="text-embedding-3-large")
+
+    def factory(identity: EmbeddingIdentity):
+        return openai if identity.provider == "openai" else live
+
+    service = _search_service(embedder=live, query_embedder_factory=factory)
+    _ready_search(
+        service,
+        build=_labeled_build(provider="openai", model="text-embedding-3-large"),
+    )
+
+    response = await service.search(SearchRequest(query="policy"))
+
+    assert response.diagnostics.embedding_provider == "openai"
+    assert service._build_retriever.call_args.args[1] is openai
+
+
+async def test_search_recovers_unlabeled_retained_build_from_stored_vectors() -> None:
+    live = _embedder(provider="cohere", model="embed-v4.0")
+    openai = _embedder(provider="openai", model="text-embedding-3-large")
+
+    def factory(identity: EmbeddingIdentity):
+        assert identity.source == "vectors"
+        return openai
+
+    service = _search_service(embedder=live, query_embedder_factory=factory)
+    unlabeled = MagicMock(id=uuid.uuid4(), embedding_set_version=2, manifest={})
+    service._embeddings = MagicMock()
+    service._embeddings.list_distinct_identities = AsyncMock(
+        return_value=[(2, "openai", "text-embedding-3-large", 1024)]
+    )
+    _ready_search(service, build=unlabeled)
+
+    response = await service.search(SearchRequest(query="policy"))
+
+    assert response.diagnostics.embedding_provider == "openai"
+    assert response.diagnostics.embedding_identity_status == "matched"
+    assert service._build_retriever.call_args.args[1] is openai
+    service = _search_service()
     service._builds = MagicMock()
     service._builds.get_active = AsyncMock(
-        return_value=MagicMock(
-            id=uuid.uuid4(),
-            embedding_set_version=2,
-            manifest={
-                "embedding_provider": "openai",
-                "embedding_model": "text-embedding-3-large",
-            },
-        )
+        return_value=MagicMock(id=uuid.uuid4(), embedding_set_version=2, manifest={})
+    )
+    service._embeddings = MagicMock()
+    service._embeddings.list_distinct_identities = AsyncMock(return_value=[])
+    retriever = MagicMock()
+    retriever.retrieve = AsyncMock()
+    service._build_retriever = MagicMock(return_value=retriever)  # type: ignore[method-assign]
+
+    with pytest.raises(ConflictError) as caught:
+        await service.search(SearchRequest(query="policy"))
+
+    assert caught.value.code == "embedding_identity_unlabeled"
+    retriever.retrieve.assert_not_called()
+
+
+async def test_search_raises_when_injected_embedder_does_not_match_identity() -> None:
+    service = _search_service(embedder=_embedder(provider="cohere", model="embed-v4.0"))
+    service._builds = MagicMock()
+    service._builds.get_active = AsyncMock(
+        return_value=_labeled_build(provider="openai", model="text-embedding-3-large")
     )
     retriever = MagicMock()
     retriever.retrieve = AsyncMock()
     service._build_retriever = MagicMock(return_value=retriever)  # type: ignore[method-assign]
 
-    response = await service.search(SearchRequest(query="policy"))
+    with pytest.raises(ConflictError) as caught:
+        await service.search(SearchRequest(query="policy"))
 
-    assert response.results == []
-    assert response.diagnostics.rerank_status == "embedding_identity_mismatch"
-    assert response.diagnostics.embedding_identity_status == "mismatch"
-    assert response.diagnostics.embedding_provider == "openai"
-    assert response.diagnostics.embedding_model == "text-embedding-3-large"
+    assert caught.value.code == "embedding_identity_incompatible"
     retriever.retrieve.assert_not_called()
 
+
+async def test_search_raises_when_active_identity_credentials_are_missing() -> None:
+    def factory(identity: EmbeddingIdentity):
+        del identity
+        raise ProviderError("Cohere embedding backend requires APE_COHERE__API_KEY")
+
+    service = _search_service(
+        embedder=_embedder(provider="cohere", model="embed-v4.0"),
+        query_embedder_factory=factory,
+    )
+    service._builds = MagicMock()
+    service._builds.get_active = AsyncMock(
+        return_value=_labeled_build(embedding_set_version=3, provider="cohere", model="embed-v4.0")
+    )
+
+    with pytest.raises(ServiceUnavailableError) as caught:
+        await service.search(SearchRequest(query="policy"))
+
+    assert caught.value.code == "embedding_provider_unavailable"
+
+
+async def test_search_respects_project_rerank_mode_off() -> None:
+    service = _search_service(
+        retrieval_config=RetrievalConfig(
+            strategy=RetrievalStrategy.HYBRID, rerank_mode=RerankMode.OFF
+        )
+    )
+    retriever = _ready_search(service)
+
+    await service.search(SearchRequest(query="policy"))
+
+    context = retriever.retrieve.await_args.args[0]
+    assert context.rerank_mode is RerankMode.OFF
+    assert context.rerank_enabled is True
+
+
+async def test_search_keeps_results_when_rerank_falls_back_unavailable() -> None:
+    service = _search_service()
+    retriever = _ready_search(service)
+    chunk_id = uuid.uuid4()
+    retriever.retrieve = AsyncMock(
+        return_value=[CandidateHit(chunk_id, 0.04, CandidateSource.HYBRID)]
+    )
+    service._hydrator.hydrate = AsyncMock(
+        return_value=[
+            RetrievalResult(
+                chunk_id=chunk_id,
+                document_id=uuid.uuid4(),
+                chunk_index=0,
+                content="fallback",
+                score=0.04,
+                filename="doc.txt",
+                metadata={"rerank_status": "unavailable", "reranker_provider": "cohere"},
+            )
+        ]
+    )
+
+    response = await service.search(SearchRequest(query="policy"))
+
+    assert response.results
+    assert response.diagnostics.rerank_status == "unavailable"
+    assert response.diagnostics.embedding_identity_status == "matched"

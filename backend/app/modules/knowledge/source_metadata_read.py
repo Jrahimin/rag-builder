@@ -78,8 +78,7 @@ class KnowledgeSourceMetadataReader:
             .group_by(base.c.source_policy_exclusion_reason)
         )
         exclusion_counts = {
-            str(reason or "not_applicable"): int(count)
-            for reason, count in decision_rows.all()
+            str(reason or "not_applicable"): int(count) for reason, count in decision_rows.all()
         }
         selectable = (
             select(*base.c)
@@ -126,8 +125,7 @@ def _canonical_source_scope(
         .where(
             SourceActivationEvent.project_id == project_id,
             SourceActivationEvent.generation <= generation,
-            SourceMetadataRevision.lifecycle_status
-            != SourceLifecycleStatus.UNSPECIFIED,
+            SourceMetadataRevision.lifecycle_status != SourceLifecycleStatus.UNSPECIFIED,
         )
         .distinct()
         .cte("governed_source_documents")
@@ -178,8 +176,7 @@ def _canonical_source_scope(
         activation_candidates = activation_candidates.where(
             or_(
                 and_(
-                    SourceMetadataRevision.lifecycle_status
-                    == SourceLifecycleStatus.UNSPECIFIED,
+                    SourceMetadataRevision.lifecycle_status == SourceLifecycleStatus.UNSPECIFIED,
                     ~has_governed_revision,
                 ),
                 and_(
@@ -256,9 +253,7 @@ def _canonical_source_scope(
     # example, its first active revision starts in the future).  The outer join
     # below must not turn that absence into legacy/neutral applicability.
     document_has_governed_revision = exists(
-        select(literal(1)).where(
-            governed_documents.c.document_id == Document.id
-        )
+        select(literal(1)).where(governed_documents.c.document_id == Document.id)
     )
     neutral = or_(
         state.c.lifecycle_status == SourceLifecycleStatus.UNSPECIFIED,

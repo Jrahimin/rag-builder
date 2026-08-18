@@ -84,8 +84,7 @@ def describe_llm_capability(provider: str, model: str) -> ProviderModelCapabilit
 
     normalized = normalized_model.lower()
     temperature_supported = not (
-        backend is LLMBackend.OPENAI
-        and normalized.startswith(("o1", "o3", "o4", "gpt-5"))
+        backend is LLMBackend.OPENAI and normalized.startswith(("o1", "o3", "o4", "gpt-5"))
     )
     token_wire_names = {
         LLMBackend.OPENAI: "max_completion_tokens",

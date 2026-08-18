@@ -188,6 +188,7 @@ class IndexBuildWorkflow:
             "language_metadata_schema_version": LANGUAGE_METADATA_SCHEMA_VERSION,
             "chunk_language_counts": language_inventory["chunk_language_counts"],
             "document_language_counts": language_inventory["document_language_counts"],
+            "embedding_set_version": self._embedding_set_version,
             "embedding_provider": self._embedder.provider_name,
             "embedding_model": self._embedder.model_name,
             "embedding_dimensions": self._embedder.dimensions,
@@ -317,7 +318,7 @@ class IndexBuildWorkflow:
 
     async def _report(self, stage: str, progress: int) -> None:
         if self._on_progress is not None:
-            await self._on_progress(stage, progress                )
+            await self._on_progress(stage, progress)
 
 
 def _language_inventory(

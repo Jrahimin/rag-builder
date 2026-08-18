@@ -15,7 +15,10 @@ from app.core.config import (
 )
 from app.platform.providers.errors import ProviderError, ProviderUnavailableError
 from app.platform.providers.implementations.cohere_embedding import CohereEmbeddingProvider
-from app.platform.providers.implementations.embedding_factory import create_embedding_provider
+from app.platform.providers.implementations.embedding_factory import (
+    create_embedding_provider,
+    create_embedding_provider_for_identity,
+)
 from app.platform.providers.implementations.gemini_embedding import GeminiEmbeddingProvider
 from app.platform.providers.implementations.openai_embedding import OpenAIEmbeddingProvider
 from app.platform.providers.implementations.reranker_factory import (
@@ -106,3 +109,23 @@ async def test_reranker_factory_missing_key_raises_unavailable_on_rerank() -> No
     assert isinstance(provider, UnavailableRerankerProvider)
     with pytest.raises(ProviderUnavailableError):
         await provider.rerank(RerankRequest(query="q", candidates=[], top_n=1))
+
+
+@pytest.mark.unit
+def test_factory_builds_query_embedder_from_active_identity_not_live_backend() -> None:
+    settings = Settings(
+        embedding=EmbeddingConfig(
+            backend=EmbeddingBackend.COHERE,
+            model="embed-v4.0",
+            openai_api_key="sk-test",
+        ),
+        cohere=CohereConfig(api_key="cohere-key"),
+    )
+    provider = create_embedding_provider_for_identity(
+        settings,
+        provider="openai",
+        model="text-embedding-3-large",
+        dimensions=1024,
+    )
+    assert isinstance(provider, OpenAIEmbeddingProvider)
+    assert provider.model_name == "text-embedding-3-large"

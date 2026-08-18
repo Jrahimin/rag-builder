@@ -66,15 +66,11 @@ async def _index_documents(
 ) -> None:
     await run_captured_document_jobs(connection, jobs)
     for document_id in document_ids:
-        response = await client.post(
-            f"/api/v1/projects/{project_id}/documents/{document_id}/embed"
-        )
+        response = await client.post(f"/api/v1/projects/{project_id}/documents/{document_id}/embed")
         assert response.status_code == 202, response.text
     await run_captured_embed_jobs(connection, jobs)
     for document_id in document_ids:
-        response = await client.post(
-            f"/api/v1/projects/{project_id}/documents/{document_id}/index"
-        )
+        response = await client.post(f"/api/v1/projects/{project_id}/documents/{document_id}/index")
         assert response.status_code == 202, response.text
     await run_captured_index_jobs(connection, jobs)
 
@@ -300,14 +296,10 @@ async def test_current_historical_replacement_modifier_hybrid_and_legacy_behavio
         assert data["diagnostics"]["source_metadata_generation"] >= 1
         assert data["diagnostics"]["index_build_id"] is not None
         assert data["diagnostics"]["configuration_hash"] is not None
-        current_hit = next(
-            item for item in data["results"] if item["document_id"] == new_document
-        )
+        current_hit = next(item for item in data["results"] if item["document_id"] == new_document)
         assert current_hit["metadata"]["source_revision_id"] == new_revision["id"]
         assert current_hit["metadata"]["source_title"] == "Current policy"
-        assert current_hit["metadata"]["source_relationships"][0][
-            "relationship_type"
-        ] == "replaces"
+        assert current_hit["metadata"]["source_relationships"][0]["relationship_type"] == "replaces"
         timeline_hit = next(
             item for item in data["results"] if item["document_id"] == timeline_document
         )
@@ -345,18 +337,11 @@ async def test_current_historical_replacement_modifier_hybrid_and_legacy_behavio
     )
     assert historical_hit["metadata"]["source_revision_id"] == old_revision["id"]
     historical_timeline_hit = next(
-        item
-        for item in historical_data["results"]
-        if item["document_id"] == timeline_document
+        item for item in historical_data["results"] if item["document_id"] == timeline_document
     )
-    assert (
-        historical_timeline_hit["metadata"]["source_revision_id"]
-        == timeline_retired["id"]
-    )
+    assert historical_timeline_hit["metadata"]["source_revision_id"] == timeline_retired["id"]
     historical_overlap_hit = next(
-        item
-        for item in historical_data["results"]
-        if item["document_id"] == overlap_document
+        item for item in historical_data["results"] if item["document_id"] == overlap_document
     )
     assert historical_overlap_hit["metadata"]["source_revision_id"] == overlap_previous["id"]
     assert modifier_revision["source_group_id"] != new_revision["source_group_id"]
@@ -415,9 +400,7 @@ async def test_current_historical_replacement_modifier_hybrid_and_legacy_behavio
     assert queued.status_code == 202, queued.text
     run_id = queued.json()["data"]["id"]
     await run_captured_evaluation_jobs(integration_connection, captured_jobs)
-    completed = await db_client.get(
-        f"/api/v1/projects/{project_id}/evaluations/runs/{run_id}"
-    )
+    completed = await db_client.get(f"/api/v1/projects/{project_id}/evaluations/runs/{run_id}")
     assert completed.status_code == 200, completed.text
     run = completed.json()["data"]
     assert run["job_state"] == "succeeded", run
@@ -427,9 +410,7 @@ async def test_current_historical_replacement_modifier_hybrid_and_legacy_behavio
         == historical_data["diagnostics"]["source_metadata_generation"]
     )
     semantic_cases = {
-        item["case_key"]: item
-        for item in run["case_results"]
-        if item["profile"] == "semantic"
+        item["case_key"]: item for item in run["case_results"] if item["profile"] == "semantic"
     }
     assert old_document in semantic_cases["historical-retired"]["result_document_ids"]
     assert new_document in semantic_cases["current-replacement"]["result_document_ids"]
@@ -438,9 +419,7 @@ async def test_current_historical_replacement_modifier_hybrid_and_legacy_behavio
         concurrent_document
         in semantic_cases["concurrent-primary-missing-dates"]["result_document_ids"]
     )
-    assert overlap_document in semantic_cases["overlapping-effective-dates"][
-        "result_document_ids"
-    ]
+    assert overlap_document in semantic_cases["overlapping-effective-dates"]["result_document_ids"]
     current_metadata = next(
         item
         for item in semantic_cases["current-replacement"]["result_source_metadata"]
@@ -455,9 +434,7 @@ async def test_current_historical_replacement_modifier_hybrid_and_legacy_behavio
     assert historical_metadata["source_revision_id"] == old_revision["id"]
     overlap_metadata = next(
         item
-        for item in semantic_cases["overlapping-effective-dates"][
-            "result_source_metadata"
-        ]
+        for item in semantic_cases["overlapping-effective-dates"]["result_source_metadata"]
         if item.get("source_revision_id") == overlap_current["id"]
     )
     assert overlap_metadata["source_revision_id"] == overlap_current["id"]

@@ -337,4 +337,3 @@ def test_cross_language_rerank_skips_when_inventory_matches_query() -> None:
         _rerank_skip_reason(replace(_context(rerank_enabled=True), rerank_mode=RerankMode.OFF))
         == "disabled"
     )
-

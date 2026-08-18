@@ -424,9 +424,7 @@ test("requires the exact filename before enabling irreversible purge and shows A
   );
   const purge = await screen.findByRole("button", { name: "Purge" });
   expect(purge).toBeDisabled();
-  expect(
-    screen.getByText(/Type the exact filename to enable Purge/),
-  ).toBeInTheDocument();
+  expect(screen.getByText(/Type the exact filename to enable Purge/)).toBeInTheDocument();
   await userEvent.type(screen.getByLabelText("Purge confirmation"), "wrong.txt");
   expect(purge).toBeDisabled();
   await userEvent.clear(screen.getByLabelText("Purge confirmation"));
@@ -539,9 +537,7 @@ test("uploads a file as the latest revision of an existing source", async () => 
       create_new_group: false,
       source_group_id: "66666666-6666-6666-6666-666666666666",
       source_role: "primary",
-      relationships: [
-        { relationship_type: "replaces", target_revision_id: revisionId },
-      ],
+      relationships: [{ relationship_type: "replaces", target_revision_id: revisionId }],
     }),
   );
 });

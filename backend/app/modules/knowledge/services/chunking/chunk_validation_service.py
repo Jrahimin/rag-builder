@@ -62,9 +62,7 @@ class ChunkValidationService:
                 merged[0:2] = [self._merge_adjacent(chunk, merged[1])]
                 continue
             if index == len(merged) - 1:
-                merged[index - 1 : index + 1] = [
-                    self._merge_adjacent(merged[index - 1], chunk)
-                ]
+                merged[index - 1 : index + 1] = [self._merge_adjacent(merged[index - 1], chunk)]
                 index = max(index - 1, 0)
                 continue
 

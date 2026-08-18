@@ -40,6 +40,7 @@ from app.modules.evaluation.repositories.evaluation_dataset_repository import (
 from app.modules.evaluation.repositories.evaluation_run_repository import EvaluationRunRepository
 from app.modules.evaluation.services.evaluation_runner_service import EvaluationRunnerService
 from app.modules.evaluation.services.evaluation_service import EvaluationService
+from app.modules.retrieval.embedding_identity import EmbeddingIdentity
 from app.modules.retrieval.schemas.search import SearchRequest
 from app.modules.retrieval.services.search_service import SearchService
 from app.platform.config.project_ai import (
@@ -54,9 +55,13 @@ from app.platform.jobs.contracts import DurableJobSubmitter, JobQueue
 from app.platform.jobs.implementations.job_queue_factory import create_job_queue
 from app.platform.providers.contracts.embedding import BaseEmbeddingProvider
 from app.platform.providers.contracts.llm import BaseLLMProvider
+from app.platform.providers.contracts.query_translation import BaseQueryTranslationProvider
 from app.platform.providers.contracts.reranker import BaseRerankerProvider
 from app.platform.providers.errors import ProviderError
-from app.platform.providers.implementations.embedding_factory import create_embedding_provider
+from app.platform.providers.implementations.embedding_factory import (
+    create_embedding_provider,
+    create_embedding_provider_for_identity,
+)
 from app.platform.providers.implementations.embedding_reranker import EmbeddingRerankerProvider
 from app.platform.providers.implementations.lexical_reranker import LexicalRerankerProvider
 from app.platform.providers.implementations.llm_factory import create_llm_provider
@@ -164,10 +169,7 @@ class SearchEvaluationAdapter(EvaluationRetrievalPort):
                         RerankerBackend.EMBEDDING_MAX,
                         RerankerBackend.COHERE,
                     }
-                    and (
-                        embedder.provider_name != "hash"
-                        or backend is RerankerBackend.COHERE
-                    )
+                    and (embedder.provider_name != "hash" or backend is RerankerBackend.COHERE)
                 ),
             }
 
@@ -273,6 +275,15 @@ class SearchEvaluationAdapter(EvaluationRetrievalPort):
             query_translator=query_translator,  # type: ignore[arg-type]
             query_translation_config=query_translation_config,
             persist_translation_text=persist_translation_text,
+            query_embedder_factory=self._query_embedder_factory,
+        )
+
+    def _query_embedder_factory(self, identity: EmbeddingIdentity) -> BaseEmbeddingProvider:
+        return create_embedding_provider_for_identity(
+            self._settings,
+            provider=identity.provider,
+            model=identity.model,
+            dimensions=identity.dimensions,
         )
 
 
@@ -313,9 +324,7 @@ class GroundedEvaluationAnswerAdapter(EvaluationAnswerPort):
         chunks = [_context_chunk(hit) for hit in hits]
         selected = self._context.select(chunks)
         selected_ids = {chunk.chunk_id for chunk in selected}
-        grounding = (
-            self._passage_grounding if profile == "passage" else self._whole_chunk_grounding
-        )
+        grounding = self._passage_grounding if profile == "passage" else self._whole_chunk_grounding
         decision = grounding.assess(
             question,
             [chunk for chunk in chunks if chunk.chunk_id in selected_ids],
@@ -503,7 +512,7 @@ def _candidate_provider(
     return NoopRerankerProvider()
 
 
-def _optional_translator(settings: Settings):
+def _optional_translator(settings: Settings) -> BaseQueryTranslationProvider | None:
     try:
         return create_query_translation_provider(settings)
     except ProviderError:

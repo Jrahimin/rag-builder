@@ -25,10 +25,7 @@ from app.platform.providers.implementations.echo_chat import EchoLLMProvider
 pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
 
 _FIXTURE = Path("tests/fixtures/evaluation/ocr_gazette_grounding_v1.json")
-_TABLE_BODY = (
-    "সঞ্চয়পত্র হইতে অর্জিত মুনাফা সম্পত্তির অধিগ্রহণ হস্তান্তর "
-    "রপ্তানির বিপরীতে প্রাপ্ত নগদ ভর্তুকি মোটরযান"
-)
+_TABLE_BODY = "সঞ্চয়পত্র হইতে অর্জিত মুনাফা সম্পত্তির অধিগ্রহণ হস্তান্তর রপ্তানির বিপরীতে প্রাপ্ত নগদ ভর্তুকি মোটরযান"
 _WRONG_SECTION = "ধারা ১৬৩ অনিবন্ধিত রপ্তানিকারকের জন্য ফৌজদারি দণ্ড নির্ধারণ করে।"
 _WRONG_TABLE = "মূল্য সংযোজন কর VAT অধ্যায় পণ্যের শ্রেণিবিন্যাস তালিকা।"
 _UNRELATED = "The lunar payroll calendar is published in April."
@@ -140,9 +137,7 @@ def _chat_config(*, mode: EvidenceGateMode, threshold: float):
 
 
 def _adapter(mode: EvidenceGateMode, threshold: float) -> GroundedEvaluationAnswerAdapter:
-    settings = Settings().model_copy(
-        update={"chat": _chat_config(mode=mode, threshold=threshold)}
-    )
+    settings = Settings().model_copy(update={"chat": _chat_config(mode=mode, threshold=threshold)})
     return GroundedEvaluationAnswerAdapter(
         settings=settings,
         llm=EchoLLMProvider(model="echo-test", provider_version="1"),
@@ -213,9 +208,7 @@ async def test_gazette_gate_comparison_isolates_false_refusals_from_selection() 
     assert all(row["evidence_score"] == pytest.approx(0.32) for row in enforce_035)
     assert all(row["winning_semantic_score"] == pytest.approx(0.32) for row in enforce_035)
     assert all(row["winning_rank_score"] == pytest.approx(0.018) for row in enforce_035)
-    assert all(
-        row["evidence_score"] != row["winning_rank_score"] for row in enforce_035
-    )
+    assert all(row["evidence_score"] != row["winning_rank_score"] for row in enforce_035)
 
     assert all(row["generation_ran"] is True for row in enforce_030)
     assert all(row["evidence_gate_sufficient"] is True for row in enforce_030)

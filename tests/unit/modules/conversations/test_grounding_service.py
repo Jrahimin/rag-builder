@@ -343,9 +343,7 @@ async def test_markdown_scaffolding_is_not_treated_as_unsupported_claims() -> No
         [chunk],
     )
 
-    assert [claim["text"] for claim in result.claims] == [
-        "Refunds are available for thirty days."
-    ]
+    assert [claim["text"] for claim in result.claims] == ["Refunds are available for thirty days."]
     assert result.grounded is True
     assert result.citation_coverage == 1.0
 
@@ -359,8 +357,7 @@ async def test_list_preamble_is_not_a_claim() -> None:
     )
 
     result = await service.map_claims(
-        "The source tax deduction/collection areas are: [1]\n\n"
-        f"{claim} [1]",
+        f"The source tax deduction/collection areas are: [1]\n\n{claim} [1]",
         [_chunk(content=table)],
     )
 
@@ -575,9 +572,7 @@ def test_observe_mode_still_blocks_when_nothing_was_retrieved() -> None:
     )
     assert decision.sufficient is False
     assert decision.reason is InsufficientEvidenceReason.NO_RETRIEVAL_RESULTS
-    assert GroundingService(ChatConfig(evidence_gate_mode="observe")).blocks_generation(
-        decision
-    )
+    assert GroundingService(ChatConfig(evidence_gate_mode="observe")).blocks_generation(decision)
 
 
 def test_rrf_rank_score_is_never_the_evidence_score() -> None:

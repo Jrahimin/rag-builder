@@ -488,68 +488,71 @@ function ProjectDetails({
                     onChange={(event) => setReason(event.target.value)}
                   />
                 </label>
-              <div className="button-row">
-                <button
-                  className="button button--secondary"
-                  type="button"
-                  disabled={!reason || !target}
-                  onClick={() => {
-                    void (async () => {
-                      setError("");
-                      try {
-                        setPreflight(
-                          await operatorApiClient.getProjectOwnershipPreflight(project.id, target),
-                        );
-                      } catch (caught) {
-                        setError((caught as Error).message);
-                      }
-                    })();
-                  }}
-                >
-                  Dry-run preflight
-                </button>
-                <button
-                  className="button button--primary"
-                  type="button"
-                  disabled={!reason || !preflight}
-                  onClick={() =>
-                    void run("reassign", () =>
-                      target === project.organization_id
-                        ? operatorApiClient.confirmProjectOwnership(
-                            project.id,
-                            project.organization_id,
-                            reason,
-                          )
-                        : operatorApiClient.reassignProjectOwnership(
-                            project.id,
-                            project.organization_id,
-                            target,
-                            reason,
-                          ),
-                    )
-                  }
-                >
-                  {target === project.organization_id
-                    ? "Confirm current owner"
-                    : "Reassign and lock"}
-                </button>
-              </div>
-              {preflight && (
-                <div className="preflight-box">
-                  <strong>
-                    {preflight.can_reassign
-                      ? "Ready to lock ownership"
-                      : "Ownership already locked"}
-                  </strong>
-                  {Object.entries(preflight.resource_counts).map(([label, count]) => (
-                    <span key={label}>
-                      {label}: {count}
-                    </span>
-                  ))}
+                <div className="button-row">
+                  <button
+                    className="button button--secondary"
+                    type="button"
+                    disabled={!reason || !target}
+                    onClick={() => {
+                      void (async () => {
+                        setError("");
+                        try {
+                          setPreflight(
+                            await operatorApiClient.getProjectOwnershipPreflight(
+                              project.id,
+                              target,
+                            ),
+                          );
+                        } catch (caught) {
+                          setError((caught as Error).message);
+                        }
+                      })();
+                    }}
+                  >
+                    Dry-run preflight
+                  </button>
+                  <button
+                    className="button button--primary"
+                    type="button"
+                    disabled={!reason || !preflight}
+                    onClick={() =>
+                      void run("reassign", () =>
+                        target === project.organization_id
+                          ? operatorApiClient.confirmProjectOwnership(
+                              project.id,
+                              project.organization_id,
+                              reason,
+                            )
+                          : operatorApiClient.reassignProjectOwnership(
+                              project.id,
+                              project.organization_id,
+                              target,
+                              reason,
+                            ),
+                      )
+                    }
+                  >
+                    {target === project.organization_id
+                      ? "Confirm current owner"
+                      : "Reassign and lock"}
+                  </button>
                 </div>
-              )}
-            </div>
-          )}
+                {preflight && (
+                  <div className="preflight-box">
+                    <strong>
+                      {preflight.can_reassign
+                        ? "Ready to lock ownership"
+                        : "Ownership already locked"}
+                    </strong>
+                    {Object.entries(preflight.resource_counts).map(([label, count]) => (
+                      <span key={label}>
+                        {label}: {count}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </section>
       </div>
