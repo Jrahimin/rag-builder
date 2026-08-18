@@ -6,10 +6,16 @@ import uuid
 
 import pytest
 
-from app.core.config import ChatConfig, EvidenceScoreMode
+from app.core.config import ChatConfig, EvidenceScoreMode, QueryTranslationConfig
 from app.modules.conversations.grounding_service import GroundingService
 from app.modules.conversations.ports import ContextChunk
 from app.modules.conversations.schemas.message import InsufficientEvidenceReason
+from app.platform.providers.contracts.embedding import BaseEmbeddingProvider, EmbeddingBatchResult
+from app.platform.providers.contracts.query_translation import (
+    BaseQueryTranslationProvider,
+    QueryTranslationRequest,
+    QueryTranslationResponse,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -42,6 +48,85 @@ def _chunk(
         char_start=120,
         char_end=240,
     )
+
+
+class _ClusterEmbeddingProvider(BaseEmbeddingProvider):
+    """Map clustered texts to nearby vectors so cosine is high only inside a cluster."""
+
+    def __init__(self, clusters: dict[str, str]) -> None:
+        self._clusters = clusters
+
+    @property
+    def provider_name(self) -> str:
+        return "test"
+
+    @property
+    def model_name(self) -> str:
+        return "cluster"
+
+    @property
+    def dimensions(self) -> int:
+        return 4
+
+    @property
+    def provider_version(self) -> str:
+        return "1"
+
+    async def embed_texts(self, texts: list[str]) -> EmbeddingBatchResult:
+        return EmbeddingBatchResult(
+            vectors=[self._vector(text) for text in texts],
+            provider=self.provider_name,
+            model=self.model_name,
+            dimensions=self.dimensions,
+            provider_version=self.provider_version,
+        )
+
+    def _vector(self, text: str) -> list[float]:
+        cluster = self._clusters.get(text, f"unique:{text}")
+        known = {
+            "table": [1.0, 0.0, 0.0, 0.0],
+            "vacation": [0.0, 1.0, 0.0, 0.0],
+            "refund": [0.0, 0.0, 1.0, 0.0],
+        }
+        return known.get(cluster, [0.0, 0.0, 0.0, 1.0])
+
+
+def _cluster_embedder(clusters: dict[str, str]) -> _ClusterEmbeddingProvider:
+    return _ClusterEmbeddingProvider(clusters)
+
+
+class _FixedTranslator(BaseQueryTranslationProvider):
+    def __init__(self, mapping: dict[str, str]) -> None:
+        self._mapping = mapping
+
+    @property
+    def provider_name(self) -> str:
+        return "test"
+
+    @property
+    def model_name(self) -> str:
+        return "fixed"
+
+    @property
+    def provider_version(self) -> str:
+        return "1"
+
+    @property
+    def prompt_version(self) -> str:
+        return "retrieval-translation-v1"
+
+    async def translate(self, request: QueryTranslationRequest) -> QueryTranslationResponse:
+        return QueryTranslationResponse(
+            translated_query=self._mapping.get(request.query, request.query),
+            provider=self.provider_name,
+            model=self.model_name,
+            provider_version=self.provider_version,
+            prompt_version=self.prompt_version,
+        )
+
+
+def _fixed_translator(mapping: dict[str, str]) -> _FixedTranslator:
+    return _FixedTranslator(mapping)
 
 
 def test_no_results_is_an_explicit_insufficient_evidence_outcome() -> None:
@@ -253,10 +338,10 @@ def test_missing_semantic_score_never_uses_ranking_score_as_evidence() -> None:
     assert decision.reason is InsufficientEvidenceReason.BELOW_RELEVANCE_THRESHOLD
 
 
-def test_claims_link_to_cited_page_and_offsets() -> None:
+async def test_claims_link_to_cited_page_and_offsets() -> None:
     service = GroundingService(ChatConfig(minimum_claim_token_coverage=0.3))
     chunk = _chunk(content="Customer refunds are available for thirty days.")
-    result = service.map_claims("Refunds are available for thirty days. [1]", [chunk])
+    result = await service.map_claims("Refunds are available for thirty days. [1]", [chunk])
     assert result.grounded is True
     assert result.claims[0]["verification"] == "supported"
     assert result.citation_coverage == 1.0
@@ -267,22 +352,22 @@ def test_claims_link_to_cited_page_and_offsets() -> None:
     assert evidence["char_end"] == 240
 
 
-def test_supported_claim_without_numbered_citation_has_zero_citation_coverage() -> None:
+async def test_uncited_factual_claim_is_unsupported() -> None:
     service = GroundingService(ChatConfig(minimum_claim_token_coverage=0.3))
     chunk = _chunk(content="Customer refunds are available for thirty days.")
 
-    result = service.map_claims("Refunds are available for thirty days.", [chunk])
+    result = await service.map_claims("Refunds are available for thirty days.", [chunk])
 
-    assert result.grounded is True
-    assert result.claims[0]["evidence"]
+    assert result.grounded is False
+    assert result.claims[0]["verification"] == "unsupported"
     assert result.citation_coverage == 0.0
 
 
-def test_markdown_scaffolding_is_not_treated_as_unsupported_claims() -> None:
+async def test_markdown_scaffolding_is_not_treated_as_unsupported_claims() -> None:
     service = GroundingService(ChatConfig(minimum_claim_token_coverage=0.3))
     chunk = _chunk(content="Refunds are available for thirty days.")
 
-    result = service.map_claims(
+    result = await service.map_claims(
         "### Refund policy\n\n1. Refunds are available for thirty days. [1]\n\n|---|---:|",
         [chunk],
     )
@@ -294,14 +379,48 @@ def test_markdown_scaffolding_is_not_treated_as_unsupported_claims() -> None:
     assert result.citation_coverage == 1.0
 
 
-def test_trailing_citations_stay_with_each_sentence() -> None:
+async def test_list_preamble_is_not_a_claim() -> None:
+    table = "সঞ্চয়পত্র হইতে অর্জিত মুনাফা সম্পত্তির অধিগ্রহণ রপ্তানির বিপরীতে মোটরযান"
+    claim = "Source tax categories include savings certificates and property acquisition."
+    service = GroundingService(
+        ChatConfig(minimum_claim_token_coverage=0.3),
+        embedder=_cluster_embedder({claim: "table", table: "table"}),
+    )
+
+    result = await service.map_claims(
+        "The source tax deduction/collection areas are: [1]\n\n"
+        f"{claim} [1]",
+        [_chunk(content=table)],
+    )
+
+    assert [item["text"] for item in result.claims] == [claim]
+    assert result.claims[0]["verification"] == "supported"
+    assert result.grounded is True
+
+
+async def test_insufficiency_statement_is_not_an_unsupported_claim() -> None:
+    service = GroundingService(ChatConfig(minimum_claim_token_coverage=0.3))
+    chunk = _chunk(content="সঞ্চয়পত্র হইতে অর্জিত মুনাফা সম্পত্তির অধিগ্রহণ")
+
+    result = await service.map_claims(
+        "There is not enough indexed evidence to confirm a 15% company recipient rate. "
+        "সঞ্চয়পত্র হইতে অর্জিত মুনাফা সম্পত্তির অধিগ্রহণ আছে। [1]",
+        [chunk],
+    )
+
+    assert [item["verification"] for item in result.claims] == ["supported"]
+    assert "not enough indexed evidence" not in result.claims[0]["text"].casefold()
+    assert result.grounded is True
+
+
+async def test_trailing_citations_stay_with_each_sentence() -> None:
     service = GroundingService(ChatConfig(minimum_claim_token_coverage=0.3))
     chunks = [
         _chunk(content="Refunds are available for thirty days."),
         _chunk(content="Credentials rotate every ninety days."),
     ]
 
-    result = service.map_claims(
+    result = await service.map_claims(
         "Refunds are available for thirty days. [1] Credentials rotate every ninety days. [2]",
         chunks,
     )
@@ -311,22 +430,98 @@ def test_trailing_citations_stay_with_each_sentence() -> None:
     assert result.citation_coverage == 1.0
 
 
-def test_valid_cross_vocabulary_citation_is_explicitly_unverified() -> None:
+async def test_valid_citation_without_semantic_support_is_unverified() -> None:
     service = GroundingService(ChatConfig(minimum_claim_token_coverage=0.3))
     chunk = _chunk(content="রিফান্ড ত্রিশ দিনের মধ্যে পাওয়া যায়।")
 
-    result = service.map_claims("Refunds are available for thirty days. [1]", [chunk])
+    result = await service.map_claims("Refunds are available for thirty days. [1]", [chunk])
 
-    assert result.grounded is True
+    assert result.grounded is False
     assert result.claims[0]["verification"] == "unverified"
+    assert result.claims[0]["grounded"] is False
     assert result.unverified_claim_rate == 1.0
     assert result.citation_coverage == 1.0
 
 
-def test_zero_overlap_without_a_valid_citation_is_unsupported() -> None:
+async def test_bn_claim_to_bn_evidence_is_supported() -> None:
+    service = GroundingService(ChatConfig(minimum_claim_token_coverage=0.3))
+    chunk = _chunk(content="সঞ্চয়পত্র হইতে অর্জিত মুনাফা সম্পত্তির অধিগ্রহণ রপ্তানির বিপরীতে মোটরযান")
+
+    result = await service.map_claims(
+        "উৎসে কর খাতের মধ্যে সঞ্চয়পত্র, সম্পত্তির অধিগ্রহণ, রপ্তানি ও মোটরযান আছে। [1]",
+        [chunk],
+    )
+
+    assert result.claims[0]["verification"] == "supported"
+    assert result.grounded is True
+
+
+async def test_en_claim_to_matching_bn_evidence_is_supported() -> None:
+    table = "সঞ্চয়পত্র হইতে অর্জিত মুনাফা সম্পত্তির অধিগ্রহণ রপ্তানির বিপরীতে মোটরযান"
+    claim = (
+        "Source tax categories include savings certificates, property acquisition, "
+        "exports, and vehicles."
+    )
+    service = GroundingService(
+        ChatConfig(minimum_claim_token_coverage=0.3),
+        embedder=_cluster_embedder({claim: "table", table: "table"}),
+    )
+
+    result = await service.map_claims(f"{claim} [1]", [_chunk(content=table)])
+
+    assert result.claims[0]["verification"] == "supported"
+    assert result.grounded is True
+
+
+async def test_en_unrelated_claim_to_bn_evidence_is_unsupported() -> None:
+    table = "সঞ্চয়পত্র হইতে অর্জিত মুনাফা সম্পত্তির অধিগ্রহণ রপ্তানির বিপরীতে মোটরযান"
+    claim = "Employees receive twenty days of paid vacation each year."
+    service = GroundingService(
+        ChatConfig(minimum_claim_token_coverage=0.3),
+        embedder=_cluster_embedder({claim: "vacation", table: "table"}),
+    )
+
+    result = await service.map_claims(f"{claim} [1]", [_chunk(content=table)])
+
+    assert result.claims[0]["verification"] == "unsupported"
+    assert result.grounded is False
+
+
+async def test_translated_en_claim_to_matching_bn_evidence_is_supported() -> None:
+    table = "সঞ্চয়পত্র হইতে অর্জিত মুনাফা সম্পত্তির অধিগ্রহণ রপ্তানির বিপরীতে মোটরযান"
+    claim = "Profit earned from savings certificates."
+    service = GroundingService(
+        ChatConfig(minimum_claim_token_coverage=0.3),
+        translator=_fixed_translator({claim: "সঞ্চয়পত্র হইতে অর্জিত মুনাফা"}),
+        translation_config=QueryTranslationConfig(enabled=True),
+    )
+
+    result = await service.map_claims(f"{claim} [1]", [_chunk(content=table)])
+
+    assert result.claims[0]["verification"] == "supported"
+    assert result.grounded is True
+
+
+async def test_translated_mismatch_is_unsupported_even_if_embedding_matches() -> None:
+    vat = "মূল্য সংযোজন কর আমদানি সরবরাহ সেবা"
+    claim = "Profit earned from savings certificates."
+    service = GroundingService(
+        ChatConfig(minimum_claim_token_coverage=0.3),
+        embedder=_cluster_embedder({claim: "vat", vat: "vat"}),
+        translator=_fixed_translator({claim: "সঞ্চয়পত্র হইতে অর্জিত মুনাফা কর"}),
+        translation_config=QueryTranslationConfig(enabled=True),
+    )
+
+    result = await service.map_claims(f"{claim} [1]", [_chunk(content=vat)])
+
+    assert result.claims[0]["verification"] == "unsupported"
+    assert result.grounded is False
+
+
+async def test_zero_overlap_without_a_valid_citation_is_unsupported() -> None:
     service = GroundingService(ChatConfig(minimum_claim_token_coverage=0.3))
 
-    result = service.map_claims(
+    result = await service.map_claims(
         "Refunds are available for thirty days.",
         [_chunk(content="রিফান্ড ত্রিশ দিনের মধ্যে পাওয়া যায়।")],
     )
@@ -336,10 +531,10 @@ def test_zero_overlap_without_a_valid_citation_is_unsupported() -> None:
     assert result.unverified_claim_rate == 0.0
 
 
-def test_partial_but_insufficient_overlap_is_unsupported() -> None:
+async def test_partial_but_insufficient_overlap_is_unsupported() -> None:
     service = GroundingService(ChatConfig(minimum_claim_token_coverage=0.75))
 
-    result = service.map_claims(
+    result = await service.map_claims(
         "Refunds require manager approval and identity verification. [1]",
         [_chunk(content="Refunds are available for thirty days.")],
     )

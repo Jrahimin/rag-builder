@@ -284,6 +284,7 @@ class GroundedEvaluationAnswerAdapter(EvaluationAnswerPort):
         *,
         settings: Settings,
         llm: BaseLLMProvider,
+        embedder: BaseEmbeddingProvider | None = None,
         domain_instructions: str = "",
         prompt_profile: str = "default",
     ) -> None:
@@ -291,11 +292,19 @@ class GroundedEvaluationAnswerAdapter(EvaluationAnswerPort):
         self._llm = llm
         self._context = ContextBuilder(settings.chat)
         self._prompt = PromptBuilder()
+        translator = _optional_translator(settings)
+        translation_config = settings.query_translation
         self._whole_chunk_grounding = GroundingService(
-            settings.chat.model_copy(update={"evidence_score_mode": EvidenceScoreMode.WHOLE_CHUNK})
+            settings.chat.model_copy(update={"evidence_score_mode": EvidenceScoreMode.WHOLE_CHUNK}),
+            embedder=embedder,
+            translator=translator,
+            translation_config=translation_config,
         )
         self._passage_grounding = GroundingService(
-            settings.chat.model_copy(update={"evidence_score_mode": EvidenceScoreMode.PASSAGE_MAX})
+            settings.chat.model_copy(update={"evidence_score_mode": EvidenceScoreMode.PASSAGE_MAX}),
+            embedder=embedder,
+            translator=translator,
+            translation_config=translation_config,
         )
         self._domain_instructions = domain_instructions
         self._prompt_profile = prompt_profile
@@ -357,7 +366,7 @@ class GroundedEvaluationAnswerAdapter(EvaluationAnswerPort):
             max_tokens=self._settings.llm.max_tokens,
         )
         provider_latency_ms = int((time.perf_counter() - provider_started) * 1000)
-        result = grounding.map_claims(completion.content, selected)
+        result = await grounding.map_claims(completion.content, selected)
         return QualityAnswer(
             answer=completion.content,
             insufficient_evidence_reason=None,
@@ -445,6 +454,7 @@ def build_evaluation_runner(
     answerer = GroundedEvaluationAnswerAdapter(
         settings=settings,
         llm=llm or create_llm_provider(settings),
+        embedder=effective_embedder,
         domain_instructions=domain_instructions,
         prompt_profile=prompt_profile,
     )

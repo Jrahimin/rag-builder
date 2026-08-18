@@ -12,7 +12,7 @@ from typing import Any
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import ChatConfig, LLMConfig, RetrievalConfig
+from app.core.config import ChatConfig, LLMConfig, QueryTranslationConfig, RetrievalConfig
 from app.core.exceptions import NotFoundError, ServiceUnavailableError
 from app.models.conversation import Conversation
 from app.models.message import Message, MessageRole
@@ -31,7 +31,9 @@ from app.modules.conversations.schemas.message import (
 )
 from app.platform.domain.lifecycle_service import get_or_raise, require_not_deleted
 from app.platform.domain.transactions import commit_refresh
+from app.platform.providers.contracts.embedding import BaseEmbeddingProvider
 from app.platform.providers.contracts.llm import BaseLLMProvider, ChatMessage, ChatUsage
+from app.platform.providers.contracts.query_translation import BaseQueryTranslationProvider
 from app.platform.providers.errors import ProviderError
 
 logger = structlog.get_logger(__name__)
@@ -75,6 +77,9 @@ class ChatService:
         llm_config: LLMConfig,
         *,
         resolve_llm: LLMProviderResolver,
+        embedder: BaseEmbeddingProvider | None = None,
+        query_translator: BaseQueryTranslationProvider | None = None,
+        query_translation_config: QueryTranslationConfig | None = None,
         config_snapshot_id: uuid.UUID | None = None,
         config_provenance: dict[str, Any] | None = None,
         domain_instructions: str = "",
@@ -95,7 +100,12 @@ class ChatService:
         self._prompt_profile = prompt_profile
         self._context_builder = ContextBuilder(chat_config)
         self._prompt_builder = PromptBuilder()
-        self._grounding = GroundingService(chat_config)
+        self._grounding = GroundingService(
+            chat_config,
+            embedder=embedder,
+            translator=query_translator,
+            translation_config=query_translation_config,
+        )
 
     async def send_message(
         self,
@@ -390,7 +400,7 @@ class ChatService:
         generation_ran: bool = False,
     ) -> Message:
         reason_value = str(insufficient_reason) if insufficient_reason is not None else None
-        grounding = self._grounding.map_claims(content, prepared.selected)
+        grounding = await self._grounding.map_claims(content, prepared.selected)
         if reason_value is not None:
             grounding = type(grounding)(claims=[], grounded=False, citation_coverage=1.0)
         metadata = self._build_metadata(

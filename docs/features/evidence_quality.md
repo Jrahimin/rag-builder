@@ -106,13 +106,14 @@ to measure false refusals when relevant chunks already sit in the selected conte
 
 For generated answers, prompt `v4` requests a concise answer in the question's language, forbids
 unsupported background or uncited data rows, and requires numbered citations even when evidence is
-in another language. The service splits answer segments, ignores Markdown-only scaffolding,
-validates cited or best-matching evidence, and persists:
+in another language. The service splits answer segments, ignores Markdown scaffolding, colon-terminated list
+preambles, and prompted “not enough indexed evidence” refusals, then verifies remaining
+claims against cited evidence and persists:
 
 - `content` — the compatible answer field;
 - `citations` — existing durable source snapshots;
 - `claims` — claim text, compatibility grounded flag, three-state verification, and source location;
-- `grounded` — whether no claim is `unsupported`;
+- `grounded` — whether every claim is `supported` (`unverified` is not fully grounded);
 - `best_semantic_evidence_score` — calibrated cosine of the best selected chunk;
 - `best_evidence_score`, `evidence_score_method`, winning chunk, and span — the actual gate input;
 - `insufficient_evidence_reason` — null for generated answers, stable reason for refusals.
@@ -120,10 +121,17 @@ validates cited or best-matching evidence, and persists:
 Historical messages may still carry `evidence_best_score`, which mixed ranking and cosine
 scales; new messages no longer write that key.
 
-Claim verification is `supported` when lexical evidence clears the configured threshold,
-`unverified` when a structurally valid citation exists but there is no shared vocabulary for the
-lexical validator to assess, and `unsupported` otherwise. `unverified` is not semantic entailment;
-its rate is reported explicitly and cross-language false accepts remain a hard regression gate.
+Claim verification is `supported` when same-language lexical evidence clears the configured
+threshold, or when a cited cross-language claim can be checked after translating the claim
+into the evidence language with the existing query translator and then applying the same
+lexical threshold. If translation is unavailable, the active embedding provider is used:
+`supported` when cosine clears `minimum_claim_semantic_score`, `unsupported` below
+`claim_semantic_reject_floor`, and `unverified` in between or when no score is available.
+It is `unsupported` when the claim is uncited, same-language lexical evidence falls short,
+or translated/lexical (or fallback cosine) evidence does not support it. A valid citation
+alone is not `supported`. Hash embeddings are not used for cross-language claim
+verification. The compatibility `grounded` flag is true only when every claim is
+`supported`. `unverified` is reported separately and does not count as fully grounded.
 
 The SSE `done` event carries the same citations, claims, grounded flag, and refusal reason.
 
@@ -152,6 +160,8 @@ original cosine remains the fallback.
 - `APE_CHAT__LEXICAL_CORROBORATION_FLOOR_SCORE`
 - `APE_CHAT__LEXICAL_CORROBORATION_COVERAGE`
 - `APE_CHAT__MINIMUM_CLAIM_TOKEN_COVERAGE`
+- `APE_CHAT__MINIMUM_CLAIM_SEMANTIC_SCORE`
+- `APE_CHAT__CLAIM_SEMANTIC_REJECT_FLOOR`
 - `APE_EVALUATION__DEFAULT_TOP_K`
 - `APE_EVALUATION__MINIMUM_*` quality thresholds
 - `APE_EVALUATION__MAXIMUM_FALSE_REFUSAL_RATE`

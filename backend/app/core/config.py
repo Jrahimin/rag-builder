@@ -614,6 +614,8 @@ class ChatConfig(BaseModel):
     minimum_evidence_score: float | None = Field(default=None, deprecated=True)
     minimum_query_token_coverage: float | None = Field(default=None, deprecated=True)
     minimum_claim_token_coverage: float = Field(default=0.35, ge=0.0, le=1.0)
+    minimum_claim_semantic_score: float = Field(default=0.25, ge=0.0, le=1.0)
+    claim_semantic_reject_floor: float = Field(default=0.15, ge=0.0, le=1.0)
     insufficient_evidence_message: str = (
         "I don't have enough evidence in the indexed sources to answer that question."
     )
@@ -637,6 +639,9 @@ class ChatConfig(BaseModel):
             msg = (
                 "lexical_corroboration_floor_score must not exceed minimum_semantic_evidence_score"
             )
+            raise ValueError(msg)
+        if self.claim_semantic_reject_floor > self.minimum_claim_semantic_score:
+            msg = "claim_semantic_reject_floor must not exceed minimum_claim_semantic_score"
             raise ValueError(msg)
         return self
 

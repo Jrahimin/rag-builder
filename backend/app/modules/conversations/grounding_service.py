@@ -8,7 +8,7 @@ from typing import Any
 
 import regex
 
-from app.core.config import ChatConfig, EvidenceGateMode, EvidenceScoreMode
+from app.core.config import ChatConfig, EvidenceGateMode, EvidenceScoreMode, QueryTranslationConfig
 from app.modules.conversations.ports import ContextChunk
 from app.modules.conversations.schemas.message import (
     AnswerClaim,
@@ -16,7 +16,15 @@ from app.modules.conversations.schemas.message import (
     ClaimVerification,
     InsufficientEvidenceReason,
 )
+from app.platform.domain.language_detection import detect_language
 from app.platform.domain.text_tokenization import tokenize
+from app.platform.providers.contracts.embedding import BaseEmbeddingProvider
+from app.platform.providers.contracts.query_translation import (
+    BaseQueryTranslationProvider,
+    QueryTranslationRequest,
+)
+from app.platform.providers.embedding_similarity import cosine_similarity
+from app.platform.providers.errors import ProviderError
 
 _SEGMENT_PATTERN = regex.compile(
     r"(?<=[.!?।॥。\uff01\uff1f…])\s+|\n+",
@@ -27,6 +35,9 @@ _LEADING_CITATIONS_PATTERN = regex.compile(r"^((?:\[\d+\]\s*)+)(.*)$", regex.DOT
 _MARKDOWN_HEADING_PATTERN = regex.compile(r"^#{1,6}\s+\S.*$")
 _MARKDOWN_ORDINAL_PATTERN = regex.compile(r"^(?:[-*+]\s*)?\p{Number}+[.)]?$")
 _MARKDOWN_TABLE_DIVIDER_PATTERN = regex.compile(r"^\|?[\s:|-]+\|?$")
+_LIST_PREAMBLE_PATTERN = regex.compile(r"^[^.\n!?।॥。\uff01\uff1f…]+[:：—–]\s*$")
+_POLARITY_PATTERN = regex.compile(r"^(?:yes|no|না|হ্যাঁ)[.\u0964]?\s*$", regex.IGNORECASE)
+_INSUFFICIENCY_MARKER = "not enough indexed evidence"
 _ENGLISH_STOPWORDS = {
     "a",
     "an",
@@ -86,11 +97,28 @@ class GroundingResult:
     unverified_claim_rate: float = 0.0
 
 
+@dataclass(frozen=True, slots=True)
+class _ClaimDraft:
+    index: int
+    text: str
+    evidence_chunks: list[tuple[int, ContextChunk]]
+    has_valid_citation: bool
+
+
 class GroundingService:
     """Apply measured thresholds without asking the generator to self-grade."""
 
-    def __init__(self, config: ChatConfig) -> None:
+    def __init__(
+        self,
+        config: ChatConfig,
+        embedder: BaseEmbeddingProvider | None = None,
+        translator: BaseQueryTranslationProvider | None = None,
+        translation_config: QueryTranslationConfig | None = None,
+    ) -> None:
         self._config = config
+        self._embedder = embedder
+        self._translator = translator
+        self._translation_config = translation_config
 
     def assess(self, question: str, chunks: list[ContextChunk]) -> EvidenceDecision:
         if not chunks:
@@ -287,54 +315,77 @@ class GroundingService:
         )
         return score, coverage, chunk, start, end
 
-    def map_claims(self, answer: str, chunks: list[ContextChunk]) -> GroundingResult:
-        claims: list[AnswerClaim] = []
-        supported = 0
-        unverified = 0
-        cited = 0
+    async def map_claims(self, answer: str, chunks: list[ContextChunk]) -> GroundingResult:
+        drafts: list[_ClaimDraft] = []
+        semantic_pairs: list[tuple[str, str]] = []
         for index, raw_segment in enumerate(_answer_segments(answer), start=1):
             segment = raw_segment.strip()
             if not segment:
                 continue
             citation_indexes = [int(value) for value in _CITATION_PATTERN.findall(segment)]
             claim_text = _CITATION_PATTERN.sub("", segment).strip()
-            if not claim_text or _is_structural_segment(claim_text):
+            if (
+                not claim_text
+                or _is_structural_segment(claim_text)
+                or _is_insufficiency_statement(claim_text)
+            ):
                 continue
             evidence_chunks = [
                 (citation_index, chunks[citation_index - 1])
                 for citation_index in dict.fromkeys(citation_indexes)
                 if 1 <= citation_index <= len(chunks)
             ]
-            has_valid_citation = bool(evidence_chunks)
-            if not evidence_chunks:
-                best = _best_evidence(claim_text, chunks)
-                if best is not None:
-                    evidence_chunks = [best]
-            claim_tokens = _significant_tokens(claim_text)
-            evidence_tokens: set[str] = set()
-            for _, chunk in evidence_chunks:
-                evidence_tokens.update(_significant_tokens(chunk.content))
-            shared_tokens = claim_tokens & evidence_tokens
-            coverage = _coverage(claim_tokens, evidence_tokens)
-            if evidence_chunks and coverage >= self._config.minimum_claim_token_coverage:
-                verification = ClaimVerification.SUPPORTED
-            elif has_valid_citation and not shared_tokens:
-                verification = ClaimVerification.UNVERIFIED
-            else:
+            drafts.append(
+                _ClaimDraft(
+                    index=index,
+                    text=claim_text,
+                    evidence_chunks=evidence_chunks,
+                    has_valid_citation=bool(evidence_chunks),
+                )
+            )
+            if evidence_chunks and not _uses_lexical_verification(
+                claim_text,
+                [chunk.content for _, chunk in evidence_chunks],
+            ):
+                semantic_pairs.extend((claim_text, chunk.content) for _, chunk in evidence_chunks)
+        similarities = await self._claim_similarities(semantic_pairs)
+        translations = await self._claim_translations(drafts)
+
+        claims: list[AnswerClaim] = []
+        supported = 0
+        unverified = 0
+        cited = 0
+        for draft in drafts:
+            evidence_texts = [chunk.content for _, chunk in draft.evidence_chunks]
+            if not draft.has_valid_citation:
                 verification = ClaimVerification.UNSUPPORTED
-            grounded = verification is not ClaimVerification.UNSUPPORTED
-            supported += int(grounded)
+            elif _uses_lexical_verification(draft.text, evidence_texts):
+                verification = self._lexical_verification(draft.text, evidence_texts)
+            else:
+                translated = translations.get(draft.text)
+                if translated:
+                    verification = self._lexical_verification(translated, evidence_texts)
+                else:
+                    scores = [
+                        similarities.get((draft.text, chunk.content))
+                        for _, chunk in draft.evidence_chunks
+                    ]
+                    numeric = [value for value in scores if value is not None]
+                    score = max(numeric) if numeric else None
+                    verification = self._cross_language_verification(score)
+            claim_grounded = verification is ClaimVerification.SUPPORTED
+            supported += int(claim_grounded)
             unverified += int(verification is ClaimVerification.UNVERIFIED)
-            cited += int(has_valid_citation)
+            cited += int(draft.has_valid_citation)
             claims.append(
                 AnswerClaim(
-                    claim_id=f"claim-{index}",
-                    text=claim_text,
-                    grounded=grounded,
+                    claim_id=f"claim-{draft.index}",
+                    text=draft.text,
+                    grounded=claim_grounded,
                     verification=verification,
                     evidence=[
                         _evidence_snapshot(citation_index, chunk, self._config)
-                        for citation_index, chunk in evidence_chunks
+                        for citation_index, chunk in draft.evidence_chunks
                     ],
                 )
             )
@@ -346,17 +397,97 @@ class GroundingService:
             unverified_claim_rate=(unverified / total) if total else 0.0,
         )
 
+    def _lexical_verification(self, text: str, evidence_texts: list[str]) -> ClaimVerification:
+        claim_tokens = _significant_tokens(text)
+        evidence_tokens: set[str] = set()
+        for evidence in evidence_texts:
+            evidence_tokens.update(_significant_tokens(evidence))
+        shared_tokens = claim_tokens & evidence_tokens
+        coverage = _coverage(claim_tokens, evidence_tokens)
+        if coverage >= self._config.minimum_claim_token_coverage:
+            return ClaimVerification.SUPPORTED
+        if not shared_tokens:
+            return ClaimVerification.UNVERIFIED
+        return ClaimVerification.UNSUPPORTED
 
-def _best_evidence(text: str, chunks: list[ContextChunk]) -> tuple[int, ContextChunk] | None:
-    claim_tokens = _significant_tokens(text)
-    ranked = [
-        (_coverage(claim_tokens, _significant_tokens(chunk.content)), index, chunk)
-        for index, chunk in enumerate(chunks, start=1)
-    ]
-    if not ranked:
-        return None
-    score, index, chunk = max(ranked, key=lambda item: (item[0], item[2].score, -item[1]))
-    return (index, chunk) if score > 0.0 else None
+    def _cross_language_verification(self, score: float | None) -> ClaimVerification:
+        if score is None:
+            return ClaimVerification.UNVERIFIED
+        if score >= self._config.minimum_claim_semantic_score:
+            return ClaimVerification.SUPPORTED
+        if score < self._config.claim_semantic_reject_floor:
+            return ClaimVerification.UNSUPPORTED
+        return ClaimVerification.UNVERIFIED
+
+    async def _claim_similarities(
+        self,
+        pairs: list[tuple[str, str]],
+    ) -> dict[tuple[str, str], float | None]:
+        unique_pairs = list(dict.fromkeys(pairs))
+        missing = dict.fromkeys(unique_pairs)
+        if not unique_pairs or not _usable_embedder(self._embedder):
+            return missing
+        embedder = self._embedder
+        if embedder is None:
+            return missing
+        texts = list(dict.fromkeys(text for pair in unique_pairs for text in pair))
+        try:
+            embedded = await embedder.embed_texts(texts)
+        except ProviderError:
+            return missing
+        by_text = dict(zip(texts, embedded.vectors, strict=True))
+        return {
+            pair: cosine_similarity(by_text[pair[0]], by_text[pair[1]]) for pair in unique_pairs
+        }
+
+    async def _claim_translations(self, drafts: list[_ClaimDraft]) -> dict[str, str]:
+        if not self._translator_enabled():
+            return {}
+        unique: dict[str, list[str]] = {}
+        for draft in drafts:
+            if not draft.has_valid_citation:
+                continue
+            evidence_texts = [chunk.content for _, chunk in draft.evidence_chunks]
+            if _uses_lexical_verification(draft.text, evidence_texts):
+                continue
+            unique.setdefault(draft.text, evidence_texts)
+        translated: dict[str, str] = {}
+        for claim_text, evidence_texts in unique.items():
+            result = await self._translate_claim(claim_text, evidence_texts)
+            if result:
+                translated[claim_text] = result
+        return translated
+
+    def _translator_enabled(self) -> bool:
+        if self._translator is None:
+            return False
+        if self._translation_config is None:
+            return True
+        return self._translation_config.enabled
+
+    async def _translate_claim(self, claim: str, evidence_texts: list[str]) -> str | None:
+        translator = self._translator
+        if translator is None:
+            return None
+        target = _evidence_target_language(evidence_texts)
+        if target is None:
+            return None
+        source = detect_language(claim)
+        config = self._translation_config or QueryTranslationConfig(enabled=True)
+        try:
+            response = await translator.translate(
+                QueryTranslationRequest(
+                    query=claim,
+                    source_profile=source.primary_language or "en",
+                    target_language=target,
+                    prompt_version=config.prompt_version,
+                    max_output_tokens=config.max_output_tokens,
+                )
+            )
+        except ProviderError:
+            return None
+        translated = response.translated_query.strip()
+        return translated or None
 
 
 def _answer_segments(answer: str) -> list[str]:
@@ -376,13 +507,20 @@ def _answer_segments(answer: str) -> list[str]:
 
 
 def _is_structural_segment(text: str) -> bool:
-    """Exclude Markdown scaffolding that does not assert a factual claim."""
+    """Exclude Markdown scaffolding and list preambles that do not assert a fact."""
     stripped = text.strip()
     return bool(
         _MARKDOWN_HEADING_PATTERN.fullmatch(stripped)
         or _MARKDOWN_ORDINAL_PATTERN.fullmatch(stripped)
         or _MARKDOWN_TABLE_DIVIDER_PATTERN.fullmatch(stripped)
+        or _LIST_PREAMBLE_PATTERN.fullmatch(stripped)
+        or _POLARITY_PATTERN.fullmatch(stripped)
     )
+
+
+def _is_insufficiency_statement(text: str) -> bool:
+    """Prompted refusals are not factual claims about the corpus."""
+    return _INSUFFICIENCY_MARKER in text.casefold()
 
 
 def _evidence_snapshot(
@@ -410,6 +548,39 @@ def _evidence_snapshot(
 
 def _significant_tokens(text: str) -> set[str]:
     return {token for token in tokenize(text, for_query=True) if token not in _ENGLISH_STOPWORDS}
+
+
+def _evidence_target_language(evidence_texts: list[str]) -> str | None:
+    languages = [
+        detect_language(text).primary_language
+        for text in evidence_texts
+        if text.strip()
+    ]
+    known = [language for language in languages if language]
+    if not known:
+        return None
+    return max(set(known), key=known.count)
+
+
+def _uses_lexical_verification(claim: str, evidence_texts: list[str]) -> bool:
+    """Same-script claims keep the lexical validator; mixed scripts do not."""
+    if not evidence_texts:
+        return False
+    return all(_same_language(claim, text) for text in evidence_texts)
+
+
+def _same_language(claim: str, evidence: str) -> bool:
+    claim_language = detect_language(claim)
+    evidence_language = detect_language(evidence)
+    if claim_language.primary_language is None or evidence_language.primary_language is None:
+        return True
+    if claim_language.is_mixed or evidence_language.is_mixed:
+        return False
+    return claim_language.primary_language == evidence_language.primary_language
+
+
+def _usable_embedder(embedder: BaseEmbeddingProvider | None) -> bool:
+    return embedder is not None and embedder.provider_name != "hash"
 
 
 def _coverage(expected: set[str], actual: set[str]) -> float:

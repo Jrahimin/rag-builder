@@ -43,13 +43,16 @@ the decision.
 Claim validation remains deterministic and does not add claim embeddings or claim entailment.
 Claims use three states:
 
-- `supported` — lexical evidence clears the configured threshold;
-- `unverified` — a structurally valid citation exists but there is no shared vocabulary for the
-  lexical validator to inspect;
-- `unsupported` — no valid evidence exists, or applicable lexical evidence falls short.
+- `supported` — same-language lexical coverage clears the threshold, or a cited cross-language
+  claim clears `minimum_claim_semantic_score` against the cited chunk;
+- `unverified` — a valid citation exists but support cannot be confirmed;
+- `unsupported` — uncited, same-language lexical evidence falls short, or cited cross-language
+  cosine is below `claim_semantic_reject_floor`.
 
-The compatibility `grounded` flag now means that no claim is `unsupported`. Evaluation reports
-`unverified_claim_rate`, per-language-pair recall/nDCG, false-refusal rate, and false-accept rate.
+The compatibility `grounded` flag is true only when every claim is `supported`. `unverified`
+citations are reported separately and do not count as fully grounded. Cross-language cited claims
+are verified with the active embedding provider against the cited chunk; same-language claims keep
+lexical coverage. See the 2026-08-18 observe-mode amendment.
 False accepts are a hard regression guard: cross-language support must not be obtained by weakening
 the refusal boundary.
 
