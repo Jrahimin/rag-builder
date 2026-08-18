@@ -292,19 +292,13 @@ class GroundedEvaluationAnswerAdapter(EvaluationAnswerPort):
         self._llm = llm
         self._context = ContextBuilder(settings.chat)
         self._prompt = PromptBuilder()
-        translator = _optional_translator(settings)
-        translation_config = settings.query_translation
         self._whole_chunk_grounding = GroundingService(
             settings.chat.model_copy(update={"evidence_score_mode": EvidenceScoreMode.WHOLE_CHUNK}),
             embedder=embedder,
-            translator=translator,
-            translation_config=translation_config,
         )
         self._passage_grounding = GroundingService(
             settings.chat.model_copy(update={"evidence_score_mode": EvidenceScoreMode.PASSAGE_MAX}),
             embedder=embedder,
-            translator=translator,
-            translation_config=translation_config,
         )
         self._domain_instructions = domain_instructions
         self._prompt_profile = prompt_profile

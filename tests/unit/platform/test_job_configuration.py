@@ -18,16 +18,22 @@ def test_job_configuration_hash_is_stable_and_excludes_secrets() -> None:
             "openai_api_key": "never-persist-this",
         },
         ocr={"google_api_key": "never-persist-google-key"},
+        cohere={"api_key": "never-persist-cohere"},
+        reranker={"cohere_api_key": "never-persist-legacy-cohere"},
     )
 
     first = build_job_configuration(settings)
     second = build_job_configuration(settings)
 
     assert first.digest() == second.digest()
-    assert "never-persist-this" not in str(first.model_dump())
+    dumped = str(first.model_dump())
+    assert "never-persist-this" not in dumped
     assert "openai_api_key" not in first.index["embedding"]
-    assert "never-persist-google-key" not in str(first.model_dump())
+    assert "never-persist-google-key" not in dumped
     assert "google_api_key" not in first.processing["ocr"]
+    assert "never-persist-cohere" not in dumped
+    assert "never-persist-legacy-cohere" not in dumped
+    assert "cohere_api_key" not in first.quality["reranker"]
 
 
 def test_output_hash_ignores_observed_active_index_but_keeps_full_provenance() -> None:

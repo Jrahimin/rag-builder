@@ -2830,6 +2830,8 @@ export interface components {
             citation_excerpt_max_chars: number;
             /** Context Char Budget */
             context_char_budget: number;
+            /** @default enforce */
+            evidence_gate_mode: components["schemas"]["EvidenceGateMode"];
             /** @default whole_chunk */
             evidence_score_mode: components["schemas"]["EvidenceScoreMode"];
             /** Include Citations */
@@ -2931,6 +2933,8 @@ export interface components {
             rerank_candidate_window: number;
             /** Rerank Enabled */
             rerank_enabled: boolean;
+            /** @default always */
+            rerank_mode: components["schemas"]["RerankMode"];
             /**
              * Rerank Return N
              * @default 8
@@ -3129,6 +3133,12 @@ export interface components {
                 [key: string]: unknown;
             };
         };
+        /**
+         * EvidenceGateMode
+         * @description Whether a failed pre-generation evidence score may block the LLM.
+         * @enum {string}
+         */
+        EvidenceGateMode: "enforce" | "observe";
         /**
          * EvidenceScoreMode
          * @description Calibrated semantic score used by the pre-generation evidence gate.
@@ -3971,6 +3981,7 @@ export interface components {
             citation_excerpt_max_chars?: number | null;
             /** Context Char Budget */
             context_char_budget?: number | null;
+            evidence_gate_mode?: components["schemas"]["EvidenceGateMode"] | null;
             evidence_score_mode?: components["schemas"]["EvidenceScoreMode"] | null;
             /** Include Citations */
             include_citations?: boolean | null;
@@ -4115,7 +4126,13 @@ export interface components {
              */
             updated_at: string;
         };
-        /** ProjectRetrievalPolicy */
+        /**
+         * ProjectRetrievalPolicy
+         * @description Sparse retrieval overrides. ``None`` inherits the deployment default.
+         *
+         *     ``rerank_mode`` is the operator-facing control (Always / Cross-language / Off).
+         *     Legacy ``rerank_enabled`` still maps true→always and false→off when mode is omitted.
+         */
         ProjectRetrievalPolicy: {
             /** Evidence Score Threshold */
             evidence_score_threshold?: number | null;
@@ -4133,6 +4150,7 @@ export interface components {
             rerank_candidate_window?: number | null;
             /** Rerank Enabled */
             rerank_enabled?: boolean | null;
+            rerank_mode?: components["schemas"]["RerankMode"] | null;
             /** Rerank Return N */
             rerank_return_n?: number | null;
             /** Rerank Score Threshold */
@@ -4226,6 +4244,15 @@ export interface components {
             /** Stage */
             stage: string;
         };
+        /**
+         * RerankMode
+         * @description When the multilingual reranker may run after RRF.
+         *
+         *     Platform default is ALWAYS. Projects may inherit or opt down to
+         *     cross-language-only or off. None in a sparse Project payload means inherit.
+         * @enum {string}
+         */
+        RerankMode: "always" | "cross_language" | "off";
         /**
          * RerankerBackend
          * @description Supported reranker provider backends.
@@ -4358,6 +4385,12 @@ export interface components {
             duplicate_suppression_removed_count: number;
             /** Duration Ms */
             duration_ms: number;
+            /** Embedding Identity Status */
+            embedding_identity_status?: string | null;
+            /** Embedding Model */
+            embedding_model?: string | null;
+            /** Embedding Provider */
+            embedding_provider?: string | null;
             /** Executed Branches */
             executed_branches?: string[];
             /** Index Build Id */
@@ -4430,8 +4463,8 @@ export interface components {
             strategy: components["schemas"]["RetrievalStrategy"];
             /** Translated Query */
             translated_query?: string | null;
-            /** Translation Source Language */
-            translation_source_language?: string | null;
+            /** Translation Failure Reason */
+            translation_failure_reason?: string | null;
             /** Translation Latency Ms */
             translation_latency_ms?: number | null;
             /** Translation Model */
@@ -4440,6 +4473,8 @@ export interface components {
             translation_prompt_version?: string | null;
             /** Translation Provider */
             translation_provider?: string | null;
+            /** Translation Source Language */
+            translation_source_language?: string | null;
             /** Translation Status */
             translation_status?: string | null;
             /** Translation Target Language */

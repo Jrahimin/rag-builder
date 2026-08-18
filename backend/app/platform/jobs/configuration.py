@@ -50,6 +50,7 @@ def build_job_configuration(
                 mode="json",
                 exclude={"cohere_api_key"},
             ),
+            "cohere": {"configured": bool(settings.resolved_cohere_api_key())},
         },
         execution=effective_resolution.secret_free_snapshot(),
         provenance={

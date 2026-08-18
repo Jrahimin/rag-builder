@@ -7,6 +7,7 @@ import pytest
 from app.core.config import (
     AppConfig,
     AuthConfig,
+    CohereConfig,
     CORSConfig,
     DatabaseConfig,
     EmbeddingBackend,
@@ -179,3 +180,42 @@ def test_webhook_signing_and_retry_relationships_are_validated() -> None:
 def test_production_rejects_wildcard_cors() -> None:
     with pytest.raises(ProductionConfigurationError, match="wildcard"):
         validate_runtime_config(_production_settings(cors=CORSConfig()))
+
+
+def test_hosted_openai_does_not_require_cohere() -> None:
+    validate_runtime_config(_production_settings())
+
+
+def test_hosted_managed_requires_cohere_embeddings_and_shared_key() -> None:
+    validate_runtime_config(
+        _production_settings(
+            runtime=RuntimeConfig(profile=RuntimeProfile.HOSTED_MANAGED),
+            embedding=EmbeddingConfig(
+                backend=EmbeddingBackend.COHERE,
+                model="embed-v4.0",
+                dimensions=1024,
+            ),
+            cohere=CohereConfig(api_key="cohere-secret"),
+        )
+    )
+
+
+def test_hosted_managed_rejects_openai_embeddings() -> None:
+    with pytest.raises(ProductionConfigurationError, match="hosted_managed requires"):
+        validate_runtime_config(
+            _production_settings(runtime=RuntimeConfig(profile=RuntimeProfile.HOSTED_MANAGED))
+        )
+
+
+def test_hosted_managed_accepts_legacy_reranker_key_as_shared_secret() -> None:
+    validate_runtime_config(
+        _production_settings(
+            runtime=RuntimeConfig(profile=RuntimeProfile.HOSTED_MANAGED),
+            embedding=EmbeddingConfig(
+                backend=EmbeddingBackend.COHERE,
+                model="embed-v4.0",
+                dimensions=1024,
+            ),
+            reranker={"cohere_api_key": "legacy-cohere-secret"},
+        )
+    )

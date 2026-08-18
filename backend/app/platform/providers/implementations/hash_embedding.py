@@ -5,7 +5,11 @@ from __future__ import annotations
 import hashlib
 import math
 
-from app.platform.providers.contracts.embedding import BaseEmbeddingProvider, EmbeddingBatchResult
+from app.platform.providers.contracts.embedding import (
+    BaseEmbeddingProvider,
+    EmbeddingBatchResult,
+    EmbeddingPurpose,
+)
 
 
 def _hash_to_vector(text: str, dimensions: int) -> list[float]:
@@ -39,7 +43,13 @@ class HashEmbeddingProvider(BaseEmbeddingProvider):
     def provider_version(self) -> str:
         return self._provider_version
 
-    async def embed_texts(self, texts: list[str]) -> EmbeddingBatchResult:
+    async def embed_texts(
+        self,
+        texts: list[str],
+        *,
+        purpose: EmbeddingPurpose = EmbeddingPurpose.DOCUMENT,
+    ) -> EmbeddingBatchResult:
+        del purpose
         vectors = [_hash_to_vector(text, self._dimensions) for text in texts]
         return EmbeddingBatchResult(
             vectors=vectors,

@@ -61,7 +61,7 @@ async def test_cohere_maps_relevance_scores_and_indexes(monkeypatch: pytest.Monk
 
         async def post(self, url: str, headers: dict, json: dict) -> _Response:
             assert "/v2/rerank" in url
-            assert json["model"] == "rerank-v4.0-fast"
+            assert json["model"] == "rerank-v4.0-pro"
             assert json["query"] == "source tax"
             return _Response()
 

@@ -31,6 +31,11 @@ async def resolve_multilingual_plan(
     persist_translation_text: bool = False,
 ) -> MultilingualRetrievalPlan:
     inventory = language_inventory_from_manifest(manifest)
+    profile, cross_language_target = choose_translation_target(
+        query,
+        inventory,
+        tuple(translation_config.target_languages),
+    )
     if inventory.is_legacy:
         return build_untranslated_plan(
             query,
@@ -44,18 +49,16 @@ async def resolve_multilingual_plan(
             inventory,
             translation_status="disabled",
             skipped_reason="translation_disabled",
+            cross_language_target=cross_language_target,
         )
-    profile, target = choose_translation_target(
-        query,
-        inventory,
-        tuple(translation_config.target_languages),
-    )
+    target = cross_language_target
     if target is None:
         return build_untranslated_plan(
             query,
             inventory,
             translation_status="skipped",
             skipped_reason="no_translation_target",
+            cross_language_target=None,
         )
     try:
         response = await translator.translate(
@@ -84,6 +87,7 @@ async def resolve_multilingual_plan(
             translation_status="failed",
             skipped_reason="translation_provider_error",
             failure_reason=failure_reason,
+            cross_language_target=target,
         )
     branches = plan_original_branches(query, profile) + plan_translated_branches(
         response.translated_query,
@@ -102,6 +106,7 @@ async def resolve_multilingual_plan(
             "output_tokens": response.usage.output_tokens,
         },
         "translation_target_language": target,
+        "cross_language_target": target,
         "language_routing_status": "applied",
     }
     return MultilingualRetrievalPlan(
@@ -113,4 +118,5 @@ async def resolve_multilingual_plan(
         branches=branches,
         skipped_branches=(),
         diagnostics=diagnostics,
+        cross_language_target=target,
     )

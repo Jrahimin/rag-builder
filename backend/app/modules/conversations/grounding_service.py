@@ -8,7 +8,7 @@ from typing import Any
 
 import regex
 
-from app.core.config import ChatConfig, EvidenceGateMode, EvidenceScoreMode, QueryTranslationConfig
+from app.core.config import ChatConfig, EvidenceGateMode, EvidenceScoreMode
 from app.modules.conversations.ports import ContextChunk
 from app.modules.conversations.schemas.message import (
     AnswerClaim,
@@ -18,11 +18,7 @@ from app.modules.conversations.schemas.message import (
 )
 from app.platform.domain.language_detection import detect_language
 from app.platform.domain.text_tokenization import tokenize
-from app.platform.providers.contracts.embedding import BaseEmbeddingProvider
-from app.platform.providers.contracts.query_translation import (
-    BaseQueryTranslationProvider,
-    QueryTranslationRequest,
-)
+from app.platform.providers.contracts.embedding import BaseEmbeddingProvider, EmbeddingPurpose
 from app.platform.providers.embedding_similarity import cosine_similarity
 from app.platform.providers.errors import ProviderError
 
@@ -112,13 +108,9 @@ class GroundingService:
         self,
         config: ChatConfig,
         embedder: BaseEmbeddingProvider | None = None,
-        translator: BaseQueryTranslationProvider | None = None,
-        translation_config: QueryTranslationConfig | None = None,
     ) -> None:
         self._config = config
         self._embedder = embedder
-        self._translator = translator
-        self._translation_config = translation_config
 
     def assess(self, question: str, chunks: list[ContextChunk]) -> EvidenceDecision:
         if not chunks:
@@ -349,7 +341,6 @@ class GroundingService:
             ):
                 semantic_pairs.extend((claim_text, chunk.content) for _, chunk in evidence_chunks)
         similarities = await self._claim_similarities(semantic_pairs)
-        translations = await self._claim_translations(drafts)
 
         claims: list[AnswerClaim] = []
         supported = 0
@@ -362,17 +353,13 @@ class GroundingService:
             elif _uses_lexical_verification(draft.text, evidence_texts):
                 verification = self._lexical_verification(draft.text, evidence_texts)
             else:
-                translated = translations.get(draft.text)
-                if translated:
-                    verification = self._lexical_verification(translated, evidence_texts)
-                else:
-                    scores = [
-                        similarities.get((draft.text, chunk.content))
-                        for _, chunk in draft.evidence_chunks
-                    ]
-                    numeric = [value for value in scores if value is not None]
-                    score = max(numeric) if numeric else None
-                    verification = self._cross_language_verification(score)
+                scores = [
+                    similarities.get((draft.text, chunk.content))
+                    for _, chunk in draft.evidence_chunks
+                ]
+                numeric = [value for value in scores if value is not None]
+                score = max(numeric) if numeric else None
+                verification = self._cross_language_verification(score)
             claim_grounded = verification is ClaimVerification.SUPPORTED
             supported += int(claim_grounded)
             unverified += int(verification is ClaimVerification.UNVERIFIED)
@@ -430,64 +417,25 @@ class GroundingService:
         embedder = self._embedder
         if embedder is None:
             return missing
-        texts = list(dict.fromkeys(text for pair in unique_pairs for text in pair))
+        claim_texts = list(dict.fromkeys(pair[0] for pair in unique_pairs))
+        evidence_texts = list(dict.fromkeys(pair[1] for pair in unique_pairs))
         try:
-            embedded = await embedder.embed_texts(texts)
-        except ProviderError:
-            return missing
-        by_text = dict(zip(texts, embedded.vectors, strict=True))
-        return {
-            pair: cosine_similarity(by_text[pair[0]], by_text[pair[1]]) for pair in unique_pairs
-        }
-
-    async def _claim_translations(self, drafts: list[_ClaimDraft]) -> dict[str, str]:
-        if not self._translator_enabled():
-            return {}
-        unique: dict[str, list[str]] = {}
-        for draft in drafts:
-            if not draft.has_valid_citation:
-                continue
-            evidence_texts = [chunk.content for _, chunk in draft.evidence_chunks]
-            if _uses_lexical_verification(draft.text, evidence_texts):
-                continue
-            unique.setdefault(draft.text, evidence_texts)
-        translated: dict[str, str] = {}
-        for claim_text, evidence_texts in unique.items():
-            result = await self._translate_claim(claim_text, evidence_texts)
-            if result:
-                translated[claim_text] = result
-        return translated
-
-    def _translator_enabled(self) -> bool:
-        if self._translator is None:
-            return False
-        if self._translation_config is None:
-            return True
-        return self._translation_config.enabled
-
-    async def _translate_claim(self, claim: str, evidence_texts: list[str]) -> str | None:
-        translator = self._translator
-        if translator is None:
-            return None
-        target = _evidence_target_language(evidence_texts)
-        if target is None:
-            return None
-        source = detect_language(claim)
-        config = self._translation_config or QueryTranslationConfig(enabled=True)
-        try:
-            response = await translator.translate(
-                QueryTranslationRequest(
-                    query=claim,
-                    source_profile=source.primary_language or "en",
-                    target_language=target,
-                    prompt_version=config.prompt_version,
-                    max_output_tokens=config.max_output_tokens,
-                )
+            claim_embedded = await embedder.embed_texts(
+                claim_texts,
+                purpose=EmbeddingPurpose.QUERY,
+            )
+            evidence_embedded = await embedder.embed_texts(
+                evidence_texts,
+                purpose=EmbeddingPurpose.DOCUMENT,
             )
         except ProviderError:
-            return None
-        translated = response.translated_query.strip()
-        return translated or None
+            return missing
+        by_claim = dict(zip(claim_texts, claim_embedded.vectors, strict=True))
+        by_evidence = dict(zip(evidence_texts, evidence_embedded.vectors, strict=True))
+        return {
+            pair: cosine_similarity(by_claim[pair[0]], by_evidence[pair[1]])
+            for pair in unique_pairs
+        }
 
 
 def _answer_segments(answer: str) -> list[str]:
@@ -548,18 +496,6 @@ def _evidence_snapshot(
 
 def _significant_tokens(text: str) -> set[str]:
     return {token for token in tokenize(text, for_query=True) if token not in _ENGLISH_STOPWORDS}
-
-
-def _evidence_target_language(evidence_texts: list[str]) -> str | None:
-    languages = [
-        detect_language(text).primary_language
-        for text in evidence_texts
-        if text.strip()
-    ]
-    known = [language for language in languages if language]
-    if not known:
-        return None
-    return max(set(known), key=known.count)
 
 
 def _uses_lexical_verification(claim: str, evidence_texts: list[str]) -> bool:

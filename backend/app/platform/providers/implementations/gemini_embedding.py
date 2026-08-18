@@ -7,6 +7,7 @@ import httpx
 from app.platform.providers.contracts.embedding import (
     BaseEmbeddingProvider,
     EmbeddingBatchResult,
+    EmbeddingPurpose,
     coerce_embedding_vector,
 )
 from app.platform.providers.errors import ProviderError
@@ -46,7 +47,13 @@ class GeminiEmbeddingProvider(BaseEmbeddingProvider):
     def provider_version(self) -> str:
         return self._provider_version
 
-    async def embed_texts(self, texts: list[str]) -> EmbeddingBatchResult:
+    async def embed_texts(
+        self,
+        texts: list[str],
+        *,
+        purpose: EmbeddingPurpose = EmbeddingPurpose.DOCUMENT,
+    ) -> EmbeddingBatchResult:
+        del purpose
         if not texts:
             return EmbeddingBatchResult(
                 vectors=[],

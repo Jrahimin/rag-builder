@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
-from app.core.config import RetrievalStrategy
+from app.core.config import RerankMode, RetrievalStrategy
 
 
 class CandidateSource(StrEnum):
@@ -64,6 +64,7 @@ class RetrievalContext:
     score_threshold: float | None
     filterable_metadata_keys: tuple[str, ...]
     index_build_id: uuid.UUID = field(default_factory=lambda: uuid.UUID(int=0))
+    rerank_mode: RerankMode = RerankMode.ALWAYS
     fts_regconfig: str = "simple"
     min_ocr_confidence: float | None = None
     hnsw_ef_search: int = 100

@@ -267,7 +267,8 @@ class OperatorService:
                 dimensions=self._settings.embedding.dimensions,
                 provider_version=self._settings.embedding.provider_version,
                 credential_configured=embedding_credential_configured(
-                    self._settings.embedding
+                    self._settings.embedding,
+                    cohere_api_key=self._settings.resolved_cohere_api_key(),
                 ),
             ),
             reranker_backend=self._settings.retrieval.reranker_backend.value,

@@ -99,9 +99,11 @@ minimum-sized token windows on the fused candidate window. It records raw cosine
 whole-chunk `semantic_score` or ranking `score`. It is disabled by default and may be promoted only
 after positive/hard-negative calibration and latency gates pass.
 
-The multilingual dense baseline is OpenAI `text-embedding-3-large` truncated to 1024 dimensions.
-Changing model or dimensions requires a new embedding set and complete immutable index build;
-dimension changes additionally require an Alembic migration because pgvector columns are fixed-size.
+The multilingual dense baseline for `hosted_managed` is Cohere `embed-v4.0` at 1024 dimensions
+(`embedding_set_version=3`) with `QUERY`/`DOCUMENT` purpose. `hosted_openai` compatibility keeps
+OpenAI `text-embedding-3-large` at 1024 (`embedding_set_version=2`). Changing model or dimensions
+requires a new embedding set and complete immutable index build; dimension changes additionally
+require an Alembic migration because pgvector columns are fixed-size.
 The `private_ollama` profile must use a 1024-dimension embedder against this column;
 `nomic-embed-text` at 768 is incompatible with the live `vector(1024)` contract.
 
@@ -147,13 +149,14 @@ python worker.py
 ## Production note
 
 Retrieval v2 ships **hybrid BM25 + vector + RRF** as the production path (ADR-009, ADR-018).
-Original dense and original lexical always run. One query-only translation pair is optional and
-off by default. When translation is applied, search and chat diagnostics include status, source
-and target language, provider/model, the translated query, executed branches, and per-candidate
-RRF provenance (`original_dense`, `translated_dense:<lang>`, translated lexical). Translated text
-is a retrieval artifact: it is not used as grounding confidence, citations, or evidence. The
-reranker seam remains a pass-through `noop` occupant until Cohere
-`rerank-v4.0-fast` passes gazette hard gates. Set `APE_RETRIEVAL__STRATEGY=hybrid` in production.
+Original dense and original lexical always run. One query-only translation pair is optional;
+`hosted_managed` enables it with domain-neutral `retrieval-translation-v2`. When translation is
+applied, search and chat diagnostics include status, source and target language, provider/model,
+latency, the translated query, executed branches, and per-candidate RRF provenance. Translated
+text is a retrieval artifact: it is not used as grounding confidence, citations, or evidence.
+`hosted_managed` reranks with Cohere `rerank-v4.0-pro` (platform default Always). Missing rerank
+credentials or API failure preserve fused RRF order (`rerank_status=unavailable`) and fall back
+to cosine evidence. Set `APE_RETRIEVAL__STRATEGY=hybrid` in production.
 Semantic-only rollback remains via `strategy=semantic` on the request or deployment config.
 
 Chat integrates through `RetrievalPort` without module coupling (ADR-008).

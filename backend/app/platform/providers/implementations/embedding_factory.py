@@ -7,6 +7,7 @@ from functools import lru_cache
 from app.core.config import EmbeddingBackend, Settings, get_settings
 from app.platform.providers.contracts.embedding import BaseEmbeddingProvider
 from app.platform.providers.errors import ProviderError
+from app.platform.providers.implementations.cohere_embedding import CohereEmbeddingProvider
 from app.platform.providers.implementations.gemini_embedding import GeminiEmbeddingProvider
 from app.platform.providers.implementations.hash_embedding import HashEmbeddingProvider
 from app.platform.providers.implementations.ollama_embedding import OllamaEmbeddingProvider
@@ -47,6 +48,18 @@ def create_embedding_provider(settings: Settings) -> BaseEmbeddingProvider:
         return GeminiEmbeddingProvider(
             api_key=cfg.gemini_api_key,
             base_url=cfg.gemini_base_url,
+            model=cfg.model,
+            dimensions=cfg.dimensions,
+            provider_version=cfg.provider_version,
+        )
+    if cfg.backend is EmbeddingBackend.COHERE:
+        api_key = settings.resolved_cohere_api_key()
+        if not api_key:
+            msg = "Cohere embedding backend requires APE_COHERE__API_KEY"
+            raise ProviderError(msg, provider_name="cohere")
+        return CohereEmbeddingProvider(
+            api_key=api_key,
+            base_url=settings.reranker.cohere_base_url,
             model=cfg.model,
             dimensions=cfg.dimensions,
             provider_version=cfg.provider_version,

@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from app.core.config import RetrievalStrategy
+from app.core.config import RerankMode, RetrievalStrategy
 from app.modules.retrieval.language_scope import LanguageScope
 from app.modules.retrieval.multilingual.planner import (
     BRANCH_ORIGINAL_DENSE,
@@ -19,7 +19,7 @@ from app.modules.retrieval.multilingual.planner import (
     MultilingualRetrievalPlan,
     RetrievalBranch,
 )
-from app.modules.retrieval.retrievers.hybrid_retriever import HybridRetriever
+from app.modules.retrieval.retrievers.hybrid_retriever import HybridRetriever, _rerank_skip_reason
 from app.modules.retrieval.retrievers.models import (
     CandidateHit,
     CandidateSource,
@@ -301,4 +301,40 @@ async def test_translated_plan_runs_target_language_dense_and_lexical() -> None:
     assert f"{BRANCH_TRANSLATED_LEXICAL}:bn" in contributions
     assert "translated_query" not in translated.metadata
     assert translated.metadata["translation_status"] == "applied"
+
+
+def test_cross_language_rerank_skips_when_inventory_matches_query() -> None:
+    context = replace(_context(rerank_enabled=True), rerank_mode=RerankMode.CROSS_LANGUAGE)
+    assert _rerank_skip_reason(context) == "skipped_same_language"
+
+    plan = MultilingualRetrievalPlan(
+        query_profile=detect_query_language_profile("source tax"),
+        inventory=LanguageInventory(
+            schema_version="2026-08-18.v1",
+            chunk_language_counts={"bn": 8},
+            document_language_counts={"bn": 1},
+            is_legacy=False,
+        ),
+        translation_status="disabled",
+        target_language=None,
+        translated_query=None,
+        branches=(),
+        skipped_branches=(),
+        diagnostics={},
+        cross_language_target="bn",
+    )
+    assert (
+        _rerank_skip_reason(
+            replace(
+                _context(rerank_enabled=True),
+                rerank_mode=RerankMode.CROSS_LANGUAGE,
+                multilingual_plan=plan,
+            )
+        )
+        is None
+    )
+    assert (
+        _rerank_skip_reason(replace(_context(rerank_enabled=True), rerank_mode=RerankMode.OFF))
+        == "disabled"
+    )
 

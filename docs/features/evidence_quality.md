@@ -142,19 +142,19 @@ uses a learned embedding backend, improves nDCG by the configured minimum, does 
 answer quality, stays within the p95 latency penalty, and has zero unavailable cases. The hash
 embedding backend is marked non-learned and cannot be promoted.
 
-No learned reranker is promoted by this change. The production baseline keeps fused RRF order
-through the enabled rerank stage with a `noop` occupant (`rerank_status=passthrough`); the lexical
-heuristic remains an
-offline/provider-free comparison but is not language-general.
-Cohere `rerank-v4.0-fast` can be promoted only after its persisted gazette report passes every
-hard gate. When that reranker is applied, calibrated relevance is the only learned evidence path;
-original cosine remains the fallback.
+No learned reranker is promoted by this change without Test Lab smoke on the live stack. The
+`hosted_openai` compatibility baseline may keep fused RRF order through the enabled rerank stage
+with a `noop` occupant (`rerank_status=passthrough`). `hosted_managed` uses Cohere
+`rerank-v4.0-pro` with platform default Always; the evidence gate ships `observe` until that
+threshold is confirmed, then examples promote to `enforce`. When that reranker is applied,
+calibrated relevance is the only learned evidence path; original cosine remains the fallback.
+Post-generation per-claim LLM translation is not part of the claim path.
 
 ## Configuration
 
 - `APE_CHAT__MINIMUM_SEMANTIC_EVIDENCE_SCORE`
-- `APE_CHAT__EVIDENCE_GATE_MODE` (`enforce` by default; `observe` records the same score
-  decision but does not block generation on a failed cosine/reranker score)
+- `APE_CHAT__EVIDENCE_GATE_MODE` (`enforce` locally; `hosted_managed` examples use `observe` until
+  Test Lab smoke confirms the pro-reranker threshold, then switch to `enforce`)
 - `APE_CHAT__MINIMUM_RERANKER_EVIDENCE_SCORE`
 - `APE_CHAT__EVIDENCE_SCORE_MODE` (`whole_chunk` by default; `passage_max` only after calibration)
 - `APE_CHAT__LEXICAL_CORROBORATION_FLOOR_SCORE`

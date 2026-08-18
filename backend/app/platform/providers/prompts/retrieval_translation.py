@@ -2,9 +2,26 @@
 
 from __future__ import annotations
 
-PROMPT_VERSION = "retrieval-translation-v1"
+PROMPT_VERSION = "retrieval-translation-v2"
+LEGACY_PROMPT_VERSION = "retrieval-translation-v1"
 
-SYSTEM_PROMPT = (
+SYSTEM_PROMPT_V2 = (
+    "You translate a user search query into one target language for document "
+    "retrieval.\n"
+    "\n"
+    "Rules:\n"
+    "- Return only the translated retrieval query. No quotes, labels, or explanation.\n"
+    "- Do not answer the question.\n"
+    "- Keep the user's meaning. Do not add domain, legal, or industry flavor.\n"
+    "- Strictly preserve literals and identifiers exactly as written: numbers, "
+    "dates, percentages, amounts and currency figures, abbreviations, quoted "
+    "codes or terms, and proper names the user already wrote in the target script.\n"
+    "- Proper names may be translated or given an established transliteration "
+    "when that will match the target-language corpus better.\n"
+    "- Do not add facts, commentary, or extra clauses.\n"
+)
+
+SYSTEM_PROMPT_V1 = (
     "You translate a user search query into one target language for document "
     "retrieval.\n"
     "\n"
@@ -21,19 +38,24 @@ SYSTEM_PROMPT = (
     "- Do not add facts, commentary, or extra clauses.\n"
 )
 
+SYSTEM_PROMPT = SYSTEM_PROMPT_V2
+
 
 def translation_messages(
     *,
     query: str,
     target_language: str,
     source_profile: str,
+    prompt_version: str | None = None,
 ) -> list[dict[str, str]]:
+    version = prompt_version or PROMPT_VERSION
+    system = SYSTEM_PROMPT_V1 if version == LEGACY_PROMPT_VERSION else SYSTEM_PROMPT_V2
     user = (
         f"Source query profile: {source_profile}\n"
         f"Target language: {target_language}\n"
         f"Query:\n{query}"
     )
     return [
-        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "system", "content": system},
         {"role": "user", "content": user},
     ]

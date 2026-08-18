@@ -322,6 +322,46 @@ def test_index_hash_ignores_project_chat_llm_and_top_k_policy() -> None:
     assert first.output_digest() != second.output_digest()
 
 
+def test_rerank_mode_inherits_and_maps_legacy_enabled() -> None:
+    inherited = resolve_project_ai_config(Settings(), None)
+    assert inherited.configuration.retrieval.rerank_mode.value == "always"
+    assert inherited.configuration.retrieval.rerank_enabled is True
+    assert inherited.origins["retrieval.rerank_mode"] == "global"
+
+    always = resolve_project_ai_config(
+        Settings(),
+        _revision({"retrieval": {"rerank_mode": "cross_language"}}),
+    )
+    assert always.configuration.retrieval.rerank_mode.value == "cross_language"
+    assert always.configuration.retrieval.rerank_enabled is True
+    assert always.origins["retrieval.rerank_mode"] == "project"
+
+    legacy_off = resolve_project_ai_config(
+        Settings(),
+        _revision({"retrieval": {"rerank_enabled": False}}),
+    )
+    assert legacy_off.configuration.retrieval.rerank_mode.value == "off"
+    assert legacy_off.configuration.retrieval.rerank_enabled is False
+
+    mode_wins = resolve_project_ai_config(
+        Settings(),
+        _revision({"retrieval": {"rerank_mode": "always", "rerank_enabled": False}}),
+    )
+    assert mode_wins.configuration.retrieval.rerank_mode.value == "always"
+    assert mode_wins.configuration.retrieval.rerank_enabled is True
+
+
+def test_apply_effective_ai_config_overlays_rerank_mode() -> None:
+    settings = Settings()
+    resolution = resolve_project_ai_config(
+        settings,
+        _revision({"retrieval": {"rerank_mode": "off"}}),
+    )
+    overlay = apply_effective_ai_config(settings, resolution)
+    assert overlay.retrieval.rerank_mode.value == "off"
+    assert overlay.retrieval.rerank_enabled is False
+
+
 def test_index_hash_ignores_query_translation_and_reranker_quality_settings() -> None:
     first = build_job_configuration(Settings(query_translation={"enabled": False}))
     second = build_job_configuration(

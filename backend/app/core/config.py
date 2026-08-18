@@ -87,9 +87,16 @@ class LoggingConfig(BaseModel):
 
 
 class RuntimeProfile(StrEnum):
-    """Certified deployment capability profiles."""
+    """Certified deployment capability profiles.
+
+    ``hosted_managed`` is the preferred production profile (Cohere embed/rerank,
+    OpenAI generation/translation). ``hosted_openai`` remains a deprecated
+    compatibility profile that still certifies OpenAI embeddings so existing
+    deploys do not suddenly require Cohere.
+    """
 
     DEVELOPMENT = "development"
+    HOSTED_MANAGED = "hosted_managed"
     HOSTED_OPENAI = "hosted_openai"
     PRIVATE_OLLAMA = "private_ollama"
 
@@ -97,6 +104,7 @@ class RuntimeProfile(StrEnum):
 class RuntimeConfig(BaseModel):
     """Production preflight and worker-observability settings."""
 
+    # Preferred production value is hosted_managed. hosted_openai is compatibility-only.
     profile: RuntimeProfile = RuntimeProfile.DEVELOPMENT
     startup_timeout_seconds: float = Field(default=30.0, ge=1.0, le=300.0)
     dependency_timeout_seconds: float = Field(default=3.0, ge=0.1, le=30.0)
@@ -345,10 +353,16 @@ class EmbeddingBackend(StrEnum):
     OLLAMA = "ollama"
     OPENAI = "openai"
     GEMINI = "gemini"
+    COHERE = "cohere"
 
 
 class EmbeddingConfig(BaseModel):
-    """Embedding provider configuration."""
+    """Dense-vector provider used for indexing and query search.
+
+    Changing backend or model requires a new ``embedding_set_version`` and a
+    full rebuild; never mix providers in one active set. Hosted_managed uses
+    Cohere ``embed-v4.0`` at 1024 dimensions. Local tests keep hash embeddings.
+    """
 
     backend: EmbeddingBackend = EmbeddingBackend.HASH
     model: str = "text-embedding-3-large"
@@ -371,7 +385,11 @@ class OcrBackend(StrEnum):
 
 
 class OcrConfig(BaseModel):
-    """OCR provider configuration — disabled by default."""
+    """OCR provider configuration — disabled by default.
+
+    Enable in production when scanned or Bangla/custom-font PDFs need Google
+    Vision. Native parse still runs first except for Bangla OCR-first pages.
+    """
 
     enabled: bool = False
     backend: OcrBackend = OcrBackend.NOOP
@@ -412,6 +430,18 @@ class RerankerBackend(StrEnum):
     COHERE = "cohere"
 
 
+class RerankMode(StrEnum):
+    """When the multilingual reranker may run after RRF.
+
+    Platform default is ALWAYS. Projects may inherit or opt down to
+    cross-language-only or off. None in a sparse Project payload means inherit.
+    """
+
+    ALWAYS = "always"
+    CROSS_LANGUAGE = "cross_language"
+    OFF = "off"
+
+
 class EvidenceScoreMode(StrEnum):
     """Calibrated semantic score used by the pre-generation evidence gate."""
 
@@ -427,12 +457,19 @@ class EvidenceGateMode(StrEnum):
 
 
 class RetrievalConfig(BaseModel):
-    """Retrieval pipeline and search defaults."""
+    """Retrieval pipeline and search defaults.
+
+    Hybrid dense + BM25 + RRF is the production path. ``rerank_mode`` is the
+    platform default (Always); Projects override with Inherit / Always /
+    Cross-language / Off. ``embedding_set_version`` identifies the active
+    vector representation — bump it when changing embedding provider or model.
+    """
 
     auto_embed: bool = True
     auto_index: bool = True
     default_top_k: int = Field(default=10, ge=1, le=100)
     score_threshold: float | None = Field(default=None, ge=0.0, le=1.0)
+    # Deployment-level representation id. Hosted_managed Cohere embed-v4 uses 3.
     embedding_set_version: int = Field(default=2, ge=1)
     filterable_metadata_keys: Annotated[list[str], NoDecode] = Field(
         default_factory=lambda: ["source", "tags", "ocr_confidence"]
@@ -445,6 +482,9 @@ class RetrievalConfig(BaseModel):
     semantic_weight: float = Field(default=1.0, ge=0.0, le=10.0)
     keyword_weight: float = Field(default=1.0, ge=0.0, le=10.0)
     rerank_enabled: bool = True
+    # Always rerank after RRF unless a Project opts down. Cross-language skips
+    # the paid call when inventory says query and corpus share a language.
+    rerank_mode: RerankMode = RerankMode.ALWAYS
     rerank_top_n: int = Field(default=20, ge=1, le=100)
     rerank_candidate_window: int = Field(default=25, ge=1, le=100)
     rerank_return_n: int = Field(default=8, ge=1, le=100)
@@ -491,7 +531,11 @@ class LLMBackend(StrEnum):
 
 
 class LLMConfig(BaseModel):
-    """LLM provider configuration."""
+    """Chat/generation provider. Hosted profiles require OpenAI; local tests use echo.
+
+    ``hosted_managed`` generation is ``gpt-5.6-luna``. Query translation uses a
+    separate nano model and does not inherit this field.
+    """
 
     backend: LLMBackend = LLMBackend.ECHO
     model: str = "gpt-4o-mini"
@@ -507,12 +551,18 @@ class LLMConfig(BaseModel):
 
 
 class QueryTranslationConfig(BaseModel):
-    """Query-only retrieval translation. Disabled by default."""
+    """Optional one-shot query rewrite for hybrid retrieval.
+
+    Runs only when the active build language inventory contains a supported
+    language different from the query. Original dense + BM25 always remain.
+    Projects override with Inherit / On / Off. Disabled by default so pytest
+    and local hash/echo stacks do not require an LLM key.
+    """
 
     enabled: bool = False
     backend: LLMBackend = LLMBackend.OPENAI
     model: str = "gpt-5-nano"
-    prompt_version: str = "retrieval-translation-v1"
+    prompt_version: str = "retrieval-translation-v2"
     max_output_tokens: int = Field(default=1024, ge=16, le=2048)
     request_timeout_seconds: float = Field(default=15.0, ge=1.0, le=120.0)
     retry_max_attempts: int = Field(default=1, ge=0, le=3)
@@ -531,12 +581,28 @@ class QueryTranslationConfig(BaseModel):
         return value
 
 
-class RerankerProviderConfig(BaseModel):
-    """Secret-aware managed reranker connection settings."""
+class CohereConfig(BaseModel):
+    """Shared Cohere credential for embeddings and reranking.
 
+    Canonical secret is ``APE_COHERE__API_KEY``. Embedding and rerank models
+    stay on their own configs. ``APE_RERANKER__COHERE_API_KEY`` is a temporary
+    fallback for older rerank-only deploys.
+    """
+
+    api_key: str | None = None
+
+
+class RerankerProviderConfig(BaseModel):
+    """Managed reranker connection settings (model/endpoint, not the canonical key).
+
+    Hosted_managed uses ``rerank-v4.0-pro``. Missing key or provider failure
+    degrades to RRF + cosine evidence; it must not block API startup.
+    """
+
+    # Legacy fallback only. Prefer APE_COHERE__API_KEY.
     cohere_api_key: str | None = None
     cohere_base_url: str = "https://api.cohere.com"
-    cohere_model: str = "rerank-v4.0-fast"
+    cohere_model: str = "rerank-v4.0-pro"
     request_timeout_seconds: float = Field(default=15.0, ge=1.0, le=120.0)
     provider_version: str = "1"
 
@@ -593,7 +659,13 @@ class AuthConfig(BaseModel):
 
 
 class ChatConfig(BaseModel):
-    """Chat / RAG orchestration defaults."""
+    """Chat / RAG orchestration defaults.
+
+    Evidence gate: when a true reranker applied, its relevance is the only
+    learned admit signal; cosine + lexical rescue are fallbacks. Hosted_managed
+    ships ``observe`` until Test Lab smoke confirms the pro-reranker threshold,
+    then operators switch to ``enforce``.
+    """
 
     retrieval_top_k: int = Field(default=10, ge=1, le=100)
     max_context_chunks: int = Field(default=8, ge=1, le=50)
@@ -755,12 +827,20 @@ class Settings(BaseSettings):
     retrieval: RetrievalConfig = Field(default_factory=RetrievalConfig)
     llm: LLMConfig = Field(default_factory=LLMConfig)
     query_translation: QueryTranslationConfig = Field(default_factory=QueryTranslationConfig)
+    cohere: CohereConfig = Field(default_factory=CohereConfig)
     reranker: RerankerProviderConfig = Field(default_factory=RerankerProviderConfig)
     generation: GenerationConfig = Field(default_factory=GenerationConfig)
     chat: ChatConfig = Field(default_factory=ChatConfig)
     evaluation: EvaluationConfig = Field(default_factory=EvaluationConfig)
     ai_policy: AIConfigPolicy = Field(default_factory=AIConfigPolicy)
     auth: AuthConfig = Field(default_factory=AuthConfig)
+
+    def resolved_cohere_api_key(self) -> str:
+        """Canonical shared Cohere key, then legacy reranker-only key."""
+        canonical = (self.cohere.api_key or "").strip()
+        if canonical:
+            return canonical
+        return (self.reranker.cohere_api_key or "").strip()
 
 
 @lru_cache

@@ -4,8 +4,20 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from enum import StrEnum
 
 from app.platform.providers.errors import ProviderError
+
+
+class EmbeddingPurpose(StrEnum):
+    """Vendor-neutral reason a vector is requested.
+
+    Retrieval services pass QUERY or DOCUMENT. Provider implementations may
+    map these onto vendor input types; they must not leak those names upward.
+    """
+
+    QUERY = "query"
+    DOCUMENT = "document"
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,5 +74,10 @@ class BaseEmbeddingProvider(ABC):
         """Provider implementation version for audit."""
 
     @abstractmethod
-    async def embed_texts(self, texts: list[str]) -> EmbeddingBatchResult:
+    async def embed_texts(
+        self,
+        texts: list[str],
+        *,
+        purpose: EmbeddingPurpose = EmbeddingPurpose.DOCUMENT,
+    ) -> EmbeddingBatchResult:
         """Embed a batch of texts into dense vectors."""

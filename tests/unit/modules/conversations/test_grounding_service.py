@@ -6,15 +6,14 @@ import uuid
 
 import pytest
 
-from app.core.config import ChatConfig, EvidenceScoreMode, QueryTranslationConfig
+from app.core.config import ChatConfig, EvidenceScoreMode
 from app.modules.conversations.grounding_service import GroundingService
 from app.modules.conversations.ports import ContextChunk
 from app.modules.conversations.schemas.message import InsufficientEvidenceReason
-from app.platform.providers.contracts.embedding import BaseEmbeddingProvider, EmbeddingBatchResult
-from app.platform.providers.contracts.query_translation import (
-    BaseQueryTranslationProvider,
-    QueryTranslationRequest,
-    QueryTranslationResponse,
+from app.platform.providers.contracts.embedding import (
+    BaseEmbeddingProvider,
+    EmbeddingBatchResult,
+    EmbeddingPurpose,
 )
 
 pytestmark = pytest.mark.unit
@@ -72,7 +71,13 @@ class _ClusterEmbeddingProvider(BaseEmbeddingProvider):
     def provider_version(self) -> str:
         return "1"
 
-    async def embed_texts(self, texts: list[str]) -> EmbeddingBatchResult:
+    async def embed_texts(
+        self,
+        texts: list[str],
+        *,
+        purpose: EmbeddingPurpose = EmbeddingPurpose.DOCUMENT,
+    ) -> EmbeddingBatchResult:
+        del purpose
         return EmbeddingBatchResult(
             vectors=[self._vector(text) for text in texts],
             provider=self.provider_name,
@@ -93,40 +98,6 @@ class _ClusterEmbeddingProvider(BaseEmbeddingProvider):
 
 def _cluster_embedder(clusters: dict[str, str]) -> _ClusterEmbeddingProvider:
     return _ClusterEmbeddingProvider(clusters)
-
-
-class _FixedTranslator(BaseQueryTranslationProvider):
-    def __init__(self, mapping: dict[str, str]) -> None:
-        self._mapping = mapping
-
-    @property
-    def provider_name(self) -> str:
-        return "test"
-
-    @property
-    def model_name(self) -> str:
-        return "fixed"
-
-    @property
-    def provider_version(self) -> str:
-        return "1"
-
-    @property
-    def prompt_version(self) -> str:
-        return "retrieval-translation-v1"
-
-    async def translate(self, request: QueryTranslationRequest) -> QueryTranslationResponse:
-        return QueryTranslationResponse(
-            translated_query=self._mapping.get(request.query, request.query),
-            provider=self.provider_name,
-            model=self.model_name,
-            provider_version=self.provider_version,
-            prompt_version=self.prompt_version,
-        )
-
-
-def _fixed_translator(mapping: dict[str, str]) -> _FixedTranslator:
-    return _FixedTranslator(mapping)
 
 
 def test_no_results_is_an_explicit_insufficient_evidence_outcome() -> None:
@@ -482,37 +453,6 @@ async def test_en_unrelated_claim_to_bn_evidence_is_unsupported() -> None:
     )
 
     result = await service.map_claims(f"{claim} [1]", [_chunk(content=table)])
-
-    assert result.claims[0]["verification"] == "unsupported"
-    assert result.grounded is False
-
-
-async def test_translated_en_claim_to_matching_bn_evidence_is_supported() -> None:
-    table = "সঞ্চয়পত্র হইতে অর্জিত মুনাফা সম্পত্তির অধিগ্রহণ রপ্তানির বিপরীতে মোটরযান"
-    claim = "Profit earned from savings certificates."
-    service = GroundingService(
-        ChatConfig(minimum_claim_token_coverage=0.3),
-        translator=_fixed_translator({claim: "সঞ্চয়পত্র হইতে অর্জিত মুনাফা"}),
-        translation_config=QueryTranslationConfig(enabled=True),
-    )
-
-    result = await service.map_claims(f"{claim} [1]", [_chunk(content=table)])
-
-    assert result.claims[0]["verification"] == "supported"
-    assert result.grounded is True
-
-
-async def test_translated_mismatch_is_unsupported_even_if_embedding_matches() -> None:
-    vat = "মূল্য সংযোজন কর আমদানি সরবরাহ সেবা"
-    claim = "Profit earned from savings certificates."
-    service = GroundingService(
-        ChatConfig(minimum_claim_token_coverage=0.3),
-        embedder=_cluster_embedder({claim: "vat", vat: "vat"}),
-        translator=_fixed_translator({claim: "সঞ্চয়পত্র হইতে অর্জিত মুনাফা কর"}),
-        translation_config=QueryTranslationConfig(enabled=True),
-    )
-
-    result = await service.map_claims(f"{claim} [1]", [_chunk(content=vat)])
 
     assert result.claims[0]["verification"] == "unsupported"
     assert result.grounded is False

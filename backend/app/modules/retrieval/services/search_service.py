@@ -15,6 +15,7 @@ from app.core.config import (
     AIConfigPolicy,
     QueryTranslationConfig,
     RequestOverrideMode,
+    RerankMode,
     RetrievalConfig,
     RetrievalStrategy,
 )
@@ -136,9 +137,42 @@ class SearchService:
                     reranker_version=None,
                     compatibility_diagnostics=diagnostics,
                     as_of=request.as_of,
+                    embedding_identity_status="empty_corpus",
                     **self._source_diagnostics(
                         source_scope,
                         index_build_id=None,
+                        status=source_policy_status,
+                    ),
+                ),
+            )
+
+        identity_status, build_provider, build_model = _embedding_identity(
+            active_build.manifest,
+            live_provider=self._embedder.provider_name,
+            live_model=self._embedder.model_name,
+        )
+        if identity_status == "mismatch":
+            elapsed_ms = int((time.perf_counter() - started) * 1000)
+            return SearchResponse(
+                results=[],
+                query=request.query,
+                top_k=top_k,
+                diagnostics=SearchDiagnostics(
+                    strategy=strategy,
+                    duration_ms=elapsed_ms,
+                    rerank_requested=False,
+                    rerank_status="embedding_identity_mismatch",
+                    reranker_provider=None,
+                    reranker_model=None,
+                    reranker_version=None,
+                    compatibility_diagnostics=diagnostics,
+                    as_of=request.as_of,
+                    embedding_identity_status="mismatch",
+                    embedding_provider=build_provider,
+                    embedding_model=build_model,
+                    **self._source_diagnostics(
+                        source_scope,
+                        index_build_id=active_build.id,
                         status=source_policy_status,
                     ),
                 ),
@@ -177,6 +211,7 @@ class SearchService:
             semantic_weight=self._config.semantic_weight,
             keyword_weight=self._config.keyword_weight,
             rerank_enabled=rerank_enabled,
+            rerank_mode=self._config.rerank_mode if rerank_enabled else RerankMode.OFF,
             rerank_top_n=self._config.rerank_top_n,
             rerank_candidate_window=self._config.rerank_candidate_window,
             rerank_return_n=self._config.rerank_return_n,
@@ -347,6 +382,11 @@ class SearchService:
                 language_routing_status=_optional_string(
                     translation_meta.get("language_routing_status")
                 ),
+                embedding_identity_status=identity_status,
+                embedding_provider=_provider_name(build_provider)
+                or _provider_name(self._embedder.provider_name),
+                embedding_model=_provider_name(build_model)
+                or _provider_name(self._embedder.model_name),
                 reranker_latency_ms=_optional_int(rerank_metadata.get("reranker_latency_ms")),
                 reranker_usage=_any_dict(rerank_metadata.get("reranker_usage")),
                 **self._source_diagnostics(
@@ -470,6 +510,33 @@ class SearchService:
 
 def _optional_string(value: object) -> str | None:
     return str(value) if value is not None else None
+
+
+def _provider_name(value: object) -> str | None:
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
+
+
+def _embedding_identity(
+    manifest: object,
+    *,
+    live_provider: str,
+    live_model: str,
+) -> tuple[str, str | None, str | None]:
+    if not isinstance(manifest, dict):
+        return "legacy_unlabeled", None, None
+    provider = manifest.get("embedding_provider")
+    model = manifest.get("embedding_model")
+    if not isinstance(provider, str) or not provider.strip():
+        return "legacy_unlabeled", None, None
+    stored_provider = provider.strip()
+    stored_model = model.strip() if isinstance(model, str) else None
+    if stored_provider != live_provider or (
+        stored_model is not None and stored_model != live_model
+    ):
+        return "mismatch", stored_provider, stored_model
+    return "matched", stored_provider, stored_model
 
 
 def _optional_int(value: object) -> int | None:

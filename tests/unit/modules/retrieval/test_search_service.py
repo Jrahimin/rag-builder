@@ -349,3 +349,39 @@ async def test_search_diagnostics_expose_translation_query_and_branch_provenance
     assert trace["rrf_score"] == pytest.approx(0.0475)
     assert f"{BRANCH_TRANSLATED_DENSE}:bn" in trace["branch_provenance"]
 
+
+async def test_search_returns_mismatch_diagnostic_when_live_embedder_differs() -> None:
+    embedder = MagicMock()
+    embedder.provider_name = "cohere"
+    embedder.model_name = "embed-v4.0"
+    service = SearchService(
+        session=AsyncMock(),
+        project_id=uuid.uuid4(),
+        embedder=embedder,
+        reranker=MagicMock(),
+        retrieval_config=RetrievalConfig(),
+    )
+    service._builds = MagicMock()
+    service._builds.get_active = AsyncMock(
+        return_value=MagicMock(
+            id=uuid.uuid4(),
+            embedding_set_version=2,
+            manifest={
+                "embedding_provider": "openai",
+                "embedding_model": "text-embedding-3-large",
+            },
+        )
+    )
+    retriever = MagicMock()
+    retriever.retrieve = AsyncMock()
+    service._build_retriever = MagicMock(return_value=retriever)  # type: ignore[method-assign]
+
+    response = await service.search(SearchRequest(query="policy"))
+
+    assert response.results == []
+    assert response.diagnostics.rerank_status == "embedding_identity_mismatch"
+    assert response.diagnostics.embedding_identity_status == "mismatch"
+    assert response.diagnostics.embedding_provider == "openai"
+    assert response.diagnostics.embedding_model == "text-embedding-3-large"
+    retriever.retrieve.assert_not_called()
+

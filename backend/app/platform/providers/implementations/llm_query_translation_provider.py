@@ -58,6 +58,7 @@ class LLMQueryTranslationProvider(BaseQueryTranslationProvider):
             query=request.query,
             target_language=request.target_language,
             source_profile=request.source_profile,
+            prompt_version=request.prompt_version or self._prompt_version,
         )
         messages = [
             ChatMessage(role=ChatRole(item["role"]), content=item["content"]) for item in payload

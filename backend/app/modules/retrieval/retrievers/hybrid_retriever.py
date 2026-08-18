@@ -9,6 +9,7 @@ from dataclasses import replace
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import RerankMode
 from app.modules.retrieval.multilingual.planner import (
     BRANCH_ORIGINAL_DENSE,
     BRANCH_ORIGINAL_LEXICAL,
@@ -23,7 +24,7 @@ from app.modules.retrieval.retrievers.keyword_retriever import KeywordRetriever
 from app.modules.retrieval.retrievers.models import CandidateHit, CandidateSource, RetrievalContext
 from app.modules.retrieval.retrievers.rrf_fusion import RankedList, reciprocal_rank_fusion
 from app.modules.retrieval.retrievers.semantic_retriever import SemanticRetriever
-from app.platform.providers.contracts.embedding import BaseEmbeddingProvider
+from app.platform.providers.contracts.embedding import BaseEmbeddingProvider, EmbeddingPurpose
 from app.platform.providers.contracts.reranker import (
     BaseRerankerProvider,
     RerankCandidate,
@@ -151,7 +152,17 @@ class HybridRetriever(BaseRetriever):
 
         final_candidates = fused
         if context.rerank_enabled and fused:
-            if self._reranker.is_passthrough:
+            skip_reason = _rerank_skip_reason(context)
+            if skip_reason is not None:
+                final_candidates = _annotate_candidates(
+                    fused,
+                    rerank_status=skip_reason,
+                    reranker_provider=self._reranker.provider_name,
+                    reranker_model=self._reranker.model_name,
+                    reranker_version=self._reranker.provider_version,
+                    reranker_score_scale=RerankScoreScale.RECIPROCAL_RANK_FUSION.value,
+                )
+            elif self._reranker.is_passthrough:
                 final_candidates = _annotate_candidates(
                     fused,
                     rerank_status="passthrough",
@@ -329,7 +340,10 @@ class HybridRetriever(BaseRetriever):
         if not passages:
             return candidates
         try:
-            embedded = await self._embedder.embed_texts(passages)
+            embedded = await self._embedder.embed_texts(
+                passages,
+                purpose=EmbeddingPurpose.DOCUMENT,
+            )
         except ProviderError:
             logger.warning(
                 "passage_semantic_scoring_unavailable",
@@ -444,6 +458,18 @@ class HybridRetriever(BaseRetriever):
         if not reranked:
             return _annotate_candidates(fused, rerank_status="empty")
         return reranked
+
+
+def _rerank_skip_reason(context: RetrievalContext) -> str | None:
+    if context.rerank_mode is RerankMode.OFF:
+        return "disabled"
+    if context.rerank_mode is not RerankMode.CROSS_LANGUAGE:
+        return None
+    plan = context.multilingual_plan
+    target = getattr(plan, "cross_language_target", None) if plan is not None else None
+    if target:
+        return None
+    return "skipped_same_language"
 
 
 def _annotate_candidates(

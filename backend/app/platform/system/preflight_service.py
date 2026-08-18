@@ -12,6 +12,7 @@ from app.core.config import MalwareScannerBackend, OcrBackend, Settings
 from app.core.logging import get_logger
 from app.platform.db.session import Database, PgVectorUnavailableError
 from app.platform.infra.connectivity.redis import RedisConnectivity
+from app.platform.providers.contracts.embedding import EmbeddingPurpose
 from app.platform.providers.contracts.llm import ChatMessage, ChatRole
 from app.platform.providers.contracts.reranker import RerankCandidate, RerankRequest
 from app.platform.providers.contracts.storage import BaseStorageProvider
@@ -187,7 +188,10 @@ class StartupPreflightService:
 
     async def _check_embedding(self) -> None:
         provider = create_embedding_provider(self._settings)
-        result = await provider.embed_texts(["runtime capability preflight"])
+        result = await provider.embed_texts(
+            ["runtime capability preflight"],
+            purpose=EmbeddingPurpose.DOCUMENT,
+        )
         expected = self._settings.embedding.dimensions
         if result.dimensions != expected or any(
             len(vector) != expected for vector in result.vectors

@@ -18,6 +18,7 @@ from app.core.config import (
     EvidenceScoreMode,
     LLMBackend,
     RequestOverrideMode,
+    RerankMode,
     RerankerBackend,
     RetrievalStrategy,
     Settings,
@@ -49,11 +50,18 @@ class ProjectLLMPolicy(BaseModel):
 
 
 class ProjectRetrievalPolicy(BaseModel):
+    """Sparse retrieval overrides. ``None`` inherits the deployment default.
+
+    ``rerank_mode`` is the operator-facing control (Always / Cross-language / Off).
+    Legacy ``rerank_enabled`` still maps true→always and false→off when mode is omitted.
+    """
+
     model_config = ConfigDict(extra="forbid")
 
     strategy: RetrievalStrategy | None = None
     top_k: int | None = Field(default=None, ge=1, le=100)
     rerank_enabled: bool | None = None
+    rerank_mode: RerankMode | None = None
     rerank_top_n: int | None = Field(default=None, ge=1, le=100)
     rerank_score_threshold: float | None = Field(default=None, ge=0.0, le=1.0)
     evidence_score_threshold: float | None = Field(default=None, ge=0.0, le=1.0)
@@ -107,6 +115,7 @@ class EffectiveRetrievalPolicy(BaseModel):
     strategy: RetrievalStrategy
     top_k: int
     rerank_enabled: bool
+    rerank_mode: RerankMode = RerankMode.ALWAYS
     rerank_top_n: int
     rerank_score_threshold: float | None
     semantic_evidence_score_threshold: float
@@ -185,6 +194,24 @@ class ConfigRevisionRecord(BaseModel):
     configuration: dict[str, Any]
 
 
+def _resolve_rerank_mode(
+    project: ProjectRetrievalPolicy,
+    settings: Settings,
+    origins: dict[str, str],
+) -> RerankMode:
+    """Project rerank_mode wins; legacy rerank_enabled maps true→always, false→off."""
+    if project.rerank_mode is not None:
+        origins["retrieval.rerank_mode"] = "project"
+        return project.rerank_mode
+    if project.rerank_enabled is not None:
+        origins["retrieval.rerank_mode"] = "project"
+        return RerankMode.ALWAYS if project.rerank_enabled else RerankMode.OFF
+    origins["retrieval.rerank_mode"] = "global"
+    if not settings.retrieval.rerank_enabled:
+        return RerankMode.OFF
+    return settings.retrieval.rerank_mode
+
+
 def resolve_project_ai_config(
     settings: Settings,
     revision: ConfigRevisionRecord | None,
@@ -221,6 +248,7 @@ def resolve_project_ai_config(
         settings.chat.lexical_corroboration_coverage,
         origins,
     )
+    rerank_mode = _resolve_rerank_mode(project.retrieval, settings, origins)
 
     config = EffectiveProjectAIConfig(
         llm=EffectiveLLMPolicy(
@@ -238,11 +266,8 @@ def resolve_project_ai_config(
             top_k=inherited(
                 "retrieval.top_k", project.retrieval.top_k, settings.retrieval.default_top_k
             ),
-            rerank_enabled=inherited(
-                "retrieval.rerank_enabled",
-                project.retrieval.rerank_enabled,
-                settings.retrieval.rerank_enabled,
-            ),
+            rerank_mode=rerank_mode,
+            rerank_enabled=rerank_mode is not RerankMode.OFF,
             rerank_top_n=inherited(
                 "retrieval.rerank_top_n",
                 project.retrieval.rerank_top_n,
@@ -494,6 +519,7 @@ def apply_effective_ai_config(
                     "strategy": effective.retrieval.strategy,
                     "default_top_k": effective.retrieval.top_k,
                     "rerank_enabled": effective.retrieval.rerank_enabled,
+                    "rerank_mode": effective.retrieval.rerank_mode,
                     "rerank_top_n": effective.retrieval.rerank_top_n,
                     "rerank_score_threshold": effective.retrieval.rerank_score_threshold,
                     "passage_scoring_enabled": effective.retrieval.passage_scoring_enabled,
@@ -570,6 +596,7 @@ def global_config_fingerprint(settings: Settings) -> str:
                 mode="json",
                 exclude={"cohere_api_key"},
             ),
+            "cohere": {"configured": bool(settings.resolved_cohere_api_key())},
         }
     )
 

@@ -32,7 +32,7 @@ class CohereRerankerProvider(BaseRerankerProvider):
         *,
         api_key: str,
         base_url: str = "https://api.cohere.com",
-        model: str = "rerank-v4.0-fast",
+        model: str = "rerank-v4.0-pro",
         provider_version: str = "1",
         request_timeout_seconds: float = 15.0,
     ) -> None:

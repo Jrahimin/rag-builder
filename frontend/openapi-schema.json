@@ -4440,6 +4440,10 @@
             "title": "Context Char Budget",
             "type": "integer"
           },
+          "evidence_gate_mode": {
+            "$ref": "#/components/schemas/EvidenceGateMode",
+            "default": "enforce"
+          },
           "evidence_score_mode": {
             "$ref": "#/components/schemas/EvidenceScoreMode",
             "default": "whole_chunk"
@@ -4676,6 +4680,10 @@
           "rerank_enabled": {
             "title": "Rerank Enabled",
             "type": "boolean"
+          },
+          "rerank_mode": {
+            "$ref": "#/components/schemas/RerankMode",
+            "default": "always"
           },
           "rerank_return_n": {
             "default": 8,
@@ -5264,6 +5272,15 @@
         ],
         "title": "EvaluationRunResponse",
         "type": "object"
+      },
+      "EvidenceGateMode": {
+        "description": "Whether a failed pre-generation evidence score may block the LLM.",
+        "enum": [
+          "enforce",
+          "observe"
+        ],
+        "title": "EvidenceGateMode",
+        "type": "string"
       },
       "EvidenceScoreMode": {
         "description": "Calibrated semantic score used by the pre-generation evidence gate.",
@@ -7716,6 +7733,16 @@
             ],
             "title": "Context Char Budget"
           },
+          "evidence_gate_mode": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EvidenceGateMode"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "evidence_score_mode": {
             "anyOf": [
               {
@@ -8152,6 +8179,7 @@
       },
       "ProjectRetrievalPolicy": {
         "additionalProperties": false,
+        "description": "Sparse retrieval overrides. ``None`` inherits the deployment default.\n\n``rerank_mode`` is the operator-facing control (Always / Cross-language / Off).\nLegacy ``rerank_enabled`` still maps true\u2192always and false\u2192off when mode is omitted.",
         "properties": {
           "evidence_score_threshold": {
             "anyOf": [
@@ -8250,6 +8278,16 @@
               }
             ],
             "title": "Rerank Enabled"
+          },
+          "rerank_mode": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RerankMode"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "rerank_return_n": {
             "anyOf": [
@@ -8557,6 +8595,16 @@
         ],
         "title": "RecentFailure",
         "type": "object"
+      },
+      "RerankMode": {
+        "description": "When the multilingual reranker may run after RRF.\n\nPlatform default is ALWAYS. Projects may inherit or opt down to\ncross-language-only or off. None in a sparse Project payload means inherit.",
+        "enum": [
+          "always",
+          "cross_language",
+          "off"
+        ],
+        "title": "RerankMode",
+        "type": "string"
       },
       "RerankerBackend": {
         "description": "Supported reranker provider backends.",
@@ -8912,6 +8960,39 @@
             "title": "Duration Ms",
             "type": "integer"
           },
+          "embedding_identity_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Embedding Identity Status"
+          },
+          "embedding_model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Embedding Model"
+          },
+          "embedding_provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Embedding Provider"
+          },
           "executed_branches": {
             "items": {
               "type": "string"
@@ -9112,6 +9193,17 @@
             ],
             "title": "Translated Query"
           },
+          "translation_failure_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Translation Failure Reason"
+          },
           "translation_latency_ms": {
             "anyOf": [
               {
@@ -9155,6 +9247,17 @@
               }
             ],
             "title": "Translation Provider"
+          },
+          "translation_source_language": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Translation Source Language"
           },
           "translation_status": {
             "anyOf": [

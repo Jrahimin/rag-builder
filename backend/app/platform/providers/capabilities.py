@@ -20,12 +20,18 @@ def llm_credential_configured(config: LLMConfig) -> bool | None:
     return None
 
 
-def embedding_credential_configured(config: EmbeddingConfig) -> bool | None:
+def embedding_credential_configured(
+    config: EmbeddingConfig,
+    *,
+    cohere_api_key: str = "",
+) -> bool | None:
     """Report embedding credential readiness through the provider abstraction."""
     if config.backend is EmbeddingBackend.OPENAI:
         return bool(config.openai_api_key)
     if config.backend is EmbeddingBackend.GEMINI:
         return bool(config.gemini_api_key)
+    if config.backend is EmbeddingBackend.COHERE:
+        return bool(cohere_api_key.strip())
     return None
 
 

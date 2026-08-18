@@ -50,6 +50,7 @@ class MultilingualRetrievalPlan:
     branches: tuple[RetrievalBranch, ...]
     skipped_branches: tuple[str, ...]
     diagnostics: dict[str, Any] = field(default_factory=dict)
+    cross_language_target: str | None = None
 
 
 def language_inventory_from_manifest(manifest: object) -> LanguageInventory:
@@ -145,6 +146,7 @@ def build_untranslated_plan(
     translation_status: str,
     skipped_reason: str,
     failure_reason: str | None = None,
+    cross_language_target: str | None = None,
 ) -> MultilingualRetrievalPlan:
     profile = detect_query_language_profile(query)
     diagnostics: dict[str, object] = {
@@ -155,6 +157,7 @@ def build_untranslated_plan(
         "language_routing_status": (
             "legacy_build_no_language_inventory" if inventory.is_legacy else "unfiltered"
         ),
+        "cross_language_target": cross_language_target,
     }
     if failure_reason is not None:
         diagnostics["translation_failure_reason"] = failure_reason
@@ -167,6 +170,7 @@ def build_untranslated_plan(
         branches=plan_original_branches(query, profile),
         skipped_branches=(BRANCH_TRANSLATED_DENSE, BRANCH_TRANSLATED_LEXICAL),
         diagnostics=diagnostics,
+        cross_language_target=cross_language_target,
     )
 
 

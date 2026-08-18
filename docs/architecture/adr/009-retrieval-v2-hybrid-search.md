@@ -53,6 +53,14 @@ A true multilingual cross-encoder may replace the default only after a persisted
 latency comparison; re-sorting by the same bi-encoder similarity is not treated as reranking.
 
 The dense baseline is `text-embedding-3-large` at 1024 dimensions, embedding set version 2.
+
+## Amendment: hosted_managed embedding-set 3 (2026-08-19)
+
+`hosted_managed` uses Cohere `embed-v4.0` at 1024 dimensions and `embedding_set_version=3`.
+`hosted_openai` compatibility stays on esv=2 + OpenAI large. Changing provider or model requires
+an immutable rebuild and atomic activation; mixing OpenAI and Cohere vectors in one active set is
+forbidden. If the active build's stored provider/model does not match the live embedder, search
+returns a clear mismatch diagnostic.
 Migration `0026_multilingual_embeddings` changes the fixed pgvector contract and deliberately
 invalidates old retrieval builds.
 

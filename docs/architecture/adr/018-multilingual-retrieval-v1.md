@@ -36,6 +36,29 @@ chunks remain the only evidence and citation source. Query translation is a retr
   until gazette hard gates pass.
 - Recall/MRR/nDCG numbers are promotion targets, not V1 ship blockers.
 
+## Amendment: hosted_managed Cohere retrieval stack (2026-08-19)
+
+The preferred production profile is `hosted_managed`:
+
+- Embedding: Cohere `embed-v4.0` at 1024 dimensions with vendor-neutral `QUERY`/`DOCUMENT`
+  purpose (`search_query` / `search_document` stay inside the Cohere adapter).
+- Reranker: Cohere `rerank-v4.0-pro` after RRF. Platform default mode is Always. Projects may
+  inherit or opt down to Cross-language or Off. Cross-language skips the paid call when inventory
+  says query and corpus share a language. Missing key or API failure degrades to RRF + cosine.
+- Generation: OpenAI `gpt-5.6-luna`. Conditional query translation remains at most one
+  `gpt-5-nano` rewrite; the original query always runs.
+- `embedding_set_version=3` for this stack. Never mix OpenAI and Cohere vectors in one active
+  set. Cutover uses the existing immutable rebuild → validate → activate path. A live embedder
+  that does not match the active build manifest returns a mismatch diagnostic, not an empty hit
+  list.
+- `hosted_openai` remains a deprecated compatibility profile (OpenAI LLM + OpenAI embeddings)
+  and must not require Cohere.
+
+Post-generation per-claim LLM translation is removed. Claim/evidence cosine uses claim=`QUERY`
+and evidence=`DOCUMENT`. The hosted_managed evidence gate ships `observe` until a small existing
+Test Lab smoke confirms the pro-reranker threshold, then examples promote to `enforce`. Do not
+treat `0.40` as already calibrated for embed-v4 + rerank-v4.0-pro.
+
 ## Alternatives considered
 
 | Alternative | Rejected because |

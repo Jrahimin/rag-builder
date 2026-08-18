@@ -33,7 +33,7 @@ from app.platform.domain.language_detection import (
 )
 from app.platform.jobs.contracts import JobProgressCallback
 from app.platform.jobs.errors import PermanentJobError
-from app.platform.providers.contracts.embedding import BaseEmbeddingProvider
+from app.platform.providers.contracts.embedding import BaseEmbeddingProvider, EmbeddingPurpose
 
 
 class IndexBuildWorkflow:
@@ -102,7 +102,10 @@ class IndexBuildWorkflow:
         await self._report("building_vectors", 10)
         for offset in range(0, len(all_chunks), self._batch_size):
             batch = all_chunks[offset : offset + self._batch_size]
-            result = await self._embedder.embed_texts([chunk.content for _, chunk in batch])
+            result = await self._embedder.embed_texts(
+                [chunk.content for _, chunk in batch],
+                purpose=EmbeddingPurpose.DOCUMENT,
+            )
             if len(result.vectors) != len(batch) or any(
                 len(vector) != result.dimensions for vector in result.vectors
             ):
@@ -185,6 +188,9 @@ class IndexBuildWorkflow:
             "language_metadata_schema_version": LANGUAGE_METADATA_SCHEMA_VERSION,
             "chunk_language_counts": language_inventory["chunk_language_counts"],
             "document_language_counts": language_inventory["document_language_counts"],
+            "embedding_provider": self._embedder.provider_name,
+            "embedding_model": self._embedder.model_name,
+            "embedding_dimensions": self._embedder.dimensions,
         }
         build.corpus_fingerprint = hashlib.sha256(
             json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode()

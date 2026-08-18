@@ -12,9 +12,9 @@ APE treats multilingual corpora as first-class through Unicode-property tokeniza
 | OCR | Optional `OCRProvider`: PaddleOCR for the existing pipeline; Google Cloud Vision for Bangla |
 | PDF parsing | Page-level Unicode quality scoring with PyMuPDF → PDFium → OCR fallback |
 | FTS | Configurable `APE_RETRIEVAL__FTS_REGCONFIG` (default `simple`) |
-| Dense retrieval | `text-embedding-3-large` at 1024 dimensions; one multilingual space for every query/evidence direction |
-| Query translation | Optional, query-only, one target language, default `gpt-5-nano`; never cited |
-| Evidence gate | Applied multilingual reranker relevance is primary; original cosine is fallback |
+| Dense retrieval | `hosted_managed`: Cohere `embed-v4.0` @ 1024 (`QUERY`/`DOCUMENT`); `hosted_openai`: `text-embedding-3-large` @ 1024 |
+| Query translation | Optional, query-only, one target language, default `gpt-5-nano` and `retrieval-translation-v2`; never cited |
+| Evidence gate | Applied multilingual reranker relevance is primary; original cosine is fallback. `hosted_managed` ships observe until Test Lab smoke. |
 | Reindex | `python -m app.cli.reindex_cli` after tokenizer upgrades |
 
 ## Configuration
@@ -31,14 +31,17 @@ APE_OCR__MAX_OCR_PAGES_PER_DOCUMENT=100
 APE_RETRIEVAL__FTS_REGCONFIG=simple
 APE_RETRIEVAL__MIN_OCR_CONFIDENCE=
 APE_RETRIEVAL__FILTERABLE_METADATA_KEYS=source,tags,ocr_confidence
-APE_EMBEDDING__MODEL=text-embedding-3-large
+APE_EMBEDDING__MODEL=embed-v4.0
 APE_EMBEDDING__DIMENSIONS=1024
-APE_RETRIEVAL__EMBEDDING_SET_VERSION=2
-APE_QUERY_TRANSLATION__ENABLED=false
+APE_RETRIEVAL__EMBEDDING_SET_VERSION=3
+APE_QUERY_TRANSLATION__ENABLED=true
 APE_QUERY_TRANSLATION__MODEL=gpt-5-nano
-APE_RETRIEVAL__RERANKER_BACKEND=noop
+APE_QUERY_TRANSLATION__PROMPT_VERSION=retrieval-translation-v2
+APE_RETRIEVAL__RERANKER_BACKEND=cohere
+APE_RETRIEVAL__RERANK_MODE=always
+APE_COHERE__API_KEY=
 APE_CHAT__MINIMUM_SEMANTIC_EVIDENCE_SCORE=0.35
-APE_CHAT__EVIDENCE_GATE_MODE=enforce
+APE_CHAT__EVIDENCE_GATE_MODE=observe
 APE_CHAT__MINIMUM_RERANKER_EVIDENCE_SCORE=0.40
 APE_CHAT__LEXICAL_CORROBORATION_FLOOR_SCORE=0.30
 APE_CHAT__LEXICAL_CORROBORATION_COVERAGE=0.50
@@ -123,8 +126,9 @@ When translation is enabled and the active immutable build has language inventor
 target-language rewrite is added (`gpt-5-nano` by default). Latin-script queries are
 `latin_ambiguous`, never auto-English, so a Bangla corpus spends that one slot on Bangla.
 Translated branches include `target OR mixed OR unknown` rows. Original chunks remain the only
-evidence and citations. Enable routing only after a new reindex; keep translation and Cohere off
-until gazette hard gates pass. See [ADR-018](../architecture/adr/018-multilingual-retrieval-v1.md).
+evidence and citations. `hosted_managed` enables translation and Cohere rerank by default; local
+and pytest stacks keep them off. Cut over an existing OpenAI embedding set with rebuild →
+validate → activate. See [ADR-018](../architecture/adr/018-multilingual-retrieval-v1.md).
 
 ## Reindex after upgrades
 

@@ -6,7 +6,7 @@ import math
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
-from app.platform.providers.contracts.embedding import BaseEmbeddingProvider
+from app.platform.providers.contracts.embedding import BaseEmbeddingProvider, EmbeddingPurpose
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,7 +52,10 @@ class SentenceSimilarityService(BaseSentenceSimilarityService):
                 provider_version=self._embedder.provider_version,
             )
 
-        embedded = await self._embedder.embed_texts(sentences)
+        embedded = await self._embedder.embed_texts(
+            sentences,
+            purpose=EmbeddingPurpose.DOCUMENT,
+        )
         vectors = embedded.vectors
         boundaries: list[int] = []
         for index in range(1, len(sentences)):

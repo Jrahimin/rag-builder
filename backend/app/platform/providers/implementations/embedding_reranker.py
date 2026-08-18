@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import regex
 
-from app.platform.providers.contracts.embedding import BaseEmbeddingProvider
+from app.platform.providers.contracts.embedding import BaseEmbeddingProvider, EmbeddingPurpose
 from app.platform.providers.contracts.reranker import (
     BaseRerankerProvider,
     RerankRequest,
@@ -59,10 +59,17 @@ class EmbeddingRerankerProvider(BaseRerankerProvider):
             passages.extend(candidate_passages)
             passage_owners.extend([candidate_index] * len(candidate_passages))
 
-        embedded = await self._embedder.embed_texts([request.query, *passages])
-        query_vector = embedded.vectors[0]
+        query_embedded = await self._embedder.embed_texts(
+            [request.query],
+            purpose=EmbeddingPurpose.QUERY,
+        )
+        passage_embedded = await self._embedder.embed_texts(
+            passages,
+            purpose=EmbeddingPurpose.DOCUMENT,
+        )
+        query_vector = query_embedded.vectors[0]
         best_scores = [-1.0] * len(request.candidates)
-        for owner, vector in zip(passage_owners, embedded.vectors[1:], strict=True):
+        for owner, vector in zip(passage_owners, passage_embedded.vectors, strict=True):
             similarity = cosine_similarity(query_vector, vector)
             best_scores[owner] = max(best_scores[owner], similarity)
 

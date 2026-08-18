@@ -108,3 +108,41 @@ def test_translation_validation_rejects_dropped_section_numbers() -> None:
     assert _validation_error("section 163 at 15%", "section at percent") == "missing_literals"
     assert _validation_error("section 163 at 15%", "section 163 at 15%") is None
     assert _validation_error("hello", "") == "empty"
+
+
+async def test_disabled_translation_still_records_cross_language_target() -> None:
+    plan = await resolve_multilingual_plan(
+        "what are the source tax deduction areas?",
+        manifest={
+            "language_metadata_schema_version": "2026-08-18.v1",
+            "chunk_language_counts": {"bn": 8, "en": 1},
+        },
+        translation_config=QueryTranslationConfig(enabled=False),
+        translator=None,
+    )
+    assert plan.translation_status == "disabled"
+    assert plan.cross_language_target == "bn"
+
+
+def test_translation_v2_prompt_is_domain_neutral() -> None:
+    from app.platform.providers.prompts.retrieval_translation import (
+        LEGACY_PROMPT_VERSION,
+        SYSTEM_PROMPT_V2,
+        translation_messages,
+    )
+
+    assert "Keep the meaning of a formal legal/tax" not in SYSTEM_PROMPT_V2
+    assert "do not add domain, legal, or industry flavor" in SYSTEM_PROMPT_V2.lower()
+    payload = translation_messages(
+        query="refund policy",
+        target_language="bn",
+        source_profile="en",
+    )
+    assert "Keep the meaning of a formal legal/tax" not in payload[0]["content"]
+    legacy = translation_messages(
+        query="refund policy",
+        target_language="bn",
+        source_profile="en",
+        prompt_version=LEGACY_PROMPT_VERSION,
+    )
+    assert "legal/tax" in legacy[0]["content"]

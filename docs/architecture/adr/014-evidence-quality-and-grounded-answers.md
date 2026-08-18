@@ -92,3 +92,10 @@ change must be measured on positives and hard negatives for the current embeddin
 corpus. A recorded Gazette comparison showed relevant 0.32 cosine chunks already retrieved and
 selected while `enforce` at 0.35 still refused, so the remaining bottleneck is the gate rather
 than retrieval, context selection, or a missing reranker.
+
+## Amendment: claim path without post-generation translation (2026-08-19)
+
+Sequential per-claim LLM translation after generation is removed. Remaining claim verification is
+citation presence, same-language lexical coverage, and batched claim=`QUERY` vs evidence=`DOCUMENT`
+cosine. `hosted_managed` ships `APE_CHAT__EVIDENCE_GATE_MODE=observe` until Test Lab smoke
+confirms the Cohere pro-reranker threshold; then operators switch examples to `enforce`.

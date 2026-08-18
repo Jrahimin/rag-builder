@@ -253,8 +253,6 @@ async def get_chat_service(
         domain_instructions=resolution.configuration.domain_instructions,
         prompt_profile=resolution.configuration.prompt_profile,
         embedder=embedder,
-        query_translator=translator,
-        query_translation_config=effective_settings.query_translation,
     )
 
 

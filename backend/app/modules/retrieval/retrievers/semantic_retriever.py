@@ -13,7 +13,7 @@ from app.core.config import RetrievalStrategy
 from app.modules.retrieval.repositories.chunk_embedding_repository import ChunkEmbeddingRepository
 from app.modules.retrieval.retrievers.base_retriever import BaseRetriever
 from app.modules.retrieval.retrievers.models import CandidateHit, RetrievalContext
-from app.platform.providers.contracts.embedding import BaseEmbeddingProvider
+from app.platform.providers.contracts.embedding import BaseEmbeddingProvider, EmbeddingPurpose
 from app.platform.providers.errors import ProviderError
 
 logger = structlog.get_logger(__name__)
@@ -66,7 +66,10 @@ class SemanticRetriever(BaseRetriever):
         scope = language_scope if language_scope is not None else context.language_scope
 
         try:
-            embedded = await self._embedder.embed_texts([query_text])
+            embedded = await self._embedder.embed_texts(
+                [query_text],
+                purpose=EmbeddingPurpose.QUERY,
+            )
             query_vector = embedded.vectors[0]
             candidates = await self._repository.search_cosine(
                 query_vector=query_vector,

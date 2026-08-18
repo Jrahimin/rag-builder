@@ -11,12 +11,16 @@
 
 ## Certified production matrix
 
-Only two combinations are startup-certified:
+Certified production profiles:
 
 | Runtime profile | LLM | Embeddings |
 | --- | --- | --- |
-| `hosted_openai` | OpenAI-compatible route through the `openai` adapter | `openai` |
+| `hosted_managed` (preferred) | OpenAI `gpt-5.6-luna` | Cohere `embed-v4.0` |
+| `hosted_openai` (deprecated compatibility) | OpenAI-compatible route through the `openai` adapter | `openai` |
 | `private_ollama` | `ollama` | `ollama` |
+
+`hosted_openai` must still start without Cohere. Rerank and query-translation availability must
+not block API startup; missing Cohere **embed** configuration fails `hosted_managed` validation.
 
 Other implemented adapters remain available for development/comparison but are non-certified in
 production. Startup invokes each configured capability once under a timeout and caches the result;
@@ -26,7 +30,9 @@ readiness never repeats model calls.
 
 - `ProviderCapability` reference enum (`providers/contracts.py`)
 - `ProviderError` hierarchy
-- **Embeddings** — `BaseEmbeddingProvider` + Ollama / OpenAI / Gemini / hash implementations
+- **Embeddings** — `BaseEmbeddingProvider` + Cohere / Ollama / OpenAI / Gemini / hash implementations.
+  Call sites pass vendor-neutral `QUERY` or `DOCUMENT`; only Cohere maps those to `search_query` /
+  `search_document`.
 - **Semantic persistence** — retrieval-owned pgvector repository; it is not a
   model-facing provider. There is no vector-store provider or external vector client.
 - **Storage** — `BaseStorageProvider` + local / MinIO implementations

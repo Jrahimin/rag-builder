@@ -12,7 +12,7 @@ from typing import Any
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import ChatConfig, LLMConfig, QueryTranslationConfig, RetrievalConfig
+from app.core.config import ChatConfig, LLMConfig, RetrievalConfig
 from app.core.exceptions import NotFoundError, ServiceUnavailableError
 from app.models.conversation import Conversation
 from app.models.message import Message, MessageRole
@@ -33,7 +33,6 @@ from app.platform.domain.lifecycle_service import get_or_raise, require_not_dele
 from app.platform.domain.transactions import commit_refresh
 from app.platform.providers.contracts.embedding import BaseEmbeddingProvider
 from app.platform.providers.contracts.llm import BaseLLMProvider, ChatMessage, ChatUsage
-from app.platform.providers.contracts.query_translation import BaseQueryTranslationProvider
 from app.platform.providers.errors import ProviderError
 
 logger = structlog.get_logger(__name__)
@@ -78,8 +77,6 @@ class ChatService:
         *,
         resolve_llm: LLMProviderResolver,
         embedder: BaseEmbeddingProvider | None = None,
-        query_translator: BaseQueryTranslationProvider | None = None,
-        query_translation_config: QueryTranslationConfig | None = None,
         config_snapshot_id: uuid.UUID | None = None,
         config_provenance: dict[str, Any] | None = None,
         domain_instructions: str = "",
@@ -103,8 +100,6 @@ class ChatService:
         self._grounding = GroundingService(
             chat_config,
             embedder=embedder,
-            translator=query_translator,
-            translation_config=query_translation_config,
         )
 
     async def send_message(
@@ -741,6 +736,20 @@ class ChatService:
                     ),
                     "diversity_backfilled_count": retrieval_diagnostics.get(
                         "diversity_backfilled_count", 0
+                    ),
+                },
+                "rerank": {
+                    "status": retrieval_diagnostics.get("rerank_status"),
+                    "provider": retrieval_diagnostics.get("reranker_provider"),
+                    "model": retrieval_diagnostics.get("reranker_model"),
+                    "version": retrieval_diagnostics.get("reranker_version"),
+                    "score_scale": retrieval_diagnostics.get("reranker_score_scale"),
+                    "latency_ms": retrieval_diagnostics.get("reranker_latency_ms"),
+                    "skipped_reason": (
+                        retrieval_diagnostics.get("rerank_status")
+                        if retrieval_diagnostics.get("rerank_status")
+                        in {"skipped_same_language", "unavailable", "disabled", "passthrough"}
+                        else None
                     ),
                 },
                 "rerank_status": retrieval_diagnostics.get("rerank_status"),

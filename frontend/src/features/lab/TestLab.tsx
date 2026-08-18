@@ -1474,8 +1474,14 @@ function SearchResults({ run, projectId }: { run: SearchRun; projectId: string }
               <dt>Rerank</dt>
               <dd>
                 {run.response.diagnostics.rerank_status}
+                {run.response.diagnostics.reranker_provider
+                  ? ` · ${run.response.diagnostics.reranker_provider}`
+                  : ""}
                 {run.response.diagnostics.reranker_model
                   ? ` · ${run.response.diagnostics.reranker_model}`
+                  : ""}
+                {run.response.diagnostics.reranker_latency_ms != null
+                  ? ` · ${run.response.diagnostics.reranker_latency_ms} ms`
                   : ""}
               </dd>
             </div>
@@ -1484,6 +1490,9 @@ function SearchResults({ run, projectId }: { run: SearchRun; projectId: string }
                 <dt>Translation</dt>
                 <dd>
                   {run.response.diagnostics.translation_status}
+                  {run.response.diagnostics.translation_provider
+                    ? ` · ${run.response.diagnostics.translation_provider}`
+                    : ""}
                   {run.response.diagnostics.translation_source_language ||
                   run.response.diagnostics.query_language_profile
                     ? ` · ${run.response.diagnostics.translation_source_language ?? run.response.diagnostics.query_language_profile}`
@@ -1493,6 +1502,9 @@ function SearchResults({ run, projectId }: { run: SearchRun; projectId: string }
                     : ""}
                   {run.response.diagnostics.translation_model
                     ? ` · ${run.response.diagnostics.translation_model}`
+                    : ""}
+                  {run.response.diagnostics.translation_latency_ms != null
+                    ? ` · ${run.response.diagnostics.translation_latency_ms} ms`
                     : ""}
                 </dd>
               </div>
@@ -2048,6 +2060,7 @@ function MessageInspector({
         </span>
       </div>
       <TranslationDiagnostics metadata={message.metadata} />
+      <RerankDiagnostics metadata={message.metadata} />
       {refusal ? (
         <div className="notice-card">
           <strong>Insufficient evidence</strong>
@@ -2303,6 +2316,8 @@ function TranslationDiagnostics({
             {typeof translation.source_language === "string" ? ` · ${translation.source_language}` : ""}
             {typeof translation.target_language === "string" ? ` → ${translation.target_language}` : ""}
             {typeof translation.model === "string" ? ` · ${translation.model}` : ""}
+            {typeof translation.provider === "string" ? ` · ${translation.provider}` : ""}
+            {typeof translation.latency_ms === "number" ? ` · ${translation.latency_ms} ms` : ""}
           </dd>
         </div>
         {typeof translation.translated_query === "string" && translation.translated_query && (
@@ -2326,6 +2341,40 @@ function TranslationDiagnostics({
           <BranchProvenanceList trace={candidate} />
         </div>
       ))}
+    </details>
+  );
+}
+
+function RerankDiagnostics({
+  metadata,
+}: {
+  metadata?: { [key: string]: unknown };
+}) {
+  const trace = asRecord(metadata?.retrieval_trace);
+  const rerank = asRecord(trace?.rerank);
+  if (!rerank?.status) {
+    return null;
+  }
+  return (
+    <details className="lab-advanced">
+      <summary>Rerank</summary>
+      <dl className="detail-list">
+        <div>
+          <dt>Status</dt>
+          <dd>
+            {String(rerank.status)}
+            {typeof rerank.provider === "string" ? ` · ${rerank.provider}` : ""}
+            {typeof rerank.model === "string" ? ` · ${rerank.model}` : ""}
+            {typeof rerank.latency_ms === "number" ? ` · ${rerank.latency_ms} ms` : ""}
+          </dd>
+        </div>
+        {typeof rerank.skipped_reason === "string" && rerank.skipped_reason && (
+          <div>
+            <dt>Skip reason</dt>
+            <dd>{rerank.skipped_reason}</dd>
+          </div>
+        )}
+      </dl>
     </details>
   );
 }

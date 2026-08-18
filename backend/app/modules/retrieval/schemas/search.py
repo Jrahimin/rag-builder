@@ -98,6 +98,9 @@ class SearchDiagnostics(BaseModel):
     skipped_branches: list[str] = Field(default_factory=list)
     branch_candidate_counts: dict[str, int] = Field(default_factory=dict)
     language_routing_status: str | None = None
+    embedding_identity_status: str | None = None
+    embedding_provider: str | None = None
+    embedding_model: str | None = None
     reranker_latency_ms: int | None = None
     reranker_usage: dict[str, Any] = Field(default_factory=dict)
 
