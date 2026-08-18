@@ -97,5 +97,7 @@ than retrieval, context selection, or a missing reranker.
 
 Sequential per-claim LLM translation after generation is removed. Remaining claim verification is
 citation presence, same-language lexical coverage, and batched claim=`QUERY` vs evidence=`DOCUMENT`
-cosine. `hosted_managed` ships `APE_CHAT__EVIDENCE_GATE_MODE=observe` until Test Lab smoke
-confirms the Cohere pro-reranker threshold; then operators switch examples to `enforce`.
+cosine. `hosted_managed` examples now use `APE_CHAT__EVIDENCE_GATE_MODE=enforce`
+with the current defaults after the Cohere embed/rerank cutover. Recalibrate
+thresholds in Test Lab if a corpus disagrees; `observe` remains available while
+measuring.

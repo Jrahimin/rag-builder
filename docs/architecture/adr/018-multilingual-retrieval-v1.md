@@ -56,9 +56,9 @@ The preferred production profile is `hosted_managed`:
   and must not require Cohere.
 
 Post-generation per-claim LLM translation is removed. Claim/evidence cosine uses claim=`QUERY`
-and evidence=`DOCUMENT`. The hosted_managed evidence gate ships `observe` until a small existing
-Test Lab smoke confirms the pro-reranker threshold, then examples promote to `enforce`. Do not
-treat `0.40` as already calibrated for embed-v4 + rerank-v4.0-pro.
+and evidence=`DOCUMENT`. The hosted_managed evidence gate examples now `enforce` with the current
+defaults (semantic `0.35`, applied reranker `0.40`). Recalibrate in Test Lab if a corpus disagrees;
+`observe` remains available while measuring. Do not add a second threshold architecture.
 
 ## Alternatives considered
 

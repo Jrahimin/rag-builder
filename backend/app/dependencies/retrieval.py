@@ -171,6 +171,7 @@ async def get_index_lifecycle_service(
         embedding_set_version=settings.retrieval.embedding_set_version,
         job_max_attempts=settings.jobs.max_attempts,
         audit=DatabaseAuditRecorder(session, project_id),
+        query_embedder_factory=query_embedder_factory_for(settings),
     )
 
 

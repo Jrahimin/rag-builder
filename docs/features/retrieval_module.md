@@ -90,6 +90,9 @@ Query embeddings always follow the **active** index build
    or `503 embedding_provider_unavailable`.
 5. **Roll back** with `POST .../index-builds/rollback`. The retained previous
    build keeps its own identity; query embeddings switch back to that space.
+   Rollback refuses with `400 index_rollback_provider_unavailable` if that
+   historical provider key is gone, instead of moving the pointer and leaving
+   the next search `503`. Unlabeled or mixed retained identity is also refused.
 
 OpenAI → Cohere: set Cohere as the live target and bump esv to 3, rebuild,
 validate, activate. Until activation, queries still use the OpenAI active
@@ -97,8 +100,10 @@ build. After rollback, they use OpenAI again. Do not delete the OpenAI key
 while a retained OpenAI build is a rollback target.
 
 Evidence fallback and claim-grounding thresholds stay provider-specific
-calibration. `hosted_managed` keeps `APE_CHAT__EVIDENCE_GATE_MODE=observe`
-until Test Lab smoke confirms the current embed/rerank pair.
+calibration. `hosted_managed` examples now use `APE_CHAT__EVIDENCE_GATE_MODE=enforce`
+with the current defaults (semantic `0.35`, applied reranker `0.40`, lexical
+`0.30`/`0.50`, claim `0.35`/`0.25`/`0.15`). Recalibrate those numbers in Test Lab
+if a corpus disagrees; keep `observe` only while measuring.
 
 ## Configuration
 

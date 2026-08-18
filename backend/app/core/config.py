@@ -663,10 +663,9 @@ class ChatConfig(BaseModel):
 
     Evidence gate: when a true reranker applied, its relevance is the only
     learned admit signal; cosine + lexical rescue are fallbacks. Thresholds are
-    provider-specific calibration, not universal constants. Hosted_managed ships
-    ``observe`` until Test Lab smoke confirms the current embed/rerank pair,
-    then operators switch to ``enforce``. Do not treat ``0.40`` as calibrated
-    for Cohere embed-v4 + rerank-v4.0-pro.
+    provider-specific calibration, not universal constants. Hosted_managed
+    examples ``enforce`` with the current defaults; use ``observe`` only while
+    measuring a corpus in Test Lab.
     """
 
     retrieval_top_k: int = Field(default=10, ge=1, le=100)

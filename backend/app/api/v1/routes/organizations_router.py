@@ -5,6 +5,8 @@ from __future__ import annotations
 import uuid
 
 from fastapi import APIRouter, Depends, Query, status
+from fastapi.exceptions import RequestValidationError
+from pydantic import ValidationError as PydanticValidationError
 
 from app.core.http.envelopes import ApiResponse
 from app.dependencies.admin_auth import require_super_admin
@@ -255,7 +257,10 @@ async def rotate_api_key(
         rotation_payload["revoke_old"] = revoke_old
     # Re-validate the merged deprecated-query/body form. The query flag must
     # never manufacture its own emergency confirmation.
-    rotation = ApiKeyRotate.model_validate(rotation_payload)
+    try:
+        rotation = ApiKeyRotate.model_validate(rotation_payload)
+    except PydanticValidationError as exc:
+        raise RequestValidationError(exc.errors()) from exc
     api_key, secret = await service.rotate(
         organization_id,
         key_id,

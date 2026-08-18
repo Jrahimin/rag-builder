@@ -90,8 +90,8 @@ Chat uses the configured retrieval strategy through `RetrievalPort`. Hybrid retr
 dense + original lexical, optional one translated pair, RRF, optional reranker) is the production
 path; semantic search remains available as an explicit rollback or comparison strategy. When rerank
 is applied, the evidence gate uses calibrated reranker relevance; otherwise it keeps whole-chunk
-cosine plus lexical rescue. `APE_CHAT__EVIDENCE_GATE_MODE=observe` records that decision without
-blocking generation on a failed score. Empty retrieval still refuses.
+cosine plus lexical rescue. `APE_CHAT__EVIDENCE_GATE_MODE=enforce` blocks generation on a failed
+score. `observe` records that decision without blocking. Empty retrieval still refuses.
 
 ## Testing strategy
 

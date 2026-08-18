@@ -46,8 +46,8 @@ private full build --validate--> validated
 - Query search uses the active build's embedding identity. A new rebuild may
   target a different provider from live settings; activate, then search uses
   that identity. Rollback restores the retained build without mixing vector
-  spaces. Unlabeled or mixed active builds fail closed with a configuration
-  error instead of empty retrieval.
+  spaces, and refuses if that historical provider key is gone. Unlabeled or mixed
+  active builds fail closed with a configuration error instead of empty retrieval.
 - Delete is reversible. Its job builds and activates a corpus excluding the
   document, then sets `deleted_at`. The retained prior build and document
   artifacts make rollback possible.
@@ -99,6 +99,9 @@ transient database or storage problem cannot turn reconciliation into data loss.
 - Monitor failed/building builds, lifecycle job age, ClamAV health, and
   reconciliation drift.
 - Activation is metadata-only and atomic; full build cost occurs before it.
+  Rollback and activation refuse if the target build's embedding credentials are
+  gone or its identity is unlabeled/mixed, so the pointer cannot move into a
+  search that would 409/503.
 - This slice deliberately does not add connectors, legal hold, multi-region
   coordination, or a general-purpose index platform.
 

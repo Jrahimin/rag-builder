@@ -101,6 +101,7 @@ function effectiveConfig(activeRevisionId: string | null): EffectiveProjectAICon
         max_history_messages: 10,
         include_citations: true,
         citation_excerpt_max_chars: 500,
+        evidence_gate_mode: "enforce",
         evidence_score_mode: "whole_chunk",
         lexical_corroboration_floor_score: 0.35,
         lexical_corroboration_coverage: 0.2,

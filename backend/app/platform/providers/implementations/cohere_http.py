@@ -27,9 +27,19 @@ def shared_cohere_client(*, base_url: str, timeout: float) -> httpx.AsyncClient:
 
 
 def clear_shared_cohere_clients() -> None:
-    """Drop cached clients. Tests call this after asserting reuse."""
+    """Drop cached clients without closing sockets. Prefer aclose in process shutdown."""
     with _lock:
         _clients.clear()
+
+
+async def aclose_shared_cohere_clients() -> None:
+    """Close cached Cohere HTTP clients. Clearing the cache alone leaks connections."""
+    with _lock:
+        clients = list(_clients.values())
+        _clients.clear()
+    for client in clients:
+        if not client.is_closed:
+            await client.aclose()
 
 
 async def cohere_post(

@@ -81,6 +81,21 @@ async def test_shared_cohere_clients_reuse_same_timeout_and_split_embed_rerank()
         clear_shared_cohere_clients()
 
 
+async def test_aclose_shared_cohere_clients_closes_cached_clients() -> None:
+    clear_shared_cohere_clients()
+    first = shared_cohere_client(base_url="https://api.cohere.com", timeout=15.0)
+    second = shared_cohere_client(base_url="https://api.cohere.com", timeout=120.0)
+    await cohere_http.aclose_shared_cohere_clients()
+    assert first.is_closed
+    assert second.is_closed
+    reused = shared_cohere_client(base_url="https://api.cohere.com", timeout=15.0)
+    try:
+        assert reused is not first
+        assert not reused.is_closed
+    finally:
+        await cohere_http.aclose_shared_cohere_clients()
+
+
 async def test_cohere_embed_timeout_uses_httpx_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
     class _Client:
         async def post(self, url: str, headers: dict, json: dict) -> None:

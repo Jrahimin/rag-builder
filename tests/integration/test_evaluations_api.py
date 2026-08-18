@@ -77,7 +77,7 @@ async def test_dataset_and_run_capture_reproducible_versions(db_client: AsyncCli
     assert len(run["configuration_hash"]) == 64
     assert run["versions"]["dataset"]["hash"] == dataset_data["dataset_hash"]
     assert run["versions"]["prompt_version"] == "v4"
-    assert run["versions"]["chunking"]["chunker_version"] == "2.0.0"
+    assert run["versions"]["chunking"]["chunker_version"] == "3.0.0"
     assert len(run["versions"]["corpus"]["fingerprint"]) == 64
     assert run["versions"]["corpus"]["indexed_chunk_count"] == 0
 
@@ -228,11 +228,13 @@ async def test_durable_runner_persists_metrics_claims_and_refusal(
     assert set(run["metrics"]) == {
         "semantic",
         "hybrid",
+        "passage",
+        "multilingual_hybrid",
         "reranked_lexical",
         "reranked_embedding",
         "reranked_embedding_max",
     }
-    assert len(run["case_results"]) == 30
+    assert len(run["case_results"]) == 42
     assert run["versions"]["corpus"]["indexed_chunk_count"] == 1
     exact = next(
         item

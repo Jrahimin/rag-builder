@@ -13,6 +13,7 @@ from app.core.exceptions import BadRequestError
 from app.models.index_build import IndexBuild, IndexBuildOperation, IndexBuildState
 from app.modules.retrieval.services.index_lifecycle_service import IndexLifecycleService
 from app.platform.jobs.configuration import build_job_configuration
+from app.platform.providers.errors import ProviderError
 
 pytestmark = pytest.mark.unit
 
@@ -84,3 +85,74 @@ async def test_rollback_activates_retained_previous_build() -> None:
     assert result is retained
     activate.assert_awaited_once_with(service._session, service._project_id, retained)
     service._audit.record.assert_called()
+
+
+async def test_rollback_refuses_when_retained_provider_credentials_are_gone() -> None:
+    project_id = uuid.uuid4()
+    service = IndexLifecycleService(
+        session=AsyncMock(),
+        project_id=project_id,
+        job_submitter=MagicMock(),
+        job_configuration=build_job_configuration(Settings()),
+        embedding_set_version=1,
+        job_max_attempts=3,
+        audit=MagicMock(),
+        query_embedder_factory=MagicMock(
+            side_effect=ProviderError("missing openai key", provider_name="openai")
+        ),
+    )
+    service._repository = MagicMock()
+    retained = _build(IndexBuildState.RETAINED)
+    retained.manifest = {
+        "embedding_provider": "openai",
+        "embedding_model": "text-embedding-3-large",
+        "embedding_dimensions": 1024,
+        "embedding_set_version": 1,
+    }
+    pointer = MagicMock(previous_build_id=retained.id)
+    service._repository.get_pointer = AsyncMock(return_value=pointer)
+    service._repository.get_by_id = AsyncMock(return_value=retained)
+    with (
+        patch(
+            "app.modules.retrieval.services.index_lifecycle_service.activate_index_build",
+            new_callable=AsyncMock,
+        ) as activate,
+        pytest.raises(BadRequestError) as caught,
+    ):
+        await service.rollback()
+    assert caught.value.code == "index_rollback_provider_unavailable"
+    activate.assert_not_awaited()
+    service._session.commit.assert_not_awaited()
+
+
+async def test_rollback_refuses_unlabeled_retained_build() -> None:
+    service = IndexLifecycleService(
+        session=AsyncMock(),
+        project_id=uuid.uuid4(),
+        job_submitter=MagicMock(),
+        job_configuration=build_job_configuration(Settings()),
+        embedding_set_version=1,
+        job_max_attempts=3,
+        audit=MagicMock(),
+        query_embedder_factory=MagicMock(),
+    )
+    service._repository = MagicMock()
+    retained = _build(IndexBuildState.RETAINED)
+    retained.manifest = {}
+    pointer = MagicMock(previous_build_id=retained.id)
+    service._repository.get_pointer = AsyncMock(return_value=pointer)
+    service._repository.get_by_id = AsyncMock(return_value=retained)
+    with (
+        patch(
+            "app.modules.retrieval.services.index_lifecycle_service.ChunkEmbeddingRepository"
+        ) as repo_cls,
+        patch(
+            "app.modules.retrieval.services.index_lifecycle_service.activate_index_build",
+            new_callable=AsyncMock,
+        ) as activate,
+        pytest.raises(BadRequestError) as caught,
+    ):
+        repo_cls.return_value.list_distinct_identities = AsyncMock(return_value=[])
+        await service.rollback()
+    assert caught.value.code == "index_rollback_identity_unlabeled"
+    activate.assert_not_awaited()

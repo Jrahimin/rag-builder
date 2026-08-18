@@ -14,7 +14,7 @@ APE treats multilingual corpora as first-class through Unicode-property tokeniza
 | FTS | Configurable `APE_RETRIEVAL__FTS_REGCONFIG` (default `simple`) |
 | Dense retrieval | `hosted_managed`: Cohere `embed-v4.0` @ 1024 (`QUERY`/`DOCUMENT`); `hosted_openai`: `text-embedding-3-large` @ 1024 |
 | Query translation | Optional, query-only, one target language, default `gpt-5-nano` and `retrieval-translation-v2`; never cited |
-| Evidence gate | Applied multilingual reranker relevance is primary; original cosine is fallback. `hosted_managed` ships observe until Test Lab smoke. |
+| Evidence gate | Applied multilingual reranker relevance is primary; original cosine is fallback. `hosted_managed` examples enforce with current defaults. |
 | Reindex | `python -m app.cli.reindex_cli` after tokenizer upgrades |
 
 ## Configuration
@@ -42,7 +42,7 @@ APE_RETRIEVAL__RERANK_MODE=always
 APE_COHERE__API_KEY=
 APE_COHERE__BASE_URL=https://api.cohere.com
 APE_CHAT__MINIMUM_SEMANTIC_EVIDENCE_SCORE=0.35
-APE_CHAT__EVIDENCE_GATE_MODE=observe
+APE_CHAT__EVIDENCE_GATE_MODE=enforce
 APE_CHAT__MINIMUM_RERANKER_EVIDENCE_SCORE=0.40
 APE_CHAT__LEXICAL_CORROBORATION_FLOOR_SCORE=0.30
 APE_CHAT__LEXICAL_CORROBORATION_COVERAGE=0.50

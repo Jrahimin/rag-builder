@@ -41,6 +41,7 @@ from app.platform.http.openapi_security import configure_openapi_security
 from app.platform.infra.connectivity.redis import RedisConnectivity
 from app.platform.jobs.implementations.job_queue_factory import get_job_queue
 from app.platform.jobs.implementations.taskiq_queue import TaskiqJobQueue
+from app.platform.providers.implementations.cohere_http import aclose_shared_cohere_clients
 from app.platform.providers.implementations.storage_factory import create_storage_provider
 from app.platform.system.preflight_service import StartupPreflightService
 
@@ -121,6 +122,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             await queue.close()
         await app.state.redis.dispose()
         await app.state.db.dispose()
+        await aclose_shared_cohere_clients()
         log.info("application_stopped")
 
 

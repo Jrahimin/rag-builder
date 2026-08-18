@@ -44,9 +44,11 @@ and rerank remain independently overridable per Project; they degrade on provide
 failure. Embedding incompatibility does not degrade.
 
 Evidence and claim-grounding thresholds are calibration for the active
-embed/rerank pair. Keep `APE_CHAT__EVIDENCE_GATE_MODE=observe` until Test Lab
-smoke confirms the current pair; do not treat `0.40` as calibrated for
-`embed-v4.0` + `rerank-v4.0-pro`.
+embed/rerank pair. Hosted examples use `APE_CHAT__EVIDENCE_GATE_MODE=enforce`
+with semantic `0.35`, applied reranker `0.40`, lexical `0.30`/`0.50`, and claim
+`0.35`/`0.25`/`0.15`. Recalibrate in Test Lab if a corpus disagrees; use
+`observe` only while measuring. Rollback refuses if the retained build's
+embedding credentials are no longer available.
 
 ## Responsibility boundary
 

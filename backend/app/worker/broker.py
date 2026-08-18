@@ -20,6 +20,7 @@ from app.platform.jobs.worker_registry import (
     create_worker_id,
     run_worker_heartbeat_loop,
 )
+from app.platform.providers.implementations.cohere_http import aclose_shared_cohere_clients
 from app.platform.providers.implementations.storage_factory import create_storage_provider
 from app.platform.system.preflight_service import StartupPreflightService
 
@@ -89,3 +90,4 @@ async def shutdown_worker_heartbeat(state: TaskiqState) -> None:
     await connectivity.dispose()
     database: Database = state.ape_worker_database
     await database.dispose()
+    await aclose_shared_cohere_clients()
