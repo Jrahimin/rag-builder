@@ -13,7 +13,8 @@ APE treats multilingual corpora as first-class through Unicode-property tokeniza
 | PDF parsing | Page-level Unicode quality scoring with PyMuPDF → PDFium → OCR fallback |
 | FTS | Configurable `APE_RETRIEVAL__FTS_REGCONFIG` (default `simple`) |
 | Dense retrieval | `text-embedding-3-large` at 1024 dimensions; one multilingual space for every query/evidence direction |
-| Evidence gate | Calibrated semantic relevance is authoritative; lexical overlap is supplementary and rescue-only |
+| Query translation | Optional, query-only, one target language, default `gpt-5-nano`; never cited |
+| Evidence gate | Applied multilingual reranker relevance is primary; original cosine is fallback |
 | Reindex | `python -m app.cli.reindex_cli` after tokenizer upgrades |
 
 ## Configuration
@@ -33,7 +34,11 @@ APE_RETRIEVAL__FILTERABLE_METADATA_KEYS=source,tags,ocr_confidence
 APE_EMBEDDING__MODEL=text-embedding-3-large
 APE_EMBEDDING__DIMENSIONS=1024
 APE_RETRIEVAL__EMBEDDING_SET_VERSION=2
+APE_QUERY_TRANSLATION__ENABLED=false
+APE_QUERY_TRANSLATION__MODEL=gpt-5-nano
+APE_RETRIEVAL__RERANKER_BACKEND=noop
 APE_CHAT__MINIMUM_SEMANTIC_EVIDENCE_SCORE=0.35
+APE_CHAT__MINIMUM_RERANKER_EVIDENCE_SCORE=0.40
 APE_CHAT__LEXICAL_CORROBORATION_FLOOR_SCORE=0.30
 APE_CHAT__LEXICAL_CORROBORATION_COVERAGE=0.50
 APE_PARSING__PDF_TEXT_PARSERS=pymupdf,pdfium
@@ -110,6 +115,16 @@ behavior: score native text first, try PDFium only for degraded pages, and invok
 general OCR backend only when still below threshold. OCR output is kept only when it beats the best
 candidate. The Bangla route instead OCRs every page and does not compete with native candidates.
 
+## Query-only multilingual retrieval
+
+Hybrid search always runs original dense and original lexical branches with no language filter.
+When translation is enabled and the active immutable build has language inventory, at most one
+target-language rewrite is added (`gpt-5-nano` by default). Latin-script queries are
+`latin_ambiguous`, never auto-English, so a Bangla corpus spends that one slot on Bangla.
+Translated branches include `target OR mixed OR unknown` rows. Original chunks remain the only
+evidence and citations. Enable routing only after a new reindex; keep translation and Cohere off
+until gazette hard gates pass. See [ADR-018](../architecture/adr/018-multilingual-retrieval-v1.md).
+
 ## Reindex after upgrades
 
 Embedding dimension changes require the Alembic migration before startup. Migration `0026`
@@ -132,7 +147,7 @@ python -m app.cli.reindex_cli project --project-id <uuid> --dry-run
 ## Acceptance scenarios
 
 - Unicode Bengali text (valid text layer or `.txt`/`.docx`) + Bangla query → non-zero tokens; hybrid retrieval returns relevant chunks
-- English query + Bengali evidence and Bengali query + English evidence → dense recall without translation
+- English query + Bengali evidence and Bengali query + English evidence → dense recall; optional query translation is an additive hybrid branch, not a citation source
 - Same-script cross-language pairs (for example English/French) behave like different-script pairs
 - Code-switched queries are evaluated without runtime language or script routing
 - Topically near but wrong cross-language evidence remains below the false-accept gate
@@ -145,4 +160,4 @@ python -m app.cli.reindex_cli project --project-id <uuid> --dry-run
 - Tiny OCR fragments merge into adjacent chunks instead of occupying retrieval slots
 - English corpus → existing PyMuPDF → PDFium → configured general OCR behavior unchanged
 
-See ADR-010, ADR-011, ADR-017, and `docs/learning/multilingual-text-processing.md`.
+See ADR-010, ADR-011, ADR-017, ADR-018, and `docs/learning/multilingual-text-processing.md`.

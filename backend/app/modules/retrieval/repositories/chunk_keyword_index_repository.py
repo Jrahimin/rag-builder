@@ -16,6 +16,7 @@ from app.modules.retrieval.keyword.tokenizer import (
     term_frequencies,
     tokenize,
 )
+from app.modules.retrieval.language_scope import LanguageScope, language_scope_predicate
 from app.modules.retrieval.source_policy import (
     SOURCE_METADATA_COLUMNS,
     SourceMetadataScope,
@@ -114,6 +115,7 @@ class ChunkKeywordIndexRepository(ProjectScopedRepository[ChunkKeywordIndex]):
         document_id: uuid.UUID | None = None,
         metadata_filter: dict[str, str] | None = None,
         source_scope: SourceMetadataScope | None = None,
+        language_scope: LanguageScope | None = None,
     ) -> list[KeywordCandidateRow]:
         """FTS candidate narrowing — BM25 scoring happens in the retriever."""
         normalized_query = normalize_for_query(query)
@@ -145,6 +147,12 @@ class ChunkKeywordIndexRepository(ProjectScopedRepository[ChunkKeywordIndex]):
         if metadata_filter:
             for key, value in metadata_filter.items():
                 stmt = stmt.where(self.model.metadata_snapshot[key].astext == value)
+        language_predicate = language_scope_predicate(
+            self.model.metadata_snapshot["chunk_language"].astext,
+            language_scope,
+        )
+        if language_predicate is not None:
+            stmt = stmt.where(language_predicate)
         result = await self._session.execute(stmt)
         return [
             KeywordCandidateRow(

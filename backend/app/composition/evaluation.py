@@ -13,6 +13,7 @@ from app.composition.jobs import build_job_service
 from app.composition.source_metadata import KnowledgeRetrievalSourceMetadataAdapter
 from app.core.config import (
     EvidenceScoreMode,
+    QueryTranslationConfig,
     RerankerBackend,
     RetrievalConfig,
     RetrievalStrategy,
@@ -54,11 +55,16 @@ from app.platform.jobs.implementations.job_queue_factory import create_job_queue
 from app.platform.providers.contracts.embedding import BaseEmbeddingProvider
 from app.platform.providers.contracts.llm import BaseLLMProvider
 from app.platform.providers.contracts.reranker import BaseRerankerProvider
+from app.platform.providers.errors import ProviderError
 from app.platform.providers.implementations.embedding_factory import create_embedding_provider
 from app.platform.providers.implementations.embedding_reranker import EmbeddingRerankerProvider
 from app.platform.providers.implementations.lexical_reranker import LexicalRerankerProvider
 from app.platform.providers.implementations.llm_factory import create_llm_provider
 from app.platform.providers.implementations.noop_reranker import NoopRerankerProvider
+from app.platform.providers.implementations.query_translation_factory import (
+    create_query_translation_provider,
+)
+from app.platform.providers.implementations.reranker_factory import create_reranker_provider
 
 
 class SearchEvaluationAdapter(EvaluationRetrievalPort):
@@ -84,9 +90,18 @@ class SearchEvaluationAdapter(EvaluationRetrievalPort):
         self._index_build_id = index_build_id
         self._configuration_hash = configuration_hash
         self._config_provenance = config_provenance or {}
+        translator = _optional_translator(settings)
+        original_only = settings.query_translation.model_copy(update={"enabled": False})
+        translated = settings.query_translation.model_copy(update={"enabled": True})
         self._services: dict[str, SearchService] = {
             "semantic": self._service(session, project_id, embedder, NoopRerankerProvider()),
-            "hybrid": self._service(session, project_id, embedder, NoopRerankerProvider()),
+            "hybrid": self._service(
+                session,
+                project_id,
+                embedder,
+                NoopRerankerProvider(),
+                query_translation_config=original_only,
+            ),
             "passage": self._service(
                 session,
                 project_id,
@@ -95,14 +110,29 @@ class SearchEvaluationAdapter(EvaluationRetrievalPort):
                 retrieval_config=settings.retrieval.model_copy(
                     update={"passage_scoring_enabled": True}
                 ),
+                query_translation_config=original_only,
+            ),
+            "multilingual_hybrid": self._service(
+                session,
+                project_id,
+                embedder,
+                NoopRerankerProvider(),
+                query_translator=translator,
+                query_translation_config=translated,
+                persist_translation_text=True,
             ),
         }
         self._profile_metadata: dict[str, dict[str, Any]] = {
-            "semantic": {"learned": False},
-            "hybrid": {"learned": False},
+            "semantic": {"learned": False, "stage": "A"},
+            "hybrid": {"learned": False, "stage": "B"},
             "passage": {
                 "learned": embedder.provider_name != "hash",
                 "evidence_score_method": "bounded_token_max_v1",
+            },
+            "multilingual_hybrid": {
+                "learned": False,
+                "stage": "E",
+                "translation": translator is not None,
             },
         }
         candidates = list(dict.fromkeys(settings.evaluation.reranker_candidates))
@@ -111,21 +141,33 @@ class SearchEvaluationAdapter(EvaluationRetrievalPort):
         for backend in candidates:
             if backend is RerankerBackend.NOOP:
                 continue
-            provider = _candidate_provider(backend, embedder)
+            provider = _candidate_provider(backend, embedder, settings)
             profile = f"reranked_{backend.value}"
             self._services[profile] = self._service(
                 session,
                 project_id,
                 embedder,
                 provider,
+                query_translator=translator,
+                query_translation_config=translated,
+                persist_translation_text=True,
             )
             self._profile_metadata[profile] = {
                 "provider": provider.provider_name,
                 "model": provider.model_name,
                 "version": provider.provider_version,
+                "stage": "F" if backend is RerankerBackend.COHERE else None,
                 "learned": (
-                    backend in {RerankerBackend.EMBEDDING, RerankerBackend.EMBEDDING_MAX}
-                    and embedder.provider_name != "hash"
+                    backend
+                    in {
+                        RerankerBackend.EMBEDDING,
+                        RerankerBackend.EMBEDDING_MAX,
+                        RerankerBackend.COHERE,
+                    }
+                    and (
+                        embedder.provider_name != "hash"
+                        or backend is RerankerBackend.COHERE
+                    )
                 ),
             }
 
@@ -180,6 +222,7 @@ class SearchEvaluationAdapter(EvaluationRetrievalPort):
                     content=result.content,
                     score=result.score,
                     semantic_score=result.semantic_score,
+                    rerank_relevance_score=result.rerank_relevance_score,
                     passage_semantic_score=result.passage_semantic_score,
                     passage_char_start=result.passage_char_start,
                     passage_char_end=result.passage_char_end,
@@ -209,6 +252,9 @@ class SearchEvaluationAdapter(EvaluationRetrievalPort):
         embedder: BaseEmbeddingProvider,
         reranker: BaseRerankerProvider,
         retrieval_config: RetrievalConfig | None = None,
+        query_translator: object | None = None,
+        query_translation_config: QueryTranslationConfig | None = None,
+        persist_translation_text: bool = False,
     ) -> SearchService:
         return SearchService(
             session=session,
@@ -223,6 +269,9 @@ class SearchEvaluationAdapter(EvaluationRetrievalPort):
             config_provenance=self._config_provenance,
             pinned_source_metadata_generation=self._source_metadata_generation,
             pinned_index_build_id=self._index_build_id,
+            query_translator=query_translator,  # type: ignore[arg-type]
+            query_translation_config=query_translation_config,
+            persist_translation_text=persist_translation_text,
         )
 
 
@@ -418,6 +467,7 @@ def build_quality_version_snapshot(settings: Settings) -> dict[str, Any]:
 def _candidate_provider(
     backend: RerankerBackend,
     embedder: BaseEmbeddingProvider,
+    settings: Settings,
 ) -> BaseRerankerProvider:
     if backend is RerankerBackend.LEXICAL:
         return LexicalRerankerProvider()
@@ -425,7 +475,19 @@ def _candidate_provider(
         return EmbeddingRerankerProvider(embedder)
     if backend is RerankerBackend.EMBEDDING_MAX:
         return EmbeddingRerankerProvider(embedder, max_sentence=True)
+    if backend is RerankerBackend.COHERE:
+        try:
+            return create_reranker_provider(settings, backend=RerankerBackend.COHERE)
+        except ProviderError:
+            return NoopRerankerProvider()
     return NoopRerankerProvider()
+
+
+def _optional_translator(settings: Settings):
+    try:
+        return create_query_translation_provider(settings)
+    except ProviderError:
+        return None
 
 
 def _context_chunk(hit: QualityHit) -> ContextChunk:
@@ -438,6 +500,7 @@ def _context_chunk(hit: QualityHit) -> ContextChunk:
         filename=hit.filename,
         chunk_hash=content_hash(hit.content),
         semantic_score=hit.semantic_score,
+        rerank_relevance_score=_optional_hit_float(hit.rerank_relevance_score),
         passage_semantic_score=hit.passage_semantic_score,
         passage_char_start=hit.passage_char_start,
         passage_char_end=hit.passage_char_end,
@@ -447,3 +510,9 @@ def _context_chunk(hit: QualityHit) -> ContextChunk:
         char_end=hit.char_end,
         metadata=hit.metadata,
     )
+
+
+def _optional_hit_float(value: object) -> float | None:
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return float(value)
+    return None

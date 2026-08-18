@@ -53,14 +53,16 @@ LLM failure after Tx1: user message retained, no assistant row.
 | `RetrievalConfig` | `APE_RETRIEVAL__EMBEDDING_SET_VERSION` | Snapshotted on assistant messages |
 
 Notable `ChatConfig` keys: `citation_excerpt_max_chars`, `minimum_semantic_evidence_score`,
-`lexical_corroboration_floor_score`, `lexical_corroboration_coverage`,
-`minimum_claim_token_coverage`, and `include_citations`.
+`minimum_reranker_evidence_score`, `lexical_corroboration_floor_score`,
+`lexical_corroboration_coverage`, `minimum_claim_token_coverage`, and `include_citations`.
 
 ## Data model
 
 - `conversations` — config snapshot (`provider`, `model`, `temperature`), nullable `title`, `last_message_at`
 - `messages` — no `sequence`; ordered by `created_at`, `id`; assistant `metadata`, `citations`,
-  `claims`, `grounded`, and `insufficient_evidence_reason`
+  `claims`, `grounded`, and `insufficient_evidence_reason`. `metadata.retrieval_trace` includes
+  translation status/languages/query/provider and per-candidate branch provenance. Translated query
+  text stays in diagnostics only; citations and evidence excerpts remain original chunk text.
 
 Soft-deleting a conversation sets `deleted_at` on the conversation only; messages remain for audit.
 
@@ -81,7 +83,11 @@ See [conversation API reference](../api/conversation_api.md).
 
 ## Production note
 
-Chat uses the configured retrieval strategy through `RetrievalPort`. Hybrid retrieval (BM25 + vector + RRF + reranker) is the production path; semantic search remains available as an explicit rollback or comparison strategy.
+Chat uses the configured retrieval strategy through `RetrievalPort`. Hybrid retrieval (original
+dense + original lexical, optional one translated pair, RRF, optional reranker) is the production
+path; semantic search remains available as an explicit rollback or comparison strategy. When rerank
+is applied, the evidence gate uses calibrated reranker relevance; otherwise it keeps whole-chunk
+cosine plus lexical rescue.
 
 ## Testing strategy
 

@@ -17,6 +17,7 @@ class QualityHit:
     filename: str
     chunk_index: int
     semantic_score: float | None = None
+    rerank_relevance_score: float | None = None
     passage_semantic_score: float | None = None
     passage_char_start: int | None = None
     passage_char_end: int | None = None

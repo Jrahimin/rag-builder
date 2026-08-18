@@ -17,6 +17,7 @@ from app.core.config import (
     EvidenceScoreMode,
     LLMBackend,
     RequestOverrideMode,
+    RerankerBackend,
     RetrievalStrategy,
     Settings,
     SourcePolicyDeploymentCap,
@@ -59,6 +60,9 @@ class ProjectRetrievalPolicy(BaseModel):
     passage_window_tokens: int | None = Field(default=None, ge=16, le=512)
     passage_overlap_tokens: int | None = Field(default=None, ge=0, le=256)
     passage_min_tokens: int | None = Field(default=None, ge=8, le=256)
+    rerank_candidate_window: int | None = Field(default=None, ge=1, le=100)
+    rerank_return_n: int | None = Field(default=None, ge=1, le=100)
+    query_translation_enabled: bool | None = None
 
 
 class ProjectChatPolicy(BaseModel):
@@ -73,6 +77,7 @@ class ProjectChatPolicy(BaseModel):
     lexical_corroboration_floor_score: float | None = Field(default=None, ge=0.0, le=1.0)
     minimum_query_token_coverage: float | None = Field(default=None, ge=0.0, le=1.0)
     minimum_claim_token_coverage: float | None = Field(default=None, ge=0.0, le=1.0)
+    minimum_reranker_evidence_score: float | None = Field(default=None, ge=0.0, le=1.0)
 
 
 class ProjectAIConfig(BaseModel):
@@ -107,6 +112,14 @@ class EffectiveRetrievalPolicy(BaseModel):
     passage_window_tokens: int = 96
     passage_overlap_tokens: int = 24
     passage_min_tokens: int = 32
+    rerank_candidate_window: int = 25
+    rerank_return_n: int = 8
+    reranker_backend: RerankerBackend | None = None
+    reranker_model: str | None = None
+    query_translation_enabled: bool = False
+    query_translation_backend: str | None = None
+    query_translation_model: str | None = None
+    query_translation_prompt_version: str | None = None
 
 
 class EffectiveChatPolicy(BaseModel):
@@ -119,6 +132,7 @@ class EffectiveChatPolicy(BaseModel):
     lexical_corroboration_floor_score: float
     lexical_corroboration_coverage: float
     minimum_claim_token_coverage: float
+    minimum_reranker_evidence_score: float = 0.40
 
 
 class EffectiveProjectAIConfig(BaseModel):
@@ -257,6 +271,30 @@ def resolve_project_ai_config(
                 project.retrieval.passage_min_tokens,
                 settings.retrieval.passage_min_tokens,
             ),
+            rerank_candidate_window=inherited(
+                "retrieval.rerank_candidate_window",
+                project.retrieval.rerank_candidate_window,
+                settings.retrieval.rerank_candidate_window,
+            ),
+            rerank_return_n=inherited(
+                "retrieval.rerank_return_n",
+                project.retrieval.rerank_return_n,
+                settings.retrieval.rerank_return_n,
+            ),
+            reranker_backend=settings.retrieval.reranker_backend,
+            reranker_model=(
+                settings.reranker.cohere_model
+                if settings.retrieval.reranker_backend is RerankerBackend.COHERE
+                else settings.retrieval.reranker_backend.value
+            ),
+            query_translation_enabled=inherited(
+                "retrieval.query_translation_enabled",
+                project.retrieval.query_translation_enabled,
+                settings.query_translation.enabled,
+            ),
+            query_translation_backend=settings.query_translation.backend.value,
+            query_translation_model=settings.query_translation.model,
+            query_translation_prompt_version=settings.query_translation.prompt_version,
         ),
         chat=EffectiveChatPolicy(
             max_context_chunks=inherited(
@@ -295,6 +333,11 @@ def resolve_project_ai_config(
                 "chat.minimum_claim_token_coverage",
                 project.chat.minimum_claim_token_coverage,
                 settings.chat.minimum_claim_token_coverage,
+            ),
+            minimum_reranker_evidence_score=inherited(
+                "chat.minimum_reranker_evidence_score",
+                project.chat.minimum_reranker_evidence_score,
+                settings.chat.minimum_reranker_evidence_score,
             ),
         ),
         domain_instructions=inherited("domain_instructions", project.domain_instructions, ""),
@@ -449,6 +492,29 @@ def apply_effective_ai_config(
                     "passage_window_tokens": effective.retrieval.passage_window_tokens,
                     "passage_overlap_tokens": effective.retrieval.passage_overlap_tokens,
                     "passage_min_tokens": effective.retrieval.passage_min_tokens,
+                    "rerank_candidate_window": effective.retrieval.rerank_candidate_window,
+                    "rerank_return_n": effective.retrieval.rerank_return_n,
+                    "reranker_backend": (
+                        effective.retrieval.reranker_backend or settings.retrieval.reranker_backend
+                    ),
+                }
+            ),
+            "query_translation": settings.query_translation.model_copy(
+                update={
+                    "enabled": effective.retrieval.query_translation_enabled,
+                    "backend": (
+                        LLMBackend(effective.retrieval.query_translation_backend)
+                        if effective.retrieval.query_translation_backend
+                        else settings.query_translation.backend
+                    ),
+                    "model": (
+                        effective.retrieval.query_translation_model
+                        or settings.query_translation.model
+                    ),
+                    "prompt_version": (
+                        effective.retrieval.query_translation_prompt_version
+                        or settings.query_translation.prompt_version
+                    ),
                 }
             ),
             "chat": ChatConfig.model_validate(
@@ -472,6 +538,9 @@ def apply_effective_ai_config(
                         effective.chat.lexical_corroboration_coverage
                     ),
                     "minimum_claim_token_coverage": effective.chat.minimum_claim_token_coverage,
+                    "minimum_reranker_evidence_score": (
+                        effective.chat.minimum_reranker_evidence_score
+                    ),
                 }
             ),
         }
@@ -487,6 +556,11 @@ def global_config_fingerprint(settings: Settings) -> str:
             "retrieval": settings.retrieval.model_dump(mode="json"),
             "chat": settings.chat.model_dump(mode="json"),
             "ai_policy": settings.ai_policy.model_dump(mode="json"),
+            "query_translation": settings.query_translation.model_dump(mode="json"),
+            "reranker": settings.reranker.model_dump(
+                mode="json",
+                exclude={"cohere_api_key"},
+            ),
         }
     )
 

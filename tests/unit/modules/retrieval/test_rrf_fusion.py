@@ -78,3 +78,41 @@ def test_rrf_tie_breaks_by_best_source_rank_then_chunk_id() -> None:
     assert len(fused) == 2
     assert fused[0].score == fused[1].score
     assert fused[0].chunk_id == low_id
+
+
+def test_rrf_records_per_branch_rank_score_and_contribution() -> None:
+    chunk_id = uuid.uuid4()
+    fused = reciprocal_rank_fusion(
+        [
+            RankedList(
+                hits=[CandidateHit(chunk_id, 0.21, CandidateSource.SEMANTIC, semantic_score=0.21)],
+                weight=1.0,
+                branch_id="original_dense",
+                family="original_dense",
+            ),
+            RankedList(
+                hits=[CandidateHit(chunk_id, 0.71, CandidateSource.SEMANTIC)],
+                weight=1.0,
+                branch_id="translated_dense:bn",
+                family="translated_dense",
+                target_language="bn",
+            ),
+            RankedList(
+                hits=[CandidateHit(chunk_id, 11.2, CandidateSource.KEYWORD)],
+                weight=1.0,
+                branch_id="translated_lexical:bn",
+                family="translated_lexical",
+                target_language="bn",
+            ),
+        ],
+        rrf_k=60,
+        top_k=1,
+    )
+    contributions = {item["branch_id"]: item for item in fused[0].metadata["rrf_contributions"]}
+    assert contributions["original_dense"]["rank"] == 1
+    assert contributions["original_dense"]["raw_score"] == 0.21
+    assert contributions["translated_dense:bn"]["rank"] == 1
+    assert contributions["translated_dense:bn"]["raw_score"] == 0.71
+    assert contributions["translated_lexical:bn"]["rank"] == 1
+    assert fused[0].score == pytest.approx(sum(item["rrf"] for item in contributions.values()))
+

@@ -58,6 +58,14 @@ Queue `/api/v1/projects/{project_id}/index-builds/reindex`, inspect the durable 
 validate, and activate explicitly. Retain the prior pointer until verification. Use the
 index rollback API; never reconstruct the former active corpus in place.
 
+Language routing reads `chunk_language` from the immutable build manifest. Enable query
+translation or Cohere only after a new full reindex and after gazette hard gates pass
+(false-accept `0`, accepted-without-relevant-evidence `0`, observed EN→BN table case,
+original-language citations). Keep `APE_QUERY_TRANSLATION__ENABLED=false` and
+`APE_RETRIEVAL__RERANKER_BACKEND=noop` until that evaluation promotes them. Rollback is
+independent: disable translation, switch the reranker backend back to `noop`, or roll the
+index pointer to the previous complete build.
+
 ## Key rotation
 
 - Organization key: create replacement, deploy to the host app, verify, revoke old.

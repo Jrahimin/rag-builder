@@ -65,8 +65,11 @@ def test_ocr_gazette_fixture_uses_rechunk_stable_evidence_and_hard_negatives() -
     } <= keys
     assert sum(case.expected_no_answer for case in dataset.cases) >= 3
     assert any(
-        case.query_language == "en"
+        case.query == "what are the source tax deduction areas?"
+        and case.query_language == "en"
         and case.expected_evidence_language == "bn"
         and not case.expected_no_answer
         for case in dataset.cases
     )
+    assert any(case.query_form == "banglish" for case in dataset.cases)
+    assert any(case.hard_negative_evidence_phrases for case in dataset.cases)

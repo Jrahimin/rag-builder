@@ -45,6 +45,11 @@ def build_job_configuration(
             "chat": effective_settings.chat.model_dump(mode="json"),
             "evaluation": effective_settings.evaluation.model_dump(mode="json"),
             "llm": effective_settings.llm.model_dump(mode="json", exclude=_LLM_SECRET_FIELDS),
+            "query_translation": effective_settings.query_translation.model_dump(mode="json"),
+            "reranker": effective_settings.reranker.model_dump(
+                mode="json",
+                exclude={"cohere_api_key"},
+            ),
         },
         execution=effective_resolution.secret_free_snapshot(),
         provenance={
@@ -86,6 +91,15 @@ def apply_job_configuration(
                 {
                     **settings.llm.model_dump(),
                     **quality["llm"],
+                }
+            ),
+            "query_translation": type(settings.query_translation).model_validate(
+                quality.get("query_translation", settings.query_translation.model_dump())
+            ),
+            "reranker": type(settings.reranker).model_validate(
+                {
+                    **settings.reranker.model_dump(),
+                    **quality.get("reranker", {}),
                 }
             ),
         }

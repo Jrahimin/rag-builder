@@ -1,0 +1,47 @@
+# ADR-018: Multilingual Retrieval Version 1
+
+**Status:** Accepted  
+**Date:** 2026-08-18
+
+## Context
+
+English queries against Bangla OCR/legal chunks can retrieve the right passage at a weak rank
+while a nearby wrong tax chunk ranks higher. Whole-chunk cosine for the observed gazette case is
+about `0.13–0.18` on the relevant table and `0.20–0.28` on hard negatives. The production hybrid
+path fused only original dense + original BM25, and the evidence gate could only admit on original
+cosine (or out-of-scope passage scoring). Lowering `0.35` would admit those hard negatives.
+
+## Decision
+
+Keep `text-embedding-3-large` at 1024 dimensions and one PostgreSQL/pgvector index. Original
+chunks remain the only evidence and citation source. Query translation is a retrieval artifact.
+
+| Topic | Decision |
+| ----- | -------- |
+| Query translation | At most one target-language rewrite, default model `gpt-5-nano`, env-selectable `gpt-5-mini` |
+| Original branches | Always run original dense and original lexical; language inference must not suppress them |
+| Translated branches | Dense + lexical against `target OR mixed OR unknown` |
+| Fusion | Equal-weight RRF with branch provenance |
+| Reranker | One managed multilingual reranker (`Cohere rerank-v4.0-fast`); original query vs original passages |
+| Evidence | When rerank is applied, calibrated reranker relevance is the only learned gate; original cosine is fallback |
+| Builds | Language inventory is frozen on the immutable index-build manifest; no second vector index |
+
+## Consequences
+
+- Amends ADR-009: hybrid production path may execute translated branches before RRF.
+- Amends ADR-014: after a true multilingual reranker is applied and calibrated, its relevance score
+  is the candidate-local evidence signal. Cosine remains the fallback when rerank is passthrough
+  or unavailable.
+- Enabling language routing requires a new immutable reindex. Translation and Cohere stay off
+  until gazette hard gates pass.
+- Recall/MRR/nDCG numbers are promotion targets, not V1 ship blockers.
+
+## Alternatives considered
+
+| Alternative | Rejected because |
+| ----------- | ---------------- |
+| Lower `0.35` | Admits measured hard negatives |
+| Passage-level evidence | Already measured negative margin / high latency |
+| One translation per corpus language | Exceeds the V1 one-call cap |
+| Suppress original English BM25 | Hides numeral/abbreviation overlap and changes today's hybrid contract |
+| Embedding-model migration | Out of V1 scope |

@@ -409,6 +409,7 @@ class RerankerBackend(StrEnum):
     LEXICAL = "lexical"
     EMBEDDING = "embedding"
     EMBEDDING_MAX = "embedding_max"
+    COHERE = "cohere"
 
 
 class EvidenceScoreMode(StrEnum):
@@ -438,8 +439,11 @@ class RetrievalConfig(BaseModel):
     keyword_weight: float = Field(default=1.0, ge=0.0, le=10.0)
     rerank_enabled: bool = True
     rerank_top_n: int = Field(default=20, ge=1, le=100)
+    rerank_candidate_window: int = Field(default=25, ge=1, le=100)
+    rerank_return_n: int = Field(default=8, ge=1, le=100)
     rerank_score_threshold: float | None = Field(default=None, ge=0.0, le=1.0)
     reranker_backend: RerankerBackend = RerankerBackend.NOOP
+    language_metadata_schema_version: str = "2026-08-18.v1"
     fts_regconfig: str = "simple"
     min_ocr_confidence: float | None = Field(default=None, ge=0.0, le=1.0)
     max_chunks_per_document: int = Field(default=4, ge=1, le=100)
@@ -492,6 +496,41 @@ class LLMConfig(BaseModel):
     openai_base_url: str = "https://api.openai.com"
     gemini_api_key: str | None = None
     gemini_base_url: str = "https://generativelanguage.googleapis.com/v1beta"
+    provider_version: str = "1"
+
+
+class QueryTranslationConfig(BaseModel):
+    """Query-only retrieval translation. Disabled by default."""
+
+    enabled: bool = False
+    backend: LLMBackend = LLMBackend.OPENAI
+    model: str = "gpt-5-nano"
+    prompt_version: str = "retrieval-translation-v1"
+    max_output_tokens: int = Field(default=1024, ge=16, le=2048)
+    request_timeout_seconds: float = Field(default=15.0, ge=1.0, le=120.0)
+    retry_max_attempts: int = Field(default=1, ge=0, le=3)
+    target_languages: Annotated[list[str], NoDecode] = Field(
+        default_factory=lambda: ["bn", "en"]
+    )
+
+    @field_validator("target_languages", mode="before")
+    @classmethod
+    def _split_target_languages(cls, value: object) -> object:
+        if isinstance(value, str):
+            stripped = value.strip()
+            if not stripped or stripped.startswith("["):
+                return value
+            return [item.strip() for item in stripped.split(",") if item.strip()]
+        return value
+
+
+class RerankerProviderConfig(BaseModel):
+    """Secret-aware managed reranker connection settings."""
+
+    cohere_api_key: str | None = None
+    cohere_base_url: str = "https://api.cohere.com"
+    cohere_model: str = "rerank-v4.0-fast"
+    request_timeout_seconds: float = Field(default=15.0, ge=1.0, le=120.0)
     provider_version: str = "1"
 
 
@@ -563,6 +602,7 @@ class ChatConfig(BaseModel):
     # Cross-language near-misses typically have ~0 coverage, so they still refuse.
     lexical_corroboration_floor_score: float = Field(default=0.30, ge=0.0, le=1.0)
     lexical_corroboration_coverage: float = Field(default=0.50, ge=0.0, le=1.0)
+    minimum_reranker_evidence_score: float = Field(default=0.40, ge=0.0, le=1.0)
     minimum_evidence_score: float | None = Field(default=None, deprecated=True)
     minimum_query_token_coverage: float | None = Field(default=None, deprecated=True)
     minimum_claim_token_coverage: float = Field(default=0.35, ge=0.0, le=1.0)
@@ -701,6 +741,8 @@ class Settings(BaseSettings):
     embedding: EmbeddingConfig = Field(default_factory=EmbeddingConfig)
     retrieval: RetrievalConfig = Field(default_factory=RetrievalConfig)
     llm: LLMConfig = Field(default_factory=LLMConfig)
+    query_translation: QueryTranslationConfig = Field(default_factory=QueryTranslationConfig)
+    reranker: RerankerProviderConfig = Field(default_factory=RerankerProviderConfig)
     generation: GenerationConfig = Field(default_factory=GenerationConfig)
     chat: ChatConfig = Field(default_factory=ChatConfig)
     evaluation: EvaluationConfig = Field(default_factory=EvaluationConfig)

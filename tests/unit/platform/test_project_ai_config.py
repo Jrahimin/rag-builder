@@ -309,3 +309,17 @@ def test_index_hash_ignores_project_chat_llm_and_top_k_policy() -> None:
     assert second.index["retrieval"]["default_top_k"] == 7
     assert first.index_output_digest() == second.index_output_digest()
     assert first.output_digest() != second.output_digest()
+
+
+def test_index_hash_ignores_query_translation_and_reranker_quality_settings() -> None:
+    first = build_job_configuration(Settings(query_translation={"enabled": False}))
+    second = build_job_configuration(
+        Settings(
+            query_translation={"enabled": True, "model": "gpt-5-mini"},
+            retrieval={"reranker_backend": "cohere"},
+        )
+    )
+
+    assert first.index_output_digest() == second.index_output_digest()
+    assert first.quality["query_translation"]["enabled"] is False
+    assert second.quality["query_translation"]["enabled"] is True

@@ -9,6 +9,16 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from app.core.config import RetrievalStrategy
+from app.modules.retrieval.language_scope import LanguageScope
+from app.modules.retrieval.multilingual.planner import (
+    BRANCH_ORIGINAL_DENSE,
+    BRANCH_ORIGINAL_LEXICAL,
+    BRANCH_TRANSLATED_DENSE,
+    BRANCH_TRANSLATED_LEXICAL,
+    LanguageInventory,
+    MultilingualRetrievalPlan,
+    RetrievalBranch,
+)
 from app.modules.retrieval.retrievers.hybrid_retriever import HybridRetriever
 from app.modules.retrieval.retrievers.models import (
     CandidateHit,
@@ -17,6 +27,7 @@ from app.modules.retrieval.retrievers.models import (
     RetrievalFilters,
 )
 from app.modules.retrieval.retrievers.semantic_retriever import SemanticRetrievalBatch
+from app.platform.domain.language_detection import detect_query_language_profile
 from app.platform.providers.contracts.embedding import EmbeddingBatchResult
 from app.platform.providers.errors import ProviderError
 from app.platform.providers.implementations.noop_reranker import NoopRerankerProvider
@@ -178,3 +189,116 @@ async def test_passage_scoring_keeps_raw_cosine_and_winning_offsets() -> None:
     assert results[0].metadata["passage_char_start"] == 0
     assert results[0].metadata["passage_char_end"] > 0
     assert results[0].semantic_score == 0.2
+
+
+async def test_translated_plan_runs_target_language_dense_and_lexical() -> None:
+    original_id = uuid.uuid4()
+    translated_id = uuid.uuid4()
+    translated_query = "উৎসে কর সংগ্রহের খাত"
+    scope = LanguageScope.translated_target("bn")
+    profile = detect_query_language_profile("what are the source tax deduction areas?")
+    plan = MultilingualRetrievalPlan(
+        query_profile=profile,
+        inventory=LanguageInventory(
+            schema_version="2026-08-18.v1",
+            chunk_language_counts={"bn": 8},
+            document_language_counts={"bn": 1},
+            is_legacy=False,
+        ),
+        translation_status="applied",
+        target_language="bn",
+        translated_query=translated_query,
+        branches=(
+            RetrievalBranch(
+                branch_id=BRANCH_ORIGINAL_DENSE,
+                family=BRANCH_ORIGINAL_DENSE,
+                query="what are the source tax deduction areas?",
+                language_scope=None,
+            ),
+            RetrievalBranch(
+                branch_id=BRANCH_ORIGINAL_LEXICAL,
+                family=BRANCH_ORIGINAL_LEXICAL,
+                query="what are the source tax deduction areas?",
+                language_scope=None,
+            ),
+            RetrievalBranch(
+                branch_id=f"{BRANCH_TRANSLATED_DENSE}:bn",
+                family=BRANCH_TRANSLATED_DENSE,
+                query=translated_query,
+                language_scope=scope,
+                target_language="bn",
+                record_semantic_score=False,
+            ),
+            RetrievalBranch(
+                branch_id=f"{BRANCH_TRANSLATED_LEXICAL}:bn",
+                family=BRANCH_TRANSLATED_LEXICAL,
+                query=translated_query,
+                language_scope=scope,
+                target_language="bn",
+            ),
+        ),
+        skipped_branches=(),
+        diagnostics={"translation_status": "applied"},
+    )
+    retriever = HybridRetriever.__new__(HybridRetriever)
+    retriever._semantic = AsyncMock()
+    retriever._semantic.retrieve_batch.side_effect = [
+        SemanticRetrievalBatch(
+            hits=[
+                CandidateHit(
+                    original_id,
+                    0.21,
+                    CandidateSource.SEMANTIC,
+                    semantic_score=0.21,
+                )
+            ],
+            query_vector=[0.1, 0.2],
+            provider="provider",
+            model="model",
+        ),
+        SemanticRetrievalBatch(
+            hits=[
+                CandidateHit(
+                    translated_id,
+                    0.71,
+                    CandidateSource.SEMANTIC,
+                    metadata={"translated_dense_score": 0.71},
+                )
+            ],
+            query_vector=[0.3, 0.4],
+            provider="provider",
+            model="model",
+        ),
+    ]
+    retriever._semantic.score_chunk_ids.return_value = {translated_id: 0.18}
+    retriever._keyword = AsyncMock()
+    retriever._keyword.retrieve.side_effect = [
+        [],
+        [CandidateHit(translated_id, 12.4, CandidateSource.KEYWORD)],
+    ]
+    retriever._reranker = NoopRerankerProvider()
+
+    results = await retriever.retrieve(
+        replace(
+            _context(),
+            multilingual_plan=plan,
+            query="what are the source tax deduction areas?",
+        )
+    )
+
+    dense_calls = retriever._semantic.retrieve_batch.await_args_list
+    lexical_calls = retriever._keyword.retrieve.await_args_list
+    assert dense_calls[0].kwargs["query"] == "what are the source tax deduction areas?"
+    assert dense_calls[1].kwargs["query"] == translated_query
+    assert dense_calls[1].kwargs["language_scope"] is scope
+    assert lexical_calls[0].kwargs["query"] == "what are the source tax deduction areas?"
+    assert lexical_calls[1].kwargs["query"] == translated_query
+    assert lexical_calls[1].kwargs["language_scope"] is scope
+    by_id = {result.chunk_id: result for result in results}
+    translated = by_id[translated_id]
+    contributions = {item["branch_id"]: item for item in translated.metadata["rrf_contributions"]}
+    assert f"{BRANCH_TRANSLATED_DENSE}:bn" in contributions
+    assert f"{BRANCH_TRANSLATED_LEXICAL}:bn" in contributions
+    assert "translated_query" not in translated.metadata
+    assert translated.metadata["translation_status"] == "applied"
+

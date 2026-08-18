@@ -719,6 +719,34 @@ class ChatService:
                 },
                 "rerank_status": retrieval_diagnostics.get("rerank_status"),
                 "reranker_score_scale": retrieval_diagnostics.get("reranker_score_scale"),
+                "translation": {
+                    "status": retrieval_diagnostics.get("translation_status"),
+                    "failure_reason": retrieval_diagnostics.get("translation_failure_reason"),
+                    "skipped_reason": retrieval_diagnostics.get("skipped_reason"),
+                    "source_language": retrieval_diagnostics.get(
+                        "translation_source_language"
+                    ),
+                    "target_language": retrieval_diagnostics.get(
+                        "translation_target_language"
+                    ),
+                    "query_language_profile": retrieval_diagnostics.get(
+                        "query_language_profile"
+                    ),
+                    "translated_query": retrieval_diagnostics.get("translated_query"),
+                    "provider": retrieval_diagnostics.get("translation_provider"),
+                    "model": retrieval_diagnostics.get("translation_model"),
+                    "prompt_version": retrieval_diagnostics.get(
+                        "translation_prompt_version"
+                    ),
+                    "latency_ms": retrieval_diagnostics.get("translation_latency_ms"),
+                    "usage": retrieval_diagnostics.get("translation_usage") or {},
+                },
+                "executed_branches": retrieval_diagnostics.get("executed_branches") or [],
+                "skipped_branches": retrieval_diagnostics.get("skipped_branches") or [],
+                "branch_candidate_counts": retrieval_diagnostics.get(
+                    "branch_candidate_counts"
+                )
+                or {},
             },
             "index_build_id": retrieval_diagnostics.get("index_build_id"),
             "source_metadata_generation": retrieval_diagnostics.get("source_metadata_generation"),

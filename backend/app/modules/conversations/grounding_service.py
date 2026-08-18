@@ -70,6 +70,7 @@ class EvidenceDecision:
     lexically_corroborated: bool = False
     winning_chunk_id: uuid.UUID | None = None
     evidence_score_method: str = "whole_chunk_cosine"
+    evidence_calibration_id: str = "whole_chunk_cosine:v1"
     evidence_char_start: int | None = None
     evidence_char_end: int | None = None
 
@@ -94,6 +95,8 @@ class GroundingService:
                 sufficient=False,
                 reason=InsufficientEvidenceReason.NO_RETRIEVAL_RESULTS,
             )
+        if _rerank_applied(chunks):
+            return self._assess_reranker(chunks)
         scored = [
             item
             for chunk in chunks
@@ -104,6 +107,7 @@ class GroundingService:
                 sufficient=False,
                 reason=InsufficientEvidenceReason.BELOW_RELEVANCE_THRESHOLD,
                 evidence_score_method=self._evidence_score_method,
+                evidence_calibration_id=self._evidence_calibration_id,
             )
         best = max(scored, key=lambda item: (item[0], item[1], str(item[2].chunk_id)))
         direct = [
@@ -119,6 +123,7 @@ class GroundingService:
                 best_score=winner[0],
                 winning_chunk_id=winner[2].chunk_id,
                 evidence_score_method=self._evidence_score_method,
+                evidence_calibration_id=self._evidence_calibration_id,
                 evidence_char_start=winner[3],
                 evidence_char_end=winner[4],
             )
@@ -137,6 +142,7 @@ class GroundingService:
                 lexically_corroborated=True,
                 winning_chunk_id=winner[2].chunk_id,
                 evidence_score_method=self._evidence_score_method,
+                evidence_calibration_id=self._evidence_calibration_id,
                 evidence_char_start=winner[3],
                 evidence_char_end=winner[4],
             )
@@ -147,8 +153,46 @@ class GroundingService:
             best_score=best[0],
             winning_chunk_id=best[2].chunk_id,
             evidence_score_method=self._evidence_score_method,
+            evidence_calibration_id=self._evidence_calibration_id,
             evidence_char_start=best[3],
             evidence_char_end=best[4],
+        )
+
+    def _assess_reranker(self, chunks: list[ContextChunk]) -> EvidenceDecision:
+        scored = [
+            (chunk.rerank_relevance_score, chunk)
+            for chunk in chunks
+            if chunk.rerank_relevance_score is not None
+        ]
+        method = "reranker_relevance"
+        calibration_id = "reranker_relevance:v1"
+        if not scored:
+            return EvidenceDecision(
+                sufficient=False,
+                reason=InsufficientEvidenceReason.BELOW_RELEVANCE_THRESHOLD,
+                evidence_score_method=method,
+                evidence_calibration_id=calibration_id,
+            )
+        winner = max(scored, key=lambda item: (item[0], str(item[1].chunk_id)))
+        if winner[0] >= self._config.minimum_reranker_evidence_score:
+            return EvidenceDecision(
+                sufficient=True,
+                best_score=winner[0],
+                winning_chunk_id=winner[1].chunk_id,
+                evidence_score_method=method,
+                evidence_calibration_id=calibration_id,
+                evidence_char_start=winner[1].char_start,
+                evidence_char_end=winner[1].char_end,
+            )
+        return EvidenceDecision(
+            sufficient=False,
+            reason=InsufficientEvidenceReason.BELOW_RELEVANCE_THRESHOLD,
+            best_score=winner[0],
+            winning_chunk_id=winner[1].chunk_id,
+            evidence_score_method=method,
+            evidence_calibration_id=calibration_id,
+            evidence_char_start=winner[1].char_start,
+            evidence_char_end=winner[1].char_end,
         )
 
     @property
@@ -156,6 +200,10 @@ class GroundingService:
         if self._config.evidence_score_mode is EvidenceScoreMode.PASSAGE_MAX:
             return "bounded_token_max_v1"
         return "whole_chunk_cosine"
+
+    @property
+    def _evidence_calibration_id(self) -> str:
+        return f"{self._evidence_score_method}:v1"
 
     def _candidate_evidence(
         self,
@@ -317,3 +365,11 @@ def _coverage(expected: set[str], actual: set[str]) -> float:
     if not expected:
         return 1.0
     return len(expected & actual) / len(expected)
+
+
+def _rerank_applied(chunks: list[ContextChunk]) -> bool:
+    return any(
+        chunk.rerank_relevance_score is not None
+        and str(chunk.metadata.get("rerank_status")) == "applied"
+        for chunk in chunks
+    )

@@ -9,6 +9,7 @@ from sqlalchemy import delete, literal, select, text
 
 from app.models.chunk_embedding import ChunkEmbedding
 from app.models.chunk_keyword_index import ChunkKeywordIndex
+from app.modules.retrieval.language_scope import LanguageScope, language_scope_predicate
 from app.modules.retrieval.retrievers.models import CandidateHit, CandidateSource
 from app.modules.retrieval.source_policy import (
     SOURCE_METADATA_COLUMNS,
@@ -91,6 +92,7 @@ class ChunkEmbeddingRepository(ProjectScopedRepository[ChunkEmbedding]):
         score_threshold: float | None = None,
         hnsw_ef_search: int = 100,
         source_scope: SourceMetadataScope | None = None,
+        language_scope: LanguageScope | None = None,
     ) -> list[CandidateHit]:
         """Return nearest native-vector candidates with all filters inside SQL."""
         await self._session.execute(
@@ -136,6 +138,12 @@ class ChunkEmbeddingRepository(ProjectScopedRepository[ChunkEmbedding]):
             stmt = stmt.where(self.model.document_id == document_id)
         for key, value in (metadata_filter or {}).items():
             stmt = stmt.where(ChunkKeywordIndex.metadata_snapshot[key].astext == value)
+        language_predicate = language_scope_predicate(
+            ChunkKeywordIndex.metadata_snapshot["chunk_language"].astext,
+            language_scope,
+        )
+        if language_predicate is not None:
+            stmt = stmt.where(language_predicate)
         if score_threshold is not None:
             stmt = stmt.where(distance <= 1.0 - score_threshold)
         stmt = stmt.order_by(distance, self.model.chunk_id).limit(top_k)

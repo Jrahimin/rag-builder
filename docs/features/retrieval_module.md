@@ -38,7 +38,7 @@ Worker handlers ──► IndexBuildWorkflow
 | **IndexBuildWorkflow** | Writes a complete private vector+keyword snapshot, validates it, and optionally activates it |
 | **IndexLifecycleService** | Durable corpus build staging plus guarded activation/rollback |
 | **SemanticRetriever** / **KeywordRetriever** | Candidate-only retrievers (`chunk_id`, ranking `score`, calibrated `semantic_score`, `source`) |
-| **HybridRetriever** | Semantic + keyword candidates with one captured source scope → RRF → optional rerank |
+| **HybridRetriever** | Original dense + original lexical, optional one translated pair, RRF provenance, optional rerank |
 | **SourceMetadataReadPort** | Composition seam for Knowledge's canonical source generation/applicability scope |
 | **ResultHydrator** | Single hydration point for chunk/document ORM rows |
 | **RetrievalCleanupService** | Irreversible purge cleanup across retained builds |
@@ -70,7 +70,9 @@ The prior active build remains the rollback target.
 | Section | Key vars | Role |
 | ------- | -------- | ---- |
 | `EmbeddingConfig` | `APE_EMBEDDING__*` | Backend (`hash`, `ollama`, `openai`, `gemini`), model, dimensions, API keys |
-| `RetrievalConfig` | `APE_RETRIEVAL__*` | `strategy`, candidate pools, `hnsw_ef_search`, RRF weights, reranker, diversity caps, optional passage scoring, `embedding_set_version` |
+| `RetrievalConfig` | `APE_RETRIEVAL__*` | `strategy`, candidate pools, `hnsw_ef_search`, RRF weights, reranker windows, diversity caps, optional passage scoring, `embedding_set_version`, language-metadata schema |
+| `QueryTranslationConfig` | `APE_QUERY_TRANSLATION__*` | Query-only translation; default off; model `gpt-5-nano` |
+| `RerankerProviderConfig` | `APE_RERANKER__*` | Cohere credentials used only when `reranker_backend=cohere` |
 | `AIConfigPolicy` | `APE_AI_POLICY__SOURCE_POLICY_DEPLOYMENT_CAP` | Emergency maximum for Project `off / observe / enforce` source policy |
 
 `embedding_set_version` is a deployment-level int, independent of
@@ -80,11 +82,12 @@ active `index_build_id`, which is stricter than selecting the newest embedding s
 The production default is hybrid with 50 semantic and 50 keyword candidates before RRF. The rerank
 stage stays enabled with the `noop` occupant so fused RRF order is the default ranking and the
 provider seam remains in the path. Pass-through skips chunk-text loading and reports
-`rerank_status=passthrough`. A true multilingual cross-encoder may replace that occupant
-only after a stored comparison. Search responses keep the final ranking `score` separate from
-`semantic_score` (`1 - cosine_distance`). Only `semantic_score` may act as evidence confidence.
-Diagnostics declare the reranker score scale rather than implying that RRF or heuristic scores are
-probabilities.
+`rerank_status=passthrough`. Query translation stays off until gazette hard gates pass. A Cohere
+multilingual reranker may replace the noop occupant only after a stored comparison. Search responses
+keep the final ranking `score` separate from `semantic_score` (`1 - cosine_distance`). When rerank
+is applied, calibrated `rerank_relevance_score` is the evidence signal; otherwise only
+`semantic_score` may act as evidence confidence. Diagnostics declare the reranker score scale rather
+than implying that RRF or heuristic scores are probabilities.
 
 Document and section caps are soft diversity preferences. Exact normalized-content deduplication
 remains hard; deferred unique chunks backfill in original rank order when the first pass would
@@ -143,11 +146,15 @@ python worker.py
 
 ## Production note
 
-Retrieval v2 ships **hybrid BM25 + vector + RRF** as the production path (ADR-009). The reranker
-provider seam remains in the path with a pass-through `noop` occupant until a true
-multilingual cross-encoder passes the persisted quality and latency gates. Set
-`APE_RETRIEVAL__STRATEGY=hybrid` in production. Semantic-only rollback remains via
-`strategy=semantic` on the request or deployment config.
+Retrieval v2 ships **hybrid BM25 + vector + RRF** as the production path (ADR-009, ADR-018).
+Original dense and original lexical always run. One query-only translation pair is optional and
+off by default. When translation is applied, search and chat diagnostics include status, source
+and target language, provider/model, the translated query, executed branches, and per-candidate
+RRF provenance (`original_dense`, `translated_dense:<lang>`, translated lexical). Translated text
+is a retrieval artifact: it is not used as grounding confidence, citations, or evidence. The
+reranker seam remains a pass-through `noop` occupant until Cohere
+`rerank-v4.0-fast` passes gazette hard gates. Set `APE_RETRIEVAL__STRATEGY=hybrid` in production.
+Semantic-only rollback remains via `strategy=semantic` on the request or deployment config.
 
 Chat integrates through `RetrievalPort` without module coupling (ADR-008).
 

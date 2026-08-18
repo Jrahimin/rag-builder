@@ -58,6 +58,8 @@ class RerankResponse:
     model: str
     provider_version: str
     score_scale: RerankScoreScale
+    usage: dict[str, Any] = field(default_factory=dict)
+    latency_ms: int | None = None
 
 
 class BaseRerankerProvider(ABC):

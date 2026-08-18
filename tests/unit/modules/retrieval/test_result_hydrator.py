@@ -75,3 +75,36 @@ async def test_hydrator_preserves_candidate_order_and_drops_orphans() -> None:
     assert results[0].chunk_id == present.id
     assert results[0].filename == "doc.txt"
     assert results[0].semantic_score == 0.72
+
+
+async def test_hydrator_strips_translated_query_from_result_metadata() -> None:
+    project_id = uuid.uuid4()
+    document_id = uuid.uuid4()
+    present = _chunk(project_id, document_id)
+    hydrator = ResultHydrator(AsyncMock(), project_id)
+    hydrator._chunk_repository = MagicMock()
+    hydrator._chunk_repository.map_by_ids = AsyncMock(return_value={present.id: present})
+    hydrator._document_repository = MagicMock()
+    hydrator._document_repository.map_by_ids = AsyncMock(
+        return_value={document_id: _document(project_id, document_id)}
+    )
+
+    results = await hydrator.hydrate(
+        [
+            CandidateHit(
+                present.id,
+                0.03,
+                CandidateSource.HYBRID,
+                metadata={
+                    "translated_query": "উৎসে কর সংগ্রহের খাত",
+                    "translation_status": "applied",
+                    "rrf_contributions": [{"branch_id": "translated_dense:bn", "rank": 1}],
+                },
+            )
+        ]
+    )
+
+    assert "translated_query" not in results[0].metadata
+    assert results[0].metadata["translation_status"] == "applied"
+    assert results[0].metadata["rrf_contributions"][0]["branch_id"] == "translated_dense:bn"
+

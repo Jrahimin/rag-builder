@@ -11,8 +11,15 @@ import structlog
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import AIConfigPolicy, RequestOverrideMode, RetrievalConfig, RetrievalStrategy
+from app.core.config import (
+    AIConfigPolicy,
+    QueryTranslationConfig,
+    RequestOverrideMode,
+    RetrievalConfig,
+    RetrievalStrategy,
+)
 from app.core.exceptions import BadRequestError, ServiceUnavailableError
+from app.modules.retrieval.multilingual.translation import resolve_multilingual_plan
 from app.modules.retrieval.repositories.index_build_repository import IndexBuildRepository
 from app.modules.retrieval.retrievers.base_retriever import BaseRetriever
 from app.modules.retrieval.retrievers.hybrid_retriever import HybridRetriever
@@ -36,6 +43,7 @@ from app.modules.retrieval.source_policy import (
 )
 from app.platform.config.project_ai import SourcePolicyMode, cap_source_policy_mode
 from app.platform.providers.contracts.embedding import BaseEmbeddingProvider
+from app.platform.providers.contracts.query_translation import BaseQueryTranslationProvider
 from app.platform.providers.contracts.reranker import BaseRerankerProvider
 
 logger = structlog.get_logger(__name__)
@@ -58,6 +66,9 @@ class SearchService:
         config_provenance: dict[str, Any] | None = None,
         pinned_source_metadata_generation: int | None = None,
         pinned_index_build_id: uuid.UUID | None = None,
+        query_translator: BaseQueryTranslationProvider | None = None,
+        query_translation_config: QueryTranslationConfig | None = None,
+        persist_translation_text: bool = False,
     ) -> None:
         self._session = session
         self._project_id = project_id
@@ -71,6 +82,9 @@ class SearchService:
         self._config_provenance = config_provenance or {}
         self._pinned_source_metadata_generation = pinned_source_metadata_generation
         self._pinned_index_build_id = pinned_index_build_id
+        self._query_translator = query_translator
+        self._query_translation_config = query_translation_config or QueryTranslationConfig()
+        self._persist_translation_text = persist_translation_text
         self._hydrator = ResultHydrator(session, project_id)
         self._builds = IndexBuildRepository(session, project_id)
         self._duplicate_suppression = DuplicateSuppressionService(retrieval_config)
@@ -137,6 +151,15 @@ class SearchService:
             # the requested result count when higher ranks contain revisions
             # from the same logical source.
             candidate_top_k = 100
+        multilingual_plan = None
+        if strategy is RetrievalStrategy.HYBRID:
+            multilingual_plan = await resolve_multilingual_plan(
+                request.query,
+                manifest=active_build.manifest,
+                translation_config=self._query_translation_config,
+                translator=self._query_translator,
+                persist_translation_text=self._persist_translation_text,
+            )
         context = RetrievalContext(
             project_id=self._project_id,
             query=request.query,
@@ -155,6 +178,8 @@ class SearchService:
             keyword_weight=self._config.keyword_weight,
             rerank_enabled=rerank_enabled,
             rerank_top_n=self._config.rerank_top_n,
+            rerank_candidate_window=self._config.rerank_candidate_window,
+            rerank_return_n=self._config.rerank_return_n,
             rerank_score_threshold=self._config.rerank_score_threshold,
             score_threshold=self._config.score_threshold,
             filterable_metadata_keys=tuple(self._config.filterable_metadata_keys),
@@ -167,6 +192,8 @@ class SearchService:
             passage_min_tokens=self._config.passage_min_tokens,
             metadata={"request_strategy": strategy.value},
             source_scope=source_scope,
+            multilingual_plan=multilingual_plan,
+            persist_translation_text=self._persist_translation_text,
         )
 
         retriever = self._build_retriever(strategy)
@@ -202,6 +229,8 @@ class SearchService:
             diversity_backfilled_count=suppression.backfilled_count,
         )
         rerank_metadata = results[0].metadata if results else {}
+        plan_diagnostics = dict(multilingual_plan.diagnostics) if multilingual_plan else {}
+        translation_meta = {**plan_diagnostics, **rerank_metadata}
         rerank_status = str(
             rerank_metadata.get(
                 "rerank_status",
@@ -211,6 +240,11 @@ class SearchService:
                     else "empty"
                 ),
             )
+        )
+        planned_branches = (
+            [branch.branch_id for branch in multilingual_plan.branches]
+            if multilingual_plan is not None
+            else []
         )
         return SearchResponse(
             results=results,
@@ -262,6 +296,59 @@ class SearchService:
                 compatibility_diagnostics=diagnostics,
                 as_of=request.as_of,
                 source_policy_consolidation_reasons=policy.consolidation_counts,
+                query_language_profile=_optional_string(
+                    translation_meta.get("query_language_profile")
+                ),
+                corpus_language_inventory=_int_dict(
+                    multilingual_plan.inventory.chunk_language_counts if multilingual_plan else {}
+                ),
+                translation_status=_optional_string(translation_meta.get("translation_status")),
+                translation_source_language=_optional_string(
+                    translation_meta.get("translation_source_language")
+                    or (
+                        (
+                            multilingual_plan.query_profile.exact_primary
+                            or multilingual_plan.query_profile.profile
+                        )
+                        if multilingual_plan is not None
+                        else None
+                    )
+                ),
+                translation_provider=_optional_string(
+                    translation_meta.get("translation_provider")
+                ),
+                translation_model=_optional_string(translation_meta.get("translation_model")),
+                translation_prompt_version=_optional_string(
+                    translation_meta.get("translation_prompt_version")
+                ),
+                translation_latency_ms=_optional_int(translation_meta.get("translation_latency_ms")),
+                translation_usage=_any_dict(translation_meta.get("translation_usage")),
+                translation_target_language=_optional_string(
+                    translation_meta.get("translation_target_language")
+                    or (multilingual_plan.target_language if multilingual_plan else None)
+                ),
+                translation_failure_reason=_optional_string(
+                    translation_meta.get("translation_failure_reason")
+                ),
+                translated_query=(
+                    multilingual_plan.translated_query if multilingual_plan is not None else None
+                ),
+                executed_branches=_string_list(translation_meta.get("executed_branches"))
+                or planned_branches,
+                skipped_branches=_string_list(translation_meta.get("skipped_branches"))
+                or (
+                    list(multilingual_plan.skipped_branches)
+                    if multilingual_plan is not None
+                    else []
+                ),
+                branch_candidate_counts=_int_dict(
+                    translation_meta.get("branch_candidate_counts")
+                ),
+                language_routing_status=_optional_string(
+                    translation_meta.get("language_routing_status")
+                ),
+                reranker_latency_ms=_optional_int(rerank_metadata.get("reranker_latency_ms")),
+                reranker_usage=_any_dict(rerank_metadata.get("reranker_usage")),
                 **self._source_diagnostics(
                     source_scope,
                     index_build_id=active_build.id,
@@ -385,8 +472,33 @@ def _optional_string(value: object) -> str | None:
     return str(value) if value is not None else None
 
 
+def _optional_int(value: object) -> int | None:
+    return int(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+
+def _string_list(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in value]
+
+
+def _int_dict(value: object) -> dict[str, int]:
+    if not isinstance(value, dict):
+        return {}
+    output: dict[str, int] = {}
+    for key, item in value.items():
+        if isinstance(item, (int, float)) and not isinstance(item, bool):
+            output[str(key)] = int(item)
+    return output
+
+
+def _any_dict(value: object) -> dict[str, Any]:
+    return dict(value) if isinstance(value, dict) else {}
+
+
 def _result_trace(result: RetrievalResult, *, rank: int) -> dict[str, Any]:
     """Return stable, sanitized retrieval facts without content or vectors."""
+    branch_provenance = _branch_provenance(result.metadata)
     return {
         "rank": rank,
         "chunk_id": str(result.chunk_id),
@@ -404,4 +516,56 @@ def _result_trace(result: RetrievalResult, *, rank: int) -> dict[str, Any]:
         "passage_char_start": result.passage_char_start,
         "passage_char_end": result.passage_char_end,
         "rerank_status": result.metadata.get("rerank_status"),
+        "rrf_rank": rank,
+        "rrf_score": _fused_rrf_score(branch_provenance, result),
+        "branch_provenance": branch_provenance,
+        "original_dense": branch_provenance.get("original_dense"),
+        "original_lexical": branch_provenance.get("original_lexical"),
+        "translated_dense": _first_prefixed(branch_provenance, "translated_dense:"),
+        "translated_lexical": _first_prefixed(branch_provenance, "translated_lexical:"),
     }
+
+
+def _branch_provenance(metadata: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    contributions = metadata.get("rrf_contributions")
+    if not isinstance(contributions, list):
+        return {}
+    provenance: dict[str, dict[str, Any]] = {}
+    for item in contributions:
+        if not isinstance(item, dict) or item.get("branch_id") is None:
+            continue
+        branch_id = str(item["branch_id"])
+        provenance[branch_id] = {
+            "rank": item.get("rank"),
+            "score": item.get("raw_score"),
+            "rrf": item.get("rrf"),
+            "family": item.get("family"),
+            "target_language": item.get("target_language"),
+        }
+    return provenance
+
+
+def _fused_rrf_score(
+    provenance: dict[str, dict[str, Any]],
+    result: RetrievalResult,
+) -> float:
+    contributions = [
+        float(item["rrf"])
+        for item in provenance.values()
+        if isinstance(item.get("rrf"), (int, float)) and not isinstance(item.get("rrf"), bool)
+    ]
+    if contributions:
+        return sum(contributions)
+    if result.rank_score is not None:
+        return result.rank_score
+    return result.score
+
+
+def _first_prefixed(
+    provenance: dict[str, dict[str, Any]],
+    prefix: str,
+) -> dict[str, Any] | None:
+    for branch_id, payload in provenance.items():
+        if branch_id.startswith(prefix):
+            return {"branch_id": branch_id, **payload}
+    return None

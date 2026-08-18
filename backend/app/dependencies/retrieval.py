@@ -29,9 +29,12 @@ from app.platform.config.project_ai import (
 from app.platform.jobs.configuration import build_job_configuration
 from app.platform.jobs.contracts import DurableJobSubmitter
 from app.platform.providers.contracts.embedding import BaseEmbeddingProvider
-from app.platform.providers.contracts.reranker import BaseRerankerProvider
+from app.platform.providers.errors import ProviderError
 from app.platform.providers.implementations.embedding_factory import get_embedding_provider
-from app.platform.providers.implementations.reranker_factory import get_reranker_provider
+from app.platform.providers.implementations.query_translation_factory import (
+    create_query_translation_provider,
+)
+from app.platform.providers.implementations.reranker_factory import create_reranker_provider
 
 
 async def get_indexing_service(
@@ -73,7 +76,6 @@ async def get_search_service(
     session: DbSessionDep,
     project_id: Annotated[uuid.UUID, Path()],
     embedder: Annotated[BaseEmbeddingProvider, Depends(get_embedding_provider)],
-    reranker: Annotated[BaseRerankerProvider, Depends(get_reranker_provider)],
 ) -> SearchService:
     settings = get_settings()
     revision = await ProjectAIConfigRepository(session, project_id).get_active()
@@ -89,6 +91,13 @@ async def get_search_service(
         else None,
     )
     effective = apply_effective_ai_config(settings, resolution)
+    reranker = create_reranker_provider(effective)
+    translator = None
+    if effective.query_translation.enabled:
+        try:
+            translator = create_query_translation_provider(effective)
+        except ProviderError:
+            translator = None
 
     return SearchService(
         session=session,
@@ -101,6 +110,8 @@ async def get_search_service(
         configured_source_policy_mode=resolution.provenance.configured_source_policy_mode,
         configuration_hash=resolution.configuration_hash,
         config_provenance=resolution.provenance.model_dump(mode="json"),
+        query_translator=translator,
+        query_translation_config=effective.query_translation,
     )
 
 

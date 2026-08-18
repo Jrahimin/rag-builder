@@ -36,6 +36,11 @@ class CandidateHit:
     source: CandidateSource
     metadata: dict[str, Any] = field(default_factory=dict)
     semantic_score: float | None = None
+    rank_score: float | None = None
+    rerank_relevance_score: float | None = None
+    evidence_relevance_score: float | None = None
+    evidence_score_method: str | None = None
+    evidence_calibration_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,6 +73,11 @@ class RetrievalContext:
     passage_min_tokens: int = 32
     metadata: dict[str, Any] = field(default_factory=dict)
     source_scope: Any | None = None
+    language_scope: Any | None = None
+    rerank_candidate_window: int = 25
+    rerank_return_n: int = 8
+    multilingual_plan: Any | None = None
+    persist_translation_text: bool = False
 
     def sanitized_metadata_filter(self) -> dict[str, str]:
         return {

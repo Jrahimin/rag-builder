@@ -346,3 +346,57 @@ def test_partial_but_insufficient_overlap_is_unsupported() -> None:
 
     assert result.grounded is False
     assert result.claims[0]["verification"] == "unsupported"
+
+
+def test_applied_reranker_score_is_the_only_learned_evidence_path() -> None:
+    from dataclasses import replace
+
+    weak_cosine = replace(
+        _chunk(content="nearby VAT chapter", semantic_score=0.9),
+        rerank_relevance_score=0.11,
+        metadata={"rerank_status": "applied"},
+    )
+    relevant = replace(
+        _chunk(content="উৎসে কর সংগ্রহের খাত সঞ্চয়পত্র", semantic_score=0.12),
+        rerank_relevance_score=0.81,
+        metadata={"rerank_status": "applied"},
+    )
+    decision = GroundingService(ChatConfig(minimum_reranker_evidence_score=0.4)).assess(
+        "what are the source tax deduction areas?",
+        [weak_cosine, relevant],
+    )
+    assert decision.sufficient is True
+    assert decision.evidence_score_method == "reranker_relevance"
+    assert decision.winning_chunk_id == relevant.chunk_id
+
+
+def test_high_cosine_cannot_override_a_low_applied_reranker_score() -> None:
+    from dataclasses import replace
+
+    chunk = replace(
+        _chunk(content="nearby VAT chapter", semantic_score=0.92),
+        rerank_relevance_score=0.12,
+        metadata={"rerank_status": "applied"},
+    )
+    decision = GroundingService(ChatConfig(minimum_reranker_evidence_score=0.4)).assess(
+        "what are the source tax deduction areas?",
+        [chunk],
+    )
+    assert decision.sufficient is False
+    assert decision.evidence_score_method == "reranker_relevance"
+
+
+def test_rerank_unavailable_falls_back_to_cosine_and_lexical_rescue() -> None:
+    from dataclasses import replace
+
+    chunk = replace(
+        _chunk(
+            content="উৎসে কর সংগ্রহের খাত কি সঞ্চয়পত্র হইতে অর্জিত মুনাফা",
+            semantic_score=0.34,
+        ),
+        metadata={"rerank_status": "unavailable"},
+    )
+    decision = GroundingService(ChatConfig()).assess("উৎসে কর সংগ্রহের খাত কি?", [chunk])
+    assert decision.sufficient is True
+    assert decision.lexically_corroborated is True
+    assert decision.evidence_score_method == "whole_chunk_cosine"

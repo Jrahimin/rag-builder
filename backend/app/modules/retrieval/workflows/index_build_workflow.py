@@ -24,6 +24,13 @@ from app.modules.retrieval.keyword.tokenizer import (
 from app.modules.retrieval.repositories.index_build_repository import IndexBuildRepository
 from app.platform.db.advisory_lock import acquire_project_stage_lock
 from app.platform.domain.content_hash import content_hash
+from app.platform.domain.language_detection import (
+    LANGUAGE_METADATA_SCHEMA_VERSION,
+    ROUTING_LANGUAGE_MIXED,
+    ROUTING_LANGUAGE_UNKNOWN,
+    build_index_language_snapshot,
+    normalize_routing_language,
+)
 from app.platform.jobs.contracts import JobProgressCallback
 from app.platform.jobs.errors import PermanentJobError
 from app.platform.providers.contracts.embedding import BaseEmbeddingProvider
@@ -135,6 +142,13 @@ class IndexBuildWorkflow:
                 for key in self._filterable_metadata_keys
                 if key in chunk.chunk_metadata
             }
+            metadata.update(
+                build_index_language_snapshot(
+                    content=chunk.content,
+                    chunk_metadata=chunk.chunk_metadata,
+                    document_language=document.language,
+                )
+            )
             self._session.add(
                 ChunkKeywordIndex(
                     project_id=self._project_id,
@@ -161,11 +175,17 @@ class IndexBuildWorkflow:
         await self._validate_versions(manifest)
 
         count = len(all_chunks)
+        language_inventory = _language_inventory(all_chunks)
         build.document_count = len(manifest)
         build.chunk_count = count
         build.vector_count = count
         build.keyword_count = count
-        build.manifest = {"documents": manifest}
+        build.manifest = {
+            "documents": manifest,
+            "language_metadata_schema_version": LANGUAGE_METADATA_SCHEMA_VERSION,
+            "chunk_language_counts": language_inventory["chunk_language_counts"],
+            "document_language_counts": language_inventory["document_language_counts"],
+        }
         build.corpus_fingerprint = hashlib.sha256(
             json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode()
         ).hexdigest()
@@ -291,7 +311,34 @@ class IndexBuildWorkflow:
 
     async def _report(self, stage: str, progress: int) -> None:
         if self._on_progress is not None:
-            await self._on_progress(stage, progress)
+            await self._on_progress(stage, progress                )
+
+
+def _language_inventory(
+    chunks: list[tuple[Document, DocumentChunk]],
+) -> dict[str, dict[str, int]]:
+    chunk_counts: dict[str, int] = {}
+    document_counts: dict[str, int] = {}
+    seen_documents: set[uuid.UUID] = set()
+    for document, chunk in chunks:
+        snapshot = build_index_language_snapshot(
+            content=chunk.content,
+            chunk_metadata=chunk.chunk_metadata,
+            document_language=document.language,
+        )
+        chunk_language = snapshot["chunk_language"]
+        chunk_counts[chunk_language] = chunk_counts.get(chunk_language, 0) + 1
+        if document.id in seen_documents:
+            continue
+        seen_documents.add(document.id)
+        document_language = normalize_routing_language(document.language)
+        if document_language in {ROUTING_LANGUAGE_MIXED, ROUTING_LANGUAGE_UNKNOWN}:
+            document_language = snapshot["document_language"]
+        document_counts[document_language] = document_counts.get(document_language, 0) + 1
+    return {
+        "chunk_language_counts": dict(sorted(chunk_counts.items())),
+        "document_language_counts": dict(sorted(document_counts.items())),
+    }
 
 
 _READY_AFTER_ACTIVATION = {

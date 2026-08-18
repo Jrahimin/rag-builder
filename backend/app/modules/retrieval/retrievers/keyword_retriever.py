@@ -41,21 +41,30 @@ class KeywordRetriever(BaseRetriever):
         self._term_stats_repository = KeywordTermStatsRepository(session, project_id)
         self._collection_stats_repository = KeywordCollectionStatsRepository(session, project_id)
 
-    async def retrieve(self, context: RetrievalContext) -> list[CandidateHit]:
+    async def retrieve(
+        self,
+        context: RetrievalContext,
+        *,
+        query: str | None = None,
+        language_scope: object | None = None,
+    ) -> list[CandidateHit]:
         started = time.perf_counter()
-        query_terms = tokenize(context.query, for_query=True)
+        query_text = query or context.query
+        query_terms = tokenize(query_text, for_query=True)
         if not query_terms:
             return []
 
         metadata_filter = context.sanitized_metadata_filter()
+        scope = language_scope if language_scope is not None else context.language_scope
         rows = await self._keyword_repository.search_candidates(
-            query=context.query,
+            query=query_text,
             index_build_id=context.index_build_id,
             embedding_set_version=context.embedding_set_version,
             top_k=context.keyword_candidate_top_k,
             document_id=context.filters.document_id,
             metadata_filter=metadata_filter,
             source_scope=context.source_scope,
+            language_scope=scope,  # type: ignore[arg-type]
         )
 
         if context.min_ocr_confidence is not None:

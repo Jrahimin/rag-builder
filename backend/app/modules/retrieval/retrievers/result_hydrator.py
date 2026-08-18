@@ -48,6 +48,11 @@ class ResultHydrator:
                     content=chunk.content,
                     score=candidate.score,
                     semantic_score=candidate.semantic_score,
+                    rank_score=candidate.rank_score,
+                    rerank_relevance_score=candidate.rerank_relevance_score,
+                    evidence_relevance_score=candidate.evidence_relevance_score,
+                    evidence_score_method=candidate.evidence_score_method,
+                    evidence_calibration_id=candidate.evidence_calibration_id,
                     passage_semantic_score=_optional_float(
                         candidate.metadata.get("passage_semantic_score")
                     ),
@@ -64,13 +69,25 @@ class ResultHydrator:
                     char_end=chunk.char_end,
                     metadata={
                         **chunk.chunk_metadata,
-                        **candidate.metadata,
+                        **_public_candidate_metadata(candidate.metadata),
                         "retrieval_source": candidate.source.value,
                         "processing_version": chunk.document_version,
                     },
                 )
             )
         return results
+
+
+_PRIVATE_CANDIDATE_METADATA_KEYS = frozenset({"translated_query"})
+
+
+def _public_candidate_metadata(metadata: dict[str, object]) -> dict[str, object]:
+    """Drop retrieval artifacts that must not appear on hydrated hits or citations."""
+    return {
+        key: value
+        for key, value in metadata.items()
+        if key not in _PRIVATE_CANDIDATE_METADATA_KEYS
+    }
 
 
 def _optional_float(value: object) -> float | None:

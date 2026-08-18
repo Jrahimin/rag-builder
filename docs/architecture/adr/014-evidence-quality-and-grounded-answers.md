@@ -69,3 +69,10 @@ Bounded overlapping passage cosine is an optional, separately named evidence met
 hybrid query vector, never a reranker score. Promotion requires separate positive/hard-negative
 calibration, zero accepted-without-relevant-evidence cases, and an explicit conversation snapshot
 with `evidence_score_mode=passage_max`.
+
+## Amendment: reranker-primary multilingual evidence (2026-08-18)
+
+When a true multilingual reranker is applied, its calibrated relevance is the candidate-local
+evidence signal. Original whole-chunk cosine is the fallback when reranking is passthrough or
+unavailable. Cosine must not independently admit a candidate the applied reranker scored below
+its calibrated threshold. Translation scores never enter grounding confidence. See ADR-018.

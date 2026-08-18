@@ -68,6 +68,12 @@ invalidates old retrieval builds.
 - Chat diagnostics read deployment strategy from `RetrievalConfig` (metadata only).
 - `docs/features/retrieval_module.md`, `docs/api/retrieval_api.md`, and learning docs updated.
 
+## Amendment: multilingual retrieval v1 (2026-08-18)
+
+Production hybrid may add one validated target-language dense/lexical pair after the original
+query's dense and lexical branches. Fusion remains equal-weight RRF. A managed multilingual
+reranker may reorder the fused window; provider failure preserves RRF order. See ADR-018.
+
 ## Alternatives considered
 
 | Alternative | Rejected because |

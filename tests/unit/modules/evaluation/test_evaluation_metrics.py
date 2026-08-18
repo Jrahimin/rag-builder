@@ -74,6 +74,9 @@ def test_profile_metrics_include_refusal_grounding_citations_and_latency() -> No
     assert metrics["citation_coverage"] == 1.0
     assert metrics["unverified_claim_rate"] == 0.5
     assert metrics["language_pairs"]["en->bn"]["recall_at_k"] == 1.0
+    assert metrics["recall_at_5"] == 1.0
+    assert metrics["candidate_union_recall"] == 1.0
+    assert metrics["query_forms"] == {}
     calibration = metrics["semantic_score_calibration"]["overall"]
     assert calibration["positive_min"] == 0.72
     assert calibration["hard_negative_max"] == 0.25

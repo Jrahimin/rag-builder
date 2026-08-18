@@ -39,12 +39,15 @@ from app.platform.config.project_ai import (
 from app.platform.domain.content_hash import content_hash
 from app.platform.providers.contracts.embedding import BaseEmbeddingProvider
 from app.platform.providers.contracts.llm import BaseLLMProvider
-from app.platform.providers.contracts.reranker import BaseRerankerProvider
+from app.platform.providers.errors import ProviderError
 from app.platform.providers.implementations.embedding_factory import get_embedding_provider
 from app.platform.providers.implementations.llm_factory import (
     create_llm_provider_for_conversation,
 )
-from app.platform.providers.implementations.reranker_factory import get_reranker_provider
+from app.platform.providers.implementations.query_translation_factory import (
+    create_query_translation_provider,
+)
+from app.platform.providers.implementations.reranker_factory import create_reranker_provider
 
 
 class SearchServiceRetrievalAdapter:
@@ -82,6 +85,11 @@ class SearchServiceRetrievalAdapter:
                     filename=result.filename,
                     chunk_hash=content_hash(result.content),
                     semantic_score=result.semantic_score,
+                    rank_score=result.rank_score,
+                    rerank_relevance_score=result.rerank_relevance_score,
+                    evidence_relevance_score=result.evidence_relevance_score,
+                    evidence_score_method=result.evidence_score_method,
+                    evidence_calibration_id=result.evidence_calibration_id,
                     passage_semantic_score=result.passage_semantic_score,
                     passage_char_start=result.passage_char_start,
                     passage_char_end=result.passage_char_end,
@@ -165,7 +173,6 @@ async def get_chat_service(
     message_repository: Annotated[MessageRepository, Depends(get_message_repository)],
     conversation_id: Annotated[uuid.UUID, Path()],
     embedder: Annotated[BaseEmbeddingProvider, Depends(get_embedding_provider)],
-    reranker: Annotated[BaseRerankerProvider, Depends(get_reranker_provider)],
 ) -> ChatService:
     settings = get_settings()
     conversation = await conversation_repository.get_by_id(conversation_id, include_deleted=True)
@@ -200,6 +207,13 @@ async def get_chat_service(
         )
         snapshot_id = snapshot.id
     effective_settings = apply_effective_ai_config(settings, resolution)
+    reranker = create_reranker_provider(effective_settings)
+    translator = None
+    if effective_settings.query_translation.enabled:
+        try:
+            translator = create_query_translation_provider(effective_settings)
+        except ProviderError:
+            translator = None
     retrieval = SearchServiceRetrievalAdapter(
         SearchService(
             session=session,
@@ -212,6 +226,8 @@ async def get_chat_service(
             configured_source_policy_mode=(resolution.provenance.configured_source_policy_mode),
             configuration_hash=resolution.configuration_hash,
             config_provenance=resolution.provenance.model_dump(mode="json"),
+            query_translator=translator,
+            query_translation_config=effective_settings.query_translation,
         )
     )
 

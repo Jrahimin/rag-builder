@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -47,7 +47,14 @@ class SemanticRetriever(BaseRetriever):
     async def retrieve(self, context: RetrievalContext) -> list[CandidateHit]:
         return (await self.retrieve_batch(context)).hits
 
-    async def retrieve_batch(self, context: RetrievalContext) -> SemanticRetrievalBatch:
+    async def retrieve_batch(
+        self,
+        context: RetrievalContext,
+        *,
+        query: str | None = None,
+        language_scope: object | None = None,
+        record_semantic_score: bool = True,
+    ) -> SemanticRetrievalBatch:
         """Retrieve candidates and retain the query vector for hybrid score backfill."""
         started = time.perf_counter()
         effective_top_k = (
@@ -55,9 +62,11 @@ class SemanticRetriever(BaseRetriever):
             if context.strategy is RetrievalStrategy.HYBRID
             else context.top_k
         )
+        query_text = query or context.query
+        scope = language_scope if language_scope is not None else context.language_scope
 
         try:
-            embedded = await self._embedder.embed_texts([context.query])
+            embedded = await self._embedder.embed_texts([query_text])
             query_vector = embedded.vectors[0]
             candidates = await self._repository.search_cosine(
                 query_vector=query_vector,
@@ -71,9 +80,23 @@ class SemanticRetriever(BaseRetriever):
                 score_threshold=context.score_threshold,
                 hnsw_ef_search=context.hnsw_ef_search,
                 source_scope=context.source_scope,
+                language_scope=scope,  # type: ignore[arg-type]
             )
         except ProviderError:
             raise
+
+        if not record_semantic_score:
+            candidates = [
+                replace(
+                    candidate,
+                    semantic_score=None,
+                    metadata={
+                        **candidate.metadata,
+                        "translated_dense_score": candidate.score,
+                    },
+                )
+                for candidate in candidates
+            ]
 
         elapsed_ms = int((time.perf_counter() - started) * 1000)
         logger.info(

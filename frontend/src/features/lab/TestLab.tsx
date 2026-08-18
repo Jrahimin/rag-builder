@@ -1479,6 +1479,43 @@ function SearchResults({ run, projectId }: { run: SearchRun; projectId: string }
                   : ""}
               </dd>
             </div>
+            {run.response.diagnostics.translation_status && (
+              <div>
+                <dt>Translation</dt>
+                <dd>
+                  {run.response.diagnostics.translation_status}
+                  {run.response.diagnostics.translation_source_language ||
+                  run.response.diagnostics.query_language_profile
+                    ? ` · ${run.response.diagnostics.translation_source_language ?? run.response.diagnostics.query_language_profile}`
+                    : ""}
+                  {run.response.diagnostics.translation_target_language
+                    ? ` → ${run.response.diagnostics.translation_target_language}`
+                    : ""}
+                  {run.response.diagnostics.translation_model
+                    ? ` · ${run.response.diagnostics.translation_model}`
+                    : ""}
+                </dd>
+              </div>
+            )}
+            {run.response.diagnostics.translated_query && (
+              <div>
+                <dt>Translated query</dt>
+                <dd>{run.response.diagnostics.translated_query}</dd>
+              </div>
+            )}
+            {run.response.diagnostics.query_language_profile && (
+              <div>
+                <dt>Query profile</dt>
+                <dd>{run.response.diagnostics.query_language_profile}</dd>
+              </div>
+            )}
+            {run.response.diagnostics.executed_branches &&
+              run.response.diagnostics.executed_branches.length > 0 && (
+                <div>
+                  <dt>Branches</dt>
+                  <dd>{run.response.diagnostics.executed_branches.join(", ")}</dd>
+                </div>
+              )}
             <div>
               <dt>Duplicates removed</dt>
               <dd>{run.response.diagnostics.duplicate_suppression_removed_count}</dd>
@@ -1503,7 +1540,9 @@ function SearchResults({ run, projectId }: { run: SearchRun; projectId: string }
         </div>
       ) : (
         <ol className="search-result-list">
-          {run.response.results.map((result, index) => (
+          {run.response.results.map((result, index) => {
+            const trace = run.response.diagnostics?.selected_trace?.[index];
+            return (
             <li key={result.chunk_id}>
               <div className="search-result-heading">
                 <span className="search-rank">#{index + 1}</span>
@@ -1521,6 +1560,7 @@ function SearchResults({ run, projectId }: { run: SearchRun; projectId: string }
                 </Link>
               </div>
               <p>{result.content}</p>
+              <BranchProvenanceList trace={trace} />
               <details className="lab-advanced">
                 <summary>
                   Chunk {shortId(result.chunk_id)} · chars {result.char_start ?? "—"}–
@@ -1548,7 +1588,8 @@ function SearchResults({ run, projectId }: { run: SearchRun; projectId: string }
                 </dl>
               </details>
             </li>
-          ))}
+            );
+          })}
         </ol>
       )}
     </div>
@@ -2006,6 +2047,7 @@ function MessageInspector({
           {citations.length} sources
         </span>
       </div>
+      <TranslationDiagnostics metadata={message.metadata} />
       {refusal ? (
         <div className="notice-card">
           <strong>Insufficient evidence</strong>
@@ -2182,5 +2224,108 @@ function ActivityDrawer({
         )}
       </aside>
     </>
+  );
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function formatScore(value: unknown): string {
+  return typeof value === "number" ? value.toFixed(4) : "—";
+}
+
+function BranchProvenanceList({
+  trace,
+}: {
+  trace?: { [key: string]: unknown };
+}) {
+  const provenance = asRecord(trace?.branch_provenance);
+  if (!provenance || Object.keys(provenance).length === 0) {
+    return null;
+  }
+  const rows = Object.entries(provenance)
+    .map(([branchId, value]) => [branchId, asRecord(value)] as const)
+    .filter((entry): entry is [string, Record<string, unknown>] => entry[1] !== null);
+  if (rows.length === 0) {
+    return (
+      <p className="muted">
+        RRF rank {typeof trace?.rrf_rank === "number" ? trace.rrf_rank : "—"} · score{" "}
+        {formatScore(trace?.rrf_score)}
+      </p>
+    );
+  }
+  return (
+    <dl className="detail-list">
+      <div>
+        <dt>RRF</dt>
+        <dd>
+          rank {typeof trace?.rrf_rank === "number" ? trace.rrf_rank : "—"} · score{" "}
+          {formatScore(trace?.rrf_score)}
+        </dd>
+      </div>
+      {rows.map(([label, payload]) => (
+        <div key={label}>
+          <dt>{typeof payload.branch_id === "string" ? payload.branch_id : label}</dt>
+          <dd>
+            rank {typeof payload.rank === "number" ? payload.rank : "—"} · score{" "}
+            {formatScore(payload.score)} · rrf {formatScore(payload.rrf)}
+          </dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+function TranslationDiagnostics({
+  metadata,
+}: {
+  metadata?: { [key: string]: unknown };
+}) {
+  const trace = asRecord(metadata?.retrieval_trace);
+  const translation = asRecord(trace?.translation);
+  if (!translation?.status) {
+    return null;
+  }
+  const candidates = Array.isArray(trace?.candidates)
+    ? (trace.candidates as { [key: string]: unknown }[])
+    : [];
+  return (
+    <details className="lab-advanced">
+      <summary>Retrieval translation</summary>
+      <dl className="detail-list">
+        <div>
+          <dt>Status</dt>
+          <dd>
+            {String(translation.status)}
+            {typeof translation.source_language === "string" ? ` · ${translation.source_language}` : ""}
+            {typeof translation.target_language === "string" ? ` → ${translation.target_language}` : ""}
+            {typeof translation.model === "string" ? ` · ${translation.model}` : ""}
+          </dd>
+        </div>
+        {typeof translation.translated_query === "string" && translation.translated_query && (
+          <div>
+            <dt>Translated query</dt>
+            <dd>{translation.translated_query}</dd>
+          </div>
+        )}
+        {Array.isArray(trace?.executed_branches) && trace.executed_branches.length > 0 && (
+          <div>
+            <dt>Branches</dt>
+            <dd>{(trace.executed_branches as string[]).join(", ")}</dd>
+          </div>
+        )}
+      </dl>
+      {candidates.slice(0, 5).map((candidate, index) => (
+        <div key={String(candidate.chunk_id ?? index)}>
+          <small>
+            #{index + 1} chunk {String(candidate.chunk_index ?? "—")}
+          </small>
+          <BranchProvenanceList trace={candidate} />
+        </div>
+      ))}
+    </details>
   );
 }

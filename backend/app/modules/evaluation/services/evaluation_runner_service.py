@@ -180,26 +180,55 @@ def _case_result(case: EvaluationCase, profile: str, search: Any, answer: Any) -
             for value in (case.relevant_chunk_ids if use_chunks else case.relevant_document_ids)
         }
     recall, reciprocal_rank, ndcg, relevant_retrieved = rank_metrics(result_ids, relevant_ids)
+    recall_at_5, _, _, _ = rank_metrics(result_ids[:5], relevant_ids)
+    recall_at_10, _, _, _ = rank_metrics(result_ids[:10], relevant_ids)
     relevant_semantic_scores = [
         float(hit.semantic_score)
         for hit, result_id in zip(search.hits, result_ids, strict=True)
         if result_id in relevant_ids and hit.semantic_score is not None
-    ]
-    hard_negative_semantic_scores = [
-        float(hit.semantic_score)
-        for hit, result_id in zip(search.hits, result_ids, strict=True)
-        if result_id not in relevant_ids and hit.semantic_score is not None
     ]
     relevant_passage_scores = [
         float(hit.passage_semantic_score)
         for hit, result_id in zip(search.hits, result_ids, strict=True)
         if result_id in relevant_ids and hit.passage_semantic_score is not None
     ]
+    relevant_rerank_scores = [
+        float(hit.rerank_relevance_score)
+        for hit, result_id in zip(search.hits, result_ids, strict=True)
+        if result_id in relevant_ids and hit.rerank_relevance_score is not None
+    ]
+    hard_negative_hits = [
+        hit
+        for hit, result_id in zip(search.hits, result_ids, strict=True)
+        if result_id not in relevant_ids
+        and (
+            not case.hard_negative_evidence_phrases
+            or _matches_evidence_phrases(hit.content, case.hard_negative_evidence_phrases)
+        )
+    ]
+    hard_negative_semantic_scores = [
+        float(hit.semantic_score)
+        for hit in hard_negative_hits
+        if hit.semantic_score is not None
+    ]
     hard_negative_passage_scores = [
         float(hit.passage_semantic_score)
-        for hit, result_id in zip(search.hits, result_ids, strict=True)
-        if result_id not in relevant_ids and hit.passage_semantic_score is not None
+        for hit in hard_negative_hits
+        if hit.passage_semantic_score is not None
     ]
+    hard_negative_rerank_scores = [
+        float(hit.rerank_relevance_score)
+        for hit in hard_negative_hits
+        if hit.rerank_relevance_score is not None
+    ]
+    relevant_families = sorted(
+        {
+            family
+            for hit, result_id in zip(search.hits, result_ids, strict=True)
+            if result_id in relevant_ids
+            for family in _hit_branch_families(hit)
+        }
+    )
     filter_correct = (
         relevant_retrieved
         and bool(search.hits)
@@ -230,6 +259,8 @@ def _case_result(case: EvaluationCase, profile: str, search: Any, answer: Any) -
             _JSON_MAPPING.dump_python(dict(hit.metadata), mode="json") for hit in search.hits
         ],
         "recall": recall,
+        "recall_at_5": recall_at_5,
+        "recall_at_10": recall_at_10,
         "reciprocal_rank": reciprocal_rank,
         "ndcg": ndcg,
         "relevant_retrieved": relevant_retrieved,
@@ -252,6 +283,22 @@ def _case_result(case: EvaluationCase, profile: str, search: Any, answer: Any) -
         "best_hard_negative_passage_semantic_score": (
             max(hard_negative_passage_scores) if hard_negative_passage_scores else None
         ),
+        "best_relevant_rerank_score": (
+            max(relevant_rerank_scores) if relevant_rerank_scores else None
+        ),
+        "best_hard_negative_rerank_score": (
+            max(hard_negative_rerank_scores) if hard_negative_rerank_scores else None
+        ),
+        "query_form": case.query_form,
+        "relevant_branch_families": relevant_families,
+        "translated_branch_contributed": bool(
+            {"translated_dense", "translated_lexical"} & set(relevant_families)
+        ),
+        "candidate_union_relevant": relevant_retrieved,
+        "translation_status": (search.provenance or {}).get("translation_status"),
+        "translation_latency_ms": (search.provenance or {}).get("translation_latency_ms"),
+        "reranker_latency_ms": (search.provenance or {}).get("reranker_latency_ms"),
+        "executed_branches": (search.provenance or {}).get("executed_branches"),
         "filter_correct": filter_correct,
         "latency_ms": search.latency_ms,
         "rerank_status": search.rerank_status,
@@ -273,6 +320,17 @@ def _case_result(case: EvaluationCase, profile: str, search: Any, answer: Any) -
         "output_tokens": answer.output_tokens,
         "provider_latency_ms": answer.provider_latency_ms,
     }
+
+
+def _hit_branch_families(hit: Any) -> set[str]:
+    contributions = (hit.metadata or {}).get("rrf_contributions")
+    if not isinstance(contributions, list):
+        return set()
+    families: set[str] = set()
+    for item in contributions:
+        if isinstance(item, dict) and item.get("family"):
+            families.add(str(item["family"]))
+    return families
 
 
 def _matches_evidence_phrases(content: str, phrases: list[str]) -> bool:

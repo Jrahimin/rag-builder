@@ -18,6 +18,9 @@ from app.platform.providers.contracts.storage import BaseStorageProvider
 from app.platform.providers.implementations.embedding_factory import create_embedding_provider
 from app.platform.providers.implementations.llm_factory import create_llm_provider
 from app.platform.providers.implementations.ocr_factory import get_ocr_provider
+from app.platform.providers.implementations.query_translation_factory import (
+    create_query_translation_provider,
+)
 from app.platform.providers.implementations.reranker_factory import create_reranker_provider
 from app.platform.system.schemas import DependencyHealth, DependencyState, PreflightStatus
 
@@ -123,6 +126,13 @@ class StartupPreflightService:
                 action="Verify the configured reranker path.",
                 failure_state=DependencyState.DEGRADED,
             ),
+            self._check(
+                "query_translation_provider",
+                self._check_query_translation,
+                check_timeout=provider_timeout,
+                action="Verify query-translation construction when enabled.",
+                failure_state=DependencyState.DEGRADED,
+            ),
             self._check_ocr(failure_state=DependencyState.DEGRADED),
         )
         core_checks = [check for check in core.checks if not check.name.endswith("_provider")]
@@ -212,6 +222,11 @@ class StartupPreflightService:
             )
         )
 
+    async def _check_query_translation(self) -> None:
+        if not self._settings.query_translation.enabled:
+            return
+        create_query_translation_provider(self._settings)
+
     async def _check_malware_scanner(self) -> None:
         if self._settings.malware_scan.backend is not MalwareScannerBackend.CLAMAV:
             return
@@ -293,6 +308,7 @@ class StartupPreflightService:
                 "embedding_provider",
                 "llm_provider",
                 "reranker_provider",
+                "query_translation_provider",
                 "ocr_provider",
             )
         ]

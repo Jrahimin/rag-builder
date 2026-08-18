@@ -1,6 +1,6 @@
 {
   "name": "OCR Gazette Grounding",
-  "version": "1.0.2",
+  "version": "1.1.0",
   "schema_version": 2,
   "description": "Structure, cross-lingual retrieval, candidate-local grounding, and numeral-decoy regression set for the Bangla Google OCR gazette.",
   "cases": [
@@ -88,6 +88,63 @@
       "expected_no_answer": true,
       "query_language": "en",
       "expected_evidence_language": "bn"
+    },
+    {
+      "key": "gazette.table.en.typo",
+      "kind": "cross_lingual",
+      "query": "what are the sorce tax deduction areas?",
+      "relevant_evidence_phrases": [
+        "সঞ্চয়পত্র হইতে অর্জিত",
+        "রপ্তানির বিপরীতে",
+        "অধিগ্রহণ",
+        "হস্তান্তর",
+        "মোটরযান"
+      ],
+      "expected_answer_tokens": ["savings", "property", "export", "vehicle"],
+      "query_language": "en",
+      "expected_evidence_language": "bn",
+      "query_form": "typo"
+    },
+    {
+      "key": "gazette.table.banglish",
+      "kind": "code_switched",
+      "query": "source tax deduction er khat gulo ki?",
+      "relevant_evidence_phrases": [
+        "সঞ্চয়পত্র হইতে অর্জিত",
+        "রপ্তানির বিপরীতে",
+        "অধিগ্রহণ",
+        "হস্তান্তর",
+        "মোটরযান"
+      ],
+      "expected_answer_tokens": ["সঞ্চয়পত্র", "সম্পত্তি", "রপ্তানি"],
+      "query_language": "en",
+      "expected_evidence_language": "bn",
+      "query_form": "banglish"
+    },
+    {
+      "key": "gazette.table.bn.to-en-terms",
+      "kind": "cross_lingual",
+      "query": "উৎসে কর সংগ্রহের খাত list in English categories",
+      "relevant_evidence_phrases": [
+        "সঞ্চয়পত্র হইতে অর্জিত",
+        "রপ্তানির বিপরীতে",
+        "অধিগ্রহণ",
+        "হস্তান্তর",
+        "মোটরযান"
+      ],
+      "query_language": "bn",
+      "expected_evidence_language": "bn",
+      "query_form": "mixed"
+    },
+    {
+      "key": "gazette.decoy.wrong-table-vat",
+      "kind": "no_answer",
+      "query": "What VAT chapter lists the source tax deduction areas?",
+      "expected_no_answer": true,
+      "query_language": "en",
+      "expected_evidence_language": "bn",
+      "hard_negative_evidence_phrases": ["মূল্য সংযোজন কর", "VAT"],
+      "query_form": "wrong_table"
     },
     {
       "key": "gazette.decoy.unrelated",

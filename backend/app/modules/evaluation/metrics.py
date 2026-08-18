@@ -15,6 +15,12 @@ def compute_profile_metrics(results: list[dict[str, Any]]) -> dict[str, Any]:
     metrics: dict[str, Any] = {
         "case_count": float(len(results)),
         "recall_at_k": _mean([float(result["recall"]) for result in answerable]),
+        "recall_at_5": _mean(
+            [float(result.get("recall_at_5", result["recall"])) for result in answerable]
+        ),
+        "recall_at_10": _mean(
+            [float(result.get("recall_at_10", result["recall"])) for result in answerable]
+        ),
         "rank_1_accuracy": _mean(
             [float(result.get("rank_1_relevant", False)) for result in answerable]
         ),
@@ -69,18 +75,42 @@ def compute_profile_metrics(results: list[dict[str, Any]]) -> dict[str, Any]:
         "reranker_unavailable_count": float(
             sum(result["rerank_status"] == "unavailable" for result in results)
         ),
+        "candidate_union_recall": _mean(
+            [
+                float(result.get("candidate_union_relevant", result.get("relevant_retrieved", 0.0)))
+                for result in answerable
+            ]
+        ),
+        "translated_branch_recall": _mean(
+            [float(result.get("translated_branch_contributed", False)) for result in answerable]
+        ),
+        "translation_latency_p50_ms": _optional_latency_median(
+            results, "translation_latency_ms"
+        ),
+        "translation_latency_p95_ms": _optional_latency_percentile(
+            results, "translation_latency_ms"
+        ),
+        "reranker_latency_p50_ms": _optional_latency_median(results, "reranker_latency_ms"),
+        "reranker_latency_p95_ms": _optional_latency_percentile(
+            results, "reranker_latency_ms"
+        ),
     }
     language_groups = _group_language_pairs(answerable)
     metrics["language_pairs"] = {
-        pair: {
-            "case_count": float(len(rows)),
-            "recall_at_k": _mean([float(row["recall"]) for row in rows]),
-            "ndcg": _mean([float(row["ndcg"]) for row in rows]),
-        }
+        pair: _pair_metrics(rows)
         for pair, rows in language_groups.items()
+    }
+    metrics["query_forms"] = {
+        form: _pair_metrics(rows)
+        for form, rows in _group_query_forms(answerable).items()
     }
     metrics["semantic_score_calibration"] = _semantic_score_calibration(results)
     metrics["passage_semantic_score_calibration"] = _passage_semantic_score_calibration(results)
+    metrics["reranker_relevance_calibration"] = _score_calibration(
+        results,
+        positive_field="best_relevant_rerank_score",
+        hard_negative_field="best_hard_negative_rerank_score",
+    )
     return metrics
 
 
@@ -112,6 +142,53 @@ def _mean_or_zero(values: list[float]) -> float:
 
 def _rate(numerator: int, denominator: int) -> float:
     return numerator / denominator if denominator else 0.0
+
+
+def _pair_metrics(rows: list[dict[str, Any]]) -> dict[str, float]:
+    return {
+        "case_count": float(len(rows)),
+        "recall_at_k": _mean([float(row["recall"]) for row in rows]),
+        "recall_at_5": _mean([float(row.get("recall_at_5", row["recall"])) for row in rows]),
+        "recall_at_10": _mean([float(row.get("recall_at_10", row["recall"])) for row in rows]),
+        "ndcg": _mean([float(row["ndcg"]) for row in rows]),
+        "mrr": _mean([float(row["reciprocal_rank"]) for row in rows]),
+        "rank_1_accuracy": _mean([float(row.get("rank_1_relevant", False)) for row in rows]),
+        "false_refusal_rate": _rate(
+            sum(row["insufficient_evidence_reason"] is not None for row in rows),
+            len(rows),
+        ),
+        "translated_branch_recall": _mean(
+            [float(row.get("translated_branch_contributed", False)) for row in rows]
+        ),
+    }
+
+
+def _group_query_forms(results: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for result in results:
+        form = result.get("query_form")
+        if not isinstance(form, str) or not form:
+            continue
+        grouped.setdefault(form, []).append(result)
+    return dict(sorted(grouped.items()))
+
+
+def _optional_latencies(results: list[dict[str, Any]], field: str) -> list[float]:
+    values: list[float] = []
+    for result in results:
+        value = result.get(field)
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            values.append(float(value))
+    return values
+
+
+def _optional_latency_median(results: list[dict[str, Any]], field: str) -> float:
+    values = _optional_latencies(results, field)
+    return statistics.median(values) if values else 0.0
+
+
+def _optional_latency_percentile(results: list[dict[str, Any]], field: str) -> float:
+    return _percentile(_optional_latencies(results, field), 0.95)
 
 
 def _group_language_pairs(results: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:

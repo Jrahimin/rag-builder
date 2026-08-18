@@ -146,7 +146,7 @@ export function EvidenceQuality() {
             <MetricCard
               label="Recall@k"
               value={percent(activeMetrics.recall_at_k)}
-              detail={`Active profile · top ${run.top_k}`}
+              detail={`Recall@5 ${percent(activeMetrics.recall_at_5 ?? activeMetrics.recall_at_k)} · top ${run.top_k}`}
               icon={ShieldCheck}
             />
             <MetricCard

@@ -4440,6 +4440,10 @@
             "title": "Context Char Budget",
             "type": "integer"
           },
+          "evidence_score_mode": {
+            "$ref": "#/components/schemas/EvidenceScoreMode",
+            "default": "whole_chunk"
+          },
           "include_citations": {
             "title": "Include Citations",
             "type": "boolean"
@@ -4462,6 +4466,11 @@
           },
           "minimum_claim_token_coverage": {
             "title": "Minimum Claim Token Coverage",
+            "type": "number"
+          },
+          "minimum_reranker_evidence_score": {
+            "default": 0.4,
+            "title": "Minimum Reranker Evidence Score",
             "type": "number"
           }
         },
@@ -4601,9 +4610,77 @@
       },
       "EffectiveRetrievalPolicy": {
         "properties": {
+          "passage_min_tokens": {
+            "default": 32,
+            "title": "Passage Min Tokens",
+            "type": "integer"
+          },
+          "passage_overlap_tokens": {
+            "default": 24,
+            "title": "Passage Overlap Tokens",
+            "type": "integer"
+          },
+          "passage_scoring_enabled": {
+            "default": false,
+            "title": "Passage Scoring Enabled",
+            "type": "boolean"
+          },
+          "passage_window_tokens": {
+            "default": 96,
+            "title": "Passage Window Tokens",
+            "type": "integer"
+          },
+          "query_translation_backend": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Query Translation Backend"
+          },
+          "query_translation_enabled": {
+            "default": false,
+            "title": "Query Translation Enabled",
+            "type": "boolean"
+          },
+          "query_translation_model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Query Translation Model"
+          },
+          "query_translation_prompt_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Query Translation Prompt Version"
+          },
+          "rerank_candidate_window": {
+            "default": 25,
+            "title": "Rerank Candidate Window",
+            "type": "integer"
+          },
           "rerank_enabled": {
             "title": "Rerank Enabled",
             "type": "boolean"
+          },
+          "rerank_return_n": {
+            "default": 8,
+            "title": "Rerank Return N",
+            "type": "integer"
           },
           "rerank_score_threshold": {
             "anyOf": [
@@ -4619,6 +4696,27 @@
           "rerank_top_n": {
             "title": "Rerank Top N",
             "type": "integer"
+          },
+          "reranker_backend": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RerankerBackend"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reranker_model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reranker Model"
           },
           "semantic_evidence_score_threshold": {
             "title": "Semantic Evidence Score Threshold",
@@ -4695,6 +4793,13 @@
             "title": "Expected No Answer",
             "type": "boolean"
           },
+          "hard_negative_evidence_phrases": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Hard Negative Evidence Phrases",
+            "type": "array"
+          },
           "key": {
             "maxLength": 128,
             "minLength": 1,
@@ -4717,6 +4822,19 @@
             "minLength": 1,
             "title": "Query",
             "type": "string"
+          },
+          "query_form": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Query Form"
           },
           "query_language": {
             "anyOf": [
@@ -4745,6 +4863,13 @@
               "type": "string"
             },
             "title": "Relevant Document Ids",
+            "type": "array"
+          },
+          "relevant_evidence_phrases": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Relevant Evidence Phrases",
             "type": "array"
           }
         },
@@ -5139,6 +5264,15 @@
         ],
         "title": "EvaluationRunResponse",
         "type": "object"
+      },
+      "EvidenceScoreMode": {
+        "description": "Calibrated semantic score used by the pre-generation evidence gate.",
+        "enum": [
+          "whole_chunk",
+          "passage_max"
+        ],
+        "title": "EvidenceScoreMode",
+        "type": "string"
       },
       "GenerationCreateRequest": {
         "additionalProperties": false,
@@ -7582,6 +7716,16 @@
             ],
             "title": "Context Char Budget"
           },
+          "evidence_score_mode": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EvidenceScoreMode"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "include_citations": {
             "anyOf": [
               {
@@ -7657,6 +7801,19 @@
               }
             ],
             "title": "Minimum Query Token Coverage"
+          },
+          "minimum_reranker_evidence_score": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Minimum Reranker Evidence Score"
           }
         },
         "title": "ProjectChatPolicy",
@@ -8009,6 +8166,80 @@
             ],
             "title": "Evidence Score Threshold"
           },
+          "passage_min_tokens": {
+            "anyOf": [
+              {
+                "maximum": 256.0,
+                "minimum": 8.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Passage Min Tokens"
+          },
+          "passage_overlap_tokens": {
+            "anyOf": [
+              {
+                "maximum": 256.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Passage Overlap Tokens"
+          },
+          "passage_scoring_enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Passage Scoring Enabled"
+          },
+          "passage_window_tokens": {
+            "anyOf": [
+              {
+                "maximum": 512.0,
+                "minimum": 16.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Passage Window Tokens"
+          },
+          "query_translation_enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Query Translation Enabled"
+          },
+          "rerank_candidate_window": {
+            "anyOf": [
+              {
+                "maximum": 100.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rerank Candidate Window"
+          },
           "rerank_enabled": {
             "anyOf": [
               {
@@ -8019,6 +8250,19 @@
               }
             ],
             "title": "Rerank Enabled"
+          },
+          "rerank_return_n": {
+            "anyOf": [
+              {
+                "maximum": 100.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rerank Return N"
           },
           "rerank_score_threshold": {
             "anyOf": [
@@ -8314,6 +8558,18 @@
         "title": "RecentFailure",
         "type": "object"
       },
+      "RerankerBackend": {
+        "description": "Supported reranker provider backends.",
+        "enum": [
+          "noop",
+          "lexical",
+          "embedding",
+          "embedding_max",
+          "cohere"
+        ],
+        "title": "RerankerBackend",
+        "type": "string"
+      },
       "ResponseMeta": {
         "description": "Lightweight metadata attached to every response for traceability.",
         "properties": {
@@ -8386,6 +8642,39 @@
             "title": "Document Id",
             "type": "string"
           },
+          "evidence_calibration_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence Calibration Id"
+          },
+          "evidence_relevance_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence Relevance Score"
+          },
+          "evidence_score_method": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence Score Method"
+          },
           "filename": {
             "title": "Filename",
             "type": "string"
@@ -8405,6 +8694,72 @@
               }
             ],
             "title": "Page Number"
+          },
+          "passage_char_end": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Passage Char End"
+          },
+          "passage_char_start": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Passage Char Start"
+          },
+          "passage_score_method": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Passage Score Method"
+          },
+          "passage_semantic_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Passage Semantic Score"
+          },
+          "rank_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rank Score"
+          },
+          "rerank_relevance_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rerank Relevance Score"
           },
           "score": {
             "title": "Score",
@@ -8457,6 +8812,17 @@
             ],
             "title": "As Of"
           },
+          "best_passage_semantic_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Best Passage Semantic Score"
+          },
           "best_semantic_score": {
             "anyOf": [
               {
@@ -8467,6 +8833,21 @@
               }
             ],
             "title": "Best Semantic Score"
+          },
+          "branch_candidate_counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Branch Candidate Counts",
+            "type": "object"
+          },
+          "candidate_trace": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Candidate Trace",
+            "type": "array"
           },
           "compatibility_diagnostics": {
             "items": {
@@ -8491,6 +8872,25 @@
             ],
             "title": "Configuration Hash"
           },
+          "corpus_language_inventory": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Corpus Language Inventory",
+            "type": "object"
+          },
+          "diversity_backfilled_count": {
+            "default": 0,
+            "title": "Diversity Backfilled Count",
+            "type": "integer"
+          },
+          "diversity_deferred_reasons": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Diversity Deferred Reasons",
+            "type": "object"
+          },
           "duplicate_suppression_input_count": {
             "default": 0,
             "title": "Duplicate Suppression Input Count",
@@ -8512,6 +8912,13 @@
             "title": "Duration Ms",
             "type": "integer"
           },
+          "executed_branches": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Executed Branches",
+            "type": "array"
+          },
           "index_build_id": {
             "anyOf": [
               {
@@ -8523,6 +8930,39 @@
               }
             ],
             "title": "Index Build Id"
+          },
+          "language_routing_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Language Routing Status"
+          },
+          "passage_score_method": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Passage Score Method"
+          },
+          "query_language_profile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Query Language Profile"
           },
           "reference_date": {
             "anyOf": [
@@ -8543,6 +8983,17 @@
           "rerank_status": {
             "title": "Rerank Status",
             "type": "string"
+          },
+          "reranker_latency_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reranker Latency Ms"
           },
           "reranker_model": {
             "anyOf": [
@@ -8577,6 +9028,11 @@
             ],
             "title": "Reranker Score Scale"
           },
+          "reranker_usage": {
+            "additionalProperties": true,
+            "title": "Reranker Usage",
+            "type": "object"
+          },
           "reranker_version": {
             "anyOf": [
               {
@@ -8587,6 +9043,21 @@
               }
             ],
             "title": "Reranker Version"
+          },
+          "selected_trace": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Selected Trace",
+            "type": "array"
+          },
+          "skipped_branches": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Skipped Branches",
+            "type": "array"
           },
           "source_metadata_generation": {
             "default": 0,
@@ -8629,6 +9100,88 @@
           },
           "strategy": {
             "$ref": "#/components/schemas/RetrievalStrategy"
+          },
+          "translated_query": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Translated Query"
+          },
+          "translation_latency_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Translation Latency Ms"
+          },
+          "translation_model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Translation Model"
+          },
+          "translation_prompt_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Translation Prompt Version"
+          },
+          "translation_provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Translation Provider"
+          },
+          "translation_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Translation Status"
+          },
+          "translation_target_language": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Translation Target Language"
+          },
+          "translation_usage": {
+            "additionalProperties": true,
+            "title": "Translation Usage",
+            "type": "object"
           }
         },
         "required": [

@@ -8,6 +8,7 @@ from app.core.config import (
     LLMBackend,
     MalwareScannerBackend,
     OcrBackend,
+    RerankerBackend,
     RetrievalStrategy,
     RuntimeProfile,
     Settings,
@@ -179,6 +180,18 @@ def _base_configuration_errors(settings: Settings) -> list[str]:
         and not (ocr.google_api_key or "").strip()
     ):
         errors.append("APE_OCR__GOOGLE_API_KEY is required for Google Vision OCR")
+    if settings.retrieval.reranker_backend is RerankerBackend.COHERE and not (
+        settings.reranker.cohere_api_key or ""
+    ).strip():
+        errors.append("APE_RERANKER__COHERE_API_KEY is required for the Cohere reranker")
+    if (
+        settings.query_translation.enabled
+        and settings.query_translation.backend in {LLMBackend.OPENAI, LLMBackend.OPENAI_COMPATIBLE}
+        and not settings.llm.openai_api_key
+    ):
+        errors.append("APE_LLM__OPENAI_API_KEY is required when query translation uses OpenAI")
+    if settings.query_translation.enabled and settings.query_translation.backend is LLMBackend.ECHO:
+        errors.append("query translation cannot use the echo LLM backend")
     return errors
 
 

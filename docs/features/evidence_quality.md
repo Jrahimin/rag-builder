@@ -38,22 +38,25 @@ checked-in representative example is
 
 ## Metrics and reproducibility
 
-Each profile records Recall@k, MRR, nDCG, per-language-pair recall/nDCG, filtered correctness,
+Each profile records Recall@k, Recall@5, Recall@10, MRR, nDCG, per-language-pair and query-form
+recall/nDCG, candidate-union recall, translated-branch recall, filtered correctness,
 false-refusal rate, false-accept rate, groundedness, unverified-claim rate, explicit
-numbered-citation coverage, expected-token coverage, p50/p95 latency, and reranker-unavailable
-counts. Runs compare:
+numbered-citation coverage, expected-token coverage, p50/p95 retrieval latency, translation and
+reranker latency, and reranker-unavailable counts. Runs compare:
 
-- semantic baseline;
-- hybrid BM25 + vector + RRF without reranking;
-- lexical reranking;
-- whole-chunk embedding reranking;
-- max-sentence embedding reranking;
+- A original dense;
+- B original dense + original lexical (hybrid, translation off);
+- C/D translated-branch contribution and candidate-union recall from multilingual diagnostics;
+- E RRF across original plus one translated pair (`multilingual_hybrid`);
+- F E plus Cohere rerank (`reranked_cohere`) when that backend is a candidate;
+- lexical / embedding / embedding_max rerank comparisons;
 - bounded-passage semantic evidence (raw cosine, independent of rerank order).
 
 `semantic_score_calibration` records positive minimum/median, hard-negative
-maximum/p95, and observed separation overall and per language pair. Thresholds
-must be reviewed against these stored distributions after each model or corpus
-baseline change; they are not derived from RRF or reranker scores. Acceptance
+maximum/p95, and observed separation overall and per language pair.
+`reranker_relevance_calibration` stores the same distribution on applied reranker
+relevance. Thresholds must be reviewed against these stored distributions after each model or
+corpus baseline change; they are not derived from RRF scores. Acceptance
 checks enforce the configured minimum cross-language recall and maximum
 false-refusal/false-accept rates on every run.
 `passage_semantic_score_calibration` stores the same distribution separately. Evaluation also
@@ -81,11 +84,12 @@ evaluation platform is introduced.
 ## Grounded answer behavior
 
 Chat uses hybrid retrieval by default. Ranking `score` (RRF or reranker output) and calibrated
-`semantic_score` are separate. `GroundingService` evaluates one candidate/evidence unit at a time:
-direct semantic acceptance and any lexical rescue must come from the same chunk (or the same winning
-passage span). Lexical query coverage is rescue-only: it can admit a semantically plausible
-candidate above a lower semantic floor, but can never reject a strong semantic candidate. No
-language or script detector is part of this decision. Stored Project `evidence_score_threshold`
+`semantic_score` are separate. When rerank is applied, `GroundingService` admits a candidate only
+if `rerank_relevance_score` clears `minimum_reranker_evidence_score`. Cosine plus lexical rescue
+are the fallback when rerank is passthrough or unavailable. Direct semantic acceptance and any
+lexical rescue must come from the same chunk (or the same winning passage span). Lexical query
+coverage is rescue-only on the cosine-fallback path. No language or script detector is part of
+this decision. Stored Project `evidence_score_threshold`
 values below `0.15` are leftover
 RRF-scale overrides and are ignored; leftover `minimum_query_token_coverage` values below the
 deployment rescue coverage are ignored so they cannot loosen false-accept protection.
@@ -124,12 +128,14 @@ No learned reranker is promoted by this change. The production baseline keeps fu
 through the enabled rerank stage with a `noop` occupant (`rerank_status=passthrough`); the lexical
 heuristic remains an
 offline/provider-free comparison but is not language-general.
-A true multilingual cross-encoder can be promoted only after its persisted report passes every
-threshold.
+Cohere `rerank-v4.0-fast` can be promoted only after its persisted gazette report passes every
+hard gate. When that reranker is applied, calibrated relevance is the only learned evidence path;
+original cosine remains the fallback.
 
 ## Configuration
 
 - `APE_CHAT__MINIMUM_SEMANTIC_EVIDENCE_SCORE`
+- `APE_CHAT__MINIMUM_RERANKER_EVIDENCE_SCORE`
 - `APE_CHAT__EVIDENCE_SCORE_MODE` (`whole_chunk` by default; `passage_max` only after calibration)
 - `APE_CHAT__LEXICAL_CORROBORATION_FLOOR_SCORE`
 - `APE_CHAT__LEXICAL_CORROBORATION_COVERAGE`

@@ -32,6 +32,11 @@ class RetrievalResult(BaseModel):
     content: str
     score: float
     semantic_score: float | None = None
+    rank_score: float | None = None
+    rerank_relevance_score: float | None = None
+    evidence_relevance_score: float | None = None
+    evidence_score_method: str | None = None
+    evidence_calibration_id: str | None = None
     passage_semantic_score: float | None = None
     passage_char_start: int | None = None
     passage_char_end: int | None = None
@@ -77,6 +82,24 @@ class SearchDiagnostics(BaseModel):
     source_policy_consolidation_reasons: dict[str, int] = Field(default_factory=dict)
     configuration_hash: str | None = None
     config_provenance: dict[str, Any] = Field(default_factory=dict)
+    query_language_profile: str | None = None
+    corpus_language_inventory: dict[str, int] = Field(default_factory=dict)
+    translation_status: str | None = None
+    translation_source_language: str | None = None
+    translation_provider: str | None = None
+    translation_model: str | None = None
+    translation_prompt_version: str | None = None
+    translation_latency_ms: int | None = None
+    translation_usage: dict[str, Any] = Field(default_factory=dict)
+    translation_target_language: str | None = None
+    translation_failure_reason: str | None = None
+    translated_query: str | None = None
+    executed_branches: list[str] = Field(default_factory=list)
+    skipped_branches: list[str] = Field(default_factory=list)
+    branch_candidate_counts: dict[str, int] = Field(default_factory=dict)
+    language_routing_status: str | None = None
+    reranker_latency_ms: int | None = None
+    reranker_usage: dict[str, Any] = Field(default_factory=dict)
 
 
 class SearchResponse(BaseModel):
