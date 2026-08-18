@@ -17,6 +17,7 @@ class QualityHit:
     filename: str
     chunk_index: int
     semantic_score: float | None = None
+    rank_score: float | None = None
     rerank_relevance_score: float | None = None
     passage_semantic_score: float | None = None
     passage_char_start: int | None = None
@@ -52,6 +53,9 @@ class QualityAnswer:
     input_tokens: int | None = None
     output_tokens: int | None = None
     provider_latency_ms: int | None = None
+    generation_ran: bool | None = None
+    selected_chunk_ids: list[uuid.UUID] = field(default_factory=list)
+    evidence_gate: dict[str, Any] = field(default_factory=dict)
 
 
 class EvaluationRetrievalPort(Protocol):

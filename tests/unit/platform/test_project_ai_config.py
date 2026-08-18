@@ -267,6 +267,17 @@ def test_passage_evidence_mode_is_versioned_in_effective_snapshot() -> None:
     ] == "passage_max"
 
 
+def test_evidence_gate_mode_is_inherited_into_chat_config() -> None:
+    revision = _revision({"chat": {"evidence_gate_mode": "observe"}})
+
+    resolution = resolve_project_ai_config(Settings(), revision)
+    restored = apply_effective_ai_config(Settings(), resolution)
+
+    assert resolution.configuration.chat.evidence_gate_mode.value == "observe"
+    assert restored.chat.evidence_gate_mode.value == "observe"
+    assert Settings().chat.evidence_gate_mode.value == "enforce"
+
+
 def test_passage_evidence_mode_requires_passage_scoring() -> None:
     revision = _revision({"chat": {"evidence_score_mode": "passage_max"}})
 

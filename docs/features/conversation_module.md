@@ -36,9 +36,10 @@ POST /messages
   → validate conversation (active, not deleted)
   → Tx1: persist user message + last_message_at → commit
   → load history + retrieve (read txn rolled back before LLM)
-  → ContextBuilder → GroundingService evidence gate
-  → insufficient: skip LLM and persist stable reason
-  → sufficient: PromptBuilder v3 → LLM generate / stream → map claims
+  → ContextBuilder → GroundingService evidence assessment
+  → enforce: insufficient score skips LLM and persists stable reason
+  → observe: same diagnostics, selected context still goes to PromptBuilder
+  → sufficient or observed: PromptBuilder v4 → LLM generate / stream → map claims
   → Tx2: persist assistant (+ claims, citations, metadata, auto-title) → commit
 ```
 
@@ -53,14 +54,16 @@ LLM failure after Tx1: user message retained, no assistant row.
 | `RetrievalConfig` | `APE_RETRIEVAL__EMBEDDING_SET_VERSION` | Snapshotted on assistant messages |
 
 Notable `ChatConfig` keys: `citation_excerpt_max_chars`, `minimum_semantic_evidence_score`,
-`minimum_reranker_evidence_score`, `lexical_corroboration_floor_score`,
-`lexical_corroboration_coverage`, `minimum_claim_token_coverage`, and `include_citations`.
+`evidence_gate_mode` (`enforce` or `observe`), `minimum_reranker_evidence_score`,
+`lexical_corroboration_floor_score`, `lexical_corroboration_coverage`,
+`minimum_claim_token_coverage`, and `include_citations`.
 
 ## Data model
 
 - `conversations` — config snapshot (`provider`, `model`, `temperature`), nullable `title`, `last_message_at`
 - `messages` — no `sequence`; ordered by `created_at`, `id`; assistant `metadata`, `citations`,
-  `claims`, `grounded`, and `insufficient_evidence_reason`. `metadata.retrieval_trace` includes
+  `claims`, `grounded`, and `insufficient_evidence_reason`. `metadata.evidence_gate` records the
+  score decision even when `observe` still generates. `metadata.retrieval_trace` includes
   translation status/languages/query/provider and per-candidate branch provenance. Translated query
   text stays in diagnostics only; citations and evidence excerpts remain original chunk text.
 
@@ -87,12 +90,14 @@ Chat uses the configured retrieval strategy through `RetrievalPort`. Hybrid retr
 dense + original lexical, optional one translated pair, RRF, optional reranker) is the production
 path; semantic search remains available as an explicit rollback or comparison strategy. When rerank
 is applied, the evidence gate uses calibrated reranker relevance; otherwise it keeps whole-chunk
-cosine plus lexical rescue.
+cosine plus lexical rescue. `APE_CHAT__EVIDENCE_GATE_MODE=observe` records that decision without
+blocking generation on a failed score. Empty retrieval still refuses.
 
 ## Testing strategy
 
-- Unit: `ChatService` (Tx1/Tx2, refusal, provider resolve, errors, stream cancel),
-  `GroundingService`, `ConversationService`, context/prompt builders, citation snapshots, retrieval adapter
+- Unit: `ChatService` (Tx1/Tx2, refusal, observe/enforce gate, provider resolve, errors, stream cancel),
+  `GroundingService`, Gazette evidence-gate comparison (`0.35` / `0.30` / `observe`),
+  `ConversationService`, context/prompt builders, citation snapshots, retrieval adapter
 - Provider contract: echo LLM + factory overrides
 - Integration: `test_conversations_api` (when stack available)
 

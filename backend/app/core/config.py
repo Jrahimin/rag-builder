@@ -419,6 +419,13 @@ class EvidenceScoreMode(StrEnum):
     PASSAGE_MAX = "passage_max"
 
 
+class EvidenceGateMode(StrEnum):
+    """Whether a failed pre-generation evidence score may block the LLM."""
+
+    ENFORCE = "enforce"
+    OBSERVE = "observe"
+
+
 class RetrievalConfig(BaseModel):
     """Retrieval pipeline and search defaults."""
 
@@ -596,6 +603,7 @@ class ChatConfig(BaseModel):
     include_citations: bool = True
     citation_excerpt_max_chars: int = Field(default=200, ge=0, le=2000)
     evidence_score_mode: EvidenceScoreMode = EvidenceScoreMode.WHOLE_CHUNK
+    evidence_gate_mode: EvidenceGateMode = EvidenceGateMode.ENFORCE
     minimum_semantic_evidence_score: float = Field(default=0.35, ge=0.0, le=1.0)
     # Below the primary bar so same-language OCR/table hits that land just under
     # 0.35 can still pass when query tokens strongly overlap the evidence.

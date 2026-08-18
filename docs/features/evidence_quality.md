@@ -94,6 +94,16 @@ values below `0.15` are leftover
 RRF-scale overrides and are ignored; leftover `minimum_query_token_coverage` values below the
 deployment rescue coverage are ignored so they cannot loosen false-accept protection.
 
+The pre-generation gate has two modes:
+
+- `enforce` (default) — a failed evidence score stops before LLM generation.
+- `observe` — the same assessment, winning chunk, lexical coverage, and diagnostics are recorded,
+  but a failed cosine/reranker score does not by itself block generation. Selected context is
+  passed to the existing grounded-generation prompt. Empty retrieval still refuses.
+
+`observe` is a diagnostic policy, not a production weakening of grounding instructions. It exists
+to measure false refusals when relevant chunks already sit in the selected context.
+
 For generated answers, prompt `v4` requests a concise answer in the question's language, forbids
 unsupported background or uncited data rows, and requires numbered citations even when evidence is
 in another language. The service splits answer segments, ignores Markdown-only scaffolding,
@@ -135,6 +145,8 @@ original cosine remains the fallback.
 ## Configuration
 
 - `APE_CHAT__MINIMUM_SEMANTIC_EVIDENCE_SCORE`
+- `APE_CHAT__EVIDENCE_GATE_MODE` (`enforce` by default; `observe` records the same score
+  decision but does not block generation on a failed cosine/reranker score)
 - `APE_CHAT__MINIMUM_RERANKER_EVIDENCE_SCORE`
 - `APE_CHAT__EVIDENCE_SCORE_MODE` (`whole_chunk` by default; `passage_max` only after calibration)
 - `APE_CHAT__LEXICAL_CORROBORATION_FLOOR_SCORE`
@@ -190,6 +202,26 @@ accepted workaround.
 Raw Unicode query-token coverage remains the lexical rescue signal. A corpus-IDF-weighted
 alternative was compared on the Bangla table query versus the section-106 near-negative; both
 methods produced the same admit/refuse decision, so the simpler raw coverage was kept.
+
+### Evidence-gate experiment (2026-08-18)
+
+The remaining Bangla/English/Banglish failures were compared on the same Gazette cases under:
+
+- A. `enforce` at `0.35`
+- B. `enforce` at `0.30`
+- C. `observe` at `0.35`
+
+Recorded relevant table cosine values of `0.32` were retrieved at rank 1, kept by context
+selection, and still refused by the `0.35` enforce gate when lexical coverage was too low for
+rescue. The same selected context was admitted at `0.30` and generated in `observe` without
+injecting extra chunks. RRF rank scores were not used as evidence. Hard negatives below `0.30`
+still refused in both enforce settings.
+
+**Conclusion:** the dominant remaining bottleneck is the pre-generation evidence gate treating
+whole-chunk cosine as a rigid confidence classifier. Retrieval and context selection already
+surface the relevant chunk on these cases. Do not add a Bangla-specific threshold. Recalibrate or
+simplify the gate after a live `observe` Gazette run confirms cited answers on positives; introduce
+one multilingual reranker only if ranking/selection fails that run.
 
 ### Operator rollout after structure-preserving OCR
 

@@ -62,6 +62,18 @@ def test_enforces_char_budget() -> None:
     assert len(selected[0].content) == 500
 
 
+def test_keeps_the_highest_ranked_chunks_inside_the_context_budget() -> None:
+    relevant = _chunk(content="relevant table body", score=0.9)
+    extras = [_chunk(content=f"other-{index}", score=0.1) for index in range(9)]
+    builder = ContextBuilder(ChatConfig(max_context_chunks=8, context_char_budget=10_000))
+
+    selected = builder.select([relevant, *extras])
+
+    assert relevant in selected
+    assert len(selected) == 8
+    assert extras[-1] not in selected
+
+
 def test_deduplicates_by_chunk_hash() -> None:
     first_id = uuid.uuid4()
     second_id = uuid.uuid4()

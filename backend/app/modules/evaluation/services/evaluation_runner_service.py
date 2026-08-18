@@ -265,12 +265,32 @@ def _case_result(case: EvaluationCase, profile: str, search: Any, answer: Any) -
         "ndcg": ndcg,
         "relevant_retrieved": relevant_retrieved,
         "rank_1_relevant": bool(result_ids and result_ids[0] in relevant_ids),
+        "relevant_chunk_rank": next(
+            (
+                index
+                for index, result_id in enumerate(result_ids, start=1)
+                if result_id in relevant_ids
+            ),
+            None,
+        ),
         "accepted_without_relevant_evidence": (
             not case.expected_no_answer
             and answer.insufficient_evidence_reason is None
             and not relevant_retrieved
         ),
         "relevant_evidence_phrases": list(case.relevant_evidence_phrases),
+        "selected_chunk_ids": [str(chunk_id) for chunk_id in answer.selected_chunk_ids],
+        "relevant_in_retrieved": relevant_retrieved,
+        "relevant_in_selected": _relevant_in_selected(
+            relevant_ids,
+            answer.selected_chunk_ids,
+            retrieved=relevant_retrieved,
+        ),
+        "relevant_dropped_before_gate": _relevant_dropped_before_gate(
+            relevant_ids,
+            result_ids,
+            answer.selected_chunk_ids,
+        ),
         "best_relevant_semantic_score": (
             max(relevant_semantic_scores) if relevant_semantic_scores else None
         ),
@@ -309,6 +329,22 @@ def _case_result(case: EvaluationCase, profile: str, search: Any, answer: Any) -
         "retrieval_provenance": search.provenance,
         "answer": answer.answer,
         "insufficient_evidence_reason": answer.insufficient_evidence_reason,
+        "generation_ran": (
+            bool(answer.generation_ran)
+            if answer.generation_ran is not None
+            else answer.insufficient_evidence_reason is None
+        ),
+        "evidence_gate": dict(answer.evidence_gate),
+        "evidence_gate_mode": answer.evidence_gate.get("mode"),
+        "evidence_gate_sufficient": answer.evidence_gate.get("sufficient"),
+        "evidence_gate_reason": answer.evidence_gate.get("reason"),
+        "evidence_score": answer.evidence_gate.get("evidence_score"),
+        "evidence_score_method": answer.evidence_gate.get("evidence_score_method"),
+        "query_token_coverage": answer.evidence_gate.get("query_token_coverage"),
+        "lexically_corroborated": answer.evidence_gate.get("lexically_corroborated"),
+        "winning_chunk_id": answer.evidence_gate.get("winning_chunk_id"),
+        "winning_semantic_score": answer.evidence_gate.get("winning_semantic_score"),
+        "winning_rank_score": answer.evidence_gate.get("winning_rank_score"),
         "grounded": answer.grounded,
         "citation_coverage": answer.citation_coverage,
         "claims": answer.claims,
@@ -320,6 +356,30 @@ def _case_result(case: EvaluationCase, profile: str, search: Any, answer: Any) -
         "output_tokens": answer.output_tokens,
         "provider_latency_ms": answer.provider_latency_ms,
     }
+
+
+def _relevant_in_selected(
+    relevant_ids: set[str],
+    selected_chunk_ids: list[uuid.UUID],
+    *,
+    retrieved: bool,
+) -> bool:
+    selected = {str(chunk_id) for chunk_id in selected_chunk_ids}
+    if not selected:
+        return retrieved
+    return bool(relevant_ids & selected)
+
+
+def _relevant_dropped_before_gate(
+    relevant_ids: set[str],
+    result_ids: list[str],
+    selected_chunk_ids: list[uuid.UUID],
+) -> bool:
+    selected = {str(chunk_id) for chunk_id in selected_chunk_ids}
+    if not selected:
+        return False
+    retrieved = bool(relevant_ids & set(result_ids))
+    return retrieved and not bool(relevant_ids & selected)
 
 
 def _hit_branch_families(hit: Any) -> set[str]:

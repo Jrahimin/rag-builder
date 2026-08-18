@@ -14,6 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.core.config import (
     ChatConfig,
+    EvidenceGateMode,
     EvidenceScoreMode,
     LLMBackend,
     RequestOverrideMode,
@@ -74,6 +75,7 @@ class ProjectChatPolicy(BaseModel):
     include_citations: bool | None = None
     citation_excerpt_max_chars: int | None = Field(default=None, ge=0, le=2000)
     evidence_score_mode: EvidenceScoreMode | None = None
+    evidence_gate_mode: EvidenceGateMode | None = None
     lexical_corroboration_floor_score: float | None = Field(default=None, ge=0.0, le=1.0)
     minimum_query_token_coverage: float | None = Field(default=None, ge=0.0, le=1.0)
     minimum_claim_token_coverage: float | None = Field(default=None, ge=0.0, le=1.0)
@@ -129,6 +131,7 @@ class EffectiveChatPolicy(BaseModel):
     include_citations: bool
     citation_excerpt_max_chars: int
     evidence_score_mode: EvidenceScoreMode = EvidenceScoreMode.WHOLE_CHUNK
+    evidence_gate_mode: EvidenceGateMode = EvidenceGateMode.ENFORCE
     lexical_corroboration_floor_score: float
     lexical_corroboration_coverage: float
     minimum_claim_token_coverage: float
@@ -326,6 +329,11 @@ def resolve_project_ai_config(
                 "chat.evidence_score_mode",
                 project.chat.evidence_score_mode,
                 settings.chat.evidence_score_mode,
+            ),
+            evidence_gate_mode=inherited(
+                "chat.evidence_gate_mode",
+                project.chat.evidence_gate_mode,
+                settings.chat.evidence_gate_mode,
             ),
             lexical_corroboration_floor_score=rescue_floor,
             lexical_corroboration_coverage=rescue_coverage,
@@ -528,6 +536,7 @@ def apply_effective_ai_config(
                     "include_citations": effective.chat.include_citations,
                     "citation_excerpt_max_chars": effective.chat.citation_excerpt_max_chars,
                     "evidence_score_mode": effective.chat.evidence_score_mode,
+                    "evidence_gate_mode": effective.chat.evidence_gate_mode,
                     "minimum_semantic_evidence_score": (
                         effective.retrieval.semantic_evidence_score_threshold
                     ),

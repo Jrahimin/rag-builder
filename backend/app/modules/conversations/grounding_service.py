@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
+from typing import Any
 
 import regex
 
-from app.core.config import ChatConfig, EvidenceScoreMode
+from app.core.config import ChatConfig, EvidenceGateMode, EvidenceScoreMode
 from app.modules.conversations.ports import ContextChunk
 from app.modules.conversations.schemas.message import (
     AnswerClaim,
@@ -73,6 +74,8 @@ class EvidenceDecision:
     evidence_calibration_id: str = "whole_chunk_cosine:v1"
     evidence_char_start: int | None = None
     evidence_char_end: int | None = None
+    winning_semantic_score: float | None = None
+    winning_rank_score: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -117,16 +120,7 @@ class GroundingService:
         ]
         if direct:
             winner = max(direct, key=lambda item: (item[0], item[1], str(item[2].chunk_id)))
-            return EvidenceDecision(
-                sufficient=True,
-                query_token_coverage=winner[1],
-                best_score=winner[0],
-                winning_chunk_id=winner[2].chunk_id,
-                evidence_score_method=self._evidence_score_method,
-                evidence_calibration_id=self._evidence_calibration_id,
-                evidence_char_start=winner[3],
-                evidence_char_end=winner[4],
-            )
+            return self._accepted(winner)
         rescued = [
             item
             for item in scored
@@ -135,17 +129,7 @@ class GroundingService:
         ]
         if rescued:
             winner = max(rescued, key=lambda item: (item[0], item[1], str(item[2].chunk_id)))
-            return EvidenceDecision(
-                sufficient=True,
-                query_token_coverage=winner[1],
-                best_score=winner[0],
-                lexically_corroborated=True,
-                winning_chunk_id=winner[2].chunk_id,
-                evidence_score_method=self._evidence_score_method,
-                evidence_calibration_id=self._evidence_calibration_id,
-                evidence_char_start=winner[3],
-                evidence_char_end=winner[4],
-            )
+            return self._accepted(winner, lexically_corroborated=True)
         return EvidenceDecision(
             sufficient=False,
             reason=InsufficientEvidenceReason.BELOW_RELEVANCE_THRESHOLD,
@@ -156,6 +140,8 @@ class GroundingService:
             evidence_calibration_id=self._evidence_calibration_id,
             evidence_char_start=best[3],
             evidence_char_end=best[4],
+            winning_semantic_score=best[2].semantic_score,
+            winning_rank_score=best[2].rank_score,
         )
 
     def _assess_reranker(self, chunks: list[ContextChunk]) -> EvidenceDecision:
@@ -183,6 +169,8 @@ class GroundingService:
                 evidence_calibration_id=calibration_id,
                 evidence_char_start=winner[1].char_start,
                 evidence_char_end=winner[1].char_end,
+                winning_semantic_score=winner[1].semantic_score,
+                winning_rank_score=winner[1].rank_score,
             )
         return EvidenceDecision(
             sufficient=False,
@@ -193,6 +181,70 @@ class GroundingService:
             evidence_calibration_id=calibration_id,
             evidence_char_start=winner[1].char_start,
             evidence_char_end=winner[1].char_end,
+            winning_semantic_score=winner[1].semantic_score,
+            winning_rank_score=winner[1].rank_score,
+        )
+
+    def blocks_generation(self, decision: EvidenceDecision) -> bool:
+        """Refuse before the LLM only when policy says the gate may block.
+
+        Empty retrieval always blocks. Observe mode still records the score
+        decision but does not treat cosine failure as a generation veto.
+        """
+        if decision.reason is InsufficientEvidenceReason.NO_RETRIEVAL_RESULTS:
+            return True
+        if self._config.evidence_gate_mode is EvidenceGateMode.OBSERVE:
+            return False
+        return not decision.sufficient
+
+    def diagnostics(
+        self,
+        decision: EvidenceDecision,
+        *,
+        blocked_generation: bool,
+        generation_ran: bool,
+    ) -> dict[str, Any]:
+        reason = decision.reason.value if decision.reason is not None else None
+        return {
+            "mode": self._config.evidence_gate_mode.value,
+            "sufficient": decision.sufficient,
+            "reason": reason,
+            "blocked_generation": blocked_generation,
+            "generation_ran": generation_ran,
+            "evidence_score": decision.best_score,
+            "evidence_score_method": decision.evidence_score_method,
+            "evidence_calibration_id": decision.evidence_calibration_id,
+            "winning_chunk_id": (
+                str(decision.winning_chunk_id) if decision.winning_chunk_id is not None else None
+            ),
+            "winning_semantic_score": decision.winning_semantic_score,
+            "winning_rank_score": decision.winning_rank_score,
+            "query_token_coverage": decision.query_token_coverage,
+            "lexically_corroborated": decision.lexically_corroborated,
+            "semantic_threshold": self._config.minimum_semantic_evidence_score,
+            "lexical_floor": self._config.lexical_corroboration_floor_score,
+            "winning_char_start": decision.evidence_char_start,
+            "winning_char_end": decision.evidence_char_end,
+        }
+
+    def _accepted(
+        self,
+        winner: tuple[float, float, ContextChunk, int | None, int | None],
+        *,
+        lexically_corroborated: bool = False,
+    ) -> EvidenceDecision:
+        return EvidenceDecision(
+            sufficient=True,
+            query_token_coverage=winner[1],
+            best_score=winner[0],
+            lexically_corroborated=lexically_corroborated,
+            winning_chunk_id=winner[2].chunk_id,
+            evidence_score_method=self._evidence_score_method,
+            evidence_calibration_id=self._evidence_calibration_id,
+            evidence_char_start=winner[3],
+            evidence_char_end=winner[4],
+            winning_semantic_score=winner[2].semantic_score,
+            winning_rank_score=winner[2].rank_score,
         )
 
     @property

@@ -120,7 +120,7 @@ class ChatService:
             request=request,
         )
 
-        if not prepared.evidence.sufficient:
+        if self._grounding.blocks_generation(prepared.evidence):
             assistant_message = await self._persist_assistant_turn(
                 conversation=conversation,
                 prepared=prepared,
@@ -137,6 +137,7 @@ class ChatService:
                 input_tokens_logged=0,
                 output_tokens_logged=0,
                 insufficient_reason=prepared.evidence.reason,
+                generation_ran=False,
             )
             return ChatTurnResponse(
                 user_message=user_message_response,
@@ -186,6 +187,7 @@ class ChatService:
             streamed=False,
             input_tokens_logged=completion.usage.input_tokens,
             output_tokens_logged=completion.usage.output_tokens,
+            generation_ran=True,
         )
 
         return ChatTurnResponse(
@@ -219,7 +221,7 @@ class ChatService:
         if should_cancel is not None and await should_cancel():
             return
 
-        if not prepared.evidence.sufficient:
+        if self._grounding.blocks_generation(prepared.evidence):
             content = self._chat_config.insufficient_evidence_message
             yield content
             assistant_message = await self._persist_assistant_turn(
@@ -238,6 +240,7 @@ class ChatService:
                 input_tokens_logged=0,
                 output_tokens_logged=0,
                 insufficient_reason=prepared.evidence.reason,
+                generation_ran=False,
             )
             yield self._done_event(assistant_message, conversation)
             return
@@ -298,6 +301,7 @@ class ChatService:
             streamed=True,
             input_tokens_logged=final_usage.input_tokens if final_usage is not None else None,
             output_tokens_logged=final_usage.output_tokens if final_usage is not None else None,
+            generation_ran=True,
         )
 
         yield self._done_event(assistant_message, conversation)
@@ -383,6 +387,7 @@ class ChatService:
         input_tokens_logged: int | None,
         output_tokens_logged: int | None,
         insufficient_reason: object | None = None,
+        generation_ran: bool = False,
     ) -> Message:
         reason_value = str(insufficient_reason) if insufficient_reason is not None else None
         grounding = self._grounding.map_claims(content, prepared.selected)
@@ -397,12 +402,17 @@ class ChatService:
             retrieval_diagnostics=prepared.retrieval_diagnostics,
             selected_chunks=prepared.selected,
         )
+        evidence_gate = self._grounding.diagnostics(
+            prepared.evidence,
+            blocked_generation=reason_value is not None,
+            generation_ran=generation_ran,
+        )
         metadata.update(
             {
                 "grounded": grounding.grounded,
                 "citation_coverage": grounding.citation_coverage,
                 "unverified_claim_rate": grounding.unverified_claim_rate,
-                "best_semantic_evidence_score": prepared.evidence.best_score,
+                "best_semantic_evidence_score": prepared.evidence.winning_semantic_score,
                 "best_evidence_score": prepared.evidence.best_score,
                 "evidence_score_method": prepared.evidence.evidence_score_method,
                 "winning_evidence_chunk_id": (
@@ -415,6 +425,7 @@ class ChatService:
                 "query_evidence_token_coverage": prepared.evidence.query_token_coverage,
                 "lexically_corroborated": prepared.evidence.lexically_corroborated,
                 "insufficient_evidence_reason": reason_value,
+                "evidence_gate": evidence_gate,
             }
         )
         citations = (
@@ -455,6 +466,9 @@ class ChatService:
             "streamed": streamed,
             "grounded": grounding.grounded,
             "insufficient_evidence_reason": reason_value,
+            "evidence_gate_mode": evidence_gate["mode"],
+            "evidence_gate_sufficient": evidence_gate["sufficient"],
+            "generation_ran": generation_ran,
         }
         if input_tokens_logged is not None:
             log_kwargs["input_tokens"] = input_tokens_logged
@@ -694,7 +708,9 @@ class ChatService:
                         "document_id": str(chunk.document_id),
                         "chunk_index": chunk.chunk_index,
                         "score": chunk.score,
+                        "rank_score": chunk.rank_score,
                         "semantic_score": chunk.semantic_score,
+                        "rerank_relevance_score": chunk.rerank_relevance_score,
                         "passage_semantic_score": chunk.passage_semantic_score,
                         "passage_score_method": chunk.passage_score_method,
                     }

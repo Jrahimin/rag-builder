@@ -400,3 +400,63 @@ def test_rerank_unavailable_falls_back_to_cosine_and_lexical_rescue() -> None:
     assert decision.sufficient is True
     assert decision.lexically_corroborated is True
     assert decision.evidence_score_method == "whole_chunk_cosine"
+
+
+def test_observe_mode_records_the_same_refusal_without_changing_assessment() -> None:
+    chunk = _chunk(
+        content="Employee vacation policy requires manager approval.",
+        semantic_score=0.32,
+        score=0.018,
+    )
+    question = "what are the source tax deduction areas?"
+    enforce = GroundingService(ChatConfig())
+    observe = GroundingService(ChatConfig(evidence_gate_mode="observe"))
+
+    enforced = enforce.assess(question, [chunk])
+    observed = observe.assess(question, [chunk])
+
+    assert enforced.sufficient is False
+    assert observed.sufficient is False
+    assert observed.reason is InsufficientEvidenceReason.BELOW_RELEVANCE_THRESHOLD
+    assert observed.best_score == pytest.approx(0.32)
+    assert enforce.blocks_generation(enforced) is True
+    assert observe.blocks_generation(observed) is False
+    diagnostics = observe.diagnostics(
+        observed,
+        blocked_generation=False,
+        generation_ran=True,
+    )
+    assert diagnostics["mode"] == "observe"
+    assert diagnostics["sufficient"] is False
+    assert diagnostics["generation_ran"] is True
+    assert diagnostics["blocked_generation"] is False
+    assert diagnostics["winning_semantic_score"] == pytest.approx(0.32)
+
+
+def test_observe_mode_still_blocks_when_nothing_was_retrieved() -> None:
+    decision = GroundingService(ChatConfig(evidence_gate_mode="observe")).assess(
+        "unsupported question",
+        [],
+    )
+    assert decision.sufficient is False
+    assert decision.reason is InsufficientEvidenceReason.NO_RETRIEVAL_RESULTS
+    assert GroundingService(ChatConfig(evidence_gate_mode="observe")).blocks_generation(
+        decision
+    )
+
+
+def test_rrf_rank_score_is_never_the_evidence_score() -> None:
+    from dataclasses import replace
+
+    chunk = replace(
+        _chunk(content="nearby VAT chapter", semantic_score=0.32, score=0.91),
+        rank_score=0.91,
+    )
+    decision = GroundingService(ChatConfig()).assess(
+        "what are the source tax deduction areas?",
+        [chunk],
+    )
+    assert decision.sufficient is False
+    assert decision.best_score == pytest.approx(0.32)
+    assert decision.winning_semantic_score == pytest.approx(0.32)
+    assert decision.winning_rank_score == pytest.approx(0.91)

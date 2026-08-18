@@ -222,6 +222,7 @@ class SearchEvaluationAdapter(EvaluationRetrievalPort):
                     content=result.content,
                     score=result.score,
                     semantic_score=result.semantic_score,
+                    rank_score=result.rank_score,
                     rerank_relevance_score=result.rerank_relevance_score,
                     passage_semantic_score=result.passage_semantic_score,
                     passage_char_start=result.passage_char_start,
@@ -316,7 +317,8 @@ class GroundedEvaluationAnswerAdapter(EvaluationAnswerPort):
             question,
             [chunk for chunk in chunks if chunk.chunk_id in selected_ids],
         )
-        if not decision.sufficient:
+        blocked = grounding.blocks_generation(decision)
+        if blocked:
             return QualityAnswer(
                 answer=self._settings.chat.insufficient_evidence_message,
                 insufficient_evidence_reason=(
@@ -332,6 +334,13 @@ class GroundedEvaluationAnswerAdapter(EvaluationAnswerPort):
                 input_tokens=0,
                 output_tokens=0,
                 provider_latency_ms=0,
+                generation_ran=False,
+                selected_chunk_ids=[chunk.chunk_id for chunk in selected],
+                evidence_gate=grounding.diagnostics(
+                    decision,
+                    blocked_generation=True,
+                    generation_ran=False,
+                ),
             )
         messages = self._prompt.build(
             template=require_prompt_template(self._settings.chat.system_prompt_version),
@@ -360,6 +369,13 @@ class GroundedEvaluationAnswerAdapter(EvaluationAnswerPort):
             input_tokens=completion.usage.input_tokens,
             output_tokens=completion.usage.output_tokens,
             provider_latency_ms=provider_latency_ms,
+            generation_ran=True,
+            selected_chunk_ids=[chunk.chunk_id for chunk in selected],
+            evidence_gate=grounding.diagnostics(
+                decision,
+                blocked_generation=False,
+                generation_ran=True,
+            ),
         )
 
 
@@ -500,6 +516,7 @@ def _context_chunk(hit: QualityHit) -> ContextChunk:
         filename=hit.filename,
         chunk_hash=content_hash(hit.content),
         semantic_score=hit.semantic_score,
+        rank_score=hit.rank_score,
         rerank_relevance_score=_optional_hit_float(hit.rerank_relevance_score),
         passage_semantic_score=hit.passage_semantic_score,
         passage_char_start=hit.passage_char_start,

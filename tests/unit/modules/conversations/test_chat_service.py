@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from app.core.config import ChatConfig, LLMBackend, LLMConfig, RetrievalConfig
+from app.core.config import ChatConfig, EvidenceGateMode, LLMBackend, LLMConfig, RetrievalConfig
 from app.core.exceptions import ConflictError, NotFoundError, ServiceUnavailableError
 from app.models.conversation import Conversation
 from app.models.message import Message, MessageRole
@@ -46,6 +46,37 @@ class EmptyRetrieval:
     async def retrieve(self, **kwargs: object) -> ContextRetrievalResult:
         del kwargs
         return ContextRetrievalResult(chunks=[], diagnostics={})
+
+
+class NearMissRetrieval:
+    """Relevant Bangla evidence whose whole-chunk cosine sits just under 0.35."""
+
+    chunk_id = uuid.UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
+
+    async def retrieve(self, **kwargs: object) -> ContextRetrievalResult:
+        del kwargs
+        return ContextRetrievalResult(
+            chunks=[
+                ContextChunk(
+                    chunk_id=self.chunk_id,
+                    document_id=uuid.uuid4(),
+                    chunk_index=0,
+                    content="সঞ্চয়পত্র হইতে অর্জিত মুনাফা সম্পত্তির অধিগ্রহণ রপ্তানির বিপরীতে",
+                    score=0.018,
+                    filename="gazette.pdf",
+                    chunk_hash="gazette-table",
+                    semantic_score=0.32,
+                    rank_score=0.018,
+                    metadata={
+                        "rrf_contributions": [
+                            {"family": "original_dense", "rank": 1, "rrf": 0.016},
+                            {"family": "translated_dense", "rank": 2, "rrf": 0.002},
+                        ]
+                    },
+                )
+            ],
+            diagnostics={"candidate_trace": [{"chunk_id": str(self.chunk_id), "rank": 1}]},
+        )
 
 
 class FailingLLM(EchoLLMProvider):
@@ -297,6 +328,138 @@ async def test_insufficient_evidence_skips_generation_and_persists_refusal(
     assert turn.assistant_message.grounded is False
     assert turn.assistant_message.claims == []
     assert turn.assistant_message.citations == []
+    gate = turn.assistant_message.metadata["evidence_gate"]
+    assert gate["mode"] == "enforce"
+    assert gate["generation_ran"] is False
+    assert gate["blocked_generation"] is True
+
+
+async def test_observe_mode_generates_when_cosine_gate_would_refuse(
+    session: AsyncMock,
+    conversation_repository: AsyncMock,
+    message_repository: AsyncMock,
+    conversation: Conversation,
+) -> None:
+    class CountingLLM(EchoLLMProvider):
+        calls = 0
+
+        async def generate(self, messages, *, temperature, max_tokens):
+            self.calls += 1
+            return await super().generate(
+                messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+
+    llm = CountingLLM(model="test", provider_version="1")
+    service = _service(
+        session,
+        conversation_repository,
+        message_repository,
+        llm,
+        chat_config=ChatConfig(
+            system_prompt_version="v1",
+            evidence_gate_mode=EvidenceGateMode.OBSERVE,
+        ),
+    )
+    service._retrieval = NearMissRetrieval()
+
+    turn = await service.send_message(
+        conversation.id,
+        MessageSendRequest(content="what are the source tax deduction areas?"),
+    )
+
+    assert llm.calls == 1
+    assert turn.assistant_message.finish_reason != "insufficient_evidence"
+    assert turn.assistant_message.insufficient_evidence_reason is None
+    assert turn.assistant_message.citations
+    gate = turn.assistant_message.metadata["evidence_gate"]
+    assert gate["mode"] == "observe"
+    assert gate["sufficient"] is False
+    assert gate["reason"] == "below_relevance_threshold"
+    assert gate["generation_ran"] is True
+    assert gate["blocked_generation"] is False
+    assert gate["evidence_score"] == pytest.approx(0.32)
+    assert gate["winning_semantic_score"] == pytest.approx(0.32)
+    assert gate["winning_rank_score"] == pytest.approx(0.018)
+    assert gate["winning_chunk_id"] == str(NearMissRetrieval.chunk_id)
+
+
+async def test_observe_mode_still_skips_generation_when_retrieval_is_empty(
+    session: AsyncMock,
+    conversation_repository: AsyncMock,
+    message_repository: AsyncMock,
+    conversation: Conversation,
+) -> None:
+    class CountingLLM(EchoLLMProvider):
+        calls = 0
+
+        async def generate(self, messages, *, temperature, max_tokens):
+            self.calls += 1
+            return await super().generate(
+                messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+
+    llm = CountingLLM(model="test", provider_version="1")
+    service = _service(
+        session,
+        conversation_repository,
+        message_repository,
+        llm,
+        chat_config=ChatConfig(
+            system_prompt_version="v1",
+            evidence_gate_mode=EvidenceGateMode.OBSERVE,
+        ),
+    )
+    service._retrieval = EmptyRetrieval()
+
+    turn = await service.send_message(
+        conversation.id,
+        MessageSendRequest(content="What is the lunar payroll rule?"),
+    )
+
+    assert llm.calls == 0
+    assert turn.assistant_message.finish_reason == "insufficient_evidence"
+    assert turn.assistant_message.insufficient_evidence_reason == "no_retrieval_results"
+    assert turn.assistant_message.metadata["evidence_gate"]["generation_ran"] is False
+
+
+async def test_enforce_mode_still_skips_generation_on_a_cosine_near_miss(
+    session: AsyncMock,
+    conversation_repository: AsyncMock,
+    message_repository: AsyncMock,
+    conversation: Conversation,
+) -> None:
+    class CountingLLM(EchoLLMProvider):
+        calls = 0
+
+        async def generate(self, messages, *, temperature, max_tokens):
+            self.calls += 1
+            return await super().generate(
+                messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+
+    llm = CountingLLM(model="test", provider_version="1")
+    service = _service(session, conversation_repository, message_repository, llm)
+    service._retrieval = NearMissRetrieval()
+
+    turn = await service.send_message(
+        conversation.id,
+        MessageSendRequest(content="what are the source tax deduction areas?"),
+    )
+
+    assert llm.calls == 0
+    assert turn.assistant_message.finish_reason == "insufficient_evidence"
+    assert turn.assistant_message.insufficient_evidence_reason == "below_relevance_threshold"
+    gate = turn.assistant_message.metadata["evidence_gate"]
+    assert gate["mode"] == "enforce"
+    assert gate["sufficient"] is False
+    assert gate["generation_ran"] is False
+    assert gate["evidence_score"] == pytest.approx(0.32)
 
 
 async def test_send_message_uses_conversation_temperature(

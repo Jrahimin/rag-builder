@@ -76,3 +76,16 @@ When a true multilingual reranker is applied, its calibrated relevance is the ca
 evidence signal. Original whole-chunk cosine is the fallback when reranking is passthrough or
 unavailable. Cosine must not independently admit a candidate the applied reranker scored below
 its calibrated threshold. Translation scores never enter grounding confidence. See ADR-018.
+
+## Amendment: evidence-gate observe mode (2026-08-18)
+
+The pre-generation gate remains a conservative safeguard, not a calibrated universal confidence
+score. `APE_CHAT__EVIDENCE_GATE_MODE=enforce` preserves current refusal-before-generation
+behavior. `observe` runs the same candidate-local assessment and persists the same diagnostics,
+but does not block generation solely because whole-chunk cosine (or applied reranker relevance)
+missed the threshold. Empty retrieval still refuses. RRF `rank_score` and translated-branch
+cosine never become `evidence_score`. Language-specific thresholds are forbidden; any threshold
+change must be measured on positives and hard negatives for the current embedding, chunking, and
+corpus. A recorded Gazette comparison showed relevant 0.32 cosine chunks already retrieved and
+selected while `enforce` at 0.35 still refused, so the remaining bottleneck is the gate rather
+than retrieval, context selection, or a missing reranker.
