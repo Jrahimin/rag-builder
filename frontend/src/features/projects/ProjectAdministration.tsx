@@ -7,7 +7,6 @@ import {
   type EffectiveProjectAIConfig,
   type Organization,
   type Project,
-  type ProjectAIConfig,
   type ProjectAIConfigRevision,
   type ProjectOwnershipPreflight,
   type ProviderCapability,
@@ -26,125 +25,22 @@ import {
 import { EmptyState, ErrorState, LoadingState } from "../../components/QueryStatePanel";
 import { StatusBadge } from "../../components/StatusBadge";
 import { formatBytes, formatDate, shortId } from "../../shared/formatters";
+import {
+  InheritanceToggle,
+  ProjectAISettingsFields,
+  buildSparseProjectConfig,
+  configFormFromEffective,
+  configOverridesFromStored,
+  emptyProjectConfigForm,
+  inheritedProjectConfig,
+  sparseHasOverrides,
+  type ProjectConfigForm,
+  type ProjectConfigOverride,
+  type ProjectConfigOverrides,
+} from "./ProjectAISettingsFields";
 
 const tabs = ["details", "ai-config", "sources", "history"] as const;
 type ProjectTab = (typeof tabs)[number];
-
-type ProjectConfigForm = {
-  provider: string;
-  model: string;
-  temperature: string;
-  maxTokens: string;
-  domain: string;
-  topK: string;
-  strategy: string;
-  rerank: boolean;
-  evidence: string;
-  citations: boolean;
-  sourcePolicy: string;
-  reason: string;
-};
-
-type ProjectConfigOverride = Exclude<keyof ProjectConfigForm, "reason">;
-type ProjectConfigOverrides = Record<ProjectConfigOverride, boolean>;
-
-const inheritedProjectConfig: ProjectConfigOverrides = {
-  provider: false,
-  model: false,
-  temperature: false,
-  maxTokens: false,
-  domain: false,
-  topK: false,
-  strategy: false,
-  rerank: false,
-  evidence: false,
-  citations: false,
-  sourcePolicy: false,
-};
-
-function configFormFromEffective(config: EffectiveProjectAIConfig): ProjectConfigForm {
-  return {
-    provider: config.configuration.llm.provider,
-    model: config.configuration.llm.model,
-    temperature:
-      config.configuration.llm.temperature === null
-        ? ""
-        : String(config.configuration.llm.temperature),
-    maxTokens: String(config.configuration.llm.max_tokens),
-    domain: config.configuration.domain_instructions,
-    topK: String(config.configuration.retrieval.top_k),
-    strategy: config.configuration.retrieval.strategy,
-    rerank: config.configuration.retrieval.rerank_enabled,
-    evidence: String(config.configuration.retrieval.evidence_score_threshold),
-    citations: config.configuration.chat.include_citations,
-    sourcePolicy: config.configuration.source_policy_mode,
-    reason: "",
-  };
-}
-
-function hasValue(value: object | undefined, key: string) {
-  return value !== undefined && Object.prototype.hasOwnProperty.call(value, key);
-}
-
-function configOverridesFromStored(stored: ProjectAIConfig): ProjectConfigOverrides {
-  return {
-    provider: hasValue(stored.llm, "provider"),
-    model: hasValue(stored.llm, "model"),
-    temperature: hasValue(stored.llm, "temperature") && stored.llm?.temperature !== null,
-    maxTokens: hasValue(stored.llm, "max_tokens"),
-    domain: hasValue(stored, "domain_instructions"),
-    topK: hasValue(stored.retrieval, "top_k"),
-    strategy: hasValue(stored.retrieval, "strategy"),
-    rerank: hasValue(stored.retrieval, "rerank_enabled"),
-    evidence: hasValue(stored.retrieval, "evidence_score_threshold"),
-    citations: hasValue(stored.chat, "include_citations"),
-    sourcePolicy: hasValue(stored, "source_policy_mode"),
-  };
-}
-
-function setSparseValue(
-  target: Record<string, unknown>,
-  key: string,
-  include: boolean,
-  value: unknown,
-) {
-  if (include) target[key] = value;
-  else delete target[key];
-}
-
-function buildSparseProjectConfig(
-  stored: ProjectAIConfig,
-  form: ProjectConfigForm,
-  overrides: ProjectConfigOverrides,
-  capability: ProviderCapability | undefined,
-): ProjectAIConfig {
-  const configuration = { ...stored } as Record<string, unknown>;
-  const llm = { ...(stored.llm ?? {}) } as Record<string, unknown>;
-  const retrieval = { ...(stored.retrieval ?? {}) } as Record<string, unknown>;
-  const chat = { ...(stored.chat ?? {}) } as Record<string, unknown>;
-
-  setSparseValue(llm, "provider", overrides.provider, form.provider);
-  setSparseValue(llm, "model", overrides.model, form.model);
-  setSparseValue(
-    llm,
-    "temperature",
-    overrides.temperature && capability?.parameters.temperature.supported !== false,
-    form.temperature === "" ? null : Number(form.temperature),
-  );
-  setSparseValue(llm, "max_tokens", overrides.maxTokens, Number(form.maxTokens));
-  setSparseValue(retrieval, "top_k", overrides.topK, Number(form.topK));
-  setSparseValue(retrieval, "strategy", overrides.strategy, form.strategy);
-  setSparseValue(retrieval, "rerank_enabled", overrides.rerank, form.rerank);
-  setSparseValue(retrieval, "evidence_score_threshold", overrides.evidence, Number(form.evidence));
-  setSparseValue(chat, "include_citations", overrides.citations, form.citations);
-  setSparseValue(configuration, "domain_instructions", overrides.domain, form.domain);
-  setSparseValue(configuration, "source_policy_mode", overrides.sourcePolicy, form.sourcePolicy);
-
-  configuration.llm = llm;
-  configuration.retrieval = retrieval;
-  configuration.chat = chat;
-  return configuration;
-}
 
 function projectStatus(project: Project) {
   if (project.deleted_at) return "archived";
@@ -160,6 +56,7 @@ export function ProjectAdministration() {
   const requestedTab = params.get("section") as ProjectTab | null;
   const tab = requestedTab && tabs.includes(requestedTab) ? requestedTab : "details";
   const [creating, setCreating] = useState(false);
+  const [aiConfigWarning, setAiConfigWarning] = useState("");
   const [migration, setMigration] = useState<Awaited<
     ReturnType<typeof operatorApiClient.getProjectOwnershipMigration>
   > | null>(null);
@@ -224,10 +121,11 @@ export function ProjectAdministration() {
               (item) => item.is_active && !item.deleted_at,
             )}
             onCancel={() => setCreating(false)}
-            onCreated={(project) => {
+            onCreated={(project, extra) => {
               setCreating(false);
               void invalidateAdministration();
-              choose(project.id);
+              choose(project.id, extra?.aiConfigError ? "ai-config" : "details");
+              setAiConfigWarning(extra?.aiConfigError ?? "");
             }}
           />
         )}
@@ -254,6 +152,22 @@ export function ProjectAdministration() {
       <section className="admin-detail">
         {selected ? (
           <>
+            {aiConfigWarning && (
+              <div className="warning-box" role="status">
+                <strong>Project created. AI settings were not saved.</strong>
+                <span>{aiConfigWarning}</span>
+                <button
+                  className="button button--secondary"
+                  type="button"
+                  onClick={() => {
+                    choose(selected.id, "ai-config");
+                    setAiConfigWarning("");
+                  }}
+                >
+                  Open AI configuration
+                </button>
+              </div>
+            )}
             <section className="panel detail-hero">
               <div>
                 <p className="eyebrow">Project · {shortId(selected.id)}</p>
@@ -309,19 +223,44 @@ function CreateProject({
 }: {
   organizations: Organization[];
   onCancel: () => void;
-  onCreated: (project: Project) => void;
+  onCreated: (project: Project, extra?: { aiConfigError?: string }) => void;
 }) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [organizationId, setOrganizationId] = useState(organizations[0]?.id ?? "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [form, setForm] = useState<ProjectConfigForm>(emptyProjectConfigForm);
+  const [overrides, setOverrides] = useState<ProjectConfigOverrides>(inheritedProjectConfig);
+  const setOverride = (key: ProjectConfigOverride, enabled: boolean) => {
+    setOverrides((current) => ({ ...current, [key]: enabled }));
+  };
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     setBusy(true);
     setError("");
     try {
-      onCreated(await operatorApiClient.createProject(name, organizationId, description));
+      const project = await operatorApiClient.createProject(name, organizationId, description);
+      const configuration = buildSparseProjectConfig({}, form, overrides, undefined);
+      if (!sparseHasOverrides(configuration)) {
+        onCreated(project);
+        return;
+      }
+      try {
+        await operatorApiClient.createProjectAIConfig(
+          project.id,
+          configuration,
+          null,
+          "Initial Project AI settings",
+        );
+        onCreated(project);
+      } catch (caught) {
+        onCreated(project, {
+          aiConfigError:
+            (caught as Error).message ||
+            "The Project exists with inherited defaults. Retry from AI configuration.",
+        });
+      }
     } catch (caught) {
       setError((caught as Error).message);
     } finally {
@@ -357,6 +296,19 @@ function CreateProject({
           onChange={(event) => setDescription(event.target.value)}
         />
       </label>
+      <details className="lab-advanced">
+        <summary>Optional AI settings</summary>
+        <p className="muted-copy">
+          Leave every control on Inherit to use deployment defaults. No AI revision is created in
+          that case.
+        </p>
+        <ProjectAISettingsFields
+          form={form}
+          setForm={setForm}
+          overrides={overrides}
+          setOverride={setOverride}
+        />
+      </details>
       {error && (
         <p className="form-error" role="alert">
           {error}
@@ -536,97 +488,75 @@ function ProjectDetails({
                     onChange={(event) => setReason(event.target.value)}
                   />
                 </label>
-              <div className="button-row">
-                <button
-                  className="button button--secondary"
-                  type="button"
-                  disabled={!reason || !target}
-                  onClick={() => {
-                    void (async () => {
-                      setError("");
-                      try {
-                        setPreflight(
-                          await operatorApiClient.getProjectOwnershipPreflight(project.id, target),
-                        );
-                      } catch (caught) {
-                        setError((caught as Error).message);
-                      }
-                    })();
-                  }}
-                >
-                  Dry-run preflight
-                </button>
-                <button
-                  className="button button--primary"
-                  type="button"
-                  disabled={!reason || !preflight}
-                  onClick={() =>
-                    void run("reassign", () =>
-                      target === project.organization_id
-                        ? operatorApiClient.confirmProjectOwnership(
-                            project.id,
-                            project.organization_id,
-                            reason,
-                          )
-                        : operatorApiClient.reassignProjectOwnership(
-                            project.id,
-                            project.organization_id,
-                            target,
-                            reason,
-                          ),
-                    )
-                  }
-                >
-                  {target === project.organization_id
-                    ? "Confirm current owner"
-                    : "Reassign and lock"}
-                </button>
-              </div>
-              {preflight && (
-                <div className="preflight-box">
-                  <strong>
-                    {preflight.can_reassign
-                      ? "Ready to lock ownership"
-                      : "Ownership already locked"}
-                  </strong>
-                  {Object.entries(preflight.resource_counts).map(([label, count]) => (
-                    <span key={label}>
-                      {label}: {count}
-                    </span>
-                  ))}
+                <div className="button-row">
+                  <button
+                    className="button button--secondary"
+                    type="button"
+                    disabled={!reason || !target}
+                    onClick={() => {
+                      void (async () => {
+                        setError("");
+                        try {
+                          setPreflight(
+                            await operatorApiClient.getProjectOwnershipPreflight(
+                              project.id,
+                              target,
+                            ),
+                          );
+                        } catch (caught) {
+                          setError((caught as Error).message);
+                        }
+                      })();
+                    }}
+                  >
+                    Dry-run preflight
+                  </button>
+                  <button
+                    className="button button--primary"
+                    type="button"
+                    disabled={!reason || !preflight}
+                    onClick={() =>
+                      void run("reassign", () =>
+                        target === project.organization_id
+                          ? operatorApiClient.confirmProjectOwnership(
+                              project.id,
+                              project.organization_id,
+                              reason,
+                            )
+                          : operatorApiClient.reassignProjectOwnership(
+                              project.id,
+                              project.organization_id,
+                              target,
+                              reason,
+                            ),
+                      )
+                    }
+                  >
+                    {target === project.organization_id
+                      ? "Confirm current owner"
+                      : "Reassign and lock"}
+                  </button>
                 </div>
-              )}
-            </div>
-          )}
+                {preflight && (
+                  <div className="preflight-box">
+                    <strong>
+                      {preflight.can_reassign
+                        ? "Ready to lock ownership"
+                        : "Ownership already locked"}
+                    </strong>
+                    {Object.entries(preflight.resource_counts).map(([label, count]) => (
+                      <span key={label}>
+                        {label}: {count}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </section>
       </div>
     </>
-  );
-}
-
-function InheritanceToggle({
-  field,
-  overridden,
-  onChange,
-  disabled = false,
-}: {
-  field: string;
-  overridden: boolean;
-  onChange: (overridden: boolean) => void;
-  disabled?: boolean;
-}) {
-  return (
-    <label className="check-control">
-      <input
-        aria-label={`${field}: inherit global`}
-        type="checkbox"
-        checked={!overridden}
-        disabled={disabled}
-        onChange={(event) => onChange(!event.target.checked)}
-      />{" "}
-      Inherit global
-    </label>
   );
 }
 
@@ -635,20 +565,7 @@ function ProjectConfig({ project }: { project: Project }) {
   const [history, setHistory] = useState<ProjectAIConfigRevision[]>([]);
   const [capabilities, setCapabilities] = useState<ProviderCapability[]>([]);
   const [overrides, setOverrides] = useState<ProjectConfigOverrides>(inheritedProjectConfig);
-  const [form, setForm] = useState<ProjectConfigForm>({
-    provider: "echo",
-    model: "",
-    temperature: "",
-    maxTokens: "",
-    domain: "",
-    topK: "",
-    strategy: "semantic",
-    rerank: false,
-    evidence: "",
-    citations: true,
-    sourcePolicy: "off",
-    reason: "",
-  });
+  const [form, setForm] = useState<ProjectConfigForm>(emptyProjectConfigForm);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const load = useCallback(async () => {
@@ -672,7 +589,7 @@ function ProjectConfig({ project }: { project: Project }) {
         ? configOverridesFromStored(activeRevision.configuration)
         : inheritedProjectConfig,
     );
-    setForm(configFormFromEffective(config));
+    setForm(configFormFromEffective(config, activeRevision?.configuration ?? {}));
   }, [project.id]);
   useEffect(() => {
     setError("");
@@ -718,6 +635,11 @@ function ProjectConfig({ project }: { project: Project }) {
       (item) => item.provider === form.provider && item.model === form.model,
     );
     const configuration = buildSparseProjectConfig(stored, form, overrides, selectedCapability);
+    if (!sparseHasOverrides(configuration) && !effective?.active_revision_id) {
+      setError("All fields inherit deployment defaults, so no Project revision was created.");
+      setBusy(false);
+      return;
+    }
     try {
       await operatorApiClient.createProjectAIConfig(
         project.id,
@@ -740,7 +662,10 @@ function ProjectConfig({ project }: { project: Project }) {
   const setOverride = (key: ProjectConfigOverride, enabled: boolean) => {
     setOverrides((current) => ({ ...current, [key]: enabled }));
     if (!enabled && effective) {
-      const inherited = configFormFromEffective(effective);
+      const activeRevision = history.find(
+        (revision) => revision.id === effective.active_revision_id,
+      );
+      const inherited = configFormFromEffective(effective, activeRevision?.configuration ?? {});
       setForm((current) => ({ ...current, [key]: inherited[key] }));
     }
   };
@@ -784,57 +709,15 @@ function ProjectConfig({ project }: { project: Project }) {
         </p>
         <fieldset>
           <legend>
-            <Settings2 size={17} /> Provider, model, and domain
+            <Settings2 size={17} /> Provider, model, translation, and rerank
           </legend>
-          <div className="form-grid">
-            <div className="field-control">
-              <span>Provider</span>
-              <select
-                aria-label="Provider"
-                value={form.provider}
-                disabled={!overrides.provider}
-                onChange={(event) => setForm({ ...form, provider: event.target.value })}
-              >
-                {["echo", "openai", "openai_compatible", "ollama", "gemini"].map((value) => (
-                  <option key={value}>{value}</option>
-                ))}
-              </select>
-              <InheritanceToggle
-                field="Provider"
-                overridden={overrides.provider}
-                onChange={(enabled) => setOverride("provider", enabled)}
-              />
-            </div>
-            <div className="field-control">
-              <span>Model</span>
-              <input
-                aria-label="Model"
-                required
-                value={form.model}
-                disabled={!overrides.model}
-                onChange={(event) => setForm({ ...form, model: event.target.value })}
-              />
-              <InheritanceToggle
-                field="Model"
-                overridden={overrides.model}
-                onChange={(enabled) => setOverride("model", enabled)}
-              />
-            </div>
-            <div className="field-control field-control--wide">
-              <span>Domain instructions</span>
-              <textarea
-                aria-label="Domain instructions"
-                value={form.domain}
-                disabled={!overrides.domain}
-                onChange={(event) => setForm({ ...form, domain: event.target.value })}
-              />
-              <InheritanceToggle
-                field="Domain instructions"
-                overridden={overrides.domain}
-                onChange={(enabled) => setOverride("domain", enabled)}
-              />
-            </div>
-          </div>
+          <ProjectAISettingsFields
+            form={form}
+            setForm={setForm}
+            overrides={overrides}
+            setOverride={setOverride}
+            effective={effective}
+          />
         </fieldset>
         <fieldset>
           <legend>Generation and chat defaults</legend>
@@ -876,23 +759,6 @@ function ProjectConfig({ project }: { project: Project }) {
                 field="Maximum output tokens"
                 overridden={overrides.maxTokens}
                 onChange={(enabled) => setOverride("maxTokens", enabled)}
-              />
-            </div>
-            <div className="field-control">
-              <span>Citations</span>
-              <label className="check-control">
-                <input
-                  type="checkbox"
-                  checked={form.citations}
-                  disabled={!overrides.citations}
-                  onChange={(event) => setForm({ ...form, citations: event.target.checked })}
-                />{" "}
-                Include citations
-              </label>
-              <InheritanceToggle
-                field="Citations"
-                overridden={overrides.citations}
-                onChange={(enabled) => setOverride("citations", enabled)}
               />
             </div>
           </div>
@@ -949,23 +815,6 @@ function ProjectConfig({ project }: { project: Project }) {
                 field="Evidence threshold"
                 overridden={overrides.evidence}
                 onChange={(enabled) => setOverride("evidence", enabled)}
-              />
-            </div>
-            <div className="field-control">
-              <span>Reranking</span>
-              <label className="check-control">
-                <input
-                  type="checkbox"
-                  checked={form.rerank}
-                  disabled={!overrides.rerank}
-                  onChange={(event) => setForm({ ...form, rerank: event.target.checked })}
-                />{" "}
-                Enable reranking
-              </label>
-              <InheritanceToggle
-                field="Reranking"
-                overridden={overrides.rerank}
-                onChange={(enabled) => setOverride("rerank", enabled)}
               />
             </div>
           </div>

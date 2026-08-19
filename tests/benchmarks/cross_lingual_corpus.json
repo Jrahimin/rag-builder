@@ -1,0 +1,51 @@
+{
+  "documents": [
+    {
+      "id": "english-incident",
+      "language": "en",
+      "text": "Critical incidents are escalated to the security director within fifteen minutes."
+    },
+    {
+      "id": "bangla-export",
+      "language": "bn",
+      "text": "আন্তর্জাতিক পণ্য রপ্তানির লাইসেন্স ও কাস্টমস নথি জমা দেওয়ার আগে অর্থ পরিচালকের অনুমোদন নিতে হবে। এই রপ্তানি অনুমোদন সাত দিন বৈধ থাকে।"
+    },
+    {
+      "id": "french-residency",
+      "language": "fr",
+      "text": "Les sauvegardes des clients européens doivent rester dans la région de Paris pendant cinq ans."
+    },
+    {
+      "id": "bangla-incident-near-miss",
+      "language": "bn",
+      "text": "সাধারণ নিরাপত্তা ঘটনা ত্রিশ মিনিটের মধ্যে স্থানীয় সুপারভাইজারকে জানাতে হয়, কিন্তু পরিচালকের কাছে পাঠানো হয় না।"
+    },
+    {
+      "id": "english-export-near-miss",
+      "language": "en",
+      "text": "Domestic warehouse transfers need supervisor sign-off before stock leaves the dock, and that approval lasts two days."
+    }
+  ],
+  "queries": [
+    {
+      "language_pair": "bn->en",
+      "text": "গুরুতর ঘটনা কত মিনিটের মধ্যে নিরাপত্তা পরিচালককে জানাতে হবে?",
+      "relevant_id": "english-incident"
+    },
+    {
+      "language_pair": "en->bn",
+      "text": "Before international goods are exported and customs documents are filed, which executive must approve the export and for how many days is that approval valid?",
+      "relevant_id": "bangla-export"
+    },
+    {
+      "language_pair": "en->fr",
+      "text": "Where must European customer backups remain and for how long?",
+      "relevant_id": "french-residency"
+    },
+    {
+      "language_pair": "fr->en",
+      "text": "Dans combien de minutes faut-il signaler un incident critique au directeur de la sécurité?",
+      "relevant_id": "english-incident"
+    }
+  ]
+}

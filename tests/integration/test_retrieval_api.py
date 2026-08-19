@@ -69,7 +69,7 @@ async def test_pgvector_extension_column_and_hnsw_index(
     index_definitions = {row.indexname: row.indexdef for row in index_rows}
 
     assert extension_version
-    assert column_type == "vector(384)"
+    assert column_type == "vector(1024)"
     hnsw_definition = index_definitions["ix_chunk_embeddings_embedding_hnsw_cosine"]
     assert "USING hnsw" in hnsw_definition
     assert "vector_cosine_ops" in hnsw_definition
@@ -312,7 +312,7 @@ async def test_search_document_and_embedding_version_filters(
     await integration_connection.execute(
         text(
             """
-            UPDATE chunk_embeddings SET embedding_set_version = 2
+            UPDATE chunk_embeddings SET embedding_set_version = 99
             WHERE project_id = :project_id
             """
         ),
@@ -452,12 +452,13 @@ async def test_pgvector_cosine_ranking_and_score_threshold(
                 else [-value for value in query_vector]
             )
         await session.flush()
+        assert rows
 
         repository = ChunkEmbeddingRepository(session, project_uuid)
         hits = await repository.search_cosine(
             query_vector=query_vector,
             top_k=10,
-            embedding_set_version=1,
+            embedding_set_version=rows[0].embedding_set_version,
             provider=embedder.provider_name,
             model=embedder.model_name,
             score_threshold=0.5,

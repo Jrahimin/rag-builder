@@ -14,6 +14,7 @@ from app.models.job_run import JobRun, JobType
 from app.modules.jobs.services.job_service import JobService
 from app.modules.retrieval.repositories.index_build_repository import IndexBuildRepository
 from app.modules.retrieval.workflows.index_build_workflow import IndexBuildWorkflow
+from app.platform.jobs.configuration import embedding_set_version_from_configuration
 from app.platform.jobs.contracts import JobConfiguration, JobDefinition
 from app.platform.jobs.errors import PermanentJobError
 from app.platform.providers.implementations.embedding_factory import create_embedding_provider
@@ -33,6 +34,7 @@ async def execute_index_build(
     auto_activate_default: bool,
 ) -> IndexBuild:
     repository = IndexBuildRepository(session, run.project_id)
+    embedding_set_version = _embedding_set_version_for_build(run, settings)
     raw_build_id = run.payload.get("build_id")
     if raw_build_id is None:
         snapshot = await session.get(JobConfigurationSnapshot, run.configuration_snapshot_id)
@@ -42,12 +44,15 @@ async def execute_index_build(
                 code="job_configuration_snapshot_missing",
             )
         staged_configuration = JobConfiguration.model_validate(snapshot.configuration)
+        embedding_set_version = (
+            embedding_set_version_from_configuration(staged_configuration) or embedding_set_version
+        )
         build = IndexBuild(
             project_id=run.project_id,
             job_id=run.id,
             operation=operation,
             state=IndexBuildState.BUILDING,
-            embedding_set_version=settings.retrieval.embedding_set_version,
+            embedding_set_version=embedding_set_version,
             configuration_hash=staged_configuration.index_output_digest(),
         )
         repository.add(build)
@@ -64,6 +69,13 @@ async def execute_index_build(
         if existing_build is None:
             raise PermanentJobError("Index build does not exist.", code="index_build_not_found")
         build = existing_build
+        desired_version = await _desired_embedding_set_version(session, run)
+        if (
+            build.state is IndexBuildState.BUILDING
+            and desired_version is not None
+            and desired_version != build.embedding_set_version
+        ):
+            build.embedding_set_version = desired_version
 
     workflow = IndexBuildWorkflow(
         session=session,
@@ -88,6 +100,38 @@ async def execute_index_build(
         "corpus_fingerprint": result.corpus_fingerprint,
     }
     return result
+
+
+def _positive_embedding_set_version(value: object) -> int | None:
+    if isinstance(value, int) and not isinstance(value, bool) and value >= 1:
+        return value
+    return None
+
+
+def _embedding_set_version_for_build(run: JobRun, settings: Settings) -> int:
+    return (
+        _positive_embedding_set_version(run.payload.get("embedding_set_version"))
+        or settings.retrieval.embedding_set_version
+    )
+
+
+async def _desired_embedding_set_version(session: AsyncSession, run: JobRun) -> int | None:
+    """Resolve esv for an already-stamped BUILDING row from payload, then snapshot.
+
+    Live process settings are not used here: a worker that loaded a newer env
+    must not rewrite an immutable corpus build that was enqueued at esv=2.
+    """
+    payload_version = _positive_embedding_set_version(run.payload.get("embedding_set_version"))
+    if payload_version is not None:
+        return payload_version
+    if run.configuration_snapshot_id is None:
+        return None
+    snapshot = await session.get(JobConfigurationSnapshot, run.configuration_snapshot_id)
+    if snapshot is None:
+        return None
+    return embedding_set_version_from_configuration(
+        JobConfiguration.model_validate(snapshot.configuration)
+    )
 
 
 def _optional_uuid(value: object) -> uuid.UUID | None:

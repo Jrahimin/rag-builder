@@ -1483,6 +1483,7 @@ export interface components {
             grounded: boolean;
             /** Text */
             text: string;
+            verification: components["schemas"]["ClaimVerification"];
         };
         /**
          * ApiKeyCreate
@@ -2524,6 +2525,12 @@ export interface components {
             /** Page Number */
             page_number?: number | null;
         };
+        /**
+         * ClaimVerification
+         * @description What the deterministic validator can establish about one claim.
+         * @enum {string}
+         */
+        ClaimVerification: "supported" | "unverified" | "unsupported";
         /** ConfigProvenance */
         ConfigProvenance: {
             /** @default off */
@@ -2544,7 +2551,7 @@ export interface components {
             };
             /**
              * Provider Capability Version
-             * @default 2026-08-16.v1
+             * @default 2026-08-16.v2
              */
             provider_capability_version: string;
             /** @default enforce */
@@ -2823,16 +2830,27 @@ export interface components {
             citation_excerpt_max_chars: number;
             /** Context Char Budget */
             context_char_budget: number;
+            /** @default enforce */
+            evidence_gate_mode: components["schemas"]["EvidenceGateMode"];
+            /** @default whole_chunk */
+            evidence_score_mode: components["schemas"]["EvidenceScoreMode"];
             /** Include Citations */
             include_citations: boolean;
+            /** Lexical Corroboration Coverage */
+            lexical_corroboration_coverage: number;
+            /** Lexical Corroboration Floor Score */
+            lexical_corroboration_floor_score: number;
             /** Max Context Chunks */
             max_context_chunks: number;
             /** Max History Messages */
             max_history_messages: number;
             /** Minimum Claim Token Coverage */
             minimum_claim_token_coverage: number;
-            /** Minimum Query Token Coverage */
-            minimum_query_token_coverage: number;
+            /**
+             * Minimum Reranker Evidence Score
+             * @default 0.4
+             */
+            minimum_reranker_evidence_score: number;
         };
         /** EffectiveLLMPolicy */
         EffectiveLLMPolicy: {
@@ -2877,14 +2895,60 @@ export interface components {
         };
         /** EffectiveRetrievalPolicy */
         EffectiveRetrievalPolicy: {
-            /** Evidence Score Threshold */
-            evidence_score_threshold: number;
+            /**
+             * Passage Min Tokens
+             * @default 32
+             */
+            passage_min_tokens: number;
+            /**
+             * Passage Overlap Tokens
+             * @default 24
+             */
+            passage_overlap_tokens: number;
+            /**
+             * Passage Scoring Enabled
+             * @default false
+             */
+            passage_scoring_enabled: boolean;
+            /**
+             * Passage Window Tokens
+             * @default 96
+             */
+            passage_window_tokens: number;
+            /** Query Translation Backend */
+            query_translation_backend?: string | null;
+            /**
+             * Query Translation Enabled
+             * @default false
+             */
+            query_translation_enabled: boolean;
+            /** Query Translation Model */
+            query_translation_model?: string | null;
+            /** Query Translation Prompt Version */
+            query_translation_prompt_version?: string | null;
+            /**
+             * Rerank Candidate Window
+             * @default 25
+             */
+            rerank_candidate_window: number;
             /** Rerank Enabled */
             rerank_enabled: boolean;
+            /** @default always */
+            rerank_mode: components["schemas"]["RerankMode"];
+            /**
+             * Rerank Return N
+             * @default 8
+             */
+            rerank_return_n: number;
             /** Rerank Score Threshold */
             rerank_score_threshold: number | null;
             /** Rerank Top N */
             rerank_top_n: number;
+            reranker_backend?: components["schemas"]["RerankerBackend"] | null;
+            /** Reranker Model */
+            reranker_model?: string | null;
+            /** Semantic Evidence Score Threshold */
+            semantic_evidence_score_threshold: number;
             strategy: components["schemas"]["RetrievalStrategy"];
             /** Top K */
             top_k: number;
@@ -2897,11 +2961,15 @@ export interface components {
             document_id?: string | null;
             /** Expected Answer Tokens */
             expected_answer_tokens?: string[];
+            /** Expected Evidence Language */
+            expected_evidence_language?: string | null;
             /**
              * Expected No Answer
              * @default false
              */
             expected_no_answer: boolean;
+            /** Hard Negative Evidence Phrases */
+            hard_negative_evidence_phrases?: string[];
             /** Key */
             key: string;
             kind: components["schemas"]["EvaluationCaseKind"];
@@ -2911,16 +2979,22 @@ export interface components {
             };
             /** Query */
             query: string;
+            /** Query Form */
+            query_form?: string | null;
+            /** Query Language */
+            query_language?: string | null;
             /** Relevant Chunk Ids */
             relevant_chunk_ids?: string[];
             /** Relevant Document Ids */
             relevant_document_ids?: string[];
+            /** Relevant Evidence Phrases */
+            relevant_evidence_phrases?: string[];
         };
         /**
          * EvaluationCaseKind
          * @enum {string}
          */
-        EvaluationCaseKind: "exact_token" | "paraphrase" | "metadata_filter" | "multilingual" | "no_answer" | "citation";
+        EvaluationCaseKind: "exact_token" | "paraphrase" | "metadata_filter" | "multilingual" | "cross_lingual" | "code_switched" | "no_answer" | "citation";
         /** EvaluationDatasetCreate */
         EvaluationDatasetCreate: {
             /** Cases */
@@ -3059,6 +3133,18 @@ export interface components {
                 [key: string]: unknown;
             };
         };
+        /**
+         * EvidenceGateMode
+         * @description Whether a failed pre-generation evidence score may block the LLM.
+         * @enum {string}
+         */
+        EvidenceGateMode: "enforce" | "observe";
+        /**
+         * EvidenceScoreMode
+         * @description Calibrated semantic score used by the pre-generation evidence gate.
+         * @enum {string}
+         */
+        EvidenceScoreMode: "whole_chunk" | "passage_max";
         /**
          * GenerationCreateRequest
          * @description Trusted caller input and context for one registered generation use case.
@@ -3895,8 +3981,12 @@ export interface components {
             citation_excerpt_max_chars?: number | null;
             /** Context Char Budget */
             context_char_budget?: number | null;
+            evidence_gate_mode?: components["schemas"]["EvidenceGateMode"] | null;
+            evidence_score_mode?: components["schemas"]["EvidenceScoreMode"] | null;
             /** Include Citations */
             include_citations?: boolean | null;
+            /** Lexical Corroboration Floor Score */
+            lexical_corroboration_floor_score?: number | null;
             /** Max Context Chunks */
             max_context_chunks?: number | null;
             /** Max History Messages */
@@ -3905,6 +3995,8 @@ export interface components {
             minimum_claim_token_coverage?: number | null;
             /** Minimum Query Token Coverage */
             minimum_query_token_coverage?: number | null;
+            /** Minimum Reranker Evidence Score */
+            minimum_reranker_evidence_score?: number | null;
         };
         /**
          * ProjectCreate
@@ -4034,12 +4126,33 @@ export interface components {
              */
             updated_at: string;
         };
-        /** ProjectRetrievalPolicy */
+        /**
+         * ProjectRetrievalPolicy
+         * @description Sparse retrieval overrides. ``None`` inherits the deployment default.
+         *
+         *     ``rerank_mode`` is the operator-facing control (Always / Cross-language / Off).
+         *     Legacy ``rerank_enabled`` still maps true→always and false→off when mode is omitted.
+         */
         ProjectRetrievalPolicy: {
             /** Evidence Score Threshold */
             evidence_score_threshold?: number | null;
+            /** Passage Min Tokens */
+            passage_min_tokens?: number | null;
+            /** Passage Overlap Tokens */
+            passage_overlap_tokens?: number | null;
+            /** Passage Scoring Enabled */
+            passage_scoring_enabled?: boolean | null;
+            /** Passage Window Tokens */
+            passage_window_tokens?: number | null;
+            /** Query Translation Enabled */
+            query_translation_enabled?: boolean | null;
+            /** Rerank Candidate Window */
+            rerank_candidate_window?: number | null;
             /** Rerank Enabled */
             rerank_enabled?: boolean | null;
+            rerank_mode?: components["schemas"]["RerankMode"] | null;
+            /** Rerank Return N */
+            rerank_return_n?: number | null;
             /** Rerank Score Threshold */
             rerank_score_threshold?: number | null;
             /** Rerank Top N */
@@ -4132,6 +4245,21 @@ export interface components {
             stage: string;
         };
         /**
+         * RerankMode
+         * @description When the multilingual reranker may run after RRF.
+         *
+         *     Platform default is ALWAYS. Projects may inherit or opt down to
+         *     cross-language-only or off. None in a sparse Project payload means inherit.
+         * @enum {string}
+         */
+        RerankMode: "always" | "cross_language" | "off";
+        /**
+         * RerankerBackend
+         * @description Supported reranker provider backends.
+         * @enum {string}
+         */
+        RerankerBackend: "noop" | "lexical" | "embedding" | "embedding_max" | "cohere";
+        /**
          * ResponseMeta
          * @description Lightweight metadata attached to every response for traceability.
          */
@@ -4164,6 +4292,12 @@ export interface components {
              * Format: uuid
              */
             document_id: string;
+            /** Evidence Calibration Id */
+            evidence_calibration_id?: string | null;
+            /** Evidence Relevance Score */
+            evidence_relevance_score?: number | null;
+            /** Evidence Score Method */
+            evidence_score_method?: string | null;
             /** Filename */
             filename: string;
             /** Metadata */
@@ -4172,8 +4306,22 @@ export interface components {
             };
             /** Page Number */
             page_number?: number | null;
+            /** Passage Char End */
+            passage_char_end?: number | null;
+            /** Passage Char Start */
+            passage_char_start?: number | null;
+            /** Passage Score Method */
+            passage_score_method?: string | null;
+            /** Passage Semantic Score */
+            passage_semantic_score?: number | null;
+            /** Rank Score */
+            rank_score?: number | null;
+            /** Rerank Relevance Score */
+            rerank_relevance_score?: number | null;
             /** Score */
             score: number;
+            /** Semantic Score */
+            semantic_score?: number | null;
         };
         /**
          * RetrievalStrategy
@@ -4188,6 +4336,18 @@ export interface components {
         SearchDiagnostics: {
             /** As Of */
             as_of?: string | null;
+            /** Best Passage Semantic Score */
+            best_passage_semantic_score?: number | null;
+            /** Best Semantic Score */
+            best_semantic_score?: number | null;
+            /** Branch Candidate Counts */
+            branch_candidate_counts?: {
+                [key: string]: number;
+            };
+            /** Candidate Trace */
+            candidate_trace?: {
+                [key: string]: unknown;
+            }[];
             /** Compatibility Diagnostics */
             compatibility_diagnostics?: string[];
             /** Config Provenance */
@@ -4196,6 +4356,19 @@ export interface components {
             };
             /** Configuration Hash */
             configuration_hash?: string | null;
+            /** Corpus Language Inventory */
+            corpus_language_inventory?: {
+                [key: string]: number;
+            };
+            /**
+             * Diversity Backfilled Count
+             * @default 0
+             */
+            diversity_backfilled_count: number;
+            /** Diversity Deferred Reasons */
+            diversity_deferred_reasons?: {
+                [key: string]: number;
+            };
             /**
              * Duplicate Suppression Input Count
              * @default 0
@@ -4212,20 +4385,48 @@ export interface components {
             duplicate_suppression_removed_count: number;
             /** Duration Ms */
             duration_ms: number;
+            /** Embedding Identity Status */
+            embedding_identity_status?: string | null;
+            /** Embedding Model */
+            embedding_model?: string | null;
+            /** Embedding Provider */
+            embedding_provider?: string | null;
+            /** Executed Branches */
+            executed_branches?: string[];
             /** Index Build Id */
             index_build_id?: string | null;
+            /** Language Routing Status */
+            language_routing_status?: string | null;
+            /** Passage Score Method */
+            passage_score_method?: string | null;
+            /** Query Language Profile */
+            query_language_profile?: string | null;
             /** Reference Date */
             reference_date?: string | null;
             /** Rerank Requested */
             rerank_requested: boolean;
             /** Rerank Status */
             rerank_status: string;
+            /** Reranker Latency Ms */
+            reranker_latency_ms?: number | null;
             /** Reranker Model */
             reranker_model?: string | null;
             /** Reranker Provider */
             reranker_provider?: string | null;
+            /** Reranker Score Scale */
+            reranker_score_scale?: string | null;
+            /** Reranker Usage */
+            reranker_usage?: {
+                [key: string]: unknown;
+            };
             /** Reranker Version */
             reranker_version?: string | null;
+            /** Selected Trace */
+            selected_trace?: {
+                [key: string]: unknown;
+            }[];
+            /** Skipped Branches */
+            skipped_branches?: string[];
             /**
              * Source Metadata Generation
              * @default 0
@@ -4260,6 +4461,28 @@ export interface components {
              */
             source_policy_status: string;
             strategy: components["schemas"]["RetrievalStrategy"];
+            /** Translated Query */
+            translated_query?: string | null;
+            /** Translation Failure Reason */
+            translation_failure_reason?: string | null;
+            /** Translation Latency Ms */
+            translation_latency_ms?: number | null;
+            /** Translation Model */
+            translation_model?: string | null;
+            /** Translation Prompt Version */
+            translation_prompt_version?: string | null;
+            /** Translation Provider */
+            translation_provider?: string | null;
+            /** Translation Source Language */
+            translation_source_language?: string | null;
+            /** Translation Status */
+            translation_status?: string | null;
+            /** Translation Target Language */
+            translation_target_language?: string | null;
+            /** Translation Usage */
+            translation_usage?: {
+                [key: string]: unknown;
+            };
         };
         /**
          * SearchRequest

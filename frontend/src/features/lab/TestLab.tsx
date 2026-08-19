@@ -251,6 +251,8 @@ export function TestLab() {
   const selectedProject = projects.data?.items.find((project) => project.id === projectId);
   const selectedDocument = pickLabDocument(documents.data?.items ?? [], selectedDocumentId);
   const latestJob = jobs.data?.items.find((job) => job.id === latestJobId) ?? jobs.data?.items[0];
+  const activeBuild = builds.data?.items.find((build) => build.id === builds.data.active_build_id);
+  const hasActiveCorpus = Boolean(activeBuild && activeBuild.chunk_count > 0);
 
   const addActivity = useCallback((item: Omit<LabActivity, "id" | "timestamp">) => {
     setActivities((current) => [
@@ -388,10 +390,7 @@ export function TestLab() {
             <MessagesTab
               projectId={projectId}
               conversationId={conversationId}
-              hasActiveCorpus={Boolean(
-                builds.data?.active_build_id &&
-                documents.data?.items.some((document) => document.status === "ready"),
-              )}
+              hasActiveCorpus={hasActiveCorpus}
               onConversation={setConversationId}
               onRun={setMessageRun}
               onNavigate={chooseTab}
@@ -538,7 +537,11 @@ function JourneyTab({
         : document.status === "ready"
           ? "passed"
           : "in_progress";
-  const retrievalState = searchRun ? (searchRun.passed ? "passed" : "needs_attention") : "not_started";
+  const retrievalState = searchRun
+    ? searchRun.passed
+      ? "passed"
+      : "needs_attention"
+    : "not_started";
   const chatState = messageRun ? (messageRun.passed ? "passed" : "needs_attention") : "not_started";
   const resultsState =
     !searchRun && !messageRun
@@ -701,9 +704,7 @@ function DocumentsTab({
     document: Document;
   } | null>(null);
   const selected = pickLabDocument(documents, selectedId);
-  const selectedSource = selected
-    ? sourceForDocument(sourceState.data, selected.id)
-    : undefined;
+  const selectedSource = selected ? sourceForDocument(sourceState.data, selected.id) : undefined;
   const relatedJobs = jobs
     .filter((job) => job.document_id === selected?.id || job.id === selected?.job_id)
     .slice(0, 6);
@@ -899,9 +900,7 @@ function DocumentsTab({
               <select
                 aria-label="Source role"
                 value={sourceRole}
-                onChange={(event) =>
-                  setSourceRole(event.target.value as typeof sourceRole)
-                }
+                onChange={(event) => setSourceRole(event.target.value as typeof sourceRole)}
               >
                 <option value="primary">Primary (authoritative / latest)</option>
                 <option value="supporting">Supporting</option>
@@ -920,8 +919,8 @@ function DocumentsTab({
           </div>
           <p className="lab-help">
             Processing version increments on reprocess. To mark this file as the latest edition of
-            an existing source, choose “Latest revision of an existing source”. Full source
-            history lives on Projects → Sources.
+            an existing source, choose “Latest revision of an existing source”. Full source history
+            lives on Projects → Sources.
           </p>
         </details>
         <div className="lab-upload-submit">
@@ -940,7 +939,9 @@ function DocumentsTab({
           <button
             className="button button--primary"
             type="button"
-            disabled={!selectedFile || upload.isPending || (uploadMode !== "independent" && !uploadTarget)}
+            disabled={
+              !selectedFile || upload.isPending || (uploadMode !== "independent" && !uploadTarget)
+            }
             onClick={() => void uploadFile(selectedFile ?? undefined)}
           >
             {upload.isPending ? "Submitting…" : "Submit document"}
@@ -952,7 +953,8 @@ function DocumentsTab({
             <div>
               <strong>Request accepted</strong>
               <p>
-                Document <Filename name={upload.data.filename} /> was accepted. Processing is not complete until job{" "}
+                Document <Filename name={upload.data.filename} /> was accepted. Processing is not
+                complete until job{" "}
                 {upload.data.job_id ? (
                   <Link to={`/jobs?project=${projectId}&job=${upload.data.job_id}`}>
                     {shortId(upload.data.job_id)}
@@ -977,23 +979,23 @@ function DocumentsTab({
             {documents.map((document) => {
               const source = sourceForDocument(sourceState.data, document.id);
               return (
-              <li key={document.id} className={document.id === selected?.id ? "selected" : ""}>
-                <button type="button" onClick={() => onSelect(document.id)}>
-                  <FileText aria-hidden="true" />
-                  <span>
-                    <strong>
-                      <Filename name={document.filename} />
-                    </strong>
-                    <small>
-                      processing v{document.version} · {formatBytes(document.size_bytes)}
-                      {source
-                        ? ` · ${source.revision.source_role} r${source.revision.revision_number}`
-                        : ""}
-                    </small>
-                  </span>
-                  <StatusBadge status={document.status} />
-                </button>
-              </li>
+                <li key={document.id} className={document.id === selected?.id ? "selected" : ""}>
+                  <button type="button" onClick={() => onSelect(document.id)}>
+                    <FileText aria-hidden="true" />
+                    <span>
+                      <strong>
+                        <Filename name={document.filename} />
+                      </strong>
+                      <small>
+                        processing v{document.version} · {formatBytes(document.size_bytes)}
+                        {source
+                          ? ` · ${source.revision.source_role} r${source.revision.revision_number}`
+                          : ""}
+                      </small>
+                    </span>
+                    <StatusBadge status={document.status} />
+                  </button>
+                </li>
               );
             })}
           </ul>
@@ -1104,18 +1106,19 @@ function DocumentsTab({
                   onClick={() => void runAction("reprocess")}
                 />
                 <ActionButton
-                  label="Embed"
-                  disabled={lifecycle.isPending || selected.status !== "chunked"}
-                  reason="Embedding requires a chunked document."
+                  label="Build search index"
+                  disabled={
+                    lifecycle.isPending ||
+                    !["chunked", "embedded", "ready"].includes(selected.status)
+                  }
+                  reason="Indexing requires a chunked document. Reprocess first if parsing is incomplete."
                   onClick={() => void runAction("embed")}
                 />
-                <ActionButton
-                  label="Index"
-                  disabled={lifecycle.isPending || selected.status !== "embedded"}
-                  reason="Indexing requires an embedded document."
-                  onClick={() => void runAction("index")}
-                />
               </div>
+              <p className="lab-help">
+                Build search index writes vectors and keywords together. Reprocess starts from parse
+                and chunk when the source text needs to change.
+              </p>
             </section>
             <section>
               <h3>Remove from corpus</h3>
@@ -1372,7 +1375,10 @@ function SearchTab({
           <p>Query the active immutable build and inspect ranked chunks, scores, and timing.</p>
         </div>
       </div>
-      <form className="lab-test-form lab-test-form--search" onSubmit={(event) => void submit(event)}>
+      <form
+        className="lab-test-form lab-test-form--search"
+        onSubmit={(event) => void submit(event)}
+      >
         <label className="field-control field-control--grow">
           <span>Query</span>
           <textarea
@@ -1470,15 +1476,79 @@ function SearchResults({ run, projectId }: { run: SearchRun; projectId: string }
               <dt>Strategy</dt>
               <dd>{run.response.diagnostics.strategy}</dd>
             </div>
+            {(run.response.diagnostics.embedding_identity_status ||
+              run.response.diagnostics.embedding_provider) && (
+              <div>
+                <dt>Embedding</dt>
+                <dd>
+                  {run.response.diagnostics.embedding_identity_status}
+                  {run.response.diagnostics.embedding_provider
+                    ? ` · ${run.response.diagnostics.embedding_provider}`
+                    : ""}
+                  {run.response.diagnostics.embedding_model
+                    ? ` · ${run.response.diagnostics.embedding_model}`
+                    : ""}
+                </dd>
+              </div>
+            )}
             <div>
               <dt>Rerank</dt>
               <dd>
                 {run.response.diagnostics.rerank_status}
+                {run.response.diagnostics.reranker_provider
+                  ? ` · ${run.response.diagnostics.reranker_provider}`
+                  : ""}
                 {run.response.diagnostics.reranker_model
                   ? ` · ${run.response.diagnostics.reranker_model}`
                   : ""}
+                {run.response.diagnostics.reranker_latency_ms != null
+                  ? ` · ${run.response.diagnostics.reranker_latency_ms} ms`
+                  : ""}
               </dd>
             </div>
+            {run.response.diagnostics.translation_status && (
+              <div>
+                <dt>Translation</dt>
+                <dd>
+                  {run.response.diagnostics.translation_status}
+                  {run.response.diagnostics.translation_provider
+                    ? ` · ${run.response.diagnostics.translation_provider}`
+                    : ""}
+                  {run.response.diagnostics.translation_source_language ||
+                  run.response.diagnostics.query_language_profile
+                    ? ` · ${run.response.diagnostics.translation_source_language ?? run.response.diagnostics.query_language_profile}`
+                    : ""}
+                  {run.response.diagnostics.translation_target_language
+                    ? ` → ${run.response.diagnostics.translation_target_language}`
+                    : ""}
+                  {run.response.diagnostics.translation_model
+                    ? ` · ${run.response.diagnostics.translation_model}`
+                    : ""}
+                  {run.response.diagnostics.translation_latency_ms != null
+                    ? ` · ${run.response.diagnostics.translation_latency_ms} ms`
+                    : ""}
+                </dd>
+              </div>
+            )}
+            {run.response.diagnostics.translated_query && (
+              <div>
+                <dt>Translated query</dt>
+                <dd>{run.response.diagnostics.translated_query}</dd>
+              </div>
+            )}
+            {run.response.diagnostics.query_language_profile && (
+              <div>
+                <dt>Query profile</dt>
+                <dd>{run.response.diagnostics.query_language_profile}</dd>
+              </div>
+            )}
+            {run.response.diagnostics.executed_branches &&
+              run.response.diagnostics.executed_branches.length > 0 && (
+                <div>
+                  <dt>Branches</dt>
+                  <dd>{run.response.diagnostics.executed_branches.join(", ")}</dd>
+                </div>
+              )}
             <div>
               <dt>Duplicates removed</dt>
               <dd>{run.response.diagnostics.duplicate_suppression_removed_count}</dd>
@@ -1487,10 +1557,7 @@ function SearchResults({ run, projectId }: { run: SearchRun; projectId: string }
               <div>
                 <dt>Index build</dt>
                 <dd>
-                  <CopyableId
-                    value={run.response.diagnostics.index_build_id}
-                    label="Index build"
-                  />
+                  <CopyableId value={run.response.diagnostics.index_build_id} label="Index build" />
                 </dd>
               </div>
             )}
@@ -1503,52 +1570,58 @@ function SearchResults({ run, projectId }: { run: SearchRun; projectId: string }
         </div>
       ) : (
         <ol className="search-result-list">
-          {run.response.results.map((result, index) => (
-            <li key={result.chunk_id}>
-              <div className="search-result-heading">
-                <span className="search-rank">#{index + 1}</span>
-                <div>
-                  <strong>
-                    <Filename name={result.filename} />
-                  </strong>
-                  <small>
-                    Page {result.page_number ?? "—"} · chunk {result.chunk_index} · score{" "}
-                    {result.score.toFixed(4)}
-                  </small>
+          {run.response.results.map((result, index) => {
+            const trace = run.response.diagnostics?.selected_trace?.[index];
+            return (
+              <li key={result.chunk_id}>
+                <div className="search-result-heading">
+                  <span className="search-rank">#{index + 1}</span>
+                  <div>
+                    <strong>
+                      <Filename name={result.filename} />
+                    </strong>
+                    <small>
+                      Page {result.page_number ?? "—"} · chunk {result.chunk_index} · score{" "}
+                      {result.score.toFixed(4)}
+                    </small>
+                  </div>
+                  <Link
+                    to={`/lab?project=${projectId}&tab=documents&document=${result.document_id}`}
+                  >
+                    Document
+                  </Link>
                 </div>
-                <Link to={`/lab?project=${projectId}&tab=documents&document=${result.document_id}`}>
-                  Document
-                </Link>
-              </div>
-              <p>{result.content}</p>
-              <details className="lab-advanced">
-                <summary>
-                  Chunk {shortId(result.chunk_id)} · chars {result.char_start ?? "—"}–
-                  {result.char_end ?? "—"}
-                </summary>
-                <dl className="detail-list">
-                  <div>
-                    <dt>Chunk ID</dt>
-                    <dd>
-                      <CopyableId value={result.chunk_id} label="Chunk ID" />
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>Document ID</dt>
-                    <dd>
-                      <CopyableId value={result.document_id} label="Document ID" />
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>Source offsets</dt>
-                    <dd>
-                      {result.char_start ?? "—"}–{result.char_end ?? "—"}
-                    </dd>
-                  </div>
-                </dl>
-              </details>
-            </li>
-          ))}
+                <p>{result.content}</p>
+                <BranchProvenanceList trace={trace} />
+                <details className="lab-advanced">
+                  <summary>
+                    Chunk {shortId(result.chunk_id)} · chars {result.char_start ?? "—"}–
+                    {result.char_end ?? "—"}
+                  </summary>
+                  <dl className="detail-list">
+                    <div>
+                      <dt>Chunk ID</dt>
+                      <dd>
+                        <CopyableId value={result.chunk_id} label="Chunk ID" />
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Document ID</dt>
+                      <dd>
+                        <CopyableId value={result.document_id} label="Document ID" />
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Source offsets</dt>
+                      <dd>
+                        {result.char_start ?? "—"}–{result.char_end ?? "—"}
+                      </dd>
+                    </div>
+                  </dl>
+                </details>
+              </li>
+            );
+          })}
         </ol>
       )}
     </div>
@@ -1775,18 +1848,13 @@ function MessagesTab({
                     </span>
                     <p>No messages yet. Ask one focused validation question.</p>
                     <div className="lab-prompt-chips">
-                      {[
-                        "What is this document about?",
-                        "Quote the key requirement or policy.",
-                      ].map((prompt) => (
-                        <button
-                          key={prompt}
-                          type="button"
-                          onClick={() => setContent(prompt)}
-                        >
-                          {prompt}
-                        </button>
-                      ))}
+                      {["What is this document about?", "Quote the key requirement or policy."].map(
+                        (prompt) => (
+                          <button key={prompt} type="button" onClick={() => setContent(prompt)}>
+                            {prompt}
+                          </button>
+                        ),
+                      )}
                     </div>
                   </div>
                 )}
@@ -1999,13 +2067,21 @@ function MessageInspector({
         </span>
         <span>
           <Sparkles size={13} aria-hidden="true" />
-          {refusal ? "Refusal" : message.grounded ? "Grounded" : citations.length ? "Cited" : "Ungrounded"}
+          {refusal
+            ? "Refusal"
+            : message.grounded
+              ? "Grounded"
+              : citations.length
+                ? "Cited"
+                : "Ungrounded"}
         </span>
         <span>
           <Quote size={13} aria-hidden="true" />
           {citations.length} sources
         </span>
       </div>
+      <TranslationDiagnostics metadata={message.metadata} />
+      <RerankDiagnostics metadata={message.metadata} />
       {refusal ? (
         <div className="notice-card">
           <strong>Insufficient evidence</strong>
@@ -2016,7 +2092,11 @@ function MessageInspector({
           {citations.slice(0, 5).map((citation, index) => (
             <li
               key={`${citation.chunk_id}-${index}`}
-              className={focused?.chunk_id === citation.chunk_id && index === activeCitation ? "is-active" : undefined}
+              className={
+                focused?.chunk_id === citation.chunk_id && index === activeCitation
+                  ? "is-active"
+                  : undefined
+              }
             >
               <button type="button" onClick={() => onCite?.(index)}>
                 <strong>
@@ -2029,7 +2109,9 @@ function MessageInspector({
                 <span
                   className="cite-score"
                   aria-hidden="true"
-                  style={{ ["--score" as string]: `${Math.round(Math.min(1, Math.max(0, citation.score)) * 100)}%` }}
+                  style={{
+                    ["--score" as string]: `${Math.round(Math.min(1, Math.max(0, citation.score)) * 100)}%`,
+                  }}
                 >
                   <i />
                 </span>
@@ -2182,5 +2264,143 @@ function ActivityDrawer({
         )}
       </aside>
     </>
+  );
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function displayText(value: unknown, fallback = "—"): string {
+  if (typeof value === "string" || typeof value === "number") {
+    return String(value);
+  }
+  return fallback;
+}
+
+function formatScore(value: unknown): string {
+  return typeof value === "number" ? value.toFixed(4) : "—";
+}
+
+function BranchProvenanceList({ trace }: { trace?: { [key: string]: unknown } }) {
+  const provenance = asRecord(trace?.branch_provenance);
+  if (!provenance || Object.keys(provenance).length === 0) {
+    return null;
+  }
+  const rows = Object.entries(provenance)
+    .map(([branchId, value]) => [branchId, asRecord(value)] as const)
+    .filter((entry): entry is [string, Record<string, unknown>] => entry[1] !== null);
+  if (rows.length === 0) {
+    return (
+      <p className="muted">
+        RRF rank {typeof trace?.rrf_rank === "number" ? trace.rrf_rank : "—"} · score{" "}
+        {formatScore(trace?.rrf_score)}
+      </p>
+    );
+  }
+  return (
+    <dl className="detail-list">
+      <div>
+        <dt>RRF</dt>
+        <dd>
+          rank {typeof trace?.rrf_rank === "number" ? trace.rrf_rank : "—"} · score{" "}
+          {formatScore(trace?.rrf_score)}
+        </dd>
+      </div>
+      {rows.map(([label, payload]) => (
+        <div key={label}>
+          <dt>{typeof payload.branch_id === "string" ? payload.branch_id : label}</dt>
+          <dd>
+            rank {typeof payload.rank === "number" ? payload.rank : "—"} · score{" "}
+            {formatScore(payload.score)} · rrf {formatScore(payload.rrf)}
+          </dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+function TranslationDiagnostics({ metadata }: { metadata?: { [key: string]: unknown } }) {
+  const trace = asRecord(metadata?.retrieval_trace);
+  const translation = asRecord(trace?.translation);
+  if (!translation?.status) {
+    return null;
+  }
+  const candidates = Array.isArray(trace?.candidates)
+    ? (trace.candidates as { [key: string]: unknown }[])
+    : [];
+  return (
+    <details className="lab-advanced">
+      <summary>Retrieval translation</summary>
+      <dl className="detail-list">
+        <div>
+          <dt>Status</dt>
+          <dd>
+            {displayText(translation.status)}
+            {typeof translation.source_language === "string"
+              ? ` · ${translation.source_language}`
+              : ""}
+            {typeof translation.target_language === "string"
+              ? ` → ${translation.target_language}`
+              : ""}
+            {typeof translation.model === "string" ? ` · ${translation.model}` : ""}
+            {typeof translation.provider === "string" ? ` · ${translation.provider}` : ""}
+            {typeof translation.latency_ms === "number" ? ` · ${translation.latency_ms} ms` : ""}
+          </dd>
+        </div>
+        {typeof translation.translated_query === "string" && translation.translated_query && (
+          <div>
+            <dt>Translated query</dt>
+            <dd>{translation.translated_query}</dd>
+          </div>
+        )}
+        {Array.isArray(trace?.executed_branches) && trace.executed_branches.length > 0 && (
+          <div>
+            <dt>Branches</dt>
+            <dd>{(trace.executed_branches as string[]).join(", ")}</dd>
+          </div>
+        )}
+      </dl>
+      {candidates.slice(0, 5).map((candidate, index) => (
+        <div key={displayText(candidate.chunk_id, String(index))}>
+          <small>
+            #{index + 1} chunk {displayText(candidate.chunk_index)}
+          </small>
+          <BranchProvenanceList trace={candidate} />
+        </div>
+      ))}
+    </details>
+  );
+}
+
+function RerankDiagnostics({ metadata }: { metadata?: { [key: string]: unknown } }) {
+  const trace = asRecord(metadata?.retrieval_trace);
+  const rerank = asRecord(trace?.rerank);
+  if (!rerank?.status) {
+    return null;
+  }
+  return (
+    <details className="lab-advanced">
+      <summary>Rerank</summary>
+      <dl className="detail-list">
+        <div>
+          <dt>Status</dt>
+          <dd>
+            {displayText(rerank.status)}
+            {typeof rerank.provider === "string" ? ` · ${rerank.provider}` : ""}
+            {typeof rerank.model === "string" ? ` · ${rerank.model}` : ""}
+            {typeof rerank.latency_ms === "number" ? ` · ${rerank.latency_ms} ms` : ""}
+          </dd>
+        </div>
+        {typeof rerank.skipped_reason === "string" && rerank.skipped_reason && (
+          <div>
+            <dt>Skip reason</dt>
+            <dd>{rerank.skipped_reason}</dd>
+          </div>
+        )}
+      </dl>
+    </details>
   );
 }

@@ -160,12 +160,16 @@
           "text": {
             "title": "Text",
             "type": "string"
+          },
+          "verification": {
+            "$ref": "#/components/schemas/ClaimVerification"
           }
         },
         "required": [
           "claim_id",
           "text",
-          "grounded"
+          "grounded",
+          "verification"
         ],
         "title": "AnswerClaim",
         "type": "object"
@@ -3587,6 +3591,16 @@
         "title": "ClaimEvidence",
         "type": "object"
       },
+      "ClaimVerification": {
+        "description": "What the deterministic validator can establish about one claim.",
+        "enum": [
+          "supported",
+          "unverified",
+          "unsupported"
+        ],
+        "title": "ClaimVerification",
+        "type": "string"
+      },
       "ConfigProvenance": {
         "properties": {
           "configured_source_policy_mode": {
@@ -3643,7 +3657,7 @@
             "type": "object"
           },
           "provider_capability_version": {
-            "default": "2026-08-16.v1",
+            "default": "2026-08-16.v2",
             "title": "Provider Capability Version",
             "type": "string"
           },
@@ -4426,9 +4440,25 @@
             "title": "Context Char Budget",
             "type": "integer"
           },
+          "evidence_gate_mode": {
+            "$ref": "#/components/schemas/EvidenceGateMode",
+            "default": "enforce"
+          },
+          "evidence_score_mode": {
+            "$ref": "#/components/schemas/EvidenceScoreMode",
+            "default": "whole_chunk"
+          },
           "include_citations": {
             "title": "Include Citations",
             "type": "boolean"
+          },
+          "lexical_corroboration_coverage": {
+            "title": "Lexical Corroboration Coverage",
+            "type": "number"
+          },
+          "lexical_corroboration_floor_score": {
+            "title": "Lexical Corroboration Floor Score",
+            "type": "number"
           },
           "max_context_chunks": {
             "title": "Max Context Chunks",
@@ -4442,8 +4472,9 @@
             "title": "Minimum Claim Token Coverage",
             "type": "number"
           },
-          "minimum_query_token_coverage": {
-            "title": "Minimum Query Token Coverage",
+          "minimum_reranker_evidence_score": {
+            "default": 0.4,
+            "title": "Minimum Reranker Evidence Score",
             "type": "number"
           }
         },
@@ -4453,7 +4484,8 @@
           "max_history_messages",
           "include_citations",
           "citation_excerpt_max_chars",
-          "minimum_query_token_coverage",
+          "lexical_corroboration_floor_score",
+          "lexical_corroboration_coverage",
           "minimum_claim_token_coverage"
         ],
         "title": "EffectiveChatPolicy",
@@ -4582,13 +4614,81 @@
       },
       "EffectiveRetrievalPolicy": {
         "properties": {
-          "evidence_score_threshold": {
-            "title": "Evidence Score Threshold",
-            "type": "number"
+          "passage_min_tokens": {
+            "default": 32,
+            "title": "Passage Min Tokens",
+            "type": "integer"
+          },
+          "passage_overlap_tokens": {
+            "default": 24,
+            "title": "Passage Overlap Tokens",
+            "type": "integer"
+          },
+          "passage_scoring_enabled": {
+            "default": false,
+            "title": "Passage Scoring Enabled",
+            "type": "boolean"
+          },
+          "passage_window_tokens": {
+            "default": 96,
+            "title": "Passage Window Tokens",
+            "type": "integer"
+          },
+          "query_translation_backend": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Query Translation Backend"
+          },
+          "query_translation_enabled": {
+            "default": false,
+            "title": "Query Translation Enabled",
+            "type": "boolean"
+          },
+          "query_translation_model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Query Translation Model"
+          },
+          "query_translation_prompt_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Query Translation Prompt Version"
+          },
+          "rerank_candidate_window": {
+            "default": 25,
+            "title": "Rerank Candidate Window",
+            "type": "integer"
           },
           "rerank_enabled": {
             "title": "Rerank Enabled",
             "type": "boolean"
+          },
+          "rerank_mode": {
+            "$ref": "#/components/schemas/RerankMode",
+            "default": "always"
+          },
+          "rerank_return_n": {
+            "default": 8,
+            "title": "Rerank Return N",
+            "type": "integer"
           },
           "rerank_score_threshold": {
             "anyOf": [
@@ -4605,6 +4705,31 @@
             "title": "Rerank Top N",
             "type": "integer"
           },
+          "reranker_backend": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RerankerBackend"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reranker_model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reranker Model"
+          },
+          "semantic_evidence_score_threshold": {
+            "title": "Semantic Evidence Score Threshold",
+            "type": "number"
+          },
           "strategy": {
             "$ref": "#/components/schemas/RetrievalStrategy"
           },
@@ -4619,7 +4744,7 @@
           "rerank_enabled",
           "rerank_top_n",
           "rerank_score_threshold",
-          "evidence_score_threshold"
+          "semantic_evidence_score_threshold"
         ],
         "title": "EffectiveRetrievalPolicy",
         "type": "object"
@@ -4658,10 +4783,30 @@
             "title": "Expected Answer Tokens",
             "type": "array"
           },
+          "expected_evidence_language": {
+            "anyOf": [
+              {
+                "maxLength": 35,
+                "minLength": 2,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Evidence Language"
+          },
           "expected_no_answer": {
             "default": false,
             "title": "Expected No Answer",
             "type": "boolean"
+          },
+          "hard_negative_evidence_phrases": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Hard Negative Evidence Phrases",
+            "type": "array"
           },
           "key": {
             "maxLength": 128,
@@ -4681,10 +4826,36 @@
             "type": "object"
           },
           "query": {
-            "maxLength": 4096,
+            "maxLength": 32000,
             "minLength": 1,
             "title": "Query",
             "type": "string"
+          },
+          "query_form": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Query Form"
+          },
+          "query_language": {
+            "anyOf": [
+              {
+                "maxLength": 35,
+                "minLength": 2,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Query Language"
           },
           "relevant_chunk_ids": {
             "items": {
@@ -4700,6 +4871,13 @@
               "type": "string"
             },
             "title": "Relevant Document Ids",
+            "type": "array"
+          },
+          "relevant_evidence_phrases": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Relevant Evidence Phrases",
             "type": "array"
           }
         },
@@ -4717,6 +4895,8 @@
           "paraphrase",
           "metadata_filter",
           "multilingual",
+          "cross_lingual",
+          "code_switched",
           "no_answer",
           "citation"
         ],
@@ -5092,6 +5272,24 @@
         ],
         "title": "EvaluationRunResponse",
         "type": "object"
+      },
+      "EvidenceGateMode": {
+        "description": "Whether a failed pre-generation evidence score may block the LLM.",
+        "enum": [
+          "enforce",
+          "observe"
+        ],
+        "title": "EvidenceGateMode",
+        "type": "string"
+      },
+      "EvidenceScoreMode": {
+        "description": "Calibrated semantic score used by the pre-generation evidence gate.",
+        "enum": [
+          "whole_chunk",
+          "passage_max"
+        ],
+        "title": "EvidenceScoreMode",
+        "type": "string"
       },
       "GenerationCreateRequest": {
         "additionalProperties": false,
@@ -7535,6 +7733,26 @@
             ],
             "title": "Context Char Budget"
           },
+          "evidence_gate_mode": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EvidenceGateMode"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "evidence_score_mode": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EvidenceScoreMode"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "include_citations": {
             "anyOf": [
               {
@@ -7545,6 +7763,19 @@
               }
             ],
             "title": "Include Citations"
+          },
+          "lexical_corroboration_floor_score": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lexical Corroboration Floor Score"
           },
           "max_context_chunks": {
             "anyOf": [
@@ -7597,6 +7828,19 @@
               }
             ],
             "title": "Minimum Query Token Coverage"
+          },
+          "minimum_reranker_evidence_score": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Minimum Reranker Evidence Score"
           }
         },
         "title": "ProjectChatPolicy",
@@ -7935,6 +8179,7 @@
       },
       "ProjectRetrievalPolicy": {
         "additionalProperties": false,
+        "description": "Sparse retrieval overrides. ``None`` inherits the deployment default.\n\n``rerank_mode`` is the operator-facing control (Always / Cross-language / Off).\nLegacy ``rerank_enabled`` still maps true\u2192always and false\u2192off when mode is omitted.",
         "properties": {
           "evidence_score_threshold": {
             "anyOf": [
@@ -7949,6 +8194,80 @@
             ],
             "title": "Evidence Score Threshold"
           },
+          "passage_min_tokens": {
+            "anyOf": [
+              {
+                "maximum": 256.0,
+                "minimum": 8.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Passage Min Tokens"
+          },
+          "passage_overlap_tokens": {
+            "anyOf": [
+              {
+                "maximum": 256.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Passage Overlap Tokens"
+          },
+          "passage_scoring_enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Passage Scoring Enabled"
+          },
+          "passage_window_tokens": {
+            "anyOf": [
+              {
+                "maximum": 512.0,
+                "minimum": 16.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Passage Window Tokens"
+          },
+          "query_translation_enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Query Translation Enabled"
+          },
+          "rerank_candidate_window": {
+            "anyOf": [
+              {
+                "maximum": 100.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rerank Candidate Window"
+          },
           "rerank_enabled": {
             "anyOf": [
               {
@@ -7959,6 +8278,29 @@
               }
             ],
             "title": "Rerank Enabled"
+          },
+          "rerank_mode": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RerankMode"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "rerank_return_n": {
+            "anyOf": [
+              {
+                "maximum": 100.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rerank Return N"
           },
           "rerank_score_threshold": {
             "anyOf": [
@@ -8254,6 +8596,28 @@
         "title": "RecentFailure",
         "type": "object"
       },
+      "RerankMode": {
+        "description": "When the multilingual reranker may run after RRF.\n\nPlatform default is ALWAYS. Projects may inherit or opt down to\ncross-language-only or off. None in a sparse Project payload means inherit.",
+        "enum": [
+          "always",
+          "cross_language",
+          "off"
+        ],
+        "title": "RerankMode",
+        "type": "string"
+      },
+      "RerankerBackend": {
+        "description": "Supported reranker provider backends.",
+        "enum": [
+          "noop",
+          "lexical",
+          "embedding",
+          "embedding_max",
+          "cohere"
+        ],
+        "title": "RerankerBackend",
+        "type": "string"
+      },
       "ResponseMeta": {
         "description": "Lightweight metadata attached to every response for traceability.",
         "properties": {
@@ -8326,6 +8690,39 @@
             "title": "Document Id",
             "type": "string"
           },
+          "evidence_calibration_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence Calibration Id"
+          },
+          "evidence_relevance_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence Relevance Score"
+          },
+          "evidence_score_method": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence Score Method"
+          },
           "filename": {
             "title": "Filename",
             "type": "string"
@@ -8346,9 +8743,86 @@
             ],
             "title": "Page Number"
           },
+          "passage_char_end": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Passage Char End"
+          },
+          "passage_char_start": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Passage Char Start"
+          },
+          "passage_score_method": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Passage Score Method"
+          },
+          "passage_semantic_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Passage Semantic Score"
+          },
+          "rank_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rank Score"
+          },
+          "rerank_relevance_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rerank Relevance Score"
+          },
           "score": {
             "title": "Score",
             "type": "number"
+          },
+          "semantic_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Semantic Score"
           }
         },
         "required": [
@@ -8386,6 +8860,43 @@
             ],
             "title": "As Of"
           },
+          "best_passage_semantic_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Best Passage Semantic Score"
+          },
+          "best_semantic_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Best Semantic Score"
+          },
+          "branch_candidate_counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Branch Candidate Counts",
+            "type": "object"
+          },
+          "candidate_trace": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Candidate Trace",
+            "type": "array"
+          },
           "compatibility_diagnostics": {
             "items": {
               "type": "string"
@@ -8409,6 +8920,25 @@
             ],
             "title": "Configuration Hash"
           },
+          "corpus_language_inventory": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Corpus Language Inventory",
+            "type": "object"
+          },
+          "diversity_backfilled_count": {
+            "default": 0,
+            "title": "Diversity Backfilled Count",
+            "type": "integer"
+          },
+          "diversity_deferred_reasons": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Diversity Deferred Reasons",
+            "type": "object"
+          },
           "duplicate_suppression_input_count": {
             "default": 0,
             "title": "Duplicate Suppression Input Count",
@@ -8430,6 +8960,46 @@
             "title": "Duration Ms",
             "type": "integer"
           },
+          "embedding_identity_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Embedding Identity Status"
+          },
+          "embedding_model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Embedding Model"
+          },
+          "embedding_provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Embedding Provider"
+          },
+          "executed_branches": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Executed Branches",
+            "type": "array"
+          },
           "index_build_id": {
             "anyOf": [
               {
@@ -8441,6 +9011,39 @@
               }
             ],
             "title": "Index Build Id"
+          },
+          "language_routing_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Language Routing Status"
+          },
+          "passage_score_method": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Passage Score Method"
+          },
+          "query_language_profile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Query Language Profile"
           },
           "reference_date": {
             "anyOf": [
@@ -8461,6 +9064,17 @@
           "rerank_status": {
             "title": "Rerank Status",
             "type": "string"
+          },
+          "reranker_latency_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reranker Latency Ms"
           },
           "reranker_model": {
             "anyOf": [
@@ -8484,6 +9098,22 @@
             ],
             "title": "Reranker Provider"
           },
+          "reranker_score_scale": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reranker Score Scale"
+          },
+          "reranker_usage": {
+            "additionalProperties": true,
+            "title": "Reranker Usage",
+            "type": "object"
+          },
           "reranker_version": {
             "anyOf": [
               {
@@ -8494,6 +9124,21 @@
               }
             ],
             "title": "Reranker Version"
+          },
+          "selected_trace": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Selected Trace",
+            "type": "array"
+          },
+          "skipped_branches": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Skipped Branches",
+            "type": "array"
           },
           "source_metadata_generation": {
             "default": 0,
@@ -8536,6 +9181,110 @@
           },
           "strategy": {
             "$ref": "#/components/schemas/RetrievalStrategy"
+          },
+          "translated_query": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Translated Query"
+          },
+          "translation_failure_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Translation Failure Reason"
+          },
+          "translation_latency_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Translation Latency Ms"
+          },
+          "translation_model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Translation Model"
+          },
+          "translation_prompt_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Translation Prompt Version"
+          },
+          "translation_provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Translation Provider"
+          },
+          "translation_source_language": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Translation Source Language"
+          },
+          "translation_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Translation Status"
+          },
+          "translation_target_language": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Translation Target Language"
+          },
+          "translation_usage": {
+            "additionalProperties": true,
+            "title": "Translation Usage",
+            "type": "object"
           }
         },
         "required": [
@@ -8582,7 +9331,7 @@
             "type": "object"
           },
           "query": {
-            "maxLength": 4096,
+            "maxLength": 32000,
             "minLength": 1,
             "title": "Query",
             "type": "string"

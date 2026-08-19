@@ -63,3 +63,11 @@ residency must therefore remain explicit deployment choices.
 | Add Bijoy/font/encoding heuristics | Fragile document-specific behavior would conflict with the Unicode-first architecture |
 | General language-to-provider registry | Premature abstraction for one additional routed language |
 | Per-page native-versus-Vision competition | Risks accepting custom-font glyph soup and violates the sole-source requirement for the Bangla route |
+
+## Amendment: Vision layout contract (2026-08-17)
+
+The Vision adapter preserves `fullTextAnnotation.pages` as provider-neutral normalized geometry.
+The PDF workflow carries the selected candidate's elements instead of flattening and re-splitting
+page text. Conservative aligned-column runs may become typed tables; the inference contains no
+Bangla terms and providers without layout retain the text-only fallback. Existing documents require
+reprocessing to receive workflow version 2.0.0 structure.

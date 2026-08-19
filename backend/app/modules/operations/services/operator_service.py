@@ -202,9 +202,7 @@ class OperatorService:
     ) -> UsageReport:
         resolved_end = _as_utc(end_at) if end_at is not None else datetime.now(UTC)
         resolved_start = (
-            _as_utc(start_at)
-            if start_at is not None
-            else (resolved_end - timedelta(days=30))
+            _as_utc(start_at) if start_at is not None else (resolved_end - timedelta(days=30))
         )
         if resolved_start >= resolved_end:
             raise BadRequestError(
@@ -267,7 +265,8 @@ class OperatorService:
                 dimensions=self._settings.embedding.dimensions,
                 provider_version=self._settings.embedding.provider_version,
                 credential_configured=embedding_credential_configured(
-                    self._settings.embedding
+                    self._settings.embedding,
+                    cohere_api_key=self._settings.resolved_cohere_api_key(),
                 ),
             ),
             reranker_backend=self._settings.retrieval.reranker_backend.value,

@@ -7,7 +7,12 @@ import uuid
 import pytest
 
 from app.modules.retrieval.retrievers.models import CandidateHit, CandidateSource
-from app.modules.retrieval.source_policy import apply_source_policy, source_metadata_from_row
+from app.modules.retrieval.source_policy import (
+    SourceMetadataScope,
+    add_retrieval_provenance,
+    apply_source_policy,
+    source_metadata_from_row,
+)
 from app.platform.config.project_ai import SourcePolicyMode
 
 pytestmark = pytest.mark.unit
@@ -126,3 +131,41 @@ def test_legacy_candidate_without_source_identity_remains_neutral() -> None:
 
     assert result.candidates == [legacy]
     assert result.consolidation_counts == {}
+
+
+def test_retrieval_provenance_keeps_rerank_relevance_score() -> None:
+    hit = CandidateHit(
+        chunk_id=uuid.uuid4(),
+        score=0.8693157,
+        source=CandidateSource.RERANK,
+        metadata={"rerank_status": "applied"},
+        semantic_score=0.323,
+        rank_score=0.8693157,
+        rerank_relevance_score=0.8693157,
+        evidence_relevance_score=0.8693157,
+        evidence_score_method="reranker_relevance",
+        evidence_calibration_id="reranker_relevance:v1",
+    )
+    scope = SourceMetadataScope(
+        selectable=None,
+        generation=0,
+        configured_mode=SourcePolicyMode.OFF,
+        effective_mode=SourcePolicyMode.OFF,
+        deployment_cap="enforce",
+        reference_date="2026-08-19",
+        explicit_as_of=None,
+    )
+
+    annotated = add_retrieval_provenance(
+        [hit],
+        index_build_id=uuid.uuid4(),
+        source_scope=scope,
+        configuration_hash="abc",
+        config_provenance={},
+    )
+
+    assert annotated[0].rerank_relevance_score == pytest.approx(0.8693157)
+    assert annotated[0].rank_score == pytest.approx(0.8693157)
+    assert annotated[0].evidence_relevance_score == pytest.approx(0.8693157)
+    assert annotated[0].evidence_score_method == "reranker_relevance"
+    assert annotated[0].metadata["rerank_status"] == "applied"

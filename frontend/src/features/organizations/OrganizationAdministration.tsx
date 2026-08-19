@@ -276,7 +276,9 @@ function OrganizationDetail({
             <button
               className="button button--primary"
               type="submit"
-              disabled={!organization.is_active || Boolean(organization.deleted_at) || Boolean(busy)}
+              disabled={
+                !organization.is_active || Boolean(organization.deleted_at) || Boolean(busy)
+              }
             >
               Issue named key
             </button>

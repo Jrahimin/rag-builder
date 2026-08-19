@@ -48,7 +48,7 @@ jobs:
       APE_STORAGE__BACKEND: local
       APE_STORAGE__LOCAL_ROOT: /tmp/rag-builder-ci-storage
       APE_EMBEDDING__BACKEND: hash
-      APE_EMBEDDING__DIMENSIONS: "384"
+      APE_EMBEDDING__DIMENSIONS: "1024"
       APE_LLM__BACKEND: echo
       APE_JOBS__DISPATCHER_ENABLED: "false"
       APE_WEBHOOKS__DISPATCHER_ENABLED: "false"
@@ -94,6 +94,42 @@ jobs:
         run: docker compose build backend frontend
       - name: Verify high-value deployment invariants
         run: |
-          test "$(grep -c '127.0.0.1:' docker-compose.yml)" -eq 6
+          python3 - <<'PY'
+          import json
+          import subprocess
+          import sys
+
+          cfg = json.loads(
+              subprocess.check_output(
+                  ["docker", "compose", "config", "--format", "json"],
+                  text=True,
+              )
+          )
+          unbound: list[str] = []
+          bound = 0
+          for name, svc in (cfg.get("services") or {}).items():
+              for port in svc.get("ports") or []:
+                  if isinstance(port, str):
+                      if not port.startswith("127.0.0.1:"):
+                          unbound.append(f"{name} {port}")
+                      else:
+                          bound += 1
+                      continue
+                  host_ip = port.get("host_ip") or ""
+                  published = port.get("published")
+                  target = port.get("target")
+                  label = f"{name} {host_ip or '*'}:{published}->{target}"
+                  if host_ip != "127.0.0.1":
+                      unbound.append(label)
+                  else:
+                      bound += 1
+          if unbound:
+              print("Published ports must bind 127.0.0.1:", *unbound, sep="\n- ")
+              sys.exit(1)
+          if bound == 0:
+              print("No loopback-bound published ports found")
+              sys.exit(1)
+          print(f"OK: {bound} published ports bind 127.0.0.1")
+          PY
           ! grep -R -E 'gunicorn|UvicornWorker|--reload' docker-compose.yml backend/Dockerfile frontend/Dockerfile
           ! grep -A 20 '^  worker:' docker-compose.yml | grep -q 'clamav:'

@@ -38,10 +38,12 @@ test("opens a lifecycle guide that explains actions and states", async () => {
   await userEvent.click(await screen.findByRole("button", { name: "Open lifecycle guide" }));
   const dialog = await screen.findByRole("dialog", { name: "How corpus lifecycle works" });
   expect(dialog).toHaveTextContent("The only snapshot search and chat use right now.");
-  expect(dialog).toHaveTextContent("Re-embed");
+  expect(dialog).toHaveTextContent("Rebuild index");
   expect(dialog).toHaveTextContent("Retained");
   await userEvent.click(screen.getByRole("button", { name: "Close" }));
-  expect(screen.queryByRole("dialog", { name: "How corpus lifecycle works" })).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("dialog", { name: "How corpus lifecycle works" }),
+  ).not.toBeInTheDocument();
 });
 
 test("confirms and activates only a validated immutable build", async () => {
@@ -68,7 +70,7 @@ test("shows the generated lifecycle job immediately and links to its detail", as
     active_build_id: null,
     previous_build_id: null,
   });
-  vi.spyOn(operatorApiClient, "reindexCorpus").mockResolvedValue({
+  vi.spyOn(operatorApiClient, "reembedCorpus").mockResolvedValue({
     job_id: jobDetailFixture.id,
     build_id: build.id,
     created: true,
@@ -83,7 +85,7 @@ test("shows the generated lifecycle job immediately and links to its detail", as
   renderOperatorComponent(
     <CorpusLifecycleActions projectId={projectFixture.id} onNotice={notice} />,
   );
-  await userEvent.click(await screen.findByRole("button", { name: /^Reindex/ }));
+  await userEvent.click(await screen.findByRole("button", { name: /^Rebuild index/ }));
   await userEvent.click(screen.getByRole("button", { name: "Confirm action" }));
   const link = await screen.findByRole("link", { name: jobDetailFixture.id });
   expect(link).toHaveAttribute(

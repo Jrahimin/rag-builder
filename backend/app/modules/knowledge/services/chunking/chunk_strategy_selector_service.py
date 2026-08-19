@@ -47,6 +47,12 @@ class ChunkStrategySelectorService:
 def _default_rules() -> list[SelectorRule]:
     return [
         SelectorRule(
+            name="typed_tables",
+            priority=4,
+            predicate=lambda _parsed, analysis, _config: analysis.signals.has_tables,
+            strategy=ChunkingStrategy.STRUCTURE,
+        ),
+        SelectorRule(
             name="low_ocr_quality",
             priority=5,
             predicate=lambda parsed, analysis, config: (

@@ -8,7 +8,9 @@ documents still pass through `chunked → embedding → embedded → indexing �
 
 - Take a restorable PostgreSQL backup and record its timestamp.
 - Confirm the target PostgreSQL version can install pgvector.
-- Set `APE_EMBEDDING__DIMENSIONS` to the dimension used by the deployment.
+- For the current baseline, set `APE_EMBEDDING__MODEL=text-embedding-3-large`,
+  `APE_EMBEDDING__DIMENSIONS=1024`, and
+  `APE_RETRIEVAL__EMBEDDING_SET_VERSION=2` before migration.
 - Keep API and workers stopped while applying the cutover migration.
 - If the migration role cannot create extensions, have an operator run:
 
@@ -41,34 +43,31 @@ FROM pg_indexes
 WHERE indexname = 'ix_chunk_embeddings_embedding_hnsw_cosine';
 ```
 
-Expected: one extension version, `vector(<configured dimension>)`, and an
+Expected for the current baseline: one extension version, `vector(1024)`, and an
 `hnsw` index using `vector_cosine_ops`. `/ready` also fails with an actionable
 message if the extension or dimension contract is wrong.
 
-## Re-embed and reindex
+## Rebuild the searchable index
 
-The migration deliberately deletes legacy packed vectors and returns affected
-documents to `chunked`. Do not convert packed bytes or copy old vector rows.
+Migration `0026_multilingual_embeddings` deliberately clears incompatible vector
+and keyword artifacts, invalidates index-build pointers/builds, and returns affected
+documents to `chunked`. Do not convert or copy old vector rows across dimensions.
 
-For a single document, call the unchanged endpoints:
+For a controlled project-wide rebuild, use Lifecycle **Rebuild index**
+(`POST /api/v1/projects/{project_id}/index-builds/reembed`), wait until the job
+succeeds, then **Activate**. Activation publishes the snapshot and marks included
+documents `ready`. Document `POST .../embed` also builds vectors and keywords
+together and auto-activates; a separate `POST .../index` step is not required.
 
-1. `POST /api/v1/projects/{project_id}/documents/{document_id}/embed`
-2. Wait for `embedded`.
-3. `POST /api/v1/projects/{project_id}/documents/{document_id}/index`
-4. Wait for `ready`.
-
-For a controlled project-wide rebuild, use the operational CLI to reprocess
-source documents and let the normal worker chain recreate chunks, embeddings,
-and keyword rows:
+For source-level reprocessing, use the operational CLI:
 
 ```bash
 python -m app.cli.reindex_cli project --project-id <uuid> --dry-run
 python -m app.cli.reindex_cli project --project-id <uuid> --full
 ```
 
-Keep workers scaled for the expected queue load. Repeated embed/index jobs are
-idempotent for the same Project, document, provider, model, and embedding-set
-version.
+Keep workers scaled for the expected queue load. Rebuild jobs are idempotent for
+the same Project, document, provider, model, and embedding-set version.
 
 ## Monitor rollout
 
@@ -133,6 +132,14 @@ deployment migration:
 3. Ship an Alembic migration that recreates the vector column and HNSW index.
 4. Re-embed and reindex all documents.
 5. Validate retrieval and benchmark thresholds before reopening traffic.
+
+Downgrading `0026` is equally destructive and recreates `vector(384)` only as a
+schema rollback target; it still requires a complete re-embedding and rebuild.
+
+The live column is `vector(1024)`. Compatibility-only dimension checks still
+require `text-embedding-ada-002` at 1536 and Ollama `nomic-embed-text` at 768,
+so those models cannot be selected against this schema. A `private_ollama`
+deployment must use a 1024-dimension embedder such as `mxbai-embed-large`.
 
 Never truncate, pad, or silently coerce vectors.
 

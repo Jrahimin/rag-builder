@@ -71,7 +71,7 @@ class ChunkingRunMetadata:
     boundary_provider: str | None = None
     boundary_model: str | None = None
     boundary_provider_version: str | None = None
-    chunker_version: str = "2.0.0"
+    chunker_version: str = "3.0.0"
     token_count_method: str = "unicode_property_v1"
     processing_time_ms: int | None = None
     chunk_count: int = 0

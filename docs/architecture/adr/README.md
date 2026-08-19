@@ -23,6 +23,7 @@ guides in this folder elaborate on implementation.
 | [ADR-015](./015-safe-corpus-index-lifecycle.md) | Immutable retrieval builds with an atomic active pointer | Accepted |
 | [ADR-016](./016-hosted-integration-and-delivery.md) | Transactional outcome webhooks and one dedicated hosted profile | Accepted |
 | [ADR-017](./017-bangla-ocr-google-vision.md) | Google Vision as the opt-in Bangla OCR backend | Accepted |
+| [ADR-018](./018-multilingual-retrieval-v1.md) | Query-only translation, language-routed hybrid branches, Cohere rerank, reranker-primary evidence | Accepted |
 
 ## When to add an ADR
 

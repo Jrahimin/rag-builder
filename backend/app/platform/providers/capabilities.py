@@ -20,12 +20,18 @@ def llm_credential_configured(config: LLMConfig) -> bool | None:
     return None
 
 
-def embedding_credential_configured(config: EmbeddingConfig) -> bool | None:
+def embedding_credential_configured(
+    config: EmbeddingConfig,
+    *,
+    cohere_api_key: str = "",
+) -> bool | None:
     """Report embedding credential readiness through the provider abstraction."""
     if config.backend is EmbeddingBackend.OPENAI:
         return bool(config.openai_api_key)
     if config.backend is EmbeddingBackend.GEMINI:
         return bool(config.gemini_api_key)
+    if config.backend is EmbeddingBackend.COHERE:
+        return bool(cohere_api_key.strip())
     return None
 
 
@@ -76,8 +82,9 @@ def describe_llm_capability(provider: str, model: str) -> ProviderModelCapabilit
             code="unsupported_llm_model",
         )
 
+    normalized = normalized_model.lower()
     temperature_supported = not (
-        backend is LLMBackend.OPENAI and normalized_model.lower().startswith(("o1", "o3", "o4"))
+        backend is LLMBackend.OPENAI and normalized.startswith(("o1", "o3", "o4", "gpt-5"))
     )
     token_wire_names = {
         LLMBackend.OPENAI: "max_completion_tokens",

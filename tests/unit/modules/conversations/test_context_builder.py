@@ -62,6 +62,61 @@ def test_enforces_char_budget() -> None:
     assert len(selected[0].content) == 500
 
 
+def test_trimmed_chunk_keeps_rerank_scores_for_evidence_gate() -> None:
+    chunk_id = uuid.uuid4()
+    ranked = ContextChunk(
+        chunk_id=chunk_id,
+        document_id=uuid.uuid4(),
+        chunk_index=0,
+        content="a" * 800,
+        score=0.91,
+        filename="doc.txt",
+        chunk_hash=content_hash("a" * 800),
+        semantic_score=0.22,
+        rank_score=0.91,
+        rerank_relevance_score=0.91,
+        evidence_relevance_score=0.91,
+        metadata={"rerank_status": "applied"},
+    )
+    builder = ContextBuilder(ChatConfig(max_context_chunks=5, context_char_budget=500))
+    selected = builder.select([ranked])
+    assert len(selected[0].content) == 500
+    assert selected[0].rerank_relevance_score == 0.91
+    assert selected[0].rank_score == 0.91
+    assert selected[0].metadata["rerank_status"] == "applied"
+
+
+def test_selected_context_restores_dropped_rerank_relevance_score() -> None:
+    ranked = ContextChunk(
+        chunk_id=uuid.uuid4(),
+        document_id=uuid.uuid4(),
+        chunk_index=0,
+        content="gazette table",
+        score=0.8693157,
+        filename="doc.txt",
+        chunk_hash=content_hash("gazette table"),
+        semantic_score=0.32,
+        rank_score=None,
+        rerank_relevance_score=None,
+        metadata={"rerank_status": "applied"},
+    )
+    selected = ContextBuilder(ChatConfig()).select([ranked])
+    assert selected[0].rerank_relevance_score == pytest.approx(0.8693157)
+    assert selected[0].rank_score == pytest.approx(0.8693157)
+
+
+def test_keeps_the_highest_ranked_chunks_inside_the_context_budget() -> None:
+    relevant = _chunk(content="relevant table body", score=0.9)
+    extras = [_chunk(content=f"other-{index}", score=0.1) for index in range(9)]
+    builder = ContextBuilder(ChatConfig(max_context_chunks=8, context_char_budget=10_000))
+
+    selected = builder.select([relevant, *extras])
+
+    assert relevant in selected
+    assert len(selected) == 8
+    assert extras[-1] not in selected
+
+
 def test_deduplicates_by_chunk_hash() -> None:
     first_id = uuid.uuid4()
     second_id = uuid.uuid4()

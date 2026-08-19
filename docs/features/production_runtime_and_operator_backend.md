@@ -13,13 +13,16 @@ console UI described in [Operator Console MVP](operator_console.md).
 
 | Profile | LLM | Embeddings | Intended route |
 | --- | --- | --- | --- |
-| `hosted_openai` | `openai` | `openai` | Hosted OpenAI-compatible API and embedding endpoints |
+| `hosted_managed` | `openai` (`gpt-5.6-luna`) | `cohere` (`embed-v4.0`) | Preferred dedicated hosted stack; shared `APE_COHERE__API_KEY` |
+| `hosted_openai` | `openai` | `openai` | Deprecated compatibility; OpenAI embeddings; must not require Cohere |
 | `private_ollama` | `ollama` | `ollama` | Private Ollama-compatible model endpoint |
 
-Production also requires Taskiq, the durable dispatcher, hybrid retrieval, a non-noop
-reranker, MinIO/S3-compatible storage, authentication, and non-default database, Redis, and
-storage credentials. Enabled OCR must resolve to a real backend. Gemini and mixed production
-provider combinations remain non-certified; development and tests retain hash/echo/local/noop
+Production also requires Taskiq, the durable dispatcher, hybrid retrieval with the
+rerank stage enabled, MinIO/S3-compatible storage, authentication, and non-default database, Redis, and
+storage credentials. On `hosted_managed` the rerank occupant is Cohere `rerank-v4.0-pro`; missing
+rerank credentials degrade to RRF + cosine and must not block startup. `hosted_openai` may still
+use the `noop` pass-through occupant. Enabled OCR must resolve to a real backend. Gemini and mixed
+production provider combinations remain non-certified; development and tests retain hash/echo/local/noop
 defaults.
 
 ## Startup and readiness flow

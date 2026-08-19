@@ -7,7 +7,7 @@ import json
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.chunk_embedding import EMBEDDING_SCHEMA_VERSION, ChunkEmbedding
@@ -16,6 +16,7 @@ from app.models.document import Document, DocumentStatus
 from app.models.document_chunk import DocumentChunk
 from app.models.index_build import IndexBuild, IndexBuildState, ProjectIndexPointer
 from app.models.keyword_term_stats import KeywordCollectionStats, KeywordTermStats
+from app.modules.retrieval.keyword.fts import to_search_vector
 from app.modules.retrieval.keyword.tokenizer import (
     normalize_for_indexing,
     term_frequencies,
@@ -24,9 +25,16 @@ from app.modules.retrieval.keyword.tokenizer import (
 from app.modules.retrieval.repositories.index_build_repository import IndexBuildRepository
 from app.platform.db.advisory_lock import acquire_project_stage_lock
 from app.platform.domain.content_hash import content_hash
+from app.platform.domain.language_detection import (
+    LANGUAGE_METADATA_SCHEMA_VERSION,
+    ROUTING_LANGUAGE_MIXED,
+    ROUTING_LANGUAGE_UNKNOWN,
+    build_index_language_snapshot,
+    normalize_routing_language,
+)
 from app.platform.jobs.contracts import JobProgressCallback
 from app.platform.jobs.errors import PermanentJobError
-from app.platform.providers.contracts.embedding import BaseEmbeddingProvider
+from app.platform.providers.contracts.embedding import BaseEmbeddingProvider, EmbeddingPurpose
 
 
 class IndexBuildWorkflow:
@@ -95,7 +103,10 @@ class IndexBuildWorkflow:
         await self._report("building_vectors", 10)
         for offset in range(0, len(all_chunks), self._batch_size):
             batch = all_chunks[offset : offset + self._batch_size]
-            result = await self._embedder.embed_texts([chunk.content for _, chunk in batch])
+            result = await self._embedder.embed_texts(
+                [chunk.content for _, chunk in batch],
+                purpose=EmbeddingPurpose.DOCUMENT,
+            )
             if len(result.vectors) != len(batch) or any(
                 len(vector) != result.dimensions for vector in result.vectors
             ):
@@ -135,6 +146,13 @@ class IndexBuildWorkflow:
                 for key in self._filterable_metadata_keys
                 if key in chunk.chunk_metadata
             }
+            metadata.update(
+                build_index_language_snapshot(
+                    content=chunk.content,
+                    chunk_metadata=chunk.chunk_metadata,
+                    document_language=document.language,
+                )
+            )
             self._session.add(
                 ChunkKeywordIndex(
                     project_id=self._project_id,
@@ -147,7 +165,7 @@ class IndexBuildWorkflow:
                     token_count=len(tokens),
                     term_frequencies=term_frequencies(tokens),
                     metadata_snapshot=metadata,
-                    search_vector=func.to_tsvector(self._fts_regconfig, normalized),
+                    search_vector=to_search_vector(self._fts_regconfig, normalized),
                 )
             )
             if index % 100 == 0:
@@ -161,11 +179,21 @@ class IndexBuildWorkflow:
         await self._validate_versions(manifest)
 
         count = len(all_chunks)
+        language_inventory = _language_inventory(all_chunks)
         build.document_count = len(manifest)
         build.chunk_count = count
         build.vector_count = count
         build.keyword_count = count
-        build.manifest = {"documents": manifest}
+        build.manifest = {
+            "documents": manifest,
+            "language_metadata_schema_version": LANGUAGE_METADATA_SCHEMA_VERSION,
+            "chunk_language_counts": language_inventory["chunk_language_counts"],
+            "document_language_counts": language_inventory["document_language_counts"],
+            "embedding_set_version": self._embedding_set_version,
+            "embedding_provider": self._embedder.provider_name,
+            "embedding_model": self._embedder.model_name,
+            "embedding_dimensions": self._embedder.dimensions,
+        }
         build.corpus_fingerprint = hashlib.sha256(
             json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode()
         ).hexdigest()
@@ -174,9 +202,6 @@ class IndexBuildWorkflow:
         await self._report("validated", 90)
         if auto_activate:
             await activate_index_build(self._session, self._project_id, build)
-            for document in documents:
-                document.status = DocumentStatus.READY
-                document.error_message = None
             await self._report("active", 100)
         return build
 
@@ -297,6 +322,82 @@ class IndexBuildWorkflow:
             await self._on_progress(stage, progress)
 
 
+def _language_inventory(
+    chunks: list[tuple[Document, DocumentChunk]],
+) -> dict[str, dict[str, int]]:
+    chunk_counts: dict[str, int] = {}
+    document_counts: dict[str, int] = {}
+    seen_documents: set[uuid.UUID] = set()
+    for document, chunk in chunks:
+        snapshot = build_index_language_snapshot(
+            content=chunk.content,
+            chunk_metadata=chunk.chunk_metadata,
+            document_language=document.language,
+        )
+        chunk_language = snapshot["chunk_language"]
+        chunk_counts[chunk_language] = chunk_counts.get(chunk_language, 0) + 1
+        if document.id in seen_documents:
+            continue
+        seen_documents.add(document.id)
+        document_language = normalize_routing_language(document.language)
+        if document_language in {ROUTING_LANGUAGE_MIXED, ROUTING_LANGUAGE_UNKNOWN}:
+            document_language = snapshot["document_language"]
+        document_counts[document_language] = document_counts.get(document_language, 0) + 1
+    return {
+        "chunk_language_counts": dict(sorted(chunk_counts.items())),
+        "document_language_counts": dict(sorted(document_counts.items())),
+    }
+
+
+_READY_AFTER_ACTIVATION = {
+    DocumentStatus.CHUNKED,
+    DocumentStatus.EMBEDDED,
+    DocumentStatus.EMBEDDING,
+    DocumentStatus.INDEXING,
+    DocumentStatus.READY,
+}
+
+
+def document_ids_from_build_manifest(manifest: object) -> dict[uuid.UUID, int]:
+    """Return document_id → version from an IndexBuild manifest."""
+    raw = manifest.get("documents") if isinstance(manifest, dict) else None
+    if not isinstance(raw, list):
+        return {}
+    versions: dict[uuid.UUID, int] = {}
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        try:
+            document_id = uuid.UUID(str(item.get("document_id")))
+            versions[document_id] = int(item["document_version"])
+        except (KeyError, TypeError, ValueError):
+            continue
+    return versions
+
+
+async def mark_included_documents_ready(
+    session: AsyncSession, project_id: uuid.UUID, build: IndexBuild
+) -> None:
+    """Documents in an activated snapshot are searchable, so they become ready."""
+    expected_versions = document_ids_from_build_manifest(build.manifest)
+    if not expected_versions:
+        return
+    result = await session.execute(
+        select(Document).where(
+            Document.project_id == project_id,
+            Document.id.in_(tuple(expected_versions)),
+            Document.deleted_at.is_(None),
+        )
+    )
+    for document in result.scalars():
+        if expected_versions.get(document.id) != document.version:
+            continue
+        if document.status not in _READY_AFTER_ACTIVATION:
+            continue
+        document.status = DocumentStatus.READY
+        document.error_message = None
+
+
 async def activate_index_build(
     session: AsyncSession, project_id: uuid.UUID, build: IndexBuild
 ) -> ProjectIndexPointer:
@@ -320,6 +421,8 @@ async def activate_index_build(
             "Only validated retained builds can be activated.", code="index_build_not_activatable"
         )
     if pointer.active_build_id == build.id:
+        await mark_included_documents_ready(session, project_id, build)
+        await session.flush()
         return pointer
     old_active = (
         await repository.get_by_id(pointer.active_build_id, for_update=True)
@@ -332,5 +435,6 @@ async def activate_index_build(
         old_active.state = IndexBuildState.RETAINED
     build.state = IndexBuildState.ACTIVE
     build.activated_at = datetime.now(UTC)
+    await mark_included_documents_ready(session, project_id, build)
     await session.flush()
     return pointer

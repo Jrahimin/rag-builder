@@ -21,11 +21,26 @@ from __future__ import annotations
 import os
 from enum import StrEnum
 from functools import lru_cache
+from pathlib import Path
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 from sqlalchemy import URL
+
+
+def _settings_env_files() -> tuple[str, ...] | None:
+    """Load backend/.env even when the process cwd is the repository root."""
+    if os.environ.get("APE_APP__ENV") == "testing":
+        return None
+    backend_env = Path(__file__).resolve().parents[2] / ".env"
+    cwd_env = Path.cwd() / ".env"
+    files: list[str] = []
+    if cwd_env.is_file() and cwd_env.resolve() != backend_env.resolve():
+        files.append(str(cwd_env))
+    if backend_env.is_file():
+        files.append(str(backend_env))
+    return tuple(files) or (".env",)
 
 
 class Environment(StrEnum):
@@ -87,9 +102,16 @@ class LoggingConfig(BaseModel):
 
 
 class RuntimeProfile(StrEnum):
-    """Certified deployment capability profiles."""
+    """Certified deployment capability profiles.
+
+    ``hosted_managed`` is the preferred production profile (Cohere embed/rerank,
+    OpenAI generation/translation). ``hosted_openai`` remains a deprecated
+    compatibility profile that still certifies OpenAI embeddings so existing
+    deploys do not suddenly require Cohere.
+    """
 
     DEVELOPMENT = "development"
+    HOSTED_MANAGED = "hosted_managed"
     HOSTED_OPENAI = "hosted_openai"
     PRIVATE_OLLAMA = "private_ollama"
 
@@ -97,6 +119,7 @@ class RuntimeProfile(StrEnum):
 class RuntimeConfig(BaseModel):
     """Production preflight and worker-observability settings."""
 
+    # Preferred production value is hosted_managed. hosted_openai is compatibility-only.
     profile: RuntimeProfile = RuntimeProfile.DEVELOPMENT
     startup_timeout_seconds: float = Field(default=30.0, ge=1.0, le=300.0)
     dependency_timeout_seconds: float = Field(default=3.0, ge=0.1, le=30.0)
@@ -333,7 +356,7 @@ class ChunkingConfig(BaseModel):
     long_block_token_threshold: int = Field(default=600, ge=100, le=8192)
     similarity_drop_threshold: float = Field(default=0.35, ge=0.0, le=1.0)
     semantic_batch_size: int = Field(default=32, ge=1, le=256)
-    chunker_version: str = "2.0.0"
+    chunker_version: str = "3.0.0"
     token_count_method: str = "unicode_property_v1"
     ocr_confidence_threshold: float = Field(default=0.5, ge=0.0, le=1.0)
 
@@ -345,14 +368,20 @@ class EmbeddingBackend(StrEnum):
     OLLAMA = "ollama"
     OPENAI = "openai"
     GEMINI = "gemini"
+    COHERE = "cohere"
 
 
 class EmbeddingConfig(BaseModel):
-    """Embedding provider configuration."""
+    """Dense-vector provider used for indexing and query search.
+
+    Changing backend or model requires a new ``embedding_set_version`` and a
+    full rebuild; never mix providers in one active set. Hosted_managed uses
+    Cohere ``embed-v4.0`` at 1024 dimensions. Local tests keep hash embeddings.
+    """
 
     backend: EmbeddingBackend = EmbeddingBackend.HASH
-    model: str = "nomic-embed-text"
-    dimensions: int = Field(default=384, ge=1, le=2000)
+    model: str = "text-embedding-3-large"
+    dimensions: int = Field(default=1024, ge=1, le=2000)
     batch_size: int = Field(default=32, ge=1, le=256)
     ollama_base_url: str = "http://localhost:11434"
     openai_api_key: str | None = None
@@ -371,7 +400,11 @@ class OcrBackend(StrEnum):
 
 
 class OcrConfig(BaseModel):
-    """OCR provider configuration — disabled by default."""
+    """OCR provider configuration — disabled by default.
+
+    Enable in production when scanned or Bangla/custom-font PDFs need Google
+    Vision. Native parse still runs first except for Bangla OCR-first pages.
+    """
 
     enabled: bool = False
     backend: OcrBackend = OcrBackend.NOOP
@@ -409,16 +442,50 @@ class RerankerBackend(StrEnum):
     LEXICAL = "lexical"
     EMBEDDING = "embedding"
     EMBEDDING_MAX = "embedding_max"
+    COHERE = "cohere"
+
+
+class RerankMode(StrEnum):
+    """When the multilingual reranker may run after RRF.
+
+    Platform default is ALWAYS. Projects may inherit or opt down to
+    cross-language-only or off. None in a sparse Project payload means inherit.
+    """
+
+    ALWAYS = "always"
+    CROSS_LANGUAGE = "cross_language"
+    OFF = "off"
+
+
+class EvidenceScoreMode(StrEnum):
+    """Calibrated semantic score used by the pre-generation evidence gate."""
+
+    WHOLE_CHUNK = "whole_chunk"
+    PASSAGE_MAX = "passage_max"
+
+
+class EvidenceGateMode(StrEnum):
+    """Whether a failed pre-generation evidence score may block the LLM."""
+
+    ENFORCE = "enforce"
+    OBSERVE = "observe"
 
 
 class RetrievalConfig(BaseModel):
-    """Retrieval pipeline and search defaults."""
+    """Retrieval pipeline and search defaults.
+
+    Hybrid dense + BM25 + RRF is the production path. ``rerank_mode`` is the
+    platform default (Always); Projects override with Inherit / Always /
+    Cross-language / Off. ``embedding_set_version`` identifies the active
+    vector representation — bump it when changing embedding provider or model.
+    """
 
     auto_embed: bool = True
     auto_index: bool = True
     default_top_k: int = Field(default=10, ge=1, le=100)
     score_threshold: float | None = Field(default=None, ge=0.0, le=1.0)
-    embedding_set_version: int = Field(default=1, ge=1)
+    # Deployment-level representation id. Hosted_managed Cohere embed-v4 uses 3.
+    embedding_set_version: int = Field(default=2, ge=1)
     filterable_metadata_keys: Annotated[list[str], NoDecode] = Field(
         default_factory=lambda: ["source", "tags", "ocr_confidence"]
     )
@@ -430,14 +497,24 @@ class RetrievalConfig(BaseModel):
     semantic_weight: float = Field(default=1.0, ge=0.0, le=10.0)
     keyword_weight: float = Field(default=1.0, ge=0.0, le=10.0)
     rerank_enabled: bool = True
+    # Always rerank after RRF unless a Project opts down. Cross-language skips
+    # the paid call when inventory says query and corpus share a language.
+    rerank_mode: RerankMode = RerankMode.ALWAYS
     rerank_top_n: int = Field(default=20, ge=1, le=100)
+    rerank_candidate_window: int = Field(default=25, ge=1, le=100)
+    rerank_return_n: int = Field(default=8, ge=1, le=100)
     rerank_score_threshold: float | None = Field(default=None, ge=0.0, le=1.0)
-    reranker_backend: RerankerBackend = RerankerBackend.LEXICAL
+    reranker_backend: RerankerBackend = RerankerBackend.NOOP
+    language_metadata_schema_version: str = "2026-08-18.v1"
     fts_regconfig: str = "simple"
     min_ocr_confidence: float | None = Field(default=None, ge=0.0, le=1.0)
     max_chunks_per_document: int = Field(default=4, ge=1, le=100)
     max_chunks_per_section: int = Field(default=2, ge=1, le=100)
     deduplicate_by_content_hash: bool = True
+    passage_scoring_enabled: bool = False
+    passage_window_tokens: int = Field(default=96, ge=16, le=512)
+    passage_overlap_tokens: int = Field(default=24, ge=0, le=256)
+    passage_min_tokens: int = Field(default=32, ge=8, le=256)
 
     @field_validator("filterable_metadata_keys", mode="before")
     @classmethod
@@ -448,6 +525,14 @@ class RetrievalConfig(BaseModel):
                 return value
             return [item.strip() for item in stripped.split(",") if item.strip()]
         return value
+
+    @model_validator(mode="after")
+    def validate_passage_windows(self) -> RetrievalConfig:
+        if self.passage_overlap_tokens >= self.passage_window_tokens:
+            raise ValueError("passage_overlap_tokens must be smaller than passage_window_tokens")
+        if self.passage_min_tokens > self.passage_window_tokens:
+            raise ValueError("passage_min_tokens must not exceed passage_window_tokens")
+        return self
 
 
 class LLMBackend(StrEnum):
@@ -461,18 +546,79 @@ class LLMBackend(StrEnum):
 
 
 class LLMConfig(BaseModel):
-    """LLM provider configuration."""
+    """Chat/generation provider. Hosted profiles require OpenAI; local tests use echo.
+
+    ``hosted_managed`` generation is ``gpt-5.6-luna``. Query translation uses a
+    separate nano model and does not inherit this field.
+    """
 
     backend: LLMBackend = LLMBackend.ECHO
     model: str = "gpt-4o-mini"
     temperature: float | None = Field(default=None, ge=0.0, le=2.0)
-    max_tokens: int = Field(default=2048, ge=1, le=128_000)
+    max_tokens: int = Field(default=4096, ge=1, le=128_000)
     request_timeout_seconds: float = Field(default=120.0, ge=1.0, le=600.0)
     ollama_base_url: str = "http://localhost:11434"
     openai_api_key: str | None = None
     openai_base_url: str = "https://api.openai.com"
     gemini_api_key: str | None = None
     gemini_base_url: str = "https://generativelanguage.googleapis.com/v1beta"
+    provider_version: str = "1"
+
+
+class QueryTranslationConfig(BaseModel):
+    """Optional one-shot query rewrite for hybrid retrieval.
+
+    Runs only when the active build language inventory contains a supported
+    language different from the query. Original dense + BM25 always remain.
+    Projects override with Inherit / On / Off. Disabled by default so pytest
+    and local hash/echo stacks do not require an LLM key.
+    """
+
+    enabled: bool = False
+    backend: LLMBackend = LLMBackend.OPENAI
+    model: str = "gpt-5-nano"
+    prompt_version: str = "retrieval-translation-v2"
+    max_output_tokens: int = Field(default=4096, ge=16, le=8192)
+    request_timeout_seconds: float = Field(default=45.0, ge=1.0, le=180.0)
+    retry_max_attempts: int = Field(default=1, ge=0, le=3)
+    target_languages: Annotated[list[str], NoDecode] = Field(default_factory=lambda: ["bn", "en"])
+
+    @field_validator("target_languages", mode="before")
+    @classmethod
+    def _split_target_languages(cls, value: object) -> object:
+        if isinstance(value, str):
+            stripped = value.strip()
+            if not stripped or stripped.startswith("["):
+                return value
+            return [item.strip() for item in stripped.split(",") if item.strip()]
+        return value
+
+
+class CohereConfig(BaseModel):
+    """Shared Cohere credential and base connection for embeddings and reranking.
+
+    Canonical secret is ``APE_COHERE__API_KEY``. Feature-specific models stay on
+    ``APE_EMBEDDING__MODEL`` and ``APE_RERANKER__COHERE_MODEL``.
+    ``APE_RERANKER__COHERE_API_KEY`` / ``APE_RERANKER__COHERE_BASE_URL`` remain
+    temporary fallbacks for older rerank-only deploys.
+    """
+
+    api_key: str | None = None
+    base_url: str = "https://api.cohere.com"
+
+
+class RerankerProviderConfig(BaseModel):
+    """Managed reranker model and timeout (not the canonical key or base URL).
+
+    Hosted_managed uses ``rerank-v4.0-pro``. Missing key or provider failure
+    degrades to RRF + cosine evidence; it must not block API startup.
+    """
+
+    # Legacy fallback only. Prefer APE_COHERE__API_KEY and APE_COHERE__BASE_URL.
+    cohere_api_key: str | None = None
+    cohere_base_url: str = "https://api.cohere.com"
+    cohere_model: str = "rerank-v4.0-pro"
+    request_timeout_seconds: float = Field(default=30.0, ge=1.0, le=120.0)
     provider_version: str = "1"
 
 
@@ -528,33 +674,80 @@ class AuthConfig(BaseModel):
 
 
 class ChatConfig(BaseModel):
-    """Chat / RAG orchestration defaults."""
+    """Chat / RAG orchestration defaults.
+
+    Evidence gate: when a true reranker applied, its relevance is the only
+    learned admit signal; cosine + lexical rescue are fallbacks. Thresholds are
+    provider-specific calibration, not universal constants. Hosted_managed
+    examples ``enforce`` with the current defaults; use ``observe`` only while
+    measuring a corpus in Test Lab.
+    """
 
     retrieval_top_k: int = Field(default=10, ge=1, le=100)
     max_context_chunks: int = Field(default=8, ge=1, le=50)
     context_char_budget: int = Field(default=12_000, ge=500, le=200_000)
     max_history_messages: int = Field(default=20, ge=0, le=200)
-    system_prompt_version: str = "v2"
+    system_prompt_version: str = "v4"
     include_citations: bool = True
     citation_excerpt_max_chars: int = Field(default=200, ge=0, le=2000)
-    minimum_evidence_score: float = Field(default=0.01, ge=0.0, le=1.0)
-    minimum_query_token_coverage: float = Field(default=0.15, ge=0.0, le=1.0)
+    evidence_score_mode: EvidenceScoreMode = EvidenceScoreMode.WHOLE_CHUNK
+    evidence_gate_mode: EvidenceGateMode = EvidenceGateMode.ENFORCE
+    minimum_semantic_evidence_score: float = Field(default=0.35, ge=0.0, le=1.0)
+    # Below the primary bar so same-language OCR/table hits that land just under
+    # 0.35 can still pass when query tokens strongly overlap the evidence.
+    # Cross-language near-misses typically have ~0 coverage, so they still refuse.
+    lexical_corroboration_floor_score: float = Field(default=0.30, ge=0.0, le=1.0)
+    lexical_corroboration_coverage: float = Field(default=0.50, ge=0.0, le=1.0)
+    # Provider-specific calibration. Keep observe until this pair is measured.
+    minimum_reranker_evidence_score: float = Field(default=0.40, ge=0.0, le=1.0)
+    minimum_evidence_score: float | None = Field(default=None, deprecated=True)
+    minimum_query_token_coverage: float | None = Field(default=None, deprecated=True)
     minimum_claim_token_coverage: float = Field(default=0.35, ge=0.0, le=1.0)
+    minimum_claim_semantic_score: float = Field(default=0.25, ge=0.0, le=1.0)
+    claim_semantic_reject_floor: float = Field(default=0.15, ge=0.0, le=1.0)
     insufficient_evidence_message: str = (
         "I don't have enough evidence in the indexed sources to answer that question."
     )
     auto_title_max_chars: int = Field(default=80, ge=10, le=255)
 
+    @model_validator(mode="after")
+    def reject_deprecated_evidence_thresholds(self) -> ChatConfig:
+        deprecated = []
+        if self.__dict__.get("minimum_evidence_score") is not None:
+            deprecated.append("APE_CHAT__MINIMUM_EVIDENCE_SCORE")
+        if self.__dict__.get("minimum_query_token_coverage") is not None:
+            deprecated.append("APE_CHAT__MINIMUM_QUERY_TOKEN_COVERAGE")
+        if deprecated:
+            msg = (
+                f"{', '.join(deprecated)} is deprecated; configure "
+                "APE_CHAT__MINIMUM_SEMANTIC_EVIDENCE_SCORE and the "
+                "APE_CHAT__LEXICAL_CORROBORATION_* settings instead"
+            )
+            raise ValueError(msg)
+        if self.lexical_corroboration_floor_score > self.minimum_semantic_evidence_score:
+            msg = (
+                "lexical_corroboration_floor_score must not exceed minimum_semantic_evidence_score"
+            )
+            raise ValueError(msg)
+        if self.claim_semantic_reject_floor > self.minimum_claim_semantic_score:
+            msg = "claim_semantic_reject_floor must not exceed minimum_claim_semantic_score"
+            raise ValueError(msg)
+        return self
+
 
 class EvaluationConfig(BaseModel):
     """Reproducible quality-run defaults and acceptance thresholds."""
 
-    evaluator_version: str = "quality-v1"
+    evaluator_version: str = "quality-v3"
     default_top_k: int = Field(default=5, ge=1, le=100)
     max_cases_per_dataset: int = Field(default=500, ge=1, le=10_000)
     minimum_recall_at_k: float = Field(default=0.80, ge=0.0, le=1.0)
+    minimum_rank_1_accuracy: float = Field(default=0.80, ge=0.0, le=1.0)
+    minimum_cross_lingual_recall_at_k: float = Field(default=0.75, ge=0.0, le=1.0)
     minimum_filtered_correctness: float = Field(default=0.95, ge=0.0, le=1.0)
-    minimum_refusal_accuracy: float = Field(default=0.90, ge=0.0, le=1.0)
+    maximum_false_refusal_rate: float = Field(default=0.10, ge=0.0, le=1.0)
+    maximum_false_accept_rate: float = Field(default=0.0, ge=0.0, le=1.0)
+    maximum_accepted_without_relevant_evidence_rate: float = Field(default=0.0, ge=0.0, le=1.0)
     minimum_groundedness: float = Field(default=0.80, ge=0.0, le=1.0)
     minimum_citation_coverage: float = Field(default=0.80, ge=0.0, le=1.0)
     maximum_p95_latency_ms: float = Field(default=750.0, ge=1.0)
@@ -600,9 +793,7 @@ class AIConfigPolicy(BaseModel):
 
     request_override_mode: RequestOverrideMode = RequestOverrideMode.COMPATIBILITY
     max_request_top_k: int = Field(default=100, ge=1, le=100)
-    source_policy_deployment_cap: SourcePolicyDeploymentCap = (
-        SourcePolicyDeploymentCap.ENFORCE
-    )
+    source_policy_deployment_cap: SourcePolicyDeploymentCap = SourcePolicyDeploymentCap.ENFORCE
     enabled_retrieval_strategies: Annotated[list[RetrievalStrategy], NoDecode] = Field(
         default_factory=lambda: [RetrievalStrategy.SEMANTIC, RetrievalStrategy.HYBRID]
     )
@@ -624,7 +815,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="APE_",
         env_nested_delimiter="__",
-        env_file=(".env",) if os.environ.get("APE_APP__ENV") != "testing" else None,
+        env_file=_settings_env_files(),
         env_file_encoding="utf-8",
         extra="ignore",
         case_sensitive=False,
@@ -650,11 +841,28 @@ class Settings(BaseSettings):
     embedding: EmbeddingConfig = Field(default_factory=EmbeddingConfig)
     retrieval: RetrievalConfig = Field(default_factory=RetrievalConfig)
     llm: LLMConfig = Field(default_factory=LLMConfig)
+    query_translation: QueryTranslationConfig = Field(default_factory=QueryTranslationConfig)
+    cohere: CohereConfig = Field(default_factory=CohereConfig)
+    reranker: RerankerProviderConfig = Field(default_factory=RerankerProviderConfig)
     generation: GenerationConfig = Field(default_factory=GenerationConfig)
     chat: ChatConfig = Field(default_factory=ChatConfig)
     evaluation: EvaluationConfig = Field(default_factory=EvaluationConfig)
     ai_policy: AIConfigPolicy = Field(default_factory=AIConfigPolicy)
     auth: AuthConfig = Field(default_factory=AuthConfig)
+
+    def resolved_cohere_api_key(self) -> str:
+        """Canonical shared Cohere key, then legacy reranker-only key."""
+        canonical = (self.cohere.api_key or "").strip()
+        if canonical:
+            return canonical
+        return (self.reranker.cohere_api_key or "").strip()
+
+    def resolved_cohere_base_url(self) -> str:
+        """Canonical shared Cohere base URL, then legacy reranker-only base URL."""
+        shared = self.cohere.base_url.rstrip("/")
+        if shared != "https://api.cohere.com":
+            return self.cohere.base_url
+        return self.reranker.cohere_base_url
 
 
 @lru_cache

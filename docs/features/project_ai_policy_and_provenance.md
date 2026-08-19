@@ -12,10 +12,13 @@ Effective AI configuration resolves in this order:
 3. the fixed request allowlist;
 4. deployment bounds and provider/model capability validation.
 
-The typed revision covers LLM provider/model/generation values, retrieval and reranking defaults,
+The typed revision covers LLM provider/model/generation values, retrieval and reranking defaults
+(`rerank_mode`: Inherit / Always / Cross-language / Off; query translation Inherit / On / Off),
 chat context/history/citation/grounding behavior, domain instructions, prompt profile/version, and
 source-policy rollout mode. Embedding and chunking settings remain deployment/index-artifact
-policy.
+policy. All-inherit Create Project and AI Configuration submits create no revision. If Project
+create succeeds and the optional AI-config save fails, the Project is kept on inherited defaults
+and the console offers a retry on AI Configuration.
 
 Only Super Admin operator endpoints can read or write revisions. Writes use an expected active
 revision ID for optimistic concurrency. History is append-only, and restore copies an old payload

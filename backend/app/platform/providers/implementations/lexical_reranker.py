@@ -8,6 +8,7 @@ from app.platform.providers.contracts.reranker import (
     RerankRequest,
     RerankResponse,
     RerankResult,
+    RerankScoreScale,
 )
 
 
@@ -41,9 +42,8 @@ class LexicalRerankerProvider(BaseRerankerProvider):
         for candidate in request.candidates:
             doc_terms = set(tokenize(candidate.text))
             overlap = len(query_terms & doc_terms)
-            union = len(query_terms | doc_terms) or 1
-            jaccard = overlap / union
-            score = (0.7 * jaccard) + (0.3 * min(candidate.source_score, 1.0))
+            query_coverage = overlap / (len(query_terms) or 1)
+            score = (0.7 * query_coverage) + (0.3 * min(candidate.source_score, 1.0))
             scored.append(
                 RerankResult(
                     chunk_id=candidate.chunk_id,
@@ -57,4 +57,5 @@ class LexicalRerankerProvider(BaseRerankerProvider):
             provider=self.provider_name,
             model=self.model_name,
             provider_version=self.provider_version,
+            score_scale=RerankScoreScale.LEXICAL_HEURISTIC,
         )

@@ -24,6 +24,7 @@ from collections.abc import AsyncIterator
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+import app.composition.orm_registry as _orm_registry  # noqa: F401
 from app.api.health import router as health_router
 from app.api.metrics import router as metrics_router
 from app.api.v1.router import api_v1_router
@@ -40,6 +41,7 @@ from app.platform.http.openapi_security import configure_openapi_security
 from app.platform.infra.connectivity.redis import RedisConnectivity
 from app.platform.jobs.implementations.job_queue_factory import get_job_queue
 from app.platform.jobs.implementations.taskiq_queue import TaskiqJobQueue
+from app.platform.providers.implementations.cohere_http import aclose_shared_cohere_clients
 from app.platform.providers.implementations.storage_factory import create_storage_provider
 from app.platform.system.preflight_service import StartupPreflightService
 
@@ -120,6 +122,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             await queue.close()
         await app.state.redis.dispose()
         await app.state.db.dispose()
+        await aclose_shared_cohere_clients()
         log.info("application_stopped")
 
 

@@ -14,7 +14,7 @@ from app.core.config import RetrievalStrategy
 class SearchRequest(BaseModel):
     """Search request body."""
 
-    query: str = Field(min_length=1, max_length=4096)
+    query: str = Field(min_length=1, max_length=32_000)
     top_k: int | None = Field(default=None, ge=1, le=100)
     document_id: uuid.UUID | None = None
     metadata_filter: dict[str, str] = Field(default_factory=dict)
@@ -31,6 +31,16 @@ class RetrievalResult(BaseModel):
     chunk_index: int
     content: str
     score: float
+    semantic_score: float | None = None
+    rank_score: float | None = None
+    rerank_relevance_score: float | None = None
+    evidence_relevance_score: float | None = None
+    evidence_score_method: str | None = None
+    evidence_calibration_id: str | None = None
+    passage_semantic_score: float | None = None
+    passage_char_start: int | None = None
+    passage_char_end: int | None = None
+    passage_score_method: str | None = None
     filename: str
     page_number: int | None = None
     char_start: int | None = None
@@ -48,9 +58,17 @@ class SearchDiagnostics(BaseModel):
     reranker_provider: str | None = None
     reranker_model: str | None = None
     reranker_version: str | None = None
+    reranker_score_scale: str | None = None
+    best_semantic_score: float | None = None
+    best_passage_semantic_score: float | None = None
+    passage_score_method: str | None = None
     duplicate_suppression_input_count: int = 0
     duplicate_suppression_removed_count: int = 0
     duplicate_suppression_reasons: dict[str, int] = Field(default_factory=dict)
+    diversity_deferred_reasons: dict[str, int] = Field(default_factory=dict)
+    diversity_backfilled_count: int = 0
+    candidate_trace: list[dict[str, Any]] = Field(default_factory=list)
+    selected_trace: list[dict[str, Any]] = Field(default_factory=list)
     compatibility_diagnostics: list[str] = Field(default_factory=list)
     as_of: datetime | None = None
     reference_date: date | None = None
@@ -64,6 +82,29 @@ class SearchDiagnostics(BaseModel):
     source_policy_consolidation_reasons: dict[str, int] = Field(default_factory=dict)
     configuration_hash: str | None = None
     config_provenance: dict[str, Any] = Field(default_factory=dict)
+    query_language_profile: str | None = None
+    corpus_language_inventory: dict[str, int] = Field(default_factory=dict)
+    translation_status: str | None = None
+    translation_source_language: str | None = None
+    translation_provider: str | None = None
+    translation_model: str | None = None
+    translation_prompt_version: str | None = None
+    translation_latency_ms: int | None = None
+    translation_usage: dict[str, Any] = Field(default_factory=dict)
+    translation_target_language: str | None = None
+    translation_failure_reason: str | None = None
+    translated_query: str | None = None
+    executed_branches: list[str] = Field(default_factory=list)
+    skipped_branches: list[str] = Field(default_factory=list)
+    branch_candidate_counts: dict[str, int] = Field(default_factory=dict)
+    language_routing_status: str | None = None
+    embedding_identity_status: str | None = None
+    embedding_provider: str | None = None
+    embedding_model: str | None = None
+    embedding_dimensions: int | None = None
+    embedding_set_version: int | None = None
+    reranker_latency_ms: int | None = None
+    reranker_usage: dict[str, Any] = Field(default_factory=dict)
 
 
 class SearchResponse(BaseModel):

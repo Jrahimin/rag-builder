@@ -23,6 +23,7 @@ class ChunkValidationService:
         validated = self._merge_tiny_chunks(validated, config)
         validated = self._prevent_isolated_headings(validated)
         validated = self._split_oversized(validated, config)
+        validated = self._merge_tiny_chunks(validated, config)
         validated = self._remove_empty(validated)
         return self._reindex(validated)
 
@@ -45,27 +46,53 @@ class ChunkValidationService:
     ) -> list[DraftChunk]:
         if not chunks:
             return []
+        if len(chunks) == 1:
+            return chunks
 
-        merged: list[DraftChunk] = []
-        buffer: DraftChunk | None = None
-
-        for chunk in chunks:
-            token_count = self._token_counter.count(chunk.content)
-            if token_count >= config.min_tokens:
-                if buffer is not None:
-                    merged.append(buffer)
-                    buffer = None
-                merged.append(chunk)
+        merged = list(chunks)
+        index = 0
+        while index < len(merged):
+            if len(merged) == 1:
+                break
+            chunk = merged[index]
+            if self._token_counter.count(chunk.content) >= config.min_tokens:
+                index += 1
+                continue
+            if index == 0:
+                merged[0:2] = [self._merge_adjacent(chunk, merged[1])]
+                continue
+            if index == len(merged) - 1:
+                merged[index - 1 : index + 1] = [self._merge_adjacent(merged[index - 1], chunk)]
+                index = max(index - 1, 0)
                 continue
 
-            buffer = chunk if buffer is None else self._merge_adjacent(buffer, chunk)
-
-        if buffer is not None:
-            if merged and self._token_counter.count(buffer.content) < config.min_tokens:
-                merged[-1] = self._merge_adjacent(merged[-1], buffer)
+            left = merged[index - 1]
+            right = merged[index + 1]
+            forward = self._merge_adjacent(chunk, right)
+            backward = self._merge_adjacent(left, chunk)
+            forward_fits = self._token_counter.count(forward.content) <= config.max_tokens
+            backward_fits = self._token_counter.count(backward.content) <= config.max_tokens
+            prefer_forward = self._is_identifier_fragment(chunk)
+            if forward_fits and (prefer_forward or not backward_fits):
+                merged[index : index + 2] = [forward]
+                continue
+            if backward_fits:
+                merged[index - 1 : index + 1] = [backward]
+                index = max(index - 1, 0)
+                continue
+            if forward_fits:
+                merged[index : index + 2] = [forward]
+                continue
+            if self._token_counter.count(left.content) <= self._token_counter.count(right.content):
+                merged[index - 1 : index + 1] = [backward]
+                index = max(index - 1, 0)
             else:
-                merged.append(buffer)
+                merged[index : index + 2] = [forward]
         return merged
+
+    def _is_identifier_fragment(self, chunk: DraftChunk) -> bool:
+        text = chunk.content.strip()
+        return self._token_counter.count(text) <= 4 and len(text) <= 16
 
     def _prevent_isolated_headings(self, chunks: list[DraftChunk]) -> list[DraftChunk]:
         if len(chunks) < 2:

@@ -147,11 +147,13 @@ a `RetrievalContext`. Semantic SQL lives only in
 repositories. Both paths require matching `project_id` and `index_build_id`, apply allowlisted
 metadata filters, and join one captured Knowledge-owned source-generation scope. Document status is
 not a retrieval activation authority; the immutable build manifest/pointer is. Hybrid retrieval
-runs semantic and keyword candidates sequentially on the same async session and captured source scope,
-fuses them with RRF, optionally reranks through `BaseRerankerProvider`, and
-falls back to fused order when reranking is unavailable. `ResultHydrator` is the
-single ORM-to-response hydration point. `SearchResponse.diagnostics` records the
-strategy, latency, reranker identity, and applied/unavailable fallback state.
+always runs original dense and original lexical candidates on the same async session, may add one
+target-language translated pair when the active build has language inventory, fuses successful
+lists with RRF, optionally reranks original query vs original passages through
+`BaseRerankerProvider`, and falls back to fused order when reranking is unavailable.
+`ResultHydrator` is the single ORM-to-response hydration point. `SearchResponse.diagnostics`
+records the strategy, latency, reranker identity, translation status, branch provenance, and
+applied/unavailable fallback state.
 
 ## Chat
 
@@ -183,9 +185,12 @@ retrieval and LLM contracts. `ContextBuilder` deduplicates and trims ranked
 chunks; `PromptBuilder` formats the versioned prompt and bounded history.
 `max_history_messages=0` means no prior messages.
 
-`GroundingService` makes the insufficient-evidence decision before generation,
-then validates generated segments against the selected source chunks. Non-stream
-responses and SSE `done` events expose the same claim/evidence structure.
+`GroundingService` records the insufficient-evidence decision before generation.
+In `enforce` mode that decision skips the LLM. In `observe` mode the same score,
+threshold result, and winning chunk are persisted, but selected context still
+reaches the grounded-generation prompt unless retrieval returned nothing.
+The service then validates generated segments against the selected source chunks.
+Non-stream responses and SSE `done` events expose the same claim/evidence structure.
 
 Provider failures become the stable `llm_provider_unavailable` application
 error. Streaming uses the same service mapping and emits a sanitized SSE error;

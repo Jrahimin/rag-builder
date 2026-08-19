@@ -13,7 +13,7 @@ from app.composition.source_metadata import KnowledgeRetrievalSourceMetadataAdap
 from app.core.config import get_settings
 from app.dependencies.access import AdminOrOrganizationDep
 from app.dependencies.common import DbSessionDep
-from app.dependencies.retrieval import get_search_service
+from app.dependencies.retrieval import get_search_service, query_embedder_factory_for
 from app.models.conversation import Conversation
 from app.modules.conversations.ports import ContextChunk, ContextRetrievalResult, RetrievalPort
 from app.modules.conversations.repositories.config_snapshot_repository import (
@@ -26,7 +26,7 @@ from app.modules.conversations.services.conversation_service import Conversation
 from app.modules.projects.repositories.project_ai_config_repository import (
     ProjectAIConfigRepository,
 )
-from app.modules.retrieval.schemas.search import SearchRequest
+from app.modules.retrieval.schemas.search import RetrievalResult, SearchRequest
 from app.modules.retrieval.services.search_service import SearchService
 from app.platform.config.project_ai import (
     ConfigProvenance,
@@ -39,12 +39,15 @@ from app.platform.config.project_ai import (
 from app.platform.domain.content_hash import content_hash
 from app.platform.providers.contracts.embedding import BaseEmbeddingProvider
 from app.platform.providers.contracts.llm import BaseLLMProvider
-from app.platform.providers.contracts.reranker import BaseRerankerProvider
+from app.platform.providers.errors import ProviderError
 from app.platform.providers.implementations.embedding_factory import get_embedding_provider
 from app.platform.providers.implementations.llm_factory import (
     create_llm_provider_for_conversation,
 )
-from app.platform.providers.implementations.reranker_factory import get_reranker_provider
+from app.platform.providers.implementations.query_translation_factory import (
+    create_query_translation_provider,
+)
+from app.platform.providers.implementations.reranker_factory import create_reranker_provider
 
 
 class SearchServiceRetrievalAdapter:
@@ -52,6 +55,10 @@ class SearchServiceRetrievalAdapter:
 
     def __init__(self, search_service: SearchService) -> None:
         self._search_service = search_service
+
+    @property
+    def query_embedder(self) -> BaseEmbeddingProvider | None:
+        return self._search_service.resolved_query_embedder
 
     async def retrieve(
         self,
@@ -72,24 +79,47 @@ class SearchServiceRetrievalAdapter:
             )
         )
         return ContextRetrievalResult(
-            chunks=[
-                ContextChunk(
-                    chunk_id=result.chunk_id,
-                    document_id=result.document_id,
-                    chunk_index=result.chunk_index,
-                    content=result.content,
-                    score=result.score,
-                    filename=result.filename,
-                    chunk_hash=content_hash(result.content),
-                    page_number=result.page_number,
-                    char_start=result.char_start,
-                    char_end=result.char_end,
-                    metadata=dict(result.metadata),
-                )
-                for result in response.results
-            ],
+            chunks=[_context_chunk_from_result(result) for result in response.results],
             diagnostics=response.diagnostics.model_dump(mode="json"),
         )
+
+
+def _context_chunk_from_result(result: RetrievalResult) -> ContextChunk:
+    """Map a search hit onto chat context without dropping rerank scores."""
+    rerank_score = result.rerank_relevance_score
+    rank_score = result.rank_score
+    evidence_score = result.evidence_relevance_score
+    if result.metadata.get("rerank_status") == "applied":
+        if rerank_score is None:
+            rerank_score = result.score
+        if rank_score is None:
+            rank_score = result.score
+        if evidence_score is None:
+            evidence_score = rerank_score
+    return ContextChunk(
+        chunk_id=result.chunk_id,
+        document_id=result.document_id,
+        chunk_index=result.chunk_index,
+        content=result.content,
+        score=result.score,
+        filename=result.filename,
+        chunk_hash=content_hash(result.content),
+        semantic_score=result.semantic_score,
+        rank_score=rank_score,
+        rerank_relevance_score=rerank_score,
+        evidence_relevance_score=evidence_score,
+        evidence_score_method=result.evidence_score_method
+        or ("reranker_relevance" if rerank_score is not None else None),
+        evidence_calibration_id=result.evidence_calibration_id,
+        passage_semantic_score=result.passage_semantic_score,
+        passage_char_start=result.passage_char_start,
+        passage_char_end=result.passage_char_end,
+        passage_score_method=result.passage_score_method,
+        page_number=result.page_number,
+        char_start=result.char_start,
+        char_end=result.char_end,
+        metadata=dict(result.metadata),
+    )
 
 
 def get_conversation_repository(
@@ -160,7 +190,6 @@ async def get_chat_service(
     message_repository: Annotated[MessageRepository, Depends(get_message_repository)],
     conversation_id: Annotated[uuid.UUID, Path()],
     embedder: Annotated[BaseEmbeddingProvider, Depends(get_embedding_provider)],
-    reranker: Annotated[BaseRerankerProvider, Depends(get_reranker_provider)],
 ) -> ChatService:
     settings = get_settings()
     conversation = await conversation_repository.get_by_id(conversation_id, include_deleted=True)
@@ -195,6 +224,13 @@ async def get_chat_service(
         )
         snapshot_id = snapshot.id
     effective_settings = apply_effective_ai_config(settings, resolution)
+    reranker = create_reranker_provider(effective_settings)
+    translator = None
+    if effective_settings.query_translation.enabled:
+        try:
+            translator = create_query_translation_provider(effective_settings)
+        except ProviderError:
+            translator = None
     retrieval = SearchServiceRetrievalAdapter(
         SearchService(
             session=session,
@@ -204,11 +240,12 @@ async def get_chat_service(
             retrieval_config=effective_settings.retrieval,
             ai_policy=settings.ai_policy,
             source_metadata=KnowledgeRetrievalSourceMetadataAdapter(session),
-            configured_source_policy_mode=(
-                resolution.provenance.configured_source_policy_mode
-            ),
+            configured_source_policy_mode=(resolution.provenance.configured_source_policy_mode),
             configuration_hash=resolution.configuration_hash,
             config_provenance=resolution.provenance.model_dump(mode="json"),
+            query_translator=translator,
+            query_translation_config=effective_settings.query_translation,
+            query_embedder_factory=query_embedder_factory_for(settings),
         )
     )
 
@@ -233,6 +270,7 @@ async def get_chat_service(
         config_provenance=resolution.provenance.model_dump(mode="json"),
         domain_instructions=resolution.configuration.domain_instructions,
         prompt_profile=resolution.configuration.prompt_profile,
+        embedder=embedder,
     )
 
 

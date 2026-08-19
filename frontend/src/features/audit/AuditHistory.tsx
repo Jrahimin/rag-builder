@@ -173,9 +173,7 @@ export function AuditHistory() {
           </table>
         </div>
       )}
-      {selected && (
-        <AuditEventInspector event={selected} onClose={() => setSelected(null)} />
-      )}
+      {selected && <AuditEventInspector event={selected} onClose={() => setSelected(null)} />}
     </section>
   );
 }

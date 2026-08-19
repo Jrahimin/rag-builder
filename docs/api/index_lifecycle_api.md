@@ -13,13 +13,14 @@ Only `validated` or `retained` builds may be activated.
 
 ## POST `/reembed`
 
-Stages a full vector and keyword snapshot with operation `reembed`. The completed
-build remains `validated` until explicitly activated.
+Stages a full vector and keyword snapshot. The completed build remains
+`validated` until explicitly activated. Activation marks included documents
+`ready`. This is the operator Rebuild index action.
 
 ## POST `/reindex`
 
-Stages a full vector and keyword snapshot with operation `reindex`. The completed
-build remains `validated` until explicitly activated.
+Compatibility alias for `/reembed`. Both jobs run the same full snapshot
+workflow; they differ only in the stored operation label.
 
 ## POST `/{build_id}/activate`
 

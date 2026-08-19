@@ -352,32 +352,27 @@ def _usage_execution_union() -> CompoundSelect[Any]:
         literal(None).cast(Integer).label("retrieval_latency_ms"),
         Generation.provider_latency_ms,
         Generation.total_latency_ms,
-        case((Generation.status == GenerationStatus.FAILED, 1), else_=0).label(
-            "error_count"
-        ),
+        case((Generation.status == GenerationStatus.FAILED, 1), else_=0).label("error_count"),
     )
-    evaluation = (
-        select(
-            EvaluationRun.id.label("record_id"),
-            EvaluationRun.project_id,
-            EvaluationRun.created_at.label("occurred_at"),
-            EvaluationRun.provider,
-            EvaluationRun.model,
-            literal(UsageWorkload.EVALUATION.value).label("workload"),
-            EvaluationRun.input_tokens,
-            EvaluationRun.output_tokens,
-            EvaluationRun.retrieval_latency_ms,
-            EvaluationRun.provider_latency_ms,
-            EvaluationRun.total_latency_ms,
-            case((JobRun.state == JobState.FAILED, 1), else_=0).label("error_count"),
-        )
-        .join(
-            JobRun,
-            and_(
-                JobRun.id == EvaluationRun.job_id,
-                JobRun.project_id == EvaluationRun.project_id,
-            ),
-        )
+    evaluation = select(
+        EvaluationRun.id.label("record_id"),
+        EvaluationRun.project_id,
+        EvaluationRun.created_at.label("occurred_at"),
+        EvaluationRun.provider,
+        EvaluationRun.model,
+        literal(UsageWorkload.EVALUATION.value).label("workload"),
+        EvaluationRun.input_tokens,
+        EvaluationRun.output_tokens,
+        EvaluationRun.retrieval_latency_ms,
+        EvaluationRun.provider_latency_ms,
+        EvaluationRun.total_latency_ms,
+        case((JobRun.state == JobState.FAILED, 1), else_=0).label("error_count"),
+    ).join(
+        JobRun,
+        and_(
+            JobRun.id == EvaluationRun.job_id,
+            JobRun.project_id == EvaluationRun.project_id,
+        ),
     )
     return union_all(chat, contextual, evaluation)
 

@@ -39,6 +39,10 @@ from app.modules.knowledge.services.chunking.structure_analyzer_service import (
     StructureAnalyzerService,
 )
 from app.modules.knowledge.services.chunking.token_counting_service import TokenCountingService
+from app.platform.domain.language_detection import (
+    detect_language,
+    routing_language_from_detection,
+)
 from app.platform.providers.contracts.document_parser import ParsedDocument
 
 
@@ -209,6 +213,8 @@ class ChunkingService:
         strategy: ChunkingStrategy,
     ) -> dict[str, Any]:
         metadata = dict(draft.metadata)
+        detected = detect_language(draft.content)
+        chunk_language = routing_language_from_detection(detected)
         metadata.update(
             {
                 "chunk_order": draft.chunk_order,
@@ -222,6 +228,9 @@ class ChunkingService:
                 "structure_signals": analysis.signals.to_dict(),
                 "token_count_method": self._config.token_count_method,
                 "language": parsed.language,
+                "document_language": parsed.language or "unknown",
+                "chunk_language": chunk_language,
+                "chunk_language_confidence": detected.confidence,
             }
         )
         if parsed.ocr_quality is not None and "ocr_confidence" not in metadata:

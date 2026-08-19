@@ -46,7 +46,7 @@ Owned by the retrieval module: `embedding`, `embedded`, `indexing`, `ready`.
 | `APE_CHUNKING__TARGET_TOKENS` | `250` | Approximate target tokens per chunk |
 | `APE_CHUNKING__MAX_TOKENS` | `400` | Approximate maximum tokens per chunk |
 | `APE_CHUNKING__MIN_TOKENS` | `50` | Minimum tokens before adjacent merge |
-| `APE_CHUNKING__OVERLAP_TOKENS` | `50` | Approximate overlap for recursive fallback splits |
+| `APE_CHUNKING__OVERLAP_TOKENS` | `50` | Reserved compatibility setting; current recursive fallback does not overlap chunks |
 | `APE_CHUNKING__STRUCTURE_SCORE_THRESHOLD` | `0.55` | Minimum structure score for structure-first chunking |
 | `APE_CHUNKING__SIMILARITY_DROP_THRESHOLD` | `0.35` | Semantic boundary threshold for weakly structured docs |
 | `APE_CHUNKING__TOKEN_COUNT_METHOD` | `unicode_property_v1` | Unicode-property token counting |
@@ -66,6 +66,18 @@ Bangla documents use an opt-in Google Vision OCR-first route. Unicode Bangla PDF
 scans, images, and custom-font/Bijoy documents need explicit `ocr_lang=bn` or deployment default
 `bn`. The route OCRs every page and skips native/PDFium candidate selection. Details:
 [multilingual support](multilingual_support.md#bangla-bengali-ocr-routing-and-limitations).
+
+### OCR layout and table chunks
+
+The OCR contract can carry provider-neutral blocks, paragraphs, words, confidence, and normalized
+page coordinates. Google Vision maps `fullTextAnnotation.pages` into that contract. The PDF
+workflow preserves the selected candidate's parsed elements instead of flattening and re-splitting
+page text.
+
+Conservative aligned-column inference emits `TABLE` only for runs of at least four geometric rows.
+Structure chunking keeps ordinary tables intact and splits oversized tables by bounded row groups,
+repeating the caption and header. `chunker_version=3.0.0` also enforces the tiny-fragment invariant:
+no sub-`min_tokens` chunk survives unless the complete document is smaller than the minimum.
 
 ## API
 

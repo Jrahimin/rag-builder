@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
-from app.core.config import RetrievalStrategy
+from app.core.config import RerankMode, RetrievalStrategy
 
 
 class CandidateSource(StrEnum):
@@ -35,6 +35,12 @@ class CandidateHit:
     score: float
     source: CandidateSource
     metadata: dict[str, Any] = field(default_factory=dict)
+    semantic_score: float | None = None
+    rank_score: float | None = None
+    rerank_relevance_score: float | None = None
+    evidence_relevance_score: float | None = None
+    evidence_score_method: str | None = None
+    evidence_calibration_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,11 +64,21 @@ class RetrievalContext:
     score_threshold: float | None
     filterable_metadata_keys: tuple[str, ...]
     index_build_id: uuid.UUID = field(default_factory=lambda: uuid.UUID(int=0))
+    rerank_mode: RerankMode = RerankMode.ALWAYS
     fts_regconfig: str = "simple"
     min_ocr_confidence: float | None = None
     hnsw_ef_search: int = 100
+    passage_scoring_enabled: bool = False
+    passage_window_tokens: int = 96
+    passage_overlap_tokens: int = 24
+    passage_min_tokens: int = 32
     metadata: dict[str, Any] = field(default_factory=dict)
     source_scope: Any | None = None
+    language_scope: Any | None = None
+    rerank_candidate_window: int = 25
+    rerank_return_n: int = 8
+    multilingual_plan: Any | None = None
+    persist_translation_text: bool = False
 
     def sanitized_metadata_filter(self) -> dict[str, str]:
         return {

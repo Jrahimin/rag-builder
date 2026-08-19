@@ -7,6 +7,7 @@ import pytest
 from app.core.config import (
     AppConfig,
     AuthConfig,
+    CohereConfig,
     CORSConfig,
     DatabaseConfig,
     EmbeddingBackend,
@@ -53,11 +54,7 @@ def _production_settings(**updates: object) -> Settings:
             dimensions=1536,
         ),
         "llm": LLMConfig(backend=LLMBackend.OPENAI, openai_api_key="llm-secret"),
-        "retrieval": RetrievalConfig(
-            strategy=RetrievalStrategy.HYBRID,
-            rerank_enabled=True,
-            reranker_backend=RerankerBackend.LEXICAL,
-        ),
+        "retrieval": RetrievalConfig(strategy=RetrievalStrategy.HYBRID),
         "auth": AuthConfig(
             enabled=True,
             key_pepper="key-pepper-that-is-at-least-thirty-two-bytes",
@@ -77,6 +74,13 @@ def test_certified_hosted_profile_is_accepted() -> None:
     validate_runtime_config(_production_settings())
 
 
+def test_production_accepts_pass_through_rrf_rerank_stage() -> None:
+    settings = _production_settings()
+    assert settings.retrieval.rerank_enabled is True
+    assert settings.retrieval.reranker_backend is RerankerBackend.NOOP
+    validate_runtime_config(settings)
+
+
 @pytest.mark.parametrize(
     ("field", "value", "expected"),
     [
@@ -92,10 +96,10 @@ def test_certified_hosted_profile_is_accepted() -> None:
             "retrieval",
             RetrievalConfig(
                 strategy=RetrievalStrategy.HYBRID,
-                rerank_enabled=True,
+                rerank_enabled=False,
                 reranker_backend=RerankerBackend.NOOP,
             ),
-            "noop reranking",
+            "rerank stage",
         ),
         (
             "ocr",
@@ -176,3 +180,42 @@ def test_webhook_signing_and_retry_relationships_are_validated() -> None:
 def test_production_rejects_wildcard_cors() -> None:
     with pytest.raises(ProductionConfigurationError, match="wildcard"):
         validate_runtime_config(_production_settings(cors=CORSConfig()))
+
+
+def test_hosted_openai_does_not_require_cohere() -> None:
+    validate_runtime_config(_production_settings())
+
+
+def test_hosted_managed_requires_cohere_embeddings_and_shared_key() -> None:
+    validate_runtime_config(
+        _production_settings(
+            runtime=RuntimeConfig(profile=RuntimeProfile.HOSTED_MANAGED),
+            embedding=EmbeddingConfig(
+                backend=EmbeddingBackend.COHERE,
+                model="embed-v4.0",
+                dimensions=1024,
+            ),
+            cohere=CohereConfig(api_key="cohere-secret"),
+        )
+    )
+
+
+def test_hosted_managed_rejects_openai_embeddings() -> None:
+    with pytest.raises(ProductionConfigurationError, match="hosted_managed requires"):
+        validate_runtime_config(
+            _production_settings(runtime=RuntimeConfig(profile=RuntimeProfile.HOSTED_MANAGED))
+        )
+
+
+def test_hosted_managed_accepts_legacy_reranker_key_as_shared_secret() -> None:
+    validate_runtime_config(
+        _production_settings(
+            runtime=RuntimeConfig(profile=RuntimeProfile.HOSTED_MANAGED),
+            embedding=EmbeddingConfig(
+                backend=EmbeddingBackend.COHERE,
+                model="embed-v4.0",
+                dimensions=1024,
+            ),
+            reranker={"cohere_api_key": "legacy-cohere-secret"},
+        )
+    )

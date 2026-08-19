@@ -39,9 +39,7 @@ async def _evaluate(
         raise PermanentJobError("Evaluation run was not found in the job Project.")
     configured_mode = evaluation_run.config_provenance.get(
         "configured_source_policy_mode",
-        evaluation_run.config_snapshot.get("configuration", {}).get(
-            "source_policy_mode", "off"
-        ),
+        evaluation_run.config_snapshot.get("configuration", {}).get("source_policy_mode", "off"),
     )
     captured_configuration = evaluation_run.config_snapshot.get("configuration", {})
     if not isinstance(captured_configuration, dict):

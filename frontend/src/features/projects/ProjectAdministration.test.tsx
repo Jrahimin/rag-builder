@@ -83,9 +83,17 @@ function effectiveConfig(activeRevisionId: string | null): EffectiveProjectAICon
         strategy: "hybrid",
         top_k: 10,
         rerank_enabled: true,
+        rerank_mode: "always",
         rerank_top_n: 20,
+        rerank_candidate_window: 25,
+        rerank_return_n: 8,
         rerank_score_threshold: null,
-        evidence_score_threshold: 0.5,
+        semantic_evidence_score_threshold: 0.5,
+        passage_scoring_enabled: false,
+        passage_window_tokens: 96,
+        passage_overlap_tokens: 24,
+        passage_min_tokens: 32,
+        query_translation_enabled: false,
       },
       chat: {
         max_context_chunks: 8,
@@ -93,8 +101,12 @@ function effectiveConfig(activeRevisionId: string | null): EffectiveProjectAICon
         max_history_messages: 10,
         include_citations: true,
         citation_excerpt_max_chars: 500,
-        minimum_query_token_coverage: 0.2,
+        evidence_gate_mode: "enforce",
+        evidence_score_mode: "whole_chunk",
+        lexical_corroboration_floor_score: 0.35,
+        lexical_corroboration_coverage: 0.2,
         minimum_claim_token_coverage: 0.2,
+        minimum_reranker_evidence_score: 0.4,
       },
       domain_instructions: "",
       prompt_profile: "default",
@@ -171,6 +183,93 @@ test("keeps inherited AI values sparse and can clear a Project override", async 
   expect(saved.llm).toEqual({});
   expect(saved).not.toHaveProperty("domain_instructions");
   expect(saved).not.toHaveProperty("source_policy_mode");
+});
+
+test("does not create an AI revision when every control inherits", async () => {
+  mockProjectShell();
+  vi.spyOn(operatorApiClient, "getProjectAIConfig").mockResolvedValue(effectiveConfig(null));
+  vi.spyOn(operatorApiClient, "getProjectAIConfigHistory").mockResolvedValue([]);
+  vi.spyOn(operatorApiClient, "getProviderCapabilities").mockResolvedValue([capability]);
+  const create = vi.spyOn(operatorApiClient, "createProjectAIConfig");
+
+  renderOperatorComponent(
+    <OperatorConsoleApp />,
+    `/projects?project=${projectFixture.id}&section=ai-config`,
+  );
+
+  await userEvent.type(
+    await screen.findByLabelText("Revision reason"),
+    "Should not create a revision",
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Create and activate revision" }));
+
+  expect(create).not.toHaveBeenCalled();
+  expect(await screen.findByText(/All fields inherit deployment defaults/i)).toBeInTheDocument();
+});
+
+test("saves query translation and rerank mode as sparse Project overrides", async () => {
+  mockProjectShell();
+  vi.spyOn(operatorApiClient, "getProjectAIConfig").mockResolvedValue(effectiveConfig(null));
+  vi.spyOn(operatorApiClient, "getProjectAIConfigHistory").mockResolvedValue([]);
+  vi.spyOn(operatorApiClient, "getProviderCapabilities").mockResolvedValue([capability]);
+  const create = vi.spyOn(operatorApiClient, "createProjectAIConfig").mockResolvedValue({
+    id: "22222222-2222-2222-2222-222222222222",
+    project_id: projectFixture.id,
+    revision_number: 1,
+    configuration_hash: "b".repeat(64),
+    configuration: {
+      retrieval: { query_translation_enabled: true, rerank_mode: "cross_language" },
+    },
+    reason: "Enable multilingual retrieval",
+    created_by: "test-admin",
+    restored_from_revision_id: null,
+    created_at: "2026-08-16T00:00:00Z",
+  });
+
+  renderOperatorComponent(
+    <OperatorConsoleApp />,
+    `/projects?project=${projectFixture.id}&section=ai-config`,
+  );
+
+  await userEvent.selectOptions(await screen.findByLabelText("Query translation"), "on");
+  await userEvent.selectOptions(screen.getByLabelText("Rerank mode"), "cross_language");
+  await userEvent.type(screen.getByLabelText("Revision reason"), "Enable multilingual retrieval");
+  await userEvent.click(screen.getByRole("button", { name: "Create and activate revision" }));
+
+  await waitFor(() => expect(create).toHaveBeenCalled());
+  const saved = create.mock.calls[0]?.[1];
+  expect(saved?.retrieval).toMatchObject({
+    query_translation_enabled: true,
+    rerank_mode: "cross_language",
+  });
+  expect(saved?.retrieval).not.toHaveProperty("rerank_enabled");
+});
+
+test("keeps a created Project when optional AI settings fail to save", async () => {
+  mockProjectShell();
+  vi.spyOn(operatorApiClient, "getProjectAIConfig").mockResolvedValue(effectiveConfig(null));
+  vi.spyOn(operatorApiClient, "getProjectAIConfigHistory").mockResolvedValue([]);
+  vi.spyOn(operatorApiClient, "getProviderCapabilities").mockResolvedValue([capability]);
+  const createProject = vi
+    .spyOn(operatorApiClient, "createProject")
+    .mockResolvedValue(projectFixture);
+  const createConfig = vi
+    .spyOn(operatorApiClient, "createProjectAIConfig")
+    .mockRejectedValue(new Error("revision conflict"));
+
+  renderOperatorComponent(<OperatorConsoleApp />, `/projects?project=${projectFixture.id}`);
+  await userEvent.click(await screen.findByRole("button", { name: "Create Project" }));
+  await userEvent.type(screen.getByLabelText("Project name"), "Pilot");
+  await userEvent.click(screen.getByText("Optional AI settings"));
+  await userEvent.selectOptions(screen.getByLabelText("Rerank mode"), "off");
+  await userEvent.click(screen.getByRole("button", { name: "Create" }));
+
+  await waitFor(() => expect(createProject).toHaveBeenCalled());
+  await waitFor(() => expect(createConfig).toHaveBeenCalled());
+  expect(
+    await screen.findByText(/Project created. AI settings were not saved/i),
+  ).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Open AI configuration" })).toBeInTheDocument();
 });
 
 test("uses provider capability rules for generation fields", async () => {
@@ -262,12 +361,8 @@ test("uploads a document into an existing source group or a modifying group", as
     offset: 0,
   });
   vi.spyOn(operatorApiClient, "getSourceState").mockResolvedValue(sourceState);
-  vi.spyOn(operatorApiClient, "getSourceRevisions").mockResolvedValue([
-    sourceItem.revision,
-  ]);
-  vi.spyOn(operatorApiClient, "getSourceActivations").mockResolvedValue([
-    sourceItem.activation,
-  ]);
+  vi.spyOn(operatorApiClient, "getSourceRevisions").mockResolvedValue([sourceItem.revision]);
+  vi.spyOn(operatorApiClient, "getSourceActivations").mockResolvedValue([sourceItem.activation]);
   const upload = vi.spyOn(operatorApiClient, "uploadDocument").mockResolvedValue(document);
 
   renderOperatorComponent(

@@ -72,6 +72,18 @@ async def test_semantic_retriever_returns_repository_candidates() -> None:
     assert call["top_k"] == 10
 
 
+async def test_semantic_retriever_exposes_query_vector_for_hybrid_backfill() -> None:
+    project_id = uuid.uuid4()
+    repository = _repository([])
+    retriever = SemanticRetriever(AsyncMock(), project_id, _embedder(), repository)
+
+    batch = await retriever.retrieve_batch(_context(project_id))
+
+    assert len(batch.query_vector) == _DIMENSIONS
+    assert batch.provider == "hash"
+    assert batch.model == "m"
+
+
 async def test_semantic_retriever_uses_hybrid_candidate_window() -> None:
     project_id = uuid.uuid4()
     repository = _repository([])

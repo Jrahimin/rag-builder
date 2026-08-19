@@ -35,6 +35,17 @@ function scalar(value: unknown, fallback = "—"): string {
     : fallback;
 }
 
+function regressionDetail(item: JsonRecord): string {
+  if (item.type === "acceptance_threshold") {
+    const direction = scalar(item.direction, "threshold");
+    return `${direction} ${scalar(item.threshold)}, observed ${scalar(item.current)}`;
+  }
+  if (item.previous !== undefined) {
+    return `${scalar(item.previous)} → ${scalar(item.current)}`;
+  }
+  return scalar(item.current);
+}
+
 export function EvidenceQuality() {
   const projects = useProjects();
   const [projectId, setProjectId] = useState("");
@@ -135,7 +146,7 @@ export function EvidenceQuality() {
             <MetricCard
               label="Recall@k"
               value={percent(activeMetrics.recall_at_k)}
-              detail={`Active profile · top ${run.top_k}`}
+              detail={`Recall@5 ${percent(activeMetrics.recall_at_5 ?? activeMetrics.recall_at_k)} · top ${run.top_k}`}
               icon={ShieldCheck}
             />
             <MetricCard
@@ -147,13 +158,13 @@ export function EvidenceQuality() {
             <MetricCard
               label="Groundedness"
               value={percent(activeMetrics.groundedness)}
-              detail={`Citation coverage ${percent(activeMetrics.citation_coverage)}`}
+              detail={`Citation coverage ${percent(activeMetrics.citation_coverage)} · Unverified claims ${percent(activeMetrics.unverified_claim_rate)}`}
               icon={ShieldCheck}
             />
             <MetricCard
               label="Retrieval p95"
               value={milliseconds(activeMetrics.latency_p95_ms)}
-              detail={`Refusal accuracy ${percent(activeMetrics.refusal_accuracy)}`}
+              detail={`False accepts ${percent(activeMetrics.false_accept_rate)} · False refusals ${percent(activeMetrics.false_refusal_rate)}`}
               icon={CheckCircle2}
             />
           </section>
@@ -270,9 +281,7 @@ export function EvidenceQuality() {
                       <AlertTriangle size={18} />
                       <div>
                         <strong>{String(item.metric)}</strong>
-                        <span>
-                          {String(item.previous)} → {String(item.current)}
-                        </span>
+                        <span>{regressionDetail(item)}</span>
                       </div>
                     </li>
                   ))}

@@ -312,14 +312,9 @@ export function useIndexBuilds(projectId: string) {
 
 export function useCorpusLifecycleAction(projectId: string) {
   const queryClient = useQueryClient();
-  return useMutation<
-    LifecycleJob | IndexBuild,
-    Error,
-    "reembed" | "reindex" | "reconcile" | "rollback"
-  >({
-    mutationFn: (action: "reembed" | "reindex" | "reconcile" | "rollback") => {
-      if (action === "reembed") return operatorApiClient.reembedCorpus(projectId);
-      if (action === "reindex") return operatorApiClient.reindexCorpus(projectId);
+  return useMutation<LifecycleJob | IndexBuild, Error, "rebuild" | "reconcile" | "rollback">({
+    mutationFn: (action: "rebuild" | "reconcile" | "rollback") => {
+      if (action === "rebuild") return operatorApiClient.reembedCorpus(projectId);
       if (action === "reconcile") return operatorApiClient.reconcileStorage(projectId);
       return operatorApiClient.rollbackIndexBuild(projectId);
     },
@@ -340,6 +335,7 @@ export function useActivateIndexBuild(projectId: string) {
     onSuccess: async () => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: operatorQueryKeys.indexBuilds(projectId) }),
+        queryClient.invalidateQueries({ queryKey: operatorQueryKeys.documents(projectId) }),
         queryClient.invalidateQueries({ queryKey: operatorQueryKeys.audit }),
       ]);
     },

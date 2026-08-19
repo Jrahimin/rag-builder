@@ -677,7 +677,7 @@ curl -s -X POST "$APE_BASE_URL/api/v1/projects/$PROJECT_ID/search" \
 
 | Field | Required | Notes |
 | ----- | -------- | ----- |
-| `query` | Yes | 1–4096 characters |
+| `query` | Yes | 1–32000 characters |
 | `top_k` | No | Default from deployment config |
 | `document_id` | No | Restrict to one document |
 | `metadata_filter` | No | Allowlisted keys only (`source`, `tags`, `ocr_confidence`, …) |

@@ -111,7 +111,7 @@ async def test_enqueue_embed_sets_status_and_enqueues(
     assert job.document_id == document.id
     assert job.payload == {
         "document_version": 1,
-        "embedding_set_version": 1,
+        "embedding_set_version": 2,
         "operation": "reembed",
     }
     job_submitter.dispatch.assert_awaited_once_with(result.job_id)

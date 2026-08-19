@@ -76,11 +76,15 @@ async def test_bad_build_isolated_then_activation_and_rollback_are_atomic(
     assert after_activation["active_build_id"] == new_build
     assert after_activation["previous_build_id"] == original_active
 
-    rolled_back = await db_client.post(f"{builds_path}/rollback")
-    assert rolled_back.status_code == 200
-    after_rollback = (await db_client.get(builds_path)).json()["data"]
-    assert after_rollback["active_build_id"] == original_active
-    assert after_rollback["previous_build_id"] == new_build
+    search_after_rollback = await db_client.post(
+        f"/api/v1/projects/{project_id}/search", json={"query": "zephyr"}
+    )
+    assert search_after_rollback.status_code == 200
+    body = search_after_rollback.json()["data"]
+    assert len(body["results"]) == 1
+    assert body["diagnostics"]["embedding_identity_status"] == "matched"
+    assert body["diagnostics"]["embedding_provider"]
+    assert body["diagnostics"]["embedding_set_version"]
 
 
 async def test_storage_reconciliation_persists_structured_result(

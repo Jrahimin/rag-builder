@@ -32,6 +32,7 @@ from app.platform.providers.contracts.document_parser import (
 from app.platform.providers.contracts.ocr import OcrImageInput, OCRProvider
 from app.platform.providers.errors import ProviderAuthenticationError, ProviderError
 from app.platform.providers.implementations.ocr_factory import get_ocr_provider
+from app.platform.providers.implementations.ocr_layout import ocr_result_to_elements
 from app.platform.providers.implementations.parsed_element_builder import finalize_elements
 from app.platform.providers.implementations.pdf_page_layout import accept_ocr_result
 from app.platform.providers.implementations.pdf_page_models import PdfPageExtraction
@@ -47,7 +48,7 @@ from app.platform.providers.implementations.pymupdf_page_extractor import (
 logger = structlog.get_logger(__name__)
 
 _WORKFLOW_NAME = "pdf_extraction_workflow"
-_WORKFLOW_VERSION = "1.1.0"
+_WORKFLOW_VERSION = "2.0.0"
 _KNOWN_TEXT_PARSERS = ("pymupdf", "pdfium")
 
 
@@ -412,6 +413,7 @@ def _build_page_record(state: _PageState) -> PageExtractionRecord:
             accepted_parser="none",
             extraction_method=ExtractionMethod.NATIVE_TEXT,
             attempts=tuple(state.attempts),
+            elements=(),
             char_count=0,
         )
 
@@ -426,6 +428,7 @@ def _build_page_record(state: _PageState) -> PageExtractionRecord:
             accepted_parser=best.parser_id,
             extraction_method=best.extraction_method,
             attempts=tuple(state.attempts),
+            elements=(),
             char_count=0,
         )
 
@@ -444,6 +447,7 @@ def _build_page_record(state: _PageState) -> PageExtractionRecord:
         accepted_parser=best.parser_id,
         extraction_method=best.extraction_method,
         attempts=tuple(state.attempts),
+        elements=best.elements,
         char_count=len(text),
     )
 
@@ -462,10 +466,9 @@ def _build_elements(page_records: list[PageExtractionRecord]) -> list[ParsedElem
         }
     ]
     for index, record in enumerate(accepted):
-        paragraphs = [part.strip() for part in record.text.split("\n\n") if part.strip()]
-        if not paragraphs:
-            paragraphs = [record.text.strip()]
-        for paragraph in paragraphs:
+        if record.elements:
+            elements.extend(record.elements)
+        else:
             metadata: dict[str, object] = {
                 "parse_quality_score": record.parse_quality_score,
                 "extraction_method": record.extraction_method.value,
@@ -481,7 +484,7 @@ def _build_elements(page_records: list[PageExtractionRecord]) -> list[ParsedElem
                         metadata["ocr_source"] = attempt.ocr_provider
             elements.append(
                 ParsedElement(
-                    text=normalize_for_storage(paragraph),
+                    text=normalize_for_storage(record.text),
                     element_type=ParsedElementType.PARAGRAPH,
                     page_start=record.page_number,
                     page_end=record.page_number,
@@ -548,21 +551,7 @@ def _ocr_page_candidate(
         parser_id="ocr",
         parser_version=None,
         text=result.text,
-        elements=tuple(
-            ParsedElement(
-                text=normalize_for_storage(paragraph),
-                element_type=ParsedElementType.PARAGRAPH,
-                page_start=page_number,
-                page_end=page_number,
-                metadata={
-                    "ocr_confidence": result.confidence,
-                    "ocr_source": result.provider_name,
-                    "content_source": "ocr_page",
-                },
-            )
-            for paragraph in [part.strip() for part in result.text.split("\n\n") if part.strip()]
-            or ([result.text.strip()] if result.text.strip() else [])
-        ),
+        elements=ocr_result_to_elements(result, page_number=page_number),
         quality_score=quality_score,
         extraction_method=ExtractionMethod.OCR,
         duration_ms=duration_ms,

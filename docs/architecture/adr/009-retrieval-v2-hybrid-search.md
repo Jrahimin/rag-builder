@@ -37,6 +37,38 @@ Ship **Retrieval v2** as the production retrieval path with:
 - With reranker disabled: fused RRF score.
 - With reranker enabled: reranker relevance score; fused score as tie-breaker.
 
+## Amendment: calibrated evidence and multilingual ranking (2026-08-17)
+
+`RetrievalResult.score` remains a ranking score only. Candidate and result DTOs now also carry
+`semantic_score`, always `1 - cosine_distance` against the active build. Keyword-only RRF
+candidates receive that score through a bounded pgvector lookup using the already-computed query
+vector. RRF and reranker scores must never be interpreted as semantic confidence.
+
+The production default remains hybrid BM25 + dense retrieval + RRF. The rerank stage stays
+enabled; its occupant is the `noop` pass-through so fused RRF order is retained,
+`rerank_status=passthrough`, and `score_scale=reciprocal_rank_fusion` is declared without a
+content-load round-trip. The lexical reranker remains an
+offline/provider-free comparison and uses query coverage instead of length-biased Jaccard.
+A true multilingual cross-encoder may replace the default only after a persisted quality and
+latency comparison; re-sorting by the same bi-encoder similarity is not treated as reranking.
+
+The dense baseline is `text-embedding-3-large` at 1024 dimensions, embedding set version 2.
+
+## Amendment: hosted_managed embedding-set 3 (2026-08-19)
+
+`hosted_managed` uses Cohere `embed-v4.0` at 1024 dimensions and `embedding_set_version=3`.
+`hosted_openai` compatibility stays on esv=2 + OpenAI large. Changing provider or model requires
+an immutable rebuild and atomic activation; mixing OpenAI and Cohere vectors in one active set is
+forbidden. Query embeddings follow the active build identity
+(`embedding_set_version`, provider, model, dimensions). Live settings are the
+target for the next rebuild. Unlabeled, mixed, or unmatched identity is a
+configuration error (`embedding_identity_unlabeled` /
+`embedding_identity_incompatible`), not an empty hit list. Missing credentials
+for the active identity return `embedding_provider_unavailable`. Translation and
+reranker failures still degrade. Rollback restores the retained build's identity.
+Migration `0026_multilingual_embeddings` changes the fixed pgvector contract and deliberately
+invalidates old retrieval builds.
+
 ### Production default
 
 - `.env.example` documents `APE_RETRIEVAL__STRATEGY=hybrid`.
@@ -48,6 +80,12 @@ Ship **Retrieval v2** as the production retrieval path with:
 - Existing `ready` documents require reindex (`POST .../index`) to populate keyword rows.
 - Chat diagnostics read deployment strategy from `RetrievalConfig` (metadata only).
 - `docs/features/retrieval_module.md`, `docs/api/retrieval_api.md`, and learning docs updated.
+
+## Amendment: multilingual retrieval v1 (2026-08-18)
+
+Production hybrid may add one validated target-language dense/lexical pair after the original
+query's dense and lexical branches. Fusion remains equal-weight RRF. A managed multilingual
+reranker may reorder the fused window; provider failure preserves RRF order. See ADR-018.
 
 ## Alternatives considered
 

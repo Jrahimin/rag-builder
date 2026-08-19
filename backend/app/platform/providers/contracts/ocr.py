@@ -8,6 +8,45 @@ from typing import Any
 
 
 @dataclass(frozen=True, slots=True)
+class OcrBoundingBox:
+    """Provider-neutral normalized page coordinates in the range 0..1."""
+
+    x_min: float
+    y_min: float
+    x_max: float
+    y_max: float
+
+
+@dataclass(frozen=True, slots=True)
+class OcrWord:
+    """One OCR word with optional geometry and confidence."""
+
+    text: str
+    bounding_box: OcrBoundingBox | None = None
+    confidence: float | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class OcrParagraph:
+    """A provider paragraph containing words in reading order."""
+
+    text: str
+    words: tuple[OcrWord, ...] = field(default_factory=tuple)
+    bounding_box: OcrBoundingBox | None = None
+    confidence: float | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class OcrBlock:
+    """A provider block containing paragraphs in reading order."""
+
+    text: str
+    paragraphs: tuple[OcrParagraph, ...] = field(default_factory=tuple)
+    bounding_box: OcrBoundingBox | None = None
+    confidence: float | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class OcrImageInput:
     """Image bytes submitted for OCR."""
 
@@ -25,6 +64,7 @@ class OcrPageResult:
     confidence: float
     provider_name: str
     lines: tuple[str, ...] = field(default_factory=tuple)
+    blocks: tuple[OcrBlock, ...] = field(default_factory=tuple)
     page_number: int | None = None
 
 

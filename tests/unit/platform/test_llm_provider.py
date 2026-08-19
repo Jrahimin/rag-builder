@@ -46,14 +46,10 @@ async def test_echo_stream_yields_tokens() -> None:
 
 
 def test_gemini_stream_preserves_incremental_text_and_final_usage() -> None:
-    first = _gemini_stream_chunk(
-        {"candidates": [{"content": {"parts": [{"text": "first "}]}}]}
-    )
+    first = _gemini_stream_chunk({"candidates": [{"content": {"parts": [{"text": "first "}]}}]})
     final = _gemini_stream_chunk(
         {
-            "candidates": [
-                {"content": {"parts": [{"text": "second"}]}, "finishReason": "STOP"}
-            ],
+            "candidates": [{"content": {"parts": [{"text": "second"}]}, "finishReason": "STOP"}],
             "usageMetadata": {"promptTokenCount": 7, "candidatesTokenCount": 2},
         }
     )
@@ -113,6 +109,38 @@ def test_openai_chat_model_keeps_temperature() -> None:
 
     assert body["max_completion_tokens"] == 32
     assert body["temperature"] == 0.7
+
+
+def test_gpt5_nano_requests_low_reasoning_effort_for_page_length_budgets() -> None:
+    provider = OpenAIChatProvider(
+        api_key="test-key",
+        model="gpt-5-nano",
+        provider_version="test",
+    )
+    body = provider._body(
+        [ChatMessage(role=ChatRole.USER, content="source tax")],
+        temperature=None,
+        max_tokens=2048,
+        stream=False,
+    )
+    assert body["max_completion_tokens"] == 2048
+    assert body["reasoning_effort"] == "low"
+    assert "temperature" not in body
+
+
+def test_non_reasoning_models_do_not_send_reasoning_effort() -> None:
+    provider = OpenAIChatProvider(
+        api_key="test-key",
+        model="gpt-4o-mini",
+        provider_version="test",
+    )
+    body = provider._body(
+        [ChatMessage(role=ChatRole.USER, content="hello")],
+        temperature=0.2,
+        max_tokens=32,
+        stream=False,
+    )
+    assert "reasoning_effort" not in body
 
 
 def test_stream_usage_is_only_sent_when_provider_capability_allows_it() -> None:
@@ -194,3 +222,47 @@ async def test_openai_error_exposes_only_safe_upstream_diagnostics(monkeypatch) 
     }
     assert "test-key-that-must-not-leak" not in str(caught.value.context)
     assert "private prompt" not in str(caught.value.context)
+
+
+async def test_openai_generate_reads_content_parts(monkeypatch: pytest.MonkeyPatch) -> None:
+    class SuccessClient:
+        async def __aenter__(self) -> SuccessClient:
+            return self
+
+        async def __aexit__(self, *_args: object) -> None:
+            return None
+
+        async def post(self, *_args: object, **_kwargs: object) -> httpx.Response:
+            return httpx.Response(
+                200,
+                json={
+                    "choices": [
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "content": [
+                                    {"type": "text", "text": "উৎসে কর"},
+                                ],
+                            },
+                            "finish_reason": "stop",
+                        }
+                    ],
+                    "usage": {"prompt_tokens": 8, "completion_tokens": 3},
+                },
+            )
+
+    client = SuccessClient()
+    monkeypatch.setattr(
+        "app.platform.providers.implementations.openai_compatible_chat.httpx.AsyncClient",
+        lambda **_kwargs: client,
+    )
+    provider = OpenAIChatProvider(
+        api_key="test-key",
+        model="gpt-5-nano",
+        provider_version="test",
+    )
+    result = await provider.generate(
+        [ChatMessage(role=ChatRole.USER, content="source tax")],
+        max_tokens=32,
+    )
+    assert result.content == "উৎসে কর"

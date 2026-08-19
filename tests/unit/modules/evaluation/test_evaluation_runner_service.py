@@ -11,7 +11,11 @@ import pytest
 from app.core.config import EvaluationConfig
 from app.modules.evaluation.errors import EvaluationCorpusChangedError
 from app.modules.evaluation.ports import QualityAnswer, QualityHit, QualitySearchResult
-from app.modules.evaluation.services.evaluation_runner_service import EvaluationRunnerService
+from app.modules.evaluation.schemas.evaluation import EvaluationCase
+from app.modules.evaluation.services.evaluation_runner_service import (
+    EvaluationRunnerService,
+    _case_result,
+)
 
 pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
 
@@ -107,8 +111,14 @@ class _Retrieval:
 
 
 class _Answerer:
-    async def answer(self, *, question: str, hits: list[QualityHit]) -> QualityAnswer:
-        del question
+    async def answer(
+        self,
+        *,
+        profile: str,
+        question: str,
+        hits: list[QualityHit],
+    ) -> QualityAnswer:
+        del profile, question
         if not hits:
             return QualityAnswer(
                 answer="insufficient",
@@ -223,3 +233,57 @@ async def test_runner_rejects_corpus_change_before_any_query() -> None:
         await runner.run(run.id)
 
     assert retrieval.calls == []
+
+
+async def test_acceptance_failures_include_filtered_correctness() -> None:
+    from app.modules.evaluation.services.evaluation_runner_service import _acceptance_failures
+
+    failures = _acceptance_failures(
+        {
+            "recall_at_k": 1.0,
+            "filtered_correctness": 0.0,
+            "false_refusal_rate": 0.0,
+            "false_accept_rate": 0.0,
+            "groundedness": 1.0,
+            "citation_coverage": 1.0,
+            "latency_p95_ms": 10.0,
+        },
+        EvaluationConfig(),
+    )
+
+    assert any(item["metric"] == "filtered_correctness" for item in failures)
+    assert all("previous" not in item for item in failures)
+
+
+async def test_case_result_resolves_relevant_evidence_after_rechunk() -> None:
+    relevant = _hit(uuid.uuid4(), "উৎসে কর সংগ্রহের খাত savings certificates")
+    irrelevant = _hit(uuid.uuid4(), "section 106 recipient rate")
+    case = EvaluationCase.model_validate(
+        {
+            "key": "gazette-table",
+            "kind": "cross_lingual",
+            "query": "tax deducted at source categories",
+            "relevant_evidence_phrases": ["উৎসে কর সংগ্রহের খাত"],
+            "expected_answer_tokens": ["savings"],
+        }
+    )
+    result = _case_result(
+        case,
+        "hybrid",
+        QualitySearchResult(
+            hits=[relevant, irrelevant],
+            latency_ms=10,
+            rerank_status="disabled",
+        ),
+        QualityAnswer(
+            answer="savings",
+            insufficient_evidence_reason=None,
+            grounded=True,
+            citation_coverage=1.0,
+            claims=[],
+        ),
+    )
+
+    assert result["rank_1_relevant"] is True
+    assert result["relevant_retrieved"] is True
+    assert result["accepted_without_relevant_evidence"] is False

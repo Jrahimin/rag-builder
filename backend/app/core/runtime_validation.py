@@ -8,7 +8,6 @@ from app.core.config import (
     LLMBackend,
     MalwareScannerBackend,
     OcrBackend,
-    RerankerBackend,
     RetrievalStrategy,
     RuntimeProfile,
     Settings,
@@ -55,9 +54,7 @@ def validate_runtime_config(settings: Settings) -> None:
     if settings.retrieval.strategy is not RetrievalStrategy.HYBRID:
         errors.append("production requires hybrid retrieval")
     if not settings.retrieval.rerank_enabled:
-        errors.append("production requires reranking to be enabled")
-    if settings.retrieval.reranker_backend is RerankerBackend.NOOP:
-        errors.append("noop reranking is not allowed in production")
+        errors.append("production requires the rerank stage to be enabled")
     if (
         settings.ocr.enabled
         and settings.ocr.backend is OcrBackend.NOOP
@@ -89,7 +86,18 @@ def validate_runtime_config(settings: Settings) -> None:
         _require_secret(errors, "APE_AUTH__ADMIN_JWT_SECRET", settings.auth.admin_jwt_secret)
         _require_secret(errors, "APE_AUTH__KEY_PEPPER", settings.auth.key_pepper)
 
-    if profile is RuntimeProfile.HOSTED_OPENAI:
+    if profile is RuntimeProfile.HOSTED_MANAGED:
+        if settings.llm.backend is not LLMBackend.OPENAI:
+            errors.append("hosted_managed requires APE_LLM__BACKEND=openai")
+        if settings.embedding.backend is not EmbeddingBackend.COHERE:
+            errors.append("hosted_managed requires APE_EMBEDDING__BACKEND=cohere")
+        _require_secret(errors, "APE_LLM__OPENAI_API_KEY", settings.llm.openai_api_key)
+        _require_secret(
+            errors,
+            "APE_COHERE__API_KEY",
+            settings.resolved_cohere_api_key() or None,
+        )
+    elif profile is RuntimeProfile.HOSTED_OPENAI:
         if settings.llm.backend is not LLMBackend.OPENAI:
             errors.append("hosted_openai requires APE_LLM__BACKEND=openai")
         if settings.embedding.backend is not EmbeddingBackend.OPENAI:
@@ -156,6 +164,8 @@ def _base_configuration_errors(settings: Settings) -> list[str]:
             errors.append("webhooks.delivery_lease_seconds must exceed delivery_timeout_seconds")
 
     embedding = settings.embedding
+    if embedding.backend is EmbeddingBackend.COHERE and not settings.resolved_cohere_api_key():
+        errors.append("APE_COHERE__API_KEY is required for Cohere embeddings")
     if embedding.backend is EmbeddingBackend.OPENAI and not embedding.openai_api_key:
         errors.append("APE_EMBEDDING__OPENAI_API_KEY is required for OpenAI embeddings")
     if embedding.backend is EmbeddingBackend.GEMINI and not embedding.gemini_api_key:
@@ -182,6 +192,14 @@ def _base_configuration_errors(settings: Settings) -> list[str]:
         and not (ocr.google_api_key or "").strip()
     ):
         errors.append("APE_OCR__GOOGLE_API_KEY is required for Google Vision OCR")
+    if (
+        settings.query_translation.enabled
+        and settings.query_translation.backend in {LLMBackend.OPENAI, LLMBackend.OPENAI_COMPATIBLE}
+        and not settings.llm.openai_api_key
+    ):
+        errors.append("APE_LLM__OPENAI_API_KEY is required when query translation uses OpenAI")
+    if settings.query_translation.enabled and settings.query_translation.backend is LLMBackend.ECHO:
+        errors.append("query translation cannot use the echo LLM backend")
     return errors
 
 

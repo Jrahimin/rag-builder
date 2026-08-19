@@ -82,7 +82,7 @@ def test_ci_fixture_declares_every_required_smoke_case() -> None:
     }
 
 
-def test_provider_free_retrieval_grounding_and_isolation_smoke() -> None:
+async def test_provider_free_retrieval_grounding_and_isolation_smoke() -> None:
     alpha = "alpha"
     beta = "beta"
     refund_chunk = "10000000-0000-0000-0000-000000000011"
@@ -156,7 +156,8 @@ def test_provider_free_retrieval_grounding_and_isolation_smoke() -> None:
         score=1.0,
         filename="policy.txt",
         chunk_hash="deterministic",
+        semantic_score=1.0,
     )
-    claims = grounding.map_claims("Credentials rotate every ninety days. [1]", [context])
+    claims = await grounding.map_claims("Credentials rotate every ninety days. [1]", [context])
     assert claims.grounded is True
     assert claims.citation_coverage == 1.0

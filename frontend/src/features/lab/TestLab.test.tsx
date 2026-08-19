@@ -1,4 +1,4 @@
-import { screen, within } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { vi } from "vitest";
 import {
@@ -182,6 +182,7 @@ test("marks expected search words pass and exposes active build and result metad
       rerank_status: "not_requested",
       duplicate_suppression_input_count: 1,
       duplicate_suppression_removed_count: 0,
+      diversity_backfilled_count: 0,
       source_metadata_generation: 0,
       source_policy_configured_mode: "off",
       source_policy_deployment_cap: "enforce",
@@ -224,6 +225,7 @@ test("marks expected search words as needs attention when no returned chunk cont
       rerank_status: "not_requested",
       duplicate_suppression_input_count: 1,
       duplicate_suppression_removed_count: 0,
+      diversity_backfilled_count: 0,
       source_metadata_generation: 0,
       source_policy_configured_mode: "off",
       source_policy_deployment_cap: "enforce",
@@ -337,6 +339,15 @@ test("renders grounded citations instead of inferring grounding from answer text
   expect(screen.getByText(/Refund requests are accepted/)).toBeInTheDocument();
 });
 
+test("allows grounded chat when an active build exists even if documents are still chunked", async () => {
+  mockLabBase({ documents: [{ ...documentFixture, status: "chunked" }] });
+  renderOperatorComponent(<OperatorConsoleApp />, `/lab?project=${projectFixture.id}&tab=messages`);
+  expect(await screen.findByRole("heading", { name: "Ask the corpus" })).toBeInTheDocument();
+  await waitFor(() => {
+    expect(screen.queryByText("No active searchable corpus")).not.toBeInTheDocument();
+  });
+});
+
 test("renders an explicit valid refusal when retrieval evidence is insufficient", async () => {
   mockLabBase();
   const conversationId = "dddddddd-dddd-dddd-dddd-dddddddddddd";
@@ -413,9 +424,7 @@ test("requires the exact filename before enabling irreversible purge and shows A
   );
   const purge = await screen.findByRole("button", { name: "Purge" });
   expect(purge).toBeDisabled();
-  expect(
-    screen.getByText(/Type the exact filename to enable Purge/),
-  ).toBeInTheDocument();
+  expect(screen.getByText(/Type the exact filename to enable Purge/)).toBeInTheDocument();
   await userEvent.type(screen.getByLabelText("Purge confirmation"), "wrong.txt");
   expect(purge).toBeDisabled();
   await userEvent.clear(screen.getByLabelText("Purge confirmation"));
@@ -528,9 +537,7 @@ test("uploads a file as the latest revision of an existing source", async () => 
       create_new_group: false,
       source_group_id: "66666666-6666-6666-6666-666666666666",
       source_role: "primary",
-      relationships: [
-        { relationship_type: "replaces", target_revision_id: revisionId },
-      ],
+      relationships: [{ relationship_type: "replaces", target_revision_id: revisionId }],
     }),
   );
 });

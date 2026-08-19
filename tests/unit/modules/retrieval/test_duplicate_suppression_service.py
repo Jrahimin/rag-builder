@@ -47,6 +47,7 @@ def test_suppression_preserves_ranked_order_and_removes_exact_content() -> None:
 
     assert [item.chunk_id for item in selected.results] == [ranked[0].chunk_id, ranked[2].chunk_id]
     assert selected.suppressed_by_reason == {"content_hash": 1}
+    assert selected.backfilled_count == 0
 
 
 def test_suppression_limits_documents_and_sections_without_mutating_metadata() -> None:
@@ -64,6 +65,58 @@ def test_suppression_limits_documents_and_sections_without_mutating_metadata() -
 
     selected = DuplicateSuppressionService(config).select(ranked, limit=6)
 
-    assert [item.content for item in selected.results] == ["one", "two", "four", "six"]
-    assert selected.suppressed_by_reason == {"document_limit": 1, "section_limit": 1}
+    assert [item.content for item in selected.results] == [
+        "one",
+        "two",
+        "three",
+        "four",
+        "five",
+        "six",
+    ]
+    assert selected.suppressed_by_reason == {}
+    assert selected.deferred_by_reason == {"document_limit": 1, "section_limit": 1}
+    assert selected.backfilled_count == 2
     assert selected.results[0].metadata == {"section_title": "Refunds"}
+
+
+def test_single_document_backfills_to_requested_limit_without_weakening_dedup() -> None:
+    document_id = uuid.uuid4()
+    ranked = [
+        _result(document_id=document_id, chunk_index=index, content=f"unique-{index}")
+        for index in range(7)
+    ]
+    ranked.append(_result(document_id=document_id, chunk_index=7, content="unique-6"))
+    config = RetrievalConfig(max_chunks_per_document=4, max_chunks_per_section=2)
+
+    selected = DuplicateSuppressionService(config).select(ranked, limit=7)
+
+    assert [item.content for item in selected.results] == [f"unique-{index}" for index in range(7)]
+    assert selected.backfilled_count == 3
+    assert selected.suppressed_by_reason == {"content_hash": 1}
+
+
+def test_few_document_corpus_backfills_without_dropping_later_ranks() -> None:
+    first_doc = uuid.uuid4()
+    second_doc = uuid.uuid4()
+    ranked = [
+        _result(document_id=first_doc, chunk_index=0, content="first-a"),
+        _result(document_id=first_doc, chunk_index=1, content="first-b"),
+        _result(document_id=first_doc, chunk_index=2, content="first-c"),
+        _result(document_id=second_doc, chunk_index=0, content="second-a"),
+        _result(document_id=second_doc, chunk_index=1, content="second-b"),
+        _result(document_id=second_doc, chunk_index=2, content="second-c"),
+    ]
+    config = RetrievalConfig(max_chunks_per_document=2, max_chunks_per_section=2)
+
+    selected = DuplicateSuppressionService(config).select(ranked, limit=5)
+
+    assert [item.content for item in selected.results] == [
+        "first-a",
+        "first-b",
+        "first-c",
+        "second-a",
+        "second-b",
+    ]
+    assert selected.deferred_by_reason == {"document_limit": 2}
+    assert selected.backfilled_count == 1
+    assert selected.suppressed_by_reason == {"document_limit": 1}

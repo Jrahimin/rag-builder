@@ -29,8 +29,14 @@ def _build_llm_provider(
     *,
     backend: LLMBackend,
     model: str,
+    request_timeout_seconds: float | None = None,
 ) -> BaseLLMProvider:
     llm = cfg.llm
+    timeout = (
+        request_timeout_seconds
+        if request_timeout_seconds is not None
+        else llm.request_timeout_seconds
+    )
     describe_llm_capability(backend.value, model)
     if backend is LLMBackend.ECHO:
         return EchoLLMProvider(model=model, provider_version=llm.provider_version)
@@ -39,7 +45,7 @@ def _build_llm_provider(
             base_url=llm.ollama_base_url,
             model=model,
             provider_version=llm.provider_version,
-            request_timeout_seconds=llm.request_timeout_seconds,
+            request_timeout_seconds=timeout,
         )
     if backend is LLMBackend.OPENAI:
         if not llm.openai_api_key:
@@ -50,7 +56,7 @@ def _build_llm_provider(
             base_url=llm.openai_base_url,
             model=model,
             provider_version=llm.provider_version,
-            request_timeout_seconds=llm.request_timeout_seconds,
+            request_timeout_seconds=timeout,
         )
     if backend is LLMBackend.OPENAI_COMPATIBLE:
         if not llm.openai_api_key:
@@ -62,7 +68,7 @@ def _build_llm_provider(
             base_url=llm.openai_base_url,
             model=model,
             provider_version=llm.provider_version,
-            request_timeout_seconds=llm.request_timeout_seconds,
+            request_timeout_seconds=timeout,
         )
     if backend is LLMBackend.GEMINI:
         if not llm.gemini_api_key:
@@ -73,7 +79,7 @@ def _build_llm_provider(
             base_url=llm.gemini_base_url,
             model=model,
             provider_version=llm.provider_version,
-            request_timeout_seconds=llm.request_timeout_seconds,
+            request_timeout_seconds=timeout,
         )
     msg = f"Unsupported LLM backend: {backend!r}"
     raise ProviderError(msg, provider_name="llm_factory")
@@ -84,6 +90,7 @@ def create_llm_provider(
     *,
     backend: LLMBackend | None = None,
     model: str | None = None,
+    request_timeout_seconds: float | None = None,
 ) -> BaseLLMProvider:
     """Build an LLM provider for deployment defaults or per-conversation overrides."""
     cfg = settings.llm
@@ -91,6 +98,7 @@ def create_llm_provider(
         settings,
         backend=backend or cfg.backend,
         model=model or cfg.model,
+        request_timeout_seconds=request_timeout_seconds,
     )
 
 

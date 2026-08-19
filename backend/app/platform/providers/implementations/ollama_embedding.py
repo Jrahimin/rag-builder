@@ -7,6 +7,7 @@ import httpx
 from app.platform.providers.contracts.embedding import (
     BaseEmbeddingProvider,
     EmbeddingBatchResult,
+    EmbeddingPurpose,
     coerce_embedding_vector,
 )
 from app.platform.providers.errors import ProviderError
@@ -44,7 +45,13 @@ class OllamaEmbeddingProvider(BaseEmbeddingProvider):
     def provider_version(self) -> str:
         return self._provider_version
 
-    async def embed_texts(self, texts: list[str]) -> EmbeddingBatchResult:
+    async def embed_texts(
+        self,
+        texts: list[str],
+        *,
+        purpose: EmbeddingPurpose = EmbeddingPurpose.DOCUMENT,
+    ) -> EmbeddingBatchResult:
+        del purpose
         vectors: list[list[float]] = []
         async with httpx.AsyncClient(timeout=120.0) as client:
             for text in texts:

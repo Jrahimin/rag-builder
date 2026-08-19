@@ -31,6 +31,7 @@ from app.modules.conversations.schemas.message import (
 )
 from app.platform.domain.lifecycle_service import get_or_raise, require_not_deleted
 from app.platform.domain.transactions import commit_refresh
+from app.platform.providers.contracts.embedding import BaseEmbeddingProvider
 from app.platform.providers.contracts.llm import BaseLLMProvider, ChatMessage, ChatUsage
 from app.platform.providers.errors import ProviderError
 
@@ -58,6 +59,7 @@ class _PreparedTurn:
     retrieval_ms: int
     evidence: EvidenceDecision
     retrieval_diagnostics: dict[str, Any]
+    grounding: GroundingService
 
 
 class ChatService:
@@ -75,6 +77,7 @@ class ChatService:
         llm_config: LLMConfig,
         *,
         resolve_llm: LLMProviderResolver,
+        embedder: BaseEmbeddingProvider | None = None,
         config_snapshot_id: uuid.UUID | None = None,
         config_provenance: dict[str, Any] | None = None,
         domain_instructions: str = "",
@@ -95,7 +98,10 @@ class ChatService:
         self._prompt_profile = prompt_profile
         self._context_builder = ContextBuilder(chat_config)
         self._prompt_builder = PromptBuilder()
-        self._grounding = GroundingService(chat_config)
+        self._grounding = GroundingService(
+            chat_config,
+            embedder=embedder,
+        )
 
     async def send_message(
         self,
@@ -120,7 +126,7 @@ class ChatService:
             request=request,
         )
 
-        if not prepared.evidence.sufficient:
+        if self._grounding.blocks_generation(prepared.evidence):
             assistant_message = await self._persist_assistant_turn(
                 conversation=conversation,
                 prepared=prepared,
@@ -137,6 +143,7 @@ class ChatService:
                 input_tokens_logged=0,
                 output_tokens_logged=0,
                 insufficient_reason=prepared.evidence.reason,
+                generation_ran=False,
             )
             return ChatTurnResponse(
                 user_message=user_message_response,
@@ -186,6 +193,7 @@ class ChatService:
             streamed=False,
             input_tokens_logged=completion.usage.input_tokens,
             output_tokens_logged=completion.usage.output_tokens,
+            generation_ran=True,
         )
 
         return ChatTurnResponse(
@@ -219,7 +227,7 @@ class ChatService:
         if should_cancel is not None and await should_cancel():
             return
 
-        if not prepared.evidence.sufficient:
+        if self._grounding.blocks_generation(prepared.evidence):
             content = self._chat_config.insufficient_evidence_message
             yield content
             assistant_message = await self._persist_assistant_turn(
@@ -238,6 +246,7 @@ class ChatService:
                 input_tokens_logged=0,
                 output_tokens_logged=0,
                 insufficient_reason=prepared.evidence.reason,
+                generation_ran=False,
             )
             yield self._done_event(assistant_message, conversation)
             return
@@ -298,6 +307,7 @@ class ChatService:
             streamed=True,
             input_tokens_logged=final_usage.input_tokens if final_usage is not None else None,
             output_tokens_logged=final_usage.output_tokens if final_usage is not None else None,
+            generation_ran=True,
         )
 
         yield self._done_event(assistant_message, conversation)
@@ -321,7 +331,17 @@ class ChatService:
         chunks = retrieval_result.chunks
         retrieval_ms = int((time.perf_counter() - retrieval_started) * 1000)
         selected = self._context_builder.select(chunks)
-        evidence = self._grounding.assess(request.content, selected)
+        query_embedder = getattr(self._retrieval, "query_embedder", None)
+        grounding = (
+            GroundingService(self._chat_config, embedder=query_embedder)
+            if query_embedder is not None
+            else self._grounding
+        )
+        evidence = grounding.assess(
+            request.content,
+            selected,
+            rerank_status=str(retrieval_result.diagnostics.get("rerank_status") or "") or None,
+        )
 
         prompt_version = (
             conversation.system_prompt_version or self._chat_config.system_prompt_version
@@ -361,6 +381,7 @@ class ChatService:
             retrieval_ms=retrieval_ms,
             evidence=evidence,
             retrieval_diagnostics=retrieval_result.diagnostics,
+            grounding=grounding,
         )
 
     async def _persist_assistant_turn(
@@ -381,9 +402,10 @@ class ChatService:
         input_tokens_logged: int | None,
         output_tokens_logged: int | None,
         insufficient_reason: object | None = None,
+        generation_ran: bool = False,
     ) -> Message:
         reason_value = str(insufficient_reason) if insufficient_reason is not None else None
-        grounding = self._grounding.map_claims(content, prepared.selected)
+        grounding = await prepared.grounding.map_claims(content, prepared.selected)
         if reason_value is not None:
             grounding = type(grounding)(claims=[], grounded=False, citation_coverage=1.0)
         metadata = self._build_metadata(
@@ -393,14 +415,32 @@ class ChatService:
             retrieved_count=len(prepared.chunks),
             selected_count=len(prepared.selected),
             retrieval_diagnostics=prepared.retrieval_diagnostics,
+            selected_chunks=prepared.selected,
+        )
+        evidence_gate = self._grounding.diagnostics(
+            prepared.evidence,
+            blocked_generation=reason_value is not None,
+            generation_ran=generation_ran,
         )
         metadata.update(
             {
                 "grounded": grounding.grounded,
                 "citation_coverage": grounding.citation_coverage,
-                "evidence_best_score": prepared.evidence.best_score,
+                "unverified_claim_rate": grounding.unverified_claim_rate,
+                "best_semantic_evidence_score": prepared.evidence.winning_semantic_score,
+                "best_evidence_score": prepared.evidence.best_score,
+                "evidence_score_method": prepared.evidence.evidence_score_method,
+                "winning_evidence_chunk_id": (
+                    str(prepared.evidence.winning_chunk_id)
+                    if prepared.evidence.winning_chunk_id is not None
+                    else None
+                ),
+                "winning_evidence_char_start": prepared.evidence.evidence_char_start,
+                "winning_evidence_char_end": prepared.evidence.evidence_char_end,
                 "query_evidence_token_coverage": prepared.evidence.query_token_coverage,
+                "lexically_corroborated": prepared.evidence.lexically_corroborated,
                 "insufficient_evidence_reason": reason_value,
+                "evidence_gate": evidence_gate,
             }
         )
         citations = (
@@ -441,6 +481,9 @@ class ChatService:
             "streamed": streamed,
             "grounded": grounding.grounded,
             "insufficient_evidence_reason": reason_value,
+            "evidence_gate_mode": evidence_gate["mode"],
+            "evidence_gate_sufficient": evidence_gate["sufficient"],
+            "generation_ran": generation_ran,
         }
         if input_tokens_logged is not None:
             log_kwargs["input_tokens"] = input_tokens_logged
@@ -469,6 +512,7 @@ class ChatService:
             retrieved_count=len(prepared.chunks),
             selected_count=len(prepared.selected),
             retrieval_diagnostics=prepared.retrieval_diagnostics,
+            selected_chunks=prepared.selected,
         )
         metadata.update(
             {
@@ -618,16 +662,15 @@ class ChatService:
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             prompt_version=prompt_version,
-            embedding_set_version=self._retrieval_config.embedding_set_version,
+            embedding_set_version=_optional_int(metadata.get("embedding_set_version"))
+            or self._retrieval_config.embedding_set_version,
             provider=provider_override,
             model=model_override,
             config_snapshot_id=self._config_snapshot_id,
             config_provenance=self._config_provenance,
             message_metadata=metadata,
             index_build_id=_optional_uuid(metadata.get("index_build_id")),
-            source_metadata_generation=_optional_int(
-                metadata.get("source_metadata_generation")
-            ),
+            source_metadata_generation=_optional_int(metadata.get("source_metadata_generation")),
             retrieval_latency_ms=_optional_int(metadata.get("retrieval_time_ms")),
             provider_latency_ms=_optional_int(metadata.get("generation_time_ms")),
             total_latency_ms=_optional_int(metadata.get("total_time_ms")),
@@ -661,6 +704,7 @@ class ChatService:
         retrieved_count: int,
         selected_count: int,
         retrieval_diagnostics: dict[str, Any],
+        selected_chunks: list[ContextChunk],
     ) -> dict[str, Any]:
         return {
             "retrieval_time_ms": retrieval_ms,
@@ -670,18 +714,88 @@ class ChatService:
             "retrieval_top_k": self._chat_config.retrieval_top_k,
             "retrieved_chunk_count": retrieved_count,
             "selected_chunk_count": selected_count,
+            "retrieval_trace": {
+                "candidates": retrieval_diagnostics.get("candidate_trace", []),
+                "retrieval_selected": retrieval_diagnostics.get("selected_trace", []),
+                "context_selected": [
+                    {
+                        "rank": index,
+                        "chunk_id": str(chunk.chunk_id),
+                        "document_id": str(chunk.document_id),
+                        "chunk_index": chunk.chunk_index,
+                        "score": chunk.score,
+                        "rank_score": chunk.rank_score,
+                        "semantic_score": chunk.semantic_score,
+                        "rerank_relevance_score": chunk.rerank_relevance_score,
+                        "passage_semantic_score": chunk.passage_semantic_score,
+                        "passage_score_method": chunk.passage_score_method,
+                    }
+                    for index, chunk in enumerate(selected_chunks, start=1)
+                ],
+                "suppression": {
+                    "input_count": retrieval_diagnostics.get(
+                        "duplicate_suppression_input_count", 0
+                    ),
+                    "removed_count": retrieval_diagnostics.get(
+                        "duplicate_suppression_removed_count", 0
+                    ),
+                    "reasons": retrieval_diagnostics.get("duplicate_suppression_reasons", {}),
+                    "diversity_deferred_reasons": retrieval_diagnostics.get(
+                        "diversity_deferred_reasons", {}
+                    ),
+                    "diversity_backfilled_count": retrieval_diagnostics.get(
+                        "diversity_backfilled_count", 0
+                    ),
+                },
+                "rerank": {
+                    "status": retrieval_diagnostics.get("rerank_status"),
+                    "provider": retrieval_diagnostics.get("reranker_provider"),
+                    "model": retrieval_diagnostics.get("reranker_model"),
+                    "version": retrieval_diagnostics.get("reranker_version"),
+                    "score_scale": retrieval_diagnostics.get("reranker_score_scale"),
+                    "latency_ms": retrieval_diagnostics.get("reranker_latency_ms"),
+                    "skipped_reason": (
+                        retrieval_diagnostics.get("rerank_status")
+                        if retrieval_diagnostics.get("rerank_status")
+                        in {"skipped_same_language", "unavailable", "disabled", "passthrough"}
+                        else None
+                    ),
+                },
+                "rerank_status": retrieval_diagnostics.get("rerank_status"),
+                "reranker_score_scale": retrieval_diagnostics.get("reranker_score_scale"),
+                "translation": {
+                    "status": retrieval_diagnostics.get("translation_status"),
+                    "failure_reason": retrieval_diagnostics.get("translation_failure_reason"),
+                    "skipped_reason": retrieval_diagnostics.get("skipped_reason"),
+                    "source_language": retrieval_diagnostics.get("translation_source_language"),
+                    "target_language": retrieval_diagnostics.get("translation_target_language"),
+                    "query_language_profile": retrieval_diagnostics.get("query_language_profile"),
+                    "translated_query": retrieval_diagnostics.get("translated_query"),
+                    "provider": retrieval_diagnostics.get("translation_provider"),
+                    "model": retrieval_diagnostics.get("translation_model"),
+                    "prompt_version": retrieval_diagnostics.get("translation_prompt_version"),
+                    "latency_ms": retrieval_diagnostics.get("translation_latency_ms"),
+                    "usage": retrieval_diagnostics.get("translation_usage") or {},
+                },
+                "executed_branches": retrieval_diagnostics.get("executed_branches") or [],
+                "skipped_branches": retrieval_diagnostics.get("skipped_branches") or [],
+                "branch_candidate_counts": retrieval_diagnostics.get("branch_candidate_counts")
+                or {},
+            },
             "index_build_id": retrieval_diagnostics.get("index_build_id"),
-            "source_metadata_generation": retrieval_diagnostics.get(
-                "source_metadata_generation"
-            ),
+            "embedding_set_version": retrieval_diagnostics.get("embedding_set_version"),
+            "embedding": {
+                "identity_status": retrieval_diagnostics.get("embedding_identity_status"),
+                "provider": retrieval_diagnostics.get("embedding_provider"),
+                "model": retrieval_diagnostics.get("embedding_model"),
+                "dimensions": retrieval_diagnostics.get("embedding_dimensions"),
+                "set_version": retrieval_diagnostics.get("embedding_set_version"),
+            },
+            "source_metadata_generation": retrieval_diagnostics.get("source_metadata_generation"),
             "source_policy": {
-                "configured_mode": retrieval_diagnostics.get(
-                    "source_policy_configured_mode"
-                ),
+                "configured_mode": retrieval_diagnostics.get("source_policy_configured_mode"),
                 "effective_mode": retrieval_diagnostics.get("source_policy_effective_mode"),
-                "deployment_cap": retrieval_diagnostics.get(
-                    "source_policy_deployment_cap"
-                ),
+                "deployment_cap": retrieval_diagnostics.get("source_policy_deployment_cap"),
                 "status": retrieval_diagnostics.get("source_policy_status"),
                 "exclusion_reasons": retrieval_diagnostics.get(
                     "source_policy_exclusion_reasons", {}

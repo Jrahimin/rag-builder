@@ -17,6 +17,33 @@ from pydantic import BaseModel, Field
 
 type JobProgressCallback = Callable[[str, int], Awaitable[None]]
 
+_INDEX_OUTPUT_EXCLUDED_RETRIEVAL_KEYS = frozenset(
+    {
+        "default_top_k",
+        "score_threshold",
+        "strategy",
+        "semantic_candidate_top_k",
+        "keyword_candidate_top_k",
+        "hnsw_ef_search",
+        "rrf_k",
+        "semantic_weight",
+        "keyword_weight",
+        "rerank_enabled",
+        "rerank_top_n",
+        "rerank_candidate_window",
+        "rerank_return_n",
+        "rerank_score_threshold",
+        "reranker_backend",
+        "max_chunks_per_document",
+        "max_chunks_per_section",
+        "deduplicate_by_content_hash",
+        "passage_scoring_enabled",
+        "passage_window_tokens",
+        "passage_overlap_tokens",
+        "passage_min_tokens",
+    }
+)
+
 
 class RetryPolicy(BaseModel):
     """Durable execution retry limit stored on :class:`JobRun`."""
@@ -88,7 +115,7 @@ class JobConfiguration(BaseModel):
         retrieval = {
             key: value
             for key, value in self.index["retrieval"].items()
-            if key != "default_top_k"
+            if key not in _INDEX_OUTPUT_EXCLUDED_RETRIEVAL_KEYS
         }
         payload = json.dumps(
             {

@@ -12,12 +12,16 @@ from app.core.config import MalwareScannerBackend, OcrBackend, Settings
 from app.core.logging import get_logger
 from app.platform.db.session import Database, PgVectorUnavailableError
 from app.platform.infra.connectivity.redis import RedisConnectivity
+from app.platform.providers.contracts.embedding import EmbeddingPurpose
 from app.platform.providers.contracts.llm import ChatMessage, ChatRole
 from app.platform.providers.contracts.reranker import RerankCandidate, RerankRequest
 from app.platform.providers.contracts.storage import BaseStorageProvider
 from app.platform.providers.implementations.embedding_factory import create_embedding_provider
 from app.platform.providers.implementations.llm_factory import create_llm_provider
 from app.platform.providers.implementations.ocr_factory import get_ocr_provider
+from app.platform.providers.implementations.query_translation_factory import (
+    create_query_translation_provider,
+)
 from app.platform.providers.implementations.reranker_factory import create_reranker_provider
 from app.platform.system.schemas import DependencyHealth, DependencyState, PreflightStatus
 
@@ -123,6 +127,13 @@ class StartupPreflightService:
                 action="Verify the configured reranker path.",
                 failure_state=DependencyState.DEGRADED,
             ),
+            self._check(
+                "query_translation_provider",
+                self._check_query_translation,
+                check_timeout=provider_timeout,
+                action="Verify query-translation construction when enabled.",
+                failure_state=DependencyState.DEGRADED,
+            ),
             self._check_ocr(failure_state=DependencyState.DEGRADED),
         )
         core_checks = [check for check in core.checks if not check.name.endswith("_provider")]
@@ -177,7 +188,10 @@ class StartupPreflightService:
 
     async def _check_embedding(self) -> None:
         provider = create_embedding_provider(self._settings)
-        result = await provider.embed_texts(["runtime capability preflight"])
+        result = await provider.embed_texts(
+            ["runtime capability preflight"],
+            purpose=EmbeddingPurpose.DOCUMENT,
+        )
         expected = self._settings.embedding.dimensions
         if result.dimensions != expected or any(
             len(vector) != expected for vector in result.vectors
@@ -211,6 +225,11 @@ class StartupPreflightService:
                 top_n=1,
             )
         )
+
+    async def _check_query_translation(self) -> None:
+        if not self._settings.query_translation.enabled:
+            return
+        create_query_translation_provider(self._settings)
 
     async def _check_malware_scanner(self) -> None:
         if self._settings.malware_scan.backend is not MalwareScannerBackend.CLAMAV:
@@ -293,6 +312,7 @@ class StartupPreflightService:
                 "embedding_provider",
                 "llm_provider",
                 "reranker_provider",
+                "query_translation_provider",
                 "ocr_provider",
             )
         ]

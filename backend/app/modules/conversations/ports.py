@@ -19,6 +19,16 @@ class ContextChunk:
     score: float
     filename: str
     chunk_hash: str
+    semantic_score: float | None = None
+    rank_score: float | None = None
+    rerank_relevance_score: float | None = None
+    evidence_relevance_score: float | None = None
+    evidence_score_method: str | None = None
+    evidence_calibration_id: str | None = None
+    passage_semantic_score: float | None = None
+    passage_char_start: int | None = None
+    passage_char_end: int | None = None
+    passage_score_method: str | None = None
     page_number: int | None = None
     char_start: int | None = None
     char_end: int | None = None

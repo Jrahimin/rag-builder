@@ -51,6 +51,7 @@ async def test_ready_reports_dependency_breakdown(client: AsyncClient) -> None:
         "embedding_provider",
         "llm_provider",
         "reranker_provider",
+        "query_translation_provider",
         "ocr_provider",
     }
     provider_checks = [

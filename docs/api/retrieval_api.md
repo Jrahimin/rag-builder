@@ -51,7 +51,7 @@ default is `hybrid`; semantic remains an explicit comparison/rollback strategy.
 
 | Field | Required | Notes |
 | ----- | -------- | ----- |
-| `query` | yes | 1–4096 characters |
+| `query` | yes | 1–32000 characters |
 | `top_k` | no | Default from `APE_RETRIEVAL__DEFAULT_TOP_K` |
 | `document_id` | no | Restrict hits to one document |
 | `metadata_filter` | no | Allowlisted keys only; others stripped |
@@ -64,8 +64,11 @@ default is `hybrid`; semantic remains an explicit comparison/rollback strategy.
 thresholds. Deprecated `rerank` use appears in `diagnostics.compatibility_diagnostics`; strict mode
 returns `request_policy_override_forbidden`.
 
-**Score semantics:** semantic-only results use `1 - cosine_distance`. Hybrid
-results expose the final RRF or reranker score.
+**Score semantics:** `score` is used only to order results: semantic-only returns
+`1 - cosine_distance`, while hybrid returns the final RRF or reranker score.
+`semantic_score` is always calibrated as `1 - cosine_distance` against the active
+build and is the only score allowed to drive evidence sufficiency. RRF and reranker
+scores are not confidence probabilities.
 
 **Response:**
 
@@ -81,13 +84,17 @@ results expose the final RRF or reranker score.
         "document_id": "…",
         "chunk_index": 0,
         "content": "…",
-        "score": 0.87,
+        "score": 0.0317,
+        "semantic_score": 0.68,
         "filename": "handbook.txt",
         "page_number": 1,
         "char_start": 0,
         "char_end": 120,
         "metadata": {
-          "retrieval_source": "rerank",
+          "retrieval_source": "hybrid",
+          "rerank_status": "passthrough",
+          "reranker_provider": "noop",
+          "reranker_score_scale": "reciprocal_rank_fusion",
           "source_revision_id": "…",
           "source_group_id": "…",
           "source_title": "Refund policy",
@@ -103,10 +110,35 @@ results expose the final RRF or reranker score.
       "strategy": "hybrid",
       "duration_ms": 42,
       "rerank_requested": true,
-      "rerank_status": "applied",
-      "reranker_provider": "lexical",
-      "reranker_model": "lexical-overlap",
+      "rerank_status": "passthrough",
+      "reranker_provider": "noop",
+      "reranker_model": "noop",
       "reranker_version": "1",
+      "reranker_score_scale": "reciprocal_rank_fusion",
+      "best_semantic_score": 0.68,
+      "query_language_profile": "latin_ambiguous",
+      "translation_status": "applied",
+      "translation_source_language": "en",
+      "translation_target_language": "bn",
+      "translation_provider": "openai",
+      "translation_model": "gpt-5-nano",
+      "translated_query": "উৎসে কর সংগ্রহের খাত",
+      "executed_branches": [
+        "original_dense",
+        "original_lexical",
+        "translated_dense:bn",
+        "translated_lexical:bn"
+      ],
+      "selected_trace": [
+        {
+          "rank": 1,
+          "chunk_id": "…",
+          "rrf_score": 0.0475,
+          "original_dense": { "rank": 8, "score": 0.18, "rrf": 0.0147 },
+          "translated_dense": { "branch_id": "translated_dense:bn", "rank": 1, "score": 0.71, "rrf": 0.0164 },
+          "translated_lexical": { "branch_id": "translated_lexical:bn", "rank": 1, "score": 12.4, "rrf": 0.0164 }
+        }
+      ],
       "index_build_id": "…",
       "source_metadata_generation": 12,
       "source_policy_configured_mode": "enforce",
@@ -121,8 +153,16 @@ results expose the final RRF or reranker score.
 }
 ```
 
-On reranker failure the search still returns fused RRF order and diagnostics report
-`rerank_status=unavailable`; quality runs count this path against candidate promotion.
+The production default keeps fused RRF order through the enabled rerank stage with a
+`noop` occupant (`rerank_status=passthrough`, `reranker_score_scale=reciprocal_rank_fusion`).
+Pass-through does not load chunk text or rewrite ranking scores. Hybrid search always runs
+original dense and original lexical branches; one target-language translation pair is added only
+when query translation is enabled and the active build has language inventory. The translated query
+is returned on `diagnostics` (and chat `metadata.retrieval_trace.translation`) so operators can
+compare original vs translated branch ranks. It is not copied into citations, evidence excerpts, or
+application logs. On an enabled reranker failure, search still returns fused
+RRF order and diagnostics report `rerank_status=unavailable`; quality runs count this path against
+candidate promotion.
 
 Semantic and keyword SQL join the same Knowledge-owned source scope captured at one Project source
 generation. `off` preserves legacy results, `observe` reports decisions without filtering, and
@@ -138,10 +178,11 @@ carries `source_policy_exclusion_reason` in its metadata or citation provenance.
 historical `as_of`, a governed document with no revision effective on that date is counted as
 `not_applicable` rather than being treated as neutral legacy metadata.
 
-## Re-embed after the pgvector cutover
+## Re-embed after an embedding dimension change
 
-The native-vector migration returns documents with legacy packed embeddings to
-`chunked`. Rebuild them through the unchanged endpoints:
+Migration `0026` changes the deployment-wide column to `vector(1024)`, clears
+incompatible retrieval artifacts, invalidates builds/pointers, and returns affected
+documents to `chunked`. Rebuild them through the unchanged lifecycle endpoints:
 
 1. `POST /api/v1/projects/{project_id}/documents/{document_id}/embed`
 2. Poll until `embedded`, then call `POST .../index`

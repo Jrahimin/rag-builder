@@ -136,10 +136,12 @@ Send a user message; returns grounded assistant answer + citations. Returns **20
 }
 ```
 
-If retrieval evidence is insufficient, the service skips generation and persists a deterministic
+If retrieval evidence is insufficient, `enforce` mode skips generation and persists a deterministic
 answer with `grounded=false`, empty `claims`/`citations`, `finish_reason=insufficient_evidence`, and
 one of: `no_retrieval_results`, `below_relevance_threshold`, or
-`low_query_evidence_coverage`.
+`low_query_evidence_coverage`. `observe` mode still records that assessment on
+`metadata.evidence_gate` but continues generation from the already-selected context unless retrieval
+returned no chunks.
 
 **Errors:** `conversation_not_found`, `conversation_deleted`, `conversation_inactive`, `unknown_prompt_version`, `llm_provider_unavailable` (503)
 

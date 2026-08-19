@@ -7,6 +7,7 @@ from app.platform.providers.contracts.reranker import (
     RerankRequest,
     RerankResponse,
     RerankResult,
+    RerankScoreScale,
 )
 
 
@@ -34,6 +35,10 @@ class NoopRerankerProvider(BaseRerankerProvider):
     def provider_version(self) -> str:
         return self._provider_version
 
+    @property
+    def is_passthrough(self) -> bool:
+        return True
+
     async def rerank(self, request: RerankRequest) -> RerankResponse:
         results = [
             RerankResult(
@@ -48,4 +53,5 @@ class NoopRerankerProvider(BaseRerankerProvider):
             provider=self.provider_name,
             model=self.model_name,
             provider_version=self.provider_version,
+            score_scale=RerankScoreScale.RECIPROCAL_RANK_FUSION,
         )

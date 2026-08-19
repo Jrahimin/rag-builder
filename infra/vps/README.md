@@ -23,8 +23,8 @@ separate specialized hosted-pilot contract.
 2. Copy `.env.example` to `.env`. Set the real HTTPS CORS origin
    and replace every placeholder with a unique secret. Rotate any credential
    that has been shared outside the VPS.
-3. Keep `APE_EMBEDDING__DIMENSIONS=384` with the configured
-   `text-embedding-3-small` provider. Migration creates `vector(384)` and API
+3. Keep `APE_EMBEDDING__DIMENSIONS=1024` with the configured
+   `text-embedding-3-large` provider. Migration `0026` creates `vector(1024)` and API
    and worker startup verify both provider output and the migrated column.
 4. Protect the runtime file and validate the resolved Compose model:
 

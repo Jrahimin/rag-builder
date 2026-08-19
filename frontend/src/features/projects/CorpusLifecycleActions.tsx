@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ArchiveRestore, CircleHelp, DatabaseZap, RefreshCw, ShieldCheck, X } from "lucide-react";
+import { ArchiveRestore, CircleHelp, RefreshCw, ShieldCheck, X } from "lucide-react";
 import { Link } from "react-router-dom";
 import { OperatorApiError, type IndexBuild, type LifecycleJob } from "../../api/operatorApiClient";
 import {
@@ -24,7 +24,7 @@ export type LifecycleNotice = {
   result?: Record<string, unknown> | null;
 };
 
-type LifecycleAction = "reembed" | "reindex" | "reconcile" | "rollback";
+type LifecycleAction = "rebuild" | "reconcile" | "rollback";
 
 function isLifecycleJob(value: LifecycleJob | IndexBuild): value is LifecycleJob {
   return "job_id" in value;
@@ -80,8 +80,8 @@ function LifecycleGuide({ onClose }: { onClose: () => void }) {
             </li>
           </ul>
           <p>
-            Hybrid search fuses both. Counts like <code>7 / 7 / 7</code> mean that snapshot has 7
-            of each. <code>0 / 0 / 0</code> is an empty corpus at that moment (for example after
+            Hybrid search fuses both. Counts like <code>7 / 7 / 7</code> mean that snapshot has 7 of
+            each. <code>0 / 0 / 0</code> is an empty corpus at that moment (for example after
             purge), not a broken row.
           </p>
           <h3>States</h3>
@@ -100,9 +100,7 @@ function LifecycleGuide({ onClose }: { onClose: () => void }) {
             </div>
             <div>
               <dt>Retained</dt>
-              <dd>
-                Kept after a later activation. The previous pointer is the rollback target.
-              </dd>
+              <dd>Kept after a later activation. The previous pointer is the rollback target.</dd>
             </div>
             <div>
               <dt>Failed</dt>
@@ -118,18 +116,11 @@ function LifecycleGuide({ onClose }: { onClose: () => void }) {
           <h3>Top actions</h3>
           <dl>
             <div>
-              <dt>Re-embed</dt>
+              <dt>Rebuild index</dt>
               <dd>
-                Rebuild vectors and keywords from current chunks. Use after embedding-model
-                changes or if semantic search looks wrong. Success means a new validated snapshot
+                Rebuild vectors and keywords from current chunks into a new private snapshot. Use
+                after embedding-model, tokenizer, or FTS changes. Success means a validated snapshot
                 — it is not live until Activate.
-              </dd>
-            </div>
-            <div>
-              <dt>Reindex</dt>
-              <dd>
-                Rebuild the snapshot without re-parsing documents. Use after tokenizer or FTS
-                config changes. Also needs Activate.
               </dd>
             </div>
             <div>
@@ -152,9 +143,9 @@ function LifecycleGuide({ onClose }: { onClose: () => void }) {
             <div>
               <dt>Operation</dt>
               <dd>
-                Why this snapshot exists: <code>ingest</code> (upload finished),{" "}
-                <code>delete</code> / <code>purge</code> (document removed from corpus),{" "}
-                <code>reembed</code> / <code>reindex</code> (operator rebuild).
+                Why this snapshot exists: <code>ingest</code> (upload finished), <code>delete</code>{" "}
+                / <code>purge</code> (document removed from corpus), <code>reembed</code> (operator
+                rebuild of vectors and keywords).
               </dd>
             </div>
             <div>
@@ -167,9 +158,17 @@ function LifecycleGuide({ onClose }: { onClose: () => void }) {
           </dl>
           <h3>Typical sequence</h3>
           <ol>
-            <li>Upload and process a document until Ready. Ingest usually creates and activates a build.</li>
-            <li>Re-embed or Reindex when you need a new snapshot. Confirm, wait for the job, then Activate.</li>
-            <li>Delete removes a document from the next active corpus but keeps artifacts for rollback.</li>
+            <li>
+              Upload and process a document until Ready. Ingest usually creates and activates a
+              build.
+            </li>
+            <li>
+              Rebuild index when you need a new snapshot. Confirm, wait for the job, then Activate.
+            </li>
+            <li>
+              Delete removes a document from the next active corpus but keeps artifacts for
+              rollback.
+            </li>
             <li>Purge does the same, then permanently deletes files, chunks, and embeddings.</li>
           </ol>
         </div>
@@ -227,12 +226,7 @@ export function CorpusLifecycleActions({
         setAcceptedBuild(result.build_id ?? "");
         notifiedTerminal.current = "";
         onNotice?.({
-          name:
-            name === "reconcile"
-              ? "Reconcile storage"
-              : name === "reembed"
-                ? "Re-embed whole corpus"
-                : "Reindex whole corpus",
+          name: name === "reconcile" ? "Reconcile storage" : "Rebuild searchable index",
           outcome: "accepted",
           jobId: result.job_id,
           buildId: result.build_id ?? undefined,
@@ -284,10 +278,8 @@ export function CorpusLifecycleActions({
   };
 
   const confirmationCopy: Record<LifecycleAction, string> = {
-    reembed:
-      "Build a complete new vector and keyword snapshot. The current active build stays available until activation.",
-    reindex:
-      "Build a new isolated corpus snapshot. Success means the build is validated, not active.",
+    rebuild:
+      "Build a complete new vector and keyword snapshot from current chunks. The current active build stays searchable until you activate this one.",
     reconcile:
       "Compare database expectations with storage artifacts and return expected, actual, missing, orphan, and consistency facts.",
     rollback: previous
@@ -320,24 +312,12 @@ export function CorpusLifecycleActions({
             className="lifecycle-action lifecycle-action--embed"
             type="button"
             disabled={action.isPending}
-            onClick={() => setPendingConfirmation("reembed")}
+            onClick={() => setPendingConfirmation("rebuild")}
           >
             <RefreshCw aria-hidden="true" />
             <span>
-              <strong>Re-embed</strong>
-              <small>Refresh vectors</small>
-            </span>
-          </button>
-          <button
-            className="lifecycle-action lifecycle-action--index"
-            type="button"
-            disabled={action.isPending}
-            onClick={() => setPendingConfirmation("reindex")}
-          >
-            <DatabaseZap aria-hidden="true" />
-            <span>
-              <strong>Reindex</strong>
-              <small>Build a new snapshot</small>
+              <strong>Rebuild index</strong>
+              <small>Vectors and keywords</small>
             </span>
           </button>
           <button
@@ -467,7 +447,9 @@ export function CorpusLifecycleActions({
           <tbody>
             {builds.data.items.length === 0 && (
               <tr>
-                <td colSpan={8}>No index builds exist yet. Reindex to create an isolated build.</td>
+                <td colSpan={8}>
+                  No index builds exist yet. Rebuild index to create an isolated build.
+                </td>
               </tr>
             )}
             {builds.data.items.map((build) => {

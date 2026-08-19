@@ -28,6 +28,7 @@ async def test_adapter_maps_search_results_to_context_chunks() -> None:
                     chunk_index=0,
                     content="refund within 30 days",
                     score=0.91,
+                    semantic_score=0.77,
                     filename="policy.txt",
                 )
             ],
@@ -38,5 +39,6 @@ async def test_adapter_maps_search_results_to_context_chunks() -> None:
     assert len(result.chunks) == 1
     assert result.chunks[0].chunk_id == chunk_id
     assert result.chunks[0].filename == "policy.txt"
+    assert result.chunks[0].semantic_score == 0.77
     assert len(result.chunks[0].chunk_hash) == 64
     assert result.diagnostics["source_policy_status"] == "off"

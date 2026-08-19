@@ -10,12 +10,18 @@ from sqlalchemy import delete, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.chunk_keyword_index import ChunkKeywordIndex
+from app.modules.retrieval.keyword.fts import (
+    keyword_candidate_predicate,
+    plain_query,
+    to_search_vector,
+)
 from app.modules.retrieval.keyword.tokenizer import (
     normalize_for_indexing,
     normalize_for_query,
     term_frequencies,
     tokenize,
 )
+from app.modules.retrieval.language_scope import LanguageScope, language_scope_predicate
 from app.modules.retrieval.source_policy import (
     SOURCE_METADATA_COLUMNS,
     SourceMetadataScope,
@@ -99,7 +105,7 @@ class ChunkKeywordIndexRepository(ProjectScopedRepository[ChunkKeywordIndex]):
             token_count=len(tokens),
             term_frequencies=frequencies,
             metadata_snapshot=metadata_snapshot,
-            search_vector=func.to_tsvector(self._fts_regconfig, normalized),
+            search_vector=to_search_vector(self._fts_regconfig, normalized),
         )
         self.add(row)
         return row
@@ -114,10 +120,19 @@ class ChunkKeywordIndexRepository(ProjectScopedRepository[ChunkKeywordIndex]):
         document_id: uuid.UUID | None = None,
         metadata_filter: dict[str, str] | None = None,
         source_scope: SourceMetadataScope | None = None,
+        language_scope: LanguageScope | None = None,
     ) -> list[KeywordCandidateRow]:
-        """FTS candidate narrowing — BM25 scoring happens in the retriever."""
+        """FTS or tokenizer-key overlap — BM25 scoring happens in the retriever."""
         normalized_query = normalize_for_query(query)
-        ts_query = func.plainto_tsquery(self._fts_regconfig, normalized_query)
+        query_terms = tokenize(query, for_query=True)
+        ts_query = plain_query(self._fts_regconfig, normalized_query)
+        candidate_match = keyword_candidate_predicate(
+            self.model.search_vector,
+            self.model.term_frequencies,
+            regconfig=self._fts_regconfig,
+            query=normalized_query,
+            query_terms=query_terms,
+        )
         source_columns = (
             [source_scope.selectable.c[name] for name in SOURCE_METADATA_COLUMNS]
             if source_scope is not None and source_scope.selectable is not None
@@ -128,9 +143,12 @@ class ChunkKeywordIndexRepository(ProjectScopedRepository[ChunkKeywordIndex]):
             .where(
                 self.model.project_id == self._project_id,
                 self.model.embedding_set_version == embedding_set_version,
-                self.model.search_vector.op("@@")(ts_query),
+                candidate_match,
             )
-            .order_by(func.ts_rank_cd(self.model.search_vector, ts_query).desc())
+            .order_by(
+                func.ts_rank_cd(self.model.search_vector, ts_query).desc(),
+                self.model.chunk_id,
+            )
             .limit(top_k)
         )
         if source_scope is not None and source_scope.selectable is not None:
@@ -145,6 +163,12 @@ class ChunkKeywordIndexRepository(ProjectScopedRepository[ChunkKeywordIndex]):
         if metadata_filter:
             for key, value in metadata_filter.items():
                 stmt = stmt.where(self.model.metadata_snapshot[key].astext == value)
+        language_predicate = language_scope_predicate(
+            self.model.metadata_snapshot["chunk_language"].astext,
+            language_scope,
+        )
+        if language_predicate is not None:
+            stmt = stmt.where(language_predicate)
         result = await self._session.execute(stmt)
         return [
             KeywordCandidateRow(
@@ -178,7 +202,7 @@ class ChunkKeywordIndexRepository(ProjectScopedRepository[ChunkKeywordIndex]):
             text(
                 """
                 UPDATE chunk_keyword_index
-                SET search_vector = to_tsvector(:regconfig, content_normalized)
+                SET search_vector = to_tsvector(CAST(:regconfig AS regconfig), content_normalized)
                 WHERE project_id = :project_id
                   AND search_vector IS NULL
                 """

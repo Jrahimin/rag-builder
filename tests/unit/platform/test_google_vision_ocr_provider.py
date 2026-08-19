@@ -76,6 +76,66 @@ def test_google_vision_success_normalizes_text_and_averages_block_confidence() -
     assert result.page_number == 2
 
 
+def test_google_vision_preserves_normalized_word_geometry() -> None:
+    def word(text: str, x1: int, y1: int, x2: int, y2: int) -> dict:
+        return {
+            "symbols": [{"text": character} for character in text],
+            "boundingBox": {
+                "vertices": [
+                    {"x": x1, "y": y1},
+                    {"x": x2, "y": y1},
+                    {"x": x2, "y": y2},
+                    {"x": x1, "y": y2},
+                ]
+            },
+            "confidence": 0.91,
+        }
+
+    provider = _provider(
+        httpx.MockTransport(
+            lambda _request: httpx.Response(
+                200,
+                json={
+                    "responses": [
+                        {
+                            "fullTextAnnotation": {
+                                "text": "Head Value",
+                                "pages": [
+                                    {
+                                        "width": 1000,
+                                        "height": 2000,
+                                        "blocks": [
+                                            {
+                                                "confidence": 0.9,
+                                                "paragraphs": [
+                                                    {
+                                                        "words": [
+                                                            word("Head", 100, 200, 200, 240),
+                                                            word("Value", 600, 200, 750, 240),
+                                                        ]
+                                                    }
+                                                ],
+                                            }
+                                        ],
+                                    }
+                                ],
+                            }
+                        }
+                    ]
+                },
+            )
+        )
+    )
+
+    result = provider.recognize(OcrImageInput(data=b"image", page_number=1))
+
+    assert result.blocks[0].paragraphs[0].words[0].text == "Head"
+    box = result.blocks[0].paragraphs[0].words[1].bounding_box
+    assert box is not None
+    assert box.x_min == 0.6
+    assert box.y_max == 0.12
+
+
 def test_google_vision_maps_authentication_failure() -> None:
     provider = _provider(
         httpx.MockTransport(lambda _request: httpx.Response(403, json={"error": "denied"}))

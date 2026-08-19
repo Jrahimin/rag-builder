@@ -42,8 +42,8 @@ const quality: QualitySummary = {
     provider_latency_ms: null,
     total_latency_ms: null,
     versions: {
-      prompt_version: "v2",
-      retrieval: { embedding_set_version: 1 },
+      prompt_version: "v3",
+      retrieval: { embedding_set_version: 2 },
       corpus: { fingerprint: "c".repeat(64) },
     },
     metrics: {
@@ -53,12 +53,22 @@ const quality: QualitySummary = {
         ndcg: 1,
         groundedness: 1,
         citation_coverage: 1,
-        refusal_accuracy: 1,
+        unverified_claim_rate: 0.25,
+        false_accept_rate: 0,
+        false_refusal_rate: 0.1,
         latency_p95_ms: 42,
       },
     },
     case_results: [],
-    regressions: [],
+    regressions: [
+      {
+        metric: "false_accept_rate",
+        type: "acceptance_threshold",
+        direction: "maximum",
+        threshold: 0,
+        current: 0.2,
+      },
+    ],
     failed_cases: [],
     reranker_comparison: {
       active_profile: "reranked_lexical",
@@ -85,5 +95,9 @@ test("renders reproducible quality metrics for the selected project", async () =
 
   expect(await screen.findByText("Recall@k")).toBeInTheDocument();
   expect((await screen.findAllByText("100.0%")).length).toBeGreaterThan(0);
+  expect(screen.getByText(/False accepts 0.0% · False refusals 10.0%/)).toBeInTheDocument();
+  expect(screen.getByText(/Unverified claims 25.0%/)).toBeInTheDocument();
   expect(screen.getByText("Configuration hash")).toBeInTheDocument();
+  expect(screen.getByText("false_accept_rate")).toBeInTheDocument();
+  expect(screen.getByText("maximum 0, observed 0.2")).toBeInTheDocument();
 });
