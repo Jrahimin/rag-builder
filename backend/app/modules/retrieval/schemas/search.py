@@ -14,7 +14,7 @@ from app.core.config import RetrievalStrategy
 class SearchRequest(BaseModel):
     """Search request body."""
 
-    query: str = Field(min_length=1, max_length=4096)
+    query: str = Field(min_length=1, max_length=32_000)
     top_k: int | None = Field(default=None, ge=1, le=100)
     document_id: uuid.UUID | None = None
     metadata_filter: dict[str, str] = Field(default_factory=dict)

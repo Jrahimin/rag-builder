@@ -4826,7 +4826,7 @@
             "type": "object"
           },
           "query": {
-            "maxLength": 4096,
+            "maxLength": 32000,
             "minLength": 1,
             "title": "Query",
             "type": "string"
@@ -9331,7 +9331,7 @@
             "type": "object"
           },
           "query": {
-            "maxLength": 4096,
+            "maxLength": 32000,
             "minLength": 1,
             "title": "Query",
             "type": "string"

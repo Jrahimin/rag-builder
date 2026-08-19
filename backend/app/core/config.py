@@ -21,11 +21,26 @@ from __future__ import annotations
 import os
 from enum import StrEnum
 from functools import lru_cache
+from pathlib import Path
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 from sqlalchemy import URL
+
+
+def _settings_env_files() -> tuple[str, ...] | None:
+    """Load backend/.env even when the process cwd is the repository root."""
+    if os.environ.get("APE_APP__ENV") == "testing":
+        return None
+    backend_env = Path(__file__).resolve().parents[2] / ".env"
+    cwd_env = Path.cwd() / ".env"
+    files: list[str] = []
+    if cwd_env.is_file() and cwd_env.resolve() != backend_env.resolve():
+        files.append(str(cwd_env))
+    if backend_env.is_file():
+        files.append(str(backend_env))
+    return tuple(files) or (".env",)
 
 
 class Environment(StrEnum):
@@ -540,7 +555,7 @@ class LLMConfig(BaseModel):
     backend: LLMBackend = LLMBackend.ECHO
     model: str = "gpt-4o-mini"
     temperature: float | None = Field(default=None, ge=0.0, le=2.0)
-    max_tokens: int = Field(default=2048, ge=1, le=128_000)
+    max_tokens: int = Field(default=4096, ge=1, le=128_000)
     request_timeout_seconds: float = Field(default=120.0, ge=1.0, le=600.0)
     ollama_base_url: str = "http://localhost:11434"
     openai_api_key: str | None = None
@@ -563,8 +578,8 @@ class QueryTranslationConfig(BaseModel):
     backend: LLMBackend = LLMBackend.OPENAI
     model: str = "gpt-5-nano"
     prompt_version: str = "retrieval-translation-v2"
-    max_output_tokens: int = Field(default=1024, ge=16, le=2048)
-    request_timeout_seconds: float = Field(default=15.0, ge=1.0, le=120.0)
+    max_output_tokens: int = Field(default=4096, ge=16, le=8192)
+    request_timeout_seconds: float = Field(default=45.0, ge=1.0, le=180.0)
     retry_max_attempts: int = Field(default=1, ge=0, le=3)
     target_languages: Annotated[list[str], NoDecode] = Field(default_factory=lambda: ["bn", "en"])
 
@@ -603,7 +618,7 @@ class RerankerProviderConfig(BaseModel):
     cohere_api_key: str | None = None
     cohere_base_url: str = "https://api.cohere.com"
     cohere_model: str = "rerank-v4.0-pro"
-    request_timeout_seconds: float = Field(default=15.0, ge=1.0, le=120.0)
+    request_timeout_seconds: float = Field(default=30.0, ge=1.0, le=120.0)
     provider_version: str = "1"
 
 
@@ -800,7 +815,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="APE_",
         env_nested_delimiter="__",
-        env_file=(".env",) if os.environ.get("APE_APP__ENV") != "testing" else None,
+        env_file=_settings_env_files(),
         env_file_encoding="utf-8",
         extra="ignore",
         case_sensitive=False,

@@ -85,11 +85,13 @@ evaluation platform is introduced.
 
 Chat uses hybrid retrieval by default. Ranking `score` (RRF or reranker output) and calibrated
 `semantic_score` are separate. When rerank is applied, `GroundingService` admits a candidate only
-if `rerank_relevance_score` clears `minimum_reranker_evidence_score`. Cosine plus lexical rescue
-are the fallback when rerank is passthrough or unavailable. Direct semantic acceptance and any
-lexical rescue must come from the same chunk (or the same winning passage span). Lexical query
-coverage is rescue-only on the cosine-fallback path. No language or script detector is part of
-this decision. Stored Project `evidence_score_threshold`
+if `rerank_relevance_score` clears `minimum_reranker_evidence_score` **and** the same winning
+chunk independently corroborates: cosine ≥ `0.35`, or cosine ≥ `0.30` with lexical coverage
+≥ `0.50`, or a cross-language cosine ≥ `0.30`. Reranker relevance alone is not enough because
+the model must rank something. Cosine plus lexical rescue remain the fallback when rerank is
+passthrough or unavailable. Direct semantic acceptance and any lexical rescue must come from
+the same chunk (or the same winning passage span). Lexical query coverage is rescue-only on the
+cosine-fallback path. Stored Project `evidence_score_threshold`
 values below `0.15` are leftover
 RRF-scale overrides and are ignored; leftover `minimum_query_token_coverage` values below the
 deployment rescue coverage are ignored so they cannot loosen false-accept protection.
@@ -108,7 +110,10 @@ For generated answers, prompt `v4` requests a concise answer in the question's l
 unsupported background or uncited data rows, and requires numbered citations even when evidence is
 in another language. The service splits answer segments, ignores Markdown scaffolding, colon-terminated list
 preambles, and prompted “not enough indexed evidence” refusals, then verifies remaining
-claims against cited evidence and persists:
+claims against cited evidence. Same-language lexical coverage and claim/evidence cosine are
+combined when an embedding provider is available so English paraphrases of cited evidence are
+not reported `grounded=false` solely because surface tokens differ. `grounded` stays true only
+when every claim is `supported`.
 
 - `content` — the compatible answer field;
 - `citations` — existing durable source snapshots;

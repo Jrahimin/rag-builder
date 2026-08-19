@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from dataclasses import replace
 
 from app.core.config import ChatConfig
 from app.modules.conversations.ports import ContextChunk
@@ -30,28 +31,31 @@ class ContextBuilder:
             if char_budget <= 0:
                 break
             if len(chunk.content) > char_budget:
-                trimmed = ContextChunk(
-                    chunk_id=chunk.chunk_id,
-                    document_id=chunk.document_id,
-                    chunk_index=chunk.chunk_index,
-                    content=chunk.content[:char_budget],
-                    score=chunk.score,
-                    filename=chunk.filename,
-                    chunk_hash=chunk.chunk_hash,
-                    semantic_score=chunk.semantic_score,
-                    passage_semantic_score=chunk.passage_semantic_score,
-                    passage_char_start=chunk.passage_char_start,
-                    passage_char_end=chunk.passage_char_end,
-                    passage_score_method=chunk.passage_score_method,
-                    page_number=chunk.page_number,
-                    char_start=chunk.char_start,
-                    char_end=chunk.char_end,
-                    metadata=chunk.metadata,
+                selected.append(
+                    _preserve_rerank_score(replace(chunk, content=chunk.content[:char_budget]))
                 )
-                selected.append(trimmed)
                 char_budget = 0
             else:
-                selected.append(chunk)
+                selected.append(_preserve_rerank_score(chunk))
                 char_budget -= len(chunk.content)
 
         return selected
+
+
+def _preserve_rerank_score(chunk: ContextChunk) -> ContextChunk:
+    """Keep Cohere relevance on the selected chunk when provenance dropped the field."""
+    if chunk.rerank_relevance_score is not None:
+        return chunk
+    if str(chunk.metadata.get("rerank_status")) != "applied" or chunk.score <= 0.0:
+        return chunk
+    return replace(
+        chunk,
+        rerank_relevance_score=chunk.score,
+        rank_score=chunk.rank_score if chunk.rank_score is not None else chunk.score,
+        evidence_relevance_score=(
+            chunk.evidence_relevance_score
+            if chunk.evidence_relevance_score is not None
+            else chunk.score
+        ),
+        evidence_score_method=chunk.evidence_score_method or "reranker_relevance",
+    )

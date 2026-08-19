@@ -51,7 +51,7 @@ default is `hybrid`; semantic remains an explicit comparison/rollback strategy.
 
 | Field | Required | Notes |
 | ----- | -------- | ----- |
-| `query` | yes | 1–4096 characters |
+| `query` | yes | 1–32000 characters |
 | `top_k` | no | Default from `APE_RETRIEVAL__DEFAULT_TOP_K` |
 | `document_id` | no | Restrict hits to one document |
 | `metadata_filter` | no | Allowlisted keys only; others stripped |

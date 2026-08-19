@@ -98,7 +98,11 @@ class IndexLifecycleService:
             JobDefinition(
                 name=job_name,
                 project_id=self._project_id,
-                payload={"build_id": str(build.id), "auto_activate": auto_activate},
+                payload={
+                    "build_id": str(build.id),
+                    "auto_activate": auto_activate,
+                    "embedding_set_version": self._embedding_set_version,
+                },
                 idempotency_key=f"{job_name}:{self._project_id}:{build.id}",
                 retry=RetryPolicy(max_attempts=self._job_max_attempts),
             ),

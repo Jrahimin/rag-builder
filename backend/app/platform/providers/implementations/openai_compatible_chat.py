@@ -98,6 +98,7 @@ class OpenAICompatibleChatProvider(BaseLLMProvider):
                 max_tokens=max_tokens,
             )
         )
+        body.update(_reasoning_parameters(self._model, max_tokens))
         return body
 
     async def _http_error(
@@ -181,8 +182,10 @@ class OpenAICompatibleChatProvider(BaseLLMProvider):
             raise ProviderError(msg, provider_name=self.provider_name)
 
         choice = choices[0]
-        message = choice.get("message") or {}
-        content = message.get("content") or ""
+        if not isinstance(choice, dict):
+            msg = f"{self.provider_name} returned an invalid chat payload"
+            raise ProviderError(msg, provider_name=self.provider_name)
+        content = _choice_text(choice)
         finish_reason = choice.get("finish_reason")
         usage = _openai_usage(payload) or ChatUsage(None, None)
         return ChatCompletionResult(
@@ -234,7 +237,7 @@ class OpenAICompatibleChatProvider(BaseLLMProvider):
                             yield ChatCompletionChunk(delta="", usage=usage)
                         continue
                     delta_obj = choices[0].get("delta") or {}
-                    delta = delta_obj.get("content") or ""
+                    delta = _content_text(delta_obj.get("content"))
                     finish_reason = choices[0].get("finish_reason")
                     if delta or finish_reason:
                         yield ChatCompletionChunk(
@@ -251,6 +254,47 @@ class OpenAICompatibleChatProvider(BaseLLMProvider):
             ) from exc
         finally:
             await client.aclose()
+
+
+def _choice_text(choice: dict[str, Any]) -> str:
+    message = choice.get("message")
+    if isinstance(message, dict):
+        for key in ("content", "output_text", "text"):
+            text = _content_text(message.get(key))
+            if text:
+                return text
+    return _content_text(choice.get("text")) or _content_text(choice.get("output_text"))
+
+
+def _reasoning_parameters(model: str, max_tokens: int) -> dict[str, str]:
+    """Keep GPT-5-nano translation from spending the token budget on reasoning."""
+    del max_tokens
+    normalized = model.strip().lower()
+    if "nano" in normalized and normalized.startswith("gpt-5"):
+        return {"reasoning_effort": "low"}
+    if normalized.startswith(("o1", "o3", "o4")):
+        return {"reasoning_effort": "low"}
+    return {}
+
+
+def _content_text(value: object) -> str:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        parts: list[str] = []
+        for item in value:
+            if isinstance(item, str) and item:
+                parts.append(item)
+                continue
+            if not isinstance(item, dict):
+                continue
+            for key in ("text", "output_text", "content"):
+                fragment = item.get(key)
+                if isinstance(fragment, str) and fragment:
+                    parts.append(fragment)
+                    break
+        return "".join(parts)
+    return ""
 
 
 def _openai_usage(payload: object) -> ChatUsage | None:

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Any, Protocol
 
@@ -138,14 +138,7 @@ def add_retrieval_provenance(
         "config_provenance": dict(config_provenance),
     }
     return [
-        CandidateHit(
-            chunk_id=candidate.chunk_id,
-            score=candidate.score,
-            source=candidate.source,
-            semantic_score=candidate.semantic_score,
-            metadata={**candidate.metadata, **shared},
-        )
-        for candidate in candidates
+        replace(candidate, metadata={**candidate.metadata, **shared}) for candidate in candidates
     ]
 
 

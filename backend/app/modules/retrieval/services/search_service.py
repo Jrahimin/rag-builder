@@ -577,6 +577,8 @@ def _result_trace(result: RetrievalResult, *, rank: int) -> dict[str, Any]:
             "reciprocal_rank_fusion",
         ),
         "semantic_score": result.semantic_score,
+        "rank_score": result.rank_score,
+        "rerank_relevance_score": result.rerank_relevance_score,
         "passage_semantic_score": result.passage_semantic_score,
         "passage_score_method": result.passage_score_method,
         "passage_char_start": result.passage_char_start,

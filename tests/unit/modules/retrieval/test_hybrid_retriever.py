@@ -29,6 +29,7 @@ from app.modules.retrieval.retrievers.models import (
 from app.modules.retrieval.retrievers.semantic_retriever import SemanticRetrievalBatch
 from app.platform.domain.language_detection import detect_query_language_profile
 from app.platform.providers.contracts.embedding import EmbeddingBatchResult
+from app.platform.providers.contracts.reranker import RerankResponse, RerankResult, RerankScoreScale
 from app.platform.providers.errors import ProviderError
 from app.platform.providers.implementations.noop_reranker import NoopRerankerProvider
 
@@ -154,6 +155,32 @@ async def test_reranker_unavailable_preserves_fused_order_and_marks_fallback() -
     assert [item.chunk_id for item in result] == [chunk_id]
     assert result[0].metadata["rerank_status"] == "unavailable"
     assert result[0].metadata["reranker_provider"] == "learned-reranker"
+
+
+async def test_applied_rerank_copies_relevance_onto_evidence_fields() -> None:
+    chunk_id = uuid.uuid4()
+    retriever = HybridRetriever.__new__(HybridRetriever)
+    retriever._content_loader = AsyncMock()
+    retriever._content_loader.load_texts.return_value = {chunk_id: "উৎসে কর সংগ্রহের খাত"}
+    retriever._reranker = AsyncMock()
+    retriever._reranker.rerank.return_value = RerankResponse(
+        results=[RerankResult(chunk_id=chunk_id, score=0.81)],
+        provider="cohere",
+        model="rerank-v4.0-pro",
+        provider_version="1",
+        score_scale=RerankScoreScale.MODEL_RELEVANCE,
+        latency_ms=12,
+    )
+    fused = [
+        CandidateHit(chunk_id, 0.03, CandidateSource.HYBRID, semantic_score=0.22),
+    ]
+
+    result = await retriever._rerank_candidates(_context(rerank_enabled=True), fused)
+
+    assert result[0].rerank_relevance_score == pytest.approx(0.81)
+    assert result[0].evidence_relevance_score == pytest.approx(0.81)
+    assert result[0].evidence_score_method == "reranker_relevance"
+    assert result[0].metadata["rerank_status"] == "applied"
 
 
 async def test_passage_scoring_keeps_raw_cosine_and_winning_offsets() -> None:

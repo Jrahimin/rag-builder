@@ -5,7 +5,11 @@ from __future__ import annotations
 import pytest
 
 from app.core.config import ChunkingStrategy, EmbeddingBackend, Settings
-from app.platform.jobs.configuration import apply_job_configuration, build_job_configuration
+from app.platform.jobs.configuration import (
+    apply_job_configuration,
+    build_job_configuration,
+    embedding_set_version_from_configuration,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -107,3 +111,34 @@ def test_apply_job_configuration_keeps_target_embedding_backend_for_new_builds()
     assert restored.embedding.model == "text-embedding-3-large"
     assert restored.embedding.openai_api_key == "live-openai"
     assert restored.resolved_cohere_api_key() == "live-cohere"
+
+
+def test_apply_job_configuration_preserves_embedding_set_version() -> None:
+    snapshot = build_job_configuration(Settings(retrieval={"embedding_set_version": 3}))
+
+    restored = apply_job_configuration(
+        Settings(retrieval={"embedding_set_version": 2}),
+        snapshot,
+    )
+
+    assert snapshot.index["retrieval"]["embedding_set_version"] == 3
+    assert restored.retrieval.embedding_set_version == 3
+    assert embedding_set_version_from_configuration(snapshot) == 3
+
+
+def test_apply_job_configuration_keeps_live_esv_when_snapshot_omits_it() -> None:
+    snapshot = build_job_configuration(Settings(retrieval={"embedding_set_version": 2}))
+    retrieval = {
+        key: value
+        for key, value in snapshot.index["retrieval"].items()
+        if key != "embedding_set_version"
+    }
+    incomplete = snapshot.model_copy(update={"index": {**snapshot.index, "retrieval": retrieval}})
+
+    restored = apply_job_configuration(
+        Settings(retrieval={"embedding_set_version": 3}),
+        incomplete,
+    )
+
+    assert "embedding_set_version" not in incomplete.index["retrieval"]
+    assert restored.retrieval.embedding_set_version == 3

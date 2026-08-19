@@ -489,7 +489,7 @@ def test_applied_reranker_score_is_the_only_learned_evidence_path() -> None:
         metadata={"rerank_status": "applied"},
     )
     relevant = replace(
-        _chunk(content="উৎসে কর সংগ্রহের খাত সঞ্চয়পত্র", semantic_score=0.12),
+        _chunk(content="উৎসে কর সংগ্রহের খাত সঞ্চয়পত্র", semantic_score=0.32),
         rerank_relevance_score=0.81,
         metadata={"rerank_status": "applied"},
     )
@@ -515,6 +515,83 @@ def test_high_cosine_cannot_override_a_low_applied_reranker_score() -> None:
         [chunk],
     )
     assert decision.sufficient is False
+    assert decision.evidence_score_method == "reranker_relevance"
+
+
+def test_applied_rerank_status_uses_reranker_threshold_without_chunk_metadata() -> None:
+    from dataclasses import replace
+
+    chunk = replace(
+        _chunk(content="nearby VAT chapter", semantic_score=0.92),
+        rerank_relevance_score=0.12,
+        metadata={},
+    )
+    decision = GroundingService(ChatConfig(minimum_reranker_evidence_score=0.4)).assess(
+        "what are the source tax deduction areas?",
+        [chunk],
+        rerank_status="applied",
+    )
+    assert decision.sufficient is False
+    assert decision.evidence_score_method == "reranker_relevance"
+    assert decision.best_score == pytest.approx(0.12)
+
+
+def test_evidence_winner_follows_reranked_order() -> None:
+    from dataclasses import replace
+
+    first = replace(
+        _chunk(content="উৎসে কর সংগ্রহের খাত সঞ্চয়পত্র", semantic_score=0.32),
+        rerank_relevance_score=0.88,
+        metadata={"rerank_status": "applied"},
+    )
+    later = replace(
+        _chunk(content="high cosine neighbor", semantic_score=0.97),
+        rerank_relevance_score=0.41,
+        metadata={"rerank_status": "applied"},
+    )
+    decision = GroundingService(ChatConfig(minimum_reranker_evidence_score=0.4)).assess(
+        "what are the source tax deduction areas?",
+        [first, later],
+    )
+    assert decision.sufficient is True
+    assert decision.winning_chunk_id == first.chunk_id
+    assert decision.evidence_score_method == "reranker_relevance"
+
+
+def test_applied_rerank_recovers_score_when_dedicated_field_is_missing() -> None:
+    from dataclasses import replace
+
+    chunk = replace(
+        _chunk(content="উৎসে কর সংগ্রহের খাত সঞ্চয়পত্র", semantic_score=0.32, score=0.8693157),
+        rerank_relevance_score=None,
+        metadata={"rerank_status": "applied"},
+    )
+    decision = GroundingService(ChatConfig(minimum_reranker_evidence_score=0.4)).assess(
+        "উৎসে কর সংগ্রহের খাত কি?",
+        [chunk],
+        rerank_status="applied",
+    )
+    assert decision.sufficient is True
+    assert decision.best_score == pytest.approx(0.8693157)
+    assert decision.evidence_score_method == "reranker_relevance"
+    assert decision.winning_chunk_id == chunk.chunk_id
+
+
+def test_applied_rerank_without_any_score_does_not_report_zero() -> None:
+    from dataclasses import replace
+
+    chunk = replace(
+        _chunk(content="nearby VAT chapter", semantic_score=0.32, score=0.0),
+        rerank_relevance_score=None,
+        metadata={},
+    )
+    decision = GroundingService(ChatConfig(minimum_reranker_evidence_score=0.4)).assess(
+        "what are the source tax deduction areas?",
+        [chunk],
+        rerank_status="applied",
+    )
+    assert decision.sufficient is False
+    assert decision.best_score is None
     assert decision.evidence_score_method == "reranker_relevance"
 
 
@@ -563,6 +640,7 @@ def test_observe_mode_records_the_same_refusal_without_changing_assessment() -> 
     assert diagnostics["generation_ran"] is True
     assert diagnostics["blocked_generation"] is False
     assert diagnostics["winning_semantic_score"] == pytest.approx(0.32)
+    assert diagnostics["reranker_threshold"] == pytest.approx(0.4)
 
 
 def test_observe_mode_still_blocks_when_nothing_was_retrieved() -> None:
@@ -590,3 +668,98 @@ def test_rrf_rank_score_is_never_the_evidence_score() -> None:
     assert decision.best_score == pytest.approx(0.32)
     assert decision.winning_semantic_score == pytest.approx(0.32)
     assert decision.winning_rank_score == pytest.approx(0.91)
+
+
+_GAZETTE_TABLE = (
+    "সারণী আয়ের উৎস/উৎসে কর সংগ্রহের খাত সঞ্চয়পত্র হইতে অর্জিত মুনাফা "
+    "সম্পত্তির অধিগ্রহণ রপ্তানির বিপরীতে প্রাপ্ত নগদ ভর্তুকি"
+)
+_RATE_ROW = "কোম্পানি প্রাপকের উৎসে করের হার পনেরো শতাংশ।"
+
+
+def _reranked(
+    content: str,
+    *,
+    rerank: float,
+    semantic: float,
+) -> ContextChunk:
+    from dataclasses import replace
+
+    return replace(
+        _chunk(content=content, semantic_score=semantic, score=rerank),
+        rerank_relevance_score=rerank,
+        metadata={"rerank_status": "applied"},
+    )
+
+
+@pytest.mark.parametrize(
+    ("question", "content", "semantic"),
+    [
+        ("উৎসে কর সংগ্রহের খাত কি?", _GAZETTE_TABLE, 0.323),
+        ("what are the source tax deduction areas?", _GAZETTE_TABLE, 0.323),
+        ("উৎসে kor collection khat ki?", _GAZETTE_TABLE, 0.323),
+    ],
+)
+def test_applied_rerank_admits_positive_multilingual_cases(
+    question: str,
+    content: str,
+    semantic: float,
+) -> None:
+    decision = GroundingService(ChatConfig()).assess(
+        question,
+        [_reranked(content, rerank=0.869, semantic=semantic)],
+        rerank_status="applied",
+    )
+    assert decision.sufficient is True
+    assert decision.evidence_score_method == "reranker_relevance"
+    assert decision.best_score == pytest.approx(0.869)
+    assert decision.winning_semantic_score == pytest.approx(semantic)
+
+
+def test_applied_rerank_rejects_unrelated_maternity_leave() -> None:
+    decision = GroundingService(ChatConfig()).assess(
+        "What is the maternity leave policy?",
+        [_reranked(_GAZETTE_TABLE, rerank=0.61, semantic=0.18)],
+        rerank_status="applied",
+    )
+    assert decision.sufficient is False
+    assert decision.reason is InsufficientEvidenceReason.BELOW_RELEVANCE_THRESHOLD
+    assert decision.best_score == pytest.approx(0.61)
+    assert decision.winning_semantic_score == pytest.approx(0.18)
+
+
+def test_category_query_does_not_admit_rate_row_on_rerank_alone() -> None:
+    decision = GroundingService(ChatConfig()).assess(
+        "উৎসে কর সংগ্রহের খাত কি?",
+        [_reranked(_RATE_ROW, rerank=0.72, semantic=0.19)],
+        rerank_status="applied",
+    )
+    assert decision.sufficient is False
+    assert decision.reason is InsufficientEvidenceReason.BELOW_RELEVANCE_THRESHOLD
+
+
+def test_category_query_admits_gazette_table_over_rate_neighbor() -> None:
+    rate = _reranked(_RATE_ROW, rerank=0.52, semantic=0.19)
+    table = _reranked(_GAZETTE_TABLE, rerank=0.87, semantic=0.323)
+    decision = GroundingService(ChatConfig()).assess(
+        "what are the source tax deduction areas?",
+        [rate, table],
+        rerank_status="applied",
+    )
+    assert decision.sufficient is True
+    assert decision.winning_chunk_id == table.chunk_id
+
+
+async def test_english_paraphrase_of_cited_english_evidence_is_supported() -> None:
+    evidence = "Customer refunds are available for thirty days after purchase."
+    claim = "Buyers can get their money back within a month of buying."
+    service = GroundingService(
+        ChatConfig(minimum_claim_token_coverage=0.35),
+        embedder=_cluster_embedder({claim: "refund", evidence: "refund"}),
+    )
+
+    result = await service.map_claims(f"{claim} [1]", [_chunk(content=evidence)])
+
+    assert result.claims[0]["verification"] == "supported"
+    assert result.grounded is True
+    assert result.citation_coverage == 1.0

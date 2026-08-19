@@ -59,6 +59,7 @@ class _PreparedTurn:
     retrieval_ms: int
     evidence: EvidenceDecision
     retrieval_diagnostics: dict[str, Any]
+    grounding: GroundingService
 
 
 class ChatService:
@@ -330,15 +331,17 @@ class ChatService:
         chunks = retrieval_result.chunks
         retrieval_ms = int((time.perf_counter() - retrieval_started) * 1000)
         selected = self._context_builder.select(chunks)
-        selected_ids = {chunk.chunk_id for chunk in selected}
-        evidence_chunks = [chunk for chunk in chunks if chunk.chunk_id in selected_ids]
         query_embedder = getattr(self._retrieval, "query_embedder", None)
         grounding = (
             GroundingService(self._chat_config, embedder=query_embedder)
             if query_embedder is not None
             else self._grounding
         )
-        evidence = grounding.assess(request.content, evidence_chunks)
+        evidence = grounding.assess(
+            request.content,
+            selected,
+            rerank_status=str(retrieval_result.diagnostics.get("rerank_status") or "") or None,
+        )
 
         prompt_version = (
             conversation.system_prompt_version or self._chat_config.system_prompt_version
@@ -378,6 +381,7 @@ class ChatService:
             retrieval_ms=retrieval_ms,
             evidence=evidence,
             retrieval_diagnostics=retrieval_result.diagnostics,
+            grounding=grounding,
         )
 
     async def _persist_assistant_turn(
@@ -401,7 +405,7 @@ class ChatService:
         generation_ran: bool = False,
     ) -> Message:
         reason_value = str(insufficient_reason) if insufficient_reason is not None else None
-        grounding = await self._grounding.map_claims(content, prepared.selected)
+        grounding = await prepared.grounding.map_claims(content, prepared.selected)
         if reason_value is not None:
             grounding = type(grounding)(claims=[], grounded=False, citation_coverage=1.0)
         metadata = self._build_metadata(

@@ -15,7 +15,11 @@ from app.models.message import Message, MessageRole
 from app.modules.conversations.ports import ContextChunk, ContextRetrievalResult
 from app.modules.conversations.schemas.message import MessageSendRequest
 from app.modules.conversations.services.chat_service import ChatService
-from app.platform.providers.contracts.llm import ChatCompletionChunk
+from app.platform.providers.contracts.llm import (
+    ChatCompletionChunk,
+    ChatCompletionResult,
+    ChatUsage,
+)
 from app.platform.providers.errors import ProviderError
 from app.platform.providers.implementations.echo_chat import EchoLLMProvider
 
@@ -462,6 +466,64 @@ async def test_enforce_mode_still_skips_generation_on_a_cosine_near_miss(
     assert gate["evidence_score"] == pytest.approx(0.32)
 
 
+async def test_applied_rerank_above_threshold_runs_generation(
+    session: AsyncMock,
+    conversation_repository: AsyncMock,
+    message_repository: AsyncMock,
+    conversation: Conversation,
+) -> None:
+    class CountingLLM(EchoLLMProvider):
+        calls = 0
+
+        async def generate(self, messages, *, temperature, max_tokens):
+            self.calls += 1
+            return await super().generate(
+                messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+
+    class AppliedRerankRetrieval:
+        async def retrieve(self, **kwargs: object) -> ContextRetrievalResult:
+            del kwargs
+            return ContextRetrievalResult(
+                chunks=[
+                    ContextChunk(
+                        chunk_id=uuid.uuid4(),
+                        document_id=uuid.uuid4(),
+                        chunk_index=2,
+                        content="উৎসে কর সংগ্রহের খাত সঞ্চয়পত্র হইতে অর্জিত মুনাফা",
+                        score=0.8693157,
+                        filename="gazette.pdf",
+                        chunk_hash="gazette-table",
+                        semantic_score=0.323,
+                        rank_score=None,
+                        rerank_relevance_score=None,
+                        metadata={"rerank_status": "applied"},
+                    )
+                ],
+                diagnostics={"rerank_status": "applied"},
+            )
+
+    llm = CountingLLM(model="test", provider_version="1")
+    service = _service(session, conversation_repository, message_repository, llm)
+    service._retrieval = AppliedRerankRetrieval()
+
+    turn = await service.send_message(
+        conversation.id,
+        MessageSendRequest(content="উৎসে কর সংগ্রহের খাত কি?"),
+    )
+
+    assert llm.calls == 1
+    assert turn.assistant_message.finish_reason != "insufficient_evidence"
+    gate = turn.assistant_message.metadata["evidence_gate"]
+    assert gate["sufficient"] is True
+    assert gate["evidence_score"] == pytest.approx(0.8693157)
+    assert gate["evidence_score_method"] == "reranker_relevance"
+    selected = turn.assistant_message.metadata["retrieval_trace"]["context_selected"]
+    assert selected[0]["rerank_relevance_score"] == pytest.approx(0.8693157)
+
+
 async def test_send_message_uses_conversation_temperature(
     session: AsyncMock,
     conversation_repository: AsyncMock,
@@ -629,3 +691,161 @@ async def test_stream_cancel_skips_assistant_persist(
         events.append(item)
     assert session.commit.await_count == 1
     assert not any(isinstance(item, dict) for item in events)
+
+
+async def test_applied_rerank_without_corroboration_blocks_unrelated_query(
+    session: AsyncMock,
+    conversation_repository: AsyncMock,
+    message_repository: AsyncMock,
+    conversation: Conversation,
+) -> None:
+    class CountingLLM(EchoLLMProvider):
+        calls = 0
+
+        async def generate(self, messages, *, temperature, max_tokens):
+            self.calls += 1
+            return await super().generate(
+                messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+
+    class UnrelatedRerankRetrieval:
+        async def retrieve(self, **kwargs: object) -> ContextRetrievalResult:
+            del kwargs
+            return ContextRetrievalResult(
+                chunks=[
+                    ContextChunk(
+                        chunk_id=uuid.uuid4(),
+                        document_id=uuid.uuid4(),
+                        chunk_index=2,
+                        content="উৎসে কর সংগ্রহের খাত সঞ্চয়পত্র হইতে অর্জিত মুনাফা",
+                        score=0.61,
+                        filename="gazette.pdf",
+                        chunk_hash="gazette-table",
+                        semantic_score=0.18,
+                        rerank_relevance_score=0.61,
+                        metadata={"rerank_status": "applied"},
+                    )
+                ],
+                diagnostics={"rerank_status": "applied"},
+            )
+
+    llm = CountingLLM(model="test", provider_version="1")
+    service = _service(session, conversation_repository, message_repository, llm)
+    service._retrieval = UnrelatedRerankRetrieval()
+
+    turn = await service.send_message(
+        conversation.id,
+        MessageSendRequest(content="What is the maternity leave policy?"),
+    )
+
+    assert llm.calls == 0
+    assert turn.assistant_message.finish_reason == "insufficient_evidence"
+    gate = turn.assistant_message.metadata["evidence_gate"]
+    assert gate["sufficient"] is False
+    assert gate["evidence_score"] == pytest.approx(0.61)
+    assert gate["winning_semantic_score"] == pytest.approx(0.18)
+
+
+async def test_cited_english_answer_is_grounded_when_query_embedder_confirms(
+    session: AsyncMock,
+    conversation_repository: AsyncMock,
+    message_repository: AsyncMock,
+    conversation: Conversation,
+) -> None:
+    from app.platform.providers.contracts.embedding import (
+        BaseEmbeddingProvider,
+        EmbeddingBatchResult,
+        EmbeddingPurpose,
+    )
+
+    table = "সঞ্চয়পত্র হইতে অর্জিত মুনাফা সম্পত্তির অধিগ্রহণ রপ্তানির বিপরীতে মোটরযান"
+    claim = "Source tax categories include savings certificates and property acquisition."
+
+    class _ClusterEmbedder(BaseEmbeddingProvider):
+        @property
+        def provider_name(self) -> str:
+            return "test"
+
+        @property
+        def model_name(self) -> str:
+            return "cluster"
+
+        @property
+        def dimensions(self) -> int:
+            return 4
+
+        @property
+        def provider_version(self) -> str:
+            return "1"
+
+        async def embed_texts(
+            self,
+            texts: list[str],
+            *,
+            purpose: EmbeddingPurpose = EmbeddingPurpose.DOCUMENT,
+        ) -> EmbeddingBatchResult:
+            del purpose
+            vector = [1.0, 0.0, 0.0, 0.0]
+            return EmbeddingBatchResult(
+                vectors=[vector for _ in texts],
+                provider=self.provider_name,
+                model=self.model_name,
+                dimensions=self.dimensions,
+                provider_version=self.provider_version,
+            )
+
+    class CitedLLM(EchoLLMProvider):
+        async def generate(self, messages, *, temperature, max_tokens):
+            del messages, temperature, max_tokens
+            return ChatCompletionResult(
+                content=f"{claim} [1]",
+                provider="echo",
+                model="test",
+                finish_reason="stop",
+                usage=ChatUsage(1, 8),
+                provider_version="1",
+            )
+
+    class GazetteRetrieval:
+        query_embedder = _ClusterEmbedder()
+
+        async def retrieve(self, **kwargs: object) -> ContextRetrievalResult:
+            del kwargs
+            return ContextRetrievalResult(
+                chunks=[
+                    ContextChunk(
+                        chunk_id=uuid.uuid4(),
+                        document_id=uuid.uuid4(),
+                        chunk_index=2,
+                        content=table,
+                        score=0.869,
+                        filename="gazette.pdf",
+                        chunk_hash="gazette-table",
+                        semantic_score=0.323,
+                        rerank_relevance_score=0.869,
+                        metadata={"rerank_status": "applied"},
+                    )
+                ],
+                diagnostics={"rerank_status": "applied"},
+            )
+
+    service = _service(
+        session,
+        conversation_repository,
+        message_repository,
+        CitedLLM(model="test", provider_version="1"),
+    )
+    service._retrieval = GazetteRetrieval()
+
+    turn = await service.send_message(
+        conversation.id,
+        MessageSendRequest(content="what are the source tax deduction areas?"),
+    )
+
+    assert turn.assistant_message.finish_reason != "insufficient_evidence"
+    assert turn.assistant_message.grounded is True
+    assert turn.assistant_message.metadata["grounded"] is True
+    assert turn.assistant_message.metadata["citation_coverage"] == 1.0
+    assert turn.assistant_message.claims[0].verification == "supported"

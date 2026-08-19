@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import time
 
 from app.platform.domain.language_detection import missing_protected_literals
@@ -18,7 +19,11 @@ from app.platform.providers.prompts.retrieval_translation import (
     translation_messages,
 )
 
-_MAX_TRANSLATION_CHARS = 2000
+# Page-length query + buffer. Rejects rambling, not a book-page translation.
+_MAX_TRANSLATION_CHARS = 24_000
+_MIN_TRANSLATION_OUTPUT_TOKENS = 256
+_MAX_TRANSLATION_OUTPUT_TOKENS = 4096
+_SHORT_QUERY_CLEAN_CHARS = 400
 
 
 class LLMQueryTranslationProvider(BaseQueryTranslationProvider):
@@ -29,13 +34,15 @@ class LLMQueryTranslationProvider(BaseQueryTranslationProvider):
         llm: BaseLLMProvider,
         *,
         prompt_version: str = PROMPT_VERSION,
-        max_output_tokens: int = 256,
+        max_output_tokens: int = 4096,
         temperature: float | None = None,
+        retry_max_attempts: int = 1,
     ) -> None:
         self._llm = llm
         self._prompt_version = prompt_version
         self._max_output_tokens = max_output_tokens
         self._temperature = temperature
+        self._retry_max_attempts = max(0, retry_max_attempts)
 
     @property
     def provider_name(self) -> str:
@@ -53,6 +60,19 @@ class LLMQueryTranslationProvider(BaseQueryTranslationProvider):
     def prompt_version(self) -> str:
         return self._prompt_version
 
+    def _max_tokens(self, request: QueryTranslationRequest) -> int:
+        # Bangla can approach ~1 token per 1-2 chars; English is cheaper.
+        sized = max(
+            _MIN_TRANSLATION_OUTPUT_TOKENS,
+            min(_MAX_TRANSLATION_OUTPUT_TOKENS, (len(request.query) // 2) + 256),
+        )
+        return min(
+            request.max_output_tokens,
+            self._max_output_tokens,
+            _MAX_TRANSLATION_OUTPUT_TOKENS,
+            sized,
+        )
+
     async def translate(self, request: QueryTranslationRequest) -> QueryTranslationResponse:
         payload = translation_messages(
             query=request.query,
@@ -64,19 +84,28 @@ class LLMQueryTranslationProvider(BaseQueryTranslationProvider):
             ChatMessage(role=ChatRole(item["role"]), content=item["content"]) for item in payload
         ]
         started = time.perf_counter()
-        completion = await self._llm.generate(
-            messages,
-            temperature=self._temperature,
-            max_tokens=min(request.max_output_tokens, self._max_output_tokens),
-        )
+        attempts = 1 + self._retry_max_attempts
+        completion = None
+        translated = ""
+        error = "empty"
+        for _ in range(attempts):
+            completion = await self._llm.generate(
+                messages,
+                temperature=self._temperature,
+                max_tokens=self._max_tokens(request),
+            )
+            translated = _clean_translation(completion.content)
+            error = _validation_error(request.query, translated)
+            if error is None:
+                break
+            if error != "empty":
+                break
         latency_ms = int((time.perf_counter() - started) * 1000)
-        translated = _clean_translation(completion.content)
-        error = _validation_error(request.query, translated)
-        if error is not None:
+        if completion is None or error is not None:
             raise ProviderError(
                 "Retrieval translation failed validation.",
                 provider_name=self.provider_name,
-                context={"reason": error},
+                context={"reason": error or "empty"},
             )
         return QueryTranslationResponse(
             translated_query=translated,
@@ -94,9 +123,83 @@ class LLMQueryTranslationProvider(BaseQueryTranslationProvider):
 
 def _clean_translation(text: str) -> str:
     cleaned = text.strip()
-    if cleaned.startswith(("```", '"', "'")) and cleaned.endswith(("```", '"', "'")):
-        cleaned = cleaned.strip("`").strip().strip('"').strip("'")
+    if not cleaned:
+        return ""
+    cleaned = _unwrap_fence(cleaned)
+    cleaned = _unwrap_json_query(cleaned)
+    cleaned = _prefer_translation_text(cleaned)
+    cleaned = _unwrap_matching_quotes(cleaned)
     return " ".join(cleaned.split())
+
+
+def _prefer_translation_text(text: str) -> str:
+    """Keep page-length translations; drop a trailing explanation on short queries."""
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if not lines:
+        return text.strip()
+    first = _strip_translation_label(lines[0])
+    rest = lines[1:]
+    if not first and rest:
+        first = _strip_translation_label(rest[0])
+        rest = rest[1:]
+    if not rest:
+        return first
+    joined = " ".join([first, *rest])
+    if len(joined) <= _SHORT_QUERY_CLEAN_CHARS:
+        return first
+    return joined
+
+
+def _strip_translation_label(text: str) -> str:
+    for prefix in ("translation:", "translated query:", "query:"):
+        lowered = text.casefold()
+        if lowered.startswith(prefix):
+            return text[len(prefix) :].strip()
+    return text
+
+
+def _unwrap_fence(text: str) -> str:
+    if not text.startswith("```"):
+        return text
+    body = text[3:]
+    newline = body.find("\n")
+    if newline != -1:
+        language = body[:newline].strip()
+        if language and " " not in language:
+            body = body[newline + 1 :]
+    if body.endswith("```"):
+        body = body[:-3]
+    return body.strip()
+
+
+def _unwrap_json_query(text: str) -> str:
+    candidate = text
+    if not (candidate.startswith("{") and candidate.endswith("}")):
+        start = text.find("{")
+        end = text.rfind("}")
+        if start == -1 or end <= start:
+            return text
+        candidate = text[start : end + 1]
+    try:
+        payload = json.loads(candidate)
+    except json.JSONDecodeError:
+        return text
+    if not isinstance(payload, dict):
+        return text
+    for key in ("translated_query", "translation", "query", "text"):
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return text
+
+
+def _unwrap_matching_quotes(text: str) -> str:
+    if len(text) < 2:
+        return text
+    pairs = {('"', '"'), ("'", "'"), ("\u201c", "\u201d"), ("\u2018", "\u2019")}
+    if (text[0], text[-1]) in pairs:
+        return text[1:-1].strip()
+    return text
 
 
 def _validation_error(original: str, translated: str) -> str | None:

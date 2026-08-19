@@ -26,7 +26,7 @@ class EvaluationCase(BaseModel):
 
     key: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_.-]+$")
     kind: EvaluationCaseKind
-    query: str = Field(min_length=1, max_length=4096)
+    query: str = Field(min_length=1, max_length=32_000)
     relevant_chunk_ids: list[uuid.UUID] = Field(default_factory=list)
     relevant_document_ids: list[uuid.UUID] = Field(default_factory=list)
     relevant_evidence_phrases: list[str] = Field(default_factory=list)

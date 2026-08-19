@@ -26,7 +26,7 @@ from app.modules.conversations.services.conversation_service import Conversation
 from app.modules.projects.repositories.project_ai_config_repository import (
     ProjectAIConfigRepository,
 )
-from app.modules.retrieval.schemas.search import SearchRequest
+from app.modules.retrieval.schemas.search import RetrievalResult, SearchRequest
 from app.modules.retrieval.services.search_service import SearchService
 from app.platform.config.project_ai import (
     ConfigProvenance,
@@ -79,34 +79,47 @@ class SearchServiceRetrievalAdapter:
             )
         )
         return ContextRetrievalResult(
-            chunks=[
-                ContextChunk(
-                    chunk_id=result.chunk_id,
-                    document_id=result.document_id,
-                    chunk_index=result.chunk_index,
-                    content=result.content,
-                    score=result.score,
-                    filename=result.filename,
-                    chunk_hash=content_hash(result.content),
-                    semantic_score=result.semantic_score,
-                    rank_score=result.rank_score,
-                    rerank_relevance_score=result.rerank_relevance_score,
-                    evidence_relevance_score=result.evidence_relevance_score,
-                    evidence_score_method=result.evidence_score_method,
-                    evidence_calibration_id=result.evidence_calibration_id,
-                    passage_semantic_score=result.passage_semantic_score,
-                    passage_char_start=result.passage_char_start,
-                    passage_char_end=result.passage_char_end,
-                    passage_score_method=result.passage_score_method,
-                    page_number=result.page_number,
-                    char_start=result.char_start,
-                    char_end=result.char_end,
-                    metadata=dict(result.metadata),
-                )
-                for result in response.results
-            ],
+            chunks=[_context_chunk_from_result(result) for result in response.results],
             diagnostics=response.diagnostics.model_dump(mode="json"),
         )
+
+
+def _context_chunk_from_result(result: RetrievalResult) -> ContextChunk:
+    """Map a search hit onto chat context without dropping rerank scores."""
+    rerank_score = result.rerank_relevance_score
+    rank_score = result.rank_score
+    evidence_score = result.evidence_relevance_score
+    if result.metadata.get("rerank_status") == "applied":
+        if rerank_score is None:
+            rerank_score = result.score
+        if rank_score is None:
+            rank_score = result.score
+        if evidence_score is None:
+            evidence_score = rerank_score
+    return ContextChunk(
+        chunk_id=result.chunk_id,
+        document_id=result.document_id,
+        chunk_index=result.chunk_index,
+        content=result.content,
+        score=result.score,
+        filename=result.filename,
+        chunk_hash=content_hash(result.content),
+        semantic_score=result.semantic_score,
+        rank_score=rank_score,
+        rerank_relevance_score=rerank_score,
+        evidence_relevance_score=evidence_score,
+        evidence_score_method=result.evidence_score_method
+        or ("reranker_relevance" if rerank_score is not None else None),
+        evidence_calibration_id=result.evidence_calibration_id,
+        passage_semantic_score=result.passage_semantic_score,
+        passage_char_start=result.passage_char_start,
+        passage_char_end=result.passage_char_end,
+        passage_score_method=result.passage_score_method,
+        page_number=result.page_number,
+        char_start=result.char_start,
+        char_end=result.char_end,
+        metadata=dict(result.metadata),
+    )
 
 
 def get_conversation_repository(

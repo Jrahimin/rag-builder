@@ -7,7 +7,7 @@ import json
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.chunk_embedding import EMBEDDING_SCHEMA_VERSION, ChunkEmbedding
@@ -16,6 +16,7 @@ from app.models.document import Document, DocumentStatus
 from app.models.document_chunk import DocumentChunk
 from app.models.index_build import IndexBuild, IndexBuildState, ProjectIndexPointer
 from app.models.keyword_term_stats import KeywordCollectionStats, KeywordTermStats
+from app.modules.retrieval.keyword.fts import to_search_vector
 from app.modules.retrieval.keyword.tokenizer import (
     normalize_for_indexing,
     term_frequencies,
@@ -164,7 +165,7 @@ class IndexBuildWorkflow:
                     token_count=len(tokens),
                     term_frequencies=term_frequencies(tokens),
                     metadata_snapshot=metadata,
-                    search_vector=func.to_tsvector(self._fts_regconfig, normalized),
+                    search_vector=to_search_vector(self._fts_regconfig, normalized),
                 )
             )
             if index % 100 == 0:

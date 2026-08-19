@@ -30,12 +30,18 @@ def create_query_translation_provider(
             "Echo LLM cannot produce retrieval translations.",
             provider_name="query_translation",
         )
-    llm = create_llm_provider(settings, backend=selected_backend, model=selected_model)
+    llm = create_llm_provider(
+        settings,
+        backend=selected_backend,
+        model=selected_model,
+        request_timeout_seconds=translation.request_timeout_seconds,
+    )
     return LLMQueryTranslationProvider(
         llm,
         prompt_version=prompt_version or translation.prompt_version or PROMPT_VERSION,
         max_output_tokens=translation.max_output_tokens,
         temperature=None,
+        retry_max_attempts=translation.retry_max_attempts,
     )
 
 

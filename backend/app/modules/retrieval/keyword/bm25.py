@@ -26,8 +26,10 @@ def bm25_score(
         if tf == 0:
             continue
         df = document_frequencies.get(term, 0)
-        if df == 0:
-            continue
+        if df <= 0:
+            # The term is in this document. Missing collection stats must not
+            # zero a lexical hit after FTS already matched it.
+            df = 1
         idf = math.log(1 + (total_documents - df + 0.5) / (df + 0.5))
         numerator = tf * (k1 + 1)
         denominator = tf + k1 * (1 - b + b * (doc_length / avg_doc_length))

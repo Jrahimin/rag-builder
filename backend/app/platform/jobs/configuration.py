@@ -61,6 +61,17 @@ def build_job_configuration(
     )
 
 
+def embedding_set_version_from_configuration(configuration: JobConfiguration) -> int | None:
+    """Read the frozen retrieval embedding_set_version captured at job enqueue."""
+    retrieval = configuration.index.get("retrieval")
+    if not isinstance(retrieval, dict):
+        return None
+    value = retrieval.get("embedding_set_version")
+    if isinstance(value, int) and not isinstance(value, bool) and value >= 1:
+        return value
+    return None
+
+
 def apply_job_configuration(
     settings: Settings,
     configuration: JobConfiguration,
@@ -85,7 +96,12 @@ def apply_job_configuration(
                     **index["embedding"],
                 }
             ),
-            "retrieval": type(settings.retrieval).model_validate(index["retrieval"]),
+            "retrieval": type(settings.retrieval).model_validate(
+                {
+                    **settings.retrieval.model_dump(),
+                    **index["retrieval"],
+                }
+            ),
             "chat": type(settings.chat).model_validate(quality["chat"]),
             "evaluation": type(settings.evaluation).model_validate(quality["evaluation"]),
             "llm": type(settings.llm).model_validate(

@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
+from app.core import config as config_module
 from app.core.config import (
     AppConfig,
     CORSConfig,
@@ -13,6 +16,8 @@ from app.core.config import (
     Environment,
     MinioConfig,
     RedisConfig,
+    Settings,
+    _settings_env_files,
     get_settings,
 )
 
@@ -89,3 +94,25 @@ def test_integration_db_guard_settings(monkeypatch: pytest.MonkeyPatch) -> None:
     settings = get_settings()
     assert settings.database.name != settings.test_database.name
     get_settings.cache_clear()
+
+
+def test_nested_env_sets_embedding_set_version(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("APE_RETRIEVAL__EMBEDDING_SET_VERSION", "3")
+    settings = Settings()
+    assert settings.retrieval.embedding_set_version == 3
+
+
+def test_settings_env_files_skip_when_testing(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("APE_APP__ENV", "testing")
+    assert _settings_env_files() is None
+
+
+def test_settings_env_files_prefer_backend_env_when_present(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("APE_APP__ENV", "development")
+    files = _settings_env_files()
+    assert files is not None
+    backend_env = Path(config_module.__file__).resolve().parents[2] / ".env"
+    if backend_env.is_file():
+        assert Path(files[-1]).resolve() == backend_env.resolve()

@@ -323,11 +323,18 @@ class GroundedEvaluationAnswerAdapter(EvaluationAnswerPort):
     ) -> QualityAnswer:
         chunks = [_context_chunk(hit) for hit in hits]
         selected = self._context.select(chunks)
-        selected_ids = {chunk.chunk_id for chunk in selected}
         grounding = self._passage_grounding if profile == "passage" else self._whole_chunk_grounding
         decision = grounding.assess(
             question,
-            [chunk for chunk in chunks if chunk.chunk_id in selected_ids],
+            selected,
+            rerank_status=next(
+                (
+                    str(chunk.metadata.get("rerank_status"))
+                    for chunk in selected
+                    if chunk.metadata.get("rerank_status")
+                ),
+                None,
+            ),
         )
         blocked = grounding.blocks_generation(decision)
         if blocked:
@@ -520,6 +527,9 @@ def _optional_translator(settings: Settings) -> BaseQueryTranslationProvider | N
 
 
 def _context_chunk(hit: QualityHit) -> ContextChunk:
+    rerank_score = _optional_hit_float(hit.rerank_relevance_score)
+    if rerank_score is None and hit.metadata.get("rerank_status") == "applied":
+        rerank_score = float(hit.score)
     return ContextChunk(
         chunk_id=hit.chunk_id,
         document_id=hit.document_id,
@@ -529,8 +539,10 @@ def _context_chunk(hit: QualityHit) -> ContextChunk:
         filename=hit.filename,
         chunk_hash=content_hash(hit.content),
         semantic_score=hit.semantic_score,
-        rank_score=hit.rank_score,
-        rerank_relevance_score=_optional_hit_float(hit.rerank_relevance_score),
+        rank_score=hit.rank_score if hit.rank_score is not None else rerank_score,
+        rerank_relevance_score=rerank_score,
+        evidence_relevance_score=rerank_score,
+        evidence_score_method="reranker_relevance" if rerank_score is not None else None,
         passage_semantic_score=hit.passage_semantic_score,
         passage_char_start=hit.passage_char_start,
         passage_char_end=hit.passage_char_end,

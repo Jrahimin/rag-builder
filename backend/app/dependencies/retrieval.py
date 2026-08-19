@@ -27,7 +27,10 @@ from app.platform.config.project_ai import (
     apply_effective_ai_config,
     resolve_project_ai_config,
 )
-from app.platform.jobs.configuration import build_job_configuration
+from app.platform.jobs.configuration import (
+    build_job_configuration,
+    embedding_set_version_from_configuration,
+)
 from app.platform.jobs.contracts import DurableJobSubmitter
 from app.platform.providers.contracts.embedding import BaseEmbeddingProvider
 from app.platform.providers.errors import ProviderError
@@ -154,21 +157,25 @@ async def get_index_lifecycle_service(
     )
     project = await session.get(Project, project_id)
     pointer = await session.get(ProjectIndexPointer, project_id)
+    job_configuration = build_job_configuration(
+        settings,
+        resolution=resolution,
+        active_index_build_id=(
+            str(pointer.active_build_id) if pointer and pointer.active_build_id else None
+        ),
+        source_metadata_generation=(
+            project.source_metadata_generation if project is not None else 0
+        ),
+    )
     return IndexLifecycleService(
         session=session,
         project_id=project_id,
         job_submitter=job_submitter,
-        job_configuration=build_job_configuration(
-            settings,
-            resolution=resolution,
-            active_index_build_id=(
-                str(pointer.active_build_id) if pointer and pointer.active_build_id else None
-            ),
-            source_metadata_generation=(
-                project.source_metadata_generation if project is not None else 0
-            ),
+        job_configuration=job_configuration,
+        embedding_set_version=(
+            embedding_set_version_from_configuration(job_configuration)
+            or settings.retrieval.embedding_set_version
         ),
-        embedding_set_version=settings.retrieval.embedding_set_version,
         job_max_attempts=settings.jobs.max_attempts,
         audit=DatabaseAuditRecorder(session, project_id),
         query_embedder_factory=query_embedder_factory_for(settings),

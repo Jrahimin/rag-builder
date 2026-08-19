@@ -76,7 +76,7 @@ class EvidenceDecision:
     sufficient: bool
     reason: InsufficientEvidenceReason | None = None
     query_token_coverage: float = 0.0
-    best_score: float = 0.0
+    best_score: float | None = None
     lexically_corroborated: bool = False
     winning_chunk_id: uuid.UUID | None = None
     evidence_score_method: str = "whole_chunk_cosine"
@@ -114,14 +114,20 @@ class GroundingService:
         self._config = config
         self._embedder = embedder
 
-    def assess(self, question: str, chunks: list[ContextChunk]) -> EvidenceDecision:
+    def assess(
+        self,
+        question: str,
+        chunks: list[ContextChunk],
+        *,
+        rerank_status: str | None = None,
+    ) -> EvidenceDecision:
         if not chunks:
             return EvidenceDecision(
                 sufficient=False,
                 reason=InsufficientEvidenceReason.NO_RETRIEVAL_RESULTS,
             )
-        if _rerank_applied(chunks):
-            return self._assess_reranker(chunks)
+        if _rerank_applied(chunks, rerank_status=rerank_status):
+            return self._assess_reranker(question, chunks, rerank_status=rerank_status)
         scored = [
             item
             for chunk in chunks
@@ -164,46 +170,88 @@ class GroundingService:
             winning_rank_score=best[2].rank_score,
         )
 
-    def _assess_reranker(self, chunks: list[ContextChunk]) -> EvidenceDecision:
+    def _assess_reranker(
+        self,
+        question: str,
+        chunks: list[ContextChunk],
+        *,
+        rerank_status: str | None = None,
+    ) -> EvidenceDecision:
         scored = [
-            (chunk.rerank_relevance_score, chunk)
+            (score, chunk)
             for chunk in chunks
-            if chunk.rerank_relevance_score is not None
+            if (score := _reranker_relevance(chunk, rerank_status=rerank_status)) is not None
         ]
         method = "reranker_relevance"
-        calibration_id = "reranker_relevance:v1"
+        calibration_id = "reranker_relevance:v2"
         if not scored:
             return EvidenceDecision(
                 sufficient=False,
                 reason=InsufficientEvidenceReason.BELOW_RELEVANCE_THRESHOLD,
                 evidence_score_method=method,
                 evidence_calibration_id=calibration_id,
+                best_score=None,
             )
-        winner = max(scored, key=lambda item: (item[0], str(item[1].chunk_id)))
-        if winner[0] >= self._config.minimum_reranker_evidence_score:
+        best_score = max(score for score, _ in scored)
+        winner_score, winner_chunk = next(item for item in scored if item[0] == best_score)
+        corroborated, coverage, lexical = self._independent_corroboration(question, winner_chunk)
+        if winner_score >= self._config.minimum_reranker_evidence_score and corroborated:
             return EvidenceDecision(
                 sufficient=True,
-                best_score=winner[0],
-                winning_chunk_id=winner[1].chunk_id,
+                query_token_coverage=coverage,
+                best_score=winner_score,
+                lexically_corroborated=lexical,
+                winning_chunk_id=winner_chunk.chunk_id,
                 evidence_score_method=method,
                 evidence_calibration_id=calibration_id,
-                evidence_char_start=winner[1].char_start,
-                evidence_char_end=winner[1].char_end,
-                winning_semantic_score=winner[1].semantic_score,
-                winning_rank_score=winner[1].rank_score,
+                evidence_char_start=winner_chunk.char_start,
+                evidence_char_end=winner_chunk.char_end,
+                winning_semantic_score=winner_chunk.semantic_score,
+                winning_rank_score=winner_chunk.rank_score,
             )
         return EvidenceDecision(
             sufficient=False,
             reason=InsufficientEvidenceReason.BELOW_RELEVANCE_THRESHOLD,
-            best_score=winner[0],
-            winning_chunk_id=winner[1].chunk_id,
+            query_token_coverage=coverage,
+            best_score=winner_score,
+            lexically_corroborated=lexical,
+            winning_chunk_id=winner_chunk.chunk_id,
             evidence_score_method=method,
             evidence_calibration_id=calibration_id,
-            evidence_char_start=winner[1].char_start,
-            evidence_char_end=winner[1].char_end,
-            winning_semantic_score=winner[1].semantic_score,
-            winning_rank_score=winner[1].rank_score,
+            evidence_char_start=winner_chunk.char_start,
+            evidence_char_end=winner_chunk.char_end,
+            winning_semantic_score=winner_chunk.semantic_score,
+            winning_rank_score=winner_chunk.rank_score,
         )
+
+    def _independent_corroboration(
+        self,
+        question: str,
+        chunk: ContextChunk,
+    ) -> tuple[bool, float, bool]:
+        """Require a non-rerank signal so forced ranking cannot admit unrelated hits."""
+        item = self._candidate_evidence(question, chunk)
+        if item is None:
+            return False, 0.0, False
+        semantic, coverage, _, start, end = item
+        evidence_text = chunk.content
+        if (
+            self._config.evidence_score_mode is EvidenceScoreMode.PASSAGE_MAX
+            and start is not None
+            and end is not None
+            and 0 <= start < end <= len(chunk.content)
+        ):
+            evidence_text = chunk.content[start:end]
+        direct = semantic >= self._config.minimum_semantic_evidence_score
+        lexical = (
+            semantic >= self._config.lexical_corroboration_floor_score
+            and coverage >= self._config.lexical_corroboration_coverage
+        )
+        cross_language = (
+            not _same_language(question, evidence_text)
+            and semantic >= self._config.lexical_corroboration_floor_score
+        )
+        return direct or lexical or cross_language, coverage, lexical
 
     def blocks_generation(self, decision: EvidenceDecision) -> bool:
         """Refuse before the LLM only when policy says the gate may block.
@@ -243,6 +291,7 @@ class GroundingService:
             "lexically_corroborated": decision.lexically_corroborated,
             "semantic_threshold": self._config.minimum_semantic_evidence_score,
             "lexical_floor": self._config.lexical_corroboration_floor_score,
+            "reranker_threshold": self._config.minimum_reranker_evidence_score,
             "winning_char_start": decision.evidence_char_start,
             "winning_char_end": decision.evidence_char_end,
         }
@@ -335,10 +384,7 @@ class GroundingService:
                     has_valid_citation=bool(evidence_chunks),
                 )
             )
-            if evidence_chunks and not _uses_lexical_verification(
-                claim_text,
-                [chunk.content for _, chunk in evidence_chunks],
-            ):
+            if evidence_chunks:
                 semantic_pairs.extend((claim_text, chunk.content) for _, chunk in evidence_chunks)
         similarities = await self._claim_similarities(semantic_pairs)
 
@@ -350,16 +396,23 @@ class GroundingService:
             evidence_texts = [chunk.content for _, chunk in draft.evidence_chunks]
             if not draft.has_valid_citation:
                 verification = ClaimVerification.UNSUPPORTED
-            elif _uses_lexical_verification(draft.text, evidence_texts):
-                verification = self._lexical_verification(draft.text, evidence_texts)
             else:
+                uses_lexical = _uses_lexical_verification(draft.text, evidence_texts)
+                lexical = (
+                    self._lexical_verification(draft.text, evidence_texts) if uses_lexical else None
+                )
                 scores = [
                     similarities.get((draft.text, chunk.content))
                     for _, chunk in draft.evidence_chunks
                 ]
                 numeric = [value for value in scores if value is not None]
                 score = max(numeric) if numeric else None
-                verification = self._cross_language_verification(score)
+                semantic = (
+                    self._cross_language_verification(score)
+                    if not uses_lexical or _usable_embedder(self._embedder)
+                    else None
+                )
+                verification = _combine_claim_verification(lexical, semantic)
             claim_grounded = verification is ClaimVerification.SUPPORTED
             supported += int(claim_grounded)
             unverified += int(verification is ClaimVerification.UNVERIFIED)
@@ -508,11 +561,27 @@ def _uses_lexical_verification(claim: str, evidence_texts: list[str]) -> bool:
 def _same_language(claim: str, evidence: str) -> bool:
     claim_language = detect_language(claim)
     evidence_language = detect_language(evidence)
-    if claim_language.primary_language is None or evidence_language.primary_language is None:
-        return True
     if claim_language.is_mixed or evidence_language.is_mixed:
         return False
+    if claim_language.primary_language is None or evidence_language.primary_language is None:
+        return False
     return claim_language.primary_language == evidence_language.primary_language
+
+
+def _combine_claim_verification(
+    lexical: ClaimVerification | None,
+    semantic: ClaimVerification | None,
+) -> ClaimVerification:
+    """Prefer confirmed support; do not treat missing semantic scores as a refusal."""
+    if lexical is ClaimVerification.SUPPORTED or semantic is ClaimVerification.SUPPORTED:
+        return ClaimVerification.SUPPORTED
+    if lexical is None:
+        return semantic if semantic is not None else ClaimVerification.UNVERIFIED
+    if semantic is None:
+        return lexical
+    if lexical is ClaimVerification.UNVERIFIED:
+        return semantic
+    return lexical
 
 
 def _usable_embedder(embedder: BaseEmbeddingProvider | None) -> bool:
@@ -526,9 +595,40 @@ def _coverage(expected: set[str], actual: set[str]) -> float:
     return len(expected & actual) / len(expected)
 
 
-def _rerank_applied(chunks: list[ContextChunk]) -> bool:
-    return any(
-        chunk.rerank_relevance_score is not None
-        and str(chunk.metadata.get("rerank_status")) == "applied"
-        for chunk in chunks
-    )
+def _reranker_relevance(
+    chunk: ContextChunk,
+    *,
+    rerank_status: str | None = None,
+) -> float | None:
+    """Return the Cohere relevance score, never a missing-value default of 0.0."""
+    if chunk.rerank_relevance_score is not None:
+        return chunk.rerank_relevance_score
+    if (
+        chunk.evidence_relevance_score is not None
+        and chunk.evidence_score_method == "reranker_relevance"
+    ):
+        return chunk.evidence_relevance_score
+    applied = rerank_status == "applied" or str(chunk.metadata.get("rerank_status")) == "applied"
+    if applied and chunk.score > 0.0:
+        # Successful rerank overwrites CandidateHit.score with model relevance. If the
+        # dedicated field was dropped in provenance, that score is still the signal.
+        return chunk.score
+    return None
+
+
+def _rerank_applied(
+    chunks: list[ContextChunk],
+    *,
+    rerank_status: str | None = None,
+) -> bool:
+    if rerank_status in {
+        "skipped_same_language",
+        "unavailable",
+        "disabled",
+        "passthrough",
+        "empty",
+    }:
+        return False
+    if rerank_status == "applied":
+        return True
+    return any(str(chunk.metadata.get("rerank_status")) == "applied" for chunk in chunks)

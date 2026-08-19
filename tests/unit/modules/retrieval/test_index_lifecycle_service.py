@@ -156,3 +156,31 @@ async def test_rollback_refuses_unlabeled_retained_build() -> None:
         await service.rollback()
     assert caught.value.code == "index_rollback_identity_unlabeled"
     activate.assert_not_awaited()
+
+
+async def test_enqueue_reindex_stamps_configured_embedding_set_version() -> None:
+    from app.platform.jobs.contracts import JobSubmission
+
+    project_id = uuid.uuid4()
+    job_submitter = MagicMock()
+    job_submitter.stage = AsyncMock(return_value=JobSubmission(job_id=uuid.uuid4(), created=True))
+    job_submitter.dispatch = AsyncMock()
+    service = IndexLifecycleService(
+        session=AsyncMock(),
+        project_id=project_id,
+        job_submitter=job_submitter,
+        job_configuration=build_job_configuration(Settings(retrieval={"embedding_set_version": 3})),
+        embedding_set_version=3,
+        job_max_attempts=3,
+        audit=MagicMock(),
+    )
+    repository = MagicMock()
+    repository.flush = AsyncMock()
+    service._repository = repository
+
+    await service.enqueue_reindex()
+
+    build = repository.add.call_args.args[0]
+    job = job_submitter.stage.await_args.args[0]
+    assert build.embedding_set_version == 3
+    assert job.payload["embedding_set_version"] == 3
