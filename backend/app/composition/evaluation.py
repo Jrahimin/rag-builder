@@ -376,7 +376,12 @@ class GroundedEvaluationAnswerAdapter(EvaluationAnswerPort):
             max_tokens=self._settings.llm.max_tokens,
         )
         provider_latency_ms = int((time.perf_counter() - provider_started) * 1000)
-        result = await grounding.map_claims(completion.content, selected)
+        # Evaluation measures support against retrieved evidence, not citation syntax.
+        result = await grounding.map_claims(
+            completion.content,
+            selected,
+            require_citations=False,
+        )
         return QualityAnswer(
             answer=completion.content,
             insufficient_evidence_reason=None,

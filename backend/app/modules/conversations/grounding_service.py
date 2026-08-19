@@ -229,29 +229,37 @@ class GroundingService:
         question: str,
         chunk: ContextChunk,
     ) -> tuple[bool, float, bool]:
-        """Require a non-rerank signal so forced ranking cannot admit unrelated hits."""
+        """Require a non-rerank signal so forced ranking cannot admit unrelated hits.
+
+        Query-token coverage is a valid independent signal on the reranker path,
+        including when semantic cosine is missing (keyword-only / hash embeddings).
+        Semantic cosine can still admit or rescue on its own calibrated bars.
+        """
         item = self._candidate_evidence(question, chunk)
-        if item is None:
-            return False, 0.0, False
-        semantic, coverage, _, start, end = item
         evidence_text = chunk.content
-        if (
-            self._config.evidence_score_mode is EvidenceScoreMode.PASSAGE_MAX
-            and start is not None
-            and end is not None
-            and 0 <= start < end <= len(chunk.content)
-        ):
-            evidence_text = chunk.content[start:end]
-        direct = semantic >= self._config.minimum_semantic_evidence_score
-        lexical = (
-            semantic >= self._config.lexical_corroboration_floor_score
-            and coverage >= self._config.lexical_corroboration_coverage
-        )
+        semantic: float | None = None
+        if item is None:
+            coverage = _coverage(
+                _significant_tokens(question),
+                _significant_tokens(evidence_text),
+            )
+        else:
+            semantic, coverage, _, start, end = item
+            if (
+                self._config.evidence_score_mode is EvidenceScoreMode.PASSAGE_MAX
+                and start is not None
+                and end is not None
+                and 0 <= start < end <= len(chunk.content)
+            ):
+                evidence_text = chunk.content[start:end]
+        direct = semantic is not None and semantic >= self._config.minimum_semantic_evidence_score
+        lexical = coverage >= self._config.lexical_corroboration_coverage
         cross_language = (
             not _same_language(question, evidence_text)
+            and semantic is not None
             and semantic >= self._config.lexical_corroboration_floor_score
         )
-        return direct or lexical or cross_language, coverage, lexical
+        return direct or lexical or cross_language, coverage, lexical and not direct
 
     def blocks_generation(self, decision: EvidenceDecision) -> bool:
         """Refuse before the LLM only when policy says the gate may block.
@@ -356,7 +364,13 @@ class GroundingService:
         )
         return score, coverage, chunk, start, end
 
-    async def map_claims(self, answer: str, chunks: list[ContextChunk]) -> GroundingResult:
+    async def map_claims(
+        self,
+        answer: str,
+        chunks: list[ContextChunk],
+        *,
+        require_citations: bool = True,
+    ) -> GroundingResult:
         drafts: list[_ClaimDraft] = []
         semantic_pairs: list[tuple[str, str]] = []
         for index, raw_segment in enumerate(_answer_segments(answer), start=1):
@@ -376,12 +390,17 @@ class GroundingService:
                 for citation_index in dict.fromkeys(citation_indexes)
                 if 1 <= citation_index <= len(chunks)
             ]
+            has_valid_citation = bool(evidence_chunks)
+            if not evidence_chunks and not require_citations:
+                best = _best_evidence(claim_text, chunks)
+                if best is not None:
+                    evidence_chunks = [best]
             drafts.append(
                 _ClaimDraft(
                     index=index,
                     text=claim_text,
                     evidence_chunks=evidence_chunks,
-                    has_valid_citation=bool(evidence_chunks),
+                    has_valid_citation=has_valid_citation,
                 )
             )
             if evidence_chunks:
@@ -394,7 +413,7 @@ class GroundingService:
         cited = 0
         for draft in drafts:
             evidence_texts = [chunk.content for _, chunk in draft.evidence_chunks]
-            if not draft.has_valid_citation:
+            if not draft.evidence_chunks:
                 verification = ClaimVerification.UNSUPPORTED
             else:
                 uses_lexical = _uses_lexical_verification(draft.text, evidence_texts)
@@ -593,6 +612,18 @@ def _coverage(expected: set[str], actual: set[str]) -> float:
     if not expected:
         return 1.0
     return len(expected & actual) / len(expected)
+
+
+def _best_evidence(text: str, chunks: list[ContextChunk]) -> tuple[int, ContextChunk] | None:
+    """Bind the strongest overlapping retrieved chunk when citations are not required."""
+    ranked = [
+        (_coverage(_significant_tokens(text), _significant_tokens(chunk.content)), index, chunk)
+        for index, chunk in enumerate(chunks, start=1)
+    ]
+    if not ranked:
+        return None
+    score, index, chunk = max(ranked, key=lambda item: (item[0], item[2].score, -item[1]))
+    return (index, chunk) if score > 0.0 else None
 
 
 def _reranker_relevance(

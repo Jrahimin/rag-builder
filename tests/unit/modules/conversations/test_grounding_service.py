@@ -332,6 +332,27 @@ async def test_uncited_factual_claim_is_unsupported() -> None:
     assert result.grounded is False
     assert result.claims[0]["verification"] == "unsupported"
     assert result.citation_coverage == 0.0
+    assert result.claims[0]["evidence"] == []
+
+
+async def test_evaluation_claim_mapping_binds_retrieved_evidence_without_citations() -> None:
+    chunk = _chunk(content="Cobalt escalation matrix assigns urgent incidents to Reliability.")
+    service = GroundingService(ChatConfig())
+
+    production = await service.map_claims("[echo] cobalt escalation matrix", [chunk])
+    evaluation = await service.map_claims(
+        "[echo] cobalt escalation matrix",
+        [chunk],
+        require_citations=False,
+    )
+
+    assert production.grounded is False
+    assert production.citation_coverage == 0.0
+    assert production.claims[0]["evidence"] == []
+    assert evaluation.grounded is True
+    assert evaluation.citation_coverage == 0.0
+    assert evaluation.claims[0]["evidence"][0]["chunk_id"] == str(chunk.chunk_id)
+    assert evaluation.claims[0]["verification"] == "supported"
 
 
 async def test_markdown_scaffolding_is_not_treated_as_unsupported_claims() -> None:
@@ -595,6 +616,29 @@ def test_applied_rerank_without_any_score_does_not_report_zero() -> None:
     assert decision.evidence_score_method == "reranker_relevance"
 
 
+def test_applied_rerank_admits_lexical_overlap_when_semantic_score_is_absent() -> None:
+    from dataclasses import replace
+
+    chunk = replace(
+        _chunk(
+            content="Cobalt escalation matrix assigns urgent incidents to Reliability.",
+            semantic_score=None,
+            score=0.71,
+        ),
+        rerank_relevance_score=0.71,
+        metadata={"rerank_status": "applied"},
+    )
+    decision = GroundingService(ChatConfig()).assess(
+        "cobalt escalation matrix",
+        [chunk],
+        rerank_status="applied",
+    )
+    assert decision.sufficient is True
+    assert decision.lexically_corroborated is True
+    assert decision.winning_semantic_score is None
+    assert decision.evidence_score_method == "reranker_relevance"
+
+
 def test_rerank_unavailable_falls_back_to_cosine_and_lexical_rescue() -> None:
     from dataclasses import replace
 
@@ -726,6 +770,35 @@ def test_applied_rerank_rejects_unrelated_maternity_leave() -> None:
     assert decision.reason is InsufficientEvidenceReason.BELOW_RELEVANCE_THRESHOLD
     assert decision.best_score == pytest.approx(0.61)
     assert decision.winning_semantic_score == pytest.approx(0.18)
+
+
+def test_applied_rerank_admits_lexical_overlap_without_semantic_score() -> None:
+    content = "Cobalt escalation matrix assigns urgent incidents to Reliability."
+    chunk = _reranked(content, rerank=0.71, semantic=None)
+    decision = GroundingService(ChatConfig()).assess(
+        "cobalt escalation matrix",
+        [chunk],
+        rerank_status="applied",
+    )
+    assert decision.sufficient is True
+    assert decision.lexically_corroborated is True
+    assert decision.winning_semantic_score is None
+    assert decision.best_score == pytest.approx(0.71)
+
+
+def test_applied_rerank_still_rejects_unrelated_hits_without_semantic_score() -> None:
+    chunk = _reranked(
+        "Cobalt escalation matrix assigns urgent incidents to Reliability.",
+        rerank=0.71,
+        semantic=None,
+    )
+    decision = GroundingService(ChatConfig()).assess(
+        "What is the lunar payroll rule?",
+        [chunk],
+        rerank_status="applied",
+    )
+    assert decision.sufficient is False
+    assert decision.reason is InsufficientEvidenceReason.BELOW_RELEVANCE_THRESHOLD
 
 
 def test_category_query_does_not_admit_rate_row_on_rerank_alone() -> None:
