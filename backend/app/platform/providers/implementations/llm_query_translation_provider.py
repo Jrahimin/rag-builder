@@ -87,7 +87,7 @@ class LLMQueryTranslationProvider(BaseQueryTranslationProvider):
         attempts = 1 + self._retry_max_attempts
         completion = None
         translated = ""
-        error = "empty"
+        error: str | None = "empty"
         for _ in range(attempts):
             completion = await self._llm.generate(
                 messages,
