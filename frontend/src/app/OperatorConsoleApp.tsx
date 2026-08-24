@@ -44,6 +44,11 @@ const OrganizationAdministration = lazy(() =>
     default: module.OrganizationAdministration,
   })),
 );
+const AdminAdministration = lazy(() =>
+  import("../features/admins/AdminAdministration").then((module) => ({
+    default: module.AdminAdministration,
+  })),
+);
 const DependencyWorkerHealth = lazy(() =>
   import("../features/system-health/DependencyWorkerHealth").then((module) => ({
     default: module.DependencyWorkerHealth,
@@ -90,6 +95,14 @@ export function OperatorConsoleApp() {
             element={
               <Suspense fallback={<LoadingState label="Loading Organizations" />}>
                 <OrganizationAdministration />
+              </Suspense>
+            }
+          />
+          <Route
+            path="admins"
+            element={
+              <Suspense fallback={<LoadingState label="Loading Admins" />}>
+                <AdminAdministration />
               </Suspense>
             }
           />

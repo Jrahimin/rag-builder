@@ -17,7 +17,9 @@ class AdminAuthRepository:
         self._session = session
 
     async def get_admin_by_email(self, email: str) -> AdminUser | None:
-        return await self._session.scalar(select(AdminUser).where(AdminUser.email == email))
+        return await self._session.scalar(
+            select(AdminUser).where(AdminUser.email == email, AdminUser.deleted_at.is_(None))
+        )
 
     async def get_admin(self, admin_id: uuid.UUID) -> AdminUser | None:
         return await self._session.get(AdminUser, admin_id)

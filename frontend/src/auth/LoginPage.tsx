@@ -44,9 +44,9 @@ export function LoginPage() {
             <small>RAG Builder</small>
           </div>
         </div>
-        <p className="eyebrow">Super Admin</p>
+        <p className="eyebrow">Operator</p>
         <h1>Operator sign in</h1>
-        <p>Use the platform owner account to manage this deployment.</p>
+        <p>Use an operator account to manage this deployment.</p>
         <label>
           Email
           <input

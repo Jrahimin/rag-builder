@@ -27,6 +27,8 @@ Feature components never call `fetch`. `operatorApiClient.ts` owns multipart upl
 | `/operator/`              | Deployment overview                              |
 | `/operator/lab`           | Test Lab journey and direct testing tabs         |
 | `/operator/jobs`          | Project/all-project durable job list and details |
+| `/operator/organizations` | Client records, credentials, and Project ownership |
+| `/operator/admins`        | Operator accounts: create Admin, disable, restore |
 | `/operator/projects`      | Project, document, and corpus inspection         |
 | `/operator/configuration` | Sanitized active configuration                   |
 | `/operator/metrics`       | Queue, latency, usage, and corpus measurements   |
@@ -118,4 +120,4 @@ Raw JSON is not the default presentation. Structured facts and friendly outcomes
 
 Vitest and Testing Library cover Lab routing/project selection, Journey derivation, accepted versus terminal uploads, expected-word pass/fail, grounded citations and refusal, lifecycle job links and active-pointer change, structured reconciliation, typed purge confirmation, and error code/trace visibility. Existing overview, jobs, health, quality, and lifecycle tests remain in place.
 
-The console remains an internal trusted-deployment surface. It does not add login, sessions, cookies, users, browser-stored credentials, RBAC, a generic test-run backend, long-term Lab-session persistence, customer-facing chat, billing, connectors, or a second admin/developer console.
+The console remains an internal trusted-deployment surface. Operator accounts are cookie-session Super Admin and Admin roles with the same access today. It does not add customer-facing users, RBAC, a generic test-run backend, long-term Lab-session persistence, billing, connectors, or a second admin/developer console.

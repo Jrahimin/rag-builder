@@ -70,10 +70,11 @@ sequenceDiagram
     Svc-->>Client: ApiResponse envelope
 ```
 
-Human operator routes (`/api/v1/organizations/**`, `/api/v1/operator/**`, and
-`/metrics`) use the separate cookie-backed `require_super_admin` dependency.
-Organization API keys continue to guard client/product traffic. Public:
-`GET /health`, `GET /ready`.
+Human operator routes (`/api/v1/organizations/**`, `/api/v1/admin-users/**`,
+`/api/v1/operator/**`, and `/metrics`) use the cookie-backed
+`require_super_admin` dependency, which currently accepts both `SUPER_ADMIN`
+and `ADMIN`. Organization API keys continue to guard client/product traffic.
+Public: `GET /health`, `GET /ready`.
 
 Detail: [organization-api-key-auth-journey.md](../learning/organization-api-key-auth-journey.md).
 

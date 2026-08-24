@@ -9,7 +9,7 @@ envelope.
 
 ## `POST /login`
 
-Authenticates the bootstrapped Super Admin using email and password. On success
+Authenticates a Super Admin or Admin using email and password. On success
 the response sets three cookies: short-lived HttpOnly access token,
 HttpOnly refresh token, and a readable CSRF token for unsafe browser requests.
 
@@ -32,9 +32,9 @@ the matching `X-CSRF-Token` header.
 
 ## `GET /me`
 
-Returns the authenticated Super Admin profile (`id`, `email`, `role`, and
-`last_login_at`). A missing, expired, disabled, or revoked session returns
-`401`.
+Returns the authenticated operator profile (`id`, `email`, `role`, and
+`last_login_at`). `role` is `SUPER_ADMIN` or `ADMIN`. A missing, expired,
+disabled, or revoked session returns `401`.
 
 ## Browser security
 

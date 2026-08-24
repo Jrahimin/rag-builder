@@ -14,6 +14,8 @@ export type RecentFailure = components["schemas"]["RecentFailure"];
 export type AuditEvent = components["schemas"]["AuditEventResponse"];
 export type Organization = components["schemas"]["OrganizationResponse"];
 export type OrganizationPage = components["schemas"]["PaginatedResult_OrganizationResponse_"];
+export type AdminUser = components["schemas"]["AdminUserResponse"];
+export type AdminUserPage = components["schemas"]["PaginatedResult_AdminUserResponse_"];
 export type ApiKey = components["schemas"]["ApiKeyResponse"];
 export type ApiKeySecret = components["schemas"]["ApiKeySecretResponse"];
 export type ApiKeyPage = components["schemas"]["PaginatedResult_ApiKeyResponse_"];
@@ -203,6 +205,18 @@ async function getAllPages<T>(
   return { items, total, limit: pageSize, offset: 0 };
 }
 
+async function getAllAdminUsers(includeDeleted = true): Promise<AdminUserPage> {
+  return getAllPages((limit, offset) =>
+    request<AdminUserPage>(
+      `${apiRoot}/admin-users${query({
+        limit,
+        offset,
+        include_deleted: String(includeDeleted),
+      })}`,
+    ),
+  );
+}
+
 async function getAllOrganizations(includeDeleted = true): Promise<OrganizationPage> {
   return getAllPages((limit, offset) =>
     request<OrganizationPage>(
@@ -274,6 +288,23 @@ export const operatorApiClient = {
   getAuditEvents: (limit = 100, offset = 0) =>
     request<AuditEvent[]>(`${apiRoot}/operator/audit-events${query({ limit, offset })}`),
   getOrganizations: (includeDeleted = true) => getAllOrganizations(includeDeleted),
+  getAdminUsers: (includeDeleted = true) => getAllAdminUsers(includeDeleted),
+  createAdminUser: (email: string, password: string) =>
+    request<AdminUser>(`${apiRoot}/admin-users`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password }),
+    }),
+  setAdminUserStatus: (adminUserId: string, isActive: boolean) =>
+    request<AdminUser>(`${apiRoot}/admin-users/${adminUserId}/status`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ is_active: isActive }),
+    }),
+  deleteAdminUser: (adminUserId: string) =>
+    request<AdminUser>(`${apiRoot}/admin-users/${adminUserId}`, { method: "DELETE" }),
+  restoreAdminUser: (adminUserId: string) =>
+    request<AdminUser>(`${apiRoot}/admin-users/${adminUserId}/restore`, { method: "POST" }),
   getOrganization: (organizationId: string, includeDeleted = true) =>
     request<Organization>(
       `${apiRoot}/organizations/${organizationId}${query({ include_deleted: String(includeDeleted) })}`,

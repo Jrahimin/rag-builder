@@ -35,14 +35,21 @@ def hash_token(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
-def create_access_token(*, admin_id: UUID, email: str, session_id: UUID, config: AuthConfig) -> str:
+def create_access_token(
+    *,
+    admin_id: UUID,
+    email: str,
+    session_id: UUID,
+    config: AuthConfig,
+    role: str,
+) -> str:
     now = datetime.now(UTC)
     secret = _jwt_secret(config)
     return jwt.encode(
         {
             "sub": str(admin_id),
             "email": email,
-            "role": "SUPER_ADMIN",
+            "role": role,
             "sid": str(session_id),
             "type": "admin_access",
             "iat": now,

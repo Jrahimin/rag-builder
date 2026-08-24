@@ -546,3 +546,54 @@ async def test_openapi_includes_security_schemes(auth_db_client: AsyncClient) ->
     assert "OrganizationBearer" in components
     assert "OrganizationApiKey" in components
     assert "AdminCookie" in components
+
+
+async def test_create_admin_user_assigns_admin_role(auth_db_client: AsyncClient) -> None:
+    response = await auth_db_client.post(
+        "/api/v1/admin-users",
+        json={"email": "ops@example.com", "password": "twelve chars."},
+        headers=admin_headers(),
+    )
+    assert response.status_code == 201
+    payload = response.json()["data"]
+    assert payload["email"] == "ops@example.com"
+    assert payload["role"] == "ADMIN"
+    assert payload["is_active"] is True
+
+    listed = await auth_db_client.get(
+        "/api/v1/admin-users",
+        params={"include_deleted": "true"},
+        headers=admin_headers(),
+    )
+    assert listed.status_code == 200
+    emails = {item["email"] for item in listed.json()["data"]["items"]}
+    assert ADMIN_EMAIL in emails
+    assert "ops@example.com" in emails
+
+
+async def test_created_admin_can_sign_in(auth_db_client: AsyncClient) -> None:
+    created = await auth_db_client.post(
+        "/api/v1/admin-users",
+        json={"email": "second@example.com", "password": "twelve chars."},
+        headers=admin_headers(),
+    )
+    assert created.status_code == 201
+
+    login = await auth_db_client.post(
+        "/api/v1/auth/login",
+        json={"email": "second@example.com", "password": "twelve chars."},
+    )
+    assert login.status_code == 200
+    assert login.json()["data"]["role"] == "ADMIN"
+
+
+async def test_cannot_disable_bootstrap_super_admin(auth_db_client: AsyncClient) -> None:
+    me = await auth_db_client.get("/api/v1/auth/me")
+    admin_id = me.json()["data"]["id"]
+    response = await auth_db_client.put(
+        f"/api/v1/admin-users/{admin_id}/status",
+        json={"is_active": False},
+        headers=admin_headers(),
+    )
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "super_admin_protected"

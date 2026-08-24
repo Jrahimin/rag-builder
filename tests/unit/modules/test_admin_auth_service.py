@@ -72,6 +72,22 @@ def _service(admin: AdminUser | None) -> tuple[AdminAuthService, _Repository]:
     return AdminAuthService(repository, config), repository
 
 
+async def test_login_accepts_admin_role() -> None:
+    admin = AdminUser(
+        id=uuid4(),
+        email="ops@example.com",
+        password_hash=hash_password("correct horse battery staple"),
+        role=AdminRole.ADMIN.value,
+        is_active=True,
+    )
+    service, _ = _service(admin)
+    tokens = await service.login(email="ops@example.com", password="correct horse battery staple")
+    session = next(iter(service._repository.sessions.values()))  # type: ignore[attr-defined]
+    current = await service.current_admin(admin_id=session.admin_user_id, session_id=session.id)
+    assert current.role == AdminRole.ADMIN.value
+    assert tokens.access_token
+
+
 async def test_login_then_current_admin_and_refresh_rotation() -> None:
     service, _ = _service(_admin())
     login = await service.login(email="owner@example.com", password="correct horse battery staple")

@@ -21,6 +21,10 @@ const titles: Record<string, { title: string; description: string }> = {
     title: "Organizations",
     description: "Client records, credentials, lifecycle, and associated Projects",
   },
+  "/admins": {
+    title: "Admins",
+    description: "Operator accounts for this deployment",
+  },
   "/configuration": {
     title: "Configuration",
     description: "Read-only active runtime and index configuration",
@@ -63,7 +67,7 @@ export function OperatorConsoleLayout() {
               </div>
               <div className="admin-account__identity">
                 <span>{auth.admin?.email}</span>
-                <small>Super Admin</small>
+                <small>{auth.admin?.role === "ADMIN" ? "Admin" : "Super Admin"}</small>
               </div>
               <button
                 className="button button--logout"

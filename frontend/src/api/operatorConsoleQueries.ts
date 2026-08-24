@@ -17,6 +17,7 @@ export const operatorQueryKeys = {
   failures: ["operator", "failures"] as const,
   audit: ["operator", "audit"] as const,
   organizations: ["operator", "organizations"] as const,
+  adminUsers: ["operator", "admin-users"] as const,
   organization: (organizationId: string) => ["operator", "organizations", organizationId] as const,
   organizationProjects: (organizationId: string) =>
     ["operator", "organizations", organizationId, "projects"] as const,
@@ -94,6 +95,14 @@ export function useOrganizations() {
   return useQuery({
     queryKey: operatorQueryKeys.organizations,
     queryFn: () => operatorApiClient.getOrganizations(),
+    staleTime: 15_000,
+  });
+}
+
+export function useAdminUsers() {
+  return useQuery({
+    queryKey: operatorQueryKeys.adminUsers,
+    queryFn: () => operatorApiClient.getAdminUsers(),
     staleTime: 15_000,
   });
 }

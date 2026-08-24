@@ -10,6 +10,7 @@ import {
   Menu,
   Settings2,
   ShieldCheck,
+  Users,
   Webhook,
   X,
 } from "lucide-react";
@@ -21,6 +22,7 @@ const navigation = [
   { to: "/lab", label: "Test Lab", icon: FlaskConical },
   { to: "/jobs", label: "Jobs", icon: BriefcaseBusiness },
   { to: "/organizations", label: "Organizations", icon: Building2 },
+  { to: "/admins", label: "Admins", icon: Users },
   { to: "/projects", label: "Projects", icon: FileStack },
   { to: "/configuration", label: "Configuration", icon: Settings2 },
   { to: "/metrics", label: "Metrics", icon: Activity },

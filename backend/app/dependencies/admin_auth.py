@@ -7,13 +7,16 @@ from uuid import UUID
 
 from fastapi import Cookie, Depends, Request
 
+from app.composition.audit import DatabaseAuditRecorder
 from app.core.exceptions import ForbiddenError, RateLimitError, UnauthorizedError
 from app.dependencies.common import DbSessionDep, SettingsDep, get_redis_connectivity
-from app.models.admin_user import AdminRole
+from app.models.admin_user import AdminRole, is_operator_role
+from app.modules.admin_auth.repositories.admin_user_repository import AdminUserRepository
 from app.modules.admin_auth.repository import AdminAuthRepository
 from app.modules.admin_auth.schemas import AuthenticatedAdmin
 from app.modules.admin_auth.security import decode_access_token, hash_token
 from app.modules.admin_auth.service import AdminAuthService
+from app.modules.admin_auth.services.admin_user_service import AdminUserService
 from app.platform.http.admin_cookies import ADMIN_ACCESS_COOKIE, require_admin_csrf
 from app.platform.infra.connectivity.redis import RedisConnectivity
 from app.platform.infra.rate_limit.redis_rate_limiter import RedisRateLimiter
@@ -55,10 +58,34 @@ async def current_admin(
 CurrentAdminDep = Annotated[AuthenticatedAdmin, Depends(current_admin)]
 
 
+def get_admin_user_repository(session: DbSessionDep) -> AdminUserRepository:
+    return AdminUserRepository(session)
+
+
+def get_admin_user_service(
+    session: DbSessionDep,
+    repository: Annotated[AdminUserRepository, Depends(get_admin_user_repository)],
+    admin: CurrentAdminDep,
+) -> AdminUserService:
+    return AdminUserService(
+        session,
+        repository,
+        AdminAuthRepository(session),
+        actor_id=admin.id,
+        audit=DatabaseAuditRecorder(session),
+    )
+
+
+AdminUserServiceDep = Annotated[AdminUserService, Depends(get_admin_user_service)]
+
+
 async def require_super_admin(request: Request, admin: CurrentAdminDep) -> AuthenticatedAdmin:
-    """Require the single Phase-1 human role and verify unsafe cookie requests' CSRF token."""
-    if admin.role != AdminRole.SUPER_ADMIN.value:
-        raise ForbiddenError("Super Admin access is required.")
+    """Require a platform operator session and verify unsafe cookie requests' CSRF token.
+
+    SUPER_ADMIN and ADMIN currently have the same access. Module permissions come later.
+    """
+    if not is_operator_role(admin.role):
+        raise ForbiddenError("Admin access is required.")
     if request.method not in {"GET", "HEAD", "OPTIONS"}:
         require_admin_csrf(request)
     return admin

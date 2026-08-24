@@ -9,7 +9,7 @@ from uuid import UUID
 from app.core.config import AuthConfig
 from app.core.exceptions import UnauthorizedError
 from app.models.admin_session import AdminSession
-from app.models.admin_user import AdminRole, AdminUser
+from app.models.admin_user import AdminUser, is_operator_role
 from app.modules.admin_auth.repository import AdminAuthRepository
 from app.modules.admin_auth.schemas import AuthenticatedAdmin
 from app.modules.admin_auth.security import (
@@ -40,7 +40,8 @@ class AdminAuthService:
         if (
             admin is None
             or not admin.is_active
-            or admin.role != AdminRole.SUPER_ADMIN.value
+            or admin.deleted_at is not None
+            or not is_operator_role(admin.role)
             or not verify_password(password, admin.password_hash)
         ):
             raise UnauthorizedError(_INVALID_LOGIN)
@@ -63,7 +64,12 @@ class AdminAuthService:
         if session is None:
             raise UnauthorizedError(_INVALID_SESSION)
         admin = await self._repository.get_admin(session.admin_user_id)
-        if admin is None or not admin.is_active or admin.role != AdminRole.SUPER_ADMIN.value:
+        if (
+            admin is None
+            or not admin.is_active
+            or admin.deleted_at is not None
+            or not is_operator_role(admin.role)
+        ):
             session.revoked_at = datetime.now(UTC)
             await self._repository.commit()
             raise UnauthorizedError(_INVALID_SESSION)
@@ -88,9 +94,9 @@ class AdminAuthService:
             or admin is None
             or session.admin_user_id != admin.id
             or not admin.is_active
+            or admin.deleted_at is not None
+            or not is_operator_role(admin.role)
         ):
-            raise UnauthorizedError(_INVALID_SESSION)
-        if admin.role != AdminRole.SUPER_ADMIN.value:
             raise UnauthorizedError(_INVALID_SESSION)
         return AuthenticatedAdmin(
             id=admin.id,
@@ -116,6 +122,7 @@ class AdminAuthService:
                 admin_id=admin.id,
                 email=admin.email,
                 session_id=resolved_session_id,
+                role=admin.role,
                 config=self._config,
             ),
             refresh_token=generate_refresh_token(),

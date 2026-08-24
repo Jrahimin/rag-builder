@@ -12,6 +12,7 @@ Concise, per-feature reference documentation for the AI Platform Engine.
 | Feature | Doc | Scope |
 | ------- | --- | ----- |
 | Organizations & auth | [organization_module.md](./organization_module.md) | Tenant CRUD, API keys, org-scoped rate limits (ADR-012) |
+| Admin users | [admin_users.md](./admin_users.md) | CLI Super Admin bootstrap, console Admin create, disable, soft delete |
 | Project Management | [project_module.md](./project_module.md) | CRUD, `is_active` toggle, soft-delete, org scoping |
 | Project AI policy and provenance | [project_ai_policy_and_provenance.md](./project_ai_policy_and_provenance.md) | Immutable policy revisions, capabilities, execution snapshots, ownership lock |
 | Operator onboarding and source lifecycle | [operator_onboarding_and_source_lifecycle.md](./operator_onboarding_and_source_lifecycle.md) | Client lifecycle, credential handoff/rotation, canonical Project admin, immutable source metadata |

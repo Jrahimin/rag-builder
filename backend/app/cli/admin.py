@@ -1,6 +1,7 @@
 """Safe, explicit Super Admin account commands.
 
 Run after migrations: ``python -m app.cli.admin create --email owner@example.com``.
+This creates a SUPER_ADMIN. Additional operators created in the console are ADMIN.
 To replace a forgotten password, use ``set-password``. The password is prompted
 so it never appears in shell history or process lists.
 """
@@ -71,8 +72,8 @@ def main() -> int:
     args = _parser().parse_args()
     password = getpass.getpass("Password: ")
     confirmation = getpass.getpass("Confirm password: ")
-    if len(password) < 6:
-        raise SystemExit("Password must be at least 12 characters.")
+    if len(password) < 8:
+        raise SystemExit("Password must be at least 8 characters.")
     if password != confirmation:
         raise SystemExit("Passwords do not match.")
     try:

@@ -4,6 +4,76 @@
  */
 
 export interface paths {
+    "/api/v1/admin-users": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List platform operators */
+        get: operations["list_admin_users_api_v1_admin_users_get"];
+        put?: never;
+        /** Create an Admin operator */
+        post: operations["create_admin_user_api_v1_admin_users_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin-users/{admin_user_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get a platform operator by id */
+        get: operations["get_admin_user_api_v1_admin_users__admin_user_id__get"];
+        put?: never;
+        post?: never;
+        /** Soft-delete an Admin operator */
+        delete: operations["delete_admin_user_api_v1_admin_users__admin_user_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin-users/{admin_user_id}/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Restore a deleted Admin in a disabled state */
+        post: operations["restore_admin_user_api_v1_admin_users__admin_user_id__restore_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin-users/{admin_user_id}/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Set Admin active status explicitly */
+        put: operations["set_admin_user_status_api_v1_admin_users__admin_user_id__status_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/auth/login": {
         parameters: {
             query?: never;
@@ -1470,6 +1540,48 @@ export interface components {
             /** Password */
             password: string;
         };
+        /** AdminUserCreate */
+        AdminUserCreate: {
+            /** Email */
+            email: string;
+            /** Password */
+            password: string;
+        };
+        /** AdminUserResponse */
+        AdminUserResponse: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Deleted At */
+            deleted_at: string | null;
+            /** Deleted By */
+            deleted_by: string | null;
+            /** Email */
+            email: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Is Active */
+            is_active: boolean;
+            /** Last Login At */
+            last_login_at: string | null;
+            /** Role */
+            role: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /** AdminUserStatusUpdate */
+        AdminUserStatusUpdate: {
+            /** Is Active */
+            is_active: boolean;
+        };
         /**
          * AnswerClaim
          * @description A generated answer segment linked to zero or more evidence locations.
@@ -1608,6 +1720,18 @@ export interface components {
         /** ApiResponse[ActiveSourceResponse] */
         ApiResponse_ActiveSourceResponse_: {
             data?: components["schemas"]["ActiveSourceResponse"] | null;
+            /** Message */
+            message?: string | null;
+            meta?: components["schemas"]["ResponseMeta"] | null;
+            /**
+             * Success
+             * @default true
+             */
+            success: boolean;
+        };
+        /** ApiResponse[AdminUserResponse] */
+        ApiResponse_AdminUserResponse_: {
+            data?: components["schemas"]["AdminUserResponse"] | null;
             /** Message */
             message?: string | null;
             meta?: components["schemas"]["ResponseMeta"] | null;
@@ -1861,6 +1985,18 @@ export interface components {
         /** ApiResponse[OrganizationResponse] */
         ApiResponse_OrganizationResponse_: {
             data?: components["schemas"]["OrganizationResponse"] | null;
+            /** Message */
+            message?: string | null;
+            meta?: components["schemas"]["ResponseMeta"] | null;
+            /**
+             * Success
+             * @default true
+             */
+            success: boolean;
+        };
+        /** ApiResponse[PaginatedResult[AdminUserResponse]] */
+        ApiResponse_PaginatedResult_AdminUserResponse__: {
+            data?: components["schemas"]["PaginatedResult_AdminUserResponse_"] | null;
             /** Message */
             message?: string | null;
             meta?: components["schemas"]["ResponseMeta"] | null;
@@ -2342,7 +2478,7 @@ export interface components {
          * AuditEventType
          * @enum {string}
          */
-        AuditEventType: "organization.created" | "organization.updated" | "organization.status_changed" | "organization.archived" | "organization.restored" | "api_key.created" | "api_key.rotated" | "api_key.revoked" | "project.created" | "project.updated" | "project.status_changed" | "project.archived" | "project.restored" | "project.ownership_reassigned" | "project.ownership_confirmed" | "project_config.revision_created" | "project_config.revision_restored" | "conversation.config_updated" | "source_metadata.revision_created" | "source_metadata.revision_activated" | "job.submitted" | "job.retried" | "job.started" | "job.succeeded" | "job.retry_scheduled" | "job.failed" | "job.recovered" | "job.dispatch_deferred" | "index_build.activated" | "index_build.rolled_back" | "document.delete_requested" | "document.purge_requested" | "storage.reconciliation_requested" | "webhook.endpoint_created" | "webhook.endpoint_enabled" | "webhook.endpoint_disabled" | "webhook.delivery_replayed";
+        AuditEventType: "organization.created" | "organization.updated" | "organization.status_changed" | "organization.archived" | "organization.restored" | "api_key.created" | "api_key.rotated" | "api_key.revoked" | "admin_user.created" | "admin_user.status_changed" | "admin_user.archived" | "admin_user.restored" | "project.created" | "project.updated" | "project.status_changed" | "project.archived" | "project.restored" | "project.ownership_reassigned" | "project.ownership_confirmed" | "project_config.revision_created" | "project_config.revision_restored" | "conversation.config_updated" | "source_metadata.revision_created" | "source_metadata.revision_activated" | "job.submitted" | "job.retried" | "job.started" | "job.succeeded" | "job.retry_scheduled" | "job.failed" | "job.recovered" | "job.dispatch_deferred" | "index_build.activated" | "index_build.rolled_back" | "document.delete_requested" | "document.purge_requested" | "storage.reconciliation_requested" | "webhook.endpoint_created" | "webhook.endpoint_enabled" | "webhook.endpoint_disabled" | "webhook.delivery_replayed";
         /**
          * AuditOutcome
          * @enum {string}
@@ -3805,6 +3941,17 @@ export interface components {
             /** Name */
             name?: string | null;
         };
+        /** PaginatedResult[AdminUserResponse] */
+        PaginatedResult_AdminUserResponse_: {
+            /** Items */
+            items: components["schemas"]["AdminUserResponse"][];
+            /** Limit */
+            limit: number;
+            /** Offset */
+            offset: number;
+            /** Total */
+            total: number;
+        };
         /** PaginatedResult[ApiKeyResponse] */
         PaginatedResult_ApiKeyResponse_: {
             /** Items */
@@ -4385,12 +4532,16 @@ export interface components {
             duplicate_suppression_removed_count: number;
             /** Duration Ms */
             duration_ms: number;
+            /** Embedding Dimensions */
+            embedding_dimensions?: number | null;
             /** Embedding Identity Status */
             embedding_identity_status?: string | null;
             /** Embedding Model */
             embedding_model?: string | null;
             /** Embedding Provider */
             embedding_provider?: string | null;
+            /** Embedding Set Version */
+            embedding_set_version?: number | null;
             /** Executed Branches */
             executed_branches?: string[];
             /** Index Build Id */
@@ -5158,6 +5309,215 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    list_admin_users_api_v1_admin_users_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+                include_deleted?: boolean;
+                is_active?: boolean | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: {
+                ape_admin_access?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_PaginatedResult_AdminUserResponse__"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_admin_user_api_v1_admin_users_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: {
+                ape_admin_access?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdminUserCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_AdminUserResponse_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_admin_user_api_v1_admin_users__admin_user_id__get: {
+        parameters: {
+            query?: {
+                include_deleted?: boolean;
+            };
+            header?: never;
+            path: {
+                admin_user_id: string;
+            };
+            cookie?: {
+                ape_admin_access?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_AdminUserResponse_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_admin_user_api_v1_admin_users__admin_user_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                admin_user_id: string;
+            };
+            cookie?: {
+                ape_admin_access?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_AdminUserResponse_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    restore_admin_user_api_v1_admin_users__admin_user_id__restore_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                admin_user_id: string;
+            };
+            cookie?: {
+                ape_admin_access?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_AdminUserResponse_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_admin_user_status_api_v1_admin_users__admin_user_id__status_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                admin_user_id: string;
+            };
+            cookie?: {
+                ape_admin_access?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdminUserStatusUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_AdminUserResponse_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     login_api_v1_auth_login_post: {
         parameters: {
             query?: never;

@@ -139,6 +139,123 @@
         "title": "AdminLoginRequest",
         "type": "object"
       },
+      "AdminUserCreate": {
+        "additionalProperties": false,
+        "properties": {
+          "email": {
+            "maxLength": 320,
+            "minLength": 3,
+            "title": "Email",
+            "type": "string"
+          },
+          "password": {
+            "maxLength": 1024,
+            "minLength": 8,
+            "title": "Password",
+            "type": "string"
+          }
+        },
+        "required": [
+          "email",
+          "password"
+        ],
+        "title": "AdminUserCreate",
+        "type": "object"
+      },
+      "AdminUserResponse": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "deleted_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deleted At"
+          },
+          "deleted_by": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deleted By"
+          },
+          "email": {
+            "title": "Email",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "is_active": {
+            "title": "Is Active",
+            "type": "boolean"
+          },
+          "last_login_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Login At"
+          },
+          "role": {
+            "title": "Role",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "email",
+          "role",
+          "is_active",
+          "last_login_at",
+          "deleted_at",
+          "deleted_by",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "AdminUserResponse",
+        "type": "object"
+      },
+      "AdminUserStatusUpdate": {
+        "additionalProperties": false,
+        "properties": {
+          "is_active": {
+            "title": "Is Active",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "is_active"
+        ],
+        "title": "AdminUserStatusUpdate",
+        "type": "object"
+      },
       "AnswerClaim": {
         "description": "A generated answer segment linked to zero or more evidence locations.",
         "properties": {
@@ -505,6 +622,48 @@
           }
         },
         "title": "ApiResponse[ActiveSourceResponse]",
+        "type": "object"
+      },
+      "ApiResponse_AdminUserResponse_": {
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AdminUserResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          },
+          "meta": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ResponseMeta"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "success": {
+            "default": true,
+            "title": "Success",
+            "type": "boolean"
+          }
+        },
+        "title": "ApiResponse[AdminUserResponse]",
         "type": "object"
       },
       "ApiResponse_ApiKeyResponse_": {
@@ -1381,6 +1540,48 @@
           }
         },
         "title": "ApiResponse[OrganizationResponse]",
+        "type": "object"
+      },
+      "ApiResponse_PaginatedResult_AdminUserResponse__": {
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PaginatedResult_AdminUserResponse_"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          },
+          "meta": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ResponseMeta"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "success": {
+            "default": true,
+            "title": "Success",
+            "type": "boolean"
+          }
+        },
+        "title": "ApiResponse[PaginatedResult[AdminUserResponse]]",
         "type": "object"
       },
       "ApiResponse_PaginatedResult_ApiKeyResponse__": {
@@ -2992,6 +3193,10 @@
           "api_key.created",
           "api_key.rotated",
           "api_key.revoked",
+          "admin_user.created",
+          "admin_user.status_changed",
+          "admin_user.archived",
+          "admin_user.restored",
           "project.created",
           "project.updated",
           "project.status_changed",
@@ -7208,6 +7413,37 @@
         "title": "OrganizationUpdate",
         "type": "object"
       },
+      "PaginatedResult_AdminUserResponse_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/AdminUserResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "limit": {
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "title": "Offset",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "limit",
+          "offset"
+        ],
+        "title": "PaginatedResult[AdminUserResponse]",
+        "type": "object"
+      },
       "PaginatedResult_ApiKeyResponse_": {
         "properties": {
           "items": {
@@ -8960,6 +9196,17 @@
             "title": "Duration Ms",
             "type": "integer"
           },
+          "embedding_dimensions": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Embedding Dimensions"
+          },
           "embedding_identity_status": {
             "anyOf": [
               {
@@ -8992,6 +9239,17 @@
               }
             ],
             "title": "Embedding Provider"
+          },
+          "embedding_set_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Embedding Set Version"
           },
           "executed_branches": {
             "items": {
@@ -10999,6 +11257,463 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/v1/admin-users": {
+      "get": {
+        "operationId": "list_admin_users_api_v1_admin_users_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "include_deleted",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Include Deleted",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "is_active",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Is Active"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "ape_admin_access",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Ape Admin Access"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_PaginatedResult_AdminUserResponse__"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OrganizationBearer": []
+          },
+          {
+            "OrganizationApiKey": []
+          }
+        ],
+        "summary": "List platform operators",
+        "tags": [
+          "admin-users"
+        ]
+      },
+      "post": {
+        "operationId": "create_admin_user_api_v1_admin_users_post",
+        "parameters": [
+          {
+            "in": "cookie",
+            "name": "ape_admin_access",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Ape Admin Access"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminUserCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_AdminUserResponse_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OrganizationBearer": []
+          },
+          {
+            "OrganizationApiKey": []
+          }
+        ],
+        "summary": "Create an Admin operator",
+        "tags": [
+          "admin-users"
+        ]
+      }
+    },
+    "/api/v1/admin-users/{admin_user_id}": {
+      "delete": {
+        "operationId": "delete_admin_user_api_v1_admin_users__admin_user_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "admin_user_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Admin User Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "ape_admin_access",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Ape Admin Access"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_AdminUserResponse_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OrganizationBearer": []
+          },
+          {
+            "OrganizationApiKey": []
+          }
+        ],
+        "summary": "Soft-delete an Admin operator",
+        "tags": [
+          "admin-users"
+        ]
+      },
+      "get": {
+        "operationId": "get_admin_user_api_v1_admin_users__admin_user_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "admin_user_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Admin User Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "include_deleted",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Include Deleted",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "ape_admin_access",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Ape Admin Access"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_AdminUserResponse_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OrganizationBearer": []
+          },
+          {
+            "OrganizationApiKey": []
+          }
+        ],
+        "summary": "Get a platform operator by id",
+        "tags": [
+          "admin-users"
+        ]
+      }
+    },
+    "/api/v1/admin-users/{admin_user_id}/restore": {
+      "post": {
+        "operationId": "restore_admin_user_api_v1_admin_users__admin_user_id__restore_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "admin_user_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Admin User Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "ape_admin_access",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Ape Admin Access"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_AdminUserResponse_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OrganizationBearer": []
+          },
+          {
+            "OrganizationApiKey": []
+          }
+        ],
+        "summary": "Restore a deleted Admin in a disabled state",
+        "tags": [
+          "admin-users"
+        ]
+      }
+    },
+    "/api/v1/admin-users/{admin_user_id}/status": {
+      "put": {
+        "operationId": "set_admin_user_status_api_v1_admin_users__admin_user_id__status_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "admin_user_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Admin User Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "ape_admin_access",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Ape Admin Access"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminUserStatusUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_AdminUserResponse_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OrganizationBearer": []
+          },
+          {
+            "OrganizationApiKey": []
+          }
+        ],
+        "summary": "Set Admin active status explicitly",
+        "tags": [
+          "admin-users"
+        ]
+      }
+    },
     "/api/v1/auth/login": {
       "post": {
         "operationId": "login_api_v1_auth_login_post",

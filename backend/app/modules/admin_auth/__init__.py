@@ -1,1 +1,1 @@
-"""Super Admin authentication bounded context."""
+"""Super Admin authentication and operator-account management."""

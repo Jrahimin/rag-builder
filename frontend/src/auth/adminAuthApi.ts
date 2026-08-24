@@ -1,7 +1,7 @@
 export type CurrentAdmin = {
   id: string;
   email: string;
-  role: "SUPER_ADMIN";
+  role: "SUPER_ADMIN" | "ADMIN";
   last_login_at: string | null;
 };
 

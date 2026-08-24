@@ -9,22 +9,43 @@ from __future__ import annotations
 from datetime import datetime
 from enum import StrEnum
 
-from sqlalchemy import DateTime, Index, String
+from sqlalchemy import DateTime, Index, String, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.platform.db.base import Base
-from app.platform.domain.mixins import ActiveStatusMixin, TimestampMixin, UUIDPrimaryKeyMixin
+from app.platform.domain.mixins import (
+    ActiveStatusMixin,
+    SoftDeleteMixin,
+    TimestampMixin,
+    UUIDPrimaryKeyMixin,
+)
 
 
 class AdminRole(StrEnum):
     SUPER_ADMIN = "SUPER_ADMIN"
+    ADMIN = "ADMIN"
 
 
-class AdminUser(Base, UUIDPrimaryKeyMixin, TimestampMixin, ActiveStatusMixin):
+OPERATOR_ROLES = frozenset({AdminRole.SUPER_ADMIN.value, AdminRole.ADMIN.value})
+
+
+def is_operator_role(role: str) -> bool:
+    """Return True for any current operator role. Permission splits come later."""
+    return role in OPERATOR_ROLES
+
+
+class AdminUser(Base, UUIDPrimaryKeyMixin, TimestampMixin, ActiveStatusMixin, SoftDeleteMixin):
     """A human operator allowed to administer this APE deployment."""
 
     __tablename__ = "admin_users"
-    __table_args__ = (Index("uq_admin_users_email", "email", unique=True),)
+    __table_args__ = (
+        Index(
+            "uq_admin_users_email",
+            "email",
+            unique=True,
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
+    )
 
     email: Mapped[str] = mapped_column(String(320), nullable=False)
     password_hash: Mapped[str] = mapped_column(String(512), nullable=False)
