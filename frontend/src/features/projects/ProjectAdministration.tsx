@@ -1,6 +1,6 @@
-import { Database, FileClock, Plus, Settings2, ShieldCheck } from "lucide-react";
+import { Database, FileClock, Plus, Settings2, ShieldCheck, X } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { type FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
   operatorApiClient,
@@ -13,6 +13,7 @@ import {
   type SourceRevisionCreate,
 } from "../../api/operatorApiClient";
 import {
+  useActiveConfiguration,
   useAllOperatorProjects,
   useDocuments,
   useOrganizations,
@@ -26,12 +27,16 @@ import { EmptyState, ErrorState, LoadingState } from "../../components/QueryStat
 import { StatusBadge } from "../../components/StatusBadge";
 import { formatBytes, formatDate, shortId } from "../../shared/formatters";
 import {
+  FieldHint,
   InheritanceToggle,
+  PROJECT_AI_FIELD_HINTS,
   ProjectAISettingsFields,
   buildSparseProjectConfig,
   configFormFromEffective,
+  configFormFromDeployment,
   configOverridesFromStored,
   emptyProjectConfigForm,
+  inheritedFormFromEffective,
   inheritedProjectConfig,
   sparseHasOverrides,
   type ProjectConfigForm,
@@ -45,6 +50,57 @@ type ProjectTab = (typeof tabs)[number];
 function projectStatus(project: Project) {
   if (project.deleted_at) return "archived";
   return project.is_active ? "active" : "disabled";
+}
+
+const originFieldLabels: Record<string, string> = {
+  "llm.provider": "Provider",
+  "llm.model": "Model",
+  "llm.temperature": "Temperature",
+  "llm.max_tokens": "Max tokens",
+  "retrieval.strategy": "Strategy",
+  "retrieval.top_k": "Top K",
+  "retrieval.rerank_mode": "Rerank",
+  "retrieval.query_translation_enabled": "Query translation",
+  "retrieval.semantic_evidence_score_threshold": "Evidence threshold",
+  "chat.include_citations": "Citations",
+  "domain_instructions": "Project instructions",
+  "source_policy_mode": "Source policy",
+};
+
+function originFieldLabel(field: string) {
+  return originFieldLabels[field] ?? (field.split(".").pop() ?? field).replaceAll("_", " ");
+}
+
+function originKindLabel(origin: string) {
+  if (origin === "global") return "deployment";
+  if (origin === "project") return "Project";
+  return origin.replaceAll("_", " ");
+}
+
+function OriginSummary({ origins }: { origins: Record<string, string> }) {
+  const overrides = Object.entries(origins).filter(([, origin]) => origin !== "global");
+  if (overrides.length === 0) {
+    return (
+      <p className="origin-summary">
+        All settings inherit deployment defaults. This strip only lists values this Project
+        overrides.
+      </p>
+    );
+  }
+  return (
+    <div className="origin-summary">
+      <p>
+        {overrides.length} Project override{overrides.length === 1 ? "" : "s"}
+      </p>
+      <div className="origin-pills">
+        {overrides.map(([field, origin]) => (
+          <span key={field} title={field}>
+            {originFieldLabel(field)} · {originKindLabel(origin)}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 export function ProjectAdministration() {
@@ -66,6 +122,13 @@ export function ProjectAdministration() {
       queryClient.invalidateQueries({ queryKey: operatorQueryKeys.organizations }),
       queryClient.invalidateQueries({ queryKey: operatorQueryKeys.ownershipMigration }),
     ]);
+  }, [queryClient]);
+  useEffect(() => {
+    void queryClient.prefetchQuery({
+      queryKey: operatorQueryKeys.configuration,
+      queryFn: operatorApiClient.getConfiguration,
+      staleTime: 60_000,
+    });
   }, [queryClient]);
 
   const projectId = useMemo(() => {
@@ -99,9 +162,14 @@ export function ProjectAdministration() {
             <p className="eyebrow">Knowledge boundary</p>
             <h2>Projects</h2>
           </div>
-          <button className="icon-button" type="button" onClick={() => setCreating(true)}>
-            <Plus size={17} />
-            <span className="sr-only">Create Project</span>
+          <button
+            className="button button--secondary button--compact"
+            type="button"
+            aria-label="Create Project"
+            onClick={() => setCreating(true)}
+          >
+            <Plus size={15} aria-hidden="true" />
+            New
           </button>
         </div>
         {migration && migration.legacy_unlocked_projects > 0 && (
@@ -115,20 +183,7 @@ export function ProjectAdministration() {
             </span>
           </div>
         )}
-        {creating && (
-          <CreateProject
-            organizations={organizations.data.items.filter(
-              (item) => item.is_active && !item.deleted_at,
-            )}
-            onCancel={() => setCreating(false)}
-            onCreated={(project, extra) => {
-              setCreating(false);
-              void invalidateAdministration();
-              choose(project.id, extra?.aiConfigError ? "ai-config" : "details");
-              setAiConfigWarning(extra?.aiConfigError ?? "");
-            }}
-          />
-        )}
+        <p className="muted-copy">Select a Project to administer its policy, documents, and sources.</p>
         <div className="admin-rail__list">
           {projects.data.items.map((project) => (
             <button
@@ -212,6 +267,20 @@ export function ProjectAdministration() {
           />
         )}
       </section>
+      {creating && (
+        <CreateProject
+          organizations={organizations.data.items.filter(
+            (item) => item.is_active && !item.deleted_at,
+          )}
+          onCancel={() => setCreating(false)}
+          onCreated={(project, extra) => {
+            setCreating(false);
+            void invalidateAdministration();
+            choose(project.id, extra?.aiConfigError ? "ai-config" : "details");
+            setAiConfigWarning(extra?.aiConfigError ?? "");
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -230,26 +299,63 @@ function CreateProject({
   const [organizationId, setOrganizationId] = useState(organizations[0]?.id ?? "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [form, setForm] = useState<ProjectConfigForm>(emptyProjectConfigForm);
+  const configuration = useActiveConfiguration();
+  const defaults = configuration.data
+    ? configFormFromDeployment(configuration.data)
+    : emptyProjectConfigForm;
+  const [form, setForm] = useState<ProjectConfigForm>(() => defaults);
   const [overrides, setOverrides] = useState<ProjectConfigOverrides>(inheritedProjectConfig);
   const setOverride = (key: ProjectConfigOverride, enabled: boolean) => {
     setOverrides((current) => ({ ...current, [key]: enabled }));
   };
+  const nameRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    nameRef.current?.focus();
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onCancel();
+    };
+    window.addEventListener("keydown", onKey);
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      document.body.style.overflow = previous;
+    };
+  }, [onCancel]);
+  useEffect(() => {
+    if (!configuration.data) return;
+    const next = configFormFromDeployment(configuration.data);
+    setForm((current) => {
+      const merged = {
+        ...current,
+        provider: current.provider || next.provider,
+        model: current.model || next.model,
+        strategy: current.strategy || next.strategy,
+      };
+      setOverrides((flags) => ({
+        ...flags,
+        provider: merged.provider !== next.provider,
+        model: merged.model !== next.model,
+        strategy: merged.strategy !== next.strategy,
+      }));
+      return merged;
+    });
+  }, [configuration.data]);
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     setBusy(true);
     setError("");
     try {
       const project = await operatorApiClient.createProject(name, organizationId, description);
-      const configuration = buildSparseProjectConfig({}, form, overrides, undefined);
-      if (!sparseHasOverrides(configuration)) {
+      const sparseConfiguration = buildSparseProjectConfig({}, form, overrides, undefined);
+      if (!sparseHasOverrides(sparseConfiguration)) {
         onCreated(project);
         return;
       }
       try {
         await operatorApiClient.createProjectAIConfig(
           project.id,
-          configuration,
+          sparseConfiguration,
           null,
           "Initial Project AI settings",
         );
@@ -268,61 +374,104 @@ function CreateProject({
     }
   };
   return (
-    <form className="stack-form compact-form" onSubmit={(event) => void submit(event)}>
-      <label className="field-control">
-        <span>Organization owner</span>
-        <select
-          required
-          value={organizationId}
-          onChange={(event) => setOrganizationId(event.target.value)}
+    <div
+      className="modal-overlay"
+      role="presentation"
+      onClick={onCancel}
+    >
+      <section
+        className="modal-card"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="create-project-title"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <header className="modal-card__header">
+          <div>
+            <p className="eyebrow">Knowledge boundary</p>
+            <h2 id="create-project-title">Create Project</h2>
+            <p>A Project isolates documents, retrieval, and chat for one knowledge scope.</p>
+          </div>
+          <button className="icon-button" type="button" aria-label="Close" onClick={onCancel}>
+            <X size={16} aria-hidden="true" />
+          </button>
+        </header>
+        <form
+          id="create-project-form"
+          className="modal-card__body stack-form"
+          onSubmit={(event) => void submit(event)}
         >
-          <option value="">Select client</option>
-          {organizations.map((organization) => (
-            <option key={organization.id} value={organization.id}>
-              {organization.name}
-            </option>
-          ))}
-        </select>
-      </label>
-      <label className="field-control">
-        <span>Project name</span>
-        <input required value={name} onChange={(event) => setName(event.target.value)} />
-      </label>
-      <label className="field-control">
-        <span>Description</span>
-        <textarea
-          rows={3}
-          value={description}
-          onChange={(event) => setDescription(event.target.value)}
-        />
-      </label>
-      <details className="lab-advanced">
-        <summary>Optional AI settings</summary>
-        <p className="muted-copy">
-          Leave every control on Inherit to use deployment defaults. No AI revision is created in
-          that case.
-        </p>
-        <ProjectAISettingsFields
-          form={form}
-          setForm={setForm}
-          overrides={overrides}
-          setOverride={setOverride}
-        />
-      </details>
-      {error && (
-        <p className="form-error" role="alert">
-          {error}
-        </p>
-      )}
-      <div className="button-row">
-        <button className="button button--primary" disabled={busy || !organizationId}>
-          Create
-        </button>
-        <button className="button button--secondary" type="button" onClick={onCancel}>
-          Cancel
-        </button>
-      </div>
-    </form>
+          <label className="field-control">
+            <span>Organization owner</span>
+            <select
+              required
+              value={organizationId}
+              onChange={(event) => setOrganizationId(event.target.value)}
+            >
+              <option value="">Select client</option>
+              {organizations.map((organization) => (
+                <option key={organization.id} value={organization.id}>
+                  {organization.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="field-control">
+            <span>Project name</span>
+            <input
+              ref={nameRef}
+              required
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+            />
+          </label>
+          <label className="field-control">
+            <span>Description</span>
+            <textarea
+              rows={3}
+              value={description}
+              onChange={(event) => setDescription(event.target.value)}
+            />
+          </label>
+          <details className="settings-disclosure">
+            <summary>Optional AI settings</summary>
+            <p className="muted-copy">
+              Leave Inherit global on to use the same vendor and model as this deployment (shown in
+              the fields). Picking another value turns Inherit off; turning it back on restores the
+              default. No AI revision is created if everything stays inherited.
+            </p>
+            {configuration.isPending && !configuration.data ? (
+              <p className="muted-copy">Loading deployment defaults…</p>
+            ) : (
+              <ProjectAISettingsFields
+                form={form}
+                setForm={setForm}
+                overrides={overrides}
+                setOverride={setOverride}
+                defaults={defaults}
+              />
+            )}
+          </details>
+          {error && (
+            <p className="form-error" role="alert">
+              {error}
+            </p>
+          )}
+        </form>
+        <footer className="modal-card__footer button-row">
+          <button className="button button--secondary" type="button" onClick={onCancel}>
+            Cancel
+          </button>
+          <button
+            className="button button--primary"
+            form="create-project-form"
+            disabled={busy || !organizationId}
+          >
+            Create
+          </button>
+        </footer>
+      </section>
+    </div>
   );
 }
 
@@ -659,43 +808,40 @@ function ProjectConfig({ project }: { project: Project }) {
   );
   const temperatureCapability = selectedCapability?.parameters.temperature;
   const tokenCapability = selectedCapability?.parameters.max_tokens;
+  const baseline = inheritedFormFromEffective(effective);
+  const inheritedClass = (overridden: boolean) =>
+    overridden ? "field-control" : "field-control field-control--inherited";
+  const changeField = <K extends ProjectConfigOverride>(key: K, value: ProjectConfigForm[K]) => {
+    setForm((current) => ({ ...current, [key]: value }));
+    setOverrides((current) => ({ ...current, [key]: value !== baseline[key] }));
+  };
+  const toggleField = (key: ProjectConfigOverride, overridden: boolean) => {
+    setOverrides((current) => ({ ...current, [key]: overridden }));
+    if (!overridden) setForm((current) => ({ ...current, [key]: baseline[key] }));
+  };
   const setOverride = (key: ProjectConfigOverride, enabled: boolean) => {
     setOverrides((current) => ({ ...current, [key]: enabled }));
-    if (!enabled && effective) {
-      const activeRevision = history.find(
-        (revision) => revision.id === effective.active_revision_id,
-      );
-      const inherited = configFormFromEffective(effective, activeRevision?.configuration ?? {});
-      setForm((current) => ({ ...current, [key]: inherited[key] }));
-    }
   };
+  const temperatureUnsupported = temperatureCapability?.supported === false;
   return (
     <>
       <section className="panel config-summary">
         <div>
           <p className="eyebrow">Active immutable policy</p>
-          <h3>{effective?.configuration_hash.slice(0, 12)}</h3>
-          <p>
-            Revision{" "}
+          <h3>
             {effective?.active_revision_id
-              ? shortId(effective.active_revision_id)
-              : "inherited deployment defaults"}
-          </p>
+              ? `Revision ${shortId(effective.active_revision_id)}`
+              : "Inherited deployment defaults"}
+          </h3>
           <p className="muted-copy">
-            Source policy: configured {effective?.provenance.configured_source_policy_mode ?? "off"}
+            Fingerprint {effective?.configuration_hash.slice(0, 12) ?? "—"}
+            {" · "}Source policy configured{" "}
+            {effective?.provenance.configured_source_policy_mode ?? "off"}
             {" · "}effective {effective?.provenance.effective_source_policy_mode ?? "off"}
             {" · "}deployment cap {effective?.provenance.source_policy_deployment_cap ?? "enforce"}
           </p>
         </div>
-        <div className="origin-pills">
-          {Object.entries(effective?.origins ?? {})
-            .slice(0, 8)
-            .map(([field, origin]) => (
-              <span key={field} title={field}>
-                {origin}
-              </span>
-            ))}
-        </div>
+        <OriginSummary origins={effective?.origins ?? {}} />
       </section>
       {error && (
         <div className="failure-box" role="alert">
@@ -704,8 +850,9 @@ function ProjectConfig({ project }: { project: Project }) {
       )}
       <form className="panel progressive-form" onSubmit={(event) => void submit(event)}>
         <p className="muted-copy">
-          Fields marked Inherit global are omitted from the Project revision. Clear that checkbox
-          only when this Project should own an explicit override.
+          Inherit global omits the field from the Project revision, so the saved policy uses the
+          deployment default. Choosing another value turns Inherit off; turning it back on restores
+          the default shown here.
         </p>
         <fieldset>
           <legend>
@@ -722,8 +869,8 @@ function ProjectConfig({ project }: { project: Project }) {
         <fieldset>
           <legend>Generation and chat defaults</legend>
           <div className="form-grid">
-            <div className="field-control">
-              <span>Temperature</span>
+            <div className={inheritedClass(overrides.temperature)}>
+              <FieldHint label="Temperature" text={PROJECT_AI_FIELD_HINTS.temperature} />
               <input
                 aria-label="Temperature"
                 type="number"
@@ -731,34 +878,33 @@ function ProjectConfig({ project }: { project: Project }) {
                 min={temperatureCapability?.minimum ?? undefined}
                 max={temperatureCapability?.maximum ?? undefined}
                 value={form.temperature}
-                disabled={!overrides.temperature || temperatureCapability?.supported === false}
-                onChange={(event) => setForm({ ...form, temperature: event.target.value })}
+                disabled={temperatureUnsupported}
+                onChange={(event) => changeField("temperature", event.target.value)}
               />
               <InheritanceToggle
                 field="Temperature"
                 overridden={overrides.temperature}
-                disabled={temperatureCapability?.supported === false}
-                onChange={(enabled) => setOverride("temperature", enabled)}
+                disabled={temperatureUnsupported}
+                onChange={(enabled) => toggleField("temperature", enabled)}
               />
-              {temperatureCapability?.supported === false && (
+              {temperatureUnsupported && (
                 <small>This provider/model does not support temperature.</small>
               )}
             </div>
-            <div className="field-control">
-              <span>Maximum output tokens</span>
+            <div className={inheritedClass(overrides.maxTokens)}>
+              <FieldHint label="Maximum output tokens" text={PROJECT_AI_FIELD_HINTS.maxTokens} />
               <input
                 aria-label="Maximum output tokens"
                 type="number"
                 min={tokenCapability?.minimum ?? 1}
                 max={tokenCapability?.maximum ?? undefined}
                 value={form.maxTokens}
-                disabled={!overrides.maxTokens}
-                onChange={(event) => setForm({ ...form, maxTokens: event.target.value })}
+                onChange={(event) => changeField("maxTokens", event.target.value)}
               />
               <InheritanceToggle
                 field="Maximum output tokens"
                 overridden={overrides.maxTokens}
-                onChange={(enabled) => setOverride("maxTokens", enabled)}
+                onChange={(enabled) => toggleField("maxTokens", enabled)}
               />
             </div>
           </div>
@@ -766,13 +912,12 @@ function ProjectConfig({ project }: { project: Project }) {
         <fieldset>
           <legend>Retrieval, citation, and evidence defaults</legend>
           <div className="form-grid">
-            <div className="field-control">
-              <span>Strategy</span>
+            <div className={inheritedClass(overrides.strategy)}>
+              <FieldHint label="Strategy" text={PROJECT_AI_FIELD_HINTS.strategy} />
               <select
                 aria-label="Strategy"
                 value={form.strategy}
-                disabled={!overrides.strategy}
-                onChange={(event) => setForm({ ...form, strategy: event.target.value })}
+                onChange={(event) => changeField("strategy", event.target.value)}
               >
                 <option value="semantic">Semantic</option>
                 <option value="hybrid">Hybrid</option>
@@ -780,27 +925,26 @@ function ProjectConfig({ project }: { project: Project }) {
               <InheritanceToggle
                 field="Strategy"
                 overridden={overrides.strategy}
-                onChange={(enabled) => setOverride("strategy", enabled)}
+                onChange={(enabled) => toggleField("strategy", enabled)}
               />
             </div>
-            <div className="field-control">
-              <span>Top K</span>
+            <div className={inheritedClass(overrides.topK)}>
+              <FieldHint label="Top K" text={PROJECT_AI_FIELD_HINTS.topK} />
               <input
                 aria-label="Top K"
                 type="number"
                 min="1"
                 value={form.topK}
-                disabled={!overrides.topK}
-                onChange={(event) => setForm({ ...form, topK: event.target.value })}
+                onChange={(event) => changeField("topK", event.target.value)}
               />
               <InheritanceToggle
                 field="Top K"
                 overridden={overrides.topK}
-                onChange={(enabled) => setOverride("topK", enabled)}
+                onChange={(enabled) => toggleField("topK", enabled)}
               />
             </div>
-            <div className="field-control">
-              <span>Evidence threshold</span>
+            <div className={inheritedClass(overrides.evidence)}>
+              <FieldHint label="Evidence threshold" text={PROJECT_AI_FIELD_HINTS.evidence} />
               <input
                 aria-label="Evidence threshold"
                 type="number"
@@ -808,13 +952,12 @@ function ProjectConfig({ project }: { project: Project }) {
                 max="1"
                 step="0.01"
                 value={form.evidence}
-                disabled={!overrides.evidence}
-                onChange={(event) => setForm({ ...form, evidence: event.target.value })}
+                onChange={(event) => changeField("evidence", event.target.value)}
               />
               <InheritanceToggle
                 field="Evidence threshold"
                 overridden={overrides.evidence}
-                onChange={(enabled) => setOverride("evidence", enabled)}
+                onChange={(enabled) => toggleField("evidence", enabled)}
               />
             </div>
           </div>
@@ -823,13 +966,12 @@ function ProjectConfig({ project }: { project: Project }) {
           <legend>
             <ShieldCheck size={17} /> Advanced source policy
           </legend>
-          <div className="field-control">
-            <span>Rollout mode</span>
+          <div className={inheritedClass(overrides.sourcePolicy)}>
+            <FieldHint label="Rollout mode" text={PROJECT_AI_FIELD_HINTS.sourcePolicy} />
             <select
               aria-label="Source policy"
               value={form.sourcePolicy}
-              disabled={!overrides.sourcePolicy}
-              onChange={(event) => setForm({ ...form, sourcePolicy: event.target.value })}
+              onChange={(event) => changeField("sourcePolicy", event.target.value)}
             >
               <option value="off">Off — legacy-neutral</option>
               <option value="observe">Observe — diagnostics only</option>
@@ -838,7 +980,7 @@ function ProjectConfig({ project }: { project: Project }) {
             <InheritanceToggle
               field="Source policy"
               overridden={overrides.sourcePolicy}
-              onChange={(enabled) => setOverride("sourcePolicy", enabled)}
+              onChange={(enabled) => toggleField("sourcePolicy", enabled)}
             />
           </div>
           <p className="muted-copy">
@@ -846,15 +988,16 @@ function ProjectConfig({ project }: { project: Project }) {
             stored Project policy.
           </p>
         </fieldset>
-        <label className="field-control">
-          <span>Revision reason</span>
+        <div className="field-control">
+          <FieldHint label="Revision reason" text={PROJECT_AI_FIELD_HINTS.reason} />
           <input
             required
+            aria-label="Revision reason"
             value={form.reason}
             onChange={(event) => setForm({ ...form, reason: event.target.value })}
             placeholder="Why this policy changed"
           />
-        </label>
+        </div>
         <p className="muted-copy">
           New conversations capture this policy. Existing conversation snapshots do not drift.
         </p>
@@ -1064,7 +1207,7 @@ function ProjectSources({ project }: { project: Project }) {
           <h3>Generation {sourceState.data?.generation ?? 0}</h3>
           <p>Metadata activation is independent of Document processing version and index builds.</p>
         </div>
-        <FileClock size={26} />
+        <FileClock size={22} />
       </section>
       {error && (
         <div className="failure-box" role="alert">
@@ -1076,62 +1219,67 @@ function ProjectSources({ project }: { project: Project }) {
           <h3>Upload document and optional source metadata</h3>
           <span>Metadata is optional</span>
         </div>
-        <form className="stack-form" onSubmit={(event) => void uploadFile(event)}>
-          <div className="form-grid">
-            <label className="field-control field-control--grow">
-              <span>File</span>
+        <form className="source-upload" onSubmit={(event) => void uploadFile(event)}>
+          <label className="field-control">
+            <span>File</span>
+            <span className="file-picker">
               <input
                 required
                 type="file"
+                aria-label="File"
                 onChange={(event) => setFile(event.target.files?.[0] ?? null)}
               />
-            </label>
-            <label className="field-control field-control--grow">
-              <span>Source title (optional quick active defaults)</span>
-              <input value={uploadTitle} onChange={(event) => setUploadTitle(event.target.value)} />
-            </label>
+              <span className="file-picker__button">Choose file</span>
+              <span className="file-picker__name">{file?.name ?? "No file chosen"}</span>
+            </span>
+          </label>
+          <label className="field-control">
+            <span>Source title (optional quick active defaults)</span>
+            <input value={uploadTitle} onChange={(event) => setUploadTitle(event.target.value)} />
+          </label>
+          <label className="field-control">
+            <span>Source treatment</span>
+            <select
+              value={uploadMode}
+              onChange={(event) => {
+                setUploadMode(event.target.value as typeof uploadMode);
+                setUploadTarget("");
+              }}
+            >
+              <option value="independent">New independent source</option>
+              <option value="revision">New revision of an existing source</option>
+              <option value="modifies">New source that modifies an existing source</option>
+            </select>
+          </label>
+          {uploadMode !== "independent" && (
             <label className="field-control">
-              <span>Source treatment</span>
+              <span>Existing source revision</span>
               <select
-                value={uploadMode}
-                onChange={(event) => {
-                  setUploadMode(event.target.value as typeof uploadMode);
-                  setUploadTarget("");
-                }}
+                required
+                value={uploadTarget}
+                onChange={(event) => setUploadTarget(event.target.value)}
               >
-                <option value="independent">New independent source</option>
-                <option value="revision">New revision of an existing source</option>
-                <option value="modifies">New source that modifies an existing source</option>
+                <option value="">Select source</option>
+                {sourceState.data?.items.map((item) => (
+                  <option key={item.revision.id} value={item.revision.id}>
+                    {item.revision.title} · r{item.revision.revision_number}
+                  </option>
+                ))}
               </select>
             </label>
-            {uploadMode !== "independent" && (
-              <label className="field-control">
-                <span>Existing source revision</span>
-                <select
-                  required
-                  value={uploadTarget}
-                  onChange={(event) => setUploadTarget(event.target.value)}
-                >
-                  <option value="">Select source</option>
-                  {sourceState.data?.items.map((item) => (
-                    <option key={item.revision.id} value={item.revision.id}>
-                      {item.revision.title} · r{item.revision.revision_number}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            )}
-          </div>
+          )}
           <p className="muted-copy">
             A new revision stays in the selected source group and replaces its target. A modifying
             source receives its own group and records a modifies relationship.
           </p>
-          <button
-            className="button button--primary"
-            disabled={!file || upload.isPending || (uploadMode !== "independent" && !uploadTarget)}
-          >
-            Upload
-          </button>
+          <div className="button-row">
+            <button
+              className="button button--primary"
+              disabled={!file || upload.isPending || (uploadMode !== "independent" && !uploadTarget)}
+            >
+              Upload
+            </button>
+          </div>
         </form>
       </section>
       {!documents.data?.items.length ? (
@@ -1192,6 +1340,19 @@ function ProjectSources({ project }: { project: Project }) {
                 </div>
                 <StatusBadge status={current?.revision.source_role ?? "unspecified"} />
               </div>
+              {current && (
+                <div className="source-facts">
+                  <span>
+                    Type <strong>{current.revision.source_type || "unset"}</strong>
+                  </span>
+                  <span>
+                    Lifecycle <strong>{current.revision.lifecycle_status}</strong>
+                  </span>
+                  <span>
+                    Role <strong>{current.revision.source_role}</strong>
+                  </span>
+                </div>
+              )}
               <form className="stack-form" onSubmit={(event) => void createRevision(event)}>
                 <div className="form-grid">
                   <label className="field-control">

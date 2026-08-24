@@ -1,5 +1,8 @@
 /* eslint-disable react-refresh/only-export-components -- helpers shared by Create Project and AI Configuration */
+import { CircleHelp } from "lucide-react";
+import { useState, type Dispatch, type SetStateAction } from "react";
 import type {
+  ActiveConfiguration,
   EffectiveProjectAIConfig,
   ProjectAIConfig,
   ProviderCapability,
@@ -44,7 +47,7 @@ export const inheritedProjectConfig: ProjectConfigOverrides = {
 };
 
 export const emptyProjectConfigForm: ProjectConfigForm = {
-  provider: "echo",
+  provider: "",
   model: "",
   temperature: "",
   maxTokens: "",
@@ -187,6 +190,46 @@ export function sparseHasOverrides(configuration: ProjectAIConfig): boolean {
   );
 }
 
+export function inheritedFormFromEffective(
+  effective?: EffectiveProjectAIConfig | null,
+): ProjectConfigForm {
+  if (!effective) return { ...emptyProjectConfigForm };
+  return configFormFromEffective(effective, {});
+}
+
+export function configFormFromDeployment(config: ActiveConfiguration): ProjectConfigForm {
+  return {
+    ...emptyProjectConfigForm,
+    provider: config.llm.backend || "",
+    model: config.llm.model ?? "",
+    strategy: config.retrieval_strategy || "hybrid",
+  };
+}
+
+export function FieldHint({ label, text }: { label: string; text: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <span className="field-label">
+      {label}
+      <button
+        type="button"
+        className={open ? "field-help field-help--open" : "field-help"}
+        aria-expanded={open}
+        onMouseEnter={() => setOpen(true)}
+        onMouseLeave={() => setOpen(false)}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setOpen(false)}
+      >
+        <CircleHelp size={13} aria-hidden="true" />
+        <span className="sr-only">About {label}</span>
+        <span className="field-help__tip" role="tooltip">
+          {text}
+        </span>
+      </button>
+    </span>
+  );
+}
+
 export function InheritanceToggle({
   field,
   overridden,
@@ -199,18 +242,47 @@ export function InheritanceToggle({
   disabled?: boolean;
 }) {
   return (
-    <label className="check-control">
+    <label className="inherit-switch">
       <input
         aria-label={`${field}: inherit global`}
         type="checkbox"
         checked={!overridden}
         disabled={disabled}
         onChange={(event) => onChange(!event.target.checked)}
-      />{" "}
+      />
       Inherit global
     </label>
   );
 }
+
+export const PROJECT_AI_FIELD_HINTS = {
+  provider:
+    "Which AI vendor this Project uses for chat.\n\nLeave Inherit on to keep the deployment vendor. Example: openai in this environment. Pick ollama only when this Project should call a different vendor.",
+  model:
+    "The exact model name sent to that vendor.\n\nLeave Inherit on to keep the deployment model. Example: gpt-4.1-mini. Type a different name only for a Project-specific model.",
+  domain:
+    "Extra standing rules for this Project, prepended to the platform’s system prompt. This is not the full system prompt.\n\nExample: “Answer in Bengali. Use official NBR tax terms. Never invent a section number.”",
+  translation:
+    "Translate the user’s question before search when it is in a different language than the documents.\n\nExample: a Bangla question over English PDFs. Inherit follows the deployment on/off setting.",
+  rerank:
+    "After search, reorder passages so the best evidence sits first.\n\nAlways: every question. Cross-language: only when languages differ. Off: skip rerank and use the search order.",
+  citations:
+    "Attach short source excerpts to grounded answers so you can check the evidence.\n\nLeave on for operator review. Turn off only if this Project should reply without citations.",
+  temperature:
+    "How varied the wording can be. Lower is more repeatable; higher is more free-form.\n\nExample: 0.2 for policy answers. Some models ignore this setting entirely.",
+  maxTokens:
+    "Hard cap on how long a generated answer may be, in tokens.\n\nExample: 2048. Inherit uses the deployment cap.",
+  strategy:
+    "How passages are found before answering.\n\nSemantic: meaning only. Hybrid: meaning plus keyword match — better for IDs, names, and mixed Bangla/English text.",
+  topK:
+    "How many passages to retrieve before answering.\n\nExample: 10. Higher can add context but costs more and may add noise.",
+  evidence:
+    "Minimum retrieval score before the model may answer from a passage.\n\nExample: 0.35. Below that, the Project should refuse rather than guess.",
+  sourcePolicy:
+    "Whether retrieval must honor source lifecycle and relationships (replaces / modifies).\n\nOff: all indexed text. Enforce: only applicable current sources.",
+  reason:
+    "Short note stored with this immutable revision for audit.\n\nExample: “Raise the evidence floor after false citations.”",
+};
 
 export function ProjectAISettingsFields({
   form,
@@ -218,27 +290,49 @@ export function ProjectAISettingsFields({
   overrides,
   setOverride,
   effective,
+  defaults,
 }: {
   form: ProjectConfigForm;
-  setForm: (form: ProjectConfigForm) => void;
+  setForm: Dispatch<SetStateAction<ProjectConfigForm>>;
   overrides: ProjectConfigOverrides;
   setOverride: (key: ProjectConfigOverride, enabled: boolean) => void;
   effective?: EffectiveProjectAIConfig | null;
+  defaults?: ProjectConfigForm;
 }) {
-  const translationHint = effective?.configuration.retrieval.query_translation_enabled
+  const baseline = effective
+    ? inheritedFormFromEffective(effective)
+    : (defaults ?? emptyProjectConfigForm);
+  const translationHint: Exclude<TranslationMode, "inherit"> = effective?.configuration.retrieval
+    .query_translation_enabled
     ? "on"
     : "off";
-  const rerankHint = effective?.configuration.retrieval.rerank_mode ?? "always";
+  const resolvedRerank = effective?.configuration.retrieval.rerank_mode;
+  const rerankHint: Exclude<RerankModeChoice, "inherit"> =
+    resolvedRerank === "cross_language" || resolvedRerank === "off" || resolvedRerank === "always"
+      ? resolvedRerank
+      : "always";
+  const changeField = <K extends ProjectConfigOverride>(key: K, value: ProjectConfigForm[K]) => {
+    setForm((current) => ({ ...current, [key]: value }));
+    setOverride(key, value !== baseline[key]);
+  };
+  const toggleField = (key: ProjectConfigOverride, overridden: boolean) => {
+    setOverride(key, overridden);
+    if (!overridden) {
+      setForm((current) => ({ ...current, [key]: baseline[key] }));
+    }
+  };
+  const inheritedClass = (overridden: boolean) =>
+    overridden ? "field-control" : "field-control field-control--inherited";
   return (
     <div className="form-grid">
-      <div className="field-control">
-        <span>Provider</span>
+      <div className={inheritedClass(overrides.provider)}>
+        <FieldHint label="Provider" text={PROJECT_AI_FIELD_HINTS.provider} />
         <select
           aria-label="Provider"
           value={form.provider}
-          disabled={!overrides.provider}
-          onChange={(event) => setForm({ ...form, provider: event.target.value })}
+          onChange={(event) => changeField("provider", event.target.value)}
         >
+          {!baseline.provider && <option value="">Deployment default</option>}
           {["echo", "openai", "openai_compatible", "ollama", "gemini"].map((value) => (
             <option key={value}>{value}</option>
           ))}
@@ -246,58 +340,82 @@ export function ProjectAISettingsFields({
         <InheritanceToggle
           field="Provider"
           overridden={overrides.provider}
-          onChange={(enabled) => setOverride("provider", enabled)}
+          onChange={(enabled) => toggleField("provider", enabled)}
         />
       </div>
-      <div className="field-control">
-        <span>Model</span>
+      <div className={inheritedClass(overrides.model)}>
+        <FieldHint label="Model" text={PROJECT_AI_FIELD_HINTS.model} />
         <input
           aria-label="Model"
           value={form.model}
-          disabled={!overrides.model}
-          onChange={(event) => setForm({ ...form, model: event.target.value })}
+          placeholder={overrides.model ? undefined : "Deployment default"}
+          onChange={(event) => changeField("model", event.target.value)}
         />
         <InheritanceToggle
           field="Model"
           overridden={overrides.model}
-          onChange={(enabled) => setOverride("model", enabled)}
+          onChange={(enabled) => toggleField("model", enabled)}
         />
       </div>
-      <div className="field-control field-control--wide">
-        <span>Domain instructions</span>
+      <div className={`${inheritedClass(overrides.domain)} field-control--wide`}>
+        <FieldHint label="Project instructions" text={PROJECT_AI_FIELD_HINTS.domain} />
         <textarea
-          aria-label="Domain instructions"
+          aria-label="Project instructions"
           value={form.domain}
-          disabled={!overrides.domain}
-          onChange={(event) => setForm({ ...form, domain: event.target.value })}
+          placeholder="e.g. Answer in Bengali. Use this Project’s official terms."
+          onChange={(event) => changeField("domain", event.target.value)}
         />
         <InheritanceToggle
-          field="Domain instructions"
+          field="Project instructions"
           overridden={overrides.domain}
-          onChange={(enabled) => setOverride("domain", enabled)}
+          onChange={(enabled) => toggleField("domain", enabled)}
         />
       </div>
-      <div className="field-control">
-        <span>Query translation</span>
+      <div
+        className={
+          form.translation === "inherit" ? "field-control field-control--inherited" : "field-control"
+        }
+      >
+        <FieldHint label="Query translation" text={PROJECT_AI_FIELD_HINTS.translation} />
         <select
           aria-label="Query translation"
           value={form.translation}
           onChange={(event) =>
-            setForm({ ...form, translation: event.target.value as TranslationMode })
+            setForm((current) => ({
+              ...current,
+              translation: event.target.value as TranslationMode,
+            }))
           }
         >
           <option value="inherit">Inherit ({translationHint})</option>
           <option value="on">On</option>
           <option value="off">Off</option>
         </select>
+        <InheritanceToggle
+          field="Query translation"
+          overridden={form.translation !== "inherit"}
+          onChange={(overridden) =>
+            setForm((current) => ({
+              ...current,
+              translation: overridden ? translationHint : "inherit",
+            }))
+          }
+        />
       </div>
-      <div className="field-control">
-        <span>Rerank mode</span>
+      <div
+        className={
+          form.rerankMode === "inherit" ? "field-control field-control--inherited" : "field-control"
+        }
+      >
+        <FieldHint label="Rerank mode" text={PROJECT_AI_FIELD_HINTS.rerank} />
         <select
           aria-label="Rerank mode"
           value={form.rerankMode}
           onChange={(event) =>
-            setForm({ ...form, rerankMode: event.target.value as RerankModeChoice })
+            setForm((current) => ({
+              ...current,
+              rerankMode: event.target.value as RerankModeChoice,
+            }))
           }
         >
           <option value="inherit">Inherit ({rerankHint})</option>
@@ -305,22 +423,31 @@ export function ProjectAISettingsFields({
           <option value="cross_language">Cross-language</option>
           <option value="off">Off</option>
         </select>
+        <InheritanceToggle
+          field="Rerank mode"
+          overridden={form.rerankMode !== "inherit"}
+          onChange={(overridden) =>
+            setForm((current) => ({
+              ...current,
+              rerankMode: overridden ? rerankHint : "inherit",
+            }))
+          }
+        />
       </div>
-      <div className="field-control">
-        <span>Citations</span>
+      <div className={inheritedClass(overrides.citations)}>
+        <FieldHint label="Citations" text={PROJECT_AI_FIELD_HINTS.citations} />
         <label className="check-control">
           <input
             type="checkbox"
             checked={form.citations}
-            disabled={!overrides.citations}
-            onChange={(event) => setForm({ ...form, citations: event.target.checked })}
+            onChange={(event) => changeField("citations", event.target.checked)}
           />{" "}
           Include citations
         </label>
         <InheritanceToggle
           field="Citations"
           overridden={overrides.citations}
-          onChange={(enabled) => setOverride("citations", enabled)}
+          onChange={(enabled) => toggleField("citations", enabled)}
         />
       </div>
     </div>

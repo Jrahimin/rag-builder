@@ -82,6 +82,14 @@ export function useAllOperatorProjects() {
   });
 }
 
+export function useActiveConfiguration() {
+  return useQuery({
+    queryKey: operatorQueryKeys.configuration,
+    queryFn: operatorApiClient.getConfiguration,
+    staleTime: 60_000,
+  });
+}
+
 export function useOrganizations() {
   return useQuery({
     queryKey: operatorQueryKeys.organizations,

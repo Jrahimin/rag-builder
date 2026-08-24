@@ -11,7 +11,7 @@ import {
   type SourceState,
 } from "../../api/operatorApiClient";
 import { OperatorConsoleApp } from "../../app/OperatorConsoleApp";
-import { projectFixture } from "../../test/operatorTestFixtures";
+import { projectFixture, configurationFixture } from "../../test/operatorTestFixtures";
 import { renderOperatorComponent } from "../../test/renderOperatorComponent";
 
 const organization: Organization = {
@@ -46,6 +46,14 @@ function mockProjectShell() {
     legacy_unlocked_projects: 0,
     default_organization_unlocked_projects: 0,
     projects: [],
+  });
+  vi.spyOn(operatorApiClient, "getConfiguration").mockResolvedValue({
+    ...configurationFixture,
+    llm: {
+      ...configurationFixture.llm,
+      backend: "openai",
+      model: "o1-test",
+    },
   });
 }
 
@@ -291,6 +299,75 @@ test("uses provider capability rules for generation fields", async () => {
   const maxTokens = screen.getByRole("spinbutton", { name: "Maximum output tokens" });
   expect(maxTokens).toHaveAttribute("min", "1");
   expect(maxTokens).toHaveAttribute("max", "128000");
+});
+
+test("keeps inherited AI fields enabled and syncs the inherit switch", async () => {
+  mockProjectShell();
+  vi.spyOn(operatorApiClient, "getProjectAIConfig").mockResolvedValue({
+    ...effectiveConfig(null),
+    origins: {
+      "llm.provider": "global",
+      "llm.model": "global",
+      "retrieval.semantic_evidence_score_threshold": "global",
+      "retrieval.top_k": "project",
+    },
+  });
+  vi.spyOn(operatorApiClient, "getProjectAIConfigHistory").mockResolvedValue([]);
+  vi.spyOn(operatorApiClient, "getProviderCapabilities").mockResolvedValue([capability]);
+
+  renderOperatorComponent(
+    <OperatorConsoleApp />,
+    `/projects?project=${projectFixture.id}&section=ai-config`,
+  );
+
+  expect(await screen.findByText("Top K · Project")).toBeInTheDocument();
+  expect(screen.queryByText(/evidence score/i)).not.toBeInTheDocument();
+
+  const inheritProvider = screen.getByLabelText("Provider: inherit global");
+  const provider = screen.getByLabelText("Provider");
+  expect(inheritProvider).toBeChecked();
+  expect(inheritProvider).toBeEnabled();
+  expect(provider).toBeEnabled();
+
+  await userEvent.selectOptions(provider, "ollama");
+  expect(inheritProvider).not.toBeChecked();
+  expect(provider).toHaveValue("ollama");
+
+  await userEvent.click(inheritProvider);
+  expect(inheritProvider).toBeChecked();
+  expect(provider).toHaveValue("openai");
+
+  const inheritTranslation = screen.getByLabelText("Query translation: inherit global");
+  expect(inheritTranslation).toBeChecked();
+  await userEvent.selectOptions(screen.getByLabelText("Query translation"), "on");
+  expect(inheritTranslation).not.toBeChecked();
+  await userEvent.click(inheritTranslation);
+  expect(inheritTranslation).toBeChecked();
+  expect(screen.getByLabelText("Query translation")).toHaveValue("inherit");
+});
+
+test("restores the deployment default in Create Project when Inherit is turned back on", async () => {
+  mockProjectShell();
+
+  renderOperatorComponent(<OperatorConsoleApp />, `/projects?project=${projectFixture.id}`);
+  await userEvent.click(await screen.findByRole("button", { name: "Create Project" }));
+  await userEvent.click(screen.getByText("Optional AI settings"));
+
+  const provider = await screen.findByLabelText("Provider");
+  const inheritProvider = screen.getByLabelText("Provider: inherit global");
+  await waitFor(() => expect(provider).toHaveValue("openai"));
+  expect(inheritProvider).toBeChecked();
+
+  await userEvent.selectOptions(provider, "openai");
+  expect(inheritProvider).toBeChecked();
+
+  await userEvent.selectOptions(provider, "ollama");
+  expect(inheritProvider).not.toBeChecked();
+  expect(provider).toHaveValue("ollama");
+
+  await userEvent.click(inheritProvider);
+  expect(inheritProvider).toBeChecked();
+  expect(provider).toHaveValue("openai");
 });
 
 test("uploads a document into an existing source group or a modifying group", async () => {
