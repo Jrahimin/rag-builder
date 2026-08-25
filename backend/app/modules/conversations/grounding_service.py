@@ -561,23 +561,22 @@ def _evidence_snapshot(
         if config.citation_excerpt_max_chars > 0
         else None
     )
+    is_web = chunk.metadata.get("source_kind") == CitationSourceKind.WEB.value
     return ClaimEvidence(
         citation_index=citation_index,
-        chunk_id=chunk.chunk_id,
-        document_id=chunk.document_id,
+        chunk_id=None if is_web else chunk.chunk_id,
+        document_id=None if is_web else chunk.document_id,
         filename=chunk.filename,
-        chunk_index=chunk.chunk_index,
-        page_number=chunk.page_number,
-        char_start=chunk.char_start,
-        char_end=chunk.char_end,
+        chunk_index=None if is_web else chunk.chunk_index,
+        page_number=None if is_web else chunk.page_number,
+        char_start=None if is_web else chunk.char_start,
+        char_end=None if is_web else chunk.char_end,
         excerpt=excerpt,
-        source_kind=(
-            CitationSourceKind.WEB
-            if chunk.metadata.get("source_kind") == CitationSourceKind.WEB.value
-            else CitationSourceKind.KNOWLEDGE
-        ),
-        web_url=chunk.metadata.get("web_url"),
-        web_title=chunk.metadata.get("web_title"),
+        source_kind=CitationSourceKind.WEB if is_web else CitationSourceKind.KNOWLEDGE,
+        web_url=chunk.metadata.get("web_url") if is_web else None,
+        web_title=chunk.metadata.get("web_title") if is_web else None,
+        web_retrieved_at=chunk.metadata.get("web_retrieved_at") if is_web else None,
+        web_provider=chunk.metadata.get("web_provider") if is_web else None,
     )
 
 

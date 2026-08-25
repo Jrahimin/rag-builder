@@ -151,9 +151,8 @@ def _extract_evidence(
     output = payload.get("output")
     if not isinstance(output, list):
         return [], 0
-    text_parts: list[str] = []
-    annotations: list[dict[str, Any]] = []
-    sources: dict[str, str] = {}
+    cited_urls: set[str] = set()
+    sources: dict[str, dict[str, str]] = {}
     for item in output:
         if not isinstance(item, dict):
             continue
@@ -167,53 +166,33 @@ def _extract_evidence(
                     url = source.get("url")
                     if isinstance(url, str) and url.startswith(("http://", "https://")):
                         title = source.get("title")
-                        sources[url] = str(title) if title else url
-        content = item.get("content")
-        if not isinstance(content, list):
+                        source_content = _source_excerpt(source)
+                        sources[url] = {
+                            "title": str(title) if title else url,
+                            "content": source_content,
+                        }
+        item_content = item.get("content")
+        if not isinstance(item_content, list):
             continue
-        for part in content:
+        for part in item_content:
             if not isinstance(part, dict) or part.get("type") != "output_text":
                 continue
-            text = part.get("text")
-            if not isinstance(text, str) or not text.strip():
-                continue
-            offset = sum(len(value) for value in text_parts)
-            text_parts.append(text)
             raw_annotations = part.get("annotations")
             if isinstance(raw_annotations, list):
                 for annotation in raw_annotations:
-                    if isinstance(annotation, dict):
-                        annotations.append({**annotation, "_offset": offset})
-
-    full_text = "".join(text_parts).strip()
-    grouped: dict[str, dict[str, Any]] = {}
-    for annotation in annotations:
-        if annotation.get("type") != "url_citation":
-            continue
-        url = annotation.get("url")
-        if not isinstance(url, str) or not url.startswith(("http://", "https://")):
-            continue
-        sources.setdefault(url, str(annotation.get("title") or url))
-        start = _optional_int(annotation.get("start_index"))
-        end = _optional_int(annotation.get("end_index"))
-        offset = _optional_int(annotation.get("_offset")) or 0
-        excerpt = _bounded_excerpt(full_text, offset + (start or 0), offset + (end or 0))
-        entry = grouped.setdefault(
-            url,
-            {"title": str(annotation.get("title") or sources[url]), "excerpts": []},
-        )
-        if excerpt and excerpt not in entry["excerpts"]:
-            entry["excerpts"].append(excerpt)
-
-    if not grouped and full_text and sources:
-        first_url = next(iter(sources))
-        grouped[first_url] = {"title": sources[first_url], "excerpts": [full_text]}
+                    if not isinstance(annotation, dict) or annotation.get("type") != "url_citation":
+                        continue
+                    url = annotation.get("url")
+                    if isinstance(url, str) and url.startswith(("http://", "https://")):
+                        cited_urls.add(url)
 
     now = datetime.now(UTC)
     results: list[WebSearchEvidence] = []
     remaining = max_chars
-    for url, entry in list(grouped.items())[:max_results]:
-        content = " ".join(str(value).strip() for value in entry["excerpts"] if str(value).strip())
+    for url, source in list(sources.items()):
+        if url not in cited_urls or len(results) >= max_results:
+            continue
+        content = source["content"]
         if not content or remaining <= 0:
             continue
         content = content[:remaining]
@@ -221,34 +200,28 @@ def _extract_evidence(
         results.append(
             WebSearchEvidence(
                 evidence_id=hashlib.sha256(url.encode("utf-8")).hexdigest()[:24],
-                title=str(entry["title"])[:500],
+                title=source["title"][:500],
                 url=url,
                 content=content,
                 retrieved_at=now,
+                citation_verified=True,
             )
         )
     return results, len(sources)
 
 
-def _bounded_excerpt(text: str, start: int, end: int) -> str:
-    if not text:
-        return ""
-    start = max(0, min(start, len(text)))
-    end = max(start, min(end, len(text)))
-    left_candidates = [text.rfind(marker, 0, start) for marker in ("\n", ". ", "। ")]
-    left = max(left_candidates) + 1
-    right_candidates = [
-        index
-        for marker in ("\n", ". ", "। ")
-        if (index := text.find(marker, end)) >= 0
-    ]
-    right = min(right_candidates) + 1 if right_candidates else min(len(text), end + 500)
-    excerpt = text[left:right].strip()
-    return excerpt or text[max(0, start - 200) : min(len(text), end + 300)].strip()
-
-
-def _optional_int(value: object) -> int | None:
-    return int(value) if isinstance(value, int) and not isinstance(value, bool) else None
+def _source_excerpt(source: dict[str, Any]) -> str:
+    """Use only source-returned text, never the model's web-search summary."""
+    for key in ("content", "snippet", "excerpt", "text"):
+        value = source.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    highlights = source.get("highlights")
+    if isinstance(highlights, list):
+        values = [value.strip() for value in highlights if isinstance(value, str) and value.strip()]
+        if values:
+            return " ".join(values)
+    return ""
 
 
 def _http_error(response: httpx.Response) -> ProviderError:

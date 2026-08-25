@@ -216,6 +216,9 @@ async def get_chat_service(
             )
             if revision is not None
             else None,
+            # Provider availability is runtime state. Preserve the response policy here,
+            # then let ChatService fail closed only if a turn actually needs web evidence.
+            validate_web_provider=False,
         )
         snapshot_id = None
     else:
@@ -230,7 +233,12 @@ async def get_chat_service(
     effective_settings = apply_effective_ai_config(settings, resolution)
     web_search: BaseWebSearchProvider | None = None
     if effective_settings.chat.response_mode is not ResponseMode.INDEXED_ONLY:
-        web_search = create_web_search_provider(effective_settings)
+        try:
+            web_search = create_web_search_provider(effective_settings)
+        except ProviderError:
+            # Keep knowledge-backed turns available. ChatService turns this into a
+            # fail-closed, user-friendly no-answer only if web evidence is required.
+            web_search = None
     reranker = create_reranker_provider(effective_settings)
     translator = None
     if effective_settings.query_translation.enabled:

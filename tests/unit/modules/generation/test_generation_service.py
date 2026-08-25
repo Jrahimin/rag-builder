@@ -193,11 +193,11 @@ async def test_success_persists_validated_output_usage_and_trace(
     assert response.source_provenance == "none"
     assert response.context_provenance == "caller_context"
     assert response.web_enrichment_used is False
-    assert response.resolved_chat_response_mode == "indexed_only"
     generation = repository.add.call_args.args[0]
     policy = generation.config_provenance["contextual_generation_policy"]
     assert policy["context_authority"] == "caller_context"
     assert policy["web_enrichment_allowed"] is False
+    assert "resolved_chat_response_mode" not in policy
     assert session.commit.await_count == 2
     assert llm.calls == 1
 
@@ -230,13 +230,11 @@ async def test_chat_web_policy_does_not_enrich_or_block_contextual_generation(
         trace_id="trace-web-policy",
     )
 
-    assert response.resolved_chat_response_mode == "indexed_then_web"
     assert response.web_enrichment_used is False
     assert response.context_provenance == "caller_context"
-    policy = repository.add.call_args.args[0].config_provenance[
-        "contextual_generation_policy"
-    ]
+    policy = repository.add.call_args.args[0].config_provenance["contextual_generation_policy"]
     assert policy["web_enrichment_allowed"] is False
+    assert "resolved_chat_response_mode" not in policy
 
 
 def test_invalid_context_root_is_rejected() -> None:

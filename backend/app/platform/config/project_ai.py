@@ -222,6 +222,7 @@ def resolve_project_ai_config(
     *,
     deprecated_overrides: dict[str, Any] | None = None,
     validate_chat_response_policy: bool = True,
+    validate_web_provider: bool = True,
 ) -> EffectiveConfigResolution:
     """Apply global -> Project -> compatibility overrides -> safety/capability rules."""
     project = (
@@ -465,7 +466,11 @@ def resolve_project_ai_config(
         config = EffectiveProjectAIConfig.model_validate(payload)
 
     if validate_chat_response_policy:
-        _validate_web_response_policy(config, settings)
+        _validate_web_response_policy(
+            config,
+            settings,
+            require_provider=validate_web_provider,
+        )
     if config.retrieval.strategy not in settings.ai_policy.enabled_retrieval_strategies:
         raise BadRequestError(
             message="The configured retrieval strategy is not enabled.",
@@ -688,7 +693,12 @@ def cap_source_policy_mode(
     return configured if order[configured] <= order[cap_mode] else cap_mode
 
 
-def _validate_web_response_policy(config: EffectiveProjectAIConfig, settings: Settings) -> None:
+def _validate_web_response_policy(
+    config: EffectiveProjectAIConfig,
+    settings: Settings,
+    *,
+    require_provider: bool = True,
+) -> None:
     if config.chat.response_mode is ResponseMode.INDEXED_ONLY:
         return
     if config.prompt_version != "v5":
@@ -696,6 +706,8 @@ def _validate_web_response_policy(config: EffectiveProjectAIConfig, settings: Se
             message="Web-enabled response modes require the source-aware v5 chat prompt.",
             code="web_response_mode_requires_source_prompt",
         )
+    if not require_provider:
+        return
     if settings.web_search.backend is WebSearchBackend.DISABLED:
         raise BadRequestError(
             message="Web-enabled response modes require a configured web-search provider.",

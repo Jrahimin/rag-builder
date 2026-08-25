@@ -2650,20 +2650,14 @@ export interface components {
             char_end?: number | null;
             /** Char Start */
             char_start?: number | null;
-            /**
-             * Chunk Id
-             * Format: uuid
-             */
-            chunk_id: string;
+            /** Chunk Id */
+            chunk_id?: string | null;
             /** Chunk Index */
-            chunk_index: number;
+            chunk_index?: number | null;
             /** Citation Index */
             citation_index: number;
-            /**
-             * Document Id
-             * Format: uuid
-             */
-            document_id: string;
+            /** Document Id */
+            document_id?: string | null;
             /** Excerpt */
             excerpt?: string | null;
             /** Filename */
@@ -2672,6 +2666,10 @@ export interface components {
             page_number?: number | null;
             /** @default knowledge */
             source_kind: components["schemas"]["CitationSourceKind"];
+            /** Web Provider */
+            web_provider?: string | null;
+            /** Web Retrieved At */
+            web_retrieved_at?: string | null;
             /** Web Title */
             web_title?: string | null;
             /** Web Url */
@@ -3409,11 +3407,6 @@ export interface components {
             provider_version: string | null;
             /** Request Id */
             request_id: string;
-            /**
-             * Resolved Chat Response Mode
-             * @default indexed_only
-             */
-            resolved_chat_response_mode: string;
             retention: components["schemas"]["GenerationRetentionMode"];
             /** Schema Version */
             schema_version: string;

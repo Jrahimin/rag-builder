@@ -110,7 +110,6 @@ The safe deployment default is `none`.
   "source_provenance": "none",
   "context_provenance": "caller_context",
   "web_enrichment_used": false,
-  "resolved_chat_response_mode": "indexed_only",
   "provider": "openai",
   "model": "gpt-4o-mini",
   "provider_version": "1",

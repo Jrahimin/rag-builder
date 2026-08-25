@@ -127,7 +127,6 @@ class GenerationService:
             "web_enrichment_allowed": False,
             "web_enrichment_used": False,
             "source_provenance": "none",
-            "resolved_chat_response_mode": resolution.configuration.chat.response_mode.value,
         }
         request_hash = sha256_json(
             {
@@ -194,9 +193,7 @@ class GenerationService:
                 "prompt_version": spec.prompt.prompt_version,
                 "schema_version": spec.schema_version,
                 "execution_provenance": self._execution_provenance,
-                "contextual_generation_policy": provenance[
-                    "contextual_generation_policy"
-                ],
+                "contextual_generation_policy": provenance["contextual_generation_policy"],
             },
             config_provenance=provenance,
             retention_mode=payload.retention,

@@ -22,18 +22,23 @@ authoritative context and often requires deterministic structured output.
 - External search is a `BaseWebSearchProvider` port. The first implementation uses OpenAI
   Responses API `web_search` with live access and forced tool execution; vendor payloads remain in
   `platform/providers/implementations/`.
+- Web evidence is admitted only when a provider associates a cited URL with source-returned
+  excerpt text and a lightweight relevance check accepts it. Model-generated search summaries are
+  never promoted to source content; unclear associations fail closed.
 - Retrieved page text is untrusted evidence. Search extraction and the final v5 prompt both reject
   instructions found in web content. Generation never fills missing evidence from model memory.
 - Messages and SSE terminal events persist `source_provenance` as `knowledge`, `web`,
   `knowledge_and_web`, or `none`, plus provider/status diagnostics and source-specific citations.
-- `/generations` remains caller-context-only. Chat response mode is recorded in its snapshot, but
-  neither web-provider readiness nor source-aware chat prompt constraints govern that workload.
-  Web enrichment is disabled and the trace explicitly records `context_authority=caller_context`,
-  `web_enrichment_used=false`, and `source_provenance=none`.
+- `/generations` remains caller-context-only. Neither web-provider readiness nor source-aware chat
+  prompt constraints govern that workload. Web enrichment is disabled and the trace explicitly
+  records `context_authority=caller_context`, `web_enrichment_used=false`, and
+  `source_provenance=none` without exposing chat response policy.
 
 ## Consequences
 
 - Existing Projects and historical snapshots remain `indexed_only` by default.
 - Web provider failure or empty results fail closed; they never trigger parametric fallback.
+- Runtime web-provider composition is non-fatal: knowledge-sufficient turns remain available, and
+  only turns that need web evidence return the fail-closed no-answer.
 - Combined mode can expose conflicts because knowledge and web blocks/citations stay distinct.
 - Enabling a web response mode requires configured credentials and the source-aware v5 prompt.

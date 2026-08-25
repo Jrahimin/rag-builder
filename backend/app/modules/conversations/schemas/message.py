@@ -67,6 +67,31 @@ class CitationSnapshot(BaseModel):
     web_retrieved_at: datetime | None = None
     web_provider: str | None = None
 
+    @model_validator(mode="after")
+    def validate_source_identity(self) -> CitationSnapshot:
+        internal_identity = (self.chunk_id, self.document_id, self.project_id)
+        web_metadata = (
+            self.web_url,
+            self.web_title,
+            self.web_retrieved_at,
+            self.web_provider,
+        )
+        if self.source_kind is CitationSourceKind.KNOWLEDGE:
+            if any(value is None for value in internal_identity):
+                raise ValueError(
+                    "knowledge citations require Project, document, and chunk identity"
+                )
+            if any(value is not None for value in web_metadata):
+                raise ValueError("knowledge citations cannot carry web source metadata")
+        else:
+            if any(value is not None for value in internal_identity):
+                raise ValueError("web citations cannot expose internal document or chunk identity")
+            if self.chunk_index is not None or self.chunk_hash is not None:
+                raise ValueError("web citations cannot expose synthetic chunk identity")
+            if any(value is None for value in web_metadata):
+                raise ValueError("web citations require URL, title, retrieval time, and provider")
+        return self
+
 
 class InsufficientEvidenceReason(StrEnum):
     """Stable reasons for a correct no-answer outcome."""
@@ -89,10 +114,10 @@ class ClaimEvidence(BaseModel):
     """One source location supporting an answer claim."""
 
     citation_index: int = Field(ge=1)
-    chunk_id: uuid.UUID
-    document_id: uuid.UUID
+    chunk_id: uuid.UUID | None = None
+    document_id: uuid.UUID | None = None
     filename: str
-    chunk_index: int
+    chunk_index: int | None = None
     page_number: int | None = None
     char_start: int | None = None
     char_end: int | None = None
@@ -100,6 +125,44 @@ class ClaimEvidence(BaseModel):
     source_kind: CitationSourceKind = CitationSourceKind.KNOWLEDGE
     web_url: str | None = None
     web_title: str | None = None
+    web_retrieved_at: datetime | None = None
+    web_provider: str | None = None
+
+    @model_validator(mode="after")
+    def validate_source_identity(self) -> ClaimEvidence:
+        if self.source_kind is CitationSourceKind.KNOWLEDGE:
+            if self.chunk_id is None or self.document_id is None or self.chunk_index is None:
+                raise ValueError("knowledge claim evidence requires internal source identity")
+            if any(
+                value is not None
+                for value in (
+                    self.web_url,
+                    self.web_title,
+                    self.web_retrieved_at,
+                    self.web_provider,
+                )
+            ):
+                raise ValueError("knowledge claim evidence cannot carry web source metadata")
+        else:
+            if (
+                self.chunk_id is not None
+                or self.document_id is not None
+                or self.chunk_index is not None
+            ):
+                raise ValueError("web claim evidence cannot expose synthetic chunk identity")
+            if any(
+                value is None
+                for value in (
+                    self.web_url,
+                    self.web_title,
+                    self.web_retrieved_at,
+                    self.web_provider,
+                )
+            ):
+                raise ValueError(
+                    "web claim evidence requires URL, title, retrieval time, and provider"
+                )
+        return self
 
 
 class AnswerClaim(BaseModel):

@@ -10,13 +10,14 @@ from typing import Any
 
 @dataclass(frozen=True, slots=True)
 class WebSearchEvidence:
-    """A bounded, cited excerpt returned by an external search provider."""
+    """A bounded source excerpt with a verified provider citation association."""
 
     evidence_id: str
     title: str
     url: str
     content: str
     retrieved_at: datetime
+    citation_verified: bool = False
 
 
 @dataclass(frozen=True, slots=True)

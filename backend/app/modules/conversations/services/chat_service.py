@@ -33,6 +33,7 @@ from app.modules.conversations.schemas.message import (
 )
 from app.platform.domain.language_detection import detect_language
 from app.platform.domain.lifecycle_service import get_or_raise, require_not_deleted
+from app.platform.domain.text_tokenization import tokenize
 from app.platform.domain.transactions import commit_refresh
 from app.platform.providers.contracts.embedding import BaseEmbeddingProvider
 from app.platform.providers.contracts.llm import BaseLLMProvider, ChatMessage, ChatUsage
@@ -49,6 +50,39 @@ type LLMProviderResolver = Callable[[Conversation], BaseLLMProvider]
 
 _NOT_FOUND = {"message": "Conversation not found.", "code": "conversation_not_found"}
 _DELETED = {"message": "Cannot modify a deleted conversation.", "code": "conversation_deleted"}
+_WEB_QUERY_STOPWORDS = {
+    "a",
+    "an",
+    "and",
+    "are",
+    "as",
+    "at",
+    "be",
+    "by",
+    "do",
+    "does",
+    "for",
+    "from",
+    "how",
+    "i",
+    "in",
+    "is",
+    "it",
+    "of",
+    "on",
+    "or",
+    "that",
+    "the",
+    "this",
+    "to",
+    "what",
+    "when",
+    "where",
+    "which",
+    "who",
+    "why",
+    "with",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -403,7 +437,7 @@ class ChatService:
         history = [message for message in history if message.id != user_message.id]
         history = history[-history_limit:] if history_limit > 0 else []
         non_knowledge_response = _non_knowledge_response(request.content)
-        retrieval_query = _retrieval_query(request.content, history)
+        retrieval_query = request.content
 
         retrieval_started = time.perf_counter()
         if non_knowledge_response is None:
@@ -443,8 +477,11 @@ class ChatService:
         scoped_request = bool(request.document_id or request.metadata_filter or request.as_of)
         web_requested = non_knowledge_response is None and (
             mode is ResponseMode.INDEXED_AND_WEB
-            or (mode is ResponseMode.INDEXED_THEN_WEB and not evidence.sufficient)
+            or (mode is ResponseMode.INDEXED_THEN_WEB and grounding.blocks_generation(evidence))
         )
+        # Retrieval/history reads may have opened an implicit transaction. Release it before
+        # any potentially slow external web or LLM I/O.
+        await self._release_read_transaction()
         if web_requested and scoped_request:
             web_diagnostics = {
                 "status": "suppressed_scoped_request",
@@ -468,15 +505,19 @@ class ChatService:
                     retrieval_query,
                     max_results=self._web_search_config.max_results,
                 )
-                web_chunks = _web_context_chunks(web_result.evidence, web_result.provider)
+                accepted_evidence, acceptance = _accepted_web_evidence(
+                    retrieval_query,
+                    web_result.evidence,
+                )
+                web_chunks = _web_context_chunks(accepted_evidence, web_result.provider)
                 web_diagnostics = {
                     **web_result.diagnostics,
+                    "status": "succeeded" if web_chunks else "no_useful_results",
                     "provider": web_result.provider,
                     "model": web_result.model,
                     "provider_version": web_result.provider_version,
-                    "fallback_used": (
-                        mode is ResponseMode.INDEXED_THEN_WEB and bool(web_chunks)
-                    ),
+                    "acceptance": acceptance,
+                    "fallback_used": (mode is ResponseMode.INDEXED_THEN_WEB and bool(web_chunks)),
                 }
             except ProviderError as exc:
                 web_diagnostics = {
@@ -493,7 +534,7 @@ class ChatService:
         elif mode is ResponseMode.INDEXED_ONLY:
             selected = knowledge_selected if knowledge_usable else []
         elif mode is ResponseMode.INDEXED_THEN_WEB:
-            selected = knowledge_selected if evidence.sufficient else web_chunks
+            selected = knowledge_selected if knowledge_usable else web_chunks
         else:
             selected = _balanced_evidence(
                 knowledge_selected if knowledge_usable else [],
@@ -505,7 +546,7 @@ class ChatService:
         source_provenance = _source_provenance(selected)
         web_fallback_used = bool(
             mode is ResponseMode.INDEXED_THEN_WEB
-            and not evidence.sufficient
+            and not knowledge_usable
             and source_provenance is SourceProvenance.WEB
         )
         web_diagnostics["fallback_used"] = web_fallback_used
@@ -525,8 +566,6 @@ class ChatService:
         )
         llm = self._resolve_llm(conversation)
         temperature = self._effective_temperature(conversation)
-
-        await self._release_read_transaction()
 
         return _PreparedTurn(
             prompt_version=prompt_version,
@@ -574,7 +613,7 @@ class ChatService:
         if reason_value is not None:
             grounding = type(grounding)(claims=[], grounded=False, citation_coverage=1.0)
         elif non_knowledge_turn:
-            grounding = type(grounding)(claims=[], grounded=True, citation_coverage=1.0)
+            grounding = type(grounding)(claims=[], grounded=False, citation_coverage=0.0)
         metadata = self._build_metadata(
             retrieval_ms=prepared.retrieval_ms,
             generation_ms=generation_ms,
@@ -767,10 +806,7 @@ class ChatService:
         bangla = detect_language(question).primary_language == "bn"
         if status in {"failed", "provider_unavailable"}:
             if bangla:
-                return (
-                    "উপলভ্য knowledge base-এ যথেষ্ট তথ্য পাইনি, এবং web search এখন "
-                    "সাময়িকভাবে অনুপলভ্য।"
-                )
+                return "উপলভ্য knowledge base-এ যথেষ্ট তথ্য পাইনি, এবং web search এখন সাময়িকভাবে অনুপলভ্য।"
             return (
                 "I couldn\u2019t find enough information in the available knowledge base, and web "
                 "search is temporarily unavailable."
@@ -787,10 +823,7 @@ class ChatService:
                 "web sources to answer that confidently."
             )
         if bangla:
-            return (
-                "উপলভ্য knowledge base-এ আত্মবিশ্বাসের সঙ্গে উত্তর দেওয়ার মতো যথেষ্ট "
-                "তথ্য পাইনি।"
-            )
+            return "উপলভ্য knowledge base-এ আত্মবিশ্বাসের সঙ্গে উত্তর দেওয়ার মতো যথেষ্ট তথ্য পাইনি।"
         return self._chat_config.insufficient_evidence_message
 
     def _with_web_fallback_notice(
@@ -944,18 +977,7 @@ class ChatService:
                 "candidates": retrieval_diagnostics.get("candidate_trace", []),
                 "retrieval_selected": retrieval_diagnostics.get("selected_trace", []),
                 "context_selected": [
-                    {
-                        "rank": index,
-                        "chunk_id": str(chunk.chunk_id),
-                        "document_id": str(chunk.document_id),
-                        "chunk_index": chunk.chunk_index,
-                        "score": chunk.score,
-                        "rank_score": chunk.rank_score,
-                        "semantic_score": chunk.semantic_score,
-                        "rerank_relevance_score": chunk.rerank_relevance_score,
-                        "passage_semantic_score": chunk.passage_semantic_score,
-                        "passage_score_method": chunk.passage_score_method,
-                    }
+                    _context_trace_item(index, chunk)
                     for index, chunk in enumerate(selected_chunks, start=1)
                 ],
                 "suppression": {
@@ -1067,6 +1089,45 @@ class ChatService:
         )
 
 
+def _accepted_web_evidence(
+    query: str,
+    evidence: list[WebSearchEvidence],
+) -> tuple[list[WebSearchEvidence], dict[str, int]]:
+    """Apply a small fail-closed admission check to provider-normalized web evidence."""
+    query_tokens = {
+        token for token in tokenize(query, for_query=True) if token not in _WEB_QUERY_STOPWORDS
+    }
+    query_language = detect_language(query).primary_language
+    accepted: list[WebSearchEvidence] = []
+    rejected_invalid = 0
+    rejected_irrelevant = 0
+    for item in evidence:
+        valid_source = (
+            item.citation_verified
+            and item.url.startswith(("http://", "https://"))
+            and bool(item.title.strip())
+            and bool(item.content.strip())
+        )
+        if not valid_source:
+            rejected_invalid += 1
+            continue
+        evidence_language = detect_language(f"{item.title}\n{item.content}").primary_language
+        evidence_tokens = set(tokenize(f"{item.title}\n{item.content}", for_query=True))
+        same_language = query_language is not None and query_language == evidence_language
+        # A same-language result must share at least one meaningful query token. For a
+        # cross-language source we retain the provider's cited source association instead of
+        # pretending a lexical-only check can reliably assess translation relevance.
+        if same_language and query_tokens and not (query_tokens & evidence_tokens):
+            rejected_irrelevant += 1
+            continue
+        accepted.append(item)
+    return accepted, {
+        "accepted_count": len(accepted),
+        "rejected_invalid_count": rejected_invalid,
+        "rejected_irrelevant_count": rejected_irrelevant,
+    }
+
+
 def _web_context_chunks(
     evidence: list[WebSearchEvidence],
     provider: str,
@@ -1097,6 +1158,32 @@ def _web_context_chunks(
             )
         )
     return chunks
+
+
+def _context_trace_item(index: int, chunk: ContextChunk) -> dict[str, Any]:
+    """Persist source-appropriate selection diagnostics without leaking synthetic web IDs."""
+    if chunk.metadata.get("source_kind") == CitationSourceKind.WEB.value:
+        return {
+            "rank": index,
+            "source_kind": CitationSourceKind.WEB.value,
+            "web_url": chunk.metadata.get("web_url"),
+            "web_title": chunk.metadata.get("web_title"),
+            "web_provider": chunk.metadata.get("web_provider"),
+            "web_retrieved_at": chunk.metadata.get("web_retrieved_at"),
+        }
+    return {
+        "rank": index,
+        "source_kind": CitationSourceKind.KNOWLEDGE.value,
+        "chunk_id": str(chunk.chunk_id),
+        "document_id": str(chunk.document_id),
+        "chunk_index": chunk.chunk_index,
+        "score": chunk.score,
+        "rank_score": chunk.rank_score,
+        "semantic_score": chunk.semantic_score,
+        "rerank_relevance_score": chunk.rerank_relevance_score,
+        "passage_semantic_score": chunk.passage_semantic_score,
+        "passage_score_method": chunk.passage_score_method,
+    }
 
 
 def _source_provenance(chunks: list[ContextChunk]) -> SourceProvenance:
@@ -1140,30 +1227,6 @@ def _balanced_evidence(
         for chunk in ordered
     ]
     return builder.select(bounded)
-
-
-def _retrieval_query(content: str, history: list[Message]) -> str:
-    normalized = " ".join(content.casefold().split())
-    followup_markers = (
-        "that",
-        "it ",
-        "previous",
-        "above",
-        "more simply",
-        "elaborate",
-        "explain more",
-        "এটা",
-        "সেটা",
-        "আরও",
-        "সহজ করে",
-    )
-    if not any(marker in normalized for marker in followup_markers):
-        return content
-    prior_user = next(
-        (message.content for message in reversed(history) if message.role is MessageRole.USER),
-        None,
-    )
-    return f"{prior_user}\nFollow-up: {content}" if prior_user else content
 
 
 def _non_knowledge_response(content: str) -> str | None:

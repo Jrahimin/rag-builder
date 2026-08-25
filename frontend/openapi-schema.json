@@ -3844,13 +3844,27 @@
             "title": "Char Start"
           },
           "chunk_id": {
-            "format": "uuid",
-            "title": "Chunk Id",
-            "type": "string"
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Chunk Id"
           },
           "chunk_index": {
-            "title": "Chunk Index",
-            "type": "integer"
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Chunk Index"
           },
           "citation_index": {
             "minimum": 1.0,
@@ -3858,9 +3872,16 @@
             "type": "integer"
           },
           "document_id": {
-            "format": "uuid",
-            "title": "Document Id",
-            "type": "string"
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Document Id"
           },
           "excerpt": {
             "anyOf": [
@@ -3892,6 +3913,29 @@
             "$ref": "#/components/schemas/CitationSourceKind",
             "default": "knowledge"
           },
+          "web_provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Web Provider"
+          },
+          "web_retrieved_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Web Retrieved At"
+          },
           "web_title": {
             "anyOf": [
               {
@@ -3917,10 +3961,7 @@
         },
         "required": [
           "citation_index",
-          "chunk_id",
-          "document_id",
-          "filename",
-          "chunk_index"
+          "filename"
         ],
         "title": "ClaimEvidence",
         "type": "object"
@@ -5922,11 +5963,6 @@
           },
           "request_id": {
             "title": "Request Id",
-            "type": "string"
-          },
-          "resolved_chat_response_mode": {
-            "default": "indexed_only",
-            "title": "Resolved Chat Response Mode",
             "type": "string"
           },
           "retention": {
