@@ -147,6 +147,7 @@ class ActiveConfiguration(BaseModel):
     runtime_profile: str
     application_version: str
     llm: ProviderConfiguration
+    web_search: ProviderConfiguration
     embedding: ProviderConfiguration
     reranker_backend: str
     ocr_backend: str
@@ -155,6 +156,7 @@ class ActiveConfiguration(BaseModel):
     storage_backend: str
     job_backend: str
     retrieval_strategy: str
+    chat_response_mode: str
     embedding_set_version: int
     generation_default_retention: str
     generation_full_retention_allowed: bool

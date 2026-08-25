@@ -48,6 +48,57 @@ def test_projects_without_revision_retain_global_behavior() -> None:
     assert resolution.configuration.retrieval.top_k == 7
     assert resolution.provenance.project_config_revision_id is None
     assert resolution.provenance.provider_capability_version == CAPABILITY_VERSION
+    assert resolution.configuration.chat.response_mode == "indexed_only"
+
+
+def test_project_can_override_response_mode_when_web_provider_is_configured() -> None:
+    settings = Settings(
+        web_search={"backend": "openai", "openai_api_key": "test-key"},
+    )
+    revision = _revision({"chat": {"response_mode": "indexed_then_web"}})
+
+    resolution = resolve_project_ai_config(settings, revision)
+
+    assert resolution.configuration.chat.response_mode == "indexed_then_web"
+    assert resolution.origins["chat.response_mode"] == "project"
+    assert resolution.secret_free_snapshot()["schema_version"] == 2
+
+
+def test_web_response_mode_rejects_missing_provider() -> None:
+    revision = _revision({"chat": {"response_mode": "indexed_and_web"}})
+
+    with pytest.raises(BadRequestError) as exc_info:
+        resolve_project_ai_config(Settings(), revision)
+
+    assert exc_info.value.code == "web_search_not_configured"
+
+
+def test_chat_runtime_can_resolve_web_policy_when_provider_is_temporarily_unavailable() -> None:
+    revision = _revision({"chat": {"response_mode": "indexed_and_web"}})
+
+    resolution = resolve_project_ai_config(
+        Settings(),
+        revision,
+        validate_web_provider=False,
+    )
+
+    assert resolution.configuration.chat.response_mode == "indexed_and_web"
+
+
+def test_web_response_mode_rejects_legacy_prompt_compatibility_override() -> None:
+    settings = Settings(
+        web_search={"backend": "openai", "openai_api_key": "test-key"},
+    )
+    revision = _revision({"chat": {"response_mode": "indexed_then_web"}})
+
+    with pytest.raises(BadRequestError) as exc_info:
+        resolve_project_ai_config(
+            settings,
+            revision,
+            deprecated_overrides={"prompt_version": "v4"},
+        )
+
+    assert exc_info.value.code == "web_response_mode_requires_source_prompt"
 
 
 def test_project_revision_is_typed_hashed_and_has_origins() -> None:

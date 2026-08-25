@@ -8,10 +8,12 @@ from app.core.config import (
     LLMBackend,
     MalwareScannerBackend,
     OcrBackend,
+    ResponseMode,
     RetrievalStrategy,
     RuntimeProfile,
     Settings,
     StorageBackend,
+    WebSearchBackend,
 )
 
 
@@ -200,6 +202,18 @@ def _base_configuration_errors(settings: Settings) -> list[str]:
         errors.append("APE_LLM__OPENAI_API_KEY is required when query translation uses OpenAI")
     if settings.query_translation.enabled and settings.query_translation.backend is LLMBackend.ECHO:
         errors.append("query translation cannot use the echo LLM backend")
+    if (
+        settings.chat.response_mode is not ResponseMode.INDEXED_ONLY
+        and settings.web_search.backend is WebSearchBackend.DISABLED
+    ):
+        errors.append("web-enabled chat response modes require APE_WEB_SEARCH__BACKEND")
+    if (
+        settings.web_search.backend is WebSearchBackend.OPENAI
+        and not settings.resolved_web_search_api_key()
+    ):
+        errors.append(
+            "APE_WEB_SEARCH__OPENAI_API_KEY or APE_LLM__OPENAI_API_KEY is required for web search"
+        )
     return errors
 
 

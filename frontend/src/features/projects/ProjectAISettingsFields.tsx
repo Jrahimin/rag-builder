@@ -10,12 +10,14 @@ import type {
 
 export type TranslationMode = "inherit" | "on" | "off";
 export type RerankModeChoice = "inherit" | "always" | "cross_language" | "off";
+export type ResponseModeChoice = "indexed_only" | "indexed_then_web" | "indexed_and_web";
 
 export type ProjectConfigForm = {
   provider: string;
   model: string;
   temperature: string;
   maxTokens: string;
+  responseMode: ResponseModeChoice;
   domain: string;
   topK: string;
   strategy: string;
@@ -38,6 +40,7 @@ export const inheritedProjectConfig: ProjectConfigOverrides = {
   model: false,
   temperature: false,
   maxTokens: false,
+  responseMode: false,
   domain: false,
   topK: false,
   strategy: false,
@@ -51,6 +54,7 @@ export const emptyProjectConfigForm: ProjectConfigForm = {
   model: "",
   temperature: "",
   maxTokens: "",
+  responseMode: "indexed_only",
   domain: "",
   topK: "",
   strategy: "hybrid",
@@ -93,6 +97,7 @@ export function configFormFromEffective(
         ? ""
         : String(config.configuration.llm.temperature),
     maxTokens: String(config.configuration.llm.max_tokens),
+    responseMode: config.configuration.chat.response_mode,
     domain: config.configuration.domain_instructions,
     topK: String(config.configuration.retrieval.top_k),
     strategy: config.configuration.retrieval.strategy,
@@ -111,6 +116,7 @@ export function configOverridesFromStored(stored: ProjectAIConfig): ProjectConfi
     model: hasValue(stored.llm, "model"),
     temperature: hasValue(stored.llm, "temperature") && stored.llm?.temperature !== null,
     maxTokens: hasValue(stored.llm, "max_tokens"),
+    responseMode: hasValue(stored.chat, "response_mode"),
     domain: hasValue(stored, "domain_instructions"),
     topK: hasValue(stored.retrieval, "top_k"),
     strategy: hasValue(stored.retrieval, "strategy"),
@@ -150,6 +156,7 @@ export function buildSparseProjectConfig(
     form.temperature === "" ? null : Number(form.temperature),
   );
   setSparseValue(llm, "max_tokens", overrides.maxTokens, Number(form.maxTokens));
+  setSparseValue(chat, "response_mode", overrides.responseMode, form.responseMode);
   setSparseValue(retrieval, "top_k", overrides.topK, Number(form.topK));
   setSparseValue(retrieval, "strategy", overrides.strategy, form.strategy);
   if (form.translation === "inherit") {
@@ -202,6 +209,7 @@ export function configFormFromDeployment(config: ActiveConfiguration): ProjectCo
     ...emptyProjectConfigForm,
     provider: config.llm.backend || "",
     model: config.llm.model ?? "",
+    responseMode: config.chat_response_mode as ResponseModeChoice,
     strategy: config.retrieval_strategy || "hybrid",
   };
 }
@@ -260,6 +268,8 @@ export const PROJECT_AI_FIELD_HINTS = {
     "Which AI vendor this Project uses for chat.\n\nLeave Inherit on to keep the deployment vendor. Example: openai in this environment. Pick ollama only when this Project should call a different vendor.",
   model:
     "The exact model name sent to that vendor.\n\nLeave Inherit on to keep the deployment model. Example: gpt-4.1-mini. Type a different name only for a Project-specific model.",
+  responseMode:
+    "Controls which evidence chat may use.\n\nIndexed only stays inside the Project knowledge base. Indexed then web searches the web only when Project evidence is insufficient. Indexed and web always retrieves both. Document-scoped questions remain limited to Project knowledge.",
   domain:
     "Extra standing rules for this Project, prepended to the platform’s system prompt. This is not the full system prompt.\n\nExample: “Answer in Bengali. Use official NBR tax terms. Never invent a section number.”",
   translation:
@@ -274,8 +284,7 @@ export const PROJECT_AI_FIELD_HINTS = {
     "Hard cap on how long a generated answer may be, in tokens.\n\nExample: 2048. Inherit uses the deployment cap.",
   strategy:
     "How passages are found before answering.\n\nSemantic: meaning only. Hybrid: meaning plus keyword match — better for IDs, names, and mixed Bangla/English text.",
-  topK:
-    "How many passages to retrieve before answering.\n\nExample: 10. Higher can add context but costs more and may add noise.",
+  topK: "How many passages to retrieve before answering.\n\nExample: 10. Higher can add context but costs more and may add noise.",
   evidence:
     "Minimum retrieval score before the model may answer from a passage.\n\nExample: 0.35. Below that, the Project should refuse rather than guess.",
   sourcePolicy:
@@ -357,6 +366,25 @@ export function ProjectAISettingsFields({
           onChange={(enabled) => toggleField("model", enabled)}
         />
       </div>
+      <div className={inheritedClass(overrides.responseMode)}>
+        <FieldHint label="Response mode" text={PROJECT_AI_FIELD_HINTS.responseMode} />
+        <select
+          aria-label="Response mode"
+          value={form.responseMode}
+          onChange={(event) =>
+            changeField("responseMode", event.target.value as ResponseModeChoice)
+          }
+        >
+          <option value="indexed_only">Indexed only</option>
+          <option value="indexed_then_web">Indexed, then web fallback</option>
+          <option value="indexed_and_web">Indexed and web</option>
+        </select>
+        <InheritanceToggle
+          field="Response mode"
+          overridden={overrides.responseMode}
+          onChange={(enabled) => toggleField("responseMode", enabled)}
+        />
+      </div>
       <div className={`${inheritedClass(overrides.domain)} field-control--wide`}>
         <FieldHint label="Project instructions" text={PROJECT_AI_FIELD_HINTS.domain} />
         <textarea
@@ -373,7 +401,9 @@ export function ProjectAISettingsFields({
       </div>
       <div
         className={
-          form.translation === "inherit" ? "field-control field-control--inherited" : "field-control"
+          form.translation === "inherit"
+            ? "field-control field-control--inherited"
+            : "field-control"
         }
       >
         <FieldHint label="Query translation" text={PROJECT_AI_FIELD_HINTS.translation} />

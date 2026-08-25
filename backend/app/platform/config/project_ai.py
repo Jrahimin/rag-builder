@@ -20,9 +20,11 @@ from app.core.config import (
     RequestOverrideMode,
     RerankerBackend,
     RerankMode,
+    ResponseMode,
     RetrievalStrategy,
     Settings,
     SourcePolicyDeploymentCap,
+    WebSearchBackend,
 )
 from app.core.exceptions import BadRequestError
 from app.platform.providers.capabilities import (
@@ -77,6 +79,7 @@ class ProjectRetrievalPolicy(BaseModel):
 class ProjectChatPolicy(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    response_mode: ResponseMode | None = None
     max_context_chunks: int | None = Field(default=None, ge=1, le=50)
     context_char_budget: int | None = Field(default=None, ge=500, le=200_000)
     max_history_messages: int | None = Field(default=None, ge=0, le=200)
@@ -134,6 +137,7 @@ class EffectiveRetrievalPolicy(BaseModel):
 
 
 class EffectiveChatPolicy(BaseModel):
+    response_mode: ResponseMode = ResponseMode.INDEXED_ONLY
     max_context_chunks: int
     context_char_budget: int
     max_history_messages: int
@@ -178,7 +182,7 @@ class EffectiveConfigResolution(BaseModel):
 
     def secret_free_snapshot(self) -> dict[str, Any]:
         return {
-            "schema_version": 1,
+            "schema_version": 2,
             "configuration": self.configuration.model_dump(mode="json"),
             "configuration_hash": self.configuration_hash,
             "origins": dict(self.origins),
@@ -217,6 +221,8 @@ def resolve_project_ai_config(
     revision: ConfigRevisionRecord | None,
     *,
     deprecated_overrides: dict[str, Any] | None = None,
+    validate_chat_response_policy: bool = True,
+    validate_web_provider: bool = True,
 ) -> EffectiveConfigResolution:
     """Apply global -> Project -> compatibility overrides -> safety/capability rules."""
     project = (
@@ -325,6 +331,11 @@ def resolve_project_ai_config(
             query_translation_prompt_version=settings.query_translation.prompt_version,
         ),
         chat=EffectiveChatPolicy(
+            response_mode=inherited(
+                "chat.response_mode",
+                project.chat.response_mode,
+                settings.chat.response_mode,
+            ),
             max_context_chunks=inherited(
                 "chat.max_context_chunks",
                 project.chat.max_context_chunks,
@@ -454,6 +465,12 @@ def resolve_project_ai_config(
                 origins[f"{section}.{field}"] = "deprecated_request_compatibility"
         config = EffectiveProjectAIConfig.model_validate(payload)
 
+    if validate_chat_response_policy:
+        _validate_web_response_policy(
+            config,
+            settings,
+            require_provider=validate_web_provider,
+        )
     if config.retrieval.strategy not in settings.ai_policy.enabled_retrieval_strategies:
         raise BadRequestError(
             message="The configured retrieval strategy is not enabled.",
@@ -559,6 +576,7 @@ def apply_effective_ai_config(
                     "context_char_budget": effective.chat.context_char_budget,
                     "max_history_messages": effective.chat.max_history_messages,
                     "system_prompt_version": effective.prompt_version,
+                    "response_mode": effective.chat.response_mode,
                     "include_citations": effective.chat.include_citations,
                     "citation_excerpt_max_chars": effective.chat.citation_excerpt_max_chars,
                     "evidence_score_mode": effective.chat.evidence_score_mode,
@@ -590,6 +608,10 @@ def global_config_fingerprint(settings: Settings) -> str:
             ),
             "retrieval": settings.retrieval.model_dump(mode="json"),
             "chat": settings.chat.model_dump(mode="json"),
+            "web_search": {
+                **settings.web_search.model_dump(mode="json", exclude={"openai_api_key"}),
+                "credential_configured": bool(settings.resolved_web_search_api_key()),
+            },
             "ai_policy": settings.ai_policy.model_dump(mode="json"),
             "query_translation": settings.query_translation.model_dump(mode="json"),
             "reranker": settings.reranker.model_dump(
@@ -669,6 +691,33 @@ def cap_source_policy_mode(
     }
     cap_mode = SourcePolicyMode(deployment_cap.value)
     return configured if order[configured] <= order[cap_mode] else cap_mode
+
+
+def _validate_web_response_policy(
+    config: EffectiveProjectAIConfig,
+    settings: Settings,
+    *,
+    require_provider: bool = True,
+) -> None:
+    if config.chat.response_mode is ResponseMode.INDEXED_ONLY:
+        return
+    if config.prompt_version != "v5":
+        raise BadRequestError(
+            message="Web-enabled response modes require the source-aware v5 chat prompt.",
+            code="web_response_mode_requires_source_prompt",
+        )
+    if not require_provider:
+        return
+    if settings.web_search.backend is WebSearchBackend.DISABLED:
+        raise BadRequestError(
+            message="Web-enabled response modes require a configured web-search provider.",
+            code="web_search_not_configured",
+        )
+    if not settings.resolved_web_search_api_key():
+        raise BadRequestError(
+            message="Web-enabled response modes require web-search credentials.",
+            code="web_search_credentials_missing",
+        )
 
 
 def _json_default(value: object) -> str:

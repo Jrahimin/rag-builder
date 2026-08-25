@@ -1492,6 +1492,8 @@ export interface components {
         ActiveConfiguration: {
             /** Application Version */
             application_version: string;
+            /** Chat Response Mode */
+            chat_response_mode: string;
             embedding: components["schemas"]["ProviderConfiguration"];
             /** Embedding Set Version */
             embedding_set_version: number;
@@ -1522,6 +1524,7 @@ export interface components {
             runtime_profile: string;
             /** Storage Backend */
             storage_backend: string;
+            web_search: components["schemas"]["ProviderConfiguration"];
         };
         /** ActiveSourceResponse */
         ActiveSourceResponse: {
@@ -2562,14 +2565,11 @@ export interface components {
             /** Char Start */
             char_start?: number | null;
             /** Chunk Hash */
-            chunk_hash: string;
-            /**
-             * Chunk Id
-             * Format: uuid
-             */
-            chunk_id: string;
+            chunk_hash?: string | null;
+            /** Chunk Id */
+            chunk_id?: string | null;
             /** Chunk Index */
-            chunk_index: number;
+            chunk_index?: number | null;
             /** Config Provenance */
             config_provenance?: {
                 [key: string]: unknown;
@@ -2578,11 +2578,8 @@ export interface components {
             config_snapshot_id?: string | null;
             /** Configuration Hash */
             configuration_hash?: string | null;
-            /**
-             * Document Id
-             * Format: uuid
-             */
-            document_id: string;
+            /** Document Id */
+            document_id?: string | null;
             /** Excerpt */
             excerpt?: string | null;
             /** Filename */
@@ -2593,21 +2590,20 @@ export interface components {
             page_number?: number | null;
             /** Processing Version */
             processing_version?: number | null;
-            /**
-             * Project Id
-             * Format: uuid
-             */
-            project_id: string;
+            /** Project Id */
+            project_id?: string | null;
             /** Prompt Version */
             prompt_version?: string | null;
             /** Score */
-            score: number;
+            score?: number | null;
             /** Source Effective From */
             source_effective_from?: string | null;
             /** Source Effective To */
             source_effective_to?: string | null;
             /** Source Group Id */
             source_group_id?: string | null;
+            /** @default knowledge */
+            source_kind: components["schemas"]["CitationSourceKind"];
             /** Source Lifecycle Status */
             source_lifecycle_status?: string | null;
             /** Source Metadata Generation */
@@ -2630,7 +2626,21 @@ export interface components {
             source_title?: string | null;
             /** Source Type */
             source_type?: string | null;
+            /** Web Provider */
+            web_provider?: string | null;
+            /** Web Retrieved At */
+            web_retrieved_at?: string | null;
+            /** Web Title */
+            web_title?: string | null;
+            /** Web Url */
+            web_url?: string | null;
         };
+        /**
+         * CitationSourceKind
+         * @description Origin of one citation snapshot.
+         * @enum {string}
+         */
+        CitationSourceKind: "knowledge" | "web";
         /**
          * ClaimEvidence
          * @description One source location supporting an answer claim.
@@ -2640,26 +2650,30 @@ export interface components {
             char_end?: number | null;
             /** Char Start */
             char_start?: number | null;
-            /**
-             * Chunk Id
-             * Format: uuid
-             */
-            chunk_id: string;
+            /** Chunk Id */
+            chunk_id?: string | null;
             /** Chunk Index */
-            chunk_index: number;
+            chunk_index?: number | null;
             /** Citation Index */
             citation_index: number;
-            /**
-             * Document Id
-             * Format: uuid
-             */
-            document_id: string;
+            /** Document Id */
+            document_id?: string | null;
             /** Excerpt */
             excerpt?: string | null;
             /** Filename */
             filename: string;
             /** Page Number */
             page_number?: number | null;
+            /** @default knowledge */
+            source_kind: components["schemas"]["CitationSourceKind"];
+            /** Web Provider */
+            web_provider?: string | null;
+            /** Web Retrieved At */
+            web_retrieved_at?: string | null;
+            /** Web Title */
+            web_title?: string | null;
+            /** Web Url */
+            web_url?: string | null;
         };
         /**
          * ClaimVerification
@@ -2987,6 +3001,8 @@ export interface components {
              * @default 0.4
              */
             minimum_reranker_evidence_score: number;
+            /** @default indexed_only */
+            response_mode: components["schemas"]["ResponseMode"];
         };
         /** EffectiveLLMPolicy */
         EffectiveLLMPolicy: {
@@ -3351,6 +3367,12 @@ export interface components {
             /** Configuration Hash */
             configuration_hash: string | null;
             /**
+             * Context Provenance
+             * @default caller_context
+             * @constant
+             */
+            context_provenance: "caller_context";
+            /**
              * Created At
              * Format: date-time
              */
@@ -3390,6 +3412,12 @@ export interface components {
             schema_version: string;
             /** Source Metadata Generation */
             source_metadata_generation: number | null;
+            /**
+             * Source Provenance
+             * @default none
+             * @constant
+             */
+            source_provenance: "none";
             status: components["schemas"]["GenerationStatus"];
             timing: components["schemas"]["GenerationTiming"];
             /** Trace Id */
@@ -3397,6 +3425,11 @@ export interface components {
             usage: components["schemas"]["GenerationUsage"];
             /** Use Case */
             use_case: string;
+            /**
+             * Web Enrichment Used
+             * @default false
+             */
+            web_enrichment_used: boolean;
         };
         /**
          * GenerationRetentionMode
@@ -3826,6 +3859,8 @@ export interface components {
             role: components["schemas"]["MessageRole"];
             /** Source Metadata Generation */
             source_metadata_generation?: number | null;
+            /** @default none */
+            source_provenance: components["schemas"]["SourceProvenance"];
             /** Total Latency Ms */
             total_latency_ms?: number | null;
             /**
@@ -4144,6 +4179,7 @@ export interface components {
             minimum_query_token_coverage?: number | null;
             /** Minimum Reranker Evidence Score */
             minimum_reranker_evidence_score?: number | null;
+            response_mode?: components["schemas"]["ResponseMode"] | null;
         };
         /**
          * ProjectCreate
@@ -4416,6 +4452,12 @@ export interface components {
             /** Trace Id */
             trace_id?: string | null;
         };
+        /**
+         * ResponseMode
+         * @description Evidence workflows available to Project chat.
+         * @enum {string}
+         */
+        ResponseMode: "indexed_only" | "indexed_then_web" | "indexed_and_web";
         /**
          * RetrievalResult
          * @description Stable search hit DTO for API and future Chat integration.
@@ -4722,6 +4764,12 @@ export interface components {
          * @enum {string}
          */
         SourcePolicyMode: "off" | "observe" | "enforce";
+        /**
+         * SourceProvenance
+         * @description Machine-readable evidence origin for one response.
+         * @enum {string}
+         */
+        SourceProvenance: "knowledge" | "web" | "knowledge_and_web" | "none";
         /** SourceRelationshipCreate */
         SourceRelationshipCreate: {
             relationship_type: components["schemas"]["SourceRelationshipType"];

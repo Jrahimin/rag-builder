@@ -107,6 +107,9 @@ The safe deployment default is `none`.
   },
   "grounded": true,
   "grounding_status": "context_supplied",
+  "source_provenance": "none",
+  "context_provenance": "caller_context",
+  "web_enrichment_used": false,
   "provider": "openai",
   "model": "gpt-4o-mini",
   "provider_version": "1",
@@ -135,6 +138,10 @@ The safe deployment default is `none`.
 
 `grounded=true` means the registered prompt constrained generation to the
 caller-provided context. It is not a semantic entailment score.
+
+Contextual generation never applies chat RAG fallback semantics. Caller-supplied context remains
+authoritative even when the resolved Project chat policy enables web modes. The response and
+persisted provenance explicitly report that no indexed/web evidence or web enrichment was used.
 
 Reusing the same idempotency key with the same normalized request returns the
 original generation ID and sets `idempotency_replayed=true`. Reusing it with a

@@ -7,6 +7,10 @@
             "title": "Application Version",
             "type": "string"
           },
+          "chat_response_mode": {
+            "title": "Chat Response Mode",
+            "type": "string"
+          },
           "embedding": {
             "$ref": "#/components/schemas/ProviderConfiguration"
           },
@@ -71,6 +75,9 @@
           "storage_backend": {
             "title": "Storage Backend",
             "type": "string"
+          },
+          "web_search": {
+            "$ref": "#/components/schemas/ProviderConfiguration"
           }
         },
         "required": [
@@ -78,6 +85,7 @@
           "runtime_profile",
           "application_version",
           "llm",
+          "web_search",
           "embedding",
           "reranker_backend",
           "ocr_backend",
@@ -86,6 +94,7 @@
           "storage_backend",
           "job_backend",
           "retrieval_strategy",
+          "chat_response_mode",
           "embedding_set_version",
           "generation_default_retention",
           "generation_full_retention_allowed",
@@ -3443,17 +3452,38 @@
             "title": "Char Start"
           },
           "chunk_hash": {
-            "title": "Chunk Hash",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Chunk Hash"
           },
           "chunk_id": {
-            "format": "uuid",
-            "title": "Chunk Id",
-            "type": "string"
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Chunk Id"
           },
           "chunk_index": {
-            "title": "Chunk Index",
-            "type": "integer"
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Chunk Index"
           },
           "config_provenance": {
             "additionalProperties": true,
@@ -3484,9 +3514,16 @@
             "title": "Configuration Hash"
           },
           "document_id": {
-            "format": "uuid",
-            "title": "Document Id",
-            "type": "string"
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Document Id"
           },
           "excerpt": {
             "anyOf": [
@@ -3538,9 +3575,16 @@
             "title": "Processing Version"
           },
           "project_id": {
-            "format": "uuid",
-            "title": "Project Id",
-            "type": "string"
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Id"
           },
           "prompt_version": {
             "anyOf": [
@@ -3554,8 +3598,15 @@
             "title": "Prompt Version"
           },
           "score": {
-            "title": "Score",
-            "type": "number"
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Score"
           },
           "source_effective_from": {
             "anyOf": [
@@ -3592,6 +3643,10 @@
               }
             ],
             "title": "Source Group Id"
+          },
+          "source_kind": {
+            "$ref": "#/components/schemas/CitationSourceKind",
+            "default": "knowledge"
           },
           "source_lifecycle_status": {
             "anyOf": [
@@ -3701,19 +3756,67 @@
               }
             ],
             "title": "Source Type"
+          },
+          "web_provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Web Provider"
+          },
+          "web_retrieved_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Web Retrieved At"
+          },
+          "web_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Web Title"
+          },
+          "web_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Web Url"
           }
         },
         "required": [
-          "chunk_id",
-          "project_id",
-          "document_id",
-          "filename",
-          "chunk_index",
-          "score",
-          "chunk_hash"
+          "filename"
         ],
         "title": "CitationSnapshot",
         "type": "object"
+      },
+      "CitationSourceKind": {
+        "description": "Origin of one citation snapshot.",
+        "enum": [
+          "knowledge",
+          "web"
+        ],
+        "title": "CitationSourceKind",
+        "type": "string"
       },
       "ClaimEvidence": {
         "description": "One source location supporting an answer claim.",
@@ -3741,13 +3844,27 @@
             "title": "Char Start"
           },
           "chunk_id": {
-            "format": "uuid",
-            "title": "Chunk Id",
-            "type": "string"
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Chunk Id"
           },
           "chunk_index": {
-            "title": "Chunk Index",
-            "type": "integer"
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Chunk Index"
           },
           "citation_index": {
             "minimum": 1.0,
@@ -3755,9 +3872,16 @@
             "type": "integer"
           },
           "document_id": {
-            "format": "uuid",
-            "title": "Document Id",
-            "type": "string"
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Document Id"
           },
           "excerpt": {
             "anyOf": [
@@ -3784,14 +3908,60 @@
               }
             ],
             "title": "Page Number"
+          },
+          "source_kind": {
+            "$ref": "#/components/schemas/CitationSourceKind",
+            "default": "knowledge"
+          },
+          "web_provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Web Provider"
+          },
+          "web_retrieved_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Web Retrieved At"
+          },
+          "web_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Web Title"
+          },
+          "web_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Web Url"
           }
         },
         "required": [
           "citation_index",
-          "chunk_id",
-          "document_id",
-          "filename",
-          "chunk_index"
+          "filename"
         ],
         "title": "ClaimEvidence",
         "type": "object"
@@ -4681,6 +4851,10 @@
             "default": 0.4,
             "title": "Minimum Reranker Evidence Score",
             "type": "number"
+          },
+          "response_mode": {
+            "$ref": "#/components/schemas/ResponseMode",
+            "default": "indexed_only"
           }
         },
         "required": [
@@ -5687,6 +5861,12 @@
             ],
             "title": "Configuration Hash"
           },
+          "context_provenance": {
+            "const": "caller_context",
+            "default": "caller_context",
+            "title": "Context Provenance",
+            "type": "string"
+          },
           "created_at": {
             "format": "date-time",
             "title": "Created At",
@@ -5803,6 +5983,12 @@
             ],
             "title": "Source Metadata Generation"
           },
+          "source_provenance": {
+            "const": "none",
+            "default": "none",
+            "title": "Source Provenance",
+            "type": "string"
+          },
           "status": {
             "$ref": "#/components/schemas/GenerationStatus"
           },
@@ -5819,6 +6005,11 @@
           "use_case": {
             "title": "Use Case",
             "type": "string"
+          },
+          "web_enrichment_used": {
+            "default": false,
+            "title": "Web Enrichment Used",
+            "type": "boolean"
           }
         },
         "required": [
@@ -7088,6 +7279,10 @@
             ],
             "title": "Source Metadata Generation"
           },
+          "source_provenance": {
+            "$ref": "#/components/schemas/SourceProvenance",
+            "default": "none"
+          },
           "total_latency_ms": {
             "anyOf": [
               {
@@ -8077,6 +8272,16 @@
               }
             ],
             "title": "Minimum Reranker Evidence Score"
+          },
+          "response_mode": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ResponseMode"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "title": "ProjectChatPolicy",
@@ -8882,6 +9087,16 @@
         },
         "title": "ResponseMeta",
         "type": "object"
+      },
+      "ResponseMode": {
+        "description": "Evidence workflows available to Project chat.",
+        "enum": [
+          "indexed_only",
+          "indexed_then_web",
+          "indexed_and_web"
+        ],
+        "title": "ResponseMode",
+        "type": "string"
       },
       "RetrievalResult": {
         "description": "Stable search hit DTO for API and future Chat integration.",
@@ -9746,6 +9961,17 @@
           "enforce"
         ],
         "title": "SourcePolicyMode",
+        "type": "string"
+      },
+      "SourceProvenance": {
+        "description": "Machine-readable evidence origin for one response.",
+        "enum": [
+          "knowledge",
+          "web",
+          "knowledge_and_web",
+          "none"
+        ],
+        "title": "SourceProvenance",
         "type": "string"
       },
       "SourceRelationshipCreate": {

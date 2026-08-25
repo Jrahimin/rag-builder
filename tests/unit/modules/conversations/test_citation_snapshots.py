@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import uuid
-from datetime import date
+from datetime import UTC, date, datetime
 
 import pytest
+from pydantic import ValidationError
 
 from app.core.config import ChatConfig
 from app.modules.conversations.citation_snapshots import build_citation_snapshots
 from app.modules.conversations.ports import ContextChunk
+from app.modules.conversations.schemas.message import CitationSnapshot, CitationSourceKind
 
 pytestmark = pytest.mark.unit
 
@@ -63,3 +65,52 @@ def test_build_citation_snapshots_includes_hash_and_excerpt() -> None:
     assert snapshots[0]["config_snapshot_id"] == str(snapshot_id)
     assert snapshots[0]["configuration_hash"] == "a" * 64
     assert snapshots[0]["source_relationships"][0]["relationship_type"] == "replaces"
+
+
+def test_web_snapshot_exposes_only_web_source_identity() -> None:
+    chunk = ContextChunk(
+        # These are internal transport identifiers only; they must not reach citation clients.
+        chunk_id=uuid.uuid4(),
+        document_id=uuid.uuid4(),
+        chunk_index=0,
+        content="Refund requests are accepted within 30 days.",
+        score=0.0,
+        filename="Refund policy",
+        chunk_hash="web-source",
+        metadata={
+            "source_kind": "web",
+            "web_url": "https://example.test/refunds",
+            "web_title": "Refund policy",
+            "web_retrieved_at": datetime.now(UTC).isoformat(),
+            "web_provider": "test_web",
+        },
+    )
+
+    snapshot = build_citation_snapshots(
+        [chunk],
+        project_id=uuid.uuid4(),
+        config_snapshot_id=None,
+        config_provenance={},
+        prompt_version="v5",
+        config=ChatConfig(),
+    )[0]
+
+    assert snapshot["source_kind"] == "web"
+    assert snapshot["chunk_id"] is None
+    assert snapshot["document_id"] is None
+    assert snapshot["project_id"] is None
+    assert snapshot["chunk_index"] is None
+    assert snapshot["web_url"] == "https://example.test/refunds"
+
+
+def test_source_specific_citation_identity_is_enforced() -> None:
+    with pytest.raises(ValidationError, match="web citations cannot expose internal"):
+        CitationSnapshot(
+            source_kind=CitationSourceKind.WEB,
+            filename="Refund policy",
+            chunk_id=uuid.uuid4(),
+            web_url="https://example.test/refunds",
+            web_title="Refund policy",
+            web_retrieved_at=datetime.now(UTC),
+            web_provider="test_web",
+        )

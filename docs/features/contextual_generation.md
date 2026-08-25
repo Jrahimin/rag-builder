@@ -33,6 +33,11 @@ in `api/v1/routes/generations_router.py` and `dependencies/generation.py`.
 Generation has no import or runtime dependency on knowledge, retrieval, or
 conversations.
 
+Project chat `response_mode` does not change this trust boundary. Caller context remains
+authoritative, and contextual generation does not perform web enrichment. Its persisted trace
+records `context_authority=caller_context`, `web_enrichment_allowed=false`,
+`web_enrichment_used=false`, and `source_provenance=none` without exposing chat policy.
+
 ## Data flow and transactions
 
 1. FastAPI authenticates the Organization and verifies Project ownership.

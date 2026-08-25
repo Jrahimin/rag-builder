@@ -8,7 +8,14 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from app.core.config import ChatConfig, EvidenceGateMode, LLMBackend, LLMConfig, RetrievalConfig
+from app.core.config import (
+    ChatConfig,
+    EvidenceGateMode,
+    LLMBackend,
+    LLMConfig,
+    ResponseMode,
+    RetrievalConfig,
+)
 from app.core.exceptions import ConflictError, NotFoundError, ServiceUnavailableError
 from app.models.conversation import Conversation
 from app.models.message import Message, MessageRole
@@ -20,7 +27,8 @@ from app.platform.providers.contracts.llm import (
     ChatCompletionResult,
     ChatUsage,
 )
-from app.platform.providers.errors import ProviderError
+from app.platform.providers.contracts.web_search import WebSearchEvidence, WebSearchResult
+from app.platform.providers.errors import ProviderError, ProviderTimeoutError
 from app.platform.providers.implementations.echo_chat import EchoLLMProvider
 
 pytestmark = pytest.mark.unit
@@ -99,6 +107,71 @@ class FailingStreamingLLM(EchoLLMProvider):
 class AltModelLLM(EchoLLMProvider):
     def __init__(self) -> None:
         super().__init__(model="alt-model", provider_version="1")
+
+
+class CitedLLM(EchoLLMProvider):
+    def __init__(self, content: str) -> None:
+        super().__init__(model="test", provider_version="1")
+        self.content = content
+
+    async def generate(self, messages, *, temperature, max_tokens):
+        del messages, temperature, max_tokens
+        return ChatCompletionResult(
+            content=self.content,
+            provider="echo",
+            model="test",
+            finish_reason="stop",
+            usage=ChatUsage(10, 5),
+            provider_version="1",
+        )
+
+    async def stream(self, messages, *, temperature, max_tokens):
+        del messages, temperature, max_tokens
+        yield ChatCompletionChunk(delta=self.content)
+        yield ChatCompletionChunk(
+            delta="",
+            finish_reason="stop",
+            usage=ChatUsage(10, 5),
+        )
+
+
+class FakeWebSearch:
+    def __init__(self, evidence: list[WebSearchEvidence] | None = None) -> None:
+        self.calls: list[str] = []
+        self.evidence = (
+            evidence
+            if evidence is not None
+            else [
+                WebSearchEvidence(
+                    evidence_id="web-1",
+                    title="Current refund guidance",
+                    url="https://example.test/refunds",
+                    content="Current web guidance allows refunds within 30 days.",
+                    retrieved_at=datetime.now(UTC),
+                    citation_verified=True,
+                )
+            ]
+        )
+
+    async def search(self, query: str, *, max_results: int) -> WebSearchResult:
+        self.calls.append(query)
+        evidence = self.evidence[:max_results]
+        return WebSearchResult(
+            evidence=evidence,
+            provider="test_web",
+            model="search-model",
+            provider_version="1",
+            diagnostics={
+                "status": "succeeded" if evidence else "no_useful_results",
+                "source_count": len(evidence),
+            },
+        )
+
+
+class FailingWebSearch:
+    async def search(self, query: str, *, max_results: int) -> WebSearchResult:
+        del query, max_results
+        raise ProviderTimeoutError("timeout", provider_name="test_web")
 
 
 @pytest.fixture
@@ -550,7 +623,7 @@ async def test_send_message_uses_conversation_temperature(
     )
     await service.send_message(
         conversation.id,
-        MessageSendRequest(content="hello"),
+        MessageSendRequest(content="What is the refund policy?"),
     )
     assert captured["temperature"] == 0.5
 
@@ -849,3 +922,537 @@ async def test_cited_english_answer_is_grounded_when_query_embedder_confirms(
     assert turn.assistant_message.metadata["grounded"] is True
     assert turn.assistant_message.metadata["citation_coverage"] == 1.0
     assert turn.assistant_message.claims[0].verification == "supported"
+
+
+async def test_indexed_then_web_uses_web_only_after_knowledge_gate_fails(
+    session: AsyncMock,
+    conversation_repository: AsyncMock,
+    message_repository: AsyncMock,
+    conversation: Conversation,
+) -> None:
+    conversation.system_prompt_version = "v5"
+    web = FakeWebSearch()
+    service = _service(
+        session,
+        conversation_repository,
+        message_repository,
+        CitedLLM("Current web guidance allows refunds within 30 days [1]."),
+        chat_config=ChatConfig(
+            response_mode=ResponseMode.INDEXED_THEN_WEB,
+            system_prompt_version="v5",
+        ),
+    )
+    service._retrieval = EmptyRetrieval()
+    service._web_search = web
+
+    turn = await service.send_message(
+        conversation.id,
+        MessageSendRequest(content="What is the current refund guidance?"),
+    )
+
+    assert len(web.calls) == 1
+    assert turn.assistant_message.source_provenance == "web"
+    assert turn.assistant_message.metadata["web_search"]["fallback_used"] is True
+    assert turn.assistant_message.content.startswith("This wasn\u2019t covered")
+    assert [citation.source_kind for citation in turn.assistant_message.citations] == ["web"]
+    assert turn.assistant_message.citations[0].web_url == "https://example.test/refunds"
+    assert turn.assistant_message.citations[0].chunk_id is None
+    assert turn.assistant_message.citations[0].document_id is None
+    assert turn.assistant_message.claims[0].evidence[0].chunk_id is None
+    assert turn.assistant_message.claims[0].evidence[0].document_id is None
+    trace = turn.assistant_message.metadata["retrieval_trace"]["context_selected"][0]
+    assert trace["source_kind"] == "web"
+    assert trace["web_url"] == "https://example.test/refunds"
+    assert "chunk_id" not in trace
+    assert "document_id" not in trace
+
+
+async def test_web_fallback_rejects_uncited_or_irrelevant_evidence(
+    session: AsyncMock,
+    conversation_repository: AsyncMock,
+    message_repository: AsyncMock,
+    conversation: Conversation,
+) -> None:
+    conversation.system_prompt_version = "v5"
+    web = FakeWebSearch(
+        [
+            WebSearchEvidence(
+                evidence_id="uncited",
+                title="Refund policy",
+                url="https://example.test/refunds",
+                content="Refunds are available within 30 days.",
+                retrieved_at=datetime.now(UTC),
+                citation_verified=False,
+            ),
+            WebSearchEvidence(
+                evidence_id="irrelevant",
+                title="Weather forecast",
+                url="https://example.test/weather",
+                content="Rain is expected this weekend across the region.",
+                retrieved_at=datetime.now(UTC),
+                citation_verified=True,
+            ),
+        ]
+    )
+    service = _service(
+        session,
+        conversation_repository,
+        message_repository,
+        CitedLLM("must not run"),
+        chat_config=ChatConfig(
+            response_mode=ResponseMode.INDEXED_THEN_WEB,
+            system_prompt_version="v5",
+        ),
+    )
+    service._retrieval = EmptyRetrieval()
+    service._web_search = web
+
+    turn = await service.send_message(
+        conversation.id,
+        MessageSendRequest(content="What is the current refund guidance?"),
+    )
+
+    acceptance = turn.assistant_message.metadata["web_search"]["acceptance"]
+    assert turn.assistant_message.finish_reason == "insufficient_evidence"
+    assert acceptance == {
+        "accepted_count": 0,
+        "rejected_invalid_count": 1,
+        "rejected_irrelevant_count": 1,
+    }
+
+
+async def test_web_search_releases_read_transaction_before_network_io(
+    session: AsyncMock,
+    conversation_repository: AsyncMock,
+    message_repository: AsyncMock,
+    conversation: Conversation,
+) -> None:
+    conversation.system_prompt_version = "v5"
+
+    class TransactionAwareWebSearch(FakeWebSearch):
+        async def search(self, query: str, *, max_results: int) -> WebSearchResult:
+            assert session.rollback.await_count >= 1
+            return await super().search(query, max_results=max_results)
+
+    service = _service(
+        session,
+        conversation_repository,
+        message_repository,
+        CitedLLM("Current web guidance allows refunds within 30 days [1]."),
+        chat_config=ChatConfig(
+            response_mode=ResponseMode.INDEXED_THEN_WEB,
+            system_prompt_version="v5",
+        ),
+    )
+    service._retrieval = EmptyRetrieval()
+    service._web_search = TransactionAwareWebSearch()
+
+    turn = await service.send_message(
+        conversation.id,
+        MessageSendRequest(content="What is the current refund guidance?"),
+    )
+
+    assert turn.assistant_message.source_provenance == "web"
+
+
+async def test_indexed_then_web_skips_web_when_knowledge_is_sufficient(
+    session: AsyncMock,
+    conversation_repository: AsyncMock,
+    message_repository: AsyncMock,
+    conversation: Conversation,
+) -> None:
+    conversation.system_prompt_version = "v5"
+    web = FakeWebSearch()
+    service = _service(
+        session,
+        conversation_repository,
+        message_repository,
+        CitedLLM("Refunds are available within 30 days [1]."),
+        chat_config=ChatConfig(
+            response_mode=ResponseMode.INDEXED_THEN_WEB,
+            system_prompt_version="v5",
+        ),
+    )
+    service._web_search = web
+
+    turn = await service.send_message(
+        conversation.id,
+        MessageSendRequest(content="What is the refund policy?"),
+    )
+
+    assert web.calls == []
+    assert turn.assistant_message.source_provenance == "knowledge"
+    assert turn.assistant_message.metadata["web_search"]["status"] == "not_requested"
+
+
+async def test_kb_sufficient_turn_survives_missing_web_provider(
+    session: AsyncMock,
+    conversation_repository: AsyncMock,
+    message_repository: AsyncMock,
+    conversation: Conversation,
+) -> None:
+    conversation.system_prompt_version = "v5"
+    service = _service(
+        session,
+        conversation_repository,
+        message_repository,
+        CitedLLM("Refunds are available within 30 days [1]."),
+        chat_config=ChatConfig(
+            response_mode=ResponseMode.INDEXED_THEN_WEB,
+            system_prompt_version="v5",
+        ),
+    )
+
+    turn = await service.send_message(
+        conversation.id,
+        MessageSendRequest(content="What is the refund policy?"),
+    )
+
+    assert turn.assistant_message.source_provenance == "knowledge"
+    assert turn.assistant_message.metadata["web_search"]["status"] == "not_requested"
+
+
+async def test_missing_web_provider_fails_closed_only_when_web_is_required(
+    session: AsyncMock,
+    conversation_repository: AsyncMock,
+    message_repository: AsyncMock,
+    conversation: Conversation,
+) -> None:
+    conversation.system_prompt_version = "v5"
+    service = _service(
+        session,
+        conversation_repository,
+        message_repository,
+        CitedLLM("must not run"),
+        chat_config=ChatConfig(
+            response_mode=ResponseMode.INDEXED_THEN_WEB,
+            system_prompt_version="v5",
+        ),
+    )
+    service._retrieval = EmptyRetrieval()
+
+    turn = await service.send_message(
+        conversation.id,
+        MessageSendRequest(content="What is the current refund guidance?"),
+    )
+
+    assert turn.assistant_message.finish_reason == "insufficient_evidence"
+    assert turn.assistant_message.metadata["web_search"]["status"] == "provider_unavailable"
+
+
+async def test_observe_mode_does_not_trigger_web_fallback_when_gate_allows_generation(
+    session: AsyncMock,
+    conversation_repository: AsyncMock,
+    message_repository: AsyncMock,
+    conversation: Conversation,
+) -> None:
+    conversation.system_prompt_version = "v5"
+    web = FakeWebSearch()
+    service = _service(
+        session,
+        conversation_repository,
+        message_repository,
+        CitedLLM("সঞ্চয়পত্র হইতে অর্জিত মুনাফা [1]."),
+        chat_config=ChatConfig(
+            response_mode=ResponseMode.INDEXED_THEN_WEB,
+            system_prompt_version="v5",
+            evidence_gate_mode=EvidenceGateMode.OBSERVE,
+        ),
+    )
+    service._retrieval = NearMissRetrieval()
+    service._web_search = web
+
+    turn = await service.send_message(
+        conversation.id,
+        MessageSendRequest(content="what are the source tax deduction areas?"),
+    )
+
+    assert web.calls == []
+    assert turn.assistant_message.source_provenance == "knowledge"
+    assert turn.assistant_message.metadata["evidence_gate"]["sufficient"] is False
+    assert turn.assistant_message.metadata["evidence_gate"]["blocked_generation"] is False
+
+
+async def test_document_scoped_question_never_escapes_to_web(
+    session: AsyncMock,
+    conversation_repository: AsyncMock,
+    message_repository: AsyncMock,
+    conversation: Conversation,
+) -> None:
+    conversation.system_prompt_version = "v5"
+    web = FakeWebSearch()
+    service = _service(
+        session,
+        conversation_repository,
+        message_repository,
+        CitedLLM("unused"),
+        chat_config=ChatConfig(
+            response_mode=ResponseMode.INDEXED_THEN_WEB,
+            system_prompt_version="v5",
+        ),
+    )
+    service._retrieval = EmptyRetrieval()
+    service._web_search = web
+
+    turn = await service.send_message(
+        conversation.id,
+        MessageSendRequest(
+            content="What does this document say?",
+            document_id=uuid.uuid4(),
+        ),
+    )
+
+    assert web.calls == []
+    assert turn.assistant_message.source_provenance == "none"
+    assert turn.assistant_message.metadata["web_search"]["status"] == ("suppressed_scoped_request")
+    assert turn.assistant_message.finish_reason == "insufficient_evidence"
+
+
+@pytest.mark.parametrize(
+    ("web", "expected_status"),
+    [(FakeWebSearch([]), "no_useful_results"), (FailingWebSearch(), "failed")],
+)
+async def test_web_no_result_or_failure_refuses_without_llm_guessing(
+    session: AsyncMock,
+    conversation_repository: AsyncMock,
+    message_repository: AsyncMock,
+    conversation: Conversation,
+    web: object,
+    expected_status: str,
+) -> None:
+    conversation.system_prompt_version = "v5"
+
+    class CountingLLM(CitedLLM):
+        calls = 0
+
+        async def generate(self, messages, *, temperature, max_tokens):
+            self.calls += 1
+            return await super().generate(
+                messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+
+    llm = CountingLLM("must not run")
+    service = _service(
+        session,
+        conversation_repository,
+        message_repository,
+        llm,
+        chat_config=ChatConfig(
+            response_mode=ResponseMode.INDEXED_THEN_WEB,
+            system_prompt_version="v5",
+        ),
+    )
+    service._retrieval = EmptyRetrieval()
+    service._web_search = web
+
+    turn = await service.send_message(
+        conversation.id,
+        MessageSendRequest(content="What is the lunar payroll rule?"),
+    )
+
+    assert llm.calls == 0
+    assert turn.assistant_message.source_provenance == "none"
+    assert turn.assistant_message.metadata["web_search"]["status"] == expected_status
+    assert turn.assistant_message.finish_reason == "insufficient_evidence"
+
+
+async def test_indexed_and_web_keeps_provenance_separate(
+    session: AsyncMock,
+    conversation_repository: AsyncMock,
+    message_repository: AsyncMock,
+    conversation: Conversation,
+) -> None:
+    conversation.system_prompt_version = "v5"
+    conflicting_web = FakeWebSearch(
+        [
+            WebSearchEvidence(
+                evidence_id="web-conflict",
+                title="Current refund guidance",
+                url="https://example.test/refunds",
+                content="Current web guidance limits refunds to 14 days.",
+                retrieved_at=datetime.now(UTC),
+                citation_verified=True,
+            )
+        ]
+    )
+    service = _service(
+        session,
+        conversation_repository,
+        message_repository,
+        CitedLLM(
+            "The knowledge policy allows refunds within 30 days [1]. "
+            "Current web guidance reports 14 days [2]. These sources conflict."
+        ),
+        chat_config=ChatConfig(
+            response_mode=ResponseMode.INDEXED_AND_WEB,
+            system_prompt_version="v5",
+        ),
+    )
+    service._web_search = conflicting_web
+
+    turn = await service.send_message(
+        conversation.id,
+        MessageSendRequest(content="What is the refund policy?"),
+    )
+
+    assert turn.assistant_message.source_provenance == "knowledge_and_web"
+    assert {citation.source_kind for citation in turn.assistant_message.citations} == {
+        "knowledge",
+        "web",
+    }
+    assert "conflict" in turn.assistant_message.content
+
+
+async def test_bangla_query_uses_web_fallback_with_bangla_notice(
+    session: AsyncMock,
+    conversation_repository: AsyncMock,
+    message_repository: AsyncMock,
+    conversation: Conversation,
+) -> None:
+    conversation.system_prompt_version = "v5"
+    service = _service(
+        session,
+        conversation_repository,
+        message_repository,
+        CitedLLM("Current web guidance allows refunds within 30 days [1]."),
+        chat_config=ChatConfig(
+            response_mode=ResponseMode.INDEXED_THEN_WEB,
+            system_prompt_version="v5",
+        ),
+    )
+    service._retrieval = EmptyRetrieval()
+    service._web_search = FakeWebSearch()
+
+    turn = await service.send_message(
+        conversation.id,
+        MessageSendRequest(content="বর্তমান রিফান্ড নীতি কী?"),
+    )
+
+    assert turn.assistant_message.source_provenance == "web"
+    assert turn.assistant_message.content.startswith("Knowledge base-এ এটি ছিল না")
+
+
+async def test_stream_done_event_contains_web_provenance(
+    session: AsyncMock,
+    conversation_repository: AsyncMock,
+    message_repository: AsyncMock,
+    conversation: Conversation,
+) -> None:
+    conversation.system_prompt_version = "v5"
+    service = _service(
+        session,
+        conversation_repository,
+        message_repository,
+        CitedLLM("Current web guidance allows refunds within 30 days [1]."),
+        chat_config=ChatConfig(
+            response_mode=ResponseMode.INDEXED_THEN_WEB,
+            system_prompt_version="v5",
+        ),
+    )
+    service._retrieval = EmptyRetrieval()
+    service._web_search = FakeWebSearch()
+
+    events = [
+        item
+        async for item in service.stream_message(
+            conversation.id,
+            MessageSendRequest(content="What is the current refund guidance?"),
+        )
+    ]
+
+    assert isinstance(events[-1], dict)
+    assert events[-1]["source_provenance"] == "web"
+    assert events[-1]["web_search"]["fallback_used"] is True
+
+
+async def test_casual_bangla_turn_skips_retrieval_web_and_llm(
+    session: AsyncMock,
+    conversation_repository: AsyncMock,
+    message_repository: AsyncMock,
+    conversation: Conversation,
+) -> None:
+    class CountingRetrieval:
+        calls = 0
+
+        async def retrieve(self, **kwargs: object) -> ContextRetrievalResult:
+            del kwargs
+            self.calls += 1
+            return ContextRetrievalResult(chunks=[], diagnostics={})
+
+    retrieval = CountingRetrieval()
+    web = FakeWebSearch()
+    service = _service(
+        session,
+        conversation_repository,
+        message_repository,
+        CitedLLM("must not run"),
+    )
+    service._retrieval = retrieval
+    service._web_search = web
+
+    turn = await service.send_message(
+        conversation.id,
+        MessageSendRequest(content="ধন্যবাদ"),
+    )
+
+    assert retrieval.calls == 0
+    assert web.calls == []
+    assert turn.assistant_message.content == "স্বাগতম।"
+    assert turn.assistant_message.source_provenance == "none"
+    assert turn.assistant_message.metadata["non_knowledge_turn"] is True
+    assert turn.assistant_message.grounded is False
+
+
+async def test_bangla_insufficient_evidence_uses_friendly_bangla_message(
+    session: AsyncMock,
+    conversation_repository: AsyncMock,
+    message_repository: AsyncMock,
+    conversation: Conversation,
+) -> None:
+    service = _service(
+        session,
+        conversation_repository,
+        message_repository,
+        CitedLLM("must not run"),
+    )
+    service._retrieval = EmptyRetrieval()
+
+    turn = await service.send_message(
+        conversation.id,
+        MessageSendRequest(content="প্রকল্পের ছুটির নীতি কী?"),
+    )
+
+    assert turn.assistant_message.finish_reason == "insufficient_evidence"
+    assert turn.assistant_message.source_provenance == "none"
+    assert "আত্মবিশ্বাসের সঙ্গে" in turn.assistant_message.content
+
+
+async def test_followup_retrieval_query_is_not_rewritten_by_substring_heuristics(
+    session: AsyncMock,
+    conversation_repository: AsyncMock,
+    message_repository: AsyncMock,
+    conversation: Conversation,
+) -> None:
+    captured: list[str] = []
+
+    class CapturingRetrieval(FakeRetrieval):
+        async def retrieve(self, **kwargs: object) -> ContextRetrievalResult:
+            captured.append(str(kwargs["query"]))
+            return await super().retrieve(**kwargs)
+
+    service = _service(
+        session,
+        conversation_repository,
+        message_repository,
+        CitedLLM("Refunds are available within 30 days [1]."),
+    )
+    service._retrieval = CapturingRetrieval()
+
+    await service.send_message(
+        conversation.id,
+        MessageSendRequest(content="What is it used for?"),
+    )
+
+    assert captured == ["What is it used for?"]

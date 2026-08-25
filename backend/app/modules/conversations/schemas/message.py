@@ -12,19 +12,36 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from app.models.message import MessageRole
 
 
+class CitationSourceKind(StrEnum):
+    """Origin of one citation snapshot."""
+
+    KNOWLEDGE = "knowledge"
+    WEB = "web"
+
+
+class SourceProvenance(StrEnum):
+    """Machine-readable evidence origin for one response."""
+
+    KNOWLEDGE = "knowledge"
+    WEB = "web"
+    KNOWLEDGE_AND_WEB = "knowledge_and_web"
+    NONE = "none"
+
+
 class CitationSnapshot(BaseModel):
     """Durable citation stored on assistant messages."""
 
-    chunk_id: uuid.UUID
-    project_id: uuid.UUID
-    document_id: uuid.UUID
+    source_kind: CitationSourceKind = CitationSourceKind.KNOWLEDGE
+    chunk_id: uuid.UUID | None = None
+    project_id: uuid.UUID | None = None
+    document_id: uuid.UUID | None = None
     filename: str
-    chunk_index: int
+    chunk_index: int | None = None
     page_number: int | None = None
     char_start: int | None = None
     char_end: int | None = None
-    score: float
-    chunk_hash: str
+    score: float | None = None
+    chunk_hash: str | None = None
     excerpt: str | None = None
     processing_version: int | None = None
     index_build_id: uuid.UUID | None = None
@@ -45,6 +62,35 @@ class CitationSnapshot(BaseModel):
     configuration_hash: str | None = None
     config_provenance: dict[str, Any] = Field(default_factory=dict)
     prompt_version: str | None = None
+    web_url: str | None = None
+    web_title: str | None = None
+    web_retrieved_at: datetime | None = None
+    web_provider: str | None = None
+
+    @model_validator(mode="after")
+    def validate_source_identity(self) -> CitationSnapshot:
+        internal_identity = (self.chunk_id, self.document_id, self.project_id)
+        web_metadata = (
+            self.web_url,
+            self.web_title,
+            self.web_retrieved_at,
+            self.web_provider,
+        )
+        if self.source_kind is CitationSourceKind.KNOWLEDGE:
+            if any(value is None for value in internal_identity):
+                raise ValueError(
+                    "knowledge citations require Project, document, and chunk identity"
+                )
+            if any(value is not None for value in web_metadata):
+                raise ValueError("knowledge citations cannot carry web source metadata")
+        else:
+            if any(value is not None for value in internal_identity):
+                raise ValueError("web citations cannot expose internal document or chunk identity")
+            if self.chunk_index is not None or self.chunk_hash is not None:
+                raise ValueError("web citations cannot expose synthetic chunk identity")
+            if any(value is None for value in web_metadata):
+                raise ValueError("web citations require URL, title, retrieval time, and provider")
+        return self
 
 
 class InsufficientEvidenceReason(StrEnum):
@@ -68,14 +114,55 @@ class ClaimEvidence(BaseModel):
     """One source location supporting an answer claim."""
 
     citation_index: int = Field(ge=1)
-    chunk_id: uuid.UUID
-    document_id: uuid.UUID
+    chunk_id: uuid.UUID | None = None
+    document_id: uuid.UUID | None = None
     filename: str
-    chunk_index: int
+    chunk_index: int | None = None
     page_number: int | None = None
     char_start: int | None = None
     char_end: int | None = None
     excerpt: str | None = None
+    source_kind: CitationSourceKind = CitationSourceKind.KNOWLEDGE
+    web_url: str | None = None
+    web_title: str | None = None
+    web_retrieved_at: datetime | None = None
+    web_provider: str | None = None
+
+    @model_validator(mode="after")
+    def validate_source_identity(self) -> ClaimEvidence:
+        if self.source_kind is CitationSourceKind.KNOWLEDGE:
+            if self.chunk_id is None or self.document_id is None or self.chunk_index is None:
+                raise ValueError("knowledge claim evidence requires internal source identity")
+            if any(
+                value is not None
+                for value in (
+                    self.web_url,
+                    self.web_title,
+                    self.web_retrieved_at,
+                    self.web_provider,
+                )
+            ):
+                raise ValueError("knowledge claim evidence cannot carry web source metadata")
+        else:
+            if (
+                self.chunk_id is not None
+                or self.document_id is not None
+                or self.chunk_index is not None
+            ):
+                raise ValueError("web claim evidence cannot expose synthetic chunk identity")
+            if any(
+                value is None
+                for value in (
+                    self.web_url,
+                    self.web_title,
+                    self.web_retrieved_at,
+                    self.web_provider,
+                )
+            ):
+                raise ValueError(
+                    "web claim evidence requires URL, title, retrieval time, and provider"
+                )
+        return self
 
 
 class AnswerClaim(BaseModel):
@@ -131,6 +218,7 @@ class MessageResponse(BaseModel):
     claims: list[AnswerClaim] = Field(default_factory=list)
     grounded: bool | None = None
     insufficient_evidence_reason: InsufficientEvidenceReason | None = None
+    source_provenance: SourceProvenance = SourceProvenance.NONE
     created_at: datetime
     updated_at: datetime
 
@@ -147,6 +235,13 @@ class MessageResponse(BaseModel):
             base = base.model_copy(update={"provider": conversation_provider})
         if message.model is None and conversation_model is not None:
             base = base.model_copy(update={"model": conversation_model})
+        metadata = getattr(message, "message_metadata", None) or {}
+        provenance = metadata.get("source_provenance", SourceProvenance.NONE.value)
+        try:
+            source_provenance = SourceProvenance(provenance)
+        except ValueError:
+            source_provenance = SourceProvenance.NONE
+        base = base.model_copy(update={"source_provenance": source_provenance})
         return base
 
 

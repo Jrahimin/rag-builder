@@ -63,8 +63,8 @@ const originFieldLabels: Record<string, string> = {
   "retrieval.query_translation_enabled": "Query translation",
   "retrieval.semantic_evidence_score_threshold": "Evidence threshold",
   "chat.include_citations": "Citations",
-  "domain_instructions": "Project instructions",
-  "source_policy_mode": "Source policy",
+  domain_instructions: "Project instructions",
+  source_policy_mode: "Source policy",
 };
 
 function originFieldLabel(field: string) {
@@ -183,7 +183,9 @@ export function ProjectAdministration() {
             </span>
           </div>
         )}
-        <p className="muted-copy">Select a Project to administer its policy, documents, and sources.</p>
+        <p className="muted-copy">
+          Select a Project to administer its policy, documents, and sources.
+        </p>
         <div className="admin-rail__list">
           {projects.data.items.map((project) => (
             <button
@@ -374,11 +376,7 @@ function CreateProject({
     }
   };
   return (
-    <div
-      className="modal-overlay"
-      role="presentation"
-      onClick={onCancel}
-    >
+    <div className="modal-overlay" role="presentation" onClick={onCancel}>
       <section
         className="modal-card"
         role="dialog"
@@ -1275,7 +1273,9 @@ function ProjectSources({ project }: { project: Project }) {
           <div className="button-row">
             <button
               className="button button--primary"
-              disabled={!file || upload.isPending || (uploadMode !== "independent" && !uploadTarget)}
+              disabled={
+                !file || upload.isPending || (uploadMode !== "independent" && !uploadTarget)
+              }
             >
               Upload
             </button>

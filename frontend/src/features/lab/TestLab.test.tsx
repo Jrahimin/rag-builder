@@ -296,6 +296,7 @@ test("renders grounded citations instead of inferring grounding from answer text
     provider: null,
     model: null,
     metadata: {},
+    source_provenance: "none",
     citations: [],
     claims: [],
     grounded: null,
@@ -313,6 +314,7 @@ test("renders grounded citations instead of inferring grounding from answer text
       grounded: true,
       citations: [
         {
+          source_kind: "knowledge",
           chunk_id: "77777777-7777-7777-7777-777777777777",
           document_id: documentFixture.id,
           project_id: projectFixture.id,
@@ -387,6 +389,7 @@ test("renders an explicit valid refusal when retrieval evidence is insufficient"
     provider: null,
     model: null,
     metadata: {},
+    source_provenance: "none",
     citations: [],
     claims: [],
     grounded: null,
