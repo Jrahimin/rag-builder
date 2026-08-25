@@ -58,9 +58,7 @@ class PromptBuilder:
         for index, chunk in enumerate(chunks, start=1):
             source_kind = str(chunk.metadata.get("source_kind") or "knowledge").upper()
             source_title = chunk.metadata.get("source_title") or chunk.filename
-            header = (
-                f"[{index}] kind={source_kind} source={source_title} file={chunk.filename}"
-            )
+            header = f"[{index}] kind={source_kind} source={source_title} file={chunk.filename}"
             web_url = chunk.metadata.get("web_url")
             if web_url:
                 header = f"{header} url={web_url}"
