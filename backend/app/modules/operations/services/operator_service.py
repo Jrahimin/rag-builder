@@ -260,8 +260,8 @@ class OperatorService:
                 credential_configured=llm_credential_configured(self._settings.llm),
             ),
             web_search=ProviderConfiguration(
-                backend=self._settings.web_search.backend.value,
-                model=self._settings.web_search.model,
+                backend=self._settings.resolved_web_search_backend().value,
+                model=self._settings.resolved_web_search_model(),
                 provider_version=self._settings.web_search.provider_version,
                 credential_configured=bool(self._settings.resolved_web_search_api_key()),
             ),

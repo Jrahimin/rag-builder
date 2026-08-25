@@ -18,6 +18,12 @@ export type ProjectConfigForm = {
   temperature: string;
   maxTokens: string;
   responseMode: ResponseModeChoice;
+  webSearchEnabled: boolean;
+  webSearchModel: string;
+  webSearchMaxResults: string;
+  webSearchMaxEvidenceChars: string;
+  webSearchMaxOutputTokens: string;
+  webSearchTimeout: string;
   domain: string;
   topK: string;
   strategy: string;
@@ -41,6 +47,12 @@ export const inheritedProjectConfig: ProjectConfigOverrides = {
   temperature: false,
   maxTokens: false,
   responseMode: false,
+  webSearchEnabled: false,
+  webSearchModel: false,
+  webSearchMaxResults: false,
+  webSearchMaxEvidenceChars: false,
+  webSearchMaxOutputTokens: false,
+  webSearchTimeout: false,
   domain: false,
   topK: false,
   strategy: false,
@@ -55,6 +67,12 @@ export const emptyProjectConfigForm: ProjectConfigForm = {
   temperature: "",
   maxTokens: "",
   responseMode: "indexed_only",
+  webSearchEnabled: false,
+  webSearchModel: "",
+  webSearchMaxResults: "",
+  webSearchMaxEvidenceChars: "",
+  webSearchMaxOutputTokens: "",
+  webSearchTimeout: "",
   domain: "",
   topK: "",
   strategy: "hybrid",
@@ -98,6 +116,12 @@ export function configFormFromEffective(
         : String(config.configuration.llm.temperature),
     maxTokens: String(config.configuration.llm.max_tokens),
     responseMode: config.configuration.chat.response_mode,
+    webSearchEnabled: config.configuration.web_search.enabled,
+    webSearchModel: config.configuration.web_search.model,
+    webSearchMaxResults: String(config.configuration.web_search.max_results),
+    webSearchMaxEvidenceChars: String(config.configuration.web_search.max_evidence_chars),
+    webSearchMaxOutputTokens: String(config.configuration.web_search.max_output_tokens),
+    webSearchTimeout: String(config.configuration.web_search.request_timeout_seconds),
     domain: config.configuration.domain_instructions,
     topK: String(config.configuration.retrieval.top_k),
     strategy: config.configuration.retrieval.strategy,
@@ -117,6 +141,12 @@ export function configOverridesFromStored(stored: ProjectAIConfig): ProjectConfi
     temperature: hasValue(stored.llm, "temperature") && stored.llm?.temperature !== null,
     maxTokens: hasValue(stored.llm, "max_tokens"),
     responseMode: hasValue(stored.chat, "response_mode"),
+    webSearchEnabled: hasValue(stored.web_search, "enabled"),
+    webSearchModel: hasValue(stored.web_search, "model"),
+    webSearchMaxResults: hasValue(stored.web_search, "max_results"),
+    webSearchMaxEvidenceChars: hasValue(stored.web_search, "max_evidence_chars"),
+    webSearchMaxOutputTokens: hasValue(stored.web_search, "max_output_tokens"),
+    webSearchTimeout: hasValue(stored.web_search, "request_timeout_seconds"),
     domain: hasValue(stored, "domain_instructions"),
     topK: hasValue(stored.retrieval, "top_k"),
     strategy: hasValue(stored.retrieval, "strategy"),
@@ -146,6 +176,7 @@ export function buildSparseProjectConfig(
   const llm = { ...(stored.llm ?? {}) } as Record<string, unknown>;
   const retrieval = { ...(stored.retrieval ?? {}) } as Record<string, unknown>;
   const chat = { ...(stored.chat ?? {}) } as Record<string, unknown>;
+  const webSearch = { ...(stored.web_search ?? {}) } as Record<string, unknown>;
 
   setSparseValue(llm, "provider", overrides.provider, form.provider);
   setSparseValue(llm, "model", overrides.model, form.model);
@@ -157,6 +188,32 @@ export function buildSparseProjectConfig(
   );
   setSparseValue(llm, "max_tokens", overrides.maxTokens, Number(form.maxTokens));
   setSparseValue(chat, "response_mode", overrides.responseMode, form.responseMode);
+  setSparseValue(webSearch, "enabled", overrides.webSearchEnabled, form.webSearchEnabled);
+  setSparseValue(webSearch, "model", overrides.webSearchModel, form.webSearchModel);
+  setSparseValue(
+    webSearch,
+    "max_results",
+    overrides.webSearchMaxResults,
+    Number(form.webSearchMaxResults),
+  );
+  setSparseValue(
+    webSearch,
+    "max_evidence_chars",
+    overrides.webSearchMaxEvidenceChars,
+    Number(form.webSearchMaxEvidenceChars),
+  );
+  setSparseValue(
+    webSearch,
+    "max_output_tokens",
+    overrides.webSearchMaxOutputTokens,
+    Number(form.webSearchMaxOutputTokens),
+  );
+  setSparseValue(
+    webSearch,
+    "request_timeout_seconds",
+    overrides.webSearchTimeout,
+    Number(form.webSearchTimeout),
+  );
   setSparseValue(retrieval, "top_k", overrides.topK, Number(form.topK));
   setSparseValue(retrieval, "strategy", overrides.strategy, form.strategy);
   if (form.translation === "inherit") {
@@ -179,6 +236,7 @@ export function buildSparseProjectConfig(
   configuration.llm = llm;
   configuration.retrieval = retrieval;
   configuration.chat = chat;
+  configuration.web_search = webSearch;
   return configuration;
 }
 
@@ -186,10 +244,12 @@ export function sparseHasOverrides(configuration: ProjectAIConfig): boolean {
   const llm = configuration.llm ?? {};
   const retrieval = configuration.retrieval ?? {};
   const chat = configuration.chat ?? {};
+  const webSearch = configuration.web_search ?? {};
   return (
     Object.keys(llm).length > 0 ||
     Object.keys(retrieval).length > 0 ||
     Object.keys(chat).length > 0 ||
+    Object.keys(webSearch).length > 0 ||
     configuration.domain_instructions != null ||
     configuration.prompt_profile != null ||
     configuration.prompt_version != null ||
@@ -270,6 +330,17 @@ export const PROJECT_AI_FIELD_HINTS = {
     "The exact model name sent to that vendor.\n\nLeave Inherit on to keep the deployment model. Example: gpt-4.1-mini. Type a different name only for a Project-specific model.",
   responseMode:
     "Controls which evidence chat may use.\n\nIndexed only stays inside the Project knowledge base. Indexed then web searches the web only when Project evidence is insufficient. Indexed and web always retrieves both. Document-scoped questions remain limited to Project knowledge.",
+  webSearchEnabled:
+    "Allows this Project to use the deployment web-search provider when its response mode needs web evidence. Turn it off to keep this Project indexed-only even when web search is globally available.",
+  webSearchModel:
+    "Model used for the web-search Responses call. Inherit uses the configured web model, or this Project’s chat model when no dedicated web model is configured.",
+  webSearchMaxResults:
+    "Maximum cited web sources considered for a chat turn. Lower values reduce latency and cost.",
+  webSearchMaxEvidenceChars:
+    "Maximum total characters admitted from accepted web evidence. This is a hard prompt-budget bound.",
+  webSearchMaxOutputTokens:
+    "Maximum tokens permitted for the web-search provider response before evidence extraction.",
+  webSearchTimeout: "Maximum seconds to wait for the web-search provider before it fails closed.",
   domain:
     "Extra standing rules for this Project, prepended to the platform’s system prompt. This is not the full system prompt.\n\nExample: “Answer in Bengali. Use official NBR tax terms. Never invent a section number.”",
   translation:
@@ -383,6 +454,106 @@ export function ProjectAISettingsFields({
           field="Response mode"
           overridden={overrides.responseMode}
           onChange={(enabled) => toggleField("responseMode", enabled)}
+        />
+      </div>
+      <div className={inheritedClass(overrides.webSearchEnabled)}>
+        <FieldHint label="Web search" text={PROJECT_AI_FIELD_HINTS.webSearchEnabled} />
+        <label className="check-control">
+          <input
+            type="checkbox"
+            checked={form.webSearchEnabled}
+            onChange={(event) => changeField("webSearchEnabled", event.target.checked)}
+          />{" "}
+          Allow web evidence
+        </label>
+        <InheritanceToggle
+          field="Web search"
+          overridden={overrides.webSearchEnabled}
+          onChange={(enabled) => toggleField("webSearchEnabled", enabled)}
+        />
+      </div>
+      <div className={inheritedClass(overrides.webSearchModel)}>
+        <FieldHint label="Web search model" text={PROJECT_AI_FIELD_HINTS.webSearchModel} />
+        <input
+          aria-label="Web search model"
+          value={form.webSearchModel}
+          placeholder={overrides.webSearchModel ? undefined : "Inherit chat model"}
+          onChange={(event) => changeField("webSearchModel", event.target.value)}
+        />
+        <InheritanceToggle
+          field="Web search model"
+          overridden={overrides.webSearchModel}
+          onChange={(enabled) => toggleField("webSearchModel", enabled)}
+        />
+      </div>
+      <div className={inheritedClass(overrides.webSearchMaxResults)}>
+        <FieldHint label="Web results" text={PROJECT_AI_FIELD_HINTS.webSearchMaxResults} />
+        <input
+          aria-label="Web results"
+          type="number"
+          min="1"
+          max="20"
+          value={form.webSearchMaxResults}
+          onChange={(event) => changeField("webSearchMaxResults", event.target.value)}
+        />
+        <InheritanceToggle
+          field="Web results"
+          overridden={overrides.webSearchMaxResults}
+          onChange={(enabled) => toggleField("webSearchMaxResults", enabled)}
+        />
+      </div>
+      <div className={inheritedClass(overrides.webSearchMaxEvidenceChars)}>
+        <FieldHint
+          label="Web evidence budget"
+          text={PROJECT_AI_FIELD_HINTS.webSearchMaxEvidenceChars}
+        />
+        <input
+          aria-label="Web evidence budget"
+          type="number"
+          min="500"
+          max="100000"
+          value={form.webSearchMaxEvidenceChars}
+          onChange={(event) => changeField("webSearchMaxEvidenceChars", event.target.value)}
+        />
+        <InheritanceToggle
+          field="Web evidence budget"
+          overridden={overrides.webSearchMaxEvidenceChars}
+          onChange={(enabled) => toggleField("webSearchMaxEvidenceChars", enabled)}
+        />
+      </div>
+      <div className={inheritedClass(overrides.webSearchMaxOutputTokens)}>
+        <FieldHint
+          label="Web search tokens"
+          text={PROJECT_AI_FIELD_HINTS.webSearchMaxOutputTokens}
+        />
+        <input
+          aria-label="Web search tokens"
+          type="number"
+          min="256"
+          max="32000"
+          value={form.webSearchMaxOutputTokens}
+          onChange={(event) => changeField("webSearchMaxOutputTokens", event.target.value)}
+        />
+        <InheritanceToggle
+          field="Web search tokens"
+          overridden={overrides.webSearchMaxOutputTokens}
+          onChange={(enabled) => toggleField("webSearchMaxOutputTokens", enabled)}
+        />
+      </div>
+      <div className={inheritedClass(overrides.webSearchTimeout)}>
+        <FieldHint label="Web timeout" text={PROJECT_AI_FIELD_HINTS.webSearchTimeout} />
+        <input
+          aria-label="Web timeout"
+          type="number"
+          min="1"
+          max="300"
+          value={form.webSearchTimeout}
+          onChange={(event) => changeField("webSearchTimeout", event.target.value)}
+        />
+        <InheritanceToggle
+          field="Web timeout"
+          overridden={overrides.webSearchTimeout}
+          onChange={(enabled) => toggleField("webSearchTimeout", enabled)}
         />
       </div>
       <div className={`${inheritedClass(overrides.domain)} field-control--wide`}>

@@ -4929,12 +4929,16 @@
           },
           "source_policy_mode": {
             "$ref": "#/components/schemas/SourcePolicyMode"
+          },
+          "web_search": {
+            "$ref": "#/components/schemas/EffectiveWebSearchPolicy"
           }
         },
         "required": [
           "llm",
           "retrieval",
           "chat",
+          "web_search",
           "domain_instructions",
           "prompt_profile",
           "prompt_version",
@@ -5126,6 +5130,48 @@
           "semantic_evidence_score_threshold"
         ],
         "title": "EffectiveRetrievalPolicy",
+        "type": "object"
+      },
+      "EffectiveWebSearchPolicy": {
+        "properties": {
+          "backend": {
+            "$ref": "#/components/schemas/WebSearchBackend"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "max_evidence_chars": {
+            "title": "Max Evidence Chars",
+            "type": "integer"
+          },
+          "max_output_tokens": {
+            "title": "Max Output Tokens",
+            "type": "integer"
+          },
+          "max_results": {
+            "title": "Max Results",
+            "type": "integer"
+          },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "request_timeout_seconds": {
+            "title": "Request Timeout Seconds",
+            "type": "number"
+          }
+        },
+        "required": [
+          "enabled",
+          "backend",
+          "model",
+          "max_results",
+          "max_evidence_chars",
+          "max_output_tokens",
+          "request_timeout_seconds"
+        ],
+        "title": "EffectiveWebSearchPolicy",
         "type": "object"
       },
       "EvaluationCase": {
@@ -8007,6 +8053,9 @@
                 "type": "null"
               }
             ]
+          },
+          "web_search": {
+            "$ref": "#/components/schemas/ProjectWebSearchPolicy"
           }
         },
         "title": "ProjectAIConfig",
@@ -8841,6 +8890,90 @@
           }
         },
         "title": "ProjectUpdate",
+        "type": "object"
+      },
+      "ProjectWebSearchPolicy": {
+        "additionalProperties": false,
+        "description": "Sparse per-Project controls for an operator-configured web provider.",
+        "properties": {
+          "enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enabled"
+          },
+          "max_evidence_chars": {
+            "anyOf": [
+              {
+                "maximum": 100000.0,
+                "minimum": 500.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Evidence Chars"
+          },
+          "max_output_tokens": {
+            "anyOf": [
+              {
+                "maximum": 32000.0,
+                "minimum": 256.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Output Tokens"
+          },
+          "max_results": {
+            "anyOf": [
+              {
+                "maximum": 20.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Results"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "request_timeout_seconds": {
+            "anyOf": [
+              {
+                "maximum": 300.0,
+                "minimum": 1.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Request Timeout Seconds"
+          }
+        },
+        "title": "ProjectWebSearchPolicy",
         "type": "object"
       },
       "ProviderConfiguration": {
@@ -10705,6 +10838,15 @@
         ],
         "title": "ValidationError",
         "type": "object"
+      },
+      "WebSearchBackend": {
+        "description": "External web-search providers.",
+        "enum": [
+          "disabled",
+          "openai"
+        ],
+        "title": "WebSearchBackend",
+        "type": "string"
       },
       "WebhookAttemptResponse": {
         "properties": {

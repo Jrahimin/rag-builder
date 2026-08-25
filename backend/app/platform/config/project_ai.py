@@ -93,6 +93,19 @@ class ProjectChatPolicy(BaseModel):
     minimum_reranker_evidence_score: float | None = Field(default=None, ge=0.0, le=1.0)
 
 
+class ProjectWebSearchPolicy(BaseModel):
+    """Sparse per-Project controls for an operator-configured web provider."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool | None = None
+    model: str | None = Field(default=None, min_length=1, max_length=128)
+    max_results: int | None = Field(default=None, ge=1, le=20)
+    max_evidence_chars: int | None = Field(default=None, ge=500, le=100_000)
+    max_output_tokens: int | None = Field(default=None, ge=256, le=32_000)
+    request_timeout_seconds: float | None = Field(default=None, ge=1.0, le=300.0)
+
+
 class ProjectAIConfig(BaseModel):
     """Sparse immutable revision payload; omitted values inherit deployment defaults."""
 
@@ -101,6 +114,7 @@ class ProjectAIConfig(BaseModel):
     llm: ProjectLLMPolicy = Field(default_factory=ProjectLLMPolicy)
     retrieval: ProjectRetrievalPolicy = Field(default_factory=ProjectRetrievalPolicy)
     chat: ProjectChatPolicy = Field(default_factory=ProjectChatPolicy)
+    web_search: ProjectWebSearchPolicy = Field(default_factory=ProjectWebSearchPolicy)
     domain_instructions: str | None = Field(default=None, max_length=20_000)
     prompt_profile: str | None = Field(default=None, max_length=64)
     prompt_version: str | None = Field(default=None, max_length=64)
@@ -151,10 +165,21 @@ class EffectiveChatPolicy(BaseModel):
     minimum_reranker_evidence_score: float = 0.40
 
 
+class EffectiveWebSearchPolicy(BaseModel):
+    enabled: bool
+    backend: WebSearchBackend
+    model: str
+    max_results: int
+    max_evidence_chars: int
+    max_output_tokens: int
+    request_timeout_seconds: float
+
+
 class EffectiveProjectAIConfig(BaseModel):
     llm: EffectiveLLMPolicy
     retrieval: EffectiveRetrievalPolicy
     chat: EffectiveChatPolicy
+    web_search: EffectiveWebSearchPolicy
     domain_instructions: str
     prompt_profile: str
     prompt_version: str
@@ -255,6 +280,22 @@ def resolve_project_ai_config(
         origins,
     )
     rerank_mode = _resolve_rerank_mode(project.retrieval, settings, origins)
+    resolved_web_backend = settings.resolved_web_search_backend()
+    origins["web_search.backend"] = (
+        "global" if settings.web_search.backend is not None else "llm_backend"
+    )
+    default_web_enabled = resolved_web_backend is not WebSearchBackend.DISABLED
+    if project.web_search.model is not None:
+        web_model = project.web_search.model
+        origins["web_search.model"] = "project"
+    elif settings.web_search.model is not None:
+        web_model = settings.web_search.model
+        origins["web_search.model"] = "global"
+    else:
+        web_model = project.llm.model or settings.llm.model
+        origins["web_search.model"] = (
+            "project_llm" if project.llm.model is not None else "global_llm"
+        )
 
     config = EffectiveProjectAIConfig(
         llm=EffectiveLLMPolicy(
@@ -382,6 +423,35 @@ def resolve_project_ai_config(
                 "chat.minimum_reranker_evidence_score",
                 project.chat.minimum_reranker_evidence_score,
                 settings.chat.minimum_reranker_evidence_score,
+            ),
+        ),
+        web_search=EffectiveWebSearchPolicy(
+            enabled=inherited(
+                "web_search.enabled",
+                project.web_search.enabled,
+                default_web_enabled,
+            ),
+            backend=resolved_web_backend,
+            model=web_model,
+            max_results=inherited(
+                "web_search.max_results",
+                project.web_search.max_results,
+                settings.web_search.max_results,
+            ),
+            max_evidence_chars=inherited(
+                "web_search.max_evidence_chars",
+                project.web_search.max_evidence_chars,
+                settings.web_search.max_evidence_chars,
+            ),
+            max_output_tokens=inherited(
+                "web_search.max_output_tokens",
+                project.web_search.max_output_tokens,
+                settings.web_search.max_output_tokens,
+            ),
+            request_timeout_seconds=inherited(
+                "web_search.request_timeout_seconds",
+                project.web_search.request_timeout_seconds,
+                settings.web_search.request_timeout_seconds,
             ),
         ),
         domain_instructions=inherited("domain_instructions", project.domain_instructions, ""),
@@ -568,6 +638,20 @@ def apply_effective_ai_config(
                     ),
                 }
             ),
+            "web_search": settings.web_search.model_copy(
+                update={
+                    "backend": (
+                        effective.web_search.backend
+                        if effective.web_search.enabled
+                        else WebSearchBackend.DISABLED
+                    ),
+                    "model": effective.web_search.model,
+                    "max_results": effective.web_search.max_results,
+                    "max_evidence_chars": effective.web_search.max_evidence_chars,
+                    "max_output_tokens": effective.web_search.max_output_tokens,
+                    "request_timeout_seconds": effective.web_search.request_timeout_seconds,
+                }
+            ),
             "chat": ChatConfig.model_validate(
                 {
                     **settings.chat.model_dump(),
@@ -708,10 +792,15 @@ def _validate_web_response_policy(
         )
     if not require_provider:
         return
-    if settings.web_search.backend is WebSearchBackend.DISABLED:
+    if config.web_search.backend is WebSearchBackend.DISABLED:
         raise BadRequestError(
             message="Web-enabled response modes require a configured web-search provider.",
             code="web_search_not_configured",
+        )
+    if not config.web_search.enabled:
+        raise BadRequestError(
+            message="Web-enabled response modes are disabled for this Project.",
+            code="web_search_disabled_for_project",
         )
     if not settings.resolved_web_search_api_key():
         raise BadRequestError(

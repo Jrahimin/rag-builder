@@ -54,7 +54,7 @@ LLM failure after Tx1: user message retained, no assistant row.
 | ------- | -------- | ---- |
 | `LLMConfig` | `APE_LLM__*` | Deployment defaults; per-conversation overrides at create/update |
 | `ChatConfig` | `APE_CHAT__*` | Response mode, retrieval top-k, context budgets, history, prompt |
-| `WebSearchConfig` | `APE_WEB_SEARCH__*` | Provider/model, timeout, result and evidence bounds |
+| `WebSearchConfig` | `APE_WEB_SEARCH__*` | Optional OpenAI override plus timeout, result, and evidence bounds; connection/model inherit compatible `APE_LLM__*` values when omitted |
 | `RetrievalConfig` | `APE_RETRIEVAL__EMBEDDING_SET_VERSION` | Snapshotted on assistant messages |
 
 `response_mode` defaults to `indexed_only` and is a sparse/versioned Project override. The other
@@ -63,6 +63,10 @@ values are `indexed_then_web` and `indexed_and_web`. Notable `ChatConfig` keys a
 `evidence_gate_mode` (`enforce` or `observe`), `minimum_reranker_evidence_score`,
 `lexical_corroboration_floor_score`, `lexical_corroboration_coverage`,
 `minimum_claim_token_coverage`, and `include_citations`.
+
+Project revisions may also include a sparse `web_search` section: `enabled`, `model`,
+`max_results`, `max_evidence_chars`, `max_output_tokens`, and `request_timeout_seconds`.
+Credentials, base URL, and provider backend remain deployment-owned.
 
 ## Data model
 

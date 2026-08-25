@@ -204,11 +204,11 @@ def _base_configuration_errors(settings: Settings) -> list[str]:
         errors.append("query translation cannot use the echo LLM backend")
     if (
         settings.chat.response_mode is not ResponseMode.INDEXED_ONLY
-        and settings.web_search.backend is WebSearchBackend.DISABLED
+        and settings.resolved_web_search_backend() is WebSearchBackend.DISABLED
     ):
-        errors.append("web-enabled chat response modes require APE_WEB_SEARCH__BACKEND")
+        errors.append("web-enabled chat response modes require an OpenAI LLM or web-search backend")
     if (
-        settings.web_search.backend is WebSearchBackend.OPENAI
+        settings.resolved_web_search_backend() is WebSearchBackend.OPENAI
         and not settings.resolved_web_search_api_key()
     ):
         errors.append(

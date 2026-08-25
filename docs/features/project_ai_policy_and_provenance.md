@@ -22,8 +22,12 @@ and the console offers a retry on AI Configuration.
 
 Chat policy also contains sparse `response_mode`: `indexed_only` (global default),
 `indexed_then_web`, or `indexed_and_web`. Web-enabled revisions require a configured deployment
-search provider and the v5 source-aware prompt. Existing revisions omit the field and continue to
-inherit `indexed_only`.
+search provider and the v5 source-aware prompt. Sparse `web_search` policy can enable or disable
+web use per Project and bound its model, result count, evidence-character budget, output-token
+budget, and timeout. Provider credentials and endpoint remain deployment-owned. When no dedicated
+web provider/model is configured, compatible `APE_LLM__OPENAI_*` settings and the resolved Project
+LLM model are inherited. Existing revisions omit these fields and continue to inherit
+`indexed_only`.
 
 Only Super Admin operator endpoints can read or write revisions. Writes use an expected active
 revision ID for optimistic concurrency. History is append-only, and restore copies an old payload

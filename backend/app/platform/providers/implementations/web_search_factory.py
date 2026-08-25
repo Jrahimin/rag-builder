@@ -10,9 +10,10 @@ from app.platform.providers.implementations.openai_web_search import OpenAIWebSe
 
 def create_web_search_provider(settings: Settings) -> BaseWebSearchProvider:
     config = settings.web_search
-    if config.backend is WebSearchBackend.DISABLED:
+    backend = settings.resolved_web_search_backend()
+    if backend is WebSearchBackend.DISABLED:
         raise ProviderError("Web search is disabled", provider_name="web_search")
-    if config.backend is WebSearchBackend.OPENAI:
+    if backend is WebSearchBackend.OPENAI:
         api_key = settings.resolved_web_search_api_key()
         if not api_key:
             raise ProviderError(
@@ -23,13 +24,13 @@ def create_web_search_provider(settings: Settings) -> BaseWebSearchProvider:
         return OpenAIWebSearchProvider(
             api_key=api_key,
             base_url=settings.resolved_web_search_base_url(),
-            model=config.model,
+            model=settings.resolved_web_search_model(),
             provider_version=config.provider_version,
             request_timeout_seconds=config.request_timeout_seconds,
             max_output_tokens=config.max_output_tokens,
             max_evidence_chars=config.max_evidence_chars,
         )
     raise ProviderError(
-        f"Unsupported web-search backend: {config.backend!r}",
+        f"Unsupported web-search backend: {backend!r}",
         provider_name="web_search",
     )

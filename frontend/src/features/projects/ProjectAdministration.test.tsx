@@ -117,6 +117,15 @@ function effectiveConfig(activeRevisionId: string | null): EffectiveProjectAICon
         minimum_claim_token_coverage: 0.2,
         minimum_reranker_evidence_score: 0.4,
       },
+      web_search: {
+        enabled: true,
+        backend: "openai",
+        model: "o1-test",
+        max_results: 8,
+        max_evidence_chars: 12_000,
+        max_output_tokens: 4096,
+        request_timeout_seconds: 45,
+      },
       domain_instructions: "",
       prompt_profile: "default",
       prompt_version: "v1",
@@ -252,6 +261,38 @@ test("saves query translation and rerank mode as sparse Project overrides", asyn
     rerank_mode: "cross_language",
   });
   expect(saved?.retrieval).not.toHaveProperty("rerank_enabled");
+});
+
+test("saves bounded web-search settings as sparse Project overrides", async () => {
+  mockProjectShell();
+  vi.spyOn(operatorApiClient, "getProjectAIConfig").mockResolvedValue(effectiveConfig(null));
+  vi.spyOn(operatorApiClient, "getProjectAIConfigHistory").mockResolvedValue([]);
+  vi.spyOn(operatorApiClient, "getProviderCapabilities").mockResolvedValue([capability]);
+  const create = vi.spyOn(operatorApiClient, "createProjectAIConfig").mockResolvedValue({
+    id: "22222222-2222-2222-2222-222222222222",
+    project_id: projectFixture.id,
+    revision_number: 1,
+    configuration_hash: "b".repeat(64),
+    configuration: { web_search: { enabled: true, max_results: 4 } },
+    reason: "Limit web sources",
+    created_by: "test-admin",
+    restored_from_revision_id: null,
+    created_at: "2026-08-16T00:00:00Z",
+  });
+
+  renderOperatorComponent(
+    <OperatorConsoleApp />,
+    `/projects?project=${projectFixture.id}&section=ai-config`,
+  );
+
+  await userEvent.click(await screen.findByLabelText("Web search: inherit global"));
+  await userEvent.clear(screen.getByLabelText("Web results"));
+  await userEvent.type(screen.getByLabelText("Web results"), "4");
+  await userEvent.type(screen.getByLabelText("Revision reason"), "Limit web sources");
+  await userEvent.click(screen.getByRole("button", { name: "Create and activate revision" }));
+
+  await waitFor(() => expect(create).toHaveBeenCalled());
+  expect(create.mock.calls[0]?.[1].web_search).toEqual({ enabled: true, max_results: 4 });
 });
 
 test("keeps a created Project when optional AI settings fail to save", async () => {

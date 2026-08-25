@@ -583,14 +583,16 @@ class WebSearchBackend(StrEnum):
 class WebSearchConfig(BaseModel):
     """Bounded external search used only by explicit chat response modes."""
 
-    backend: WebSearchBackend = WebSearchBackend.DISABLED
-    model: str = "gpt-5.6-luna"
+    # Omitted connection/model settings inherit the normal OpenAI LLM settings.
+    # ``disabled`` remains an explicit deployment kill switch.
+    backend: WebSearchBackend | None = None
+    model: str | None = Field(default=None, min_length=1, max_length=128)
     max_results: int = Field(default=8, ge=1, le=20)
     max_evidence_chars: int = Field(default=12_000, ge=500, le=100_000)
     max_output_tokens: int = Field(default=4096, ge=256, le=32_000)
     request_timeout_seconds: float = Field(default=45.0, ge=1.0, le=300.0)
     openai_api_key: str | None = None
-    openai_base_url: str = "https://api.openai.com"
+    openai_base_url: str | None = None
     provider_version: str = "responses-web-search-v1"
 
 
@@ -900,10 +902,22 @@ class Settings(BaseSettings):
         """Prefer a dedicated search key, then the existing OpenAI LLM key."""
         return (self.web_search.openai_api_key or self.llm.openai_api_key or "").strip()
 
+    def resolved_web_search_backend(self) -> WebSearchBackend:
+        """Prefer explicit search configuration, then a compatible LLM backend."""
+        if self.web_search.backend is not None:
+            return self.web_search.backend
+        if self.llm.backend is LLMBackend.OPENAI:
+            return WebSearchBackend.OPENAI
+        return WebSearchBackend.DISABLED
+
+    def resolved_web_search_model(self) -> str:
+        """Prefer a dedicated search model, then the resolved LLM model."""
+        return self.web_search.model or self.llm.model
+
     def resolved_web_search_base_url(self) -> str:
         """Prefer an explicit search endpoint, then the OpenAI LLM endpoint."""
-        configured = self.web_search.openai_base_url.rstrip("/")
-        if configured != "https://api.openai.com":
+        configured = (self.web_search.openai_base_url or "").rstrip("/")
+        if configured:
             return configured
         return self.llm.openai_base_url.rstrip("/")
 

@@ -7,10 +7,12 @@ from typing import Any
 import httpx
 import pytest
 
+from app.core.config import Settings
 from app.platform.providers.errors import ProviderTimeoutError
 from app.platform.providers.implementations.openai_web_search import (
     OpenAIWebSearchProvider,
 )
+from app.platform.providers.implementations.web_search_factory import create_web_search_provider
 
 pytestmark = pytest.mark.unit
 
@@ -25,6 +27,21 @@ def _provider() -> OpenAIWebSearchProvider:
         max_output_tokens=1000,
         max_evidence_chars=4000,
     )
+
+
+def test_factory_inherits_openai_llm_model_when_web_settings_are_omitted() -> None:
+    provider = create_web_search_provider(
+        Settings(
+            llm={
+                "backend": "openai",
+                "model": "shared-model",
+                "openai_api_key": "test-key",
+            }
+        )
+    )
+
+    assert provider.provider_name == "openai"
+    assert provider.model_name == "shared-model"
 
 
 async def test_search_requires_live_tool_and_normalizes_cited_evidence(

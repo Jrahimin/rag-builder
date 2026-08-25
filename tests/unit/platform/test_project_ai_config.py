@@ -64,6 +64,67 @@ def test_project_can_override_response_mode_when_web_provider_is_configured() ->
     assert resolution.secret_free_snapshot()["schema_version"] == 2
 
 
+def test_web_search_inherits_openai_llm_settings_when_unspecified() -> None:
+    settings = Settings(
+        llm={
+            "backend": "openai",
+            "model": "shared-model",
+            "openai_api_key": "test-key",
+            "openai_base_url": "https://gateway.example/v1",
+        },
+    )
+    revision = _revision({"chat": {"response_mode": "indexed_then_web"}})
+
+    resolution = resolve_project_ai_config(settings, revision)
+    effective = apply_effective_ai_config(settings, resolution)
+
+    assert effective.resolved_web_search_backend().value == "openai"
+    assert effective.resolved_web_search_model() == "shared-model"
+    assert effective.resolved_web_search_api_key() == "test-key"
+    assert effective.resolved_web_search_base_url() == "https://gateway.example/v1"
+    assert resolution.origins["web_search.model"] == "global_llm"
+    assert resolution.configuration.web_search.max_results == 8
+    assert resolution.configuration.web_search.max_evidence_chars == 12_000
+
+
+def test_project_can_disable_or_bound_web_search() -> None:
+    settings = Settings(
+        llm={"backend": "openai", "model": "shared-model", "openai_api_key": "test-key"},
+    )
+    disabled = _revision(
+        {
+            "chat": {"response_mode": "indexed_then_web"},
+            "web_search": {"enabled": False},
+        }
+    )
+    with pytest.raises(BadRequestError) as exc_info:
+        resolve_project_ai_config(settings, disabled)
+    assert exc_info.value.code == "web_search_disabled_for_project"
+
+    revision = _revision(
+        {
+            "chat": {"response_mode": "indexed_and_web"},
+            "web_search": {
+                "enabled": True,
+                "model": "project-search-model",
+                "max_results": 4,
+                "max_evidence_chars": 4000,
+                "max_output_tokens": 800,
+                "request_timeout_seconds": 20,
+            },
+        }
+    )
+    resolution = resolve_project_ai_config(settings, revision)
+    effective = apply_effective_ai_config(settings, resolution)
+
+    assert resolution.configuration.web_search.model == "project-search-model"
+    assert resolution.origins["web_search.max_results"] == "project"
+    assert effective.web_search.max_results == 4
+    assert effective.web_search.max_evidence_chars == 4000
+    assert effective.web_search.max_output_tokens == 800
+    assert effective.web_search.request_timeout_seconds == 20
+
+
 def test_web_response_mode_rejects_missing_provider() -> None:
     revision = _revision({"chat": {"response_mode": "indexed_and_web"}})
 
