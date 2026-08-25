@@ -43,7 +43,8 @@ async def test_create_conversation_and_send_message(db_client: AsyncClient) -> N
     assert body["data"]["user_message"]["content"] == "What is APE?"
     assistant = body["data"]["assistant_message"]
     assert assistant["content"] == (
-        "I don't have enough evidence in the indexed sources to answer that question."
+        "I couldn\u2019t find enough information in the available knowledge base to answer that "
+        "confidently."
     )
     assert assistant["grounded"] is False
     assert assistant["insufficient_evidence_reason"] == "no_retrieval_results"
