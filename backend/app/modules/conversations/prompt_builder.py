@@ -2,10 +2,21 @@
 
 from __future__ import annotations
 
-from app.models.message import Message, MessageRole
+from collections.abc import Sequence
+from dataclasses import dataclass
+
+from app.models.message import MessageRole
 from app.modules.conversations.ports import ContextChunk
 from app.modules.conversations.prompts.registry import PromptTemplate
 from app.platform.providers.contracts.llm import ChatMessage, ChatRole
+
+
+@dataclass(frozen=True, slots=True)
+class PromptHistoryMessage:
+    """Loaded history fields needed to build a provider prompt."""
+
+    role: MessageRole
+    content: str
 
 
 class PromptBuilder:
@@ -16,7 +27,7 @@ class PromptBuilder:
         *,
         template: PromptTemplate,
         context_chunks: list[ContextChunk],
-        history: list[Message],
+        history: Sequence[PromptHistoryMessage],
         user_question: str,
         domain_instructions: str = "",
         prompt_profile: str = "default",

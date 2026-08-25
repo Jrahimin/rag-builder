@@ -20,7 +20,7 @@ from app.modules.conversations.citation_snapshots import build_citation_snapshot
 from app.modules.conversations.context_builder import ContextBuilder
 from app.modules.conversations.grounding_service import EvidenceDecision, GroundingService
 from app.modules.conversations.ports import ContextChunk, ContextRetrievalResult, RetrievalPort
-from app.modules.conversations.prompt_builder import PromptBuilder
+from app.modules.conversations.prompt_builder import PromptBuilder, PromptHistoryMessage
 from app.modules.conversations.prompts.registry import PromptTemplate, require_prompt_template
 from app.modules.conversations.repositories.conversation_repository import ConversationRepository
 from app.modules.conversations.repositories.message_repository import MessageRepository
@@ -94,7 +94,7 @@ class _PreparedTurn:
     selected: list[ContextChunk]
     knowledge_selected: list[ContextChunk]
     chunks: list[ContextChunk]
-    history: list[Message]
+    history: list[PromptHistoryMessage]
     messages: list[ChatMessage]
     temperature: float | None
     llm: BaseLLMProvider
@@ -468,6 +468,20 @@ class ChatService:
             rerank_status=str(retrieval_result.diagnostics.get("rerank_status") or "") or None,
         )
 
+        # Capture all ORM-backed prompt inputs before closing the read
+        # transaction. AsyncSession.rollback() expires ORM attributes, so
+        # using ``conversation`` or ``history`` afterward would trigger
+        # implicit IO from synchronous attribute access (MissingGreenlet).
+        prompt_history = [
+            PromptHistoryMessage(role=message.role, content=message.content) for message in history
+        ]
+        prompt_version = (
+            conversation.system_prompt_version or self._chat_config.system_prompt_version
+        )
+        template = require_prompt_template(prompt_version)
+        llm = self._resolve_llm(conversation)
+        temperature = self._effective_temperature(conversation)
+
         mode = self._chat_config.response_mode
         web_diagnostics: dict[str, Any] = {
             "status": "not_requested",
@@ -551,29 +565,21 @@ class ChatService:
         )
         web_diagnostics["fallback_used"] = web_fallback_used
 
-        prompt_version = (
-            conversation.system_prompt_version or self._chat_config.system_prompt_version
-        )
-        template = require_prompt_template(prompt_version)
-
         messages = self._prompt_builder.build(
             template=template,
             context_chunks=selected,
-            history=history,
+            history=prompt_history,
             user_question=request.content,
             domain_instructions=self._domain_instructions,
             prompt_profile=self._prompt_profile,
         )
-        llm = self._resolve_llm(conversation)
-        temperature = self._effective_temperature(conversation)
-
         return _PreparedTurn(
             prompt_version=prompt_version,
             template=template,
             selected=selected,
             knowledge_selected=knowledge_selected,
             chunks=chunks,
-            history=history,
+            history=prompt_history,
             messages=messages,
             temperature=temperature,
             llm=llm,
