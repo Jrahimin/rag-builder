@@ -471,6 +471,14 @@ class EvidenceGateMode(StrEnum):
     OBSERVE = "observe"
 
 
+class ResponseMode(StrEnum):
+    """Evidence workflows available to Project chat."""
+
+    INDEXED_ONLY = "indexed_only"
+    INDEXED_THEN_WEB = "indexed_then_web"
+    INDEXED_AND_WEB = "indexed_and_web"
+
+
 class RetrievalConfig(BaseModel):
     """Retrieval pipeline and search defaults.
 
@@ -563,6 +571,27 @@ class LLMConfig(BaseModel):
     gemini_api_key: str | None = None
     gemini_base_url: str = "https://generativelanguage.googleapis.com/v1beta"
     provider_version: str = "1"
+
+
+class WebSearchBackend(StrEnum):
+    """External web-search providers."""
+
+    DISABLED = "disabled"
+    OPENAI = "openai"
+
+
+class WebSearchConfig(BaseModel):
+    """Bounded external search used only by explicit chat response modes."""
+
+    backend: WebSearchBackend = WebSearchBackend.DISABLED
+    model: str = "gpt-5.6-luna"
+    max_results: int = Field(default=8, ge=1, le=20)
+    max_evidence_chars: int = Field(default=12_000, ge=500, le=100_000)
+    max_output_tokens: int = Field(default=4096, ge=256, le=32_000)
+    request_timeout_seconds: float = Field(default=45.0, ge=1.0, le=300.0)
+    openai_api_key: str | None = None
+    openai_base_url: str = "https://api.openai.com"
+    provider_version: str = "responses-web-search-v1"
 
 
 class QueryTranslationConfig(BaseModel):
@@ -683,11 +712,12 @@ class ChatConfig(BaseModel):
     measuring a corpus in Test Lab.
     """
 
+    response_mode: ResponseMode = ResponseMode.INDEXED_ONLY
     retrieval_top_k: int = Field(default=10, ge=1, le=100)
     max_context_chunks: int = Field(default=8, ge=1, le=50)
     context_char_budget: int = Field(default=12_000, ge=500, le=200_000)
     max_history_messages: int = Field(default=20, ge=0, le=200)
-    system_prompt_version: str = "v4"
+    system_prompt_version: str = "v5"
     include_citations: bool = True
     citation_excerpt_max_chars: int = Field(default=200, ge=0, le=2000)
     evidence_score_mode: EvidenceScoreMode = EvidenceScoreMode.WHOLE_CHUNK
@@ -706,7 +736,8 @@ class ChatConfig(BaseModel):
     minimum_claim_semantic_score: float = Field(default=0.25, ge=0.0, le=1.0)
     claim_semantic_reject_floor: float = Field(default=0.15, ge=0.0, le=1.0)
     insufficient_evidence_message: str = (
-        "I don't have enough evidence in the indexed sources to answer that question."
+        "I couldn\u2019t find enough information in the available knowledge base to answer that "
+        "confidently."
     )
     auto_title_max_chars: int = Field(default=80, ge=10, le=255)
 
@@ -841,6 +872,7 @@ class Settings(BaseSettings):
     embedding: EmbeddingConfig = Field(default_factory=EmbeddingConfig)
     retrieval: RetrievalConfig = Field(default_factory=RetrievalConfig)
     llm: LLMConfig = Field(default_factory=LLMConfig)
+    web_search: WebSearchConfig = Field(default_factory=WebSearchConfig)
     query_translation: QueryTranslationConfig = Field(default_factory=QueryTranslationConfig)
     cohere: CohereConfig = Field(default_factory=CohereConfig)
     reranker: RerankerProviderConfig = Field(default_factory=RerankerProviderConfig)
@@ -863,6 +895,17 @@ class Settings(BaseSettings):
         if shared != "https://api.cohere.com":
             return self.cohere.base_url
         return self.reranker.cohere_base_url
+
+    def resolved_web_search_api_key(self) -> str:
+        """Prefer a dedicated search key, then the existing OpenAI LLM key."""
+        return (self.web_search.openai_api_key or self.llm.openai_api_key or "").strip()
+
+    def resolved_web_search_base_url(self) -> str:
+        """Prefer an explicit search endpoint, then the OpenAI LLM endpoint."""
+        configured = self.web_search.openai_base_url.rstrip("/")
+        if configured != "https://api.openai.com":
+            return configured
+        return self.llm.openai_base_url.rstrip("/")
 
 
 @lru_cache

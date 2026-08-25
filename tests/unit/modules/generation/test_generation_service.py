@@ -14,6 +14,7 @@ from app.core.config import (
     GenerationRetentionMode,
     LLMBackend,
     LLMConfig,
+    Settings,
 )
 from app.core.exceptions import (
     BadRequestError,
@@ -30,6 +31,7 @@ from app.modules.generation.services.generation_service import GenerationService
 from app.modules.generation.services.payload_validation_service import (
     PayloadValidationService,
 )
+from app.platform.config.project_ai import ConfigRevisionRecord, stable_hash
 from app.platform.providers.contracts.llm import (
     BaseLLMProvider,
     ChatCompletionResult,
@@ -130,6 +132,8 @@ def _service(
     project_id: uuid.UUID,
     llm: BaseLLMProvider,
     config: GenerationConfig | None = None,
+    settings: Settings | None = None,
+    active_revision: ConfigRevisionRecord | None = None,
 ) -> GenerationService:
     return GenerationService(
         session=session,
@@ -143,6 +147,8 @@ def _service(
             max_tokens=512,
         ),
         resolve_llm=lambda _provider, _model: llm,
+        settings=settings,
+        active_revision=active_revision,
     )
 
 
@@ -184,8 +190,53 @@ async def test_success_persists_validated_output_usage_and_trace(
     assert response.request_id == "req-1"
     assert response.trace_id == "trace-1"
     assert response.schema_version.startswith("custom-")
+    assert response.source_provenance == "none"
+    assert response.context_provenance == "caller_context"
+    assert response.web_enrichment_used is False
+    assert response.resolved_chat_response_mode == "indexed_only"
+    generation = repository.add.call_args.args[0]
+    policy = generation.config_provenance["contextual_generation_policy"]
+    assert policy["context_authority"] == "caller_context"
+    assert policy["web_enrichment_allowed"] is False
     assert session.commit.await_count == 2
     assert llm.calls == 1
+
+
+async def test_chat_web_policy_does_not_enrich_or_block_contextual_generation(
+    session: AsyncMock,
+    repository: AsyncMock,
+    project_id: uuid.UUID,
+) -> None:
+    payload = {"chat": {"response_mode": "indexed_then_web"}}
+    revision = ConfigRevisionRecord(
+        id=uuid.uuid4(),
+        revision_number=1,
+        configuration_hash=stable_hash(payload),
+        configuration=payload,
+    )
+    service = _service(
+        session=session,
+        repository=repository,
+        project_id=project_id,
+        llm=StaticLLM('"Thirty days"'),
+        settings=Settings(),
+        active_revision=revision,
+    )
+
+    response = await service.create(
+        _request(prompt_version="v1"),
+        idempotency_key=None,
+        request_id="req-web-policy",
+        trace_id="trace-web-policy",
+    )
+
+    assert response.resolved_chat_response_mode == "indexed_then_web"
+    assert response.web_enrichment_used is False
+    assert response.context_provenance == "caller_context"
+    policy = repository.add.call_args.args[0].config_provenance[
+        "contextual_generation_policy"
+    ]
+    assert policy["web_enrichment_allowed"] is False
 
 
 def test_invalid_context_root_is_rejected() -> None:

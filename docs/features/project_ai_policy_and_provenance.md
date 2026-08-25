@@ -20,6 +20,11 @@ policy. All-inherit Create Project and AI Configuration submits create no revisi
 create succeeds and the optional AI-config save fails, the Project is kept on inherited defaults
 and the console offers a retry on AI Configuration.
 
+Chat policy also contains sparse `response_mode`: `indexed_only` (global default),
+`indexed_then_web`, or `indexed_and_web`. Web-enabled revisions require a configured deployment
+search provider and the v5 source-aware prompt. Existing revisions omit the field and continue to
+inherit `indexed_only`.
+
 Only Super Admin operator endpoints can read or write revisions. Writes use an expected active
 revision ID for optimistic concurrency. History is append-only, and restore copies an old payload
 into a new revision.

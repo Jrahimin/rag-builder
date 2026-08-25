@@ -16,6 +16,7 @@ conversations_router ──► ConversationService (CRUD)
                                         ├──► GroundingService
                                         ├──► PromptBuilder
                                         ├──► BaseLLMProvider (per-conversation resolve)
+                                        ├──► BaseWebSearchProvider (policy-selected)
                                         └──► build_citation_snapshots
 ```
 
@@ -25,7 +26,8 @@ conversations_router ──► ConversationService (CRUD)
 | **ChatService** | Tx1 user msg → retrieve → prompt → LLM → Tx2 assistant msg |
 | **RetrievalPort** | Module-local seam; adapter wraps `SearchService` |
 | **ContextBuilder** | Dedupe + budget trim (preserves retrieval order) |
-| **PromptBuilder** | Versioned system prompt + context + history |
+| **PromptBuilder** | Versioned system prompt + separated knowledge/web evidence + history |
+| **BaseWebSearchProvider** | Vendor-neutral current-web evidence; never selects the workflow |
 | **build_citation_snapshots** | Durable citation JSONB for assistant messages |
 | **GroundingService** | Pre-generation evidence decision and post-generation claim/source mapping |
 
@@ -39,7 +41,8 @@ POST /messages
   → ContextBuilder → GroundingService evidence assessment
   → enforce: insufficient score skips LLM and persists stable reason
   → observe: same diagnostics, selected context still goes to PromptBuilder
-  → sufficient or observed: PromptBuilder v4 → LLM generate / stream → map claims
+  → response_mode selects indexed-only, conditional web fallback, or combined evidence
+  → sufficient evidence: PromptBuilder v5 → LLM generate / stream → map claims
   → Tx2: persist assistant (+ claims, citations, metadata, auto-title) → commit
 ```
 
@@ -50,10 +53,13 @@ LLM failure after Tx1: user message retained, no assistant row.
 | Section | Key vars | Role |
 | ------- | -------- | ---- |
 | `LLMConfig` | `APE_LLM__*` | Deployment defaults; per-conversation overrides at create/update |
-| `ChatConfig` | `APE_CHAT__*` | Retrieval top-k, context budgets, history window, prompt version |
+| `ChatConfig` | `APE_CHAT__*` | Response mode, retrieval top-k, context budgets, history, prompt |
+| `WebSearchConfig` | `APE_WEB_SEARCH__*` | Provider/model, timeout, result and evidence bounds |
 | `RetrievalConfig` | `APE_RETRIEVAL__EMBEDDING_SET_VERSION` | Snapshotted on assistant messages |
 
-Notable `ChatConfig` keys: `citation_excerpt_max_chars`, `minimum_semantic_evidence_score`,
+`response_mode` defaults to `indexed_only` and is a sparse/versioned Project override. The other
+values are `indexed_then_web` and `indexed_and_web`. Notable `ChatConfig` keys also include
+`citation_excerpt_max_chars`, `minimum_semantic_evidence_score`,
 `evidence_gate_mode` (`enforce` or `observe`), `minimum_reranker_evidence_score`,
 `lexical_corroboration_floor_score`, `lexical_corroboration_coverage`,
 `minimum_claim_token_coverage`, and `include_citations`.
@@ -66,6 +72,9 @@ Notable `ChatConfig` keys: `citation_excerpt_max_chars`, `minimum_semantic_evide
   score decision even when `observe` still generates. `metadata.retrieval_trace` includes
   translation status/languages/query/provider and per-candidate branch provenance. Translated query
   text stays in diagnostics only; citations and evidence excerpts remain original chunk text.
+  `source_provenance` and `web_search` record the selected source family, fallback use, provider,
+  status, and fail-closed errors. Web citations store URL, title, retrieval time, and provider
+  separately from Knowledge document/chunk locations.
 
 Soft-deleting a conversation sets `deleted_at` on the conversation only; messages remain for audit.
 
@@ -93,6 +102,11 @@ is applied, the evidence gate uses calibrated reranker relevance; otherwise it k
 cosine plus lexical rescue. `APE_CHAT__EVIDENCE_GATE_MODE=enforce` blocks generation on a failed
 score. `observe` records that decision without blocking. Empty retrieval still refuses.
 
+Web-enabled modes never search for document-, metadata-, or `as_of`-scoped requests. Provider
+timeouts, failures, and empty results do not permit model-memory fallback. Clear social turns are
+handled without an awkward knowledge refusal, while referential follow-ups reuse the prior user
+question for retrieval.
+
 ## Testing strategy
 
 - Unit: `ChatService` (Tx1/Tx2, refusal, observe/enforce gate, provider resolve, errors, stream cancel),
@@ -112,5 +126,6 @@ score. `observe` records that decision without blocking. Empty retrieval still r
 - [Retrieval](./retrieval_module.md)
 - [ADR-008](../architecture/adr/008-chat-on-semantic-baseline.md)
 - [ADR-014](../architecture/adr/014-evidence-quality-and-grounded-answers.md)
+- [ADR-019](../architecture/adr/019-grounded-response-modes.md)
 - [Implementation plan](../plans/conversation_module_plan.md)
 - [RAG journey (learning)](../learning/conversation_rag_journey.md)

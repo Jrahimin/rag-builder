@@ -7,7 +7,7 @@ from typing import Any
 
 from app.core.config import ChatConfig
 from app.modules.conversations.ports import ContextChunk
-from app.modules.conversations.schemas.message import CitationSnapshot
+from app.modules.conversations.schemas.message import CitationSnapshot, CitationSourceKind
 
 
 def build_citation_snapshots(
@@ -26,17 +26,19 @@ def build_citation_snapshots(
         excerpt: str | None = None
         if max_excerpt > 0:
             excerpt = chunk.content[:max_excerpt]
+        is_web = chunk.metadata.get("source_kind") == CitationSourceKind.WEB.value
         snapshot = CitationSnapshot(
-            chunk_id=chunk.chunk_id,
-            project_id=project_id,
-            document_id=chunk.document_id,
+            source_kind=(CitationSourceKind.WEB if is_web else CitationSourceKind.KNOWLEDGE),
+            chunk_id=None if is_web else chunk.chunk_id,
+            project_id=None if is_web else project_id,
+            document_id=None if is_web else chunk.document_id,
             filename=chunk.filename,
-            chunk_index=chunk.chunk_index,
+            chunk_index=None if is_web else chunk.chunk_index,
             page_number=chunk.page_number,
             char_start=chunk.char_start,
             char_end=chunk.char_end,
-            score=chunk.score,
-            chunk_hash=chunk.chunk_hash,
+            score=None if is_web else chunk.score,
+            chunk_hash=None if is_web else chunk.chunk_hash,
             excerpt=excerpt,
             processing_version=chunk.metadata.get("processing_version"),
             index_build_id=chunk.metadata.get("index_build_id"),
@@ -57,6 +59,10 @@ def build_citation_snapshots(
             configuration_hash=chunk.metadata.get("configuration_hash"),
             config_provenance=config_provenance,
             prompt_version=prompt_version,
+            web_url=str(chunk.metadata.get("web_url")) if is_web else None,
+            web_title=str(chunk.metadata.get("web_title")) if is_web else None,
+            web_retrieved_at=chunk.metadata.get("web_retrieved_at") if is_web else None,
+            web_provider=str(chunk.metadata.get("web_provider")) if is_web else None,
         )
         snapshots.append(snapshot.model_dump(mode="json"))
     return snapshots

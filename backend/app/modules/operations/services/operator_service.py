@@ -259,6 +259,12 @@ class OperatorService:
                 provider_version=self._settings.llm.provider_version,
                 credential_configured=llm_credential_configured(self._settings.llm),
             ),
+            web_search=ProviderConfiguration(
+                backend=self._settings.web_search.backend.value,
+                model=self._settings.web_search.model,
+                provider_version=self._settings.web_search.provider_version,
+                credential_configured=bool(self._settings.resolved_web_search_api_key()),
+            ),
             embedding=ProviderConfiguration(
                 backend=self._settings.embedding.backend.value,
                 model=self._settings.embedding.model,
@@ -276,6 +282,7 @@ class OperatorService:
             storage_backend=self._settings.storage.backend.value,
             job_backend=self._settings.jobs.backend.value,
             retrieval_strategy=self._settings.retrieval.strategy.value,
+            chat_response_mode=self._settings.chat.response_mode.value,
             embedding_set_version=self._settings.retrieval.embedding_set_version,
             generation_default_retention=self._settings.generation.default_retention.value,
             generation_full_retention_allowed=self._settings.generation.allow_full_retention,

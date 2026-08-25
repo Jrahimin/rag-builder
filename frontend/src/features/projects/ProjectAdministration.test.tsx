@@ -104,6 +104,7 @@ function effectiveConfig(activeRevisionId: string | null): EffectiveProjectAICon
         query_translation_enabled: false,
       },
       chat: {
+        response_mode: "indexed_only",
         max_context_chunks: 8,
         context_char_budget: 12_000,
         max_history_messages: 10,

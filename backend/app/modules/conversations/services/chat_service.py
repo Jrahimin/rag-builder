@@ -5,34 +5,41 @@ from __future__ import annotations
 import time
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import Any
 
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import ChatConfig, LLMConfig, RetrievalConfig
+from app.core.config import ChatConfig, LLMConfig, ResponseMode, RetrievalConfig, WebSearchConfig
 from app.core.exceptions import NotFoundError, ServiceUnavailableError
 from app.models.conversation import Conversation
 from app.models.message import Message, MessageRole
 from app.modules.conversations.citation_snapshots import build_citation_snapshots
 from app.modules.conversations.context_builder import ContextBuilder
 from app.modules.conversations.grounding_service import EvidenceDecision, GroundingService
-from app.modules.conversations.ports import ContextChunk, RetrievalPort
+from app.modules.conversations.ports import ContextChunk, ContextRetrievalResult, RetrievalPort
 from app.modules.conversations.prompt_builder import PromptBuilder
 from app.modules.conversations.prompts.registry import PromptTemplate, require_prompt_template
 from app.modules.conversations.repositories.conversation_repository import ConversationRepository
 from app.modules.conversations.repositories.message_repository import MessageRepository
 from app.modules.conversations.schemas.message import (
     ChatTurnResponse,
+    CitationSourceKind,
     MessageResponse,
     MessageSendRequest,
+    SourceProvenance,
 )
+from app.platform.domain.language_detection import detect_language
 from app.platform.domain.lifecycle_service import get_or_raise, require_not_deleted
 from app.platform.domain.transactions import commit_refresh
 from app.platform.providers.contracts.embedding import BaseEmbeddingProvider
 from app.platform.providers.contracts.llm import BaseLLMProvider, ChatMessage, ChatUsage
+from app.platform.providers.contracts.web_search import (
+    BaseWebSearchProvider,
+    WebSearchEvidence,
+)
 from app.platform.providers.errors import ProviderError
 
 logger = structlog.get_logger(__name__)
@@ -51,6 +58,7 @@ class _PreparedTurn:
     prompt_version: str
     template: PromptTemplate
     selected: list[ContextChunk]
+    knowledge_selected: list[ContextChunk]
     chunks: list[ContextChunk]
     history: list[Message]
     messages: list[ChatMessage]
@@ -60,6 +68,10 @@ class _PreparedTurn:
     evidence: EvidenceDecision
     retrieval_diagnostics: dict[str, Any]
     grounding: GroundingService
+    source_provenance: SourceProvenance
+    web_search_diagnostics: dict[str, Any]
+    web_fallback_used: bool = False
+    non_knowledge_response: str | None = None
 
 
 class ChatService:
@@ -82,6 +94,8 @@ class ChatService:
         config_provenance: dict[str, Any] | None = None,
         domain_instructions: str = "",
         prompt_profile: str = "default",
+        web_search: BaseWebSearchProvider | None = None,
+        web_search_config: WebSearchConfig | None = None,
     ) -> None:
         self._session = session
         self._project_id = project_id
@@ -96,6 +110,8 @@ class ChatService:
         self._config_provenance = config_provenance or {}
         self._domain_instructions = domain_instructions
         self._prompt_profile = prompt_profile
+        self._web_search = web_search
+        self._web_search_config = web_search_config or WebSearchConfig()
         self._context_builder = ContextBuilder(chat_config)
         self._prompt_builder = PromptBuilder()
         self._grounding = GroundingService(
@@ -126,11 +142,39 @@ class ChatService:
             request=request,
         )
 
-        if self._grounding.blocks_generation(prepared.evidence):
+        if prepared.non_knowledge_response is not None:
             assistant_message = await self._persist_assistant_turn(
                 conversation=conversation,
                 prepared=prepared,
-                content=self._chat_config.insufficient_evidence_message,
+                content=prepared.non_knowledge_response,
+                finish_reason="conversation",
+                input_tokens=0,
+                output_tokens=0,
+                provider=prepared.llm.provider_name,
+                model=prepared.llm.model_name,
+                generation_ms=0,
+                total_ms=int((time.perf_counter() - started) * 1000),
+                user_content_for_title=request.content,
+                streamed=False,
+                input_tokens_logged=0,
+                output_tokens_logged=0,
+                generation_ran=False,
+                non_knowledge_turn=True,
+            )
+            return ChatTurnResponse(
+                user_message=user_message_response,
+                assistant_message=self._to_response(
+                    assistant_message,
+                    conversation_provider=conversation_provider,
+                    conversation_model=conversation_model,
+                ),
+            )
+
+        if not prepared.selected:
+            assistant_message = await self._persist_assistant_turn(
+                conversation=conversation,
+                prepared=prepared,
+                content=self._insufficient_content(prepared, request.content),
                 finish_reason="insufficient_evidence",
                 input_tokens=0,
                 output_tokens=0,
@@ -178,10 +222,11 @@ class ChatService:
         generation_ms = int((time.perf_counter() - generation_started) * 1000)
         total_ms = int((time.perf_counter() - started) * 1000)
 
+        content = self._with_web_fallback_notice(completion.content, prepared, request.content)
         assistant_message = await self._persist_assistant_turn(
             conversation=conversation,
             prepared=prepared,
-            content=completion.content,
+            content=content,
             finish_reason=completion.finish_reason,
             input_tokens=completion.usage.input_tokens,
             output_tokens=completion.usage.output_tokens,
@@ -227,8 +272,32 @@ class ChatService:
         if should_cancel is not None and await should_cancel():
             return
 
-        if self._grounding.blocks_generation(prepared.evidence):
-            content = self._chat_config.insufficient_evidence_message
+        if prepared.non_knowledge_response is not None:
+            content = prepared.non_knowledge_response
+            yield content
+            assistant_message = await self._persist_assistant_turn(
+                conversation=conversation,
+                prepared=prepared,
+                content=content,
+                finish_reason="conversation",
+                input_tokens=0,
+                output_tokens=0,
+                provider=prepared.llm.provider_name,
+                model=prepared.llm.model_name,
+                generation_ms=0,
+                total_ms=int((time.perf_counter() - started) * 1000),
+                user_content_for_title=request.content,
+                streamed=True,
+                input_tokens_logged=0,
+                output_tokens_logged=0,
+                generation_ran=False,
+                non_knowledge_turn=True,
+            )
+            yield self._done_event(assistant_message, conversation)
+            return
+
+        if not prepared.selected:
+            content = self._insufficient_content(prepared, request.content)
             yield content
             assistant_message = await self._persist_assistant_turn(
                 conversation=conversation,
@@ -252,7 +321,12 @@ class ChatService:
             return
 
         generation_started = time.perf_counter()
+        notice = self._web_fallback_notice(request.content) if prepared.web_fallback_used else ""
         content_parts: list[str] = []
+        if notice:
+            prefix = f"{notice}\n\n"
+            content_parts.append(prefix)
+            yield prefix
         finish_reason: str | None = None
         final_usage: ChatUsage | None = None
 
@@ -320,33 +394,6 @@ class ChatService:
         user_message: Message,
         request: MessageSendRequest,
     ) -> _PreparedTurn:
-        retrieval_started = time.perf_counter()
-        retrieval_result = await self._retrieval.retrieve(
-            query=request.content,
-            top_k=self._chat_config.retrieval_top_k,
-            document_id=request.document_id,
-            metadata_filter=request.metadata_filter or None,
-            as_of=request.as_of,
-        )
-        chunks = retrieval_result.chunks
-        retrieval_ms = int((time.perf_counter() - retrieval_started) * 1000)
-        selected = self._context_builder.select(chunks)
-        query_embedder = getattr(self._retrieval, "query_embedder", None)
-        grounding = (
-            GroundingService(self._chat_config, embedder=query_embedder)
-            if query_embedder is not None
-            else self._grounding
-        )
-        evidence = grounding.assess(
-            request.content,
-            selected,
-            rerank_status=str(retrieval_result.diagnostics.get("rerank_status") or "") or None,
-        )
-
-        prompt_version = (
-            conversation.system_prompt_version or self._chat_config.system_prompt_version
-        )
-        template = require_prompt_template(prompt_version)
         history_limit = self._chat_config.max_history_messages
         fetch_limit = history_limit + 1 if history_limit > 0 else 1
         history = await self._message_repository.list_recent_for_conversation(
@@ -355,6 +402,118 @@ class ChatService:
         )
         history = [message for message in history if message.id != user_message.id]
         history = history[-history_limit:] if history_limit > 0 else []
+        non_knowledge_response = _non_knowledge_response(request.content)
+        retrieval_query = _retrieval_query(request.content, history)
+
+        retrieval_started = time.perf_counter()
+        if non_knowledge_response is None:
+            retrieval_result = await self._retrieval.retrieve(
+                query=retrieval_query,
+                top_k=self._chat_config.retrieval_top_k,
+                document_id=request.document_id,
+                metadata_filter=request.metadata_filter or None,
+                as_of=request.as_of,
+            )
+        else:
+            retrieval_result = ContextRetrievalResult(
+                chunks=[],
+                diagnostics={"status": "skipped_non_knowledge_turn"},
+            )
+        chunks = retrieval_result.chunks
+        retrieval_ms = int((time.perf_counter() - retrieval_started) * 1000)
+        knowledge_selected = self._context_builder.select(chunks)
+        query_embedder = getattr(self._retrieval, "query_embedder", None)
+        grounding = (
+            GroundingService(self._chat_config, embedder=query_embedder)
+            if query_embedder is not None
+            else self._grounding
+        )
+        evidence = grounding.assess(
+            retrieval_query,
+            knowledge_selected,
+            rerank_status=str(retrieval_result.diagnostics.get("rerank_status") or "") or None,
+        )
+
+        mode = self._chat_config.response_mode
+        web_diagnostics: dict[str, Any] = {
+            "status": "not_requested",
+            "fallback_used": False,
+        }
+        web_chunks: list[ContextChunk] = []
+        scoped_request = bool(request.document_id or request.metadata_filter or request.as_of)
+        web_requested = non_knowledge_response is None and (
+            mode is ResponseMode.INDEXED_AND_WEB
+            or (mode is ResponseMode.INDEXED_THEN_WEB and not evidence.sufficient)
+        )
+        if web_requested and scoped_request:
+            web_diagnostics = {
+                "status": "suppressed_scoped_request",
+                "fallback_used": False,
+            }
+        elif web_requested and self._web_search is None:
+            web_diagnostics = {
+                "status": "provider_unavailable",
+                "fallback_used": False,
+                "error_code": "web_search_not_configured",
+            }
+        elif web_requested:
+            try:
+                web_search = self._web_search
+                if web_search is None:  # Defensive: the branch above handles normal composition.
+                    raise ProviderError(
+                        "Web search provider is unavailable",
+                        provider_name="web_search",
+                    )
+                web_result = await web_search.search(
+                    retrieval_query,
+                    max_results=self._web_search_config.max_results,
+                )
+                web_chunks = _web_context_chunks(web_result.evidence, web_result.provider)
+                web_diagnostics = {
+                    **web_result.diagnostics,
+                    "provider": web_result.provider,
+                    "model": web_result.model,
+                    "provider_version": web_result.provider_version,
+                    "fallback_used": (
+                        mode is ResponseMode.INDEXED_THEN_WEB and bool(web_chunks)
+                    ),
+                }
+            except ProviderError as exc:
+                web_diagnostics = {
+                    "status": "failed",
+                    "fallback_used": False,
+                    "provider": exc.provider_name,
+                    "error_code": exc.code,
+                    "retryable": exc.retryable,
+                }
+
+        knowledge_usable = not grounding.blocks_generation(evidence)
+        if non_knowledge_response is not None:
+            selected: list[ContextChunk] = []
+        elif mode is ResponseMode.INDEXED_ONLY:
+            selected = knowledge_selected if knowledge_usable else []
+        elif mode is ResponseMode.INDEXED_THEN_WEB:
+            selected = knowledge_selected if evidence.sufficient else web_chunks
+        else:
+            selected = _balanced_evidence(
+                knowledge_selected if knowledge_usable else [],
+                web_chunks,
+                self._context_builder,
+                self._chat_config,
+            )
+
+        source_provenance = _source_provenance(selected)
+        web_fallback_used = bool(
+            mode is ResponseMode.INDEXED_THEN_WEB
+            and not evidence.sufficient
+            and source_provenance is SourceProvenance.WEB
+        )
+        web_diagnostics["fallback_used"] = web_fallback_used
+
+        prompt_version = (
+            conversation.system_prompt_version or self._chat_config.system_prompt_version
+        )
+        template = require_prompt_template(prompt_version)
 
         messages = self._prompt_builder.build(
             template=template,
@@ -373,6 +532,7 @@ class ChatService:
             prompt_version=prompt_version,
             template=template,
             selected=selected,
+            knowledge_selected=knowledge_selected,
             chunks=chunks,
             history=history,
             messages=messages,
@@ -382,6 +542,10 @@ class ChatService:
             evidence=evidence,
             retrieval_diagnostics=retrieval_result.diagnostics,
             grounding=grounding,
+            source_provenance=source_provenance,
+            web_search_diagnostics=web_diagnostics,
+            web_fallback_used=web_fallback_used,
+            non_knowledge_response=non_knowledge_response,
         )
 
     async def _persist_assistant_turn(
@@ -403,11 +567,14 @@ class ChatService:
         output_tokens_logged: int | None,
         insufficient_reason: object | None = None,
         generation_ran: bool = False,
+        non_knowledge_turn: bool = False,
     ) -> Message:
         reason_value = str(insufficient_reason) if insufficient_reason is not None else None
         grounding = await prepared.grounding.map_claims(content, prepared.selected)
         if reason_value is not None:
             grounding = type(grounding)(claims=[], grounded=False, citation_coverage=1.0)
+        elif non_knowledge_turn:
+            grounding = type(grounding)(claims=[], grounded=True, citation_coverage=1.0)
         metadata = self._build_metadata(
             retrieval_ms=prepared.retrieval_ms,
             generation_ms=generation_ms,
@@ -424,6 +591,10 @@ class ChatService:
         )
         metadata.update(
             {
+                "response_mode": self._chat_config.response_mode.value,
+                "source_provenance": prepared.source_provenance.value,
+                "web_search": prepared.web_search_diagnostics,
+                "non_knowledge_turn": non_knowledge_turn,
                 "grounded": grounding.grounded,
                 "citation_coverage": grounding.citation_coverage,
                 "unverified_claim_rate": grounding.unverified_claim_rate,
@@ -445,7 +616,7 @@ class ChatService:
         )
         citations = (
             []
-            if reason_value is not None
+            if reason_value is not None or non_knowledge_turn
             else self._citations_for(
                 prepared.selected,
                 prompt_version=prepared.prompt_version,
@@ -484,6 +655,9 @@ class ChatService:
             "evidence_gate_mode": evidence_gate["mode"],
             "evidence_gate_sufficient": evidence_gate["sufficient"],
             "generation_ran": generation_ran,
+            "response_mode": self._chat_config.response_mode.value,
+            "source_provenance": prepared.source_provenance.value,
+            "web_search_status": prepared.web_search_diagnostics.get("status"),
         }
         if input_tokens_logged is not None:
             log_kwargs["input_tokens"] = input_tokens_logged
@@ -516,6 +690,9 @@ class ChatService:
         )
         metadata.update(
             {
+                "response_mode": self._chat_config.response_mode.value,
+                "source_provenance": prepared.source_provenance.value,
+                "web_search": prepared.web_search_diagnostics,
                 "execution_status": "failed",
                 "execution_error_code": exc.code,
                 "execution_retryable": exc.retryable,
@@ -563,6 +740,9 @@ class ChatService:
             "claims": [item.model_dump(mode="json") for item in response.claims],
             "grounded": response.grounded,
             "insufficient_evidence_reason": response.insufficient_evidence_reason,
+            "response_mode": self._chat_config.response_mode.value,
+            "source_provenance": response.source_provenance.value,
+            "web_search": response.metadata.get("web_search", {}),
         }
 
     def _citations_for(
@@ -581,6 +761,52 @@ class ChatService:
             config_provenance=self._config_provenance,
             prompt_version=prompt_version,
         )
+
+    def _insufficient_content(self, prepared: _PreparedTurn, question: str) -> str:
+        status = str(prepared.web_search_diagnostics.get("status") or "")
+        bangla = detect_language(question).primary_language == "bn"
+        if status in {"failed", "provider_unavailable"}:
+            if bangla:
+                return (
+                    "উপলভ্য knowledge base-এ যথেষ্ট তথ্য পাইনি, এবং web search এখন "
+                    "সাময়িকভাবে অনুপলভ্য।"
+                )
+            return (
+                "I couldn\u2019t find enough information in the available knowledge base, and web "
+                "search is temporarily unavailable."
+            )
+        if status == "no_useful_results":
+            if bangla:
+                return (
+                    "উপলভ্য knowledge base বা সাম্প্রতিক web সূত্রে যথেষ্ট তথ্য পাইনি, তাই "
+                    "আত্মবিশ্বাসের সঙ্গে উত্তর দিতে পারছি না।"
+                )
+            return (
+                "I couldn\u2019t find enough information in the available knowledge base "
+                "or current "
+                "web sources to answer that confidently."
+            )
+        if bangla:
+            return (
+                "উপলভ্য knowledge base-এ আত্মবিশ্বাসের সঙ্গে উত্তর দেওয়ার মতো যথেষ্ট "
+                "তথ্য পাইনি।"
+            )
+        return self._chat_config.insufficient_evidence_message
+
+    def _with_web_fallback_notice(
+        self,
+        content: str,
+        prepared: _PreparedTurn,
+        question: str,
+    ) -> str:
+        if not prepared.web_fallback_used:
+            return content
+        return f"{self._web_fallback_notice(question)}\n\n{content}"
+
+    def _web_fallback_notice(self, question: str) -> str:
+        if detect_language(question).primary_language == "bn":
+            return "Knowledge base-এ এটি ছিল না, তাই আমি সাম্প্রতিক web সূত্র ব্যবহার করেছি।"
+        return "This wasn\u2019t covered in the knowledge base, so I used current web sources."
 
     async def _release_read_transaction(self) -> None:
         """Close any implicit read transaction before slow external I/O."""
@@ -839,6 +1065,126 @@ class ChatService:
             conversation_provider=conversation_provider,
             conversation_model=conversation_model,
         )
+
+
+def _web_context_chunks(
+    evidence: list[WebSearchEvidence],
+    provider: str,
+) -> list[ContextChunk]:
+    chunks: list[ContextChunk] = []
+    for index, item in enumerate(evidence):
+        document_id = uuid.uuid5(uuid.NAMESPACE_URL, item.url)
+        chunk_id = uuid.uuid5(uuid.NAMESPACE_URL, f"{item.url}#{item.evidence_id}")
+        chunks.append(
+            ContextChunk(
+                chunk_id=chunk_id,
+                document_id=document_id,
+                chunk_index=index,
+                content=item.content,
+                score=0.0,
+                filename=item.title or item.url,
+                chunk_hash=item.evidence_id,
+                char_start=0,
+                char_end=len(item.content),
+                metadata={
+                    "source_kind": CitationSourceKind.WEB.value,
+                    "source_title": item.title,
+                    "web_title": item.title,
+                    "web_url": item.url,
+                    "web_retrieved_at": item.retrieved_at.isoformat(),
+                    "web_provider": provider,
+                },
+            )
+        )
+    return chunks
+
+
+def _source_provenance(chunks: list[ContextChunk]) -> SourceProvenance:
+    has_web = any(
+        chunk.metadata.get("source_kind") == CitationSourceKind.WEB.value for chunk in chunks
+    )
+    has_knowledge = any(
+        chunk.metadata.get("source_kind") != CitationSourceKind.WEB.value for chunk in chunks
+    )
+    if has_web and has_knowledge:
+        return SourceProvenance.KNOWLEDGE_AND_WEB
+    if has_web:
+        return SourceProvenance.WEB
+    if has_knowledge:
+        return SourceProvenance.KNOWLEDGE
+    return SourceProvenance.NONE
+
+
+def _balanced_evidence(
+    knowledge: list[ContextChunk],
+    web: list[ContextChunk],
+    builder: ContextBuilder,
+    config: ChatConfig,
+) -> list[ContextChunk]:
+    """Interleave and bound both source families so one cannot crowd out the other."""
+    if not knowledge:
+        return builder.select(web)
+    if not web:
+        return builder.select(knowledge)
+    ordered: list[ContextChunk] = []
+    for index in range(max(len(knowledge), len(web))):
+        if index < len(knowledge):
+            ordered.append(knowledge[index])
+        if index < len(web):
+            ordered.append(web[index])
+    per_item_budget = max(1, config.context_char_budget // config.max_context_chunks)
+    bounded = [
+        replace(chunk, content=chunk.content[:per_item_budget])
+        if len(chunk.content) > per_item_budget
+        else chunk
+        for chunk in ordered
+    ]
+    return builder.select(bounded)
+
+
+def _retrieval_query(content: str, history: list[Message]) -> str:
+    normalized = " ".join(content.casefold().split())
+    followup_markers = (
+        "that",
+        "it ",
+        "previous",
+        "above",
+        "more simply",
+        "elaborate",
+        "explain more",
+        "এটা",
+        "সেটা",
+        "আরও",
+        "সহজ করে",
+    )
+    if not any(marker in normalized for marker in followup_markers):
+        return content
+    prior_user = next(
+        (message.content for message in reversed(history) if message.role is MessageRole.USER),
+        None,
+    )
+    return f"{prior_user}\nFollow-up: {content}" if prior_user else content
+
+
+def _non_knowledge_response(content: str) -> str | None:
+    normalized = " ".join(content.casefold().strip(" .,!?:;\u0964\u0965").split())
+    english = {
+        "hi": "Hello! How can I help with your knowledge base?",
+        "hello": "Hello! How can I help with your knowledge base?",
+        "hey": "Hello! How can I help with your knowledge base?",
+        "thanks": "You\u2019re welcome.",
+        "thank you": "You\u2019re welcome.",
+        "got it": "Glad that helped.",
+        "okay": "Okay.",
+        "ok": "Okay.",
+    }
+    bangla = {
+        "হাই": "হ্যালো! উপলভ্য knowledge base থেকে আমি কীভাবে সাহায্য করতে পারি?",
+        "হ্যালো": "হ্যালো! উপলভ্য knowledge base থেকে আমি কীভাবে সাহায্য করতে পারি?",
+        "ধন্যবাদ": "স্বাগতম।",
+        "বুঝতে পেরেছি": "ভালো লাগল।",
+    }
+    return english.get(normalized) or bangla.get(normalized)
 
 
 def _optional_uuid(value: object) -> uuid.UUID | None:

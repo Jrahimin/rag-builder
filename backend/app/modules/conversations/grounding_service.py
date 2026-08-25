@@ -12,6 +12,7 @@ from app.core.config import ChatConfig, EvidenceGateMode, EvidenceScoreMode
 from app.modules.conversations.ports import ContextChunk
 from app.modules.conversations.schemas.message import (
     AnswerClaim,
+    CitationSourceKind,
     ClaimEvidence,
     ClaimVerification,
     InsufficientEvidenceReason,
@@ -36,6 +37,10 @@ _LIST_PREAMBLE_PATTERN = regex.compile(
 )
 _POLARITY_PATTERN = regex.compile(r"^(?:yes|no|না|হ্যাঁ)[.\u0964]?\s*$", regex.IGNORECASE)
 _INSUFFICIENCY_MARKER = "not enough indexed evidence"
+_SOURCE_NOTICE_MARKERS = (
+    "this wasn\u2019t covered in the knowledge base, so i used current web sources",
+    "knowledge base-এ এটি ছিল না, তাই আমি সাম্প্রতিক web সূত্র ব্যবহার করেছি",
+)
 _ENGLISH_STOPWORDS = {
     "a",
     "an",
@@ -540,7 +545,10 @@ def _is_structural_segment(text: str) -> bool:
 
 def _is_insufficiency_statement(text: str) -> bool:
     """Prompted refusals are not factual claims about the corpus."""
-    return _INSUFFICIENCY_MARKER in text.casefold()
+    folded = text.casefold()
+    return _INSUFFICIENCY_MARKER in folded or any(
+        marker in folded for marker in _SOURCE_NOTICE_MARKERS
+    )
 
 
 def _evidence_snapshot(
@@ -563,6 +571,13 @@ def _evidence_snapshot(
         char_start=chunk.char_start,
         char_end=chunk.char_end,
         excerpt=excerpt,
+        source_kind=(
+            CitationSourceKind.WEB
+            if chunk.metadata.get("source_kind") == CitationSourceKind.WEB.value
+            else CitationSourceKind.KNOWLEDGE
+        ),
+        web_url=chunk.metadata.get("web_url"),
+        web_title=chunk.metadata.get("web_title"),
     )
 
 

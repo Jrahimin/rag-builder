@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator
 
@@ -115,6 +115,10 @@ class GenerationResponse(BaseModel):
     config_provenance: dict[str, object]
     index_build_id: str | None
     source_metadata_generation: int | None
+    source_provenance: Literal["none"] = "none"
+    context_provenance: Literal["caller_context"] = "caller_context"
+    web_enrichment_used: bool = False
+    resolved_chat_response_mode: str = "indexed_only"
     created_at: datetime
     completed_at: datetime | None
 
@@ -173,6 +177,21 @@ class GenerationResponse(BaseModel):
             config_provenance=dict(generation.config_provenance),
             index_build_id=(str(generation.index_build_id) if generation.index_build_id else None),
             source_metadata_generation=generation.source_metadata_generation,
+            source_provenance="none",
+            context_provenance="caller_context",
+            web_enrichment_used=False,
+            resolved_chat_response_mode=_resolved_chat_response_mode(generation),
             created_at=generation.created_at,
             completed_at=generation.completed_at,
         )
+
+
+def _resolved_chat_response_mode(generation: Generation) -> str:
+    configuration = generation.config_snapshot.get("configuration")
+    if not isinstance(configuration, dict):
+        return "indexed_only"
+    chat = configuration.get("chat")
+    if not isinstance(chat, dict):
+        return "indexed_only"
+    value = chat.get("response_mode")
+    return str(value) if value is not None else "indexed_only"

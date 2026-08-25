@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { CheckCircle2, Eye, KeyRound, Settings2 } from "lucide-react";
+import { CheckCircle2, Eye, Globe2, KeyRound, Settings2 } from "lucide-react";
 import { operatorApiClient } from "../../api/operatorApiClient";
 import { operatorQueryKeys } from "../../api/operatorConsoleQueries";
 import { ErrorState, LoadingState } from "../../components/QueryStatePanel";
@@ -23,6 +23,7 @@ export function ActiveConfigurationDetails() {
     ["Storage", config.storage_backend],
     ["Job backend", config.job_backend],
     ["Retrieval strategy", config.retrieval_strategy],
+    ["Chat response mode", config.chat_response_mode],
     ["Reranker", config.reranker_backend],
     ["OCR", config.ocr_enabled ? config.ocr_backend : "disabled"],
     ["Bangla OCR", config.ocr_enabled ? config.ocr_bangla_backend : "disabled"],
@@ -70,6 +71,43 @@ export function ActiveConfigurationDetails() {
                 config.llm.credential_configured === undefined
                   ? "Not applicable"
                   : config.llm.credential_configured
+                    ? "Configured"
+                    : "Missing"}
+              </dd>
+            </div>
+          </dl>
+        </section>
+        <section className="panel provider-card">
+          <div className="provider-card__title">
+            <Globe2 aria-hidden="true" />
+            <div>
+              <h2>Web search</h2>
+              <p>External evidence provider</p>
+            </div>
+            <StatusBadge
+              status={config.web_search.backend === "disabled" ? "disabled" : "active"}
+            />
+          </div>
+          <dl className="detail-list">
+            <div>
+              <dt>Backend</dt>
+              <dd>{config.web_search.backend}</dd>
+            </div>
+            <div>
+              <dt>Model</dt>
+              <dd>{config.web_search.model ?? "—"}</dd>
+            </div>
+            <div>
+              <dt>Provider version</dt>
+              <dd>{config.web_search.provider_version ?? "—"}</dd>
+            </div>
+            <div>
+              <dt>Credential</dt>
+              <dd>
+                {config.web_search.credential_configured === null ||
+                config.web_search.credential_configured === undefined
+                  ? "Not applicable"
+                  : config.web_search.credential_configured
                     ? "Configured"
                     : "Missing"}
               </dd>

@@ -10,7 +10,7 @@ from fastapi import Depends, Path
 
 from app.composition.audit import DatabaseAuditRecorder
 from app.composition.source_metadata import KnowledgeRetrievalSourceMetadataAdapter
-from app.core.config import get_settings
+from app.core.config import ResponseMode, get_settings
 from app.dependencies.access import AdminOrOrganizationDep
 from app.dependencies.common import DbSessionDep
 from app.dependencies.retrieval import get_search_service, query_embedder_factory_for
@@ -39,6 +39,7 @@ from app.platform.config.project_ai import (
 from app.platform.domain.content_hash import content_hash
 from app.platform.providers.contracts.embedding import BaseEmbeddingProvider
 from app.platform.providers.contracts.llm import BaseLLMProvider
+from app.platform.providers.contracts.web_search import BaseWebSearchProvider
 from app.platform.providers.errors import ProviderError
 from app.platform.providers.implementations.embedding_factory import get_embedding_provider
 from app.platform.providers.implementations.llm_factory import (
@@ -48,6 +49,9 @@ from app.platform.providers.implementations.query_translation_factory import (
     create_query_translation_provider,
 )
 from app.platform.providers.implementations.reranker_factory import create_reranker_provider
+from app.platform.providers.implementations.web_search_factory import (
+    create_web_search_provider,
+)
 
 
 class SearchServiceRetrievalAdapter:
@@ -224,6 +228,9 @@ async def get_chat_service(
         )
         snapshot_id = snapshot.id
     effective_settings = apply_effective_ai_config(settings, resolution)
+    web_search: BaseWebSearchProvider | None = None
+    if effective_settings.chat.response_mode is not ResponseMode.INDEXED_ONLY:
+        web_search = create_web_search_provider(effective_settings)
     reranker = create_reranker_provider(effective_settings)
     translator = None
     if effective_settings.query_translation.enabled:
@@ -271,6 +278,8 @@ async def get_chat_service(
         domain_instructions=resolution.configuration.domain_instructions,
         prompt_profile=resolution.configuration.prompt_profile,
         embedder=embedder,
+        web_search=web_search,
+        web_search_config=effective_settings.web_search,
     )
 
 

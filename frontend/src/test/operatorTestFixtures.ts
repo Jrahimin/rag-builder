@@ -139,6 +139,13 @@ export const configurationFixture: ActiveConfiguration = {
   runtime_profile: "development",
   application_version: "0.9.0",
   llm: { backend: "echo", model: "echo", provider_version: null, credential_configured: null },
+  web_search: {
+    backend: "disabled",
+    model: "gpt-5.6-luna",
+    provider_version: null,
+    credential_configured: null,
+  },
+  chat_response_mode: "indexed_only",
   embedding: {
     backend: "hash",
     model: "hash",

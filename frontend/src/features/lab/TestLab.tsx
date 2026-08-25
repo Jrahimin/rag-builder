@@ -1976,10 +1976,10 @@ function MessageCard({
             <div className="cite-chips" aria-label="Citations">
               {citations.slice(0, 5).map((citation, index) => (
                 <button
-                  key={`${citation.chunk_id}-${index}`}
+                  key={`${citation.chunk_id ?? citation.web_url ?? "source"}-${index}`}
                   type="button"
                   className={activeCitation === index ? "is-active" : undefined}
-                  title={citation.filename}
+                  title={citation.web_title ?? citation.filename}
                   onClick={() => onInspect?.(index)}
                 >
                   {index + 1}
@@ -2091,7 +2091,7 @@ function MessageInspector({
         <ol className="citation-list" aria-label={`${citations.length} citations`}>
           {citations.slice(0, 5).map((citation, index) => (
             <li
-              key={`${citation.chunk_id}-${index}`}
+              key={`${citation.chunk_id ?? citation.web_url ?? "source"}-${index}`}
               className={
                 focused?.chunk_id === citation.chunk_id && index === activeCitation
                   ? "is-active"
@@ -2100,24 +2100,39 @@ function MessageInspector({
             >
               <button type="button" onClick={() => onCite?.(index)}>
                 <strong>
-                  [{index + 1}] <Filename name={citation.filename} />
+                  [{index + 1}] <Filename name={citation.web_title ?? citation.filename} />
                 </strong>
                 <span>
-                  Page {citation.page_number ?? "—"} · chunk {citation.chunk_index} · score{" "}
-                  {citation.score.toFixed(4)}
+                  {citation.source_kind === "web"
+                    ? `Web · ${citation.web_provider ?? "external source"}`
+                    : `Page ${citation.page_number ?? "—"} · chunk ${citation.chunk_index ?? "—"}`}
+                  {citation.score == null ? "" : ` · score ${citation.score.toFixed(4)}`}
                 </span>
-                <span
-                  className="cite-score"
-                  aria-hidden="true"
-                  style={{
-                    ["--score" as string]: `${Math.round(Math.min(1, Math.max(0, citation.score)) * 100)}%`,
-                  }}
-                >
-                  <i />
-                </span>
-                <p>{citation.excerpt ?? `Stable chunk reference ${citation.chunk_id}`}</p>
+                {citation.score != null && (
+                  <span
+                    className="cite-score"
+                    aria-hidden="true"
+                    style={{
+                      ["--score" as string]: `${Math.round(Math.min(1, Math.max(0, citation.score)) * 100)}%`,
+                    }}
+                  >
+                    <i />
+                  </span>
+                )}
+                <p>
+                  {citation.excerpt ??
+                    (citation.source_kind === "web"
+                      ? citation.web_url
+                      : `Stable chunk reference ${citation.chunk_id}`)}
+                </p>
               </button>
-              <CopyableId value={citation.chunk_id} label="Citation chunk ID" />
+              {citation.chunk_id ? (
+                <CopyableId value={citation.chunk_id} label="Citation chunk ID" />
+              ) : citation.web_url ? (
+                <a href={citation.web_url} target="_blank" rel="noreferrer">
+                  Open web source
+                </a>
+              ) : null}
             </li>
           ))}
         </ol>

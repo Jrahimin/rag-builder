@@ -905,6 +905,13 @@ Unsupported questions are a successful API response: the assistant contains the 
 insufficient-evidence message, `grounded=false`, empty claims/citations, and a stable
 `insufficient_evidence_reason`. Do not convert this correct outcome into an application error.
 
+The resolved Project `response_mode` controls evidence workflow. The deployment and backward-
+compatible default is `indexed_only`; `indexed_then_web` uses external evidence only after the
+Project evidence gate fails, and `indexed_and_web` retrieves both. Read
+`assistant_message.source_provenance` (`knowledge`, `web`, `knowledge_and_web`, or `none`) and the
+source-specific citations instead of inferring provenance from answer text. Scoped document,
+metadata, and `as_of` questions never fall back to the public web.
+
 </details>
 
 ### Streaming (SSE)
@@ -1038,7 +1045,10 @@ validated output + persisted usage/trace
 ```
 
 This endpoint does not upload Documents, create embeddings, or search a Project
-corpus. The Project remains the isolation, configuration, and usage boundary.
+corpus. It also does not inherit chat web enrichment: caller context remains authoritative and
+structured output is not unexpectedly mixed with web data. The trace reports
+`context_provenance=caller_context`, `web_enrichment_used=false`, and `source_provenance=none`.
+The Project remains the isolation, configuration, and usage boundary.
 
 ### Generate a validated decision
 

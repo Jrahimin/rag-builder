@@ -12,19 +12,36 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from app.models.message import MessageRole
 
 
+class CitationSourceKind(StrEnum):
+    """Origin of one citation snapshot."""
+
+    KNOWLEDGE = "knowledge"
+    WEB = "web"
+
+
+class SourceProvenance(StrEnum):
+    """Machine-readable evidence origin for one response."""
+
+    KNOWLEDGE = "knowledge"
+    WEB = "web"
+    KNOWLEDGE_AND_WEB = "knowledge_and_web"
+    NONE = "none"
+
+
 class CitationSnapshot(BaseModel):
     """Durable citation stored on assistant messages."""
 
-    chunk_id: uuid.UUID
-    project_id: uuid.UUID
-    document_id: uuid.UUID
+    source_kind: CitationSourceKind = CitationSourceKind.KNOWLEDGE
+    chunk_id: uuid.UUID | None = None
+    project_id: uuid.UUID | None = None
+    document_id: uuid.UUID | None = None
     filename: str
-    chunk_index: int
+    chunk_index: int | None = None
     page_number: int | None = None
     char_start: int | None = None
     char_end: int | None = None
-    score: float
-    chunk_hash: str
+    score: float | None = None
+    chunk_hash: str | None = None
     excerpt: str | None = None
     processing_version: int | None = None
     index_build_id: uuid.UUID | None = None
@@ -45,6 +62,10 @@ class CitationSnapshot(BaseModel):
     configuration_hash: str | None = None
     config_provenance: dict[str, Any] = Field(default_factory=dict)
     prompt_version: str | None = None
+    web_url: str | None = None
+    web_title: str | None = None
+    web_retrieved_at: datetime | None = None
+    web_provider: str | None = None
 
 
 class InsufficientEvidenceReason(StrEnum):
@@ -76,6 +97,9 @@ class ClaimEvidence(BaseModel):
     char_start: int | None = None
     char_end: int | None = None
     excerpt: str | None = None
+    source_kind: CitationSourceKind = CitationSourceKind.KNOWLEDGE
+    web_url: str | None = None
+    web_title: str | None = None
 
 
 class AnswerClaim(BaseModel):
@@ -131,6 +155,7 @@ class MessageResponse(BaseModel):
     claims: list[AnswerClaim] = Field(default_factory=list)
     grounded: bool | None = None
     insufficient_evidence_reason: InsufficientEvidenceReason | None = None
+    source_provenance: SourceProvenance = SourceProvenance.NONE
     created_at: datetime
     updated_at: datetime
 
@@ -147,6 +172,13 @@ class MessageResponse(BaseModel):
             base = base.model_copy(update={"provider": conversation_provider})
         if message.model is None and conversation_model is not None:
             base = base.model_copy(update={"model": conversation_model})
+        metadata = getattr(message, "message_metadata", None) or {}
+        provenance = metadata.get("source_provenance", SourceProvenance.NONE.value)
+        try:
+            source_provenance = SourceProvenance(provenance)
+        except ValueError:
+            source_provenance = SourceProvenance.NONE
+        base = base.model_copy(update={"source_provenance": source_provenance})
         return base
 
 

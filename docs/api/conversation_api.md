@@ -87,8 +87,10 @@ Send a user message; returns grounded assistant answer + citations. Returns **20
   "assistant_message": {
     "role": "assistant",
     "content": "...",
+    "source_provenance": "knowledge",
     "citations": [
       {
+        "source_kind": "knowledge",
         "chunk_id": "...",
         "document_id": "...",
         "filename": "policy.txt",
@@ -124,6 +126,9 @@ Send a user message; returns grounded assistant answer + citations. Returns **20
     "grounded": true,
     "insufficient_evidence_reason": null,
     "metadata": {
+      "response_mode": "indexed_only",
+      "source_provenance": "knowledge",
+      "web_search": {"status": "not_requested", "fallback_used": false},
       "retrieval_time_ms": 120,
       "generation_time_ms": 800,
       "total_time_ms": 950,
@@ -143,6 +148,19 @@ one of: `no_retrieval_results`, `below_relevance_threshold`, or
 `metadata.evidence_gate` but continues generation from the already-selected context unless retrieval
 returned no chunks.
 
+Resolved Project `response_mode` semantics:
+
+- `indexed_only`: current strict RAG behavior; insufficient evidence returns a friendly no-answer.
+- `indexed_then_web`: the same evidence gate runs first. Sufficient Project evidence is used alone;
+  otherwise a configured external provider retrieves current web evidence.
+- `indexed_and_web`: both paths run and the v5 source-aware prompt receives separately labeled
+  evidence. Conflicts must be exposed and cited from both sides.
+
+Web access is suppressed whenever `document_id`, `metadata_filter`, or `as_of` scopes the request.
+Provider failure or empty web results fail closed. `source_provenance` is always one of
+`knowledge`, `web`, `knowledge_and_web`, or `none`. Web citations use `source_kind=web` and provide
+`web_url`, `web_title`, `web_retrieved_at`, and `web_provider`; Knowledge location fields are null.
+
 **Errors:** `conversation_not_found`, `conversation_deleted`, `conversation_inactive`, `unknown_prompt_version`, `llm_provider_unavailable` (503)
 
 ## POST `/{conversation_id}/messages/stream`
@@ -151,7 +169,7 @@ SSE stream (`text/event-stream`). Events:
 
 ```json
 {"event": "token", "delta": "partial text"}
-{"event": "done", "assistant_message_id": "...", "citations": [], "claims": [], "grounded": false, "insufficient_evidence_reason": "no_retrieval_results"}
+{"event": "done", "assistant_message_id": "...", "citations": [], "claims": [], "grounded": false, "insufficient_evidence_reason": "no_retrieval_results", "response_mode": "indexed_only", "source_provenance": "none", "web_search": {"status": "not_requested"}}
 {"event": "error", "message": "The language model provider is temporarily unavailable."}
 ```
 

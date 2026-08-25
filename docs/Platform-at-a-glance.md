@@ -160,7 +160,7 @@ OCR, embedding, and indexing continue asynchronously.
 | Vector indexing | Persist native pgvector rows in PostgreSQL | Shipped |
 | Keyword indexing | Build BM25 / FTS rows in PostgreSQL | Shipped |
 | Hybrid retrieval | BM25 + vector + RRF + reranking | Shipped |
-| Conversations | Stateful RAG chat with citations and streaming | Shipped |
+| Conversations | Stateful RAG chat with citations, streaming, and policy-gated web evidence | Shipped |
 | Operations baseline | Docker stack, migrations, health, readiness, structured logs | Shipped |
 
 ---
