@@ -3923,6 +3923,92 @@ code {
 .source-facts strong {
   color: #344054;
 }
+.source-revision-form {
+  gap: 18px;
+  padding: 18px;
+}
+.source-revision-form__section {
+  display: grid;
+  gap: 14px;
+  padding: 15px;
+  background: #fbfcfe;
+  border: 1px solid #e3e8ef;
+  border-radius: 10px;
+}
+.source-revision-form__section-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.source-revision-form__section-heading h4,
+.source-revision-form__section-heading p {
+  margin: 0;
+}
+.source-revision-form__section-heading h4 {
+  color: #344054;
+  font-size: 0.8rem;
+}
+.source-revision-form__section-heading p,
+.field-description {
+  color: #667085;
+  font-size: 0.68rem;
+  font-weight: 400;
+  line-height: 1.45;
+}
+.source-revision-form__section-heading > span {
+  flex-shrink: 0;
+  padding: 4px 7px;
+  color: #285a9f;
+  background: #edf4ff;
+  border-radius: 999px;
+  font-size: 0.65rem;
+  font-weight: 700;
+}
+.source-revision-form__dates {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.source-revision-form__relationship {
+  gap: 12px;
+}
+.source-revision-form__new-group {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 10px 11px;
+  color: #344054;
+  background: #fff;
+  border: 1px solid #dfe6ef;
+  border-radius: 8px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 1.35;
+}
+.source-revision-form__new-group > span {
+  display: grid;
+  gap: 2px;
+}
+.source-revision-form__new-group small {
+  color: #667085;
+  font-size: 0.66rem;
+  font-weight: 400;
+}
+.source-revision-form__new-group:has(input:disabled) {
+  color: #285a9f;
+  background: #f2f7ff;
+}
+.source-revision-form__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
+}
+.source-revision-form__actions > span {
+  max-width: 420px;
+  color: #667085;
+  font-size: 0.68rem;
+  line-height: 1.45;
+}
 .record-row {
   align-items: flex-start;
 }
@@ -4120,5 +4206,13 @@ code {
   .usage-toolbar,
   .source-upload {
     grid-template-columns: 1fr;
+  }
+  .source-revision-form__dates {
+    grid-template-columns: 1fr;
+  }
+  .source-revision-form__section-heading,
+  .source-revision-form__actions {
+    align-items: flex-start;
+    flex-direction: column;
   }
 }

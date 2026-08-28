@@ -38,7 +38,7 @@ class SourceRevisionCreate(BaseModel):
     lifecycle_status: SourceLifecycleStatus = SourceLifecycleStatus.ACTIVE
     source_role: SourceRole = SourceRole.PRIMARY
     relationships: list[SourceRelationshipCreate] = Field(default_factory=list, max_length=100)
-    change_reason: str = Field(default="Source metadata created", min_length=1, max_length=2000)
+    change_reason: str | None = Field(default=None, max_length=2000)
     activate: bool = False
 
     @field_validator("revision_label", "title", "source_type", "change_reason")

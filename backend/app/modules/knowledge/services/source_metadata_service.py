@@ -84,7 +84,7 @@ class SourceMetadataService:
         activation = await self._stage_activation(
             project,
             revision,
-            reason=data.change_reason,
+            reason=data.change_reason or "Source metadata created",
         )
         return revision, activation
 
@@ -101,7 +101,7 @@ class SourceMetadataService:
             activation = await self._stage_activation(
                 project,
                 revision,
-                reason=data.change_reason,
+                reason=data.change_reason or "Source metadata created",
             )
         await self._session.commit()
         await self._session.refresh(revision)
@@ -259,7 +259,7 @@ class SourceMetadataService:
             effective_to=data.effective_to,
             lifecycle_status=data.lifecycle_status,
             source_role=data.source_role,
-            change_reason=data.change_reason,
+            change_reason=data.change_reason or "Source metadata created",
             created_by=self._actor_id,
             content_hash=document.content_sha256,
         )

@@ -10200,11 +10200,16 @@
             "type": "boolean"
           },
           "change_reason": {
-            "default": "Source metadata created",
-            "maxLength": 2000,
-            "minLength": 1,
-            "title": "Change Reason",
-            "type": "string"
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Change Reason"
           },
           "create_new_group": {
             "default": false,

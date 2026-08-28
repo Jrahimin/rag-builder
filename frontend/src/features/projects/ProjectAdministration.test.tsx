@@ -529,6 +529,10 @@ test("uploads a document into an existing source group or a modifying group", as
   vi.spyOn(operatorApiClient, "getSourceRevisions").mockResolvedValue([sourceItem.revision]);
   vi.spyOn(operatorApiClient, "getSourceActivations").mockResolvedValue([sourceItem.activation]);
   const upload = vi.spyOn(operatorApiClient, "uploadDocument").mockResolvedValue(document);
+  const createRevision = vi.spyOn(operatorApiClient, "createSourceRevision").mockResolvedValue({
+    revision: sourceItem.revision,
+    activation: sourceItem.activation,
+  });
 
   renderOperatorComponent(
     <OperatorConsoleApp />,
@@ -537,6 +541,22 @@ test("uploads a document into an existing source group or a modifying group", as
 
   const target = sourceItem.revision;
   await screen.findByText("Upload document and optional source metadata");
+  fireEvent.submit(
+    screen.getByRole("button", { name: "Create and activate revision" }).closest("form")!,
+  );
+  await waitFor(() => expect(createRevision).toHaveBeenCalledTimes(1));
+  expect(createRevision.mock.calls[0]?.[2]).not.toHaveProperty("change_reason");
+  const relationship = screen.getByLabelText("Relationship");
+  const metadataTarget = screen.getByLabelText("Target revision");
+  const separateGroup = screen.getByLabelText(/Create a separate source group/i);
+  expect(metadataTarget).toBeDisabled();
+  await userEvent.selectOptions(relationship, "modifies");
+  expect(metadataTarget).toBeEnabled();
+  expect(separateGroup).toBeChecked();
+  expect(separateGroup).toBeDisabled();
+  await userEvent.selectOptions(relationship, "replaces");
+  expect(separateGroup).not.toBeChecked();
+  expect(separateGroup).toBeEnabled();
   await userEvent.upload(
     screen.getByLabelText("File"),
     new File(["revision"], "revision.pdf", { type: "application/pdf" }),

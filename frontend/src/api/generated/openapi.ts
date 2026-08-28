@@ -4932,9 +4932,8 @@ export interface components {
       activate: boolean;
       /**
        * Change Reason
-       * @default Source metadata created
        */
-      change_reason: string;
+      change_reason?: string | null;
       /**
        * Create New Group
        * @default false

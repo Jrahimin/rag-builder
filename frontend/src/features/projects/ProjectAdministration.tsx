@@ -1094,6 +1094,11 @@ function ProjectSources({ project }: { project: Project }) {
     relationType: "",
     target: "",
   });
+  const relationshipTargets = sourceState.data?.items.filter(
+    (item) =>
+      form.relationType !== "replaces" ||
+      item.revision.source_group_id === current?.revision.source_group_id,
+  );
   const [error, setError] = useState("");
   useEffect(() => {
     if (selectedDocument) {
@@ -1169,9 +1174,10 @@ function ProjectSources({ project }: { project: Project }) {
     event.preventDefault();
     if (!selectedDocument) return;
     setError("");
+    const changeReason = form.reason.trim();
     const revision: SourceRevisionCreate = {
       activate: true,
-      change_reason: form.reason,
+      ...(changeReason ? { change_reason: changeReason } : {}),
       create_new_group: form.newGroup,
       revision_label: form.label,
       title: form.title,
@@ -1356,128 +1362,181 @@ function ProjectSources({ project }: { project: Project }) {
                   </span>
                 </div>
               )}
-              <form className="stack-form" onSubmit={(event) => void createRevision(event)}>
-                <div className="form-grid">
-                  <label className="field-control">
-                    <span>Source title</span>
-                    <input
-                      required
-                      value={form.title}
-                      onChange={(event) => setForm({ ...form, title: event.target.value })}
-                    />
-                  </label>
-                  <label className="field-control">
-                    <span>Revision label</span>
-                    <input
-                      required
-                      value={form.label}
-                      onChange={(event) => setForm({ ...form, label: event.target.value })}
-                    />
-                  </label>
-                  <label className="field-control">
-                    <span>Source type</span>
-                    <input
-                      value={form.sourceType}
-                      onChange={(event) => setForm({ ...form, sourceType: event.target.value })}
-                    />
-                  </label>
-                  <label className="field-control">
-                    <span>Lifecycle</span>
-                    <select
-                      value={form.lifecycle}
-                      onChange={(event) => setForm({ ...form, lifecycle: event.target.value })}
-                    >
-                      {["unspecified", "draft", "active", "retired"].map((value) => (
-                        <option key={value}>{value}</option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="field-control">
-                    <span>Role</span>
-                    <select
-                      value={form.role}
-                      onChange={(event) => setForm({ ...form, role: event.target.value })}
-                    >
-                      {["unspecified", "primary", "supporting", "reference"].map((value) => (
-                        <option key={value}>{value}</option>
-                      ))}
-                    </select>
-                  </label>
-                  <label className="field-control">
-                    <span>Published</span>
-                    <input
-                      type="date"
-                      value={form.published}
-                      onChange={(event) => setForm({ ...form, published: event.target.value })}
-                    />
-                  </label>
-                  <label className="field-control">
-                    <span>Effective from</span>
-                    <input
-                      type="date"
-                      value={form.from}
-                      onChange={(event) => setForm({ ...form, from: event.target.value })}
-                    />
-                  </label>
-                  <label className="field-control">
-                    <span>Effective to</span>
-                    <input
-                      type="date"
-                      value={form.to}
-                      onChange={(event) => setForm({ ...form, to: event.target.value })}
-                    />
-                  </label>
+              <form
+                className="stack-form source-revision-form"
+                onSubmit={(event) => void createRevision(event)}
+              >
+                <div className="source-revision-form__section">
+                  <div className="source-revision-form__section-heading">
+                    <div>
+                      <h4>Source details</h4>
+                      <p>Describe the document and the status it should have in this Project.</p>
+                    </div>
+                    <span>Revision {current ? current.revision.revision_number + 1 : 1}</span>
+                  </div>
+                  <div className="form-grid">
+                    <label className="field-control">
+                      <span>Source title</span>
+                      <input
+                        required
+                        value={form.title}
+                        onChange={(event) => setForm({ ...form, title: event.target.value })}
+                      />
+                    </label>
+                    <label className="field-control">
+                      <span>Revision label</span>
+                      <input
+                        required
+                        value={form.label}
+                        onChange={(event) => setForm({ ...form, label: event.target.value })}
+                      />
+                    </label>
+                    <label className="field-control">
+                      <span>Source type</span>
+                      <input
+                        value={form.sourceType}
+                        onChange={(event) => setForm({ ...form, sourceType: event.target.value })}
+                      />
+                    </label>
+                    <label className="field-control">
+                      <span>Lifecycle</span>
+                      <select
+                        value={form.lifecycle}
+                        onChange={(event) => setForm({ ...form, lifecycle: event.target.value })}
+                      >
+                        {["unspecified", "draft", "active", "retired"].map((value) => (
+                          <option key={value}>{value}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="field-control">
+                      <span>Role</span>
+                      <select
+                        value={form.role}
+                        onChange={(event) => setForm({ ...form, role: event.target.value })}
+                      >
+                        {["unspecified", "primary", "supporting", "reference"].map((value) => (
+                          <option key={value}>{value}</option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
                 </div>
-                <label className="check-control">
-                  <input
-                    type="checkbox"
-                    checked={form.newGroup}
-                    onChange={(event) => setForm({ ...form, newGroup: event.target.checked })}
-                  />{" "}
-                  Create a separate source group (required for a modifying source)
-                </label>
-                <div className="form-grid">
-                  <label className="field-control">
-                    <span>Relationship</span>
-                    <select
-                      value={form.relationType}
-                      onChange={(event) =>
-                        setForm({
-                          ...form,
-                          relationType: event.target.value,
-                          newGroup: event.target.value === "modifies",
-                        })
-                      }
-                    >
-                      <option value="">None</option>
-                      <option value="replaces">Replaces</option>
-                      <option value="modifies">Modifies</option>
-                    </select>
+                <div className="source-revision-form__section">
+                  <div className="source-revision-form__section-heading">
+                    <div>
+                      <h4>Validity</h4>
+                      <p>Optional dates are used when source policy is enforced.</p>
+                    </div>
+                  </div>
+                  <div className="form-grid source-revision-form__dates">
+                    <label className="field-control">
+                      <span>Published</span>
+                      <input
+                        type="date"
+                        value={form.published}
+                        onChange={(event) => setForm({ ...form, published: event.target.value })}
+                      />
+                    </label>
+                    <label className="field-control">
+                      <span>Effective from</span>
+                      <input
+                        type="date"
+                        value={form.from}
+                        onChange={(event) => setForm({ ...form, from: event.target.value })}
+                      />
+                    </label>
+                    <label className="field-control">
+                      <span>Effective to</span>
+                      <input
+                        type="date"
+                        value={form.to}
+                        onChange={(event) => setForm({ ...form, to: event.target.value })}
+                      />
+                    </label>
+                  </div>
+                </div>
+                <div className="source-revision-form__section source-revision-form__relationship">
+                  <div className="source-revision-form__section-heading">
+                    <div>
+                      <h4>Relationship</h4>
+                      <p>Connect this revision to a source it replaces or modifies, if relevant.</p>
+                    </div>
+                  </div>
+                  <label className="check-control source-revision-form__new-group">
+                    <input
+                      type="checkbox"
+                      checked={form.newGroup}
+                      disabled={form.relationType === "modifies"}
+                      onChange={(event) => setForm({ ...form, newGroup: event.target.checked })}
+                    />
+                    <span>
+                      Create a separate source group
+                      <small>
+                        Required automatically when this source modifies another source.
+                      </small>
+                    </span>
                   </label>
-                  <label className="field-control">
-                    <span>Target revision</span>
-                    <select
-                      value={form.target}
-                      onChange={(event) => setForm({ ...form, target: event.target.value })}
-                    >
-                      <option value="">Select target</option>
-                      {sourceState.data?.items.map((item) => (
-                        <option key={item.revision.id} value={item.revision.id}>
-                          {item.revision.title} · r{item.revision.revision_number}
+                  <div className="form-grid">
+                    <label className="field-control">
+                      <span>Relationship</span>
+                      <select
+                        value={form.relationType}
+                        onChange={(event) =>
+                          setForm({
+                            ...form,
+                            relationType: event.target.value,
+                            target: "",
+                            newGroup:
+                              event.target.value === "modifies"
+                                ? true
+                                : event.target.value === "replaces"
+                                  ? false
+                                  : form.newGroup,
+                          })
+                        }
+                      >
+                        <option value="">None</option>
+                        <option value="replaces">Replaces</option>
+                        <option value="modifies">Modifies</option>
+                      </select>
+                    </label>
+                    <label className="field-control">
+                      <span>Target revision</span>
+                      <select
+                        required={Boolean(form.relationType)}
+                        disabled={!form.relationType}
+                        value={form.target}
+                        onChange={(event) => setForm({ ...form, target: event.target.value })}
+                      >
+                        <option value="">
+                          {form.relationType ? "Select target" : "Choose a relationship first"}
                         </option>
-                      ))}
-                    </select>
-                  </label>
+                        {relationshipTargets?.map((item) => (
+                          <option key={item.revision.id} value={item.revision.id}>
+                            {item.revision.title} · r{item.revision.revision_number}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
                 </div>
                 <label className="field-control">
                   <span>Change reason</span>
+                  <small className="field-description">
+                    Optional. Records why this immutable revision is being activated.
+                  </small>
                   <textarea
-                    required
+                    rows={3}
+                    placeholder="Optional — defaults to “Source metadata created”"
                     value={form.reason}
                     onChange={(event) => setForm({ ...form, reason: event.target.value })}
                   />
                 </label>
-                <button className="button button--primary">Create and activate revision</button>
+                <div className="source-revision-form__actions">
+                  <button className="button button--primary">Create and activate revision</button>
+                  <span>Creates a new metadata revision; the uploaded file is not duplicated.</span>
+                </div>
               </form>
             </section>
           )}
@@ -1501,6 +1560,7 @@ function ProjectSources({ project }: { project: Project }) {
                       {revision.lifecycle_status} · {revision.source_role} ·{" "}
                       {formatDate(revision.created_at)}
                     </small>
+                    <small>{revision.change_reason}</small>
                   </span>
                   {current?.revision.id !== revision.id && (
                     <button
