@@ -10,7 +10,7 @@ import {
   type ProjectAIConfigRevision,
   type ProjectOwnershipPreflight,
   type ProviderCapability,
-  type SourceRevisionCreate,
+  type SourceRevision,
 } from "../../api/operatorApiClient";
 import {
   useActiveConfiguration,
@@ -43,6 +43,14 @@ import {
   type ProjectConfigOverride,
   type ProjectConfigOverrides,
 } from "./ProjectAISettingsFields";
+import {
+  buildSourceUploadMetadata,
+  buildSourceMetadataCorrection,
+  hasInvalidEffectiveInterval,
+  type SourceMetadataDraft,
+  type SourceCorrectionTreatment,
+  type SourceUploadMode,
+} from "../sources/sourceUploadMetadata";
 
 const tabs = ["details", "ai-config", "sources", "history"] as const;
 type ProjectTab = (typeof tabs)[number];
@@ -75,6 +83,50 @@ function originKindLabel(origin: string) {
   if (origin === "global") return "deployment";
   if (origin === "project") return "Project";
   return origin.replaceAll("_", " ");
+}
+
+type SourceRevisionForm = {
+  title: string;
+  label: string;
+  sourceType: string;
+  lifecycle: "unspecified" | "draft" | "active" | "retired";
+  role: "unspecified" | "primary" | "supporting" | "reference";
+  published: string;
+  from: string;
+  to: string;
+  reason: string;
+  treatment: SourceCorrectionTreatment;
+  target: string;
+};
+
+function dateInputValue(value: string | null | undefined) {
+  return value?.slice(0, 10) ?? "";
+}
+
+function formatSourceDate(value: string | null | undefined) {
+  if (!value) return "Not set";
+  return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeZone: "UTC" }).format(
+    new Date(`${dateInputValue(value)}T00:00:00Z`),
+  );
+}
+
+function sourceRevisionForm(
+  revision: SourceRevision | undefined,
+  fallbackTitle: string,
+): SourceRevisionForm {
+  return {
+    title: revision?.title ?? fallbackTitle,
+    label: revision ? `Revision ${revision.revision_number + 1}` : "Revision 1",
+    sourceType: revision?.source_type ?? "",
+    lifecycle: revision?.lifecycle_status ?? "active",
+    role: revision?.source_role ?? "primary",
+    published: dateInputValue(revision?.published_date),
+    from: dateInputValue(revision?.effective_from),
+    to: dateInputValue(revision?.effective_to),
+    reason: "",
+    treatment: "keep",
+    target: "",
+  };
 }
 
 function OriginSummary({ origins }: { origins: Record<string, string> }) {
@@ -1076,40 +1128,31 @@ function ProjectSources({ project }: { project: Project }) {
   const current = sourceState.data?.items.find((item) => item.document_id === selectedDocument?.id);
   const [file, setFile] = useState<File | null>(null);
   const [uploadTitle, setUploadTitle] = useState("");
-  const [uploadMode, setUploadMode] = useState<"independent" | "revision" | "modifies">(
-    "independent",
-  );
+  const [uploadMode, setUploadMode] = useState<SourceUploadMode>("independent");
   const [uploadTarget, setUploadTarget] = useState("");
-  const [form, setForm] = useState({
-    title: "",
-    label: "Revision",
-    sourceType: "",
-    lifecycle: "active",
-    role: "primary",
-    published: "",
-    from: "",
-    to: "",
-    reason: "",
-    newGroup: false,
-    relationType: "",
-    target: "",
-  });
+  const [uploadSourceType, setUploadSourceType] = useState("");
+  const [uploadLifecycle, setUploadLifecycle] =
+    useState<SourceMetadataDraft["lifecycle"]>("active");
+  const [uploadSourceRole, setUploadSourceRole] = useState<SourceMetadataDraft["role"]>("primary");
+  const [uploadPublished, setUploadPublished] = useState("");
+  const [uploadEffectiveFrom, setUploadEffectiveFrom] = useState("");
+  const [uploadEffectiveTo, setUploadEffectiveTo] = useState("");
+  const [uploadChangeReason, setUploadChangeReason] = useState("");
+  const [form, setForm] = useState<SourceRevisionForm>(() => sourceRevisionForm(undefined, ""));
   const relationshipTargets = sourceState.data?.items.filter(
-    (item) =>
-      form.relationType !== "replaces" ||
-      item.revision.source_group_id === current?.revision.source_group_id,
+    (item) => item.revision.id !== current?.revision.id,
   );
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [creatingRevision, setCreatingRevision] = useState(false);
   useEffect(() => {
     if (selectedDocument) {
-      setSelectedDocumentId(selectedDocument.id);
-      setForm((value) => ({
-        ...value,
-        title: current?.revision.title ?? selectedDocument.filename,
-        label: current ? `Revision ${current.revision.revision_number + 1}` : "Revision",
-      }));
+      setSelectedDocumentId((value) =>
+        value === selectedDocument.id ? value : selectedDocument.id,
+      );
+      setForm(sourceRevisionForm(current?.revision, selectedDocument.filename));
     }
-  }, [selectedDocument, current]);
+  }, [current?.revision, selectedDocument]);
   const refresh = async () => {
     await Promise.all([
       documents.refetch(),
@@ -1128,43 +1171,39 @@ function ProjectSources({ project }: { project: Project }) {
         setError("Select the existing source revision this upload relates to.");
         return;
       }
-      const metadata: SourceRevisionCreate | undefined =
-        uploadMode === "independent" && !uploadTitle
-          ? undefined
-          : {
-              activate: true,
-              change_reason:
-                uploadMode === "revision"
-                  ? "Uploaded as a new revision of an existing source"
-                  : uploadMode === "modifies"
-                    ? "Uploaded as a modifying source"
-                    : "Governed Operator upload",
-              create_new_group: uploadMode !== "revision",
-              ...(uploadMode === "revision" && target
-                ? { source_group_id: target.revision.source_group_id }
-                : {}),
-              lifecycle_status: "active",
-              revision_label:
-                uploadMode === "revision" && target
-                  ? `Revision ${target.revision.revision_number + 1}`
-                  : "Initial",
-              source_role: "primary",
-              title: uploadTitle || file.name,
-              relationships:
-                uploadMode === "independent" || !target
-                  ? []
-                  : [
-                      {
-                        relationship_type: uploadMode === "revision" ? "replaces" : "modifies",
-                        target_revision_id: target.revision.id,
-                      },
-                    ],
-            };
+      const draft: SourceMetadataDraft = {
+        title: uploadTitle,
+        sourceType: uploadSourceType,
+        lifecycle: uploadLifecycle,
+        role: uploadSourceRole,
+        publishedDate: uploadPublished,
+        effectiveFrom: uploadEffectiveFrom,
+        effectiveTo: uploadEffectiveTo,
+        changeReason: uploadChangeReason,
+      };
+      if (hasInvalidEffectiveInterval(draft)) {
+        setError("Effective to must be on or after effective from.");
+        return;
+      }
+      const metadata = buildSourceUploadMetadata({
+        filename: file.name,
+        mode: uploadMode,
+        target: target?.revision,
+        draft,
+        defaultReason: "Governed Operator upload",
+      });
       await upload.mutateAsync({ file, sourceMetadata: metadata });
       setFile(null);
       setUploadTitle("");
       setUploadMode("independent");
       setUploadTarget("");
+      setUploadSourceType("");
+      setUploadLifecycle("active");
+      setUploadSourceRole("primary");
+      setUploadPublished("");
+      setUploadEffectiveFrom("");
+      setUploadEffectiveTo("");
+      setUploadChangeReason("");
       await refresh();
     } catch (caught) {
       setError((caught as Error).message);
@@ -1174,35 +1213,58 @@ function ProjectSources({ project }: { project: Project }) {
     event.preventDefault();
     if (!selectedDocument) return;
     setError("");
+    setNotice("");
     const changeReason = form.reason.trim();
-    const revision: SourceRevisionCreate = {
-      activate: true,
-      ...(changeReason ? { change_reason: changeReason } : {}),
-      create_new_group: form.newGroup,
-      revision_label: form.label,
-      title: form.title,
-      source_type: form.sourceType || null,
-      published_date: form.published || null,
-      effective_from: form.from || null,
-      effective_to: form.to || null,
-      lifecycle_status: form.lifecycle as "unspecified" | "draft" | "active" | "retired",
-      source_role: form.role as "unspecified" | "primary" | "supporting" | "reference",
-      relationships:
-        form.relationType && form.target
-          ? [
-              {
-                relationship_type: form.relationType as "replaces" | "modifies",
-                target_revision_id: form.target,
-              },
-            ]
-          : [],
-    };
+    const title = form.title.trim();
+    const label = form.label.trim();
+    const sourceType = form.sourceType.trim();
+    if (!title || !label) {
+      setError("Source title and revision label are required.");
+      return;
+    }
+    if (form.from && form.to && form.to < form.from) {
+      setError("Effective to must be on or after effective from.");
+      return;
+    }
+    const target = sourceState.data?.items.find((item) => item.revision.id === form.target)?.revision;
+    if ((form.treatment === "revision" || form.treatment === "modifies") && !target) {
+      setError("Select the existing source this correction relates to.");
+      return;
+    }
+    if (!current) return;
+    const revision = buildSourceMetadataCorrection({
+      current: current.revision,
+      treatment: form.treatment,
+      target,
+      draft: {
+        title,
+        sourceType,
+        lifecycle: form.lifecycle,
+        role: form.role,
+        publishedDate: form.published,
+        effectiveFrom: form.from,
+        effectiveTo: form.to,
+        changeReason,
+      },
+    });
+    if (!revision) return;
+    revision.revision_label = label;
+    setCreatingRevision(true);
     try {
-      await operatorApiClient.createSourceRevision(project.id, selectedDocument.id, revision);
-      setForm({ ...form, reason: "", relationType: "", target: "" });
+      const created = await operatorApiClient.createSourceRevision(
+        project.id,
+        selectedDocument.id,
+        revision,
+      );
+      setForm(sourceRevisionForm(created.revision, selectedDocument.filename));
+      setNotice(
+        `Revision ${created.revision.revision_number} is active. Its validity dates are saved with this immutable revision.`,
+      );
       await refresh();
     } catch (caught) {
       setError((caught as Error).message);
+    } finally {
+      setCreatingRevision(false);
     }
   };
   if (documents.isPending || sourceState.isPending) return <LoadingState label="Loading sources" />;
@@ -1219,6 +1281,11 @@ function ProjectSources({ project }: { project: Project }) {
       {error && (
         <div className="failure-box" role="alert">
           {error}
+        </div>
+      )}
+      {notice && (
+        <div className="notice-card" role="status">
+          {notice}
         </div>
       )}
       <section className="panel">
@@ -1249,7 +1316,7 @@ function ProjectSources({ project }: { project: Project }) {
             <select
               value={uploadMode}
               onChange={(event) => {
-                setUploadMode(event.target.value as typeof uploadMode);
+                setUploadMode(event.target.value as SourceUploadMode);
                 setUploadTarget("");
               }}
             >
@@ -1275,9 +1342,79 @@ function ProjectSources({ project }: { project: Project }) {
               </select>
             </label>
           )}
+          <label className="field-control">
+            <span>Source role</span>
+            <select
+              value={uploadSourceRole}
+              onChange={(event) =>
+                setUploadSourceRole(event.target.value as SourceMetadataDraft["role"])
+              }
+            >
+              <option value="primary">Primary</option>
+              <option value="supporting">Supporting</option>
+              <option value="reference">Reference</option>
+              <option value="unspecified">Unspecified</option>
+            </select>
+          </label>
+          <label className="field-control">
+            <span>Lifecycle</span>
+            <select
+              value={uploadLifecycle}
+              onChange={(event) =>
+                setUploadLifecycle(event.target.value as SourceMetadataDraft["lifecycle"])
+              }
+            >
+              <option value="active">Active</option>
+              <option value="draft">Draft</option>
+              <option value="retired">Retired</option>
+              <option value="unspecified">Unspecified</option>
+            </select>
+          </label>
+          <label className="field-control">
+            <span>Source type</span>
+            <input
+              value={uploadSourceType}
+              onChange={(event) => setUploadSourceType(event.target.value)}
+            />
+          </label>
+          <label className="field-control">
+            <span>Published</span>
+            <input
+              type="date"
+              value={uploadPublished}
+              onChange={(event) => setUploadPublished(event.target.value)}
+            />
+          </label>
+          <label className="field-control">
+            <span>Effective from</span>
+            <input
+              type="date"
+              value={uploadEffectiveFrom}
+              max={uploadEffectiveTo || undefined}
+              onChange={(event) => setUploadEffectiveFrom(event.target.value)}
+            />
+          </label>
+          <label className="field-control">
+            <span>Effective to</span>
+            <input
+              type="date"
+              value={uploadEffectiveTo}
+              min={uploadEffectiveFrom || undefined}
+              onChange={(event) => setUploadEffectiveTo(event.target.value)}
+            />
+          </label>
+          <label className="field-control source-upload__reason">
+            <span>Change reason</span>
+            <input
+              value={uploadChangeReason}
+              placeholder="Optional — records why this source was added"
+              onChange={(event) => setUploadChangeReason(event.target.value)}
+            />
+          </label>
           <p className="muted-copy">
-            A new revision stays in the selected source group and replaces its target. A modifying
-            source receives its own group and records a modifies relationship.
+            Source metadata is optional: defaults create a neutral initial record. Entering any
+            metadata saves it with this upload. A new revision stays in the selected source group; a
+            modifying source receives its own group.
           </p>
           <div className="button-row">
             <button
@@ -1314,7 +1451,10 @@ function ProjectSources({ project }: { project: Project }) {
                     }
                     type="button"
                     key={document.id}
-                    onClick={() => setSelectedDocumentId(document.id)}
+                    onClick={() => {
+                      setSelectedDocumentId(document.id);
+                      setNotice("");
+                    }}
                   >
                     <span>
                       <strong>{source?.revision.title ?? document.filename}</strong>
@@ -1340,7 +1480,7 @@ function ProjectSources({ project }: { project: Project }) {
             <section className="panel">
               <div className="section-heading">
                 <div>
-                  <h3>Create immutable source revision</h3>
+                  <h3>Correct source metadata</h3>
                   <p>
                     {current
                       ? `Group ${shortId(current.revision.source_group_id)} · revision ${current.revision.revision_number}`
@@ -1359,6 +1499,16 @@ function ProjectSources({ project }: { project: Project }) {
                   </span>
                   <span>
                     Role <strong>{current.revision.source_role}</strong>
+                  </span>
+                  <span>
+                    Published <strong>{formatSourceDate(current.revision.published_date)}</strong>
+                  </span>
+                  <span>
+                    Effective from{" "}
+                    <strong>{formatSourceDate(current.revision.effective_from)}</strong>
+                  </span>
+                  <span>
+                    Effective to <strong>{formatSourceDate(current.revision.effective_to)}</strong>
                   </span>
                 </div>
               )}
@@ -1402,7 +1552,12 @@ function ProjectSources({ project }: { project: Project }) {
                       <span>Lifecycle</span>
                       <select
                         value={form.lifecycle}
-                        onChange={(event) => setForm({ ...form, lifecycle: event.target.value })}
+                        onChange={(event) =>
+                          setForm({
+                            ...form,
+                            lifecycle: event.target.value as SourceRevisionForm["lifecycle"],
+                          })
+                        }
                       >
                         {["unspecified", "draft", "active", "retired"].map((value) => (
                           <option key={value}>{value}</option>
@@ -1413,7 +1568,12 @@ function ProjectSources({ project }: { project: Project }) {
                       <span>Role</span>
                       <select
                         value={form.role}
-                        onChange={(event) => setForm({ ...form, role: event.target.value })}
+                        onChange={(event) =>
+                          setForm({
+                            ...form,
+                            role: event.target.value as SourceRevisionForm["role"],
+                          })
+                        }
                       >
                         {["unspecified", "primary", "supporting", "reference"].map((value) => (
                           <option key={value}>{value}</option>
@@ -1426,7 +1586,10 @@ function ProjectSources({ project }: { project: Project }) {
                   <div className="source-revision-form__section-heading">
                     <div>
                       <h4>Validity</h4>
-                      <p>Optional dates are used when source policy is enforced.</p>
+                      <p>
+                        These dates are preserved on this revision and apply to retrieval only when
+                        source policy is enforced.
+                      </p>
                     </div>
                   </div>
                   <div className="form-grid source-revision-form__dates">
@@ -1443,6 +1606,7 @@ function ProjectSources({ project }: { project: Project }) {
                       <input
                         type="date"
                         value={form.from}
+                        max={form.to || undefined}
                         onChange={(event) => setForm({ ...form, from: event.target.value })}
                       />
                     </label>
@@ -1451,67 +1615,70 @@ function ProjectSources({ project }: { project: Project }) {
                       <input
                         type="date"
                         value={form.to}
+                        min={form.from || undefined}
                         onChange={(event) => setForm({ ...form, to: event.target.value })}
                       />
                     </label>
                   </div>
                 </div>
-                <div className="source-revision-form__section source-revision-form__relationship">
-                  <div className="source-revision-form__section-heading">
-                    <div>
-                      <h4>Relationship</h4>
-                      <p>Connect this revision to a source it replaces or modifies, if relevant.</p>
+                  <div className="source-revision-form__section source-revision-form__relationship">
+                    <div className="source-revision-form__section-heading">
+                      <div>
+                      <h4>Source treatment</h4>
+                      <p>
+                        Correct an accidental upload choice without changing the document or its
+                        processing results.
+                      </p>
+                      </div>
                     </div>
-                  </div>
-                  <label className="check-control source-revision-form__new-group">
-                    <input
-                      type="checkbox"
-                      checked={form.newGroup}
-                      disabled={form.relationType === "modifies"}
-                      onChange={(event) => setForm({ ...form, newGroup: event.target.checked })}
-                    />
-                    <span>
-                      Create a separate source group
-                      <small>
-                        Required automatically when this source modifies another source.
-                      </small>
-                    </span>
-                  </label>
                   <div className="form-grid">
                     <label className="field-control">
-                      <span>Relationship</span>
+                      <span>Correct treatment</span>
                       <select
-                        value={form.relationType}
+                        aria-label="Correct treatment"
+                        value={form.treatment}
                         onChange={(event) =>
                           setForm({
                             ...form,
-                            relationType: event.target.value,
+                            treatment: event.target.value as SourceCorrectionTreatment,
                             target: "",
-                            newGroup:
-                              event.target.value === "modifies"
-                                ? true
-                                : event.target.value === "replaces"
-                                  ? false
-                                  : form.newGroup,
+                            label:
+                              event.target.value === "independent" || event.target.value === "modifies"
+                                ? "Revision 1"
+                                : event.target.value === "keep"
+                                  ? `Revision ${(current?.revision.revision_number ?? 0) + 1}`
+                                : form.label,
                           })
                         }
                       >
-                        <option value="">None</option>
-                        <option value="replaces">Replaces</option>
-                        <option value="modifies">Modifies</option>
+                        <option value="keep">Keep this source's current treatment</option>
+                        <option value="independent">New independent source</option>
+                        <option value="revision">Latest revision of an existing source</option>
+                        <option value="modifies">Modifies an existing source</option>
                       </select>
                     </label>
+                    {(form.treatment === "revision" || form.treatment === "modifies") && (
                     <label className="field-control">
-                      <span>Target revision</span>
+                      <span>Existing source</span>
                       <select
-                        required={Boolean(form.relationType)}
-                        disabled={!form.relationType}
+                        aria-label="Correction target source"
+                        required
                         value={form.target}
-                        onChange={(event) => setForm({ ...form, target: event.target.value })}
+                        onChange={(event) => {
+                          const target = relationshipTargets?.find(
+                            (item) => item.revision.id === event.target.value,
+                          )?.revision;
+                          setForm({
+                            ...form,
+                            target: event.target.value,
+                            label:
+                              form.treatment === "revision" && target
+                                ? `Revision ${target.revision_number + 1}`
+                                : form.label,
+                          });
+                        }}
                       >
-                        <option value="">
-                          {form.relationType ? "Select target" : "Choose a relationship first"}
-                        </option>
+                        <option value="">Select source</option>
                         {relationshipTargets?.map((item) => (
                           <option key={item.revision.id} value={item.revision.id}>
                             {item.revision.title} · r{item.revision.revision_number}
@@ -1519,7 +1686,13 @@ function ProjectSources({ project }: { project: Project }) {
                         ))}
                       </select>
                     </label>
+                    )}
                   </div>
+                  <p className="muted-copy">
+                    “Latest revision” joins the selected source’s history and replaces it. “Modifies”
+                    stays a separate source and records the link. “Independent” removes any active
+                    relationship from this document.
+                  </p>
                 </div>
                 <label className="field-control">
                   <span>Change reason</span>
@@ -1534,8 +1707,13 @@ function ProjectSources({ project }: { project: Project }) {
                   />
                 </label>
                 <div className="source-revision-form__actions">
-                  <button className="button button--primary">Create and activate revision</button>
-                  <span>Creates a new metadata revision; the uploaded file is not duplicated.</span>
+                  <button className="button button--primary" disabled={creatingRevision}>
+                    {creatingRevision ? "Saving correction…" : "Save metadata correction"}
+                  </button>
+                  <span>
+                    Saved as a new immutable metadata revision. No upload, reprocessing, or index
+                    rebuild is needed.
+                  </span>
                 </div>
               </form>
             </section>
@@ -1559,6 +1737,11 @@ function ProjectSources({ project }: { project: Project }) {
                     <small>
                       {revision.lifecycle_status} · {revision.source_role} ·{" "}
                       {formatDate(revision.created_at)}
+                    </small>
+                    <small>
+                      Published {formatSourceDate(revision.published_date)} · effective{" "}
+                      {formatSourceDate(revision.effective_from)} to{" "}
+                      {formatSourceDate(revision.effective_to)}
                     </small>
                     <small>{revision.change_reason}</small>
                   </span>

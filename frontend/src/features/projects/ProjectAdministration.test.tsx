@@ -500,9 +500,9 @@ test("uploads a document into an existing source group or a modifying group", as
           revision_label: "Initial",
           title: "Existing source",
           source_type: null,
-          published_date: null,
-          effective_from: null,
-          effective_to: null,
+          published_date: "2023-07-01",
+          effective_from: "2023-07-01",
+          effective_to: "2024-06-30",
           lifecycle_status: "active",
           source_role: "primary",
           change_reason: "Initial",
@@ -541,22 +541,19 @@ test("uploads a document into an existing source group or a modifying group", as
 
   const target = sourceItem.revision;
   await screen.findByText("Upload document and optional source metadata");
+  expect(screen.getAllByLabelText<HTMLInputElement>("Published")[1]).toHaveValue("2023-07-01");
+  expect(screen.getAllByLabelText<HTMLInputElement>("Effective from")[1]).toHaveValue("2023-07-01");
+  expect(screen.getAllByLabelText<HTMLInputElement>("Effective to")[1]).toHaveValue("2024-06-30");
   fireEvent.submit(
-    screen.getByRole("button", { name: "Create and activate revision" }).closest("form")!,
+    screen.getByRole("button", { name: "Save metadata correction" }).closest("form")!,
   );
   await waitFor(() => expect(createRevision).toHaveBeenCalledTimes(1));
+  expect(createRevision.mock.calls[0]?.[2]).toMatchObject({
+    published_date: "2023-07-01",
+    effective_from: "2023-07-01",
+    effective_to: "2024-06-30",
+  });
   expect(createRevision.mock.calls[0]?.[2]).not.toHaveProperty("change_reason");
-  const relationship = screen.getByLabelText("Relationship");
-  const metadataTarget = screen.getByLabelText("Target revision");
-  const separateGroup = screen.getByLabelText(/Create a separate source group/i);
-  expect(metadataTarget).toBeDisabled();
-  await userEvent.selectOptions(relationship, "modifies");
-  expect(metadataTarget).toBeEnabled();
-  expect(separateGroup).toBeChecked();
-  expect(separateGroup).toBeDisabled();
-  await userEvent.selectOptions(relationship, "replaces");
-  expect(separateGroup).not.toBeChecked();
-  expect(separateGroup).toBeEnabled();
   await userEvent.upload(
     screen.getByLabelText("File"),
     new File(["revision"], "revision.pdf", { type: "application/pdf" }),

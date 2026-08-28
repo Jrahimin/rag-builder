@@ -1452,6 +1452,9 @@ td small {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
 }
+.lab-source-versioning__reason {
+  grid-column: 1 / -1;
+}
 .lab-source-versioning .lab-help {
   margin-top: 8px;
 }
@@ -1532,6 +1535,26 @@ td small {
   overflow-wrap: break-word;
   word-break: normal;
   line-height: 1.4;
+}
+.lab-source-correction {
+  display: grid;
+  gap: 14px;
+  margin-top: 18px;
+  padding-top: 18px;
+  border-top: 1px solid #e3e8ef;
+}
+.lab-source-correction .section-heading {
+  margin-bottom: 0;
+}
+.lab-source-correction .section-heading p {
+  max-width: 62ch;
+  margin: 4px 0 0;
+  color: #667085;
+  font-size: 0.72rem;
+  line-height: 1.45;
+}
+.lab-source-correction .source-revision-form {
+  padding: 0;
 }
 .lab-document-list small,
 .lab-help {
@@ -3906,7 +3929,8 @@ code {
 }
 .source-upload .field-control:first-child,
 .source-upload .muted-copy,
-.source-upload .button-row {
+.source-upload .button-row,
+.source-upload__reason {
   grid-column: 1 / -1;
 }
 .source-generation {

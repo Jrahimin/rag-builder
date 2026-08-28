@@ -28,6 +28,7 @@ import {
 } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import {
+  operatorApiClient,
   OperatorApiError,
   type ChatTurn,
   type Document,
@@ -35,7 +36,6 @@ import {
   type Message,
   type Project,
   type SearchResponse,
-  type SourceRevisionCreate,
   type SourceState,
 } from "../../api/operatorApiClient";
 import {
@@ -57,6 +57,15 @@ import { ProjectSelector } from "../../components/ProjectSelector";
 import { StatusBadge } from "../../components/StatusBadge";
 import { formatBytes, formatDate, formatDuration, shortId } from "../../shared/formatters";
 import { CorpusLifecycleActions } from "../projects/CorpusLifecycleActions";
+import {
+  buildSourceUploadMetadata,
+  buildSourceMetadataCorrection,
+  hasInvalidEffectiveInterval,
+  sourceMetadataDraftFromRevision,
+  type SourceMetadataDraft,
+  type SourceCorrectionTreatment,
+  type SourceUploadMode,
+} from "../sources/sourceUploadMetadata";
 
 const tabs = ["journey", "documents", "search", "messages", "lifecycle"] as const;
 type LabTab = (typeof tabs)[number];
@@ -693,11 +702,24 @@ function DocumentsTab({
   const [ocrLang, setOcrLang] = useState("");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [sourceTitle, setSourceTitle] = useState("");
-  const [sourceRole, setSourceRole] = useState<"primary" | "supporting" | "reference">("primary");
-  const [uploadMode, setUploadMode] = useState<"independent" | "revision" | "modifies">(
-    "independent",
-  );
+  const [sourceType, setSourceType] = useState("");
+  const [sourceLifecycle, setSourceLifecycle] =
+    useState<SourceMetadataDraft["lifecycle"]>("active");
+  const [sourceRole, setSourceRole] = useState<SourceMetadataDraft["role"]>("primary");
+  const [sourcePublished, setSourcePublished] = useState("");
+  const [sourceEffectiveFrom, setSourceEffectiveFrom] = useState("");
+  const [sourceEffectiveTo, setSourceEffectiveTo] = useState("");
+  const [sourceChangeReason, setSourceChangeReason] = useState("");
+  const [uploadMode, setUploadMode] = useState<SourceUploadMode>("independent");
   const [uploadTarget, setUploadTarget] = useState("");
+  const [metadataError, setMetadataError] = useState("");
+  const [correctionOpen, setCorrectionOpen] = useState(false);
+  const [correctionTreatment, setCorrectionTreatment] =
+    useState<SourceCorrectionTreatment>("keep");
+  const [correctionTarget, setCorrectionTarget] = useState("");
+  const [correctionDraft, setCorrectionDraft] = useState<SourceMetadataDraft | null>(null);
+  const [correctionError, setCorrectionError] = useState("");
+  const [savingCorrection, setSavingCorrection] = useState(false);
   const [purgeText, setPurgeText] = useState("");
   const [actionAccepted, setActionAccepted] = useState<{
     action: string;
@@ -705,6 +727,9 @@ function DocumentsTab({
   } | null>(null);
   const selected = pickLabDocument(documents, selectedId);
   const selectedSource = selected ? sourceForDocument(sourceState.data, selected.id) : undefined;
+  const correctionTargets = sourceState.data?.items.filter(
+    (item) => item.revision.id !== selectedSource?.revision.id,
+  );
   const relatedJobs = jobs
     .filter((job) => job.document_id === selected?.id || job.id === selected?.job_id)
     .slice(0, 6);
@@ -716,48 +741,36 @@ function DocumentsTab({
   const purgeBusy = lifecycle.isPending || selected?.status === "purging";
   const destructiveBusy = ["deleting", "purging"].includes(selected?.status ?? "");
 
-  const buildSourceMetadata = (file: File): SourceRevisionCreate | undefined => {
-    const target = sourceState.data?.items.find((item) => item.revision.id === uploadTarget);
-    const customized =
-      uploadMode !== "independent" || sourceTitle.trim() !== "" || sourceRole !== "primary";
-    if (!customized) return undefined;
-    if (uploadMode !== "independent" && !target) return undefined;
-    return {
-      activate: true,
-      change_reason:
-        uploadMode === "revision"
-          ? "Uploaded as the latest revision of an existing source"
-          : uploadMode === "modifies"
-            ? "Uploaded as a modifying source"
-            : "Governed Test Lab upload",
-      create_new_group: uploadMode !== "revision",
-      ...(uploadMode === "revision" && target
-        ? { source_group_id: target.revision.source_group_id }
-        : {}),
-      lifecycle_status: "active",
-      revision_label:
-        uploadMode === "revision" && target
-          ? `Revision ${target.revision.revision_number + 1}`
-          : "Initial",
-      source_role: sourceRole,
-      title: sourceTitle.trim() || file.name,
-      relationships:
-        uploadMode === "independent" || !target
-          ? []
-          : [
-              {
-                relationship_type: uploadMode === "revision" ? "replaces" : "modifies",
-                target_revision_id: target.revision.id,
-              },
-            ],
-    };
-  };
-
   const uploadFile = async (file?: File) => {
     if (!file) return;
-    if (uploadMode !== "independent" && !uploadTarget) return;
+    setMetadataError("");
+    const target = sourceState.data?.items.find((item) => item.revision.id === uploadTarget);
+    if (uploadMode !== "independent" && !target) {
+      setMetadataError("Select the existing source revision this upload relates to.");
+      return;
+    }
+    const draft: SourceMetadataDraft = {
+      title: sourceTitle,
+      sourceType,
+      lifecycle: sourceLifecycle,
+      role: sourceRole,
+      publishedDate: sourcePublished,
+      effectiveFrom: sourceEffectiveFrom,
+      effectiveTo: sourceEffectiveTo,
+      changeReason: sourceChangeReason,
+    };
+    if (hasInvalidEffectiveInterval(draft)) {
+      setMetadataError("Effective to must be on or after effective from.");
+      return;
+    }
     try {
-      const sourceMetadata = buildSourceMetadata(file);
+      const sourceMetadata = buildSourceUploadMetadata({
+        filename: file.name,
+        mode: uploadMode,
+        target: target?.revision,
+        draft,
+        defaultReason: "Governed Test Lab upload",
+      });
       const document = await upload.mutateAsync({
         file,
         ocrLang: ocrLang || undefined,
@@ -765,6 +778,12 @@ function DocumentsTab({
       });
       setSelectedFile(null);
       setSourceTitle("");
+      setSourceType("");
+      setSourceLifecycle("active");
+      setSourcePublished("");
+      setSourceEffectiveFrom("");
+      setSourceEffectiveTo("");
+      setSourceChangeReason("");
       setUploadMode("independent");
       setUploadTarget("");
       setSourceRole("primary");
@@ -824,6 +843,55 @@ function DocumentsTab({
     }
   };
 
+  const startCorrection = () => {
+    if (!selectedSource) return;
+    setCorrectionDraft(sourceMetadataDraftFromRevision(selectedSource.revision));
+    setCorrectionTreatment("keep");
+    setCorrectionTarget("");
+    setCorrectionError("");
+    setCorrectionOpen(true);
+  };
+
+  const saveCorrection = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!selected || !selectedSource || !correctionDraft) return;
+    setCorrectionError("");
+    const target = correctionTargets?.find((item) => item.revision.id === correctionTarget)?.revision;
+    if ((correctionTreatment === "revision" || correctionTreatment === "modifies") && !target) {
+      setCorrectionError("Select the existing source this correction relates to.");
+      return;
+    }
+    if (hasInvalidEffectiveInterval(correctionDraft)) {
+      setCorrectionError("Effective to must be on or after effective from.");
+      return;
+    }
+    const revision = buildSourceMetadataCorrection({
+      current: selectedSource.revision,
+      treatment: correctionTreatment,
+      target,
+      draft: correctionDraft,
+    });
+    if (!revision) return;
+    setSavingCorrection(true);
+    try {
+      const created = await operatorApiClient.createSourceRevision(projectId, selected.id, revision);
+      await sourceState.refetch();
+      setCorrectionOpen(false);
+      onActivity({
+        name: `Correct source metadata for ${selected.filename}`,
+        outcome: "passed",
+        projectId,
+        documentId: selected.id,
+        detail: `Activated source metadata revision ${created.revision.revision_number}; document processing was unchanged.`,
+        tab: "documents",
+      });
+    } catch (correctionSaveError) {
+      setCorrectionError((correctionSaveError as Error).message);
+    } finally {
+      setSavingCorrection(false);
+    }
+  };
+
   if (isLoading) return <LoadingState label="Loading project documents" />;
   if (error) return <ErrorState error={error} retry={() => window.location.reload()} />;
   return (
@@ -867,7 +935,7 @@ function DocumentsTab({
                 aria-label="Source treatment"
                 value={uploadMode}
                 onChange={(event) => {
-                  setUploadMode(event.target.value as typeof uploadMode);
+                  setUploadMode(event.target.value as SourceUploadMode);
                   setUploadTarget("");
                 }}
               >
@@ -900,11 +968,29 @@ function DocumentsTab({
               <select
                 aria-label="Source role"
                 value={sourceRole}
-                onChange={(event) => setSourceRole(event.target.value as typeof sourceRole)}
+                onChange={(event) =>
+                  setSourceRole(event.target.value as SourceMetadataDraft["role"])
+                }
               >
                 <option value="primary">Primary (authoritative / latest)</option>
                 <option value="supporting">Supporting</option>
                 <option value="reference">Reference</option>
+                <option value="unspecified">Unspecified</option>
+              </select>
+            </label>
+            <label className="field-control">
+              <span>Lifecycle</span>
+              <select
+                aria-label="Source lifecycle"
+                value={sourceLifecycle}
+                onChange={(event) =>
+                  setSourceLifecycle(event.target.value as SourceMetadataDraft["lifecycle"])
+                }
+              >
+                <option value="active">Active</option>
+                <option value="draft">Draft</option>
+                <option value="retired">Retired</option>
+                <option value="unspecified">Unspecified</option>
               </select>
             </label>
             <label className="field-control">
@@ -916,13 +1002,65 @@ function DocumentsTab({
                 placeholder="Defaults to the filename"
               />
             </label>
+            <label className="field-control">
+              <span>Source type</span>
+              <input
+                aria-label="Source type"
+                value={sourceType}
+                placeholder="e.g. Act, regulation, guidance"
+                onChange={(event) => setSourceType(event.target.value)}
+              />
+            </label>
+            <label className="field-control">
+              <span>Published</span>
+              <input
+                aria-label="Published"
+                type="date"
+                value={sourcePublished}
+                onChange={(event) => setSourcePublished(event.target.value)}
+              />
+            </label>
+            <label className="field-control">
+              <span>Effective from</span>
+              <input
+                aria-label="Effective from"
+                type="date"
+                value={sourceEffectiveFrom}
+                max={sourceEffectiveTo || undefined}
+                onChange={(event) => setSourceEffectiveFrom(event.target.value)}
+              />
+            </label>
+            <label className="field-control">
+              <span>Effective to</span>
+              <input
+                aria-label="Effective to"
+                type="date"
+                value={sourceEffectiveTo}
+                min={sourceEffectiveFrom || undefined}
+                onChange={(event) => setSourceEffectiveTo(event.target.value)}
+              />
+            </label>
+            <label className="field-control lab-source-versioning__reason">
+              <span>Change reason (optional)</span>
+              <input
+                aria-label="Change reason"
+                value={sourceChangeReason}
+                placeholder="Why this source was added or revised"
+                onChange={(event) => setSourceChangeReason(event.target.value)}
+              />
+            </label>
           </div>
           <p className="lab-help">
-            Processing version increments on reprocess. To mark this file as the latest edition of
-            an existing source, choose “Latest revision of an existing source”. Full source history
-            lives on Projects → Sources.
+            Source metadata is optional: defaults create a neutral initial record. Entering any
+            metadata saves it with this upload. Validity dates affect retrieval only when source
+            policy is enforced. Full source history lives on Projects → Sources.
           </p>
         </details>
+        {metadataError && (
+          <div className="failure-box lab-request-card" role="alert">
+            {metadataError}
+          </div>
+        )}
         <div className="lab-upload-submit">
           <label className="field-control lab-ocr-control">
             <span>OCR language</span>
@@ -1096,6 +1234,177 @@ function DocumentsTab({
                 )}
               </dl>
             </details>
+            {selectedSource && (
+              <section className="lab-source-correction">
+                <div className="section-heading">
+                  <div>
+                    <h3>Source metadata</h3>
+                    <p>Correct a source choice or its retrieval metadata without reprocessing.</p>
+                  </div>
+                  {!correctionOpen && (
+                    <button className="button button--secondary" type="button" onClick={startCorrection}>
+                      Correct metadata
+                    </button>
+                  )}
+                </div>
+                {correctionOpen && correctionDraft && (
+                  <form className="stack-form source-revision-form" onSubmit={(event) => void saveCorrection(event)}>
+                    <div className="form-grid">
+                      <label className="field-control">
+                        <span>Correct treatment</span>
+                        <select
+                          aria-label="Correct treatment"
+                          value={correctionTreatment}
+                          onChange={(event) => {
+                            setCorrectionTreatment(event.target.value as SourceCorrectionTreatment);
+                            setCorrectionTarget("");
+                          }}
+                        >
+                          <option value="keep">Keep this source's current treatment</option>
+                          <option value="independent">New independent source</option>
+                          <option value="revision">Latest revision of an existing source</option>
+                          <option value="modifies">Modifies an existing source</option>
+                        </select>
+                      </label>
+                      {(correctionTreatment === "revision" || correctionTreatment === "modifies") && (
+                        <label className="field-control">
+                          <span>Existing source</span>
+                          <select
+                            aria-label="Correction target source"
+                            required
+                            value={correctionTarget}
+                            onChange={(event) => setCorrectionTarget(event.target.value)}
+                          >
+                            <option value="">Select source</option>
+                            {correctionTargets?.map((item) => (
+                              <option key={item.revision.id} value={item.revision.id}>
+                                {item.revision.title} · r{item.revision.revision_number}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      )}
+                      <label className="field-control">
+                        <span>Source title</span>
+                        <input
+                          required
+                          value={correctionDraft.title}
+                          onChange={(event) =>
+                            setCorrectionDraft({ ...correctionDraft, title: event.target.value })
+                          }
+                        />
+                      </label>
+                      <label className="field-control">
+                        <span>Source type</span>
+                        <input
+                          value={correctionDraft.sourceType}
+                          onChange={(event) =>
+                            setCorrectionDraft({ ...correctionDraft, sourceType: event.target.value })
+                          }
+                        />
+                      </label>
+                      <label className="field-control">
+                        <span>Source role</span>
+                        <select
+                          aria-label="Correction source role"
+                          value={correctionDraft.role}
+                          onChange={(event) =>
+                            setCorrectionDraft({
+                              ...correctionDraft,
+                              role: event.target.value as SourceMetadataDraft["role"],
+                            })
+                          }
+                        >
+                          <option value="primary">Primary</option>
+                          <option value="supporting">Supporting</option>
+                          <option value="reference">Reference</option>
+                          <option value="unspecified">Unspecified</option>
+                        </select>
+                      </label>
+                      <label className="field-control">
+                        <span>Lifecycle</span>
+                        <select
+                          aria-label="Correction lifecycle"
+                          value={correctionDraft.lifecycle}
+                          onChange={(event) =>
+                            setCorrectionDraft({
+                              ...correctionDraft,
+                              lifecycle: event.target.value as SourceMetadataDraft["lifecycle"],
+                            })
+                          }
+                        >
+                          <option value="active">Active</option>
+                          <option value="draft">Draft</option>
+                          <option value="retired">Retired</option>
+                          <option value="unspecified">Unspecified</option>
+                        </select>
+                      </label>
+                      <label className="field-control">
+                        <span>Published</span>
+                        <input
+                          type="date"
+                          value={correctionDraft.publishedDate}
+                          onChange={(event) =>
+                            setCorrectionDraft({ ...correctionDraft, publishedDate: event.target.value })
+                          }
+                        />
+                      </label>
+                      <label className="field-control">
+                        <span>Effective from</span>
+                        <input
+                          type="date"
+                          value={correctionDraft.effectiveFrom}
+                          max={correctionDraft.effectiveTo || undefined}
+                          onChange={(event) =>
+                            setCorrectionDraft({ ...correctionDraft, effectiveFrom: event.target.value })
+                          }
+                        />
+                      </label>
+                      <label className="field-control">
+                        <span>Effective to</span>
+                        <input
+                          type="date"
+                          value={correctionDraft.effectiveTo}
+                          min={correctionDraft.effectiveFrom || undefined}
+                          onChange={(event) =>
+                            setCorrectionDraft({ ...correctionDraft, effectiveTo: event.target.value })
+                          }
+                        />
+                      </label>
+                    </div>
+                    <label className="field-control">
+                      <span>Change reason (optional)</span>
+                      <textarea
+                        rows={2}
+                        value={correctionDraft.changeReason}
+                        placeholder="Why this metadata was corrected"
+                        onChange={(event) =>
+                          setCorrectionDraft({ ...correctionDraft, changeReason: event.target.value })
+                        }
+                      />
+                    </label>
+                    {correctionError && <div className="failure-box" role="alert">{correctionError}</div>}
+                    <div className="button-row">
+                      <button className="button button--primary" disabled={savingCorrection}>
+                        {savingCorrection ? "Saving…" : "Save metadata correction"}
+                      </button>
+                      <button
+                        className="button button--secondary"
+                        type="button"
+                        disabled={savingCorrection}
+                        onClick={() => setCorrectionOpen(false)}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                    <p className="lab-help">
+                      “Latest revision” joins the selected source’s history and replaces it.
+                      “Modifies” stays separate and records the link. The file and index are unchanged.
+                    </p>
+                  </form>
+                )}
+              </section>
+            )}
             <section>
               <h3>Processing actions</h3>
               <div className="button-row">

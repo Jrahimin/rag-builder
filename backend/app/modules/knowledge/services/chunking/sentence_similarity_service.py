@@ -35,8 +35,12 @@ class BaseSentenceSimilarityService(ABC):
 class SentenceSimilarityService(BaseSentenceSimilarityService):
     """Embedding-backed sentence similarity boundary detector."""
 
-    def __init__(self, embedder: BaseEmbeddingProvider) -> None:
+    def __init__(self, embedder: BaseEmbeddingProvider, *, batch_size: int = 32) -> None:
+        if batch_size < 1:
+            msg = "Semantic similarity batch_size must be at least 1."
+            raise ValueError(msg)
         self._embedder = embedder
+        self._batch_size = batch_size
 
     async def detect_boundaries(
         self,
@@ -52,11 +56,17 @@ class SentenceSimilarityService(BaseSentenceSimilarityService):
                 provider_version=self._embedder.provider_version,
             )
 
-        embedded = await self._embedder.embed_texts(
-            sentences,
-            purpose=EmbeddingPurpose.DOCUMENT,
-        )
-        vectors = embedded.vectors
+        vectors: list[list[float]] = []
+        embedded = None
+        for start in range(0, len(sentences), self._batch_size):
+            embedded = await self._embedder.embed_texts(
+                sentences[start : start + self._batch_size],
+                purpose=EmbeddingPurpose.DOCUMENT,
+            )
+            vectors.extend(embedded.vectors)
+        if embedded is None:  # pragma: no cover - guarded by len(sentences) above
+            msg = "No sentence embeddings were generated."
+            raise RuntimeError(msg)
         boundaries: list[int] = []
         for index in range(1, len(sentences)):
             similarity = _cosine_similarity(vectors[index - 1], vectors[index])

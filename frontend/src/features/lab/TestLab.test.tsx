@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { vi } from "vitest";
 import {
@@ -8,6 +8,7 @@ import {
   type IndexBuild,
   type Job,
   type Message,
+  type SourceState,
 } from "../../api/operatorApiClient";
 import { OperatorConsoleApp } from "../../app/OperatorConsoleApp";
 import { renderOperatorComponent } from "../../test/renderOperatorComponent";
@@ -524,6 +525,13 @@ test("uploads a file as the latest revision of an existing source", async () => 
     "Latest revision of an existing source",
   );
   await userEvent.selectOptions(screen.getByLabelText("Existing source"), revisionId);
+  await userEvent.selectOptions(screen.getByLabelText("Source role"), "supporting");
+  await userEvent.selectOptions(screen.getByLabelText("Source lifecycle"), "draft");
+  await userEvent.type(screen.getByLabelText("Source type"), "Ordinance");
+  fireEvent.change(screen.getByLabelText("Published"), { target: { value: "2023-07-01" } });
+  fireEvent.change(screen.getByLabelText("Effective from"), { target: { value: "2023-07-01" } });
+  fireEvent.change(screen.getByLabelText("Effective to"), { target: { value: "2024-06-30" } });
+  await userEvent.type(screen.getByLabelText("Change reason"), "Annual update");
   const picker = screen.getByText("Drop a document here").closest("label")!;
   const fileInput = picker.querySelector("input[type=file]") as HTMLInputElement;
   await userEvent.upload(
@@ -539,8 +547,89 @@ test("uploads a file as the latest revision of an existing source", async () => 
       activate: true,
       create_new_group: false,
       source_group_id: "66666666-6666-6666-6666-666666666666",
-      source_role: "primary",
+      source_role: "supporting",
+      lifecycle_status: "draft",
+      source_type: "Ordinance",
+      published_date: "2023-07-01",
+      effective_from: "2023-07-01",
+      effective_to: "2024-06-30",
+      change_reason: "Annual update",
       relationships: [{ relationship_type: "replaces", target_revision_id: revisionId }],
     }),
   );
+});
+
+test("corrects source treatment in Test Lab without triggering document processing", async () => {
+  mockLabBase();
+  const sourceState: SourceState = {
+    project_id: projectFixture.id,
+    generation: 1,
+    current_generation: 1,
+    items: [
+      {
+        document_id: documentFixture.id,
+        activation: {
+          id: "44444444-4444-4444-4444-444444444444",
+          project_id: projectFixture.id,
+          document_id: documentFixture.id,
+          source_revision_id: "55555555-5555-5555-5555-555555555555",
+          generation: 1,
+          activated_by: "test-admin",
+          reason: "Initial",
+          created_at: now,
+        },
+        revision: {
+          id: "55555555-5555-5555-5555-555555555555",
+          project_id: projectFixture.id,
+          document_id: documentFixture.id,
+          source_group_id: "66666666-6666-6666-6666-666666666666",
+          revision_number: 1,
+          revision_label: "Initial",
+          title: "Existing ordinance",
+          source_type: "Ordinance",
+          published_date: "2023-07-01",
+          effective_from: "2023-07-01",
+          effective_to: null,
+          lifecycle_status: "active",
+          source_role: "primary",
+          change_reason: "Initial",
+          created_by: "test-admin",
+          content_hash: "d".repeat(64),
+          created_at: now,
+          relationships: [],
+          warnings: [],
+        },
+      },
+    ],
+  };
+  vi.mocked(operatorApiClient.getSourceState).mockResolvedValue(sourceState);
+  const createRevision = vi.spyOn(operatorApiClient, "createSourceRevision").mockResolvedValue({
+    revision: sourceState.items[0]!.revision,
+    activation: sourceState.items[0]!.activation,
+  });
+  const reprocess = vi.spyOn(operatorApiClient, "reprocessDocument");
+
+  renderOperatorComponent(
+    <OperatorConsoleApp />,
+    `/lab?project=${projectFixture.id}&tab=documents`,
+  );
+
+  await userEvent.click(await screen.findByRole("button", { name: "Correct metadata" }));
+  await userEvent.type(
+    screen.getByPlaceholderText("Why this metadata was corrected"),
+    "Correct treatment",
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Save metadata correction" }));
+
+  await waitFor(() => expect(createRevision).toHaveBeenCalledTimes(1));
+  expect(createRevision).toHaveBeenCalledWith(
+    projectFixture.id,
+    documentFixture.id,
+    expect.objectContaining({
+      create_new_group: false,
+      change_reason: "Correct treatment",
+      relationships: [],
+    }),
+  );
+  expect(reprocess).not.toHaveBeenCalled();
 });

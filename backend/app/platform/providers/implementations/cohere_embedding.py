@@ -26,6 +26,7 @@ _PURPOSE_TO_INPUT_TYPE = {
     EmbeddingPurpose.QUERY: "search_query",
     EmbeddingPurpose.DOCUMENT: "search_document",
 }
+_MAX_TEXTS_PER_REQUEST = 96
 
 
 class CohereEmbeddingProvider(BaseEmbeddingProvider):
@@ -78,6 +79,23 @@ class CohereEmbeddingProvider(BaseEmbeddingProvider):
                 dimensions=self._dimensions,
                 provider_version=self._provider_version,
             )
+        vectors: list[list[float]] = []
+        for start in range(0, len(texts), _MAX_TEXTS_PER_REQUEST):
+            batch = texts[start : start + _MAX_TEXTS_PER_REQUEST]
+            vectors.extend(await self._embed_batch(batch, purpose))
+        return EmbeddingBatchResult(
+            vectors=vectors,
+            provider=self.provider_name,
+            model=self.model_name,
+            dimensions=self._dimensions,
+            provider_version=self._provider_version,
+        )
+
+    async def _embed_batch(
+        self,
+        texts: list[str],
+        purpose: EmbeddingPurpose,
+    ) -> list[list[float]]:
         try:
             response = await cohere_post(
                 base_url=self._base_url,
@@ -127,20 +145,13 @@ class CohereEmbeddingProvider(BaseEmbeddingProvider):
                 context={"http_status": response.status_code},
             )
 
-        payload = response.json()
-        vectors = _float_vectors(payload, dimensions=self._dimensions)
+        vectors = _float_vectors(response.json(), dimensions=self._dimensions)
         if len(vectors) != len(texts):
             raise ProviderError(
                 "Cohere embed returned a mismatched vector batch.",
                 provider_name=self.provider_name,
             )
-        return EmbeddingBatchResult(
-            vectors=vectors,
-            provider=self.provider_name,
-            model=self.model_name,
-            dimensions=self._dimensions,
-            provider_version=self._provider_version,
-        )
+        return vectors
 
 
 def _float_vectors(payload: object, *, dimensions: int) -> list[list[float]]:

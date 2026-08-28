@@ -48,6 +48,36 @@ async def test_cohere_maps_query_and_document_input_types(
     assert seen == ["search_query", "search_document"]
 
 
+async def test_cohere_splits_requests_larger_than_vendor_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request_sizes: list[int] = []
+
+    class _Response:
+        status_code = 200
+        is_error = False
+
+        def __init__(self, count: int) -> None:
+            self._count = count
+
+        def json(self) -> dict:
+            return {"embeddings": {"float": [[0.1] * 4 for _ in range(self._count)]}}
+
+    class _Client:
+        async def post(self, url: str, headers: dict, json: dict) -> _Response:
+            del url, headers
+            count = len(json["texts"])
+            request_sizes.append(count)
+            return _Response(count)
+
+    _patch_client(monkeypatch, _Client())
+    provider = CohereEmbeddingProvider(api_key="secret", dimensions=4)
+    result = await provider.embed_texts([f"sentence {index}" for index in range(97)])
+
+    assert request_sizes == [96, 1]
+    assert len(result.vectors) == 97
+
+
 async def test_cohere_embed_auth_error(monkeypatch: pytest.MonkeyPatch) -> None:
     class _Response:
         status_code = 401

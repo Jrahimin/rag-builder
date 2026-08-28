@@ -43,7 +43,10 @@ async def _process(
         similarity_service=(
             HashSentenceSimilarityService()
             if settings.embedding.backend is EmbeddingBackend.HASH
-            else SentenceSimilarityService(embedder)
+            else SentenceSimilarityService(
+                embedder,
+                batch_size=settings.chunking.semantic_batch_size,
+            )
         ),
     )
     workflow = DocumentProcessingWorkflow(
