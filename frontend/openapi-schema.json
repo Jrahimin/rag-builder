@@ -4968,6 +4968,16 @@
             "title": "Configuration Hash",
             "type": "string"
           },
+          "deployment_configuration": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EffectiveProjectAIConfig"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "origins": {
             "additionalProperties": {
               "type": "string"

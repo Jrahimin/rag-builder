@@ -43,6 +43,7 @@ from app.modules.projects.schemas.project import (
     ProjectStatusUpdate,
     ProjectUpdate,
 )
+from app.platform.config.project_ai import resolve_project_ai_config
 from app.platform.http.pagination import OperatorListParams, PaginatedResult
 from app.platform.providers.capabilities import describe_llm_capability
 
@@ -287,12 +288,14 @@ async def get_project_ai_config(
     service: ProjectAdministrationServiceDep,
 ) -> ApiResponse[EffectiveProjectAIConfigResponse]:
     resolution = await service.effective_config()
+    deployment_resolution = resolve_project_ai_config(get_settings(), None)
     return ApiResponse.ok(
         EffectiveProjectAIConfigResponse(
             project_id=project_id,
             active_revision_id=resolution.provenance.project_config_revision_id,
             configuration_hash=resolution.configuration_hash,
             configuration=resolution.configuration,
+            deployment_configuration=deployment_resolution.configuration,
             origins=resolution.origins,
             provenance=resolution.provenance,
         )

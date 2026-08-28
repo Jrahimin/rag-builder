@@ -32,9 +32,9 @@ import {
   PROJECT_AI_FIELD_HINTS,
   ProjectAISettingsFields,
   buildSparseProjectConfig,
+  configOverridesFromEffective,
   configFormFromEffective,
   configFormFromDeployment,
-  configOverridesFromStored,
   emptyProjectConfigForm,
   inheritedFormFromEffective,
   inheritedProjectConfig,
@@ -731,12 +731,14 @@ function ProjectConfig({ project }: { project: Project }) {
     setEffective(config);
     setHistory(revisions);
     setCapabilities(providerCapabilities);
-    setOverrides(
-      activeRevision
-        ? configOverridesFromStored(activeRevision.configuration)
-        : inheritedProjectConfig,
+    setOverrides(configOverridesFromEffective(config, config.deployment_configuration));
+    setForm(
+      configFormFromEffective(
+        config,
+        activeRevision?.configuration ?? {},
+        config.deployment_configuration,
+      ),
     );
-    setForm(configFormFromEffective(config, activeRevision?.configuration ?? {}));
   }, [project.id]);
   useEffect(() => {
     setError("");
@@ -862,6 +864,7 @@ function ProjectConfig({ project }: { project: Project }) {
             overrides={overrides}
             setOverride={setOverride}
             effective={effective}
+            deploymentConfiguration={effective?.deployment_configuration}
           />
         </fieldset>
         <fieldset>

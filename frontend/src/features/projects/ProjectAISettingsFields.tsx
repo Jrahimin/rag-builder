@@ -106,31 +106,73 @@ export function storedRerankMode(stored: ProjectAIConfig): RerankModeChoice {
 export function configFormFromEffective(
   config: EffectiveProjectAIConfig,
   stored: ProjectAIConfig = {},
+  deploymentConfiguration?: EffectiveProjectAIConfig["configuration"] | null,
 ): ProjectConfigForm {
+  const configuration = config.configuration;
+  const inheritsTranslation =
+    deploymentConfiguration != null &&
+    configuration.retrieval.query_translation_enabled ===
+      deploymentConfiguration.retrieval.query_translation_enabled;
+  const inheritsRerank =
+    deploymentConfiguration != null &&
+    configuration.retrieval.rerank_mode === deploymentConfiguration.retrieval.rerank_mode;
   return {
-    provider: config.configuration.llm.provider,
-    model: config.configuration.llm.model,
+    provider: configuration.llm.provider,
+    model: configuration.llm.model,
     temperature:
-      config.configuration.llm.temperature === null
+      configuration.llm.temperature === null
         ? ""
-        : String(config.configuration.llm.temperature),
-    maxTokens: String(config.configuration.llm.max_tokens),
-    responseMode: config.configuration.chat.response_mode,
-    webSearchEnabled: config.configuration.web_search.enabled,
-    webSearchModel: config.configuration.web_search.model,
-    webSearchMaxResults: String(config.configuration.web_search.max_results),
-    webSearchMaxEvidenceChars: String(config.configuration.web_search.max_evidence_chars),
-    webSearchMaxOutputTokens: String(config.configuration.web_search.max_output_tokens),
-    webSearchTimeout: String(config.configuration.web_search.request_timeout_seconds),
-    domain: config.configuration.domain_instructions,
-    topK: String(config.configuration.retrieval.top_k),
-    strategy: config.configuration.retrieval.strategy,
-    translation: storedTranslationMode(stored),
-    rerankMode: storedRerankMode(stored),
-    evidence: String(config.configuration.retrieval.semantic_evidence_score_threshold),
-    citations: config.configuration.chat.include_citations,
-    sourcePolicy: config.configuration.source_policy_mode,
+        : String(configuration.llm.temperature),
+    maxTokens: String(configuration.llm.max_tokens),
+    responseMode: configuration.chat.response_mode,
+    webSearchEnabled: configuration.web_search.enabled,
+    webSearchModel: configuration.web_search.model,
+    webSearchMaxResults: String(configuration.web_search.max_results),
+    webSearchMaxEvidenceChars: String(configuration.web_search.max_evidence_chars),
+    webSearchMaxOutputTokens: String(configuration.web_search.max_output_tokens),
+    webSearchTimeout: String(configuration.web_search.request_timeout_seconds),
+    domain: configuration.domain_instructions,
+    topK: String(configuration.retrieval.top_k),
+    strategy: configuration.retrieval.strategy,
+    translation: inheritsTranslation ? "inherit" : storedTranslationMode(stored),
+    rerankMode: inheritsRerank ? "inherit" : storedRerankMode(stored),
+    evidence: String(configuration.retrieval.semantic_evidence_score_threshold),
+    citations: configuration.chat.include_citations,
+    sourcePolicy: configuration.source_policy_mode,
     reason: "",
+  };
+}
+
+export function configOverridesFromEffective(
+  config: EffectiveProjectAIConfig,
+  deploymentConfiguration?: EffectiveProjectAIConfig["configuration"] | null,
+): ProjectConfigOverrides {
+  if (!deploymentConfiguration) return configOverridesFromStored(config.configuration);
+  const form = configFormFromEffective(config);
+  const baseline = configFormFromEffective({
+    ...config,
+    configuration: deploymentConfiguration,
+  });
+  return {
+    provider: form.provider !== baseline.provider,
+    model: form.model !== baseline.model,
+    temperature: form.temperature !== baseline.temperature,
+    maxTokens: form.maxTokens !== baseline.maxTokens,
+    responseMode: form.responseMode !== baseline.responseMode,
+    webSearchEnabled: form.webSearchEnabled !== baseline.webSearchEnabled,
+    webSearchModel: form.webSearchModel !== baseline.webSearchModel,
+    webSearchMaxResults: form.webSearchMaxResults !== baseline.webSearchMaxResults,
+    webSearchMaxEvidenceChars:
+      form.webSearchMaxEvidenceChars !== baseline.webSearchMaxEvidenceChars,
+    webSearchMaxOutputTokens:
+      form.webSearchMaxOutputTokens !== baseline.webSearchMaxOutputTokens,
+    webSearchTimeout: form.webSearchTimeout !== baseline.webSearchTimeout,
+    domain: form.domain !== baseline.domain,
+    topK: form.topK !== baseline.topK,
+    strategy: form.strategy !== baseline.strategy,
+    evidence: form.evidence !== baseline.evidence,
+    citations: form.citations !== baseline.citations,
+    sourcePolicy: form.sourcePolicy !== baseline.sourcePolicy,
   };
 }
 
@@ -261,7 +303,10 @@ export function inheritedFormFromEffective(
   effective?: EffectiveProjectAIConfig | null,
 ): ProjectConfigForm {
   if (!effective) return { ...emptyProjectConfigForm };
-  return configFormFromEffective(effective, {});
+  return configFormFromEffective({
+    ...effective,
+    configuration: effective.deployment_configuration ?? effective.configuration,
+  });
 }
 
 export function configFormFromDeployment(config: ActiveConfiguration): ProjectConfigForm {
@@ -370,6 +415,7 @@ export function ProjectAISettingsFields({
   overrides,
   setOverride,
   effective,
+  deploymentConfiguration,
   defaults,
 }: {
   form: ProjectConfigForm;
@@ -377,16 +423,21 @@ export function ProjectAISettingsFields({
   overrides: ProjectConfigOverrides;
   setOverride: (key: ProjectConfigOverride, enabled: boolean) => void;
   effective?: EffectiveProjectAIConfig | null;
+  deploymentConfiguration?: EffectiveProjectAIConfig["configuration"] | null;
   defaults?: ProjectConfigForm;
 }) {
   const baseline = effective
-    ? inheritedFormFromEffective(effective)
+    ? configFormFromEffective({
+        ...effective,
+        configuration: deploymentConfiguration ?? effective.configuration,
+      })
     : (defaults ?? emptyProjectConfigForm);
-  const translationHint: Exclude<TranslationMode, "inherit"> = effective?.configuration.retrieval
+  const baselineConfiguration = deploymentConfiguration ?? effective?.configuration;
+  const translationHint: Exclude<TranslationMode, "inherit"> = baselineConfiguration?.retrieval
     .query_translation_enabled
     ? "on"
     : "off";
-  const resolvedRerank = effective?.configuration.retrieval.rerank_mode;
+  const resolvedRerank = baselineConfiguration?.retrieval.rerank_mode;
   const rerankHint: Exclude<RerankModeChoice, "inherit"> =
     resolvedRerank === "cross_language" || resolvedRerank === "off" || resolvedRerank === "always"
       ? resolvedRerank

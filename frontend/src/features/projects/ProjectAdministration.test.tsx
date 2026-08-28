@@ -81,56 +81,58 @@ const capability: ProviderCapability = {
 };
 
 function effectiveConfig(activeRevisionId: string | null): EffectiveProjectAIConfig {
+  const deploymentConfiguration: EffectiveProjectAIConfig["configuration"] = {
+    llm: { provider: "openai", model: "o1-test", temperature: null, max_tokens: 2048 },
+    retrieval: {
+      strategy: "hybrid",
+      top_k: 10,
+      rerank_enabled: true,
+      rerank_mode: "always",
+      rerank_top_n: 20,
+      rerank_candidate_window: 25,
+      rerank_return_n: 8,
+      rerank_score_threshold: null,
+      semantic_evidence_score_threshold: 0.5,
+      passage_scoring_enabled: false,
+      passage_window_tokens: 96,
+      passage_overlap_tokens: 24,
+      passage_min_tokens: 32,
+      query_translation_enabled: false,
+    },
+    chat: {
+      response_mode: "indexed_only",
+      max_context_chunks: 8,
+      context_char_budget: 12_000,
+      max_history_messages: 10,
+      include_citations: true,
+      citation_excerpt_max_chars: 500,
+      evidence_gate_mode: "enforce",
+      evidence_score_mode: "whole_chunk",
+      lexical_corroboration_floor_score: 0.35,
+      lexical_corroboration_coverage: 0.2,
+      minimum_claim_token_coverage: 0.2,
+      minimum_reranker_evidence_score: 0.4,
+    },
+    web_search: {
+      enabled: true,
+      backend: "openai",
+      model: "o1-test",
+      max_results: 8,
+      max_evidence_chars: 12_000,
+      max_output_tokens: 4096,
+      request_timeout_seconds: 45,
+    },
+    domain_instructions: "",
+    prompt_profile: "default",
+    prompt_version: "v1",
+    source_policy_mode: "off" as const,
+  };
   return {
     project_id: projectFixture.id,
     active_revision_id: activeRevisionId,
     configuration_hash: "a".repeat(64),
-    configuration: {
-      llm: { provider: "openai", model: "o1-test", temperature: null, max_tokens: 2048 },
-      retrieval: {
-        strategy: "hybrid",
-        top_k: 10,
-        rerank_enabled: true,
-        rerank_mode: "always",
-        rerank_top_n: 20,
-        rerank_candidate_window: 25,
-        rerank_return_n: 8,
-        rerank_score_threshold: null,
-        semantic_evidence_score_threshold: 0.5,
-        passage_scoring_enabled: false,
-        passage_window_tokens: 96,
-        passage_overlap_tokens: 24,
-        passage_min_tokens: 32,
-        query_translation_enabled: false,
-      },
-      chat: {
-        response_mode: "indexed_only",
-        max_context_chunks: 8,
-        context_char_budget: 12_000,
-        max_history_messages: 10,
-        include_citations: true,
-        citation_excerpt_max_chars: 500,
-        evidence_gate_mode: "enforce",
-        evidence_score_mode: "whole_chunk",
-        lexical_corroboration_floor_score: 0.35,
-        lexical_corroboration_coverage: 0.2,
-        minimum_claim_token_coverage: 0.2,
-        minimum_reranker_evidence_score: 0.4,
-      },
-      web_search: {
-        enabled: true,
-        backend: "openai",
-        model: "o1-test",
-        max_results: 8,
-        max_evidence_chars: 12_000,
-        max_output_tokens: 4096,
-        request_timeout_seconds: 45,
-      },
-      domain_instructions: "",
-      prompt_profile: "default",
-      prompt_version: "v1",
-      source_policy_mode: "off",
-    },
+    configuration: deploymentConfiguration,
+    deployment_configuration: deploymentConfiguration,
     origins: {},
     provenance: {
       project_config_revision_id: activeRevisionId,
@@ -174,7 +176,12 @@ test("keeps inherited AI values sparse and can clear a Project override", async 
     restored_from_revision_id: null,
     created_at: "2026-08-16T00:00:00Z",
   };
-  vi.spyOn(operatorApiClient, "getProjectAIConfig").mockResolvedValue(effectiveConfig(revision.id));
+  const config = effectiveConfig(revision.id);
+  config.configuration = {
+    ...config.configuration,
+    retrieval: { ...config.configuration.retrieval, top_k: 23 },
+  };
+  vi.spyOn(operatorApiClient, "getProjectAIConfig").mockResolvedValue(config);
   vi.spyOn(operatorApiClient, "getProjectAIConfigHistory").mockResolvedValue([revision]);
   vi.spyOn(operatorApiClient, "getProviderCapabilities").mockResolvedValue([capability]);
   const create = vi.spyOn(operatorApiClient, "createProjectAIConfig").mockResolvedValue(revision);
@@ -201,6 +208,45 @@ test("keeps inherited AI values sparse and can clear a Project override", async 
   expect(saved.llm).toEqual({});
   expect(saved).not.toHaveProperty("domain_instructions");
   expect(saved).not.toHaveProperty("source_policy_mode");
+});
+
+test("treats Project values equal to deployment defaults as inherited on load and after edits", async () => {
+  mockProjectShell();
+  const revision: ProjectAIConfigRevision = {
+    id: "33333333-3333-3333-3333-333333333333",
+    project_id: projectFixture.id,
+    revision_number: 1,
+    configuration_hash: "d".repeat(64),
+    configuration: {
+      llm: { provider: "openai", model: "o1-test" },
+      web_search: { enabled: true, max_results: 8 },
+      retrieval: { query_translation_enabled: false, rerank_mode: "always" },
+    },
+    reason: "Redundant legacy values",
+    created_by: "test-admin",
+    restored_from_revision_id: null,
+    created_at: "2026-08-16T00:00:00Z",
+  };
+  vi.spyOn(operatorApiClient, "getProjectAIConfig").mockResolvedValue(effectiveConfig(revision.id));
+  vi.spyOn(operatorApiClient, "getProjectAIConfigHistory").mockResolvedValue([revision]);
+  vi.spyOn(operatorApiClient, "getProviderCapabilities").mockResolvedValue([capability]);
+
+  renderOperatorComponent(
+    <OperatorConsoleApp />,
+    `/projects?project=${projectFixture.id}&section=ai-config`,
+  );
+
+  const inheritProvider = await screen.findByLabelText("Provider: inherit global");
+  expect(inheritProvider).toBeChecked();
+  expect(screen.getByLabelText("Model: inherit global")).toBeChecked();
+  expect(screen.getByLabelText("Web search: inherit global")).toBeChecked();
+  expect(screen.getByLabelText("Query translation: inherit global")).toBeChecked();
+  expect(screen.getByLabelText("Rerank mode: inherit global")).toBeChecked();
+
+  await userEvent.selectOptions(screen.getByLabelText("Provider"), "ollama");
+  expect(inheritProvider).not.toBeChecked();
+  await userEvent.selectOptions(screen.getByLabelText("Provider"), "openai");
+  expect(inheritProvider).toBeChecked();
 });
 
 test("does not create an AI revision when every control inherits", async () => {

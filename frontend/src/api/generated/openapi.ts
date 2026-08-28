@@ -3088,6 +3088,8 @@ export interface components {
       /** Active Revision Id */
       active_revision_id: string | null;
       configuration: components["schemas"]["EffectiveProjectAIConfig"];
+      /** Deployment Configuration */
+      deployment_configuration?: components["schemas"]["EffectiveProjectAIConfig"] | null;
       /** Configuration Hash */
       configuration_hash: string;
       /** Origins */

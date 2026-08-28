@@ -48,6 +48,10 @@ class EffectiveProjectAIConfigResponse(BaseModel):
     active_revision_id: uuid.UUID | None
     configuration_hash: str
     configuration: EffectiveProjectAIConfig
+    # Resolve the deployment policy separately so clients can tell an explicit
+    # Project value that happens to match the current default from a real
+    # override.
+    deployment_configuration: EffectiveProjectAIConfig | None = None
     origins: dict[str, str]
     provenance: ConfigProvenance
 
