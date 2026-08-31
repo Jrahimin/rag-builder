@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from app.modules.retrieval.language_scope import LanguageScope
+from app.platform.domain.evidence_contracts import QueryVariant, QueryVariantKind
 from app.platform.domain.language_detection import (
     QueryLanguageProfile,
     detect_query_language_profile,
@@ -38,6 +39,7 @@ class RetrievalBranch:
     language_scope: LanguageScope | None
     target_language: str | None = None
     record_semantic_score: bool = True
+    query_variant_id: str = "original"
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,6 +53,7 @@ class MultilingualRetrievalPlan:
     skipped_branches: tuple[str, ...]
     diagnostics: dict[str, Any] = field(default_factory=dict)
     cross_language_target: str | None = None
+    query_variants: tuple[QueryVariant, ...] = ()
 
 
 def language_inventory_from_manifest(manifest: object) -> LanguageInventory:
@@ -103,12 +106,14 @@ def plan_original_branches(
             query=query,
             language_scope=None,
             record_semantic_score=True,
+            query_variant_id="original",
         ),
         RetrievalBranch(
             branch_id=BRANCH_ORIGINAL_LEXICAL,
             family=BRANCH_ORIGINAL_LEXICAL,
             query=query,
             language_scope=None,
+            query_variant_id="original",
         ),
     )
 
@@ -126,6 +131,7 @@ def plan_translated_branches(
             language_scope=scope,
             target_language=target_language,
             record_semantic_score=False,
+            query_variant_id=f"translated:{target_language}",
         ),
         RetrievalBranch(
             branch_id=f"{BRANCH_TRANSLATED_LEXICAL}:{target_language}",
@@ -133,6 +139,7 @@ def plan_translated_branches(
             query=translated_query,
             language_scope=scope,
             target_language=target_language,
+            query_variant_id=f"translated:{target_language}",
         ),
     )
 
@@ -169,6 +176,14 @@ def build_untranslated_plan(
         skipped_branches=(BRANCH_TRANSLATED_DENSE, BRANCH_TRANSLATED_LEXICAL),
         diagnostics=diagnostics,
         cross_language_target=cross_language_target,
+        query_variants=(
+            QueryVariant(
+                variant_id="original",
+                kind=QueryVariantKind.ORIGINAL,
+                language=profile.exact_primary or profile.profile,
+                text=query,
+            ),
+        ),
     )
 
 

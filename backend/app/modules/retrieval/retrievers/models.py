@@ -8,6 +8,7 @@ from enum import StrEnum
 from typing import Any
 
 from app.core.config import RerankMode, RetrievalStrategy
+from app.platform.domain.evidence_contracts import BranchContribution, QueryVariant
 
 
 class CandidateSource(StrEnum):
@@ -24,6 +25,7 @@ class RetrievalFilters:
     """Project-scoped search filters."""
 
     document_id: uuid.UUID | None = None
+    document_ids: tuple[uuid.UUID, ...] = ()
     metadata: dict[str, str] = field(default_factory=dict)
 
 
@@ -41,6 +43,8 @@ class CandidateHit:
     evidence_relevance_score: float | None = None
     evidence_score_method: str | None = None
     evidence_calibration_id: str | None = None
+    query_variants: tuple[QueryVariant, ...] = ()
+    branch_contributions: tuple[BranchContribution, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,6 +83,10 @@ class RetrievalContext:
     rerank_return_n: int = 8
     multilingual_plan: Any | None = None
     persist_translation_text: bool = False
+    modifies_expansion_enabled: bool = False
+    max_related_sources: int = 8
+    max_relationship_candidates: int = 20
+    source_metadata_reader: Any | None = None
 
     def sanitized_metadata_filter(self) -> dict[str, str]:
         return {

@@ -185,6 +185,33 @@ async def test_source_policy_off_skips_metadata_capture() -> None:
     source_metadata.capture.assert_not_awaited()
 
 
+async def test_modifies_expansion_captures_governance_even_when_source_policy_is_off() -> None:
+    source_metadata = MagicMock()
+    source_metadata.capture = AsyncMock(
+        return_value=MagicMock(
+            selectable=MagicMock(),
+            generation=4,
+            configured_mode=SourcePolicyMode.OFF,
+            effective_mode=SourcePolicyMode.OFF,
+            deployment_cap="enforce",
+            reference_date="2026-08-31",
+            explicit_as_of=None,
+            exclusion_counts={},
+        )
+    )
+    service = _search_service(
+        retrieval_config=RetrievalConfig(modifies_expansion_enabled=True),
+        source_metadata=source_metadata,
+        configured_source_policy_mode=SourcePolicyMode.OFF,
+    )
+
+    scope, status = await service._capture_source_scope(None)
+
+    assert scope.generation == 4
+    assert status == "off"
+    source_metadata.capture.assert_awaited_once()
+
+
 async def test_enforce_overfetches_before_revision_consolidation_to_fill_top_k() -> None:
     project_id = uuid.uuid4()
     source_metadata = MagicMock()
@@ -259,6 +286,13 @@ async def test_enforce_overfetches_before_revision_consolidation_to_fill_top_k()
     context = retriever.retrieve.await_args.args[0]
     assert context.top_k == 100
     assert len(response.results) == 10
+    assert response.diagnostics.reranked_candidate_count == 40
+    assert response.diagnostics.post_rerank_removed_count == 30
+    assert response.diagnostics.post_rerank_removal_reasons == {
+        "same_source_group_lower_ranked_revision": 29,
+        "result_limit": 1,
+    }
+    assert response.diagnostics.post_rerank_unfilled_slots == 0
 
 
 async def test_search_diagnostics_expose_translation_query_and_branch_provenance() -> None:

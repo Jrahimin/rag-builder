@@ -11,6 +11,7 @@ from app.modules.retrieval.multilingual.planner import (
     language_inventory_from_manifest,
 )
 from app.modules.retrieval.multilingual.translation import resolve_multilingual_plan
+from app.platform.domain.evidence_contracts import QueryVariantKind
 from app.platform.providers.contracts.query_translation import (
     QueryTranslationRequest,
     QueryTranslationResponse,
@@ -84,6 +85,17 @@ async def test_plan_always_keeps_original_dense_and_lexical() -> None:
         for branch in plan.branches
         if branch.family.startswith("original")
     )
+    assert [variant.variant_id for variant in plan.query_variants] == [
+        "original",
+        "translated:bn",
+    ]
+    assert plan.query_variants[0].kind is QueryVariantKind.ORIGINAL
+    assert plan.query_variants[0].text == "what are the source tax deduction areas?"
+    assert plan.query_variants[1].kind is QueryVariantKind.TRANSLATED
+    assert plan.query_variants[1].text == "উৎসে কর সংগ্রহের খাত"
+    assert plan.query_variants[1].source_variant_id == "original"
+    assert plan.query_variants[1].translation_provider == "openai"
+    assert {branch.query_variant_id for branch in translated} == {"translated:bn"}
 
 
 async def test_translation_failure_keeps_original_branches() -> None:

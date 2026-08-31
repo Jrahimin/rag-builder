@@ -438,3 +438,162 @@ async def test_current_historical_replacement_modifier_hybrid_and_legacy_behavio
         if item.get("source_revision_id") == overlap_current["id"]
     )
     assert overlap_metadata["source_revision_id"] == overlap_current["id"]
+
+
+async def test_depth_one_modifier_expansion_is_current_scoped_and_incoming_only(
+    db_client: AsyncClient,
+    integration_connection: AsyncConnection,
+    captured_jobs: list[JobDefinition],
+) -> None:
+    project_id = await _project(db_client)
+    base_document = await _upload(
+        db_client,
+        project_id,
+        "base-authority.txt",
+        "base authority only",
+    )
+    modifier_document = await _upload(
+        db_client,
+        project_id,
+        "modifier-authority.txt",
+        "amendment text that is searched only through the incoming edge",
+    )
+    unrelated_document = await _upload(
+        db_client,
+        project_id,
+        "unrelated-authority.txt",
+        "unrelated authority",
+    )
+    base_revision = await _revision(
+        db_client,
+        project_id,
+        base_document,
+        {
+            "title": "Base authority",
+            "revision_label": "Base 2025",
+            "published_date": "2025-01-01",
+            "effective_from": "2025-01-01",
+            "lifecycle_status": "active",
+            "source_role": "primary",
+            "change_reason": "Create expansion target",
+        },
+    )
+    modifier_revision = await _revision(
+        db_client,
+        project_id,
+        modifier_document,
+        {
+            "title": "Current amendment",
+            "revision_label": "Amendment 2026",
+            "published_date": "2026-01-01",
+            "effective_from": "2026-01-01",
+            "lifecycle_status": "active",
+            "source_role": "supporting",
+            "relationships": [
+                {
+                    "relationship_type": "modifies",
+                    "target_revision_id": base_revision["id"],
+                }
+            ],
+            "change_reason": "Modify the base authority",
+        },
+    )
+    await _revision(
+        db_client,
+        project_id,
+        unrelated_document,
+        {
+            "title": "Unrelated authority",
+            "revision_label": "Unrelated 2025",
+            "published_date": "2025-01-01",
+            "effective_from": "2025-01-01",
+            "lifecycle_status": "active",
+            "source_role": "reference",
+            "change_reason": "Verify expansion stays target-triggered",
+        },
+    )
+    configured = await db_client.post(
+        f"/api/v1/operator/projects/{project_id}/ai-config/revisions",
+        json={
+            "expected_active_revision_id": None,
+            "reason": "Enable bounded current-authority expansion",
+            "configuration": {
+                "source_policy_mode": "enforce",
+                "retrieval": {
+                    "strategy": "hybrid",
+                    "top_k": 5,
+                    "modifies_expansion_enabled": True,
+                    "max_related_sources": 8,
+                    "max_relationship_candidates": 20,
+                },
+            },
+        },
+        headers=_CSRF,
+        cookies=_COOKIES,
+    )
+    assert configured.status_code == 201, configured.text
+    await _index_documents(
+        db_client,
+        integration_connection,
+        captured_jobs,
+        project_id,
+        [base_document, modifier_document, unrelated_document],
+    )
+
+    current = await db_client.post(
+        f"/api/v1/projects/{project_id}/search",
+        json={
+            "query": _QUERY,
+            "top_k": 5,
+            "strategy": "hybrid",
+            "document_id": base_document,
+        },
+    )
+    assert current.status_code == 200, current.text
+    current_data = current.json()["data"]
+    current_ids = {str(item["document_id"]) for item in current_data["results"]}
+    assert {base_document, modifier_document}.issubset(current_ids)
+    diagnostics = current_data["diagnostics"]
+    assert diagnostics["modifies_expansion_status"] == "expanded"
+    assert diagnostics["modifies_expansion_depth"] == 1
+    assert diagnostics["related_source_count"] == 1
+    assert diagnostics["relationship_candidate_count"] <= 20
+    assert diagnostics["modifies_expansion_records"][0]["outcome"] == "expanded"
+    modifier_hit = next(
+        item for item in current_data["results"] if item["document_id"] == modifier_document
+    )
+    assert modifier_hit["metadata"]["source_revision_id"] == modifier_revision["id"]
+    assert modifier_hit["metadata"]["relationship_grounding_trust"] is False
+
+    historical = await db_client.post(
+        f"/api/v1/projects/{project_id}/search",
+        json={
+            "query": _QUERY,
+            "top_k": 5,
+            "strategy": "hybrid",
+            "document_id": base_document,
+            "as_of": "2025-06-01T00:00:00Z",
+        },
+    )
+    assert historical.status_code == 200, historical.text
+    historical_data = historical.json()["data"]
+    assert modifier_document not in {
+        str(item["document_id"]) for item in historical_data["results"]
+    }
+    assert historical_data["diagnostics"]["modifies_expansion_records"][0]["outcome"] == (
+        "outside_as_of"
+    )
+
+    outgoing_only = await db_client.post(
+        f"/api/v1/projects/{project_id}/search",
+        json={
+            "query": _QUERY,
+            "top_k": 5,
+            "strategy": "hybrid",
+            "document_id": modifier_document,
+        },
+    )
+    assert outgoing_only.status_code == 200, outgoing_only.text
+    outgoing_data = outgoing_only.json()["data"]
+    assert base_document not in {str(item["document_id"]) for item in outgoing_data["results"]}
+    assert outgoing_data["diagnostics"]["modifies_expansion_status"] == "no_relationships"

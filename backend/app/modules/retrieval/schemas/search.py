@@ -9,6 +9,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from app.core.config import RetrievalStrategy
+from app.platform.domain.evidence_contracts import BranchContribution, QueryVariant
 
 
 class SearchRequest(BaseModel):
@@ -45,6 +46,8 @@ class RetrievalResult(BaseModel):
     page_number: int | None = None
     char_start: int | None = None
     char_end: int | None = None
+    query_variants: tuple[QueryVariant, ...] = ()
+    branch_contributions: tuple[BranchContribution, ...] = ()
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -97,6 +100,7 @@ class SearchDiagnostics(BaseModel):
     executed_branches: list[str] = Field(default_factory=list)
     skipped_branches: list[str] = Field(default_factory=list)
     branch_candidate_counts: dict[str, int] = Field(default_factory=dict)
+    query_variants: list[dict[str, Any]] = Field(default_factory=list)
     language_routing_status: str | None = None
     embedding_identity_status: str | None = None
     embedding_provider: str | None = None
@@ -105,6 +109,16 @@ class SearchDiagnostics(BaseModel):
     embedding_set_version: int | None = None
     reranker_latency_ms: int | None = None
     reranker_usage: dict[str, Any] = Field(default_factory=dict)
+    modifies_expansion_status: str = "disabled"
+    modifies_expansion_depth: int = 1
+    modifies_expansion_records: list[dict[str, Any]] = Field(default_factory=list)
+    modifies_expansion_exclusion_reasons: dict[str, int] = Field(default_factory=dict)
+    related_source_count: int = 0
+    relationship_candidate_count: int = 0
+    reranked_candidate_count: int = 0
+    post_rerank_removed_count: int = 0
+    post_rerank_removal_reasons: dict[str, int] = Field(default_factory=dict)
+    post_rerank_unfilled_slots: int = 0
 
 
 class SearchResponse(BaseModel):

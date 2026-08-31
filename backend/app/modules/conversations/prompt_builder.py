@@ -70,6 +70,13 @@ class PromptBuilder:
             source_kind = str(chunk.metadata.get("source_kind") or "knowledge").upper()
             source_title = chunk.metadata.get("source_title") or chunk.filename
             header = f"[{index}] kind={source_kind} source={source_title} file={chunk.filename}"
+            evidence_unit_id = chunk.metadata.get("evidence_unit_id")
+            evidence_span_hash = chunk.metadata.get("evidence_span_hash")
+            if evidence_unit_id and evidence_span_hash:
+                header = (
+                    f"{header} evidence_unit={evidence_unit_id} "
+                    f"span_hash={evidence_span_hash}"
+                )
             web_url = chunk.metadata.get("web_url")
             if web_url:
                 header = f"{header} url={web_url}"

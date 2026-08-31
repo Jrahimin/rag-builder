@@ -38,7 +38,7 @@ Worker handlers ──► IndexBuildWorkflow
 | **IndexBuildWorkflow** | Writes a complete private vector+keyword snapshot, validates it, and optionally activates it |
 | **IndexLifecycleService** | Durable corpus build staging plus guarded activation/rollback |
 | **SemanticRetriever** / **KeywordRetriever** | Candidate-only retrievers (`chunk_id`, ranking `score`, calibrated `semantic_score`, `source`) |
-| **HybridRetriever** | Original dense + original lexical, optional one translated pair, RRF provenance, optional rerank |
+| **HybridRetriever** | Original dense + original lexical, optional one translated pair, bounded incoming `MODIFIES` recall, RRF provenance, optional rerank |
 | **SourceMetadataReadPort** | Composition seam for Knowledge's canonical source generation/applicability scope |
 | **ResultHydrator** | Single hydration point for chunk/document ORM rows |
 | **RetrievalCleanupService** | Irreversible purge cleanup across retained builds |
@@ -110,7 +110,7 @@ if a corpus disagrees; keep `observe` only while measuring.
 | Section | Key vars | Role |
 | ------- | -------- | ---- |
 | `EmbeddingConfig` | `APE_EMBEDDING__*` | Target backend (`hash`, `ollama`, `openai`, `gemini`, `cohere`), model, dimensions, API keys. Query search uses the active build identity, not this live target. |
-| `RetrievalConfig` | `APE_RETRIEVAL__*` | `strategy`, candidate pools, `hnsw_ef_search`, RRF weights, reranker windows, diversity caps, optional passage scoring, `embedding_set_version`, language-metadata schema |
+| `RetrievalConfig` | `APE_RETRIEVAL__*` | `strategy`, candidate pools, `hnsw_ef_search`, RRF weights, reranker windows, diversity caps, optional passage scoring, bounded modifier expansion, `embedding_set_version`, language-metadata schema |
 | `QueryTranslationConfig` | `APE_QUERY_TRANSLATION__*` | Query-only translation; default off; model `gpt-5-nano` |
 | `CohereConfig` | `APE_COHERE__*` | Shared credential and base URL for embed and rerank |
 | `RerankerProviderConfig` | `APE_RERANKER__*` | Rerank model/timeout; missing key or API failure degrades to RRF + cosine |
@@ -164,6 +164,16 @@ captures the active index build and Project source generation, then joins the sa
 selectable in both vector and keyword repositories. This lets metadata activation affect the next
 request without OCR, chunking, embedding, or index construction. Exact index/config/source IDs are
 returned in diagnostics and result metadata for prompts, citations, messages, jobs, and evaluations.
+
+Optional current-authority expansion (`APE_RETRIEVAL__MODIFIES_EXPANSION_ENABLED`, default off)
+considers only depth-one incoming `MODIFIES` edges whose target revision was retrieved. Knowledge
+resolves every edge against the same Project, source generation, `as_of`, and active index build and
+returns one fail-closed inclusion/exclusion outcome. At most eight modifier documents and twenty
+relationship-origin chunks are admitted. Related branches reuse the original multilingual query
+variants, are fused with the base candidates, and share the single existing reranker call.
+Relationship metadata is retained as recall provenance but is never a grounding signal. Existing
+post-rerank source-policy consolidation remains in place; diagnostics separately report modifier
+exclusions, candidates reranked, later removals by reason, and unfilled result slots.
 
 ## Delete policy
 

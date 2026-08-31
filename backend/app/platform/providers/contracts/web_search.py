@@ -9,8 +9,18 @@ from typing import Any
 
 
 @dataclass(frozen=True, slots=True)
-class WebSearchEvidence:
-    """A bounded source excerpt with a verified provider citation association."""
+class WebDiscoveredSource:
+    """Provider-neutral identity for a source discovered by web search."""
+
+    provider_id: str | None
+    title: str
+    original_url: str
+    canonical_url: str
+
+
+@dataclass(frozen=True, slots=True)
+class WebEvidence:
+    """Bounded source-owned result text with a conservative source association."""
 
     evidence_id: str
     title: str
@@ -18,6 +28,12 @@ class WebSearchEvidence:
     content: str
     retrieved_at: datetime
     citation_verified: bool = False
+    source_id: str | None = None
+    canonical_url: str | None = None
+
+
+# Compatibility name retained for existing provider fakes and downstream imports.
+WebSearchEvidence = WebEvidence
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,6 +45,7 @@ class WebSearchResult:
     model: str
     provider_version: str
     diagnostics: dict[str, Any] = field(default_factory=dict)
+    discovered_sources: list[WebDiscoveredSource] = field(default_factory=list)
 
 
 class BaseWebSearchProvider(ABC):

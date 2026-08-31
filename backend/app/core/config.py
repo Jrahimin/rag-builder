@@ -523,6 +523,9 @@ class RetrievalConfig(BaseModel):
     passage_window_tokens: int = Field(default=96, ge=16, le=512)
     passage_overlap_tokens: int = Field(default=24, ge=0, le=256)
     passage_min_tokens: int = Field(default=32, ge=8, le=256)
+    modifies_expansion_enabled: bool = False
+    max_related_sources: int = Field(default=8, ge=1, le=8)
+    max_relationship_candidates: int = Field(default=20, ge=1, le=20)
 
     @field_validator("filterable_metadata_keys", mode="before")
     @classmethod
@@ -732,6 +735,9 @@ class ChatConfig(BaseModel):
     lexical_corroboration_coverage: float = Field(default=0.50, ge=0.0, le=1.0)
     # Provider-specific calibration. Keep observe until this pair is measured.
     minimum_reranker_evidence_score: float = Field(default=0.40, ge=0.0, le=1.0)
+    # Compute candidate-wise assessments in all deployments; this switch controls
+    # whether admitted evidence units affect generation or remain shadow-only.
+    candidate_wise_grounding_enabled: bool = False
     minimum_evidence_score: float | None = Field(default=None, deprecated=True)
     minimum_query_token_coverage: float | None = Field(default=None, deprecated=True)
     minimum_claim_token_coverage: float = Field(default=0.35, ge=0.0, le=1.0)

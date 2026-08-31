@@ -22,9 +22,10 @@ def test_build_citation_snapshots_includes_hash_and_excerpt() -> None:
     revision_id = uuid.uuid4()
     group_id = uuid.uuid4()
     snapshot_id = uuid.uuid4()
+    document_id = uuid.uuid4()
     chunk = ContextChunk(
         chunk_id=uuid.uuid4(),
-        document_id=uuid.uuid4(),
+        document_id=document_id,
         chunk_index=0,
         content="x" * 300,
         score=0.9,
@@ -41,6 +42,16 @@ def test_build_citation_snapshots_includes_hash_and_excerpt() -> None:
             "source_effective_from": date(2026, 1, 1).isoformat(),
             "source_relationships": [
                 {"relationship_type": "replaces", "target_revision_id": str(uuid.uuid4())}
+            ],
+            "relationship_recall_provenance": [
+                {
+                    "relationship_type": "modifies",
+                    "depth": 1,
+                    "base_revision_id": str(uuid.uuid4()),
+                    "base_document_id": str(uuid.uuid4()),
+                    "modifier_revision_id": str(revision_id),
+                    "modifier_document_id": str(document_id),
+                }
             ],
             "configuration_hash": "a" * 64,
         },
@@ -65,6 +76,9 @@ def test_build_citation_snapshots_includes_hash_and_excerpt() -> None:
     assert snapshots[0]["config_snapshot_id"] == str(snapshot_id)
     assert snapshots[0]["configuration_hash"] == "a" * 64
     assert snapshots[0]["source_relationships"][0]["relationship_type"] == "replaces"
+    assert snapshots[0]["relationship_recall_provenance"][0]["relationship_type"] == (
+        "modifies"
+    )
 
 
 def test_web_snapshot_exposes_only_web_source_identity() -> None:
@@ -101,6 +115,73 @@ def test_web_snapshot_exposes_only_web_source_identity() -> None:
     assert snapshot["project_id"] is None
     assert snapshot["chunk_index"] is None
     assert snapshot["web_url"] == "https://example.test/refunds"
+
+
+def test_base_and_modifier_keep_distinct_citation_identity() -> None:
+    base_document_id = uuid.uuid4()
+    base_revision_id = uuid.uuid4()
+    modifier_document_id = uuid.uuid4()
+    modifier_revision_id = uuid.uuid4()
+    base = ContextChunk(
+        chunk_id=uuid.uuid4(),
+        document_id=base_document_id,
+        chunk_index=0,
+        content="Base authority.",
+        score=0.9,
+        filename="base.txt",
+        chunk_hash="base-hash",
+        metadata={
+            "source_revision_id": str(base_revision_id),
+            "source_title": "Base authority",
+            "source_effective_from": "2025-01-01",
+        },
+    )
+    modifier = ContextChunk(
+        chunk_id=uuid.uuid4(),
+        document_id=modifier_document_id,
+        chunk_index=0,
+        content="Modifying authority.",
+        score=0.8,
+        filename="modifier.txt",
+        chunk_hash="modifier-hash",
+        metadata={
+            "source_revision_id": str(modifier_revision_id),
+            "source_title": "Modifying authority",
+            "source_effective_from": "2026-01-01",
+            "relationship_recall_provenance": [
+                {
+                    "relationship_type": "modifies",
+                    "depth": 1,
+                    "base_revision_id": str(base_revision_id),
+                    "base_document_id": str(base_document_id),
+                    "modifier_revision_id": str(modifier_revision_id),
+                    "modifier_document_id": str(modifier_document_id),
+                }
+            ],
+        },
+    )
+
+    snapshots = build_citation_snapshots(
+        [base, modifier],
+        project_id=uuid.uuid4(),
+        config_snapshot_id=None,
+        config_provenance={},
+        prompt_version="v5",
+        config=ChatConfig(),
+    )
+
+    assert [item["document_id"] for item in snapshots] == [
+        str(base_document_id),
+        str(modifier_document_id),
+    ]
+    assert [item["source_revision_id"] for item in snapshots] == [
+        str(base_revision_id),
+        str(modifier_revision_id),
+    ]
+    assert snapshots[0]["relationship_recall_provenance"] == []
+    assert snapshots[1]["relationship_recall_provenance"][0]["base_revision_id"] == str(
+        base_revision_id
+    )
 
 
 def test_source_specific_citation_identity_is_enforced() -> None:

@@ -125,6 +125,30 @@ def test_project_can_disable_or_bound_web_search() -> None:
     assert effective.web_search.request_timeout_seconds == 20
 
 
+def test_modifies_expansion_is_default_off_and_project_bounded() -> None:
+    settings = Settings()
+    default_resolution = resolve_project_ai_config(settings, None)
+
+    assert default_resolution.configuration.retrieval.modifies_expansion_enabled is False
+    assert default_resolution.configuration.retrieval.max_related_sources == 8
+    assert default_resolution.configuration.retrieval.max_relationship_candidates == 20
+
+    revision = _revision(
+        {
+            "retrieval": {
+                "modifies_expansion_enabled": True,
+                "max_related_sources": 4,
+                "max_relationship_candidates": 12,
+            }
+        }
+    )
+    resolution = resolve_project_ai_config(settings, revision)
+
+    assert resolution.configuration.retrieval.modifies_expansion_enabled is True
+    assert resolution.configuration.retrieval.max_related_sources == 4
+    assert resolution.configuration.retrieval.max_relationship_candidates == 12
+
+
 def test_web_response_mode_rejects_missing_provider() -> None:
     revision = _revision({"chat": {"response_mode": "indexed_and_web"}})
 
@@ -389,6 +413,17 @@ def test_evidence_gate_mode_is_inherited_into_chat_config() -> None:
     assert resolution.configuration.chat.evidence_gate_mode.value == "observe"
     assert restored.chat.evidence_gate_mode.value == "observe"
     assert Settings().chat.evidence_gate_mode.value == "enforce"
+
+
+def test_candidate_wise_grounding_can_be_enabled_for_a_project_canary() -> None:
+    revision = _revision({"chat": {"candidate_wise_grounding_enabled": True}})
+
+    resolution = resolve_project_ai_config(Settings(), revision)
+    restored = apply_effective_ai_config(Settings(), resolution)
+
+    assert resolution.configuration.chat.candidate_wise_grounding_enabled is True
+    assert resolution.origins["chat.candidate_wise_grounding_enabled"] == "project"
+    assert restored.chat.candidate_wise_grounding_enabled is True
 
 
 def test_passage_evidence_mode_requires_passage_scoring() -> None:

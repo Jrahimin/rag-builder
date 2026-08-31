@@ -76,6 +76,7 @@ class SemanticRetriever(BaseRetriever):
                 top_k=effective_top_k,
                 index_build_id=context.index_build_id,
                 document_id=context.filters.document_id,
+                document_ids=context.filters.document_ids,
                 embedding_set_version=context.embedding_set_version,
                 provider=embedded.provider,
                 model=embedded.model,

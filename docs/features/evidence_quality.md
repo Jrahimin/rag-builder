@@ -84,14 +84,19 @@ evaluation platform is introduced.
 ## Grounded answer behavior
 
 Chat uses hybrid retrieval by default. Ranking `score` (RRF or reranker output) and calibrated
-`semantic_score` are separate. When rerank is applied, `GroundingService` admits a candidate only
-if `rerank_relevance_score` clears `minimum_reranker_evidence_score` **and** the same winning
-chunk independently corroborates: cosine ≥ `0.35`, or cosine ≥ `0.30` with lexical coverage
-≥ `0.50`, or a cross-language cosine ≥ `0.30`. Reranker relevance alone is not enough because
-the model must rank something. Cosine plus lexical rescue remain the fallback when rerank is
-passthrough or unavailable. Direct semantic acceptance and any lexical rescue must come from
-the same chunk (or the same winning passage span). Lexical query coverage is rescue-only on the
-cosine-fallback path. Stored Project `evidence_score_threshold`
+semantic evidence are separate. Candidate-wise grounding evaluates reranked candidates in order,
+so a failed rank-one candidate does not suppress valid lower-ranked evidence. Under an applied
+reranker, admission requires the candidate-local relevance score to clear the unchanged threshold
+and an independent signal aligned to the same selected span: original-query semantic support,
+translated lexical coverage from a contributing typed query variant, or an already calibrated
+cross-language semantic signal. RRF rank, source role, and relationship provenance never admit a
+candidate. Translated dense scores remain shadow diagnostics only.
+
+The admitted object is an immutable `EvidenceUnit`. A scored passage is preferred; otherwise a
+complete fitting chunk is used, or a deterministic match-local sentence/paragraph span when it can
+be anchored safely. Whole-chunk semantic scores are not relabeled as span-local support. Context
+budgeting may omit an evidence unit but may not truncate or rewrite it, and prompt, citation, and
+claim records preserve its identity, offsets, and span hash. Stored Project `evidence_score_threshold`
 values below `0.15` are leftover
 RRF-scale overrides and are ignored; leftover `minimum_query_token_coverage` values below the
 deployment rescue coverage are ignored so they cannot loosen false-accept protection.

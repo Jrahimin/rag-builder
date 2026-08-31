@@ -22,12 +22,24 @@ from app.models.message import Message, MessageRole
 from app.modules.conversations.ports import ContextChunk, ContextRetrievalResult
 from app.modules.conversations.schemas.message import MessageSendRequest
 from app.modules.conversations.services.chat_service import ChatService
+from app.platform.domain.content_hash import content_hash
+from app.platform.domain.evidence_contracts import (
+    RERANKER_RELEVANCE_CALIBRATION_ID,
+    BranchContribution,
+    BranchScoreType,
+    QueryVariant,
+    QueryVariantKind,
+)
 from app.platform.providers.contracts.llm import (
     ChatCompletionChunk,
     ChatCompletionResult,
     ChatUsage,
 )
-from app.platform.providers.contracts.web_search import WebSearchEvidence, WebSearchResult
+from app.platform.providers.contracts.web_search import (
+    WebDiscoveredSource,
+    WebSearchEvidence,
+    WebSearchResult,
+)
 from app.platform.providers.errors import ProviderError, ProviderTimeoutError
 from app.platform.providers.implementations.echo_chat import EchoLLMProvider
 
@@ -162,9 +174,17 @@ class FakeWebSearch:
             model="search-model",
             provider_version="1",
             diagnostics={
-                "status": "succeeded" if evidence else "no_useful_results",
                 "source_count": len(evidence),
             },
+            discovered_sources=[
+                WebDiscoveredSource(
+                    provider_id=item.source_id,
+                    title=item.title,
+                    original_url=item.url,
+                    canonical_url=item.canonical_url or item.url,
+                )
+                for item in evidence
+            ],
         )
 
 
@@ -172,6 +192,26 @@ class FailingWebSearch:
     async def search(self, query: str, *, max_results: int) -> WebSearchResult:
         del query, max_results
         raise ProviderTimeoutError("timeout", provider_name="test_web")
+
+
+class SourceOnlyWebSearch:
+    async def search(self, query: str, *, max_results: int) -> WebSearchResult:
+        del query, max_results
+        return WebSearchResult(
+            evidence=[],
+            provider="test_web",
+            model="search-model",
+            provider_version="1",
+            diagnostics={"source_count": 1},
+            discovered_sources=[
+                WebDiscoveredSource(
+                    provider_id=None,
+                    title="Policy",
+                    original_url="https://example.test/policy",
+                    canonical_url="https://example.test/policy",
+                )
+            ],
+        )
 
 
 @pytest.fixture
@@ -252,6 +292,213 @@ def _service(
         llm_config=LLMConfig(backend=LLMBackend.ECHO, max_tokens=100, temperature=0.2),
         resolve_llm=lambda _conversation: llm,
     )
+
+
+async def test_candidate_wise_canary_sends_only_passing_lower_rank_to_generation(
+    session: AsyncMock,
+    conversation_repository: AsyncMock,
+    message_repository: AsyncMock,
+    conversation: Conversation,
+) -> None:
+    question = "What are the source tax deduction categories?"
+    translated_text = "উৎসে কর কর্তনের খাতগুলো কী কী"
+    relevant_text = "উৎসে কর কর্তনের খাতগুলো হলো সঞ্চয়পত্র এবং সম্পত্তি অধিগ্রহণ।"
+    unrelated_text = "মাতৃত্বকালীন ছুটির আবেদন ব্যবস্থাপকের অনুমোদন সাপেক্ষ।"
+    original = QueryVariant(
+        variant_id="original",
+        kind=QueryVariantKind.ORIGINAL,
+        language="en",
+        text=question,
+    )
+    translated = QueryVariant(
+        variant_id="translated:bn",
+        kind=QueryVariantKind.TRANSLATED,
+        language="bn",
+        text=translated_text,
+        source_variant_id="original",
+    )
+
+    def candidate(content: str, score: float) -> ContextChunk:
+        return ContextChunk(
+            chunk_id=uuid.uuid4(),
+            document_id=uuid.uuid4(),
+            chunk_index=2,
+            content=content,
+            score=score,
+            filename="sanitized.pdf",
+            chunk_hash=content_hash(content),
+            semantic_score=0.1,
+            rerank_relevance_score=score,
+            evidence_relevance_score=score,
+            evidence_score_method="reranker_relevance",
+            evidence_calibration_id=RERANKER_RELEVANCE_CALIBRATION_ID,
+            query_variants=(original, translated),
+            branch_contributions=(
+                BranchContribution(
+                    branch_id="translated_lexical:bn",
+                    family="translated_lexical",
+                    query_variant_id=translated.variant_id,
+                    target_language="bn",
+                    rank=1,
+                    raw_score=8.0,
+                    score_type=BranchScoreType.KEYWORD_BM25,
+                    rrf_score=0.01,
+                ),
+            ),
+            metadata={"rerank_status": "applied"},
+        )
+
+    relevant = candidate(relevant_text, 0.81)
+
+    class CandidateRetrieval:
+        async def retrieve(self, **kwargs: object) -> ContextRetrievalResult:
+            del kwargs
+            return ContextRetrievalResult(
+                chunks=[candidate(unrelated_text, 0.92), relevant],
+                diagnostics={"rerank_status": "applied"},
+            )
+
+    captured_system: list[str] = []
+
+    class CapturingLLM(EchoLLMProvider):
+        calls = 0
+
+        async def generate(self, messages, *, temperature, max_tokens):
+            del temperature, max_tokens
+            self.calls += 1
+            captured_system.append(messages[0].content)
+            return ChatCompletionResult(
+                content=f"{relevant_text} [1]",
+                provider="echo",
+                model="test",
+                finish_reason="stop",
+                usage=ChatUsage(10, 5),
+                provider_version="1",
+            )
+
+    llm = CapturingLLM(model="test", provider_version="1")
+    service = _service(
+        session,
+        conversation_repository,
+        message_repository,
+        llm,
+        chat_config=ChatConfig(
+            system_prompt_version="v5",
+            candidate_wise_grounding_enabled=True,
+        ),
+    )
+    service._retrieval = CandidateRetrieval()
+
+    turn = await service.send_message(conversation.id, MessageSendRequest(content=question))
+
+    assert llm.calls == 1
+    assert relevant_text in captured_system[0]
+    assert unrelated_text not in captured_system[0]
+    assert len(turn.assistant_message.citations) == 1
+    assert turn.assistant_message.citations[0].chunk_id == relevant.chunk_id
+    candidate_diagnostics = turn.assistant_message.metadata["evidence_gate"]["candidate_wise"]
+    assert candidate_diagnostics["assessed_count"] == 2
+    assert candidate_diagnostics["admitted_count"] == 1
+    assert candidate_diagnostics["retrieved_count"] == 2
+    assert candidate_diagnostics["context_selected_count"] == 1
+    assert candidate_diagnostics["cited_count"] == 1
+    assert candidate_diagnostics["alerts"] == {
+        "unknown_calibration_count": 0,
+        "failed_span_derivation_count": 0,
+        "missing_provenance_count": 0,
+        "span_hash_mismatch_count": 0,
+    }
+
+
+async def test_candidate_wise_canary_refuses_when_admitted_unit_exceeds_context_budget(
+    session: AsyncMock,
+    conversation_repository: AsyncMock,
+    message_repository: AsyncMock,
+    conversation: Conversation,
+) -> None:
+    question = "What is the refund policy?"
+    passage = ("The refund policy permits a refund within thirty days. " * 12)[:600]
+    original = QueryVariant(
+        variant_id="original",
+        kind=QueryVariantKind.ORIGINAL,
+        language="en",
+        text=question,
+    )
+
+    class OversizedPassageRetrieval:
+        async def retrieve(self, **kwargs: object) -> ContextRetrievalResult:
+            del kwargs
+            return ContextRetrievalResult(
+                chunks=[
+                    ContextChunk(
+                        chunk_id=uuid.uuid4(),
+                        document_id=uuid.uuid4(),
+                        chunk_index=0,
+                        content=passage,
+                        score=0.8,
+                        filename="policy.pdf",
+                        chunk_hash=content_hash(passage),
+                        semantic_score=0.1,
+                        rerank_relevance_score=0.8,
+                        evidence_relevance_score=0.8,
+                        evidence_score_method="reranker_relevance",
+                        evidence_calibration_id=RERANKER_RELEVANCE_CALIBRATION_ID,
+                        passage_semantic_score=0.5,
+                        passage_char_start=0,
+                        passage_char_end=len(passage),
+                        passage_score_method="passage_max_cosine",
+                        query_variants=(original,),
+                        branch_contributions=(
+                            BranchContribution(
+                                branch_id="original_dense",
+                                family="original_dense",
+                                query_variant_id=original.variant_id,
+                                target_language="en",
+                                rank=1,
+                                raw_score=0.1,
+                                score_type=BranchScoreType.COSINE_SIMILARITY,
+                                rrf_score=0.01,
+                            ),
+                        ),
+                        metadata={"rerank_status": "applied"},
+                    )
+                ],
+                diagnostics={"rerank_status": "applied"},
+            )
+
+    class CountingLLM(EchoLLMProvider):
+        calls = 0
+
+        async def generate(self, messages, *, temperature, max_tokens):
+            self.calls += 1
+            return await super().generate(
+                messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+
+    llm = CountingLLM(model="test", provider_version="1")
+    service = _service(
+        session,
+        conversation_repository,
+        message_repository,
+        llm,
+        chat_config=ChatConfig(
+            system_prompt_version="v5",
+            candidate_wise_grounding_enabled=True,
+            context_char_budget=500,
+        ),
+    )
+    service._retrieval = OversizedPassageRetrieval()
+
+    turn = await service.send_message(conversation.id, MessageSendRequest(content=question))
+
+    assert llm.calls == 0
+    assert turn.assistant_message.finish_reason == "insufficient_evidence"
+    assert turn.assistant_message.insufficient_evidence_reason == "below_relevance_threshold"
+    gate = turn.assistant_message.metadata["evidence_gate"]
+    assert gate["candidate_wise"]["admitted_count"] == 1
+    assert gate["generation_ran"] is False
 
 
 async def test_zero_history_limit_excludes_prior_messages(
@@ -593,6 +840,10 @@ async def test_applied_rerank_above_threshold_runs_generation(
     assert gate["sufficient"] is True
     assert gate["evidence_score"] == pytest.approx(0.8693157)
     assert gate["evidence_score_method"] == "reranker_relevance"
+    assert gate["candidate_wise"]["enabled"] is False
+    assert gate["candidate_wise"]["path"] == "legacy_shadow"
+    assert gate["candidate_wise"]["shadow_sufficient"] is True
+    assert gate["candidate_wise"]["assessed_count"] == 1
     selected = turn.assistant_message.metadata["retrieval_trace"]["context_selected"]
     assert selected[0]["rerank_relevance_score"] == pytest.approx(0.8693157)
 
@@ -953,6 +1204,7 @@ async def test_indexed_then_web_uses_web_only_after_knowledge_gate_fails(
     assert len(web.calls) == 1
     assert turn.assistant_message.source_provenance == "web"
     assert turn.assistant_message.metadata["web_search"]["fallback_used"] is True
+    assert turn.assistant_message.metadata["web_search"]["status"] == "evidence_accepted"
     assert turn.assistant_message.content.startswith("This wasn\u2019t covered")
     assert [citation.source_kind for citation in turn.assistant_message.citations] == ["web"]
     assert turn.assistant_message.citations[0].web_url == "https://example.test/refunds"
@@ -1019,6 +1271,9 @@ async def test_web_fallback_rejects_uncited_or_irrelevant_evidence(
         "rejected_invalid_count": 1,
         "rejected_irrelevant_count": 1,
     }
+    assert turn.assistant_message.metadata["web_search"]["status"] == (
+        "evidence_extracted_irrelevant"
+    )
 
 
 async def test_web_search_releases_read_transaction_before_network_io(
@@ -1210,7 +1465,11 @@ async def test_document_scoped_question_never_escapes_to_web(
 
 @pytest.mark.parametrize(
     ("web", "expected_status"),
-    [(FakeWebSearch([]), "no_useful_results"), (FailingWebSearch(), "failed")],
+    [
+        (FakeWebSearch([]), "no_sources"),
+        (SourceOnlyWebSearch(), "sources_found_no_extractable_evidence"),
+        (FailingWebSearch(), "failed"),
+    ],
 )
 async def test_web_no_result_or_failure_refuses_without_llm_guessing(
     session: AsyncMock,

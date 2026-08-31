@@ -5,6 +5,7 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass, field, replace
 from datetime import datetime
+from enum import StrEnum
 from typing import Any, Protocol
 
 from sqlalchemy.sql.selectable import FromClause
@@ -13,6 +14,7 @@ from app.modules.retrieval.retrievers.models import CandidateHit
 from app.platform.config.project_ai import SourcePolicyMode
 
 SOURCE_METADATA_COLUMNS = (
+    "source_document_id",
     "source_revision_id",
     "source_group_id",
     "source_title",
@@ -28,6 +30,69 @@ SOURCE_METADATA_COLUMNS = (
     "source_policy_applicable",
     "source_policy_exclusion_reason",
 )
+
+
+class ModifierExpansionOutcome(StrEnum):
+    """One terminal inclusion/exclusion outcome for an incoming MODIFIES edge."""
+
+    EXPANDED = "expanded"
+    INACTIVE = "inactive"
+    OUTSIDE_AS_OF = "outside_as_of"
+    NOT_IN_ACTIVE_INDEX = "not_in_active_index"
+    CROSS_PROJECT_OR_GENERATION = "cross_project_or_generation"
+    UNGOVERNED_OR_INCOMPLETE_METADATA = "ungoverned_or_incomplete_metadata"
+    DUPLICATE = "duplicate"
+    CYCLE = "cycle"
+    SOURCE_CAP_EXCEEDED = "source_cap_exceeded"
+    CANDIDATE_CAP_EXCEEDED = "candidate_cap_exceeded"
+
+
+@dataclass(frozen=True, slots=True)
+class ModifierExpansionRecord:
+    """Sanitized depth-one relationship decision and recall provenance."""
+
+    relationship_id: uuid.UUID
+    base_revision_id: uuid.UUID
+    base_document_id: uuid.UUID
+    modifier_revision_id: uuid.UUID
+    modifier_document_id: uuid.UUID
+    modifier_effective_from: str | None
+    modifier_published_date: str | None
+    modifier_revision_number: int | None
+    outcome: ModifierExpansionOutcome
+    base_effective_from: str | None = None
+    base_effective_to: str | None = None
+    modifier_effective_to: str | None = None
+    candidate_count: int = 0
+    retained_candidate_count: int = 0
+
+    def diagnostic(self) -> dict[str, Any]:
+        return {
+            "relationship_id": str(self.relationship_id),
+            "relationship_type": "modifies",
+            "depth": 1,
+            "base_revision_id": str(self.base_revision_id),
+            "base_document_id": str(self.base_document_id),
+            "modifier_revision_id": str(self.modifier_revision_id),
+            "modifier_document_id": str(self.modifier_document_id),
+            "base_effective_from": self.base_effective_from,
+            "base_effective_to": self.base_effective_to,
+            "modifier_effective_from": self.modifier_effective_from,
+            "modifier_effective_to": self.modifier_effective_to,
+            "modifier_published_date": self.modifier_published_date,
+            "modifier_revision_number": self.modifier_revision_number,
+            "outcome": self.outcome.value,
+            "candidate_count": self.candidate_count,
+            "retained_candidate_count": self.retained_candidate_count,
+        }
+
+    def recall_provenance(self) -> dict[str, Any]:
+        """Return relationship facts only; callers must not treat them as grounding trust."""
+        return {
+            key: value
+            for key, value in self.diagnostic().items()
+            if key not in {"outcome", "candidate_count", "retained_candidate_count"}
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,6 +121,16 @@ class SourceMetadataReadPort(Protocol):
         as_of: datetime | None,
         generation: int | None = None,
     ) -> SourceMetadataScope: ...
+
+    async def incoming_modifiers(
+        self,
+        *,
+        project_id: uuid.UUID,
+        base_revision_ids: tuple[uuid.UUID, ...],
+        generation: int,
+        as_of: datetime | None,
+        index_build_id: uuid.UUID,
+    ) -> list[ModifierExpansionRecord]: ...
 
 
 @dataclass(frozen=True, slots=True)

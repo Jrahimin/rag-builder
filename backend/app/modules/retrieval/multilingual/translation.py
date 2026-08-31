@@ -13,6 +13,7 @@ from app.modules.retrieval.multilingual.planner import (
     plan_original_branches,
     plan_translated_branches,
 )
+from app.platform.domain.evidence_contracts import QueryVariant, QueryVariantKind
 from app.platform.providers.contracts.query_translation import (
     BaseQueryTranslationProvider,
     QueryTranslationRequest,
@@ -119,4 +120,27 @@ async def resolve_multilingual_plan(
         skipped_branches=(),
         diagnostics=diagnostics,
         cross_language_target=target,
+        query_variants=(
+            QueryVariant(
+                variant_id="original",
+                kind=QueryVariantKind.ORIGINAL,
+                language=profile.exact_primary or profile.profile,
+                text=query,
+            ),
+            QueryVariant(
+                variant_id=f"translated:{target}",
+                kind=QueryVariantKind.TRANSLATED,
+                language=target,
+                text=response.translated_query,
+                source_variant_id="original",
+                translation_provider=response.provider,
+                translation_model=response.model,
+                translation_prompt_version=response.prompt_version,
+                translation_provenance={
+                    "source_language": profile.exact_primary or profile.profile,
+                    "target_language": target,
+                    "latency_ms": response.latency_ms,
+                },
+            ),
+        ),
     )

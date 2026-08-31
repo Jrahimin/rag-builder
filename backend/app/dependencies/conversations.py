@@ -122,6 +122,8 @@ def _context_chunk_from_result(result: RetrievalResult) -> ContextChunk:
         page_number=result.page_number,
         char_start=result.char_start,
         char_end=result.char_end,
+        query_variants=result.query_variants,
+        branch_contributions=result.branch_contributions,
         metadata=dict(result.metadata),
     )
 

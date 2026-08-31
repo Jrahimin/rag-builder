@@ -5,6 +5,7 @@ from __future__ import annotations
 import time
 import uuid
 from dataclasses import replace
+from datetime import date
 
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,6 +27,16 @@ from app.modules.retrieval.retrievers.rrf_fusion import RankedList, reciprocal_r
 from app.modules.retrieval.retrievers.semantic_retriever import (
     SemanticRetrievalBatch,
     SemanticRetriever,
+)
+from app.modules.retrieval.source_policy import (
+    ModifierExpansionOutcome,
+    ModifierExpansionRecord,
+)
+from app.platform.domain.evidence_contracts import (
+    RERANKER_RELEVANCE_CALIBRATION_ID,
+    BranchScoreType,
+    QueryVariant,
+    QueryVariantKind,
 )
 from app.platform.providers.contracts.embedding import BaseEmbeddingProvider, EmbeddingPurpose
 from app.platform.providers.contracts.reranker import (
@@ -107,18 +118,27 @@ class HybridRetriever(BaseRetriever):
             original_query_vector = semantic_batch.query_vector
             original_provider = semantic_batch.provider
             original_model = semantic_batch.model
+            original_variant = QueryVariant(
+                variant_id="original",
+                kind=QueryVariantKind.ORIGINAL,
+                language="und",
+                text=context.query,
+            )
             ranked_lists = [
                 RankedList(
                     hits=semantic_batch.hits,
                     weight=context.semantic_weight,
                     branch_id=BRANCH_ORIGINAL_DENSE,
                     family=BRANCH_ORIGINAL_DENSE,
+                    query_variant=original_variant,
                 ),
                 RankedList(
                     hits=keyword_hits,
                     weight=context.keyword_weight,
                     branch_id=BRANCH_ORIGINAL_LEXICAL,
                     family=BRANCH_ORIGINAL_LEXICAL,
+                    score_type=BranchScoreType.KEYWORD_BM25,
+                    query_variant=original_variant,
                 ),
             ]
             branch_counts = {
@@ -136,6 +156,26 @@ class HybridRetriever(BaseRetriever):
             if context.rerank_enabled
             else context.top_k
         )
+        expansion_diagnostics: dict[str, object] = {
+            "modifies_expansion_status": "disabled",
+            "modifies_expansion_depth": 1,
+            "modifies_expansion_records": [],
+            "modifies_expansion_exclusion_reasons": {},
+            "related_source_count": 0,
+            "relationship_candidate_count": 0,
+        }
+        if context.modifies_expansion_enabled and ranked_lists:
+            base_fused = reciprocal_rank_fusion(
+                ranked_lists,
+                rrf_k=context.rrf_k,
+                top_k=fusion_top_k,
+            )
+            related_lists, related_counts, expansion_diagnostics = (
+                await self._retrieve_modifier_branches(context, base_fused, plan)
+            )
+            ranked_lists.extend(related_lists)
+            branch_counts.update(related_counts)
+            executed_branches.extend(related_counts)
         fused = reciprocal_rank_fusion(
             ranked_lists,
             rrf_k=context.rrf_k,
@@ -181,7 +221,11 @@ class HybridRetriever(BaseRetriever):
             else:
                 final_candidates = await self._rerank_candidates(context, fused)
 
-        final_candidates = _annotate_candidates(final_candidates, **multilingual_diagnostics)
+        final_candidates = _annotate_candidates(
+            final_candidates,
+            **multilingual_diagnostics,
+            **expansion_diagnostics,
+        )
         elapsed_ms = int((time.perf_counter() - started) * 1000)
         logger.info(
             "hybrid_retrieve_complete",
@@ -213,6 +257,163 @@ class HybridRetriever(BaseRetriever):
             return_n = min(return_n, max(context.rerank_return_n, 1))
         return final_candidates[:return_n]
 
+    async def _retrieve_modifier_branches(
+        self,
+        context: RetrievalContext,
+        base_fused: list[CandidateHit],
+        plan: object,
+    ) -> tuple[list[RankedList], dict[str, int], dict[str, object]]:
+        reader = context.source_metadata_reader
+        base_revision_ids = tuple(
+            dict.fromkeys(
+                revision_id
+                for candidate in base_fused
+                if (revision_id := _uuid_value(candidate.metadata.get("source_revision_id")))
+                is not None
+            )
+        )
+        if reader is None or not base_revision_ids:
+            status = "unavailable" if reader is None else "no_retrieved_governed_bases"
+            return [], {}, _expansion_diagnostics(status=status, records=[])
+        try:
+            records = await reader.incoming_modifiers(
+                project_id=context.project_id,
+                base_revision_ids=base_revision_ids,
+                generation=getattr(context.source_scope, "generation", 0),
+                as_of=getattr(context.source_scope, "explicit_as_of", None),
+                index_build_id=context.index_build_id,
+            )
+        except Exception as exc:
+            logger.warning(
+                "modifies_expansion_read_failed",
+                project_id=str(context.project_id),
+                error_type=type(exc).__name__,
+            )
+            return [], {}, _expansion_diagnostics(status="unavailable", records=[])
+        bounded = _bound_modifier_records(
+            records,
+            base_revision_ids=set(base_revision_ids),
+            base_document_ids={
+                document_id
+                for candidate in base_fused
+                if (document_id := _uuid_value(candidate.metadata.get("source_document_id")))
+                is not None
+            },
+            max_related_sources=context.max_related_sources,
+        )
+        selected = [
+            item for item in bounded if item.outcome is ModifierExpansionOutcome.EXPANDED
+        ]
+        if not selected:
+            status = "no_relationships" if not bounded else "no_eligible_modifiers"
+            return [], {}, _expansion_diagnostics(status=status, records=bounded)
+
+        selected_documents = tuple(dict.fromkeys(item.modifier_document_id for item in selected))
+        related_context = replace(
+            context,
+            filters=replace(
+                context.filters,
+                document_id=None,
+                document_ids=selected_documents,
+            ),
+            modifies_expansion_enabled=False,
+        )
+        record_by_document = {item.modifier_document_id: item for item in selected}
+        related_lists: list[RankedList] = []
+        branch_counts: dict[str, int] = {}
+        if isinstance(plan, MultilingualRetrievalPlan):
+            raw_lists, _, _, _, _ = await self._retrieve_planned_branches(related_context, plan)
+            for ranked in raw_lists:
+                branch_id = f"related_modifier:{ranked.branch_id}"
+                hits = _annotate_related_hits(ranked.hits, record_by_document)
+                related_lists.append(
+                    replace(ranked, hits=hits, branch_id=branch_id)
+                )
+                branch_counts[branch_id] = len(hits)
+        else:
+            semantic_batch = await self._semantic.retrieve_batch(related_context)
+            keyword_hits = await self._keyword.retrieve(related_context)
+            original_variant = QueryVariant(
+                variant_id="original",
+                kind=QueryVariantKind.ORIGINAL,
+                language="und",
+                text=context.query,
+            )
+            related_lists = [
+                RankedList(
+                    hits=_annotate_related_hits(
+                        semantic_batch.hits,
+                        record_by_document,
+                    ),
+                    weight=context.semantic_weight,
+                    branch_id=f"related_modifier:{BRANCH_ORIGINAL_DENSE}",
+                    family=BRANCH_ORIGINAL_DENSE,
+                    query_variant=original_variant,
+                ),
+                RankedList(
+                    hits=_annotate_related_hits(keyword_hits, record_by_document),
+                    weight=context.keyword_weight,
+                    branch_id=f"related_modifier:{BRANCH_ORIGINAL_LEXICAL}",
+                    family=BRANCH_ORIGINAL_LEXICAL,
+                    score_type=BranchScoreType.KEYWORD_BM25,
+                    query_variant=original_variant,
+                ),
+            ]
+            branch_counts = {item.branch_id: len(item.hits) for item in related_lists}
+
+        raw_ids_by_document: dict[uuid.UUID, set[uuid.UUID]] = {}
+        for ranked in related_lists:
+            for hit in ranked.hits:
+                document_id = _uuid_value(hit.metadata.get("source_document_id"))
+                if document_id is not None:
+                    raw_ids_by_document.setdefault(document_id, set()).add(hit.chunk_id)
+        related_fused = reciprocal_rank_fusion(
+            related_lists,
+            rrf_k=context.rrf_k,
+            top_k=context.max_relationship_candidates,
+        )
+        retained_ids = {candidate.chunk_id for candidate in related_fused}
+        retained_ids_by_document: dict[uuid.UUID, set[uuid.UUID]] = {}
+        for candidate in related_fused:
+            document_id = _uuid_value(candidate.metadata.get("source_document_id"))
+            if document_id is not None:
+                retained_ids_by_document.setdefault(document_id, set()).add(candidate.chunk_id)
+        bounded = [
+            replace(
+                item,
+                outcome=(
+                    ModifierExpansionOutcome.CANDIDATE_CAP_EXCEEDED
+                    if item.outcome is ModifierExpansionOutcome.EXPANDED
+                    and raw_ids_by_document.get(item.modifier_document_id)
+                    and not retained_ids_by_document.get(item.modifier_document_id)
+                    else item.outcome
+                ),
+                candidate_count=len(raw_ids_by_document.get(item.modifier_document_id, set())),
+                retained_candidate_count=len(
+                    retained_ids_by_document.get(item.modifier_document_id, set())
+                ),
+            )
+            for item in bounded
+        ]
+        related_lists = [
+            replace(
+                ranked,
+                hits=[hit for hit in ranked.hits if hit.chunk_id in retained_ids],
+            )
+            for ranked in related_lists
+        ]
+        related_lists = [ranked for ranked in related_lists if ranked.hits]
+        status = "expanded" if related_fused else "expanded_no_candidates"
+        return (
+            related_lists,
+            branch_counts,
+            _expansion_diagnostics(
+                status=status,
+                records=bounded,
+                relationship_candidate_count=len(related_fused),
+            ),
+        )
+
     async def _retrieve_planned_branches(
         self,
         context: RetrievalContext,
@@ -229,6 +430,7 @@ class HybridRetriever(BaseRetriever):
         executed: list[str] = []
         skipped = list(plan.skipped_branches)
         original_batch: SemanticRetrievalBatch | None = None
+        variants = {variant.variant_id: variant for variant in plan.query_variants}
         for branch in plan.branches:
             try:
                 hits, batch = await self._execute_branch(context, branch)
@@ -257,6 +459,13 @@ class HybridRetriever(BaseRetriever):
                     branch_id=branch.branch_id,
                     family=branch.family,
                     target_language=branch.target_language,
+                    query_variant_id=branch.query_variant_id,
+                    score_type=(
+                        BranchScoreType.COSINE_SIMILARITY
+                        if branch.family in {BRANCH_ORIGINAL_DENSE, BRANCH_TRANSLATED_DENSE}
+                        else BranchScoreType.KEYWORD_BM25
+                    ),
+                    query_variant=variants.get(branch.query_variant_id),
                 )
             )
         return ranked_lists, original_batch, branch_counts, executed, skipped
@@ -428,6 +637,7 @@ class HybridRetriever(BaseRetriever):
                 fused,
                 rerank_status="unavailable",
                 reranker_provider=exc.provider_name,
+                reranked_candidate_count=len(request.candidates),
             )
 
         reranked: list[CandidateHit] = []
@@ -450,7 +660,7 @@ class HybridRetriever(BaseRetriever):
                     rerank_relevance_score=result.score,
                     evidence_relevance_score=result.score,
                     evidence_score_method="reranker_relevance",
-                    evidence_calibration_id="reranker_relevance:v1",
+                    evidence_calibration_id=RERANKER_RELEVANCE_CALIBRATION_ID,
                     metadata={
                         **source.metadata,
                         **result.metadata,
@@ -462,12 +672,17 @@ class HybridRetriever(BaseRetriever):
                         "reranker_score_scale": response.score_scale.value,
                         "reranker_usage": dict(response.usage),
                         "reranker_latency_ms": response.latency_ms,
+                        "reranked_candidate_count": len(request.candidates),
                     },
                 )
             )
 
         if not reranked:
-            return _annotate_candidates(fused, rerank_status="empty")
+            return _annotate_candidates(
+                fused,
+                rerank_status="empty",
+                reranked_candidate_count=len(request.candidates),
+            )
         return reranked
 
 
@@ -490,3 +705,110 @@ def _annotate_candidates(
     return [
         replace(candidate, metadata={**candidate.metadata, **metadata}) for candidate in candidates
     ]
+
+
+def _bound_modifier_records(
+    records: list[ModifierExpansionRecord],
+    *,
+    base_revision_ids: set[uuid.UUID],
+    base_document_ids: set[uuid.UUID],
+    max_related_sources: int,
+) -> list[ModifierExpansionRecord]:
+    visited_revisions = set(base_revision_ids)
+    visited_documents = set(base_document_ids)
+    selected_documents: set[uuid.UUID] = set()
+    output: list[ModifierExpansionRecord] = []
+    for item in sorted(records, key=_modifier_sort_key):
+        outcome = item.outcome
+        if outcome is ModifierExpansionOutcome.EXPANDED:
+            if item.modifier_document_id in selected_documents:
+                outcome = ModifierExpansionOutcome.DUPLICATE
+            elif (
+                item.modifier_revision_id in visited_revisions
+                or item.modifier_document_id in visited_documents
+            ):
+                outcome = ModifierExpansionOutcome.CYCLE
+            elif len(selected_documents) >= max_related_sources:
+                outcome = ModifierExpansionOutcome.SOURCE_CAP_EXCEEDED
+            else:
+                selected_documents.add(item.modifier_document_id)
+                visited_revisions.add(item.modifier_revision_id)
+                visited_documents.add(item.modifier_document_id)
+        output.append(replace(item, outcome=outcome))
+    return output
+
+
+def _modifier_sort_key(item: ModifierExpansionRecord) -> tuple[int, int, int, str]:
+    return (
+        -_date_ordinal(item.modifier_effective_from),
+        -_date_ordinal(item.modifier_published_date),
+        -(item.modifier_revision_number or 0),
+        str(item.relationship_id),
+    )
+
+
+def _date_ordinal(value: str | None) -> int:
+    try:
+        return date.fromisoformat(value or "").toordinal()
+    except ValueError:
+        return 0
+
+
+def _annotate_related_hits(
+    hits: list[CandidateHit],
+    record_by_document: dict[uuid.UUID, ModifierExpansionRecord],
+) -> list[CandidateHit]:
+    output: list[CandidateHit] = []
+    for hit in hits:
+        document_id = _uuid_value(hit.metadata.get("source_document_id"))
+        record = record_by_document.get(document_id) if document_id is not None else None
+        if record is None:
+            continue
+        output.append(
+            replace(
+                hit,
+                metadata={
+                    **hit.metadata,
+                    "retrieval_scope": "related_modifier",
+                    "relationship_grounding_trust": False,
+                    "relationship_recall_provenance": [record.recall_provenance()],
+                },
+            )
+        )
+    return output
+
+
+def _uuid_value(value: object) -> uuid.UUID | None:
+    if isinstance(value, uuid.UUID):
+        return value
+    try:
+        return uuid.UUID(str(value)) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _expansion_diagnostics(
+    *,
+    status: str,
+    records: list[ModifierExpansionRecord],
+    relationship_candidate_count: int = 0,
+) -> dict[str, object]:
+    exclusions: dict[str, int] = {}
+    for item in records:
+        if item.outcome is ModifierExpansionOutcome.EXPANDED:
+            continue
+        exclusions[item.outcome.value] = exclusions.get(item.outcome.value, 0) + 1
+    return {
+        "modifies_expansion_status": status,
+        "modifies_expansion_depth": 1,
+        "modifies_expansion_records": [item.diagnostic() for item in records],
+        "modifies_expansion_exclusion_reasons": exclusions,
+        "related_source_count": len(
+            {
+                item.modifier_document_id
+                for item in records
+                if item.outcome is ModifierExpansionOutcome.EXPANDED
+            }
+        ),
+        "relationship_candidate_count": relationship_candidate_count,
+    }

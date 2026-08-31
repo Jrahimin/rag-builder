@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Protocol
 
+from app.platform.domain.evidence_contracts import BranchContribution, QueryVariant
+
 
 @dataclass(frozen=True, slots=True)
 class ContextChunk:
@@ -32,7 +34,51 @@ class ContextChunk:
     page_number: int | None = None
     char_start: int | None = None
     char_end: int | None = None
+    query_variants: tuple[QueryVariant, ...] = ()
+    branch_contributions: tuple[BranchContribution, ...] = ()
     metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class EvidenceUnit(ContextChunk):
+    """One immutable admitted span carried through the generation lifecycle."""
+
+    evidence_unit_id: str = ""
+    source_chunk_hash: str = ""
+    evidence_span_hash: str = ""
+    evidence_char_start: int = 0
+    evidence_char_end: int = 0
+    span_derivation: str = "complete_chunk"
+    query_variant_id: str = "original"
+    corroboration_method: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class CandidateEvidenceAssessment:
+    """Exactly one terminal grounding assessment for a reranked candidate."""
+
+    candidate_rank: int
+    chunk_id: uuid.UUID
+    reranker_score: float | None
+    reranker_threshold: float
+    reranker_calibration_id: str | None
+    calibration_status: str
+    query_variant_ids: tuple[str, ...]
+    branch_contributions: tuple[BranchContribution, ...]
+    span_derivation: str | None
+    evidence_char_start: int | None
+    evidence_char_end: int | None
+    evidence_span_hash: str | None
+    evidence_unit_id: str | None
+    original_semantic_score: float | None
+    semantic_span_aligned: bool
+    original_lexical_coverage: float
+    translated_lexical_coverage: dict[str, float]
+    translated_dense_shadow_scores: dict[str, float]
+    corroboration_method: str | None
+    query_variant_provenance_missing: bool
+    passed: bool
+    terminal_reason: str
 
 
 @dataclass(frozen=True, slots=True)
