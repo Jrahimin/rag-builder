@@ -32,6 +32,59 @@ _DEFAULT_OVERRIDES: dict[str, Any] = {
     "source_policy_mode": "enforce",
 }
 
+# This is deliberately an explicit allowlist rather than every leaf currently
+# exposed by ProjectAIConfig. New policy leaves default to rejected until they
+# are classified as safe to compare against an existing corpus index.
+RUNTIME_COMPARISON_CONFIG_KEYS = frozenset(
+    {
+        "llm.provider",
+        "llm.model",
+        "llm.temperature",
+        "llm.max_tokens",
+        "retrieval.strategy",
+        "retrieval.top_k",
+        "retrieval.rerank_enabled",
+        "retrieval.rerank_mode",
+        "retrieval.rerank_top_n",
+        "retrieval.rerank_score_threshold",
+        "retrieval.evidence_score_threshold",
+        "retrieval.passage_scoring_enabled",
+        "retrieval.passage_window_tokens",
+        "retrieval.passage_overlap_tokens",
+        "retrieval.passage_min_tokens",
+        "retrieval.rerank_candidate_window",
+        "retrieval.rerank_return_n",
+        "retrieval.query_translation_enabled",
+        "retrieval.modifies_expansion_enabled",
+        "retrieval.modifies_expansion_mode",
+        "retrieval.max_related_sources",
+        "retrieval.max_relationship_candidates",
+        "chat.response_mode",
+        "chat.max_context_chunks",
+        "chat.context_char_budget",
+        "chat.max_history_messages",
+        "chat.include_citations",
+        "chat.citation_excerpt_max_chars",
+        "chat.evidence_score_mode",
+        "chat.evidence_gate_mode",
+        "chat.lexical_corroboration_floor_score",
+        "chat.minimum_query_token_coverage",
+        "chat.minimum_claim_token_coverage",
+        "chat.minimum_reranker_evidence_score",
+        "chat.candidate_wise_grounding_enabled",
+        "web_search.enabled",
+        "web_search.model",
+        "web_search.max_results",
+        "web_search.max_evidence_chars",
+        "web_search.max_output_tokens",
+        "web_search.request_timeout_seconds",
+        "domain_instructions",
+        "prompt_profile",
+        "prompt_version",
+        "source_policy_mode",
+    }
+)
+
 
 class JourneyError(RuntimeError):
     """Operator-facing journey setup or assertion failure."""
@@ -61,6 +114,16 @@ class EvidenceAnchor(BaseModel):
     expected_cardinality: int = Field(default=1, ge=1)
 
 
+class CorrectionExpectation(BaseModel):
+    """Minimal deterministic proof that a stale claim was actually corrected."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    old_tokens: list[str] = Field(min_length=1)
+    new_tokens: list[str] = Field(min_length=1)
+    markers: list[str] = Field(min_length=1)
+
+
 class JourneyCase(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -72,6 +135,7 @@ class JourneyCase(BaseModel):
     as_of: datetime | None = None
     expected_tokens: list[str] = Field(default_factory=list)
     expected_any: list[str] = Field(default_factory=list)
+    correction: CorrectionExpectation | None = None
     mode: Literal["answerable", "scope_isolation", "no_answer"] = "answerable"
 
 
@@ -203,7 +267,7 @@ def _project_ai_leaf_paths() -> set[str]:
     return paths
 
 
-SAFE_CONFIG_KEYS = frozenset(_project_ai_leaf_paths())
+SAFE_CONFIG_KEYS = RUNTIME_COMPARISON_CONFIG_KEYS
 
 
 def parse_config_assignment(raw: str) -> tuple[str, Any]:
@@ -391,8 +455,10 @@ def evaluate_case_result(
     authority = dict(metadata.get("current_authority") or {})
     failures: list[dict[str, str]] = []
     all_knowledge_evidence = candidates + retrieved + admitted + citations
+    finalized_knowledge_evidence = admitted + citations
     for claim in claims:
         all_knowledge_evidence.extend(claim["evidence"])
+        finalized_knowledge_evidence.extend(claim["evidence"])
 
     if case.document_scope is not None:
         expected_document = str(document_ids[case.document_scope])
@@ -403,12 +469,10 @@ def evaluate_case_result(
             )
     if "historical" in case.tags:
         historical_document = str(document_ids["tax_2023"])
-        leaked = _knowledge_document_ids(all_knowledge_evidence) - {historical_document}
+        leaked = _knowledge_document_ids(finalized_knowledge_evidence) - {historical_document}
         if leaked:
             failures.append(
-                _failure(
-                    "authority", f"Historical as_of admitted future evidence: {sorted(leaked)}."
-                )
+                _failure("authority", f"Historical answer used future evidence: {sorted(leaked)}.")
             )
 
     if case.mode == "answerable":
@@ -432,6 +496,29 @@ def evaluate_case_result(
                     f"Answer contains none of the expected semantic markers {case.expected_any!r}.",
                 )
             )
+        if case.correction is not None:
+            missing_old = [
+                token
+                for token in case.correction.old_tokens
+                if normalize_text(token) not in normalized_answer
+            ]
+            missing_new = [
+                token
+                for token in case.correction.new_tokens
+                if normalize_text(token) not in normalized_answer
+            ]
+            has_correction_marker = any(
+                normalize_text(marker) in normalized_answer for marker in case.correction.markers
+            )
+            if missing_old or missing_new or not has_correction_marker:
+                failures.append(
+                    _failure(
+                        "generation_refusal",
+                        "Answer did not explicitly correct the stale claim "
+                        f"(missing_old={missing_old}, missing_new={missing_new}, "
+                        f"correction_marker={has_correction_marker}).",
+                    )
+                )
         if message.insufficient_evidence_reason is not None or not message.grounded:
             failures.append(_failure("admission_grounding", "Answerable case was not grounded."))
         if not bool(gate.get("sufficient")):
@@ -481,12 +568,16 @@ def evaluate_case_result(
             failures.append(
                 _failure("admission_grounding", "Unknown case passed indexed grounding gate.")
             )
-        if (
-            response_mode is ResponseMode.INDEXED_ONLY
-            and message.insufficient_evidence_reason is None
+        if response_mode is ResponseMode.INDEXED_ONLY and (
+            message.insufficient_evidence_reason is None
+            or gate.get("generation_ran") is not False
+            or web.get("status") != "not_requested"
         ):
             failures.append(
-                _failure("generation_refusal", "Indexed-only unknown case did not refuse.")
+                _failure(
+                    "generation_refusal",
+                    "Indexed-only unknown case did not refuse before generation/web fallback.",
+                )
             )
 
     return {
@@ -1049,12 +1140,46 @@ async def _effective_resolution(session: Any, *, project_id: uuid.UUID, settings
     )
 
 
+def source_purge_order(sources: list[JourneySource]) -> list[str]:
+    """Return modifiers before the sources they reference.
+
+    Source relationships are stored on the modifying revision, so deleting a
+    target before its modifier violates the relationship foreign key.  The
+    fixture graph is the authoritative lifecycle contract for this tiny tool;
+    do not rely on source or document insertion order.
+    """
+    by_key = {source.key: source for source in sources}
+    source_position = {source.key: index for index, source in enumerate(sources)}
+    incoming_edges = {source.key: 0 for source in sources}
+    for source in sources:
+        for target_key in source.modifies:
+            incoming_edges[target_key] += 1
+    order: list[str] = []
+    ready = sorted(
+        (source_key for source_key, count in incoming_edges.items() if count == 0),
+        key=source_position.__getitem__,
+    )
+    while ready:
+        source_key = ready.pop(0)
+        order.append(source_key)
+        for target_key in by_key[source_key].modifies:
+            incoming_edges[target_key] -= 1
+            if incoming_edges[target_key] == 0:
+                ready.append(target_key)
+        ready.sort(key=source_position.__getitem__)
+    if len(order) != len(sources):
+        cyclic = sorted(source_key for source_key, count in incoming_edges.items() if count > 0)
+        raise JourneyError(f"Source MODIFIES graph contains a cycle: {cyclic}")
+    return order
+
+
 async def _cleanup_project(
     session_factory: Any,
     *,
     project_id: uuid.UUID,
     run_token: str,
     document_ids: Mapping[str, uuid.UUID],
+    sources: list[JourneySource],
     settings: Settings,
     storage: Any,
     progress: Progress,
@@ -1066,7 +1191,11 @@ async def _cleanup_project(
     from app.models.index_build import ProjectIndexPointer
     from app.models.project import Project
 
-    purge_targets = dict(document_ids)
+    purge_targets = {
+        source_key: document_ids[source_key]
+        for source_key in source_purge_order(sources)
+        if source_key in document_ids
+    }
     known_document_ids = set(purge_targets.values())
     async with session_factory() as session:
         rows = await session.execute(
@@ -1478,6 +1607,7 @@ async def run_journey(
                     project_id=project_id,
                     run_token=run_token,
                     document_ids=document_ids,
+                    sources=manifest.sources,
                     settings=settings,
                     storage=storage,
                     progress=notify,

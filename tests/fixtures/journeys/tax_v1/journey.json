@@ -28,7 +28,7 @@
       "key": "eligible_investments_2023",
       "source": "tax_2023",
       "section": "Section 20 — Eligible Investment",
-      "phrases": ["approved savings certificates", "approved retirement contributions"],
+      "phrases": ["approved savings certificates", "approved retirement contributions", "approved life-insurance premiums"],
       "expected_cardinality": 1
     },
     {
@@ -81,7 +81,7 @@
       "query": "Which investments are eligible under Section 20?",
       "document_scope": "tax_2023",
       "anchors": ["eligible_investments_2023"],
-      "expected_tokens": ["approved savings certificates", "approved retirement contributions"]
+      "expected_tokens": ["approved savings certificates", "approved retirement contributions", "approved life-insurance premiums"]
     },
     {
       "key": "current_rebate_calculation",
@@ -121,7 +121,12 @@
       "query": "Someone says the current rebate on BDT 60,000 is 15%, or BDT 9,000. Correct that claim using the current rule.",
       "as_of": "2026-08-01T00:00:00Z",
       "anchors": ["rebate_rate_2026", "rebate_example_2026"],
-      "expected_tokens": ["10%", "6000"]
+      "expected_tokens": ["10%", "6000"],
+      "correction": {
+        "old_tokens": ["15%", "9000"],
+        "new_tokens": ["10%", "6000"],
+        "markers": ["incorrect", "instead", "rather than", "no longer", "not current"]
+      }
     },
     {
       "key": "current_threshold",

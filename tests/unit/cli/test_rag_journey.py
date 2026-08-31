@@ -8,12 +8,15 @@ from types import SimpleNamespace
 import pytest
 
 from app.cli.rag_journey import (
+    SAFE_CONFIG_KEYS,
     EvidenceAnchor,
     JourneyCase,
     JourneyError,
+    JourneySource,
     RuntimeChunk,
     _comparison_summary,
     _preflight_default_organization,
+    _project_ai_leaf_paths,
     aggregate_results,
     build_project_config,
     evaluate_case_result,
@@ -22,11 +25,15 @@ from app.cli.rag_journey import (
     parse_config_assignment,
     resolve_evidence_anchors,
     sanitize_diagnostics,
+    source_purge_order,
     tag_aggregates,
 )
 from app.cli.rag_journey_cli import _options, _parser
 from app.core.config import ResponseMode
-from app.modules.conversations.schemas.message import SourceProvenance
+from app.modules.conversations.schemas.message import (
+    InsufficientEvidenceReason,
+    SourceProvenance,
+)
 from app.platform.jobs.contracts import JobDefinition
 from app.platform.jobs.implementations.inline_queue import InlineJobQueue
 from app.platform.jobs.names import DOCUMENT_PURGE
@@ -66,6 +73,21 @@ def test_tax_v1_manifest_has_fixed_ten_cases() -> None:
     assert {"multilingual", "authority", "scope", "refusal"}.issubset(
         {tag for case in manifest.cases for tag in case.tags}
     )
+
+
+def test_tax_v1_fixture_requires_all_eligible_categories_and_stale_correction() -> None:
+    cases = {case.key: case for case in load_manifest().cases}
+
+    assert cases["eligible_investments_scoped"].expected_tokens == [
+        "approved savings certificates",
+        "approved retirement contributions",
+        "approved life-insurance premiums",
+    ]
+    correction = cases["stale_rebate_correction"].correction
+    assert correction is not None
+    assert correction.old_tokens == ["15%", "9000"]
+    assert correction.new_tokens == ["10%", "6000"]
+    assert correction.markers
 
 
 def test_anchor_resolution_uses_source_section_and_phrases() -> None:
@@ -124,6 +146,7 @@ def test_numeric_normalization_handles_bangla_digits_and_grouping() -> None:
         "embedding.model=text-embedding-3-small",
         "chunking.max_tokens=100",
         "retrieval.fts_regconfig=simple",
+        "retrieval.embedding_set_version=3",
         "database.password=secret",
         "unknown.enabled=true",
     ],
@@ -142,6 +165,39 @@ def test_config_assignments_accept_only_valid_project_query_leaves() -> None:
     assert config.chat.response_mode is ResponseMode.INDEXED_THEN_WEB
 
 
+def test_comparison_allowlist_stays_closed_when_project_config_schema_grows() -> None:
+    """A future embedding/index leaf must opt in explicitly, never by discovery."""
+    assert _project_ai_leaf_paths() >= SAFE_CONFIG_KEYS
+    assert "retrieval.embedding_set_version" not in SAFE_CONFIG_KEYS
+    with pytest.raises(JourneyError, match="Unsafe or unknown"):
+        build_project_config({"retrieval.embedding_set_version": 3})
+
+
+def test_source_purge_order_deletes_modifiers_before_targets() -> None:
+    source_2023 = JourneySource(
+        key="tax_2023",
+        filename="tax.md",
+        title="Tax",
+        revision_label="2023",
+        source_type="synthetic_statute",
+        published_date="2023-07-01",
+        effective_from="2023-07-01",
+    )
+    source_2026 = JourneySource(
+        key="finance_2026",
+        filename="finance.md",
+        title="Finance",
+        revision_label="2026",
+        source_type="synthetic_statute",
+        published_date="2026-07-01",
+        effective_from="2026-07-01",
+        modifies=["tax_2023"],
+    )
+
+    assert source_purge_order([source_2023, source_2026]) == ["finance_2026", "tax_2023"]
+    assert source_purge_order([source_2026, source_2023]) == ["finance_2026", "tax_2023"]
+
+
 def test_cli_rejects_more_than_one_comparison_variant() -> None:
     args = _parser().parse_args(
         [
@@ -156,14 +212,20 @@ def test_cli_rejects_more_than_one_comparison_variant() -> None:
         _options(args, configured_job_backend="taskiq")
 
 
-def _message(*, content: str, metadata: dict[str, object], grounded: bool = True) -> object:
+def _message(
+    *,
+    content: str,
+    metadata: dict[str, object],
+    grounded: bool = True,
+    insufficient_evidence_reason: InsufficientEvidenceReason | None = None,
+) -> object:
     return SimpleNamespace(
         content=content,
         metadata=metadata,
         citations=[],
         claims=[],
         grounded=grounded,
-        insufficient_evidence_reason=None,
+        insufficient_evidence_reason=insufficient_evidence_reason,
         source_provenance=SourceProvenance.NONE,
         retrieval_latency_ms=2,
         provider_latency_ms=3,
@@ -211,6 +273,72 @@ def test_no_answer_records_indexed_failure_before_web_eligibility() -> None:
     assert result["fallback"]["fallback_used"] is True
 
 
+def test_indexed_only_unknown_requires_refusal_before_generation_or_web() -> None:
+    case = JourneyCase(
+        key="unknown",
+        tags=["refusal", "fallback"],
+        query="Unknown?",
+        anchors=[],
+        mode="no_answer",
+    )
+    message = _message(
+        content="I do not have enough indexed evidence.",
+        grounded=False,
+        insufficient_evidence_reason=InsufficientEvidenceReason.BELOW_RELEVANCE_THRESHOLD,
+        metadata={
+            "retrieval_trace": {"context_selected": []},
+            "evidence_gate": {"sufficient": False, "generation_ran": False},
+            "web_search": {"status": "not_requested", "fallback_used": False},
+        },
+    )
+
+    result = evaluate_case_result(
+        case=case,
+        message=message,
+        anchor_mapping={},
+        document_ids={},
+        response_mode=ResponseMode.INDEXED_ONLY,
+        modifies_expansion_enabled=True,
+    )
+
+    assert result["passed"] is True
+    assert result["evidence_gate"]["sufficient"] is False
+    assert result["admitted"] == []
+    assert result["insufficient_evidence_reason"] is not None
+    assert result["evidence_gate"]["generation_ran"] is False
+    assert result["fallback"]["status"] == "not_requested"
+
+
+def test_stale_claim_requires_a_correction_marker_not_just_new_numbers() -> None:
+    case = JourneyCase(
+        key="stale",
+        tags=["authority", "stale_rule"],
+        query="Correct the old calculation.",
+        anchors=[],
+        expected_tokens=["10%", "6000"],
+        correction={
+            "old_tokens": ["15%", "9000"],
+            "new_tokens": ["10%", "6000"],
+            "markers": ["instead"],
+        },
+    )
+    message = _message(
+        content="15% and 9000; 10% and 6000.",
+        metadata={"evidence_gate": {"sufficient": True}, "web_search": {}},
+    )
+
+    result = evaluate_case_result(
+        case=case,
+        message=message,
+        anchor_mapping={},
+        document_ids={},
+        response_mode=ResponseMode.INDEXED_ONLY,
+        modifies_expansion_enabled=True,
+    )
+
+    assert any("explicitly correct" in item["message"] for item in result["failures"])
+
+
 def test_scope_failure_is_localized_to_authority() -> None:
     scoped_id = uuid.uuid4()
     outside_id = uuid.uuid4()
@@ -247,6 +375,49 @@ def test_scope_failure_is_localized_to_authority() -> None:
     )
 
     assert {failure["stage"] for failure in result["failures"]} == {"authority"}
+
+
+def test_historical_authority_allows_raw_future_candidates_but_not_final_evidence() -> None:
+    old_document_id = uuid.uuid4()
+    future_document_id = uuid.uuid4()
+    old_chunk_id = uuid.uuid4()
+    case = JourneyCase(
+        key="historical",
+        tags=["authority", "historical"],
+        query="What applied in 2024?",
+        anchors=["old"],
+        expected_tokens=["15%"],
+    )
+    message = _message(
+        content="The historical rate was 15%.",
+        metadata={
+            "retrieval_trace": {
+                "candidates": [
+                    {"chunk_id": str(uuid.uuid4()), "document_id": str(future_document_id)},
+                    {"chunk_id": str(old_chunk_id), "document_id": str(old_document_id)},
+                ],
+                "retrieval_selected": [
+                    {"chunk_id": str(old_chunk_id), "document_id": str(old_document_id)}
+                ],
+                "context_selected": [
+                    {"chunk_id": str(old_chunk_id), "document_id": str(old_document_id)}
+                ],
+            },
+            "evidence_gate": {"sufficient": True},
+            "web_search": {"status": "not_requested", "fallback_used": False},
+        },
+    )
+
+    result = evaluate_case_result(
+        case=case,
+        message=message,
+        anchor_mapping={"old": [old_chunk_id]},
+        document_ids={"tax_2023": old_document_id},
+        response_mode=ResponseMode.INDEXED_ONLY,
+        modifies_expansion_enabled=True,
+    )
+
+    assert all(failure["stage"] != "authority" for failure in result["failures"])
 
 
 def test_tag_aggregation_and_sanitization_are_maintainable() -> None:

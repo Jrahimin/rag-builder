@@ -4,14 +4,125 @@ from __future__ import annotations
 
 import json
 import shutil
+import uuid
 from pathlib import Path
+from typing import ClassVar
 
 import pytest
+from sqlalchemy import func, select
 
 from app.cli.rag_journey import DEFAULT_FIXTURE, JourneyOptions, run_journey
-from app.core.config import get_settings
+from app.core.config import Settings, get_settings
+from app.models.document import Document
+from app.models.project import Project
+from app.models.source_metadata import SourceMetadataRevision
+from app.platform.db.session import Database
+from app.platform.providers.contracts.embedding import (
+    BaseEmbeddingProvider,
+    EmbeddingBatchResult,
+    EmbeddingPurpose,
+)
+from app.platform.providers.implementations.storage_factory import create_storage_provider
 
 pytestmark = pytest.mark.integration
+
+
+class FixtureConceptEmbeddingProvider(BaseEmbeddingProvider):
+    """Deterministic semantic fixture embedder for production pgvector smoke tests.
+
+    Each tax concept occupies a stable orthogonal coordinate. It deliberately
+    gives fixture/query pairs a cosine similarity of 1.0 while the lunar query
+    occupies a separate coordinate, so production evidence thresholds remain
+    unchanged and still reject unrelated evidence.
+    """
+
+    _CONCEPTS: ClassVar[dict[str, int]] = {
+        "eligible": 0,
+        "rebate": 1,
+        "threshold": 2,
+        "source_tax": 3,
+        "unknown": 4,
+        "other_document": 5,
+    }
+
+    def __init__(self, dimensions: int) -> None:
+        self._dimensions = dimensions
+
+    @property
+    def provider_name(self) -> str:
+        return "fixture-concept"
+
+    @property
+    def model_name(self) -> str:
+        return "tax-v1-smoke-v1"
+
+    @property
+    def dimensions(self) -> int:
+        return self._dimensions
+
+    @property
+    def provider_version(self) -> str:
+        return "1"
+
+    @classmethod
+    def _concept(cls, text: str) -> str:
+        value = text.casefold()
+        if "lunar" in value or "moon colony" in value:
+            return "unknown"
+        if "section 20" in value and ("eligible" in value or "investment" in value):
+            return "eligible"
+        if "eligible investment" in value or "rebate" in value or "রিবেট" in value:
+            return "rebate"
+        if "tax-free threshold" in value or "tax free threshold" in value:
+            return "threshold"
+        if "source tax" in value or "savings-certificate" in value:
+            return "source_tax"
+        # Documents always carry their section heading; arbitrary unrelated
+        # prose is intentionally orthogonal to the tax concepts.
+        return "unknown"
+
+    async def embed_texts(
+        self,
+        texts: list[str],
+        *,
+        purpose: EmbeddingPurpose = EmbeddingPurpose.DOCUMENT,
+    ) -> EmbeddingBatchResult:
+        vectors: list[list[float]] = []
+        for text in texts:
+            vector = [0.0] * self._dimensions
+            concept = self._concept(text)
+            if purpose is EmbeddingPurpose.DOCUMENT and concept == "unknown":
+                concept = "other_document"
+            vector[self._CONCEPTS[concept]] = 1.0
+            vectors.append(vector)
+        return EmbeddingBatchResult(
+            vectors=vectors,
+            provider=self.provider_name,
+            model=self.model_name,
+            dimensions=self.dimensions,
+            provider_version=self.provider_version,
+        )
+
+
+def _fixture_embedder(
+    settings: Settings,
+    *,
+    dimensions: int | None = None,
+    **_: object,
+) -> BaseEmbeddingProvider:
+    return FixtureConceptEmbeddingProvider(dimensions or settings.embedding.dimensions)
+
+
+def _install_fixture_embedder(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Replace only provider construction; services, jobs, and pgvector stay real."""
+    for target in (
+        "app.platform.providers.implementations.embedding_factory.create_embedding_provider",
+        "app.platform.providers.implementations.embedding_factory.create_embedding_provider_for_identity",
+        "app.dependencies.retrieval.create_embedding_provider_for_identity",
+        "app.worker.handlers.document.create_embedding_provider",
+        "app.worker.handlers.corpus.create_embedding_provider",
+    ):
+        monkeypatch.setattr(target, _fixture_embedder)
 
 
 async def test_tax_journey_subset_uses_production_diagnostics_and_cleans_up(
@@ -38,6 +149,7 @@ async def test_tax_journey_subset_uses_production_diagnostics_and_cleans_up(
     monkeypatch.setenv("APE_JOBS__DISPATCHER_ENABLED", "false")
     get_settings.cache_clear()
     settings = get_settings()
+    _install_fixture_embedder(monkeypatch)
     try:
         result, artifact_dir = await run_journey(
             settings,
@@ -91,4 +203,33 @@ async def test_tax_journey_subset_uses_production_diagnostics_and_cleans_up(
     unknown = cases["unknown_lunar_rule"]
     assert unknown["evidence_gate"]["sufficient"] is False
     assert unknown["admitted"] == []
-    assert "status" in unknown["fallback"]
+    assert unknown["insufficient_evidence_reason"] is not None
+    assert unknown["evidence_gate"]["generation_ran"] is False
+    assert unknown["fallback"]["status"] == "not_requested"
+
+    # The runner's relationship-aware purge must leave no aggregate, source,
+    # document, or object-prefix artefact for its exact temporary project.
+    project_id = uuid.UUID(result["project_id"])
+    database = Database(settings)
+    try:
+        async with database.session_factory() as session:
+            assert await session.get(Project, project_id) is None
+            assert (
+                await session.scalar(
+                    select(func.count())
+                    .select_from(Document)
+                    .where(Document.project_id == project_id)
+                )
+                == 0
+            )
+            assert (
+                await session.scalar(
+                    select(func.count())
+                    .select_from(SourceMetadataRevision)
+                    .where(SourceMetadataRevision.project_id == project_id)
+                )
+                == 0
+            )
+        assert await create_storage_provider(settings).list_keys(f"{project_id}/") == []
+    finally:
+        await database.dispose()
