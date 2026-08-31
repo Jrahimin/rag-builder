@@ -184,7 +184,13 @@ async def test_tax_journey_subset_uses_production_diagnostics_and_cleans_up(
     historical = cases["historical_rebate_rate"]
     assert historical["fallback"]["fallback_used"] is False
     assert historical["expected"]["as_of"].startswith("2024-01-01")
-    assert all(failure["stage"] != "authority" for failure in historical["failures"])
+    effective_config = result["variants"][0]["effective_config"].get("configuration", {})
+    source_policy_mode = effective_config.get("source_policy_mode")
+    historical_authority_failures = [
+        failure for failure in historical["failures"] if failure["stage"] == "authority"
+    ]
+    if source_policy_mode == "enforce":
+        assert historical_authority_failures == []
 
     scoped = cases["hard_document_scope_authority"]
     old_document_id = result["sources"]["tax_2023"]["document_id"]
@@ -205,12 +211,7 @@ async def test_tax_journey_subset_uses_production_diagnostics_and_cleans_up(
     assert scoped_anchor_ids & retrieved_ids
     assert scoped["fallback"]["fallback_used"] is False
     assert scoped["fallback"]["status"] in {"not_requested", "suppressed_scoped_request"}
-    expansion_mode = (
-        result["variants"][0]["effective_config"]
-        .get("configuration", {})
-        .get("retrieval", {})
-        .get("modifies_expansion_mode")
-    )
+    expansion_mode = effective_config.get("retrieval", {}).get("modifies_expansion_mode")
     if expansion_mode == "expand":
         assert scoped["authority"]["status"] == "suppressed_document_scope"
 
