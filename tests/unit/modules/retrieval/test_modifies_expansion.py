@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from dataclasses import replace
 from datetime import date
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -15,6 +16,7 @@ from app.modules.knowledge.source_metadata_read import _modifier_outcome
 from app.modules.retrieval.retrievers.hybrid_retriever import (
     HybridRetriever,
     _bound_modifier_records,
+    _expansion_diagnostics,
 )
 from app.modules.retrieval.retrievers.models import (
     CandidateHit,
@@ -175,6 +177,45 @@ def test_depth_one_visited_sets_diagnose_cycle_duplicate_and_source_cap() -> Non
         ModifierExpansionOutcome.CYCLE,
         ModifierExpansionOutcome.SOURCE_CAP_EXCEEDED,
     ]
+
+
+def test_modifier_already_in_original_recall_is_not_reported_as_cycle() -> None:
+    base_revision_id = uuid.uuid4()
+    base_document_id = uuid.uuid4()
+    modifier_revision_id = uuid.uuid4()
+    modifier_document_id = uuid.uuid4()
+    record = _record(
+        base_revision_id=base_revision_id,
+        base_document_id=base_document_id,
+        modifier_revision_id=modifier_revision_id,
+        modifier_document_id=modifier_document_id,
+    )
+
+    bounded = _bound_modifier_records(
+        [record],
+        base_revision_ids={base_revision_id, modifier_revision_id},
+        base_document_ids={base_document_id, modifier_document_id},
+        max_related_sources=1,
+    )
+
+    assert bounded[0].outcome is ModifierExpansionOutcome.ALREADY_IN_RECALL
+
+
+def test_unscoped_current_authority_relationship_is_explicit_in_diagnostics() -> None:
+    record = _record(
+        base_revision_id=uuid.uuid4(),
+        base_document_id=uuid.uuid4(),
+        outcome=ModifierExpansionOutcome.ALREADY_IN_RECALL,
+    )
+    diagnostics = _expansion_diagnostics(status="no_eligible_modifiers", records=[record])
+    assert diagnostics["modifies_authority_scope_status"] == "unscoped_relationships"
+    assert diagnostics["modifies_authority_unscoped_count"] == 1
+
+    scoped = _expansion_diagnostics(
+        status="no_eligible_modifiers",
+        records=[replace(record, target_provisions=("Section 21",))],
+    )
+    assert scoped["modifies_authority_scope_status"] == "scoped"
 
 
 class _CountingReranker:

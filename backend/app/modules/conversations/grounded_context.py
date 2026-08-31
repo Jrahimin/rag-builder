@@ -6,6 +6,7 @@ from dataclasses import replace
 
 from app.core.config import ChatConfig, EvidenceGateMode
 from app.modules.conversations.context_builder import ContextBuilder
+from app.modules.conversations.current_authority import remove_superseded_provisions
 from app.modules.conversations.grounding_service import EvidenceDecision, GroundingService
 from app.modules.conversations.ports import ContextChunk
 from app.modules.conversations.schemas.message import InsufficientEvidenceReason
@@ -26,7 +27,8 @@ def assess_and_select_knowledge(
     an admitted unit but must not truncate it. Legacy generation still uses the
     existing truncated selection so default-off behavior stays compatible.
     """
-    legacy_selected = context_builder.select(chunks)
+    authority_safe_chunks = remove_superseded_provisions(chunks)
+    legacy_selected = context_builder.select(authority_safe_chunks)
     legacy_evidence = grounding.assess_legacy(
         question,
         legacy_selected,
@@ -34,7 +36,7 @@ def assess_and_select_knowledge(
     )
     candidate_evidence = grounding.assess_candidate_wise(
         question,
-        chunks,
+        authority_safe_chunks,
         rerank_status=rerank_status,
     )
     if not chat_config.candidate_wise_grounding_enabled:

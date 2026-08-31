@@ -81,6 +81,7 @@ class KnowledgeRetrievalSourceMetadataAdapter:
                 base_effective_from=item.base_effective_from,
                 base_effective_to=item.base_effective_to,
                 outcome=ModifierExpansionOutcome(item.outcome),
+                target_provisions=item.target_provisions,
             )
             for item in records
         ]

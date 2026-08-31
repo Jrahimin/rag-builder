@@ -88,6 +88,7 @@ class SearchDiagnostics(BaseModel):
     query_language_profile: str | None = None
     corpus_language_inventory: dict[str, int] = Field(default_factory=dict)
     translation_status: str | None = None
+    skipped_reason: str | None = None
     translation_source_language: str | None = None
     translation_provider: str | None = None
     translation_model: str | None = None
@@ -96,12 +97,15 @@ class SearchDiagnostics(BaseModel):
     translation_usage: dict[str, Any] = Field(default_factory=dict)
     translation_target_language: str | None = None
     translation_failure_reason: str | None = None
+    translation_attempts: int | None = None
+    translation_validation_reasons: list[str] = Field(default_factory=list)
     translated_query: str | None = None
     executed_branches: list[str] = Field(default_factory=list)
     skipped_branches: list[str] = Field(default_factory=list)
     branch_candidate_counts: dict[str, int] = Field(default_factory=dict)
     query_variants: list[dict[str, Any]] = Field(default_factory=list)
     language_routing_status: str | None = None
+    romanized_or_codeswitched: bool = False
     embedding_identity_status: str | None = None
     embedding_provider: str | None = None
     embedding_model: str | None = None
@@ -113,6 +117,8 @@ class SearchDiagnostics(BaseModel):
     modifies_expansion_depth: int = 1
     modifies_expansion_records: list[dict[str, Any]] = Field(default_factory=list)
     modifies_expansion_exclusion_reasons: dict[str, int] = Field(default_factory=dict)
+    modifies_authority_scope_status: str = "not_applicable"
+    modifies_authority_unscoped_count: int = 0
     related_source_count: int = 0
     relationship_candidate_count: int = 0
     reranked_candidate_count: int = 0

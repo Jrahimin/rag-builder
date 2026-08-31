@@ -46,6 +46,11 @@ _LIST_PREAMBLE_PATTERN = regex.compile(
     r"^[^.\n!?।॥。\uff01\uff1f…]+[:：—–]\s*$",  # noqa: RUF001
 )
 _POLARITY_PATTERN = regex.compile(r"^(?:yes|no|না|হ্যাঁ)[.\u0964]?\s*$", regex.IGNORECASE)
+_SHORT_STANCE_PATTERN = regex.compile(
+    r"^(?:the\s+)?(?:claim|statement|assertion|premise)\s+"
+    r"(?:is|was)\s+(?:incorrect|false|wrong|not\s+correct)[.!]?$",
+    regex.IGNORECASE,
+)
 _SPAN_BOUNDARY_PATTERN = regex.compile(
     r"\n+|(?<=[.!?।॥。\uff01\uff1f…])\s+",
     regex.UNICODE,
@@ -55,6 +60,7 @@ _SOURCE_NOTICE_MARKERS = (
     "this wasn\u2019t covered in the knowledge base, so i used current web sources",
     "knowledge base-এ এটি ছিল না, তাই আমি সাম্প্রতিক web সূত্র ব্যবহার করেছি",
 )
+_MAX_CITATION_INHERITANCE_STRUCTURAL_GAP = 1
 _ENGLISH_STOPWORDS = {
     "a",
     "an",
@@ -689,6 +695,7 @@ class GroundingService:
             if (
                 not claim_text
                 or _is_structural_segment(claim_text)
+                or _is_short_stance_segment(claim_text)
                 or _is_insufficiency_statement(claim_text)
             ):
                 continue
@@ -1087,19 +1094,94 @@ def _assessment_diagnostic(assessment: CandidateEvidenceAssessment) -> dict[str,
 
 
 def _answer_segments(answer: str) -> list[str]:
-    """Keep citations written after sentence punctuation with the preceding claim."""
+    """Split claims and safely inherit nearby citations.
+
+    Inheritance only supplies candidate evidence.  Every sentence is still
+    verified independently by ``map_claims`` before it can be grounded.
+    """
     segments: list[str] = []
-    for raw_segment in _SEGMENT_PATTERN.split(answer):
-        segment = raw_segment.strip()
-        if not segment:
+    for paragraph in regex.split(r"\n\s*\n", answer):
+        paragraph_segments: list[str] = []
+        for raw_segment in _SEGMENT_PATTERN.split(paragraph):
+            segment = raw_segment.strip()
+            if not segment:
+                continue
+            leading = _LEADING_CITATIONS_PATTERN.match(segment)
+            if leading is not None and paragraph_segments:
+                paragraph_segments[-1] = f"{paragraph_segments[-1]} {leading.group(1).strip()}"
+                segment = leading.group(2).strip()
+            if segment:
+                paragraph_segments.append(segment)
+        if paragraph_segments:
+            final_citations = _CITATION_PATTERN.findall(paragraph_segments[-1])
+            if final_citations:
+                inherited = " ".join(f"[{value}]" for value in dict.fromkeys(final_citations))
+                paragraph_segments = [
+                    segment if _CITATION_PATTERN.search(segment) else f"{segment} {inherited}"
+                    for segment in paragraph_segments
+                ]
+            segments.extend(paragraph_segments)
+    return _inherit_bounded_block_citations(segments)
+
+
+def _inherit_bounded_block_citations(segments: list[str]) -> list[str]:
+    """Attach shared citations around one isolated factual Markdown block.
+
+    Generators often put a calculation in its own displayed Markdown block
+    while citing the factual sentence immediately before and after it. This
+    accepts only that bounded pattern: the nearest factual neighbours must
+    both be cited and share a citation; at most one heading or list preamble
+    may appear between them, and another factual claim is a hard boundary.
+    """
+    inherited = list(segments)
+    for index, segment in enumerate(segments):
+        if _CITATION_PATTERN.search(segment) or _is_non_factual_segment(segment):
             continue
-        leading = _LEADING_CITATIONS_PATTERN.match(segment)
-        if leading is not None and segments:
-            segments[-1] = f"{segments[-1]} {leading.group(1).strip()}"
-            segment = leading.group(2).strip()
-        if segment:
-            segments.append(segment)
-    return segments
+        before = _nearest_cited_factual_segment(segments, index, direction=-1)
+        after = _nearest_cited_factual_segment(segments, index, direction=1)
+        if before is None or after is None:
+            continue
+        shared = set(_CITATION_PATTERN.findall(segments[before])) & set(
+            _CITATION_PATTERN.findall(segments[after])
+        )
+        if shared:
+            citations = " ".join(f"[{value}]" for value in sorted(shared))
+            inherited[index] = f"{segment} {citations}"
+    return inherited
+
+
+def _nearest_cited_factual_segment(
+    segments: list[str],
+    index: int,
+    *,
+    direction: int,
+) -> int | None:
+    """Find an adjacent cited fact without crossing another factual claim."""
+    cursor = index + direction
+    structural_gap = 0
+    while 0 <= cursor < len(segments):
+        candidate = segments[cursor]
+        if _is_non_factual_segment(candidate):
+            structural_gap += 1
+            if structural_gap > _MAX_CITATION_INHERITANCE_STRUCTURAL_GAP:
+                return None
+            cursor += direction
+            continue
+        return cursor if _CITATION_PATTERN.search(candidate) else None
+    return None
+
+
+def _is_non_factual_segment(text: str) -> bool:
+    return (
+        _is_structural_segment(text)
+        or _is_short_stance_segment(text)
+        or _is_insufficiency_statement(text)
+    )
+
+
+def _is_short_stance_segment(text: str) -> bool:
+    """Ignore a meta-level verdict; the factual correction remains verified."""
+    return bool(_SHORT_STANCE_PATTERN.fullmatch(text.strip()))
 
 
 def _is_structural_segment(text: str) -> bool:

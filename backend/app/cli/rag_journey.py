@@ -20,6 +20,7 @@ from app.core.config import ResponseMode, Settings, StorageBackend
 from app.modules.evaluation.metrics import rank_metrics
 from app.modules.evaluation.schemas.evaluation import EvaluationCase, EvaluationCaseKind
 from app.platform.config.project_ai import ProjectAIConfig
+from app.platform.domain.text_tokenization import tokenize
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_FIXTURE = _REPO_ROOT / "tests" / "fixtures" / "journeys" / "tax_v1" / "journey.json"
@@ -97,6 +98,7 @@ class JourneySource(BaseModel):
     effective_from: date
     effective_to: date | None = None
     modifies: list[str] = Field(default_factory=list)
+    modified_provisions: dict[str, list[str]] = Field(default_factory=dict)
 
 
 class EvidenceAnchor(BaseModel):
@@ -186,6 +188,11 @@ def load_manifest(path: Path = DEFAULT_FIXTURE) -> JourneyManifest:
         unknown = set(source.modifies) - sources
         if unknown:
             raise JourneyError(f"Source {source.key!r} modifies unknown sources: {sorted(unknown)}")
+        unknown_scopes = set(source.modified_provisions) - set(source.modifies)
+        if unknown_scopes:
+            raise JourneyError(
+                f"Source {source.key!r} scopes non-MODIFIES targets: {sorted(unknown_scopes)}"
+            )
     for anchor in manifest.anchors:
         if anchor.source not in sources:
             raise JourneyError(
@@ -212,6 +219,40 @@ def normalize_text(value: str) -> str:
             characters.append(char)
     normalized = "".join(characters).replace(",", "")
     return " ".join(re.sub(r"[^\w%]+", " ", normalized, flags=re.UNICODE).split())
+
+
+def _scope_current_authority_response_is_safe(normalized_answer: str) -> bool:
+    """Accept a scope-qualified refusal, not a scoped value labelled current."""
+    tokens = set(normalized_answer.split())
+    has_scope = bool(tokens & {"scope", "scoped", "document"})
+    has_current = "current" in tokens
+    has_unavailability = bool(tokens & {"cannot", "unavailable", "insufficient", "enough"})
+    return has_scope and has_current and has_unavailability
+
+
+def _contains_semantic_marker(normalized_answer: str, marker: str) -> bool:
+    """Match short discourse markers across harmless inflection/wording changes."""
+    normalized_marker = normalize_text(marker)
+    if normalized_marker in normalized_answer:
+        return True
+    answer_forms = set().union(*(_token_forms(token) for token in normalized_answer.split()))
+    marker_tokens = normalized_marker.split()
+    return bool(marker_tokens) and all(
+        _token_forms(token) & answer_forms for token in marker_tokens
+    )
+
+
+def _token_forms(token: str) -> set[str]:
+    forms = {token}
+    if len(token) > 4 and token.endswith("ies"):
+        forms.add(f"{token[:-3]}y")
+    if len(token) > 4 and token.endswith("ing"):
+        forms.add(token[:-3])
+    if len(token) > 3 and token.endswith("ed"):
+        forms.update({token[:-2], token[:-1]})
+    if len(token) > 3 and token.endswith("s"):
+        forms.add(token[:-1])
+    return forms
 
 
 def resolve_evidence_anchors(
@@ -366,6 +407,8 @@ def _trace_identities(items: Any) -> list[dict[str, Any]]:
         "rerank_relevance_score",
         "branch_provenance",
         "evidence_unit_id",
+        "authority_redaction",
+        "authority_redacted_provisions",
         "web_url",
         "web_title",
         "web_provider",
@@ -420,6 +463,7 @@ def evaluate_case_result(
     claims = [
         {
             "claim_id": claim.claim_id,
+            "text": claim.text,
             "grounded": claim.grounded,
             "verification": claim.verification.value,
             "evidence": [
@@ -448,6 +492,7 @@ def evaluate_case_result(
     web = dict(metadata.get("web_search") or {})
     gate = dict(metadata.get("evidence_gate") or {})
     authority = dict(metadata.get("current_authority") or {})
+    scope_current_authority = dict(metadata.get("scope_current_authority") or {})
     failures: list[dict[str, str]] = []
     all_knowledge_evidence = candidates + retrieved + admitted + citations
     finalized_knowledge_evidence = admitted + citations
@@ -483,7 +528,7 @@ def evaluate_case_result(
                     _failure("generation_refusal", f"Answer is missing expected fact {token!r}.")
                 )
         if case.expected_any and not any(
-            normalize_text(token) in normalized_answer for token in case.expected_any
+            _contains_semantic_marker(normalized_answer, token) for token in case.expected_any
         ):
             failures.append(
                 _failure(
@@ -492,25 +537,22 @@ def evaluate_case_result(
                 )
             )
         if case.correction is not None:
-            missing_old = [
-                token
-                for token in case.correction.old_tokens
-                if normalize_text(token) not in normalized_answer
-            ]
             missing_new = [
                 token
                 for token in case.correction.new_tokens
                 if normalize_text(token) not in normalized_answer
             ]
             has_correction_marker = any(
-                normalize_text(marker) in normalized_answer for marker in case.correction.markers
+                _contains_semantic_marker(normalized_answer, marker)
+                for marker in case.correction.markers
             )
-            if missing_old or missing_new or not has_correction_marker:
+            if missing_new or not has_correction_marker:
                 failures.append(
                     _failure(
                         "generation_refusal",
                         "Answer did not explicitly correct the stale claim "
-                        f"(missing_old={missing_old}, missing_new={missing_new}, "
+                        f"(stale_facts_need_not_be_repeated={case.correction.old_tokens}, "
+                        f"missing_new={missing_new}, "
                         f"correction_marker={has_correction_marker}).",
                     )
                 )
@@ -554,6 +596,22 @@ def evaluate_case_result(
             failures.append(
                 _failure("fallback", "Eligible web fallback was not suppressed by hard scope.")
             )
+        if "current" in set(tokenize(case.query)):
+            if scope_current_authority.get("status") != "unavailable_within_hard_scope":
+                failures.append(
+                    _failure(
+                        "authority",
+                        "Current hard-scope request was not marked unavailable within scope.",
+                    )
+                )
+            if not _scope_current_authority_response_is_safe(normalized_answer):
+                failures.append(
+                    _failure(
+                        "generation_refusal",
+                        "Hard-scoped current response did not distinguish scoped evidence "
+                        "from current authority.",
+                    )
+                )
 
     if case.mode == "no_answer":
         indexed_admitted = [
@@ -820,6 +878,7 @@ async def _ingest_sources(
             SourceRelationshipCreate(
                 relationship_type=SourceRelationshipType.MODIFIES,
                 target_revision_id=revision_ids[target],
+                target_provisions=source.modified_provisions.get(target, []),
             )
             for target in source.modifies
         ]
@@ -1515,6 +1574,9 @@ async def run_journey(
                     {
                         "source_key": target,
                         "target_revision_id": str(revision_ids[target]),
+                        "target_provisions": next(
+                            source for source in manifest.sources if source.key == key
+                        ).modified_provisions.get(target, []),
                     }
                     for target in next(
                         source for source in manifest.sources if source.key == key

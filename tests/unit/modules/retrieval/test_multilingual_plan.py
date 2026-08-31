@@ -47,7 +47,16 @@ class _FakeTranslator:
 class _FailingTranslator(_FakeTranslator):
     async def translate(self, request: QueryTranslationRequest) -> QueryTranslationResponse:
         del request
-        raise ProviderError("offline", provider_name="openai")
+        raise ProviderError(
+            "validation",
+            provider_name="openai",
+            context={
+                "reason": "missing_literals",
+                "attempts": 2,
+                "validation_reasons": ["missing_literals", "missing_literals"],
+                "latency_ms": 41,
+            },
+        )
 
 
 def test_legacy_manifest_keeps_original_branches_only() -> None:
@@ -112,6 +121,40 @@ async def test_translation_failure_keeps_original_branches() -> None:
     assert {branch.family for branch in plan.branches} == {
         BRANCH_ORIGINAL_DENSE,
         BRANCH_ORIGINAL_LEXICAL,
+    }
+    assert plan.diagnostics["translation_failure_reason"] == "missing_literals"
+    assert plan.diagnostics["translation_provider"] == "openai"
+    assert plan.diagnostics["translation_model"] == "gpt-5-nano"
+    assert plan.diagnostics["translation_prompt_version"] == "retrieval-translation-v2"
+    assert plan.diagnostics["translation_target_language"] == "bn"
+    assert plan.diagnostics["translation_attempts"] == 2
+    assert plan.diagnostics["translation_validation_reasons"] == [
+        "missing_literals",
+        "missing_literals",
+    ]
+    assert plan.diagnostics["translation_latency_ms"] == 41
+
+
+async def test_banglish_plan_adds_english_rewrite_and_keeps_original_branches() -> None:
+    plan = await resolve_multilingual_plan(
+        "Current niyome BDT 60,000 eligible investment er rebate koto?",
+        manifest={
+            "language_metadata_schema_version": "2026-08-18.v1",
+            "chunk_language_counts": {"en": 9},
+        },
+        translation_config=QueryTranslationConfig(enabled=True),
+        translator=_FakeTranslator(
+            "Under the current rule, what is the rebate for BDT 60,000 of eligible investment?"
+        ),
+    )
+    assert plan.target_language == "en"
+    assert plan.diagnostics["romanized_or_codeswitched"] is True
+    assert plan.diagnostics["translation_attempts"] == 1
+    assert {branch.family for branch in plan.branches} == {
+        BRANCH_ORIGINAL_DENSE,
+        BRANCH_ORIGINAL_LEXICAL,
+        "translated_dense",
+        "translated_lexical",
     }
 
 

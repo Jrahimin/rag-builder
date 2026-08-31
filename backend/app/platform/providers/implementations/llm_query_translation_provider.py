@@ -21,8 +21,8 @@ from app.platform.providers.prompts.retrieval_translation import (
 
 # Page-length query + buffer. Rejects rambling, not a book-page translation.
 _MAX_TRANSLATION_CHARS = 24_000
-_MIN_TRANSLATION_OUTPUT_TOKENS = 256
-_MAX_TRANSLATION_OUTPUT_TOKENS = 4096
+_MIN_TRANSLATION_OUTPUT_TOKENS = 96
+_MAX_TRANSLATION_OUTPUT_TOKENS = 2048
 _SHORT_QUERY_CLEAN_CHARS = 400
 
 
@@ -64,7 +64,7 @@ class LLMQueryTranslationProvider(BaseQueryTranslationProvider):
         # Bangla can approach ~1 token per 1-2 chars; English is cheaper.
         sized = max(
             _MIN_TRANSLATION_OUTPUT_TOKENS,
-            min(_MAX_TRANSLATION_OUTPUT_TOKENS, (len(request.query) // 2) + 256),
+            min(_MAX_TRANSLATION_OUTPUT_TOKENS, (len(request.query) // 2) + 96),
         )
         return min(
             request.max_output_tokens,
@@ -88,24 +88,56 @@ class LLMQueryTranslationProvider(BaseQueryTranslationProvider):
         completion = None
         translated = ""
         error: str | None = "empty"
+        validation_reasons: list[str] = []
+        attempt_count = 0
         for _ in range(attempts):
-            completion = await self._llm.generate(
-                messages,
-                temperature=self._temperature,
-                max_tokens=self._max_tokens(request),
-            )
+            attempt_count += 1
+            try:
+                completion = await self._llm.generate(
+                    messages,
+                    temperature=self._temperature,
+                    max_tokens=self._max_tokens(request),
+                )
+            except ProviderError as exc:
+                context = dict(exc.context) if isinstance(exc.context, dict) else {}
+                context.update(
+                    {
+                        "attempts": attempt_count,
+                        "provider": exc.provider_name or self.provider_name,
+                        "model": self.model_name,
+                        "prompt_version": request.prompt_version or self._prompt_version,
+                        "latency_ms": int((time.perf_counter() - started) * 1000),
+                    }
+                )
+                raise ProviderError(
+                    exc.message,
+                    provider_name=exc.provider_name or self.provider_name,
+                    retryable=exc.retryable,
+                    context=context,
+                ) from exc
             translated = _clean_translation(completion.content)
             error = _validation_error(request.query, translated)
             if error is None:
                 break
-            if error != "empty":
-                break
+            validation_reasons.append(error)
         latency_ms = int((time.perf_counter() - started) * 1000)
         if completion is None or error is not None:
+            diagnostic_reason = next(
+                (reason for reason in reversed(validation_reasons) if reason != "empty"),
+                error or "empty",
+            )
             raise ProviderError(
                 "Retrieval translation failed validation.",
                 provider_name=self.provider_name,
-                context={"reason": error or "empty"},
+                context={
+                    "reason": diagnostic_reason,
+                    "validation_reasons": validation_reasons,
+                    "attempts": attempt_count,
+                    "provider": self.provider_name,
+                    "model": self.model_name,
+                    "prompt_version": request.prompt_version or self._prompt_version,
+                    "latency_ms": latency_ms,
+                },
             )
         return QueryTranslationResponse(
             translated_query=translated,
@@ -118,6 +150,7 @@ class LLMQueryTranslationProvider(BaseQueryTranslationProvider):
                 output_tokens=completion.usage.output_tokens,
             ),
             latency_ms=latency_ms,
+            attempts=attempt_count,
         )
 
 

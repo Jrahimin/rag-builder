@@ -19,6 +19,23 @@ class SourceRelationshipCreate(BaseModel):
 
     relationship_type: SourceRelationshipType
     target_revision_id: uuid.UUID
+    target_provisions: list[str] = Field(default_factory=list, max_length=100)
+
+    @field_validator("target_provisions")
+    @classmethod
+    def normalize_target_provisions(cls, value: list[str]) -> list[str]:
+        normalized = [item.strip() for item in value]
+        if any(not item for item in normalized):
+            raise ValueError("target_provisions must not contain blank values")
+        if len(set(normalized)) != len(normalized):
+            raise ValueError("target_provisions must not contain duplicates")
+        return normalized
+
+    @model_validator(mode="after")
+    def validate_scope_type(self) -> SourceRelationshipCreate:
+        if self.target_provisions and self.relationship_type is not SourceRelationshipType.MODIFIES:
+            raise ValueError("target_provisions are supported only for modifies relationships")
+        return self
 
 
 class SourceRevisionCreate(BaseModel):
@@ -69,6 +86,7 @@ class SourceRelationshipResponse(BaseModel):
     id: uuid.UUID
     relationship_type: SourceRelationshipType
     target_revision_id: uuid.UUID
+    target_provisions: list[str] = Field(default_factory=list)
     created_at: datetime
 
 

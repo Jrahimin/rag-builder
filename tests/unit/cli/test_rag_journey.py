@@ -77,7 +77,8 @@ def test_tax_v1_manifest_has_fixed_ten_cases() -> None:
 
 
 def test_tax_v1_fixture_requires_all_eligible_categories_and_stale_correction() -> None:
-    cases = {case.key: case for case in load_manifest().cases}
+    manifest = load_manifest()
+    cases = {case.key: case for case in manifest.cases}
 
     assert cases["eligible_investments_scoped"].expected_tokens == [
         "approved savings certificates",
@@ -100,6 +101,12 @@ def test_tax_v1_fixture_requires_all_eligible_categories_and_stale_correction() 
         "superseded",
         "historical",
     }.issubset(correction.markers)
+    finance = next(source for source in manifest.sources if source.key == "finance_2026")
+    assert finance.modified_provisions["tax_2023"] == [
+        "Section 10 — Tax-Free Threshold",
+        "Section 21 — Investment Rebate Rate",
+        "Section 40 — Individual Example",
+    ]
 
 
 def test_anchor_resolution_uses_source_section_and_phrases() -> None:
@@ -366,6 +373,66 @@ def test_stale_claim_requires_a_correction_marker_not_just_new_numbers() -> None
     assert any("explicitly correct" in item["message"] for item in result["failures"])
 
 
+def test_stale_correction_need_not_repeat_every_stale_literal() -> None:
+    case = JourneyCase(
+        key="stale",
+        tags=["authority", "stale_rule"],
+        query="Correct the old calculation.",
+        anchors=[],
+        expected_tokens=["10%", "6000"],
+        correction={
+            "old_tokens": ["15%", "9000"],
+            "new_tokens": ["10%", "6000"],
+            "markers": ["incorrect"],
+        },
+    )
+    message = _message(
+        content="That claim is incorrect. The current result is 10%, or 6000.",
+        metadata={
+            "evidence_gate": {"sufficient": True},
+            "web_search": {"status": "not_requested", "fallback_used": False},
+        },
+    )
+
+    result = evaluate_case_result(
+        case=case,
+        message=message,
+        anchor_mapping={},
+        document_ids={},
+        response_mode=ResponseMode.INDEXED_ONLY,
+        modifies_expansion_enabled=True,
+    )
+
+    assert result["passed"] is True
+
+
+def test_expected_any_accepts_semantically_equivalent_inflection() -> None:
+    case = JourneyCase(
+        key="unchanged",
+        tags=["authority"],
+        query="Was the rate changed?",
+        anchors=[],
+        expected_tokens=["10%"],
+        expected_any=["not changed"],
+    )
+    message = _message(
+        content="No, the rate did not change; it is still 10%.",
+        metadata={
+            "evidence_gate": {"sufficient": True},
+            "web_search": {"status": "not_requested", "fallback_used": False},
+        },
+    )
+    result = evaluate_case_result(
+        case=case,
+        message=message,
+        anchor_mapping={},
+        document_ids={},
+        response_mode=ResponseMode.INDEXED_ONLY,
+        modifies_expansion_enabled=True,
+    )
+    assert result["passed"] is True
+
+
 def test_scope_failure_is_localized_to_authority() -> None:
     scoped_id = uuid.uuid4()
     outside_id = uuid.uuid4()
@@ -378,7 +445,10 @@ def test_scope_failure_is_localized_to_authority() -> None:
         mode="scope_isolation",
     )
     message = _message(
-        content="",
+        content=(
+            "There is not enough evidence within the requested document scope to establish "
+            "the current authoritative value."
+        ),
         grounded=False,
         metadata={
             "retrieval_trace": {
@@ -387,6 +457,7 @@ def test_scope_failure_is_localized_to_authority() -> None:
                 "context_selected": [],
             },
             "current_authority": {"status": "expanded"},
+            "scope_current_authority": {"status": "unavailable_within_hard_scope"},
             "evidence_gate": {"sufficient": False},
             "web_search": {"status": "suppressed_scoped_request", "fallback_used": False},
         },
@@ -416,7 +487,10 @@ def test_scope_isolation_requires_scoped_anchor_and_allows_safe_refusal() -> Non
         mode="scope_isolation",
     )
     refused = _message(
-        content="I do not have enough current evidence in the scoped document.",
+        content=(
+            "There is not enough evidence within the requested document scope to establish "
+            "the current authoritative value."
+        ),
         grounded=False,
         insufficient_evidence_reason=InsufficientEvidenceReason.BELOW_RELEVANCE_THRESHOLD,
         metadata={
@@ -428,6 +502,7 @@ def test_scope_isolation_requires_scoped_anchor_and_allows_safe_refusal() -> Non
                 "context_selected": [],
             },
             "current_authority": {"status": "suppressed_document_scope"},
+            "scope_current_authority": {"status": "unavailable_within_hard_scope"},
             "evidence_gate": {"sufficient": False, "generation_ran": False},
             "web_search": {"status": "suppressed_scoped_request", "fallback_used": False},
         },
@@ -445,7 +520,10 @@ def test_scope_isolation_requires_scoped_anchor_and_allows_safe_refusal() -> Non
     assert passed["retrieval"]["recall"] == 1.0
 
     missing_anchor = _message(
-        content="",
+        content=(
+            "There is not enough evidence within the requested document scope to establish "
+            "the current authoritative value."
+        ),
         grounded=False,
         metadata={
             "retrieval_trace": {
@@ -454,6 +532,7 @@ def test_scope_isolation_requires_scoped_anchor_and_allows_safe_refusal() -> Non
                 "context_selected": [],
             },
             "current_authority": {"status": "suppressed_document_scope"},
+            "scope_current_authority": {"status": "unavailable_within_hard_scope"},
             "evidence_gate": {"sufficient": False},
             "web_search": {"status": "suppressed_scoped_request", "fallback_used": False},
         },

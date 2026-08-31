@@ -73,8 +73,22 @@ async def resolve_multilingual_plan(
         )
     except ProviderError as exc:
         failure_reason = None
+        failure_diagnostics: dict[str, object] = {
+            "translation_provider": translator.provider_name,
+            "translation_model": translator.model_name,
+            "translation_prompt_version": translation_config.prompt_version,
+            "translation_target_language": target,
+        }
         if isinstance(exc.context, dict) and exc.context.get("reason"):
             failure_reason = str(exc.context["reason"])
+            for source, target_key in (
+                ("latency_ms", "translation_latency_ms"),
+                ("attempts", "translation_attempts"),
+                ("validation_reasons", "translation_validation_reasons"),
+            ):
+                value = exc.context.get(source)
+                if value is not None:
+                    failure_diagnostics[target_key] = value
         logger.warning(
             "query_translation_unavailable",
             target_language=target,
@@ -89,6 +103,7 @@ async def resolve_multilingual_plan(
             skipped_reason="translation_provider_error",
             failure_reason=failure_reason,
             cross_language_target=target,
+            failure_diagnostics=failure_diagnostics,
         )
     branches = plan_original_branches(query, profile) + plan_translated_branches(
         response.translated_query,
@@ -96,12 +111,14 @@ async def resolve_multilingual_plan(
     )
     diagnostics = {
         "query_language_profile": profile.profile,
+        "romanized_or_codeswitched": profile.is_romanized_or_codeswitched,
         "translation_source_language": profile.exact_primary or profile.profile,
         "translation_status": "applied",
         "translation_provider": response.provider,
         "translation_model": response.model,
         "translation_prompt_version": response.prompt_version,
         "translation_latency_ms": response.latency_ms,
+        "translation_attempts": response.attempts,
         "translation_usage": {
             "input_tokens": response.usage.input_tokens,
             "output_tokens": response.usage.output_tokens,

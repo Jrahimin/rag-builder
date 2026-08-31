@@ -52,6 +52,7 @@ class KnowledgeIncomingModifier:
     base_effective_from: str | None
     base_effective_to: str | None
     outcome: str
+    target_provisions: tuple[str, ...] = ()
 
 
 class KnowledgeSourceMetadataReader:
@@ -134,6 +135,7 @@ class KnowledgeSourceMetadataReader:
             await self._session.execute(
                 select(
                     SourceRevisionRelationship.id.label("relationship_id"),
+                    SourceRevisionRelationship.target_provisions.label("target_provisions"),
                     SourceRevisionRelationship.project_id.label("relationship_project_id"),
                     SourceRevisionRelationship.source_revision_id.label("modifier_revision_id"),
                     SourceRevisionRelationship.target_revision_id.label("base_revision_id"),
@@ -258,6 +260,7 @@ class KnowledgeSourceMetadataReader:
                     base_effective_from=_isoformat(row.base_effective_from),
                     base_effective_to=_isoformat(row.base_effective_to),
                     outcome=outcome,
+                    target_provisions=tuple(row.target_provisions or ()),
                 )
             )
         return records
@@ -431,6 +434,8 @@ def _canonical_source_scope(
                     SourceRevisionRelationship.relationship_type,
                     "target_revision_id",
                     SourceRevisionRelationship.target_revision_id,
+                    "target_provisions",
+                    SourceRevisionRelationship.target_provisions,
                 )
             ).label("relationships"),
         )

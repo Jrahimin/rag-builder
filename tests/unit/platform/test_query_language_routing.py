@@ -53,6 +53,20 @@ def test_english_only_corpus_skips_latin_query_translation() -> None:
     assert select_translation_target(profile, {"en": 9}) is None
 
 
+def test_banglish_query_gets_bounded_english_rewrite_with_original_fallback() -> None:
+    profile = detect_query_language_profile(
+        "Current niyome BDT 60,000 eligible investment er rebate koto?"
+    )
+    assert profile.is_romanized_or_codeswitched is True
+    assert select_translation_target(profile, {"en": 9}) == "en"
+
+
+def test_normal_english_query_does_not_get_an_english_rewrite() -> None:
+    profile = detect_query_language_profile("What is the current investment rebate rate?")
+    assert profile.is_romanized_or_codeswitched is False
+    assert select_translation_target(profile, {"en": 9}) is None
+
+
 def test_protected_literals_keep_sections_dates_and_quoted_codes() -> None:
     query = 'See section 12 / 106 dated 2024-07-01 at 15% under "TDS-01" and BDT 1,000'
     literals = extract_protected_literals(query)
@@ -69,6 +83,19 @@ def test_entity_name_drift_is_allowed_but_section_numbers_are_not() -> None:
     assert "163" not in missing_protected_literals(original, translated)
     dropped = missing_protected_literals(original, "আয়কর অধ্যাদেশ")
     assert "163" in dropped
+
+
+def test_unicode_digits_may_translate_to_ascii_without_losing_numeric_meaning() -> None:
+    original = "বর্তমান নিয়মে ৬০,০০০ টাকা বিনিয়োগ"  # noqa: RUF001
+    translated = "current rule for 60,000 taka investment"
+    assert missing_protected_literals(original, translated) == ()
+    assert missing_protected_literals(original, "current rule for 60000 taka investment") == ()
+
+
+def test_true_abbreviations_remain_exact_even_when_digits_normalize() -> None:
+    original = "TDS ৬০,০০০"  # noqa: RUF001
+    missing = missing_protected_literals(original, "60,000 tax deducted at source")
+    assert "TDS" in missing
 
 
 def test_empty_query_is_unknown() -> None:

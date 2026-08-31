@@ -63,6 +63,7 @@ async def test_wrapped_translation_is_accepted() -> None:
     translator = LLMQueryTranslationProvider(_FakeLLM('```json\n{"query": "উৎসে কর"}\n```'))
     result = await translator.translate(_request())
     assert result.translated_query == "উৎসে কর"
+    assert result.attempts == 1
 
 
 def test_clean_translation_strips_labels_and_uses_first_line() -> None:
@@ -99,6 +100,15 @@ class _RecordingLLM:
         )
 
 
+class _FailingLLM:
+    provider_name = "openai"
+    model_name = "gpt-5-nano"
+    provider_version = "test"
+
+    async def generate(self, *_args: object, **_kwargs: object) -> object:
+        raise ProviderError("connection failed", provider_name="openai", retryable=True)
+
+
 async def test_translation_caps_output_tokens_and_retries_empty() -> None:
     llm = _RecordingLLM(["", "উৎসে কর সংগ্রহ"])
     translator = LLMQueryTranslationProvider(llm, max_output_tokens=1024, retry_max_attempts=1)
@@ -112,7 +122,8 @@ async def test_translation_caps_output_tokens_and_retries_empty() -> None:
         )
     )
     assert result.translated_query == "উৎসে কর সংগ্রহ"
-    assert llm.max_tokens == [266, 266]
+    assert result.attempts == 2
+    assert llm.max_tokens == [106, 106]
 
 
 async def test_page_length_query_gets_a_page_sized_output_budget() -> None:
@@ -128,14 +139,40 @@ async def test_page_length_query_gets_a_page_sized_output_budget() -> None:
             max_output_tokens=4096,
         )
     )
-    expected = min(4096, (len(page) // 2) + 256)
+    expected = min(2048, (len(page) // 2) + 96)
     assert llm.max_tokens == [expected]
 
 
-async def test_non_empty_validation_failure_does_not_retry() -> None:
+async def test_non_empty_validation_failure_retries_and_retains_diagnostics() -> None:
     llm = _RecordingLLM(["x" * 5000])
     translator = LLMQueryTranslationProvider(llm, retry_max_attempts=2)
     with pytest.raises(ProviderError) as caught:
         await translator.translate(_request())
     assert caught.value.context["reason"] == "too_long"
-    assert len(llm.max_tokens) == 1
+    assert caught.value.context["validation_reasons"] == ["too_long", "empty", "empty"]
+    assert caught.value.context["attempts"] == 3
+    assert caught.value.context["provider"] == "openai"
+    assert caught.value.context["model"] == "gpt-5-nano"
+    assert caught.value.context["prompt_version"] == "retrieval-translation-v2"
+    assert isinstance(caught.value.context["latency_ms"], int)
+    assert len(llm.max_tokens) == 3
+
+
+async def test_provider_failure_retains_attempt_count_and_diagnostics() -> None:
+    translator = LLMQueryTranslationProvider(_FailingLLM())
+    with pytest.raises(ProviderError) as caught:
+        await translator.translate(_request())
+
+    assert caught.value.context["attempts"] == 1
+    assert caught.value.context["provider"] == "openai"
+    assert caught.value.context["model"] == "gpt-5-nano"
+    assert isinstance(caught.value.context["latency_ms"], int)
+
+
+async def test_validation_failure_can_recover_on_retry() -> None:
+    llm = _RecordingLLM(["x" * 5000, "উৎসে কর সংগ্রহ"])
+    translator = LLMQueryTranslationProvider(llm, retry_max_attempts=1)
+    result = await translator.translate(_request())
+    assert result.translated_query == "উৎসে কর সংগ্রহ"
+    assert result.attempts == 2
+    assert len(llm.max_tokens) == 2

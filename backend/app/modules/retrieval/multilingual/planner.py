@@ -152,10 +152,12 @@ def build_untranslated_plan(
     skipped_reason: str,
     failure_reason: str | None = None,
     cross_language_target: str | None = None,
+    failure_diagnostics: dict[str, object] | None = None,
 ) -> MultilingualRetrievalPlan:
     profile = detect_query_language_profile(query)
     diagnostics: dict[str, object] = {
         "query_language_profile": profile.profile,
+        "romanized_or_codeswitched": profile.is_romanized_or_codeswitched,
         "translation_source_language": profile.exact_primary or profile.profile,
         "translation_status": translation_status,
         "skipped_reason": skipped_reason,
@@ -166,6 +168,8 @@ def build_untranslated_plan(
     }
     if failure_reason is not None:
         diagnostics["translation_failure_reason"] = failure_reason
+    if failure_diagnostics:
+        diagnostics.update(failure_diagnostics)
     return MultilingualRetrievalPlan(
         query_profile=profile,
         inventory=inventory,

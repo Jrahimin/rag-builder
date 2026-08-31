@@ -20,7 +20,14 @@
       "source_type": "synthetic_statute",
       "published_date": "2026-07-01",
       "effective_from": "2026-07-01",
-      "modifies": ["tax_2023"]
+      "modifies": ["tax_2023"],
+      "modified_provisions": {
+        "tax_2023": [
+          "Section 10 — Tax-Free Threshold",
+          "Section 21 — Investment Rebate Rate",
+          "Section 40 — Individual Example"
+        ]
+      }
     }
   ],
   "anchors": [
@@ -143,7 +150,14 @@
       "as_of": "2026-08-01T00:00:00Z",
       "anchors": ["source_tax_2026"],
       "expected_tokens": ["10%"],
-      "expected_any": ["unchanged", "not changed", "remains"]
+      "expected_any": [
+        "unchanged",
+        "not changed",
+        "remains",
+        "stayed the same",
+        "still",
+        "retained"
+      ]
     },
     {
       "key": "hard_document_scope_authority",

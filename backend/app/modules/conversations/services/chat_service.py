@@ -113,6 +113,8 @@ class _PreparedTurn:
     web_search_diagnostics: dict[str, Any]
     web_fallback_used: bool = False
     non_knowledge_response: str | None = None
+    scope_limited_response: str | None = None
+    scope_current_authority: dict[str, Any] | None = None
 
 
 class ChatService:
@@ -201,6 +203,34 @@ class ChatService:
                 output_tokens_logged=0,
                 generation_ran=False,
                 non_knowledge_turn=True,
+            )
+            return ChatTurnResponse(
+                user_message=user_message_response,
+                assistant_message=self._to_response(
+                    assistant_message,
+                    conversation_provider=conversation_provider,
+                    conversation_model=conversation_model,
+                ),
+            )
+
+        if prepared.scope_limited_response is not None:
+            assistant_message = await self._persist_assistant_turn(
+                conversation=conversation,
+                prepared=prepared,
+                content=prepared.scope_limited_response,
+                finish_reason="insufficient_evidence",
+                input_tokens=0,
+                output_tokens=0,
+                provider=prepared.llm.provider_name,
+                model=prepared.llm.model_name,
+                generation_ms=0,
+                total_ms=int((time.perf_counter() - started) * 1000),
+                user_content_for_title=request.content,
+                streamed=False,
+                input_tokens_logged=0,
+                output_tokens_logged=0,
+                insufficient_reason="below_relevance_threshold",
+                generation_ran=False,
             )
             return ChatTurnResponse(
                 user_message=user_message_response,
@@ -337,6 +367,30 @@ class ChatService:
             yield self._done_event(assistant_message, conversation)
             return
 
+        if prepared.scope_limited_response is not None:
+            content = prepared.scope_limited_response
+            yield content
+            assistant_message = await self._persist_assistant_turn(
+                conversation=conversation,
+                prepared=prepared,
+                content=content,
+                finish_reason="insufficient_evidence",
+                input_tokens=0,
+                output_tokens=0,
+                provider=prepared.llm.provider_name,
+                model=prepared.llm.model_name,
+                generation_ms=0,
+                total_ms=int((time.perf_counter() - started) * 1000),
+                user_content_for_title=request.content,
+                streamed=True,
+                input_tokens_logged=0,
+                output_tokens_logged=0,
+                insufficient_reason="below_relevance_threshold",
+                generation_ran=False,
+            )
+            yield self._done_event(assistant_message, conversation)
+            return
+
         if not prepared.selected:
             content = self._insufficient_content(prepared, request.content)
             yield content
@@ -462,6 +516,10 @@ class ChatService:
             )
         chunks = retrieval_result.chunks
         retrieval_ms = int((time.perf_counter() - retrieval_started) * 1000)
+        scope_current_authority = _scope_current_authority_status(
+            request,
+            retrieval_result.diagnostics,
+        )
         query_embedder = getattr(self._retrieval, "query_embedder", None)
         grounding = (
             GroundingService(self._chat_config, embedder=query_embedder)
@@ -499,7 +557,7 @@ class ChatService:
         }
         web_chunks: list[ContextChunk] = []
         scoped_request = bool(request.document_id or request.metadata_filter or request.as_of)
-        web_requested = non_knowledge_response is None and (
+        web_requested = non_knowledge_response is None and scope_current_authority is None and (
             mode is ResponseMode.INDEXED_AND_WEB
             or (mode is ResponseMode.INDEXED_THEN_WEB and grounding.blocks_generation(evidence))
         )
@@ -568,7 +626,7 @@ class ChatService:
                 }
 
         knowledge_usable = not grounding.blocks_generation(evidence)
-        if non_knowledge_response is not None:
+        if non_knowledge_response is not None or scope_current_authority is not None:
             selected: list[ContextChunk] = []
         elif mode is ResponseMode.INDEXED_ONLY:
             selected = knowledge_selected if knowledge_usable else []
@@ -616,6 +674,12 @@ class ChatService:
             web_search_diagnostics=web_diagnostics,
             web_fallback_used=web_fallback_used,
             non_knowledge_response=non_knowledge_response,
+            scope_limited_response=(
+                _scope_limited_current_authority_content(request.content)
+                if scope_current_authority is not None
+                else None
+            ),
+            scope_current_authority=scope_current_authority,
         )
 
     async def _persist_assistant_turn(
@@ -721,6 +785,8 @@ class ChatService:
                 "lexically_corroborated": prepared.evidence.lexically_corroborated,
                 "insufficient_evidence_reason": reason_value,
                 "evidence_gate": evidence_gate,
+                "scope_current_authority": prepared.scope_current_authority
+                or {"status": "not_applicable"},
             }
         )
         assistant_message = await self._commit_assistant_message(
@@ -1080,10 +1146,18 @@ class ChatService:
                 "translation": {
                     "status": retrieval_diagnostics.get("translation_status"),
                     "failure_reason": retrieval_diagnostics.get("translation_failure_reason"),
+                    "attempts": retrieval_diagnostics.get("translation_attempts"),
+                    "validation_reasons": retrieval_diagnostics.get(
+                        "translation_validation_reasons"
+                    )
+                    or [],
                     "skipped_reason": retrieval_diagnostics.get("skipped_reason"),
                     "source_language": retrieval_diagnostics.get("translation_source_language"),
                     "target_language": retrieval_diagnostics.get("translation_target_language"),
                     "query_language_profile": retrieval_diagnostics.get("query_language_profile"),
+                    "romanized_or_codeswitched": retrieval_diagnostics.get(
+                        "romanized_or_codeswitched", False
+                    ),
                     "translated_query": retrieval_diagnostics.get("translated_query"),
                     "provider": retrieval_diagnostics.get("translation_provider"),
                     "model": retrieval_diagnostics.get("translation_model"),
@@ -1125,6 +1199,12 @@ class ChatService:
                 "records": retrieval_diagnostics.get("modifies_expansion_records") or [],
                 "exclusion_reasons": retrieval_diagnostics.get(
                     "modifies_expansion_exclusion_reasons", {}
+                ),
+                "authority_scope_status": retrieval_diagnostics.get(
+                    "modifies_authority_scope_status", "not_applicable"
+                ),
+                "authority_unscoped_count": retrieval_diagnostics.get(
+                    "modifies_authority_unscoped_count", 0
                 ),
                 "related_source_count": retrieval_diagnostics.get("related_source_count", 0),
                 "relationship_candidate_count": retrieval_diagnostics.get(
@@ -1280,6 +1360,8 @@ def _context_trace_item(index: int, chunk: ContextChunk) -> dict[str, Any]:
         "evidence_chunk_char_end": chunk.metadata.get("evidence_chunk_char_end"),
         "evidence_span_derivation": chunk.metadata.get("evidence_span_derivation"),
         "evidence_query_variant_id": chunk.metadata.get("evidence_query_variant_id"),
+        "authority_redaction": chunk.metadata.get("authority_redaction"),
+        "authority_redacted_provisions": chunk.metadata.get("authority_redacted_provisions") or [],
     }
 
 
@@ -1345,6 +1427,47 @@ def _non_knowledge_response(content: str) -> str | None:
         "বুঝতে পেরেছি": "ভালো লাগল।",
     }
     return english.get(normalized) or bangla.get(normalized)
+
+
+def _scope_current_authority_status(
+    request: MessageSendRequest,
+    diagnostics: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Refuse a current-rule answer when hard scope excludes its effective modifier."""
+    if request.document_id is None or "current" not in set(tokenize(request.content)):
+        return None
+    if diagnostics.get("modifies_expansion_status") != "suppressed_document_scope":
+        return None
+    records = diagnostics.get("modifies_expansion_records") or []
+    effective_modifiers = [
+        record
+        for record in records
+        if isinstance(record, dict)
+        and record.get("relationship_type") == "modifies"
+        and record.get("modifier_effective_from")
+    ]
+    if not effective_modifiers:
+        return None
+    return {
+        "status": "unavailable_within_hard_scope",
+        "reason": "effective_modifier_excluded_by_document_scope",
+        "scoped_evidence_available": True,
+        "excluded_effective_modifier_count": len(effective_modifiers),
+    }
+
+
+def _scope_limited_current_authority_content(question: str) -> str:
+    if detect_language(question).primary_language == "bn":
+        return (
+            "অনুরোধ করা document scope-এর মধ্যে বর্তমান কর্তৃত্বপূর্ণ মান নির্ধারণের জন্য "
+            "যথেষ্ট indexed evidence নেই; scoped document-এর পুরোনো মানকে বর্তমান নিয়ম "
+            "হিসেবে উপস্থাপন করা যাবে না।"
+        )
+    return (
+        "There is not enough indexed evidence within the requested document scope to "
+        "establish the current authoritative value; a value in the scoped document must "
+        "not be presented as the current rule."
+    )
 
 
 def _optional_uuid(value: object) -> uuid.UUID | None:

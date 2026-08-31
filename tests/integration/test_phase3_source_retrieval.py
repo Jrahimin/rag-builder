@@ -493,11 +493,15 @@ async def test_depth_one_modifier_expansion_is_current_scoped_and_incoming_only(
                 {
                     "relationship_type": "modifies",
                     "target_revision_id": base_revision["id"],
+                    "target_provisions": ["Section 21 — Investment Rebate Rate"],
                 }
             ],
             "change_reason": "Modify the base authority",
         },
     )
+    assert modifier_revision["relationships"][0]["target_provisions"] == [
+        "Section 21 — Investment Rebate Rate"
+    ]
     await _revision(
         db_client,
         project_id,

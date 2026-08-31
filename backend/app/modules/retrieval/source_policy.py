@@ -46,6 +46,7 @@ class ModifierExpansionOutcome(StrEnum):
     CYCLE = "cycle"
     SOURCE_CAP_EXCEEDED = "source_cap_exceeded"
     CANDIDATE_CAP_EXCEEDED = "candidate_cap_exceeded"
+    ALREADY_IN_RECALL = "already_in_recall"
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,6 +67,7 @@ class ModifierExpansionRecord:
     modifier_effective_to: str | None = None
     candidate_count: int = 0
     retained_candidate_count: int = 0
+    target_provisions: tuple[str, ...] = ()
 
     def diagnostic(self) -> dict[str, Any]:
         return {
@@ -85,6 +87,7 @@ class ModifierExpansionRecord:
             "outcome": self.outcome.value,
             "candidate_count": self.candidate_count,
             "retained_candidate_count": self.retained_candidate_count,
+            "target_provisions": list(self.target_provisions),
         }
 
     def recall_provenance(self) -> dict[str, Any]:

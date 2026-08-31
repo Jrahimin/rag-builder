@@ -36,6 +36,7 @@ class QueryTranslationResponse:
     prompt_version: str
     usage: QueryTranslationUsage = field(default_factory=QueryTranslationUsage)
     latency_ms: int | None = None
+    attempts: int = 1
 
 
 class BaseQueryTranslationProvider(ABC):

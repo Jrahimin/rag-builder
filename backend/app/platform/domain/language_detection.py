@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import unicodedata
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
@@ -46,6 +47,27 @@ _AMOUNT = regex.compile(
 )
 _ABBREVIATION = regex.compile(r"\b[A-Z]{2,}\b")
 _NUMBER = regex.compile(r"[\d\p{Number}]+(?:[.,][\d\p{Number}]+)?")
+_LATIN_WORD = regex.compile(r"\p{Latin}+(?:['\u2019-]\p{Latin}+)*", regex.UNICODE)
+_ROMANIZED_BANGLA_PARTICLES = frozenset(
+    {
+        "ami",
+        "apni",
+        "ache",
+        "ebong",
+        "er",
+        "hobe",
+        "jonno",
+        "ki",
+        "kora",
+        "kore",
+        "koto",
+        "nai",
+        "niyom",
+        "niyome",
+        "te",
+        "theke",
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,6 +90,7 @@ class QueryLanguageProfile:
     languages: dict[str, float]
     is_mixed: bool
     is_latin_ambiguous: bool
+    is_romanized_or_codeswitched: bool = False
 
 
 def detect_language(text: str) -> LanguageDetectionResult:
@@ -153,6 +176,8 @@ def detect_query_language_profile(text: str) -> QueryLanguageProfile:
             is_latin_ambiguous=False,
         )
     if detected.primary_language == "en":
+        words = {word.casefold() for word in _LATIN_WORD.findall(text)}
+        romanized = len(words & _ROMANIZED_BANGLA_PARTICLES) >= 2
         return QueryLanguageProfile(
             profile=QUERY_PROFILE_LATIN_AMBIGUOUS,
             exact_primary=None,
@@ -160,6 +185,7 @@ def detect_query_language_profile(text: str) -> QueryLanguageProfile:
             languages=dict(detected.languages),
             is_mixed=False,
             is_latin_ambiguous=True,
+            is_romanized_or_codeswitched=romanized,
         )
     return QueryLanguageProfile(
         profile=detected.primary_language,
@@ -186,8 +212,16 @@ def select_translation_target(
     if profile.exact_primary is not None:
         candidates = [language for language in candidates if language != profile.exact_primary]
     if profile.exact_primary is None:
-        # Latin-ambiguous / mixed / unknown queries never spend the one slot on English.
-        candidates = [language for language in candidates if language in NON_LATIN_ROUTING_CODES]
+        if profile.is_romanized_or_codeswitched:
+            # A bounded code-switch signal may use the one slot for a corpus-
+            # language rewrite. Original retrieval always remains in the plan.
+            candidates = [language for language in candidates if language == "en"]
+        else:
+            # Ordinary Latin-ambiguous / mixed / unknown queries never spend
+            # the one slot on English.
+            candidates = [
+                language for language in candidates if language in NON_LATIN_ROUTING_CODES
+            ]
     if not candidates:
         return None
     return sorted(candidates, key=lambda language: (-exact_inventory[language], language))[0]
@@ -212,11 +246,62 @@ def extract_protected_literals(text: str) -> tuple[str, ...]:
 def missing_protected_literals(original: str, translated: str) -> tuple[str, ...]:
     """Return protected literals from the original query that the translation dropped."""
     translated_text = translated
+    normalized_translated = _normalize_unicode_digits(translated_text)
+    exact_literals = {
+        match.group(0).strip()
+        for pattern in (_QUOTED, _ABBREVIATION)
+        for match in pattern.finditer(original)
+    }
     missing: list[str] = []
     for literal in extract_protected_literals(original):
+        if literal in translated_text:
+            continue
+        # Human-readable numbers, dates, percentages, and amounts may validly
+        # change numeral scripts during translation.  Codes and abbreviations
+        # are still emitted as separate protected literals and remain exact.
+        if _normalize_unicode_digits(literal) in normalized_translated:
+            continue
+        if literal not in exact_literals and _numeric_literal_equivalent(
+            literal, normalized_translated
+        ):
+            continue
         if literal not in translated_text:
             missing.append(literal)
     return tuple(missing)
+
+
+def _normalize_unicode_digits(text: str) -> str:
+    output: list[str] = []
+    for char in text:
+        try:
+            output.append(str(unicodedata.digit(char)))
+        except (TypeError, ValueError):
+            output.append(char)
+    return "".join(output)
+
+
+def _numeric_literal_equivalent(literal: str, normalized_translated: str) -> bool:
+    normalized_literal = _normalize_unicode_digits(literal)
+    numbers = [_canonical_number(item) for item in _NUMBER.findall(normalized_literal)]
+    if not numbers:
+        return False
+    translated_numbers = {
+        _canonical_number(item) for item in _NUMBER.findall(normalized_translated)
+    }
+    if not set(numbers).issubset(translated_numbers):
+        return False
+    if "%" in normalized_literal and "%" not in normalized_translated:
+        return False
+    currency_symbols = set(normalized_literal) & set("$€£¥৳")
+    return not currency_symbols or currency_symbols.issubset(set(normalized_translated))
+
+
+def _canonical_number(value: str) -> str:
+    compact = value.replace(",", "")
+    if "." in compact:
+        whole, fraction = compact.split(".", maxsplit=1)
+        return f"{int(whole or '0')}.{fraction.rstrip('0') or '0'}"
+    return str(int(compact or "0"))
 
 
 def build_index_language_snapshot(

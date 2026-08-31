@@ -749,10 +749,15 @@ def _bound_modifier_records(
             if item.modifier_document_id in selected_documents:
                 outcome = ModifierExpansionOutcome.DUPLICATE
             elif (
-                item.modifier_revision_id in visited_revisions
-                or item.modifier_document_id in visited_documents
+                item.modifier_revision_id == item.base_revision_id
+                or item.modifier_document_id == item.base_document_id
             ):
                 outcome = ModifierExpansionOutcome.CYCLE
+            elif (
+                item.modifier_revision_id in base_revision_ids
+                or item.modifier_document_id in base_document_ids
+            ):
+                outcome = ModifierExpansionOutcome.ALREADY_IN_RECALL
             elif len(selected_documents) >= max_related_sources:
                 outcome = ModifierExpansionOutcome.SOURCE_CAP_EXCEEDED
             else:
@@ -831,11 +836,26 @@ def _expansion_diagnostics(
         if item.outcome is ModifierExpansionOutcome.EXPANDED:
             continue
         exclusions[item.outcome.value] = exclusions.get(item.outcome.value, 0) + 1
+    authority_applicable = [
+        item
+        for item in records
+        if item.outcome
+        in {ModifierExpansionOutcome.EXPANDED, ModifierExpansionOutcome.ALREADY_IN_RECALL}
+    ]
+    unscoped = sum(not item.target_provisions for item in authority_applicable)
     return {
         "modifies_expansion_status": status,
         "modifies_expansion_depth": 1,
         "modifies_expansion_records": [item.diagnostic() for item in records],
         "modifies_expansion_exclusion_reasons": exclusions,
+        "modifies_authority_scope_status": (
+            "unscoped_relationships"
+            if unscoped
+            else "scoped"
+            if authority_applicable
+            else "not_applicable"
+        ),
+        "modifies_authority_unscoped_count": unscoped,
         "related_source_count": len(
             {
                 item.modifier_document_id
