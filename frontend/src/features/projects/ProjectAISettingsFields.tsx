@@ -120,9 +120,7 @@ export function configFormFromEffective(
     provider: configuration.llm.provider,
     model: configuration.llm.model,
     temperature:
-      configuration.llm.temperature === null
-        ? ""
-        : String(configuration.llm.temperature),
+      configuration.llm.temperature === null ? "" : String(configuration.llm.temperature),
     maxTokens: String(configuration.llm.max_tokens),
     responseMode: configuration.chat.response_mode,
     webSearchEnabled: configuration.web_search.enabled,
@@ -164,8 +162,7 @@ export function configOverridesFromEffective(
     webSearchMaxResults: form.webSearchMaxResults !== baseline.webSearchMaxResults,
     webSearchMaxEvidenceChars:
       form.webSearchMaxEvidenceChars !== baseline.webSearchMaxEvidenceChars,
-    webSearchMaxOutputTokens:
-      form.webSearchMaxOutputTokens !== baseline.webSearchMaxOutputTokens,
+    webSearchMaxOutputTokens: form.webSearchMaxOutputTokens !== baseline.webSearchMaxOutputTokens,
     webSearchTimeout: form.webSearchTimeout !== baseline.webSearchTimeout,
     domain: form.domain !== baseline.domain,
     topK: form.topK !== baseline.topK,

@@ -80,7 +80,11 @@ Credentials, base URL, and provider backend remain deployment-owned.
   status, and fail-closed errors. Web citations store URL, title, retrieval time, and provider
   separately from Knowledge document/chunk locations.
 
-Candidate-wise diagnostics contain exactly one terminal assessment for each reranked candidate.
+Every candidate presented to grounding receives exactly one assessment. Candidates removed
+earlier by policy, hydration, or dedup do not need grounding assessments; those removals stay
+visible in retrieval diagnostics (`retrieved_count`, `reranked_count`, `removed_count`,
+`post_rerank_removed_count`).
+
 An admitted `EvidenceUnit` records deterministic offsets, span derivation, query-variant identity,
 and a content hash; context budgeting may omit the whole unit but cannot truncate it. The unit ID
 and span hash remain attached to prompt evidence, citations, and claim verification. With the
@@ -127,9 +131,11 @@ URLs, and URL-only results cannot become evidence. Every completed fallback repo
 
 ## Testing strategy
 
-- Unit: `ChatService` (Tx1/Tx2, refusal, observe/enforce gate, provider resolve, errors, stream cancel),
+- Unit: `ChatService` (Tx1/Tx2, refusal, observe/enforce gate, provider resolve, errors, stream cancel,
+  combined MODIFIES → grounding → generation → no-web authority path),
   `GroundingService`, Gazette evidence-gate comparison (`0.35` / `0.30` / `observe`),
-  `ConversationService`, context/prompt builders, citation snapshots, retrieval adapter
+  captured EN→BN production fail-closed replay, `ConversationService`, context/prompt builders,
+  citation snapshots, retrieval adapter
 - Provider contract: echo LLM + factory overrides
 - Integration: `test_conversations_api` (when stack available)
 

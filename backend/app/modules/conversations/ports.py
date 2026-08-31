@@ -55,7 +55,7 @@ class EvidenceUnit(ContextChunk):
 
 @dataclass(frozen=True, slots=True)
 class CandidateEvidenceAssessment:
-    """Exactly one terminal grounding assessment for a reranked candidate."""
+    """Exactly one terminal assessment for a candidate presented to grounding."""
 
     candidate_rank: int
     chunk_id: uuid.UUID

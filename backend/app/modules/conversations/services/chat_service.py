@@ -688,6 +688,7 @@ class ChatService:
                 ),
                 "assessed_count": len(prepared.evidence.candidate_assessments)
                 or candidate_diagnostics.get("assessed_count", 0),
+                # Policy/hydration/dedup removals stay in retrieval diagnostics.
                 "removed_count": prepared.retrieval_diagnostics.get("post_rerank_removed_count", 0),
                 "context_selected_count": len(selected_evidence_units),
                 "cited_count": len(cited_evidence_units),

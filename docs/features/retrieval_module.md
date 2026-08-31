@@ -178,9 +178,10 @@ multilingual query variants, are fused with the base candidates, and share the s
 reranker call. Relationship metadata is retained as recall provenance but is never a grounding
 signal. Public `document_id` search remains a hard single-document scope: expansion does not add
 modifier documents under that contract. Chat can still expand when the request is unscoped.
-Existing post-rerank source-policy consolidation remains in place; diagnostics separately report
-modifier exclusions, candidates retrieved, reranked, assessed, later removals by reason, and
-unfilled result slots.
+Existing post-rerank source-policy consolidation remains in place; retrieval diagnostics separately
+report modifier exclusions, candidates retrieved, reranked, later removals by reason, and unfilled
+result slots. Grounding assessments apply only to candidates presented to grounding; earlier
+policy/hydration/dedup removals do not require those assessments.
 
 ## Delete policy
 

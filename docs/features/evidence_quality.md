@@ -85,8 +85,10 @@ evaluation platform is introduced.
 ## Grounded answer behavior
 
 Chat uses hybrid retrieval by default. Ranking `score` (RRF or reranker output) and calibrated
-semantic evidence are separate. Candidate-wise grounding evaluates reranked candidates in order,
-so a failed rank-one candidate does not suppress valid lower-ranked evidence. Under an applied
+semantic evidence are separate. Every candidate presented to grounding receives exactly one
+assessment. Candidates removed earlier by policy, hydration, or dedup stay in retrieval
+diagnostics and are not assessed. Candidate-wise grounding evaluates presented candidates in
+order, so a failed rank-one candidate does not suppress valid lower-ranked evidence. Under an applied
 reranker, admission requires the candidate-local relevance score to clear the unchanged threshold
 and an independent signal aligned to the same selected span: original-query semantic support,
 translated lexical coverage from a contributing typed query variant, or an already calibrated
@@ -111,6 +113,14 @@ The pre-generation gate has two modes:
 
 `observe` is a diagnostic policy, not a production weakening of grounding instructions. It exists
 to measure false refusals when relevant chunks already sit in the selected context.
+
+The captured EN→BN production turn in
+`tests/fixtures/evaluation/phase1_multilingual_grounding_production_shape_v1.json` is not treated as
+fixed. The executable reproduction correctly fails closed under current safe thresholds because
+independent corroboration is insufficient (`translated_lexical:bn` absent, lexical coverage below
+`0.50`, original semantics below `0.35` and the `0.30` floor). Translated dense remains
+diagnostic-only. Bangla morphology / translated-lexical recall is a separate follow-up; do not
+lower thresholds or admit translated dense.
 
 For generated answers, prompt `v4` requests a concise answer in the question's language, forbids
 unsupported background or uncited data rows, and requires numbered citations even when evidence is

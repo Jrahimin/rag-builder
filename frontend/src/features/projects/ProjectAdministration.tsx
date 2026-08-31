@@ -1226,7 +1226,9 @@ function ProjectSources({ project }: { project: Project }) {
       setError("Effective to must be on or after effective from.");
       return;
     }
-    const target = sourceState.data?.items.find((item) => item.revision.id === form.target)?.revision;
+    const target = sourceState.data?.items.find(
+      (item) => item.revision.id === form.target,
+    )?.revision;
     if ((form.treatment === "revision" || form.treatment === "modifies") && !target) {
       setError("Select the existing source this correction relates to.");
       return;
@@ -1621,16 +1623,16 @@ function ProjectSources({ project }: { project: Project }) {
                     </label>
                   </div>
                 </div>
-                  <div className="source-revision-form__section source-revision-form__relationship">
-                    <div className="source-revision-form__section-heading">
-                      <div>
+                <div className="source-revision-form__section source-revision-form__relationship">
+                  <div className="source-revision-form__section-heading">
+                    <div>
                       <h4>Source treatment</h4>
                       <p>
                         Correct an accidental upload choice without changing the document or its
                         processing results.
                       </p>
-                      </div>
                     </div>
+                  </div>
                   <div className="form-grid">
                     <label className="field-control">
                       <span>Correct treatment</span>
@@ -1643,11 +1645,12 @@ function ProjectSources({ project }: { project: Project }) {
                             treatment: event.target.value as SourceCorrectionTreatment,
                             target: "",
                             label:
-                              event.target.value === "independent" || event.target.value === "modifies"
+                              event.target.value === "independent" ||
+                              event.target.value === "modifies"
                                 ? "Revision 1"
                                 : event.target.value === "keep"
                                   ? `Revision ${(current?.revision.revision_number ?? 0) + 1}`
-                                : form.label,
+                                  : form.label,
                           })
                         }
                       >
@@ -1658,40 +1661,40 @@ function ProjectSources({ project }: { project: Project }) {
                       </select>
                     </label>
                     {(form.treatment === "revision" || form.treatment === "modifies") && (
-                    <label className="field-control">
-                      <span>Existing source</span>
-                      <select
-                        aria-label="Correction target source"
-                        required
-                        value={form.target}
-                        onChange={(event) => {
-                          const target = relationshipTargets?.find(
-                            (item) => item.revision.id === event.target.value,
-                          )?.revision;
-                          setForm({
-                            ...form,
-                            target: event.target.value,
-                            label:
-                              form.treatment === "revision" && target
-                                ? `Revision ${target.revision_number + 1}`
-                                : form.label,
-                          });
-                        }}
-                      >
-                        <option value="">Select source</option>
-                        {relationshipTargets?.map((item) => (
-                          <option key={item.revision.id} value={item.revision.id}>
-                            {item.revision.title} · r{item.revision.revision_number}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
+                      <label className="field-control">
+                        <span>Existing source</span>
+                        <select
+                          aria-label="Correction target source"
+                          required
+                          value={form.target}
+                          onChange={(event) => {
+                            const target = relationshipTargets?.find(
+                              (item) => item.revision.id === event.target.value,
+                            )?.revision;
+                            setForm({
+                              ...form,
+                              target: event.target.value,
+                              label:
+                                form.treatment === "revision" && target
+                                  ? `Revision ${target.revision_number + 1}`
+                                  : form.label,
+                            });
+                          }}
+                        >
+                          <option value="">Select source</option>
+                          {relationshipTargets?.map((item) => (
+                            <option key={item.revision.id} value={item.revision.id}>
+                              {item.revision.title} · r{item.revision.revision_number}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
                     )}
                   </div>
                   <p className="muted-copy">
-                    “Latest revision” joins the selected source’s history and replaces it. “Modifies”
-                    stays a separate source and records the link. “Independent” removes any active
-                    relationship from this document.
+                    “Latest revision” joins the selected source’s history and replaces it.
+                    “Modifies” stays a separate source and records the link. “Independent” removes
+                    any active relationship from this document.
                   </p>
                 </div>
                 <label className="field-control">

@@ -49,6 +49,15 @@ def test_production_baseline_fixture_is_sanitized_and_complete() -> None:
     assert payload["turn"]["branch_candidate_counts"]["translated_lexical:bn"] == 0
     assert "project_id" not in payload["capture"]
     assert "conversation_id" not in payload["capture"]
+    replay = payload["post_implementation_read_only_replay"]
+    assert replay["candidate_wise_sufficient"] is False
+    assert replay["admitted_count"] == 0
+    assert replay["reason"] == "no_aligned_independent_signal"
+    explanation = str(replay["explanation"]).lower()
+    assert "not treated as fixed" in explanation
+    assert "fails closed" in explanation
+    assert "independent corroboration is insufficient" in explanation
+    assert "do not lower thresholds" in explanation
 
 
 def _variant(
@@ -525,6 +534,7 @@ def _production_payload() -> dict[str, object]:
 
 
 def test_captured_production_turn_fails_closed_under_candidate_wise() -> None:
+    """Captured EN→BN turn correctly refuses; it is not a remediating pass."""
     payload = _production_payload()
     turn = payload["turn"]
     document_id = uuid.UUID(str(payload["document"]["document_id"]))
