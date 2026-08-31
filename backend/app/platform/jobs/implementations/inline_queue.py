@@ -6,11 +6,17 @@ import uuid
 
 from app.platform.jobs.contracts import JobDefinition, JobQueue
 from app.platform.jobs.errors import JobEnqueueError
-from app.platform.jobs.names import DOCUMENT_EMBED, DOCUMENT_INDEX, DOCUMENT_PROCESS, EVALUATION_RUN
+from app.platform.jobs.names import (
+    DOCUMENT_EMBED,
+    DOCUMENT_INDEX,
+    DOCUMENT_PROCESS,
+    DOCUMENT_PURGE,
+    EVALUATION_RUN,
+)
 
 
 class InlineJobQueue(JobQueue):
-    """Execute supported jobs synchronously in-process (integration tests)."""
+    """Execute supported jobs synchronously for tests and explicit local tooling."""
 
     async def enqueue(self, job: JobDefinition) -> str:
         job_id = job.idempotency_key or str(uuid.uuid4())
@@ -35,6 +41,12 @@ class InlineJobQueue(JobQueue):
             from app.worker.handlers.indexing import run_document_index
 
             await run_document_index(project_id=job.project_id, job_id=durable_job_id)
+            return job_id
+
+        if job.name == DOCUMENT_PURGE:
+            from app.worker.handlers.document_lifecycle import run_document_purge
+
+            await run_document_purge(project_id=job.project_id, job_id=durable_job_id)
             return job_id
 
         if job.name == EVALUATION_RUN:

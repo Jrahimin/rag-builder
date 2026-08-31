@@ -1,0 +1,160 @@
+{
+  "schema_version": 1,
+  "key": "tax_v1",
+  "description": "Synthetic current/historical Bangladesh tax journey for local RAG regression checks.",
+  "sources": [
+    {
+      "key": "tax_2023",
+      "filename": "ape_synthetic_income_tax_act_2023.md",
+      "title": "APE Synthetic Income Tax Act 2023",
+      "revision_label": "2023 Act",
+      "source_type": "synthetic_statute",
+      "published_date": "2023-07-01",
+      "effective_from": "2023-07-01"
+    },
+    {
+      "key": "finance_2026",
+      "filename": "ape_synthetic_finance_act_2026.md",
+      "title": "APE Synthetic Finance Act 2026",
+      "revision_label": "2026 Finance Act",
+      "source_type": "synthetic_statute",
+      "published_date": "2026-07-01",
+      "effective_from": "2026-07-01",
+      "modifies": ["tax_2023"]
+    }
+  ],
+  "anchors": [
+    {
+      "key": "eligible_investments_2023",
+      "source": "tax_2023",
+      "section": "Section 20 — Eligible Investment",
+      "phrases": ["approved savings certificates", "approved retirement contributions"],
+      "expected_cardinality": 1
+    },
+    {
+      "key": "rebate_rate_2023",
+      "source": "tax_2023",
+      "section": "Section 21 — Investment Rebate Rate",
+      "phrases": ["15% of eligible investment", "BDT 9,000"],
+      "expected_cardinality": 1
+    },
+    {
+      "key": "source_tax_2023",
+      "source": "tax_2023",
+      "section": "Section 31 — Savings Certificate Source Tax",
+      "phrases": ["approved savings-certificate profit", "10%"],
+      "expected_cardinality": 1
+    },
+    {
+      "key": "rebate_rate_2026",
+      "source": "finance_2026",
+      "section": "Section 5 — Amendment to Investment Rebate Rate",
+      "phrases": ["changed from 15% to 10%", "10% of eligible investment"],
+      "expected_cardinality": 1
+    },
+    {
+      "key": "rebate_example_2026",
+      "source": "finance_2026",
+      "section": "Section 6 — Example After Amendment",
+      "phrases": ["BDT 60,000", "BDT 6,000"],
+      "expected_cardinality": 1
+    },
+    {
+      "key": "threshold_2026",
+      "source": "finance_2026",
+      "section": "Section 10 — Revised Tax-Free Threshold",
+      "phrases": ["BDT 350,000 to BDT 400,000", "applicable threshold"],
+      "expected_cardinality": 1
+    },
+    {
+      "key": "source_tax_2026",
+      "source": "finance_2026",
+      "section": "Section 15 — Savings Certificate Source Tax",
+      "phrases": ["is not changed", "remains 10%"],
+      "expected_cardinality": 1
+    }
+  ],
+  "cases": [
+    {
+      "key": "eligible_investments_scoped",
+      "tags": ["factual", "scope"],
+      "query": "Which investments are eligible under Section 20?",
+      "document_scope": "tax_2023",
+      "anchors": ["eligible_investments_2023"],
+      "expected_tokens": ["approved savings certificates", "approved retirement contributions"]
+    },
+    {
+      "key": "current_rebate_calculation",
+      "tags": ["authority", "calculation"],
+      "query": "Under the current rule, what rebate applies to BDT 60,000 of eligible investment?",
+      "as_of": "2026-08-01T00:00:00Z",
+      "anchors": ["rebate_rate_2026", "rebate_example_2026"],
+      "expected_tokens": ["10%", "6000"]
+    },
+    {
+      "key": "historical_rebate_rate",
+      "tags": ["authority", "historical"],
+      "query": "What investment rebate rate applied on 1 January 2024?",
+      "as_of": "2024-01-01T00:00:00Z",
+      "anchors": ["rebate_rate_2023"],
+      "expected_tokens": ["15%"]
+    },
+    {
+      "key": "current_rebate_bangla",
+      "tags": ["multilingual", "authority"],
+      "query": "বর্তমান নিয়মে ৬০,০০০ টাকা যোগ্য বিনিয়োগের রিবেট কত?",
+      "as_of": "2026-08-01T00:00:00Z",
+      "anchors": ["rebate_rate_2026", "rebate_example_2026"],
+      "expected_tokens": ["10%", "6000"]
+    },
+    {
+      "key": "current_rebate_banglish",
+      "tags": ["multilingual", "authority"],
+      "query": "Current niyome BDT 60,000 eligible investment er rebate koto?",
+      "as_of": "2026-08-01T00:00:00Z",
+      "anchors": ["rebate_rate_2026", "rebate_example_2026"],
+      "expected_tokens": ["10%", "6000"]
+    },
+    {
+      "key": "stale_rebate_correction",
+      "tags": ["authority", "stale_rule"],
+      "query": "Someone says the current rebate on BDT 60,000 is 15%, or BDT 9,000. Correct that claim using the current rule.",
+      "as_of": "2026-08-01T00:00:00Z",
+      "anchors": ["rebate_rate_2026", "rebate_example_2026"],
+      "expected_tokens": ["10%", "6000"]
+    },
+    {
+      "key": "current_threshold",
+      "tags": ["authority", "factual"],
+      "query": "What is the current individual tax-free threshold?",
+      "as_of": "2026-08-01T00:00:00Z",
+      "anchors": ["threshold_2026"],
+      "expected_tokens": ["400000"]
+    },
+    {
+      "key": "unchanged_source_tax",
+      "tags": ["authority", "unchanged"],
+      "query": "Did the 2026 Finance Act change the savings-certificate source-tax rate, and what is the rate?",
+      "as_of": "2026-08-01T00:00:00Z",
+      "anchors": ["source_tax_2026"],
+      "expected_tokens": ["10%"],
+      "expected_any": ["unchanged", "not changed", "remains"]
+    },
+    {
+      "key": "hard_document_scope_authority",
+      "tags": ["scope", "authority"],
+      "query": "What is the current Section 21 investment rebate rate?",
+      "as_of": "2026-08-01T00:00:00Z",
+      "document_scope": "tax_2023",
+      "anchors": ["rebate_rate_2023"],
+      "mode": "scope_isolation"
+    },
+    {
+      "key": "unknown_lunar_rule",
+      "tags": ["refusal", "fallback"],
+      "query": "What lunar-residency tax credit applies to Moon Colony Seven?",
+      "anchors": [],
+      "mode": "no_answer"
+    }
+  ]
+}

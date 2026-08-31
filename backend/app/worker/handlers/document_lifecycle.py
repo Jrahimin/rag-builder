@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import uuid
+
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -118,6 +120,15 @@ async def document_delete_task(*, project_id: str, job_id: str) -> None:
 
 @broker.task(task_name=JobType.DOCUMENT_PURGE.value)
 async def document_purge_task(*, project_id: str, job_id: str) -> None:
+    await run_document_purge(project_id=project_id, job_id=job_id)
+
+
+async def run_document_purge(
+    *,
+    project_id: uuid.UUID | str,
+    job_id: uuid.UUID | str,
+) -> None:
+    """Run the durable purge handler without requiring Taskiq transport."""
     await run_durable_job(
         project_id=project_id, job_id=job_id, expected_type=JobType.DOCUMENT_PURGE, operation=_purge
     )
