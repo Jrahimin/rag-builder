@@ -15,6 +15,7 @@ from app.cli.rag_journey import (
     JourneySource,
     RuntimeChunk,
     _comparison_summary,
+    _ensure_indexed,
     _preflight_default_organization,
     _project_ai_leaf_paths,
     aggregate_results,
@@ -87,7 +88,18 @@ def test_tax_v1_fixture_requires_all_eligible_categories_and_stale_correction() 
     assert correction is not None
     assert correction.old_tokens == ["15%", "9000"]
     assert correction.new_tokens == ["10%", "6000"]
-    assert correction.markers
+    assert {
+        "incorrect",
+        "instead",
+        "rather than",
+        "no longer",
+        "not current",
+        "old",
+        "previous",
+        "changed",
+        "superseded",
+        "historical",
+    }.issubset(correction.markers)
 
 
 def test_anchor_resolution_uses_source_section_and_phrases() -> None:
@@ -163,6 +175,21 @@ def test_config_assignments_accept_only_valid_project_query_leaves() -> None:
     config = build_project_config({key: value, "chat.response_mode": "indexed_then_web"})
     assert config.retrieval.query_translation_enabled is False
     assert config.chat.response_mode is ResponseMode.INDEXED_THEN_WEB
+
+
+def test_empty_baseline_inherits_deployment_config_without_implicit_policy_overrides() -> None:
+    config = build_project_config({})
+    payload = config.model_dump(exclude_none=True)
+
+    assert payload.get("source_policy_mode") is None
+    assert payload.get("chat", {}).get("include_citations") is None
+    assert payload.get("retrieval", {}).get("modifies_expansion_mode") is None
+    assert payload.get("retrieval", {}).get("modifies_expansion_enabled") is None
+
+    explicit = build_project_config({"source_policy_mode": "enforce"})
+    assert explicit.source_policy_mode.value == "enforce"
+    assert explicit.chat.include_citations is None
+    assert explicit.retrieval.modifies_expansion_mode is None
 
 
 def test_comparison_allowlist_stays_closed_when_project_config_schema_grows() -> None:
@@ -377,6 +404,71 @@ def test_scope_failure_is_localized_to_authority() -> None:
     assert {failure["stage"] for failure in result["failures"]} == {"authority"}
 
 
+def test_scope_isolation_requires_scoped_anchor_and_allows_safe_refusal() -> None:
+    scoped_id = uuid.uuid4()
+    scoped_chunk_id = uuid.uuid4()
+    case = JourneyCase(
+        key="scope",
+        tags=["scope", "authority"],
+        query="Current rate?",
+        anchors=["old"],
+        document_scope="old",
+        mode="scope_isolation",
+    )
+    refused = _message(
+        content="I do not have enough current evidence in the scoped document.",
+        grounded=False,
+        insufficient_evidence_reason=InsufficientEvidenceReason.BELOW_RELEVANCE_THRESHOLD,
+        metadata={
+            "retrieval_trace": {
+                "candidates": [{"chunk_id": str(scoped_chunk_id), "document_id": str(scoped_id)}],
+                "retrieval_selected": [
+                    {"chunk_id": str(scoped_chunk_id), "document_id": str(scoped_id)}
+                ],
+                "context_selected": [],
+            },
+            "current_authority": {"status": "suppressed_document_scope"},
+            "evidence_gate": {"sufficient": False, "generation_ran": False},
+            "web_search": {"status": "suppressed_scoped_request", "fallback_used": False},
+        },
+    )
+
+    passed = evaluate_case_result(
+        case=case,
+        message=refused,
+        anchor_mapping={"old": [scoped_chunk_id]},
+        document_ids={"old": scoped_id},
+        response_mode=ResponseMode.INDEXED_THEN_WEB,
+        modifies_expansion_enabled=True,
+    )
+    assert passed["passed"] is True
+    assert passed["retrieval"]["recall"] == 1.0
+
+    missing_anchor = _message(
+        content="",
+        grounded=False,
+        metadata={
+            "retrieval_trace": {
+                "candidates": [{"chunk_id": str(uuid.uuid4()), "document_id": str(scoped_id)}],
+                "retrieval_selected": [],
+                "context_selected": [],
+            },
+            "current_authority": {"status": "suppressed_document_scope"},
+            "evidence_gate": {"sufficient": False},
+            "web_search": {"status": "suppressed_scoped_request", "fallback_used": False},
+        },
+    )
+    failed = evaluate_case_result(
+        case=case,
+        message=missing_anchor,
+        anchor_mapping={"old": [scoped_chunk_id]},
+        document_ids={"old": scoped_id},
+        response_mode=ResponseMode.INDEXED_THEN_WEB,
+        modifies_expansion_enabled=True,
+    )
+    assert {failure["stage"] for failure in failed["failures"]} == {"retrieval"}
+
+
 def test_historical_authority_allows_raw_future_candidates_but_not_final_evidence() -> None:
     old_document_id = uuid.uuid4()
     future_document_id = uuid.uuid4()
@@ -508,3 +600,145 @@ async def test_inline_queue_dispatches_document_purge(monkeypatch: pytest.Monkey
     )
 
     assert calls == [(project_id, str(job_id))]
+
+
+async def test_ensure_indexed_processes_every_fixture_document(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.models.document import DocumentStatus
+    from app.models.index_build import IndexBuildState
+
+    tax_id = uuid.uuid4()
+    finance_id = uuid.uuid4()
+    documents = {
+        tax_id: SimpleNamespace(id=tax_id, status=DocumentStatus.CHUNKED),
+        finance_id: SimpleNamespace(id=finance_id, status=DocumentStatus.CHUNKED),
+    }
+    embed_calls: list[uuid.UUID] = []
+    index_calls: list[uuid.UUID] = []
+    build = SimpleNamespace(
+        id=uuid.uuid4(),
+        state=IndexBuildState.ACTIVE,
+        document_count=0,
+        chunk_count=2,
+        vector_count=2,
+        keyword_count=2,
+        embedding_set_version=2,
+        configuration_hash="cfg",
+        corpus_fingerprint="fp",
+    )
+
+    class _Indexing:
+        async def enqueue_embed(self, document_id: uuid.UUID) -> None:
+            embed_calls.append(document_id)
+            documents[document_id].status = DocumentStatus.EMBEDDED
+            build.document_count = len(documents)
+
+        async def enqueue_index(self, document_id: uuid.UUID) -> None:
+            index_calls.append(document_id)
+            documents[document_id].status = DocumentStatus.READY
+            build.document_count = len(documents)
+
+    class _DocumentRepository:
+        def __init__(self, _session: object, _project_id: uuid.UUID) -> None:
+            del _session, _project_id
+
+        async def get_by_id(self, document_id: uuid.UUID, include_deleted: bool = False) -> object:
+            del include_deleted
+            return documents[document_id]
+
+    class _IndexBuildRepository:
+        def __init__(self, _session: object, _project_id: uuid.UUID) -> None:
+            del _session, _project_id
+
+        async def get_active(self) -> object | None:
+            return build if build.document_count else None
+
+    monkeypatch.setattr(
+        "app.modules.knowledge.repositories.document_repository.DocumentRepository",
+        _DocumentRepository,
+    )
+    monkeypatch.setattr(
+        "app.modules.retrieval.repositories.index_build_repository.IndexBuildRepository",
+        _IndexBuildRepository,
+    )
+    monkeypatch.setattr(
+        "app.composition.retrieval.build_indexing_service",
+        lambda **_kwargs: _Indexing(),
+    )
+
+    class _SessionFactory:
+        async def __aenter__(self) -> object:
+            return object()
+
+        async def __aexit__(self, *_exc: object) -> None:
+            return None
+
+        def __call__(self) -> _SessionFactory:
+            return self
+
+    result = await _ensure_indexed(
+        _SessionFactory(),
+        project_id=uuid.uuid4(),
+        document_ids={"tax_2023": tax_id, "finance_2026": finance_id},
+        settings=SimpleNamespace(),
+    )
+
+    assert embed_calls == [tax_id, finance_id]
+    assert index_calls == [tax_id, finance_id]
+    assert result["document_count"] == 2
+
+
+async def test_ensure_indexed_fails_clearly_for_unsupported_indexing_status(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.models.document import DocumentStatus
+
+    failed_id = uuid.uuid4()
+    ready_id = uuid.uuid4()
+    documents = {
+        failed_id: SimpleNamespace(id=failed_id, status=DocumentStatus.FAILED),
+        ready_id: SimpleNamespace(id=ready_id, status=DocumentStatus.READY),
+    }
+
+    class _DocumentRepository:
+        def __init__(self, _session: object, _project_id: uuid.UUID) -> None:
+            del _session, _project_id
+
+        async def get_by_id(self, document_id: uuid.UUID, include_deleted: bool = False) -> object:
+            del include_deleted
+            return documents[document_id]
+
+    class _IndexBuildRepository:
+        def __init__(self, _session: object, _project_id: uuid.UUID) -> None:
+            del _session, _project_id
+
+        async def get_active(self) -> None:
+            return None
+
+    monkeypatch.setattr(
+        "app.modules.knowledge.repositories.document_repository.DocumentRepository",
+        _DocumentRepository,
+    )
+    monkeypatch.setattr(
+        "app.modules.retrieval.repositories.index_build_repository.IndexBuildRepository",
+        _IndexBuildRepository,
+    )
+
+    class _SessionFactory:
+        async def __aenter__(self) -> object:
+            return object()
+
+        async def __aexit__(self, *_exc: object) -> None:
+            return None
+
+        def __call__(self) -> _SessionFactory:
+            return self
+
+    with pytest.raises(JourneyError, match="indexing mode"):
+        await _ensure_indexed(
+            _SessionFactory(),
+            project_id=uuid.uuid4(),
+            document_ids={"tax_2023": failed_id, "finance_2026": ready_id},
+            settings=SimpleNamespace(),
+        )

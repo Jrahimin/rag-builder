@@ -26,11 +26,6 @@ DEFAULT_FIXTURE = _REPO_ROOT / "tests" / "fixtures" / "journeys" / "tax_v1" / "j
 DEFAULT_ARTIFACT_ROOT = _REPO_ROOT / "artifacts" / "rag-journey"
 _LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
 _SECRET_KEYS = ("api_key", "password", "secret", "credential", "authorization")
-_DEFAULT_OVERRIDES: dict[str, Any] = {
-    "chat.include_citations": True,
-    "retrieval.modifies_expansion_mode": "expand",
-    "source_policy_mode": "enforce",
-}
 
 # This is deliberately an explicit allowlist rather than every leaf currently
 # exposed by ProjectAIConfig. New policy leaves default to rejected until they
@@ -536,6 +531,10 @@ def evaluate_case_result(
             failures.append(_failure("fallback", "Sufficient indexed answer requested web search."))
 
     if case.mode == "scope_isolation":
+        if case.anchors and not relevant_retrieved:
+            failures.append(
+                _failure("retrieval", "No expected scoped evidence anchor was retrieved.")
+            )
         if modifies_expansion_enabled and authority.get("status") != "suppressed_document_scope":
             failures.append(
                 _failure(
@@ -882,31 +881,44 @@ async def _ensure_indexed(
     from app.modules.retrieval.repositories.index_build_repository import IndexBuildRepository
     from app.platform.jobs.implementations.inline_queue import InlineJobQueue
 
+    indexable = {
+        DocumentStatus.CHUNKED,
+        DocumentStatus.EMBEDDED,
+        DocumentStatus.READY,
+    }
+
     async def active_build() -> Any:
         async with session_factory() as session:
             return await IndexBuildRepository(session, project_id).get_active()
 
-    build = await active_build()
-    if build is None or build.document_count != len(document_ids):
-        target_id = list(document_ids.values())[-1]
+    async def index_document(source_key: str, document_id: uuid.UUID) -> None:
         async with session_factory() as session:
-            repository = DocumentRepository(session, project_id)
-            document = await repository.get_by_id(target_id, include_deleted=True)
-            if document is None:
-                raise JourneyError("The indexing target disappeared during setup.")
-            indexing = build_indexing_service(
-                session=session,
-                project_id=project_id,
-                settings=settings,
-                job_queue=InlineJobQueue(),
+            document = await DocumentRepository(session, project_id).get_by_id(
+                document_id, include_deleted=True
             )
+            if document is None:
+                raise JourneyError(f"Indexing target {source_key!r} disappeared during setup.")
+            if document.status not in indexable:
+                raise JourneyError(
+                    f"Document {source_key!r} has status {document.status.value}; expected "
+                    "chunked, embedded, or ready. The required production embed/index path "
+                    "cannot run for this indexing mode."
+                )
             if document.status in {DocumentStatus.CHUNKED, DocumentStatus.READY}:
+                indexing = build_indexing_service(
+                    session=session,
+                    project_id=project_id,
+                    settings=settings,
+                    job_queue=InlineJobQueue(),
+                )
                 await indexing.enqueue_embed(document.id)
         async with session_factory() as session:
             document = await DocumentRepository(session, project_id).get_by_id(
-                target_id, include_deleted=True
+                document_id, include_deleted=True
             )
-            if document is not None and document.status is DocumentStatus.EMBEDDED:
+            if document is None:
+                raise JourneyError(f"Indexing target {source_key!r} disappeared during setup.")
+            if document.status is DocumentStatus.EMBEDDED:
                 indexing = build_indexing_service(
                     session=session,
                     project_id=project_id,
@@ -914,6 +926,16 @@ async def _ensure_indexed(
                     job_queue=InlineJobQueue(),
                 )
                 await indexing.enqueue_index(document.id)
+            elif document.status is not DocumentStatus.READY:
+                raise JourneyError(
+                    f"Document {source_key!r} remained {document.status.value} after the "
+                    "production embed/index path."
+                )
+
+    build = await active_build()
+    if build is None or build.document_count != len(document_ids):
+        for source_key, document_id in document_ids.items():
+            await index_document(source_key, document_id)
         build = await active_build()
     if build is None:
         raise JourneyError("No validated active index build exists after ingestion.")
@@ -1464,7 +1486,7 @@ async def run_journey(
             project_id = project.id
             result["project_id"] = str(project_id)
 
-        baseline_values = {**_DEFAULT_OVERRIDES, **options.overrides}
+        baseline_values = dict(options.overrides)
         baseline_config = build_project_config(baseline_values)
         async with database.session_factory() as session:
             baseline_revision = await _activate_configuration(

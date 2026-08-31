@@ -198,7 +198,21 @@ async def test_tax_journey_subset_uses_production_diagnostics_and_cleans_up(
         item["document_id"] for item in scoped["admitted"] if item.get("document_id")
     )
     assert observed_document_ids <= {old_document_id}
-    assert scoped["authority"]["status"] == "suppressed_document_scope"
+    scoped_anchor_ids = set(result["anchor_mappings"]["rebate_rate_2023"])
+    retrieved_ids = {
+        item["chunk_id"] for item in scoped["retrieval"]["selected"] if item.get("chunk_id")
+    }
+    assert scoped_anchor_ids & retrieved_ids
+    assert scoped["fallback"]["fallback_used"] is False
+    assert scoped["fallback"]["status"] in {"not_requested", "suppressed_scoped_request"}
+    expansion_mode = (
+        result["variants"][0]["effective_config"]
+        .get("configuration", {})
+        .get("retrieval", {})
+        .get("modifies_expansion_mode")
+    )
+    if expansion_mode == "expand":
+        assert scoped["authority"]["status"] == "suppressed_document_scope"
 
     unknown = cases["unknown_lunar_rule"]
     assert unknown["evidence_gate"]["sufficient"] is False

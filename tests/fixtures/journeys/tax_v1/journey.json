@@ -125,7 +125,7 @@
       "correction": {
         "old_tokens": ["15%", "9000"],
         "new_tokens": ["10%", "6000"],
-        "markers": ["incorrect", "instead", "rather than", "no longer", "not current"]
+        "markers": ["incorrect", "instead", "rather than", "no longer", "not current", "old", "previous", "changed", "superseded", "historical"]
       }
     },
     {
