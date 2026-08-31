@@ -18,6 +18,7 @@ from app.models.conversation import Conversation
 from app.models.message import Message, MessageRole
 from app.modules.conversations.citation_snapshots import build_citation_snapshots
 from app.modules.conversations.context_builder import ContextBuilder
+from app.modules.conversations.grounded_context import assess_and_select_knowledge
 from app.modules.conversations.grounding_service import EvidenceDecision, GroundingService
 from app.modules.conversations.ports import (
     ContextChunk,
@@ -32,7 +33,6 @@ from app.modules.conversations.repositories.message_repository import MessageRep
 from app.modules.conversations.schemas.message import (
     ChatTurnResponse,
     CitationSourceKind,
-    InsufficientEvidenceReason,
     MessageResponse,
     MessageSendRequest,
     SourceProvenance,
@@ -462,7 +462,6 @@ class ChatService:
             )
         chunks = retrieval_result.chunks
         retrieval_ms = int((time.perf_counter() - retrieval_started) * 1000)
-        legacy_selected = self._context_builder.select(chunks)
         query_embedder = getattr(self._retrieval, "query_embedder", None)
         grounding = (
             GroundingService(self._chat_config, embedder=query_embedder)
@@ -470,49 +469,14 @@ class ChatService:
             else self._grounding
         )
         rerank_status = str(retrieval_result.diagnostics.get("rerank_status") or "") or None
-        legacy_evidence = grounding.assess_legacy(
-            retrieval_query,
-            legacy_selected,
+        evidence, knowledge_selected = assess_and_select_knowledge(
+            grounding=grounding,
+            context_builder=self._context_builder,
+            chat_config=self._chat_config,
+            question=retrieval_query,
+            chunks=chunks,
             rerank_status=rerank_status,
         )
-        candidate_evidence = grounding.assess_candidate_wise(
-            retrieval_query,
-            chunks,
-            rerank_status=rerank_status,
-        )
-        if self._chat_config.candidate_wise_grounding_enabled:
-            evidence = replace(
-                candidate_evidence,
-                legacy_sufficient=legacy_evidence.sufficient,
-                legacy_winning_chunk_id=legacy_evidence.winning_chunk_id,
-            )
-            if evidence.grounding_path == "candidate_wise":
-                knowledge_selected = self._context_builder.select(list(evidence.admitted_units))
-                if (
-                    not knowledge_selected
-                    and self._chat_config.evidence_gate_mode.value == "observe"
-                ):
-                    knowledge_selected = legacy_selected
-                elif evidence.sufficient and not knowledge_selected:
-                    # Admission and context budgeting are separate stages. Never run
-                    # generation when every indivisible admitted unit was omitted.
-                    evidence = replace(
-                        evidence,
-                        sufficient=False,
-                        reason=InsufficientEvidenceReason.BELOW_RELEVANCE_THRESHOLD,
-                    )
-            else:
-                knowledge_selected = legacy_selected
-        else:
-            evidence = replace(
-                legacy_evidence,
-                grounding_path="legacy_shadow",
-                candidate_assessments=candidate_evidence.candidate_assessments,
-                shadow_candidate_wise_sufficient=candidate_evidence.sufficient,
-                shadow_candidate_wise_winning_chunk_id=candidate_evidence.winning_chunk_id,
-                shadow_candidate_wise_admitted_count=len(candidate_evidence.admitted_units),
-            )
-            knowledge_selected = legacy_selected
 
         # Capture all ORM-backed prompt inputs before closing the read
         # transaction. AsyncSession.rollback() expires ORM attributes, so
@@ -712,7 +676,19 @@ class ChatService:
         ]
         candidate_diagnostics.update(
             {
-                "retrieved_count": len(prepared.chunks),
+                "retrieved_count": (
+                    prepared.retrieval_diagnostics.get("retrieved_candidate_count")
+                    if prepared.retrieval_diagnostics.get("retrieved_candidate_count") is not None
+                    else len(prepared.chunks)
+                ),
+                "reranked_count": (
+                    prepared.retrieval_diagnostics.get("reranked_candidate_count")
+                    if prepared.retrieval_diagnostics.get("reranked_candidate_count") is not None
+                    else len(prepared.chunks)
+                ),
+                "assessed_count": len(prepared.evidence.candidate_assessments)
+                or candidate_diagnostics.get("assessed_count", 0),
+                "removed_count": prepared.retrieval_diagnostics.get("post_rerank_removed_count", 0),
                 "context_selected_count": len(selected_evidence_units),
                 "cited_count": len(cited_evidence_units),
             }

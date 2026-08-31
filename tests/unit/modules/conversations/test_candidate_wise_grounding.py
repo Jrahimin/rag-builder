@@ -17,6 +17,7 @@ from app.modules.conversations.ports import ContextChunk, EvidenceUnit
 from app.modules.conversations.prompt_builder import PromptBuilder
 from app.modules.conversations.prompts.registry import require_prompt_template
 from app.modules.conversations.services.chat_service import _balanced_evidence
+from app.modules.retrieval.keyword.bm25 import bm25_score
 from app.platform.domain.content_hash import content_hash
 from app.platform.domain.evidence_contracts import (
     RERANKER_RELEVANCE_CALIBRATION_ID,
@@ -25,6 +26,7 @@ from app.platform.domain.evidence_contracts import (
     QueryVariant,
     QueryVariantKind,
 )
+from app.platform.domain.text_tokenization import term_frequencies, tokenize
 
 pytestmark = pytest.mark.unit
 
@@ -296,9 +298,7 @@ def test_provenance_alone_and_translated_dense_remain_non_admitting() -> None:
             **chunk.metadata,
             "source_role": "primary",
             "source_relationships": [{"relationship_type": "modifies"}],
-            "relationship_recall_provenance": [
-                {"relationship_type": "modifies", "depth": 1}
-            ],
+            "relationship_recall_provenance": [{"relationship_type": "modifies", "depth": 1}],
             "relationship_grounding_trust": False,
         },
     )
@@ -430,12 +430,16 @@ async def test_evidence_unit_identity_survives_prompt_citation_and_claim_verific
     assert unit.corroboration_method == "original_semantic"
     selected = ContextBuilder(ChatConfig()).select([unit])
     assert selected[0] is unit
-    prompt = PromptBuilder().build(
-        template=require_prompt_template("v5"),
-        context_chunks=selected,
-        history=[],
-        user_question=question,
-    )[0].content
+    prompt = (
+        PromptBuilder()
+        .build(
+            template=require_prompt_template("v5"),
+            context_chunks=selected,
+            history=[],
+            user_question=question,
+        )[0]
+        .content
+    )
     assert unit.content in prompt
     assert unit.evidence_unit_id in prompt
     assert unit.evidence_span_hash in prompt
@@ -514,3 +518,134 @@ def test_combined_web_budget_never_truncates_an_evidence_unit() -> None:
     assert selected[0] is unit
     assert selected[0].content == evidence_text
     assert content_hash(selected[0].content) == unit.evidence_span_hash
+
+
+def _production_payload() -> dict[str, object]:
+    return json.loads(_PRODUCTION_BASELINE.read_text(encoding="utf-8"))
+
+
+def test_captured_production_turn_fails_closed_under_candidate_wise() -> None:
+    payload = _production_payload()
+    turn = payload["turn"]
+    document_id = uuid.UUID(str(payload["document"]["document_id"]))
+    original = _variant("original", str(turn["query"]), "en")
+    translated = _variant(
+        "translated:bn",
+        str(turn["translated_query"]),
+        "bn",
+        translated=True,
+    )
+    chunks: list[ContextChunk] = []
+    for item in payload["candidates"]:
+        contributions = []
+        for branch_id, rank in item["branch_ranks"].items():
+            family = str(branch_id).split(":", maxsplit=1)[0]
+            translated_branch = family.startswith("translated")
+            contributions.append(
+                BranchContribution(
+                    branch_id=str(branch_id),
+                    family=family,
+                    query_variant_id=translated.variant_id
+                    if translated_branch
+                    else original.variant_id,
+                    target_language="bn" if translated_branch else None,
+                    rank=int(rank),
+                    raw_score=float(
+                        item["translated_dense_shadow_score"]
+                        if translated_branch
+                        else item["original_semantic_score"]
+                    ),
+                    score_type=(
+                        BranchScoreType.KEYWORD_BM25
+                        if family.endswith("lexical")
+                        else BranchScoreType.COSINE_SIMILARITY
+                    ),
+                    rrf_score=float(item["rrf_score"]),
+                )
+            )
+        chunks.append(
+            ContextChunk(
+                chunk_id=uuid.UUID(str(item["chunk_id"])),
+                document_id=document_id,
+                chunk_index=int(item["chunk_index"]),
+                content=str(item["bounded_excerpt"]),
+                score=float(item["reranker_score"]),
+                filename=str(payload["document"]["filename"]),
+                chunk_hash=str(item["content_hash"]),
+                semantic_score=float(item["original_semantic_score"]),
+                rank_score=float(item["rrf_score"]),
+                rerank_relevance_score=float(item["reranker_score"]),
+                evidence_relevance_score=float(item["reranker_score"]),
+                evidence_score_method="reranker_relevance",
+                evidence_calibration_id=RERANKER_RELEVANCE_CALIBRATION_ID,
+                page_number=int(item["page_number"]),
+                char_start=int(item["char_start"]),
+                char_end=int(item["char_end"]),
+                query_variants=(original, translated),
+                branch_contributions=tuple(contributions),
+                metadata={"rerank_status": "applied"},
+            )
+        )
+
+    decision = GroundingService(
+        ChatConfig(
+            candidate_wise_grounding_enabled=True,
+            minimum_reranker_evidence_score=float(
+                turn["thresholds"]["minimum_reranker_evidence_score"]
+            ),
+            minimum_semantic_evidence_score=float(
+                turn["thresholds"]["minimum_semantic_evidence_score"]
+            ),
+            lexical_corroboration_floor_score=float(
+                turn["thresholds"]["lexical_corroboration_floor_score"]
+            ),
+            lexical_corroboration_coverage=float(
+                turn["thresholds"]["lexical_corroboration_coverage"]
+            ),
+        )
+    ).assess(str(turn["query"]), chunks, rerank_status=str(turn["reranker_status"]))
+
+    replay = payload["post_implementation_read_only_replay"]
+    assert decision.sufficient is False
+    assert decision.admitted_units == ()
+    assert decision.sufficient is replay["candidate_wise_sufficient"]
+    assert [item.terminal_reason for item in decision.candidate_assessments] == [
+        "no_aligned_independent_signal"
+    ] * len(chunks)
+    rank_one = decision.candidate_assessments[0]
+    assert rank_one.translated_lexical_coverage == {}
+    assert rank_one.original_semantic_score is not None
+    assert rank_one.original_semantic_score < turn["thresholds"]["minimum_semantic_evidence_score"]
+    assert (
+        rank_one.original_semantic_score < turn["thresholds"]["lexical_corroboration_floor_score"]
+    )
+    assert rank_one.original_lexical_coverage < turn["thresholds"]["lexical_corroboration_coverage"]
+    assert rank_one.translated_dense_shadow_scores[translated.variant_id] == pytest.approx(
+        float(payload["candidates"][0]["translated_dense_shadow_score"])
+    )
+    assert rank_one.reranker_score is not None
+    assert rank_one.reranker_score >= turn["thresholds"]["minimum_reranker_evidence_score"]
+
+
+def test_captured_bangla_excerpt_shares_too_few_tokens_for_lexical_admission() -> None:
+    payload = _production_payload()
+    query = str(payload["turn"]["translated_query"])
+    excerpt = str(payload["candidates"][0]["bounded_excerpt"])
+    query_terms = list(dict.fromkeys(tokenize(query, for_query=True)))
+    frequencies = term_frequencies(tokenize(excerpt))
+    shared = [term for term in query_terms if term in frequencies]
+    coverage = len(shared) / len(query_terms)
+
+    assert set(shared) == {"উৎস", "কর"}
+    assert coverage < float(payload["turn"]["thresholds"]["lexical_corroboration_coverage"])
+    assert (
+        bm25_score(
+            query_terms,
+            term_frequencies=frequencies,
+            doc_length=max(sum(frequencies.values()), 1),
+            avg_doc_length=20.0,
+            total_documents=5,
+            document_frequencies={},
+        )
+        > 0
+    )

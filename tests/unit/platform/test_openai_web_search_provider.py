@@ -193,9 +193,7 @@ async def test_search_fails_closed_without_source_text_and_citation_association(
     result = await _provider().search("policy", max_results=5)
 
     assert result.evidence == []
-    assert result.diagnostics["extraction_status"] == (
-        "sources_found_no_extractable_evidence"
-    )
+    assert result.diagnostics["extraction_status"] == ("sources_found_no_extractable_evidence")
 
 
 def test_dict_and_sdk_object_shapes_extract_identically() -> None:
@@ -203,11 +201,7 @@ def test_dict_and_sdk_object_shapes_extract_identically() -> None:
         "output": [
             {
                 "type": "web_search_call",
-                "action": {
-                    "sources": [
-                        {"id": "src_1", "url": "https://example.test/policy"}
-                    ]
-                },
+                "action": {"sources": [{"id": "src_1", "url": "https://example.test/policy"}]},
                 "results": [
                     {
                         "type": "search_result",
@@ -224,9 +218,7 @@ def test_dict_and_sdk_object_shapes_extract_identically() -> None:
             SimpleNamespace(
                 type="web_search_call",
                 action=SimpleNamespace(
-                    sources=[
-                        SimpleNamespace(id="src_1", url="https://example.test/policy")
-                    ]
+                    sources=[SimpleNamespace(id="src_1", url="https://example.test/policy")]
                 ),
                 results=[
                     SimpleNamespace(
@@ -279,9 +271,7 @@ def test_conflicting_provider_id_and_url_cannot_transfer_text_between_sources() 
         ]
     }
 
-    evidence, sources, diagnostics = _extract_web_material(
-        payload, max_results=5, max_chars=1000
-    )
+    evidence, sources, diagnostics = _extract_web_material(payload, max_results=5, max_chars=1000)
 
     assert len(sources) == 2
     assert evidence == []
@@ -310,9 +300,7 @@ def test_reused_provider_id_is_rejected_even_when_result_supplies_a_url() -> Non
         ]
     }
 
-    evidence, sources, diagnostics = _extract_web_material(
-        payload, max_results=5, max_chars=1000
-    )
+    evidence, sources, diagnostics = _extract_web_material(payload, max_results=5, max_chars=1000)
 
     assert len(sources) == 2
     assert evidence == []

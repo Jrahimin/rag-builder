@@ -145,7 +145,7 @@
     "candidate_wise_sufficient": false,
     "admitted_count": 0,
     "reason": "no_aligned_independent_signal",
-    "explanation": "The historical build recorded no translated lexical contribution and all original semantic scores remained below unchanged thresholds. Translated dense scores stayed diagnostic-only."
+    "explanation": "The captured turn had translated-dense hits but no translated_lexical:bn contribution. Shared Bangla tokens between the translated query and rank-1 excerpt are only উৎস and কর (coverage 0.33 < 0.50) because morphology diverges (কর্তনের/কর্তন, ক্ষেত্রগুলো/খাত, উৎসে/উৎস). Original semantics stay below 0.35 and the 0.30 cross-language floor. Translated dense remains diagnostic-only. Candidate-wise grounding therefore still refuses; this is the executable fail-closed regression, not a threshold or admission change."
   },
   "classification_findings": {
     "failing_document": "legacy_governance_unspecified",

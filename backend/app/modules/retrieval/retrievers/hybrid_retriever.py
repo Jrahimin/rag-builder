@@ -10,7 +10,7 @@ from datetime import date
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import RerankMode
+from app.core.config import ModifiesExpansionMode, RerankMode
 from app.modules.retrieval.multilingual.planner import (
     BRANCH_ORIGINAL_DENSE,
     BRANCH_ORIGINAL_LEXICAL,
@@ -164,15 +164,38 @@ class HybridRetriever(BaseRetriever):
             "related_source_count": 0,
             "relationship_candidate_count": 0,
         }
-        if context.modifies_expansion_enabled and ranked_lists:
+        expansion_mode = _expansion_mode(context)
+        if expansion_mode is not ModifiesExpansionMode.OFF and ranked_lists:
             base_fused = reciprocal_rank_fusion(
                 ranked_lists,
                 rrf_k=context.rrf_k,
                 top_k=fusion_top_k,
             )
-            related_lists, related_counts, expansion_diagnostics = (
-                await self._retrieve_modifier_branches(context, base_fused, plan)
+            retrieve_related = (
+                expansion_mode is ModifiesExpansionMode.EXPAND
+                and context.filters.document_id is None
             )
+            (
+                related_lists,
+                related_counts,
+                expansion_diagnostics,
+            ) = await self._retrieve_modifier_branches(
+                context,
+                base_fused,
+                plan,
+                retrieve_related=retrieve_related,
+            )
+            if not retrieve_related:
+                scoped = context.filters.document_id is not None
+                status = (
+                    "suppressed_document_scope"
+                    if expansion_mode is ModifiesExpansionMode.EXPAND and scoped
+                    else "observe"
+                )
+                expansion_diagnostics = {
+                    **expansion_diagnostics,
+                    "modifies_expansion_status": status,
+                }
             ranked_lists.extend(related_lists)
             branch_counts.update(related_counts)
             executed_branches.extend(related_counts)
@@ -225,6 +248,7 @@ class HybridRetriever(BaseRetriever):
             final_candidates,
             **multilingual_diagnostics,
             **expansion_diagnostics,
+            retrieved_candidate_count=len(fused),
         )
         elapsed_ms = int((time.perf_counter() - started) * 1000)
         logger.info(
@@ -262,6 +286,8 @@ class HybridRetriever(BaseRetriever):
         context: RetrievalContext,
         base_fused: list[CandidateHit],
         plan: object,
+        *,
+        retrieve_related: bool = True,
     ) -> tuple[list[RankedList], dict[str, int], dict[str, object]]:
         reader = context.source_metadata_reader
         base_revision_ids = tuple(
@@ -301,12 +327,12 @@ class HybridRetriever(BaseRetriever):
             },
             max_related_sources=context.max_related_sources,
         )
-        selected = [
-            item for item in bounded if item.outcome is ModifierExpansionOutcome.EXPANDED
-        ]
+        selected = [item for item in bounded if item.outcome is ModifierExpansionOutcome.EXPANDED]
         if not selected:
             status = "no_relationships" if not bounded else "no_eligible_modifiers"
             return [], {}, _expansion_diagnostics(status=status, records=bounded)
+        if not retrieve_related:
+            return [], {}, _expansion_diagnostics(status="observe", records=bounded)
 
         selected_documents = tuple(dict.fromkeys(item.modifier_document_id for item in selected))
         related_context = replace(
@@ -317,6 +343,7 @@ class HybridRetriever(BaseRetriever):
                 document_ids=selected_documents,
             ),
             modifies_expansion_enabled=False,
+            modifies_expansion_mode=ModifiesExpansionMode.OFF,
         )
         record_by_document = {item.modifier_document_id: item for item in selected}
         related_lists: list[RankedList] = []
@@ -326,9 +353,7 @@ class HybridRetriever(BaseRetriever):
             for ranked in raw_lists:
                 branch_id = f"related_modifier:{ranked.branch_id}"
                 hits = _annotate_related_hits(ranked.hits, record_by_document)
-                related_lists.append(
-                    replace(ranked, hits=hits, branch_id=branch_id)
-                )
+                related_lists.append(replace(ranked, hits=hits, branch_id=branch_id))
                 branch_counts[branch_id] = len(hits)
         else:
             semantic_batch = await self._semantic.retrieve_batch(related_context)
@@ -785,6 +810,14 @@ def _uuid_value(value: object) -> uuid.UUID | None:
         return uuid.UUID(str(value)) if value is not None else None
     except (TypeError, ValueError):
         return None
+
+
+def _expansion_mode(context: RetrievalContext) -> ModifiesExpansionMode:
+    if context.modifies_expansion_mode is not ModifiesExpansionMode.OFF:
+        return context.modifies_expansion_mode
+    if context.modifies_expansion_enabled:
+        return ModifiesExpansionMode.EXPAND
+    return ModifiesExpansionMode.OFF
 
 
 def _expansion_diagnostics(

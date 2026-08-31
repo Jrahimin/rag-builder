@@ -23,7 +23,8 @@ Evaluation API → EvaluationService → JobRun + snapshot + outbox
 
 `modules/evaluation/` owns datasets, runs, metric calculation, thresholds, and comparison rules. It
 does not import retrieval or conversation internals. `composition/evaluation.py` adapts the existing
-`SearchService`, context builder, prompt builder, grounding service, and provider contracts.
+`SearchService` and the shared chat knowledge-context helper so evaluation assesses the full
+retrieved candidate set, selects admitted `EvidenceUnit`s, then prompts and claim-maps those units.
 Evaluations execute through the durable job runtime as `evaluation.run`; HTTP only stages work.
 
 ## Dataset contract

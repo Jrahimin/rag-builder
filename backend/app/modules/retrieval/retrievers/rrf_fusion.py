@@ -67,9 +67,9 @@ def reciprocal_rank_fusion(
             for variant in hit.query_variants:
                 variants_by_chunk.setdefault(hit.chunk_id, {})[variant.variant_id] = variant
             if ranked.query_variant is not None:
-                variants_by_chunk.setdefault(hit.chunk_id, {})[
-                    ranked.query_variant.variant_id
-                ] = ranked.query_variant
+                variants_by_chunk.setdefault(hit.chunk_id, {})[ranked.query_variant.variant_id] = (
+                    ranked.query_variant
+                )
 
     ordered_ids = sorted(
         fused_scores.keys(),

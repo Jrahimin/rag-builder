@@ -479,6 +479,14 @@ class ResponseMode(StrEnum):
     INDEXED_AND_WEB = "indexed_and_web"
 
 
+class ModifiesExpansionMode(StrEnum):
+    """Whether incoming MODIFIES edges are ignored, diagnosed, or searched."""
+
+    OFF = "off"
+    OBSERVE = "observe"
+    EXPAND = "expand"
+
+
 class RetrievalConfig(BaseModel):
     """Retrieval pipeline and search defaults.
 
@@ -524,8 +532,17 @@ class RetrievalConfig(BaseModel):
     passage_overlap_tokens: int = Field(default=24, ge=0, le=256)
     passage_min_tokens: int = Field(default=32, ge=8, le=256)
     modifies_expansion_enabled: bool = False
+    modifies_expansion_mode: ModifiesExpansionMode = ModifiesExpansionMode.OFF
     max_related_sources: int = Field(default=8, ge=1, le=8)
     max_relationship_candidates: int = Field(default=20, ge=1, le=20)
+
+    def resolved_modifies_expansion_mode(self) -> ModifiesExpansionMode:
+        """``mode`` wins when set; the legacy boolean still means expand."""
+        if self.modifies_expansion_mode is not ModifiesExpansionMode.OFF:
+            return self.modifies_expansion_mode
+        if self.modifies_expansion_enabled:
+            return ModifiesExpansionMode.EXPAND
+        return ModifiesExpansionMode.OFF
 
     @field_validator("filterable_metadata_keys", mode="before")
     @classmethod

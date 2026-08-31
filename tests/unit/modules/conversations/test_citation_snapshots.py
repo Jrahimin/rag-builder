@@ -76,9 +76,7 @@ def test_build_citation_snapshots_includes_hash_and_excerpt() -> None:
     assert snapshots[0]["config_snapshot_id"] == str(snapshot_id)
     assert snapshots[0]["configuration_hash"] == "a" * 64
     assert snapshots[0]["source_relationships"][0]["relationship_type"] == "replaces"
-    assert snapshots[0]["relationship_recall_provenance"][0]["relationship_type"] == (
-        "modifies"
-    )
+    assert snapshots[0]["relationship_recall_provenance"][0]["relationship_type"] == ("modifies")
 
 
 def test_web_snapshot_exposes_only_web_source_identity() -> None:

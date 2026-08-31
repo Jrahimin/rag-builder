@@ -400,6 +400,8 @@ async def test_candidate_wise_canary_sends_only_passing_lower_rank_to_generation
     assert candidate_diagnostics["assessed_count"] == 2
     assert candidate_diagnostics["admitted_count"] == 1
     assert candidate_diagnostics["retrieved_count"] == 2
+    assert candidate_diagnostics["reranked_count"] == 2
+    assert candidate_diagnostics["removed_count"] == 0
     assert candidate_diagnostics["context_selected_count"] == 1
     assert candidate_diagnostics["cited_count"] == 1
     assert candidate_diagnostics["alerts"] == {

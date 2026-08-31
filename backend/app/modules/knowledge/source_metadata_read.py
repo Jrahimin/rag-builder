@@ -155,8 +155,7 @@ class KnowledgeSourceMetadataReader:
                 .join(modifier, modifier.id == SourceRevisionRelationship.source_revision_id)
                 .join(base, base.id == SourceRevisionRelationship.target_revision_id)
                 .where(
-                    SourceRevisionRelationship.relationship_type
-                    == SourceRelationshipType.MODIFIES,
+                    SourceRevisionRelationship.relationship_type == SourceRelationshipType.MODIFIES,
                     SourceRevisionRelationship.target_revision_id.in_(base_revision_ids),
                 )
             )
@@ -305,7 +304,7 @@ def _modifier_outcome(
     if selected_revision is None:
         return "ungoverned_or_incomplete_metadata"
     if selected_revision != row.modifier_revision_id:
-        return "cross_project_or_generation"
+        return "stale_or_replaced_revision"
     if not indexed:
         return "not_in_active_index"
     return "expanded"

@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
-from app.core.config import RerankMode, RetrievalStrategy
+from app.core.config import ModifiesExpansionMode, RerankMode, RetrievalStrategy
 from app.platform.domain.evidence_contracts import BranchContribution, QueryVariant
 
 
@@ -84,6 +84,7 @@ class RetrievalContext:
     multilingual_plan: Any | None = None
     persist_translation_text: bool = False
     modifies_expansion_enabled: bool = False
+    modifies_expansion_mode: ModifiesExpansionMode = ModifiesExpansionMode.OFF
     max_related_sources: int = 8
     max_relationship_candidates: int = 20
     source_metadata_reader: Any | None = None

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from typing import Any
 
@@ -36,6 +36,13 @@ class QueryVariant:
     translation_model: str | None = None
     translation_prompt_version: str | None = None
     translation_provenance: dict[str, Any] = field(default_factory=dict)
+
+
+def public_query_variant(variant: QueryVariant, *, include_text: bool) -> QueryVariant:
+    """Keep variant identity while omitting translated runtime text when required."""
+    if include_text or variant.kind is QueryVariantKind.ORIGINAL:
+        return variant
+    return replace(variant, text="")
 
 
 @dataclass(frozen=True, slots=True)

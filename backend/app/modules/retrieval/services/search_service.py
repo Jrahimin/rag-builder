@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import (
     AIConfigPolicy,
+    ModifiesExpansionMode,
     QueryTranslationConfig,
     RequestOverrideMode,
     RerankMode,
@@ -55,6 +56,7 @@ from app.modules.retrieval.source_policy import (
     apply_source_policy,
 )
 from app.platform.config.project_ai import SourcePolicyMode, cap_source_policy_mode
+from app.platform.domain.evidence_contracts import public_query_variant
 from app.platform.providers.contracts.embedding import BaseEmbeddingProvider
 from app.platform.providers.contracts.query_translation import BaseQueryTranslationProvider
 from app.platform.providers.contracts.reranker import BaseRerankerProvider
@@ -107,7 +109,12 @@ class SearchService:
         self._duplicate_suppression = DuplicateSuppressionService(retrieval_config)
         self.resolved_query_embedder: BaseEmbeddingProvider | None = None
 
-    async def search(self, request: SearchRequest) -> SearchResponse:
+    async def search(
+        self,
+        request: SearchRequest,
+        *,
+        for_public_response: bool = False,
+    ) -> SearchResponse:
         started = time.perf_counter()
         top_k = min(
             request.top_k or self._config.default_top_k,
@@ -221,7 +228,10 @@ class SearchService:
             source_scope=source_scope,
             multilingual_plan=multilingual_plan,
             persist_translation_text=self._persist_translation_text,
-            modifies_expansion_enabled=self._config.modifies_expansion_enabled,
+            modifies_expansion_enabled=(
+                self._config.resolved_modifies_expansion_mode() is ModifiesExpansionMode.EXPAND
+            ),
+            modifies_expansion_mode=self._config.resolved_modifies_expansion_mode(),
             max_related_sources=self._config.max_related_sources,
             max_relationship_candidates=self._config.max_relationship_candidates,
             source_metadata_reader=(
@@ -259,9 +269,7 @@ class SearchService:
         if hydration_removed:
             post_rerank_removal_reasons["hydration_missing"] = hydration_removed
         for reason, count in suppression.suppressed_by_reason.items():
-            post_rerank_removal_reasons[reason] = (
-                post_rerank_removal_reasons.get(reason, 0) + count
-            )
+            post_rerank_removal_reasons[reason] = post_rerank_removal_reasons.get(reason, 0) + count
 
         elapsed_ms = int((time.perf_counter() - started) * 1000)
         logger.info(
@@ -303,8 +311,13 @@ class SearchService:
             if multilingual_plan is not None
             else []
         )
+        public_results = (
+            [_redact_translated_query_text(result) for result in results]
+            if for_public_response and not self._persist_translation_text
+            else results
+        )
         return SearchResponse(
-            results=results,
+            results=public_results,
             query=request.query,
             top_k=top_k,
             diagnostics=SearchDiagnostics(
@@ -388,7 +401,10 @@ class SearchService:
                     translation_meta.get("translation_failure_reason")
                 ),
                 translated_query=(
-                    multilingual_plan.translated_query if multilingual_plan is not None else None
+                    multilingual_plan.translated_query
+                    if multilingual_plan is not None
+                    and (self._persist_translation_text or not for_public_response)
+                    else None
                 ),
                 executed_branches=_string_list(translation_meta.get("executed_branches"))
                 or planned_branches,
@@ -422,7 +438,8 @@ class SearchService:
                         "modifies_expansion_status",
                         (
                             "disabled"
-                            if not self._config.modifies_expansion_enabled
+                            if self._config.resolved_modifies_expansion_mode()
+                            is ModifiesExpansionMode.OFF
                             else "no_candidates"
                         ),
                     )
@@ -434,14 +451,16 @@ class SearchService:
                 modifies_expansion_exclusion_reasons=_int_dict(
                     rerank_metadata.get("modifies_expansion_exclusion_reasons")
                 ),
-                related_source_count=_optional_int(
-                    rerank_metadata.get("related_source_count")
-                )
+                related_source_count=_optional_int(rerank_metadata.get("related_source_count"))
                 or 0,
                 relationship_candidate_count=_optional_int(
                     rerank_metadata.get("relationship_candidate_count")
                 )
                 or 0,
+                retrieved_candidate_count=(
+                    _optional_int(rerank_metadata.get("retrieved_candidate_count"))
+                    or reranked_candidate_count
+                ),
                 reranked_candidate_count=(
                     _optional_int(rerank_metadata.get("reranked_candidate_count"))
                     or reranked_candidate_count
@@ -466,7 +485,9 @@ class SearchService:
             self._configured_source_policy_mode,
             deployment_cap,
         )
-        if effective_mode is SourcePolicyMode.OFF and not self._config.modifies_expansion_enabled:
+        if effective_mode is SourcePolicyMode.OFF and (
+            self._config.resolved_modifies_expansion_mode() is ModifiesExpansionMode.OFF
+        ):
             return (
                 SourceMetadataScope(
                     selectable=None,
@@ -715,6 +736,17 @@ def _first_prefixed(
         if branch_id.startswith(prefix):
             return {"branch_id": branch_id, **payload}
     return None
+
+
+def _redact_translated_query_text(result: RetrievalResult) -> RetrievalResult:
+    return result.model_copy(
+        update={
+            "query_variants": tuple(
+                public_query_variant(variant, include_text=False)
+                for variant in result.query_variants
+            )
+        }
+    )
 
 
 def _query_variant_trace(variant: object, *, include_text: bool) -> dict[str, Any]:

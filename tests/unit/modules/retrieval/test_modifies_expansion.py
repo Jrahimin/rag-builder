@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from app.core.config import RetrievalStrategy
+from app.core.config import ModifiesExpansionMode, RetrievalStrategy
 from app.models.source_metadata import SourceLifecycleStatus
 from app.modules.knowledge.source_metadata_read import _modifier_outcome
 from app.modules.retrieval.retrievers.hybrid_retriever import (
@@ -62,7 +62,7 @@ def _governed_row(project_id: uuid.UUID) -> SimpleNamespace:
         ({"modifier_effective_from": date(2027, 1, 1)}, "missing", True, "outside_as_of"),
         ({}, "same", False, "not_in_active_index"),
         ({"modifier_project_id": uuid.UUID(int=0)}, "same", True, "cross_project_or_generation"),
-        ({}, "different", True, "cross_project_or_generation"),
+        ({}, "different", True, "stale_or_replaced_revision"),
         ({"modifier_title": ""}, "same", True, "ungoverned_or_incomplete_metadata"),
         ({}, "missing", True, "ungoverned_or_incomplete_metadata"),
     ],
@@ -83,13 +83,33 @@ def test_modifier_governance_has_one_fail_closed_outcome(
         "missing": None,
     }[selected]
 
-    assert _modifier_outcome(
-        row,
-        project_id=project_id,
-        selected_revision=selected_revision,
-        indexed=indexed,
-        reference_date=date(2026, 8, 31),
-    ) == expected
+    assert (
+        _modifier_outcome(
+            row,
+            project_id=project_id,
+            selected_revision=selected_revision,
+            indexed=indexed,
+            reference_date=date(2026, 8, 31),
+        )
+        == expected
+    )
+
+
+def test_replaces_activation_excludes_stale_modifier_revision() -> None:
+    project_id = uuid.uuid4()
+    row = _governed_row(project_id)
+    activated_successor = uuid.uuid4()
+
+    assert (
+        _modifier_outcome(
+            row,
+            project_id=project_id,
+            selected_revision=activated_successor,
+            indexed=True,
+            reference_date=date(2026, 8, 31),
+        )
+        == ModifierExpansionOutcome.STALE_OR_REPLACED_REVISION.value
+    )
 
 
 def _record(
@@ -196,9 +216,7 @@ async def test_base_and_bounded_related_candidates_share_one_reranker_call() -> 
             modifier_revision_id=revision_id,
             modifier_document_id=document_id,
         )
-        for revision_id, document_id in zip(
-            modifier_revisions, modifier_documents, strict=True
-        )
+        for revision_id, document_id in zip(modifier_revisions, modifier_documents, strict=True)
     ]
     base_hit = CandidateHit(
         chunk_id=base_chunk_id,
@@ -280,6 +298,7 @@ async def test_base_and_bounded_related_candidates_share_one_reranker_call() -> 
         source_scope=SimpleNamespace(generation=7, explicit_as_of=None),
         source_metadata_reader=source_reader,
         modifies_expansion_enabled=True,
+        modifies_expansion_mode=ModifiesExpansionMode.EXPAND,
         max_related_sources=8,
         max_relationship_candidates=1,
     )
@@ -304,3 +323,131 @@ async def test_base_and_bounded_related_candidates_share_one_reranker_call() -> 
         contribution.branch_id.startswith("related_modifier:")
         for contribution in related_result.branch_contributions
     )
+
+
+def _expansion_harness(
+    *,
+    document_id: uuid.UUID | None,
+    mode: ModifiesExpansionMode,
+) -> tuple[HybridRetriever, RetrievalContext, uuid.UUID, list[uuid.UUID]]:
+    project_id = uuid.uuid4()
+    build_id = uuid.uuid4()
+    base_revision_id = uuid.uuid4()
+    base_document_id = document_id or uuid.uuid4()
+    base_chunk_id = uuid.uuid4()
+    modifier_document_id = uuid.uuid4()
+    modifier_chunk_id = uuid.uuid4()
+    records = [
+        _record(
+            base_revision_id=base_revision_id,
+            base_document_id=base_document_id,
+            modifier_document_id=modifier_document_id,
+        )
+    ]
+    base_hit = CandidateHit(
+        chunk_id=base_chunk_id,
+        score=0.8,
+        source=CandidateSource.SEMANTIC,
+        semantic_score=0.8,
+        metadata={
+            "source_revision_id": str(base_revision_id),
+            "source_document_id": str(base_document_id),
+        },
+    )
+    related_hit = CandidateHit(
+        chunk_id=modifier_chunk_id,
+        score=0.7,
+        source=CandidateSource.SEMANTIC,
+        semantic_score=0.7,
+        metadata={
+            "source_revision_id": str(records[0].modifier_revision_id),
+            "source_document_id": str(modifier_document_id),
+        },
+    )
+    retriever = HybridRetriever.__new__(HybridRetriever)
+    retriever._semantic = AsyncMock()
+    retriever._semantic.retrieve_batch.side_effect = [
+        SemanticRetrievalBatch(
+            hits=[base_hit],
+            query_vector=[0.1, 0.2],
+            provider="test",
+            model="embedding",
+        ),
+        SemanticRetrievalBatch(
+            hits=[related_hit],
+            query_vector=[0.1, 0.2],
+            provider="test",
+            model="embedding",
+        ),
+    ]
+    retriever._semantic.score_chunk_ids.return_value = {}
+    retriever._keyword = AsyncMock()
+    retriever._keyword.retrieve.side_effect = [[], []]
+    retriever._content_loader = AsyncMock()
+    retriever._content_loader.load_texts.return_value = {
+        base_chunk_id: "current policy",
+        modifier_chunk_id: "current amendment",
+    }
+    retriever._embedder = AsyncMock()
+    retriever._reranker = _CountingReranker()
+    source_reader = AsyncMock()
+    source_reader.incoming_modifiers.return_value = records
+    context = RetrievalContext(
+        project_id=project_id,
+        query="current policy",
+        embedding_set_version=2,
+        filters=RetrievalFilters(document_id=document_id),
+        top_k=5,
+        strategy=RetrievalStrategy.HYBRID,
+        semantic_candidate_top_k=10,
+        keyword_candidate_top_k=10,
+        rrf_k=60,
+        semantic_weight=1.0,
+        keyword_weight=1.0,
+        rerank_enabled=True,
+        rerank_top_n=5,
+        rerank_score_threshold=None,
+        score_threshold=None,
+        filterable_metadata_keys=(),
+        index_build_id=build_id,
+        rerank_candidate_window=5,
+        rerank_return_n=5,
+        source_scope=SimpleNamespace(generation=7, explicit_as_of=None),
+        source_metadata_reader=source_reader,
+        modifies_expansion_enabled=mode is ModifiesExpansionMode.EXPAND,
+        modifies_expansion_mode=mode,
+        max_related_sources=8,
+        max_relationship_candidates=20,
+    )
+    return retriever, context, modifier_chunk_id, modifier_document_id
+
+
+async def test_observe_mode_reports_eligible_modifiers_without_changing_recall() -> None:
+    retriever, context, modifier_chunk_id, _modifier_document_id = _expansion_harness(
+        document_id=None,
+        mode=ModifiesExpansionMode.OBSERVE,
+    )
+
+    results = await retriever.retrieve(context)
+
+    assert modifier_chunk_id not in {item.chunk_id for item in results}
+    assert retriever._semantic.retrieve_batch.await_count == 1
+    assert results[0].metadata["modifies_expansion_status"] == "observe"
+    assert results[0].metadata["modifies_expansion_records"][0]["outcome"] == "expanded"
+    assert results[0].metadata["related_source_count"] == 1
+    assert results[0].metadata["relationship_candidate_count"] == 0
+
+
+async def test_document_id_scope_does_not_retrieve_modifier_documents() -> None:
+    scoped_document_id = uuid.uuid4()
+    retriever, context, modifier_chunk_id, _modifier_document_id = _expansion_harness(
+        document_id=scoped_document_id,
+        mode=ModifiesExpansionMode.EXPAND,
+    )
+
+    results = await retriever.retrieve(context)
+
+    assert modifier_chunk_id not in {item.chunk_id for item in results}
+    assert retriever._semantic.retrieve_batch.await_count == 1
+    assert results[0].metadata["modifies_expansion_status"] == "suppressed_document_scope"
+    assert results[0].metadata["modifies_expansion_records"][0]["outcome"] == "expanded"

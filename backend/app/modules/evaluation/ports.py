@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Protocol
 
+from app.platform.domain.evidence_contracts import BranchContribution, QueryVariant
+
 
 @dataclass(frozen=True, slots=True)
 class QualityHit:
@@ -26,6 +28,9 @@ class QualityHit:
     page_number: int | None = None
     char_start: int | None = None
     char_end: int | None = None
+    evidence_calibration_id: str | None = None
+    query_variants: tuple[QueryVariant, ...] = ()
+    branch_contributions: tuple[BranchContribution, ...] = ()
     metadata: dict[str, Any] = field(default_factory=dict)
 
 

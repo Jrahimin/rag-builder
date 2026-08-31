@@ -73,10 +73,7 @@ class PromptBuilder:
             evidence_unit_id = chunk.metadata.get("evidence_unit_id")
             evidence_span_hash = chunk.metadata.get("evidence_span_hash")
             if evidence_unit_id and evidence_span_hash:
-                header = (
-                    f"{header} evidence_unit={evidence_unit_id} "
-                    f"span_hash={evidence_span_hash}"
-                )
+                header = f"{header} evidence_unit={evidence_unit_id} span_hash={evidence_span_hash}"
             web_url = chunk.metadata.get("web_url")
             if web_url:
                 header = f"{header} url={web_url}"

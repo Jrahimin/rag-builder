@@ -116,6 +116,7 @@ class SearchDiagnostics(BaseModel):
     related_source_count: int = 0
     relationship_candidate_count: int = 0
     reranked_candidate_count: int = 0
+    retrieved_candidate_count: int = 0
     post_rerank_removed_count: int = 0
     post_rerank_removal_reasons: dict[str, int] = Field(default_factory=dict)
     post_rerank_unfilled_slots: int = 0

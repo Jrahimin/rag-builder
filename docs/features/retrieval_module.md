@@ -165,15 +165,22 @@ selectable in both vector and keyword repositories. This lets metadata activatio
 request without OCR, chunking, embedding, or index construction. Exact index/config/source IDs are
 returned in diagnostics and result metadata for prompts, citations, messages, jobs, and evaluations.
 
-Optional current-authority expansion (`APE_RETRIEVAL__MODIFIES_EXPANSION_ENABLED`, default off)
-considers only depth-one incoming `MODIFIES` edges whose target revision was retrieved. Knowledge
+Optional current-authority expansion is off by default. `APE_RETRIEVAL__MODIFIES_EXPANSION_MODE`
+(`off` / `observe` / `expand`) wins when set; the legacy boolean
+`APE_RETRIEVAL__MODIFIES_EXPANSION_ENABLED=true` still means expand. `observe` reports
+eligible and excluded incoming `MODIFIES` relationships without changing recall. `expand`
+searches bounded depth-one incoming edges whose target revision was retrieved. Knowledge
 resolves every edge against the same Project, source generation, `as_of`, and active index build and
-returns one fail-closed inclusion/exclusion outcome. At most eight modifier documents and twenty
-relationship-origin chunks are admitted. Related branches reuse the original multilingual query
-variants, are fused with the base candidates, and share the single existing reranker call.
-Relationship metadata is retained as recall provenance but is never a grounding signal. Existing
-post-rerank source-policy consolidation remains in place; diagnostics separately report modifier
-exclusions, candidates reranked, later removals by reason, and unfilled result slots.
+returns one fail-closed inclusion/exclusion outcome. A stale or replaced modifier revision is
+reported as `stale_or_replaced_revision`, not as a cross-project miss. At most eight modifier
+documents and twenty relationship-origin chunks are admitted. Related branches reuse the original
+multilingual query variants, are fused with the base candidates, and share the single existing
+reranker call. Relationship metadata is retained as recall provenance but is never a grounding
+signal. Public `document_id` search remains a hard single-document scope: expansion does not add
+modifier documents under that contract. Chat can still expand when the request is unscoped.
+Existing post-rerank source-policy consolidation remains in place; diagnostics separately report
+modifier exclusions, candidates retrieved, reranked, assessed, later removals by reason, and
+unfilled result slots.
 
 ## Delete policy
 
@@ -203,8 +210,10 @@ Retrieval v2 ships **hybrid BM25 + vector + RRF** as the production path (ADR-00
 Original dense and original lexical always run. One query-only translation pair is optional;
 `hosted_managed` enables it with domain-neutral `retrieval-translation-v2`. When translation is
 applied, search and chat diagnostics include status, source and target language, provider/model,
-latency, the translated query, executed branches, and per-candidate RRF provenance. Translated
-text is a retrieval artifact: it is not used as grounding confidence, citations, or evidence.
+latency, executed branches, and per-candidate RRF provenance. Translated query text is a retrieval
+artifact kept on internal chat/evaluation hits for grounding. Public `RetrievalResult.query_variants`
+omit that text when translated-query persistence is disabled. It is not used as grounding
+confidence, citations, or evidence.
 `hosted_managed` reranks with Cohere `rerank-v4.0-pro` (platform default Always). Missing rerank
 credentials or API failure preserve fused RRF order (`rerank_status=unavailable`) and fall back
 to cosine evidence. Set `APE_RETRIEVAL__STRATEGY=hybrid` in production.

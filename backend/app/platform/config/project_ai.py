@@ -17,6 +17,7 @@ from app.core.config import (
     EvidenceGateMode,
     EvidenceScoreMode,
     LLMBackend,
+    ModifiesExpansionMode,
     RequestOverrideMode,
     RerankerBackend,
     RerankMode,
@@ -75,6 +76,7 @@ class ProjectRetrievalPolicy(BaseModel):
     rerank_return_n: int | None = Field(default=None, ge=1, le=100)
     query_translation_enabled: bool | None = None
     modifies_expansion_enabled: bool | None = None
+    modifies_expansion_mode: ModifiesExpansionMode | None = None
     max_related_sources: int | None = Field(default=None, ge=1, le=8)
     max_relationship_candidates: int | None = Field(default=None, ge=1, le=20)
 
@@ -153,6 +155,7 @@ class EffectiveRetrievalPolicy(BaseModel):
     query_translation_model: str | None = None
     query_translation_prompt_version: str | None = None
     modifies_expansion_enabled: bool = False
+    modifies_expansion_mode: ModifiesExpansionMode = ModifiesExpansionMode.OFF
     max_related_sources: int = 8
     max_relationship_candidates: int = 20
 
@@ -249,6 +252,25 @@ def _resolve_rerank_mode(
     return settings.retrieval.rerank_mode
 
 
+def _resolve_modifies_expansion_mode(
+    project: ProjectRetrievalPolicy,
+    settings: Settings,
+    origins: dict[str, str],
+) -> ModifiesExpansionMode:
+    """Project mode wins; legacy enabled=true still means expand."""
+    if project.modifies_expansion_mode is not None:
+        origins["retrieval.modifies_expansion_mode"] = "project"
+        return project.modifies_expansion_mode
+    if project.modifies_expansion_enabled is True:
+        origins["retrieval.modifies_expansion_mode"] = "project"
+        return ModifiesExpansionMode.EXPAND
+    if project.modifies_expansion_enabled is False:
+        origins["retrieval.modifies_expansion_mode"] = "project"
+        return ModifiesExpansionMode.OFF
+    origins["retrieval.modifies_expansion_mode"] = "global"
+    return settings.retrieval.resolved_modifies_expansion_mode()
+
+
 def resolve_project_ai_config(
     settings: Settings,
     revision: ConfigRevisionRecord | None,
@@ -288,6 +310,7 @@ def resolve_project_ai_config(
         origins,
     )
     rerank_mode = _resolve_rerank_mode(project.retrieval, settings, origins)
+    modifies_mode = _resolve_modifies_expansion_mode(project.retrieval, settings, origins)
     resolved_web_backend = settings.resolved_web_search_backend()
     origins["web_search.backend"] = (
         "global" if settings.web_search.backend is not None else "llm_backend"
@@ -378,11 +401,8 @@ def resolve_project_ai_config(
             query_translation_backend=settings.query_translation.backend.value,
             query_translation_model=settings.query_translation.model,
             query_translation_prompt_version=settings.query_translation.prompt_version,
-            modifies_expansion_enabled=inherited(
-                "retrieval.modifies_expansion_enabled",
-                project.retrieval.modifies_expansion_enabled,
-                settings.retrieval.modifies_expansion_enabled,
-            ),
+            modifies_expansion_mode=modifies_mode,
+            modifies_expansion_enabled=modifies_mode is ModifiesExpansionMode.EXPAND,
             max_related_sources=inherited(
                 "retrieval.max_related_sources",
                 project.retrieval.max_related_sources,
@@ -644,8 +664,9 @@ def apply_effective_ai_config(
                     "rerank_candidate_window": effective.retrieval.rerank_candidate_window,
                     "rerank_return_n": effective.retrieval.rerank_return_n,
                     "modifies_expansion_enabled": (
-                        effective.retrieval.modifies_expansion_enabled
+                        effective.retrieval.modifies_expansion_mode is ModifiesExpansionMode.EXPAND
                     ),
+                    "modifies_expansion_mode": effective.retrieval.modifies_expansion_mode,
                     "max_related_sources": effective.retrieval.max_related_sources,
                     "max_relationship_candidates": (
                         effective.retrieval.max_relationship_candidates

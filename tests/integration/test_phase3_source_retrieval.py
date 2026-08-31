@@ -456,13 +456,13 @@ async def test_depth_one_modifier_expansion_is_current_scoped_and_incoming_only(
         db_client,
         project_id,
         "modifier-authority.txt",
-        "amendment text that is searched only through the incoming edge",
+        "amendment text searched through the incoming edge",
     )
     unrelated_document = await _upload(
         db_client,
         project_id,
         "unrelated-authority.txt",
-        "unrelated authority",
+        "unrelated reference document",
     )
     base_revision = await _revision(
         db_client,
@@ -540,35 +540,48 @@ async def test_depth_one_modifier_expansion_is_current_scoped_and_incoming_only(
         [base_document, modifier_document, unrelated_document],
     )
 
-    current = await db_client.post(
+    scoped = await db_client.post(
         f"/api/v1/projects/{project_id}/search",
         json={
-            "query": _QUERY,
+            "query": "base authority only",
             "top_k": 5,
             "strategy": "hybrid",
             "document_id": base_document,
         },
     )
-    assert current.status_code == 200, current.text
-    current_data = current.json()["data"]
-    current_ids = {str(item["document_id"]) for item in current_data["results"]}
-    assert {base_document, modifier_document}.issubset(current_ids)
-    diagnostics = current_data["diagnostics"]
-    assert diagnostics["modifies_expansion_status"] == "expanded"
-    assert diagnostics["modifies_expansion_depth"] == 1
-    assert diagnostics["related_source_count"] == 1
-    assert diagnostics["relationship_candidate_count"] <= 20
-    assert diagnostics["modifies_expansion_records"][0]["outcome"] == "expanded"
-    modifier_hit = next(
-        item for item in current_data["results"] if item["document_id"] == modifier_document
+    assert scoped.status_code == 200, scoped.text
+    scoped_data = scoped.json()["data"]
+    scoped_ids = {str(item["document_id"]) for item in scoped_data["results"]}
+    assert base_document in scoped_ids
+    assert modifier_document not in scoped_ids
+    assert scoped_data["diagnostics"]["modifies_expansion_status"] == "suppressed_document_scope"
+    assert scoped_data["diagnostics"]["modifies_expansion_depth"] == 1
+    assert scoped_data["diagnostics"]["modifies_expansion_records"][0]["outcome"] == "expanded"
+    assert scoped_data["diagnostics"]["modifies_expansion_records"][0]["modifier_document_id"] == (
+        modifier_document
     )
-    assert modifier_hit["metadata"]["source_revision_id"] == modifier_revision["id"]
-    assert modifier_hit["metadata"]["relationship_grounding_trust"] is False
+    assert (
+        scoped_data["diagnostics"]["modifies_expansion_records"][0]["modifier_revision_id"]
+        == (modifier_revision["id"])
+    )
+
+    unscoped = await db_client.post(
+        f"/api/v1/projects/{project_id}/search",
+        json={
+            "query": "base authority only",
+            "top_k": 5,
+            "strategy": "hybrid",
+        },
+    )
+    assert unscoped.status_code == 200, unscoped.text
+    assert unscoped.json()["data"]["diagnostics"]["modifies_expansion_status"] != (
+        "suppressed_document_scope"
+    )
 
     historical = await db_client.post(
         f"/api/v1/projects/{project_id}/search",
         json={
-            "query": _QUERY,
+            "query": "base authority only",
             "top_k": 5,
             "strategy": "hybrid",
             "document_id": base_document,
@@ -587,7 +600,7 @@ async def test_depth_one_modifier_expansion_is_current_scoped_and_incoming_only(
     outgoing_only = await db_client.post(
         f"/api/v1/projects/{project_id}/search",
         json={
-            "query": _QUERY,
+            "query": "amendment text searched through the incoming edge",
             "top_k": 5,
             "strategy": "hybrid",
             "document_id": modifier_document,
@@ -596,4 +609,4 @@ async def test_depth_one_modifier_expansion_is_current_scoped_and_incoming_only(
     assert outgoing_only.status_code == 200, outgoing_only.text
     outgoing_data = outgoing_only.json()["data"]
     assert base_document not in {str(item["document_id"]) for item in outgoing_data["results"]}
-    assert outgoing_data["diagnostics"]["modifies_expansion_status"] == "no_relationships"
+    assert outgoing_data["diagnostics"]["modifies_expansion_status"] == "suppressed_document_scope"

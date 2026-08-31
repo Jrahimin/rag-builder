@@ -40,6 +40,7 @@ class ModifierExpansionOutcome(StrEnum):
     OUTSIDE_AS_OF = "outside_as_of"
     NOT_IN_ACTIVE_INDEX = "not_in_active_index"
     CROSS_PROJECT_OR_GENERATION = "cross_project_or_generation"
+    STALE_OR_REPLACED_REVISION = "stale_or_replaced_revision"
     UNGOVERNED_OR_INCOMPLETE_METADATA = "ungoverned_or_incomplete_metadata"
     DUPLICATE = "duplicate"
     CYCLE = "cycle"

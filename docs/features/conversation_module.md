@@ -85,6 +85,7 @@ An admitted `EvidenceUnit` records deterministic offsets, span derivation, query
 and a content hash; context budgeting may omit the whole unit but cannot truncate it. The unit ID
 and span hash remain attached to prompt evidence, citations, and claim verification. With the
 candidate-wise switch disabled, these decisions run in shadow while the legacy gate remains active.
+Quality evaluation uses the same candidate-wise lifecycle through composition.
 
 Soft-deleting a conversation sets `deleted_at` on the conversation only; messages remain for audit.
 

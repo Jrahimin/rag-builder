@@ -158,9 +158,8 @@ class GroundingService:
         *,
         rerank_status: str | None = None,
     ) -> EvidenceDecision:
-        if (
-            self._config.candidate_wise_grounding_enabled
-            and _rerank_applied(chunks, rerank_status=rerank_status)
+        if self._config.candidate_wise_grounding_enabled and _rerank_applied(
+            chunks, rerank_status=rerank_status
         ):
             return self.assess_candidate_wise(
                 question,
@@ -325,11 +324,7 @@ class GroundingService:
         )
         return EvidenceDecision(
             sufficient=bool(units),
-            reason=(
-                None
-                if units
-                else InsufficientEvidenceReason.BELOW_RELEVANCE_THRESHOLD
-            ),
+            reason=(None if units else InsufficientEvidenceReason.BELOW_RELEVANCE_THRESHOLD),
             query_token_coverage=max(
                 [
                     winner.original_lexical_coverage,
@@ -337,7 +332,8 @@ class GroundingService:
                 ]
             ),
             best_score=winner.reranker_score,
-            lexically_corroborated=winner.corroboration_method in {
+            lexically_corroborated=winner.corroboration_method
+            in {
                 "original_lexical",
                 "translated_lexical",
             },
@@ -351,9 +347,7 @@ class GroundingService:
                 winning_unit.evidence_char_end if winning_unit is not None else None
             ),
             winning_semantic_score=winner.original_semantic_score,
-            winning_rank_score=(
-                winning_unit.rank_score if winning_unit is not None else None
-            ),
+            winning_rank_score=(winning_unit.rank_score if winning_unit is not None else None),
             admitted_units=tuple(units),
             candidate_assessments=tuple(assessments),
             grounding_path="candidate_wise",
@@ -425,10 +419,14 @@ class GroundingService:
                 and semantic_score >= self._config.lexical_corroboration_floor_score
             ):
                 corroboration = "cross_language_semantic"
-        if corroboration is None and span is not None and _lexical_support(
-            original_text,
-            span.text,
-            minimum_coverage=self._config.lexical_corroboration_coverage,
+        if (
+            corroboration is None
+            and span is not None
+            and _lexical_support(
+                original_text,
+                span.text,
+                minimum_coverage=self._config.lexical_corroboration_coverage,
+            )
         ):
             corroboration = "original_lexical"
         if corroboration is None and span is not None:
@@ -574,9 +572,7 @@ class GroundingService:
             "winning_evidence_unit_id": (
                 admitted_units[0].evidence_unit_id if admitted_units else None
             ),
-            "winning_span_hash": (
-                admitted_units[0].evidence_span_hash if admitted_units else None
-            ),
+            "winning_span_hash": (admitted_units[0].evidence_span_hash if admitted_units else None),
             "candidate_wise": {
                 "enabled": self._config.candidate_wise_grounding_enabled,
                 "path": decision.grounding_path,

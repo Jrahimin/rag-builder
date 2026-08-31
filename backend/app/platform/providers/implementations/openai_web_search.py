@@ -261,9 +261,9 @@ def _extract_web_material(
                 evidence_id=hashlib.sha256(
                     f"{source.canonical_url}\0{content}".encode()
                 ).hexdigest()[:24],
-                title=(
-                    _string(_field(result, "title")) or source.title or source.canonical_url
-                )[:500],
+                title=(_string(_field(result, "title")) or source.title or source.canonical_url)[
+                    :500
+                ],
                 url=source.canonical_url,
                 content=bounded_content,
                 retrieved_at=now,

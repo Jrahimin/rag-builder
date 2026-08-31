@@ -130,6 +130,7 @@ def test_modifies_expansion_is_default_off_and_project_bounded() -> None:
     default_resolution = resolve_project_ai_config(settings, None)
 
     assert default_resolution.configuration.retrieval.modifies_expansion_enabled is False
+    assert default_resolution.configuration.retrieval.modifies_expansion_mode.value == "off"
     assert default_resolution.configuration.retrieval.max_related_sources == 8
     assert default_resolution.configuration.retrieval.max_relationship_candidates == 20
 
@@ -145,8 +146,22 @@ def test_modifies_expansion_is_default_off_and_project_bounded() -> None:
     resolution = resolve_project_ai_config(settings, revision)
 
     assert resolution.configuration.retrieval.modifies_expansion_enabled is True
+    assert resolution.configuration.retrieval.modifies_expansion_mode.value == "expand"
     assert resolution.configuration.retrieval.max_related_sources == 4
     assert resolution.configuration.retrieval.max_relationship_candidates == 12
+
+
+def test_modifies_expansion_observe_mode_does_not_enable_recall() -> None:
+    settings = Settings()
+    revision = _revision({"retrieval": {"modifies_expansion_mode": "observe"}})
+
+    resolution = resolve_project_ai_config(settings, revision)
+    effective = apply_effective_ai_config(settings, resolution)
+
+    assert resolution.configuration.retrieval.modifies_expansion_mode.value == "observe"
+    assert resolution.configuration.retrieval.modifies_expansion_enabled is False
+    assert effective.retrieval.modifies_expansion_mode.value == "observe"
+    assert effective.retrieval.modifies_expansion_enabled is False
 
 
 def test_web_response_mode_rejects_missing_provider() -> None:
