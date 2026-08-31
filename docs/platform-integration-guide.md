@@ -679,7 +679,7 @@ curl -s -X POST "$APE_BASE_URL/api/v1/projects/$PROJECT_ID/search" \
 | ----- | -------- | ----- |
 | `query` | Yes | 1–32000 characters |
 | `top_k` | No | Default from deployment config |
-| `document_id` | No | Restrict to one document |
+| `document_id` | No | Hard single-document scope |
 | `metadata_filter` | No | Allowlisted keys only (`source`, `tags`, `ocr_confidence`, …) |
 | `strategy` | No | `hybrid` (recommended) or `semantic` |
 | `rerank` | No | Override deployment reranker setting |
@@ -832,6 +832,7 @@ curl -s -X POST "$APE_BASE_URL/api/v1/projects/$PROJECT_ID/conversations/$CONVER
 ```
 
 `metadata_filter` values must be strings. Set `document_id` to scope retrieval to one document.
+Current-authority expansion does not add modifier documents under that public contract.
 
 **Response** `200`
 

@@ -25,5 +25,5 @@ async def search_project(
     service: SearchServiceDep,
 ) -> ApiResponse[SearchResponse]:
     del project_id
-    response = await service.search(body)
+    response = await service.search(body, for_public_response=True)
     return ApiResponse.ok(response)

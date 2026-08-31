@@ -18,8 +18,14 @@ from app.models.conversation import Conversation
 from app.models.message import Message, MessageRole
 from app.modules.conversations.citation_snapshots import build_citation_snapshots
 from app.modules.conversations.context_builder import ContextBuilder
+from app.modules.conversations.grounded_context import assess_and_select_knowledge
 from app.modules.conversations.grounding_service import EvidenceDecision, GroundingService
-from app.modules.conversations.ports import ContextChunk, ContextRetrievalResult, RetrievalPort
+from app.modules.conversations.ports import (
+    ContextChunk,
+    ContextRetrievalResult,
+    EvidenceUnit,
+    RetrievalPort,
+)
 from app.modules.conversations.prompt_builder import PromptBuilder, PromptHistoryMessage
 from app.modules.conversations.prompts.registry import PromptTemplate, require_prompt_template
 from app.modules.conversations.repositories.conversation_repository import ConversationRepository
@@ -31,6 +37,7 @@ from app.modules.conversations.schemas.message import (
     MessageSendRequest,
     SourceProvenance,
 )
+from app.platform.domain.content_hash import content_hash
 from app.platform.domain.language_detection import detect_language
 from app.platform.domain.lifecycle_service import get_or_raise, require_not_deleted
 from app.platform.domain.text_tokenization import tokenize
@@ -455,17 +462,20 @@ class ChatService:
             )
         chunks = retrieval_result.chunks
         retrieval_ms = int((time.perf_counter() - retrieval_started) * 1000)
-        knowledge_selected = self._context_builder.select(chunks)
         query_embedder = getattr(self._retrieval, "query_embedder", None)
         grounding = (
             GroundingService(self._chat_config, embedder=query_embedder)
             if query_embedder is not None
             else self._grounding
         )
-        evidence = grounding.assess(
-            retrieval_query,
-            knowledge_selected,
-            rerank_status=str(retrieval_result.diagnostics.get("rerank_status") or "") or None,
+        rerank_status = str(retrieval_result.diagnostics.get("rerank_status") or "") or None
+        evidence, knowledge_selected = assess_and_select_knowledge(
+            grounding=grounding,
+            context_builder=self._context_builder,
+            chat_config=self._chat_config,
+            question=retrieval_query,
+            chunks=chunks,
+            rerank_status=rerank_status,
         )
 
         # Capture all ORM-backed prompt inputs before closing the read
@@ -524,12 +534,27 @@ class ChatService:
                     web_result.evidence,
                 )
                 web_chunks = _web_context_chunks(accepted_evidence, web_result.provider)
+                discovered_source_count = (
+                    len(web_result.discovered_sources)
+                    or _optional_int(web_result.diagnostics.get("source_count"))
+                    or len(web_result.evidence)
+                )
+                if discovered_source_count == 0:
+                    terminal_status = "no_sources"
+                elif not web_result.evidence:
+                    terminal_status = "sources_found_no_extractable_evidence"
+                elif web_chunks:
+                    terminal_status = "evidence_accepted"
+                else:
+                    terminal_status = "evidence_extracted_irrelevant"
                 web_diagnostics = {
                     **web_result.diagnostics,
-                    "status": "succeeded" if web_chunks else "no_useful_results",
+                    "status": terminal_status,
                     "provider": web_result.provider,
                     "model": web_result.model,
                     "provider_version": web_result.provider_version,
+                    "discovered_source_count": discovered_source_count,
+                    "extractable_evidence_count": len(web_result.evidence),
                     "acceptance": acceptance,
                     "fallback_used": (mode is ResponseMode.INDEXED_THEN_WEB and bool(web_chunks)),
                 }
@@ -634,6 +659,45 @@ class ChatService:
             blocked_generation=reason_value is not None,
             generation_ran=generation_ran,
         )
+        citations = (
+            []
+            if reason_value is not None or non_knowledge_turn
+            else self._citations_for(
+                prepared.selected,
+                prompt_version=prepared.prompt_version,
+            )
+        )
+        candidate_diagnostics = evidence_gate["candidate_wise"]
+        selected_evidence_units = [
+            chunk for chunk in prepared.selected if chunk.metadata.get("evidence_unit_id")
+        ]
+        cited_evidence_units = [
+            citation for citation in citations if citation.get("evidence_unit_id")
+        ]
+        candidate_diagnostics.update(
+            {
+                "retrieved_count": (
+                    prepared.retrieval_diagnostics.get("retrieved_candidate_count")
+                    if prepared.retrieval_diagnostics.get("retrieved_candidate_count") is not None
+                    else len(prepared.chunks)
+                ),
+                "reranked_count": (
+                    prepared.retrieval_diagnostics.get("reranked_candidate_count")
+                    if prepared.retrieval_diagnostics.get("reranked_candidate_count") is not None
+                    else len(prepared.chunks)
+                ),
+                "assessed_count": len(prepared.evidence.candidate_assessments)
+                or candidate_diagnostics.get("assessed_count", 0),
+                # Policy/hydration/dedup removals stay in retrieval diagnostics.
+                "removed_count": prepared.retrieval_diagnostics.get("post_rerank_removed_count", 0),
+                "context_selected_count": len(selected_evidence_units),
+                "cited_count": len(cited_evidence_units),
+            }
+        )
+        candidate_diagnostics["alerts"]["span_hash_mismatch_count"] = sum(
+            content_hash(chunk.content) != chunk.metadata.get("evidence_span_hash")
+            for chunk in selected_evidence_units
+        )
         metadata.update(
             {
                 "response_mode": self._chat_config.response_mode.value,
@@ -658,14 +722,6 @@ class ChatService:
                 "insufficient_evidence_reason": reason_value,
                 "evidence_gate": evidence_gate,
             }
-        )
-        citations = (
-            []
-            if reason_value is not None or non_knowledge_turn
-            else self._citations_for(
-                prepared.selected,
-                prompt_version=prepared.prompt_version,
-            )
         )
         assistant_message = await self._commit_assistant_message(
             conversation=conversation,
@@ -817,7 +873,11 @@ class ChatService:
                 "I couldn\u2019t find enough information in the available knowledge base, and web "
                 "search is temporarily unavailable."
             )
-        if status == "no_useful_results":
+        if status in {
+            "no_sources",
+            "sources_found_no_extractable_evidence",
+            "evidence_extracted_irrelevant",
+        }:
             if bangla:
                 return (
                     "উপলভ্য knowledge base বা সাম্প্রতিক web সূত্রে যথেষ্ট তথ্য পাইনি, তাই "
@@ -1031,6 +1091,7 @@ class ChatService:
                     "latency_ms": retrieval_diagnostics.get("translation_latency_ms"),
                     "usage": retrieval_diagnostics.get("translation_usage") or {},
                 },
+                "query_variants": retrieval_diagnostics.get("query_variants") or [],
                 "executed_branches": retrieval_diagnostics.get("executed_branches") or [],
                 "skipped_branches": retrieval_diagnostics.get("skipped_branches") or [],
                 "branch_candidate_counts": retrieval_diagnostics.get("branch_candidate_counts")
@@ -1056,6 +1117,30 @@ class ChatService:
                 ),
                 "consolidation_reasons": retrieval_diagnostics.get(
                     "source_policy_consolidation_reasons", {}
+                ),
+            },
+            "current_authority": {
+                "status": retrieval_diagnostics.get("modifies_expansion_status"),
+                "depth": retrieval_diagnostics.get("modifies_expansion_depth"),
+                "records": retrieval_diagnostics.get("modifies_expansion_records") or [],
+                "exclusion_reasons": retrieval_diagnostics.get(
+                    "modifies_expansion_exclusion_reasons", {}
+                ),
+                "related_source_count": retrieval_diagnostics.get("related_source_count", 0),
+                "relationship_candidate_count": retrieval_diagnostics.get(
+                    "relationship_candidate_count", 0
+                ),
+                "reranked_candidate_count": retrieval_diagnostics.get(
+                    "reranked_candidate_count", 0
+                ),
+                "post_rerank_removed_count": retrieval_diagnostics.get(
+                    "post_rerank_removed_count", 0
+                ),
+                "post_rerank_removal_reasons": retrieval_diagnostics.get(
+                    "post_rerank_removal_reasons", {}
+                ),
+                "post_rerank_unfilled_slots": retrieval_diagnostics.get(
+                    "post_rerank_unfilled_slots", 0
                 ),
             },
             "retrieval_reference_date": retrieval_diagnostics.get("reference_date"),
@@ -1189,6 +1274,12 @@ def _context_trace_item(index: int, chunk: ContextChunk) -> dict[str, Any]:
         "rerank_relevance_score": chunk.rerank_relevance_score,
         "passage_semantic_score": chunk.passage_semantic_score,
         "passage_score_method": chunk.passage_score_method,
+        "evidence_unit_id": chunk.metadata.get("evidence_unit_id"),
+        "evidence_span_hash": chunk.metadata.get("evidence_span_hash"),
+        "evidence_chunk_char_start": chunk.metadata.get("evidence_chunk_char_start"),
+        "evidence_chunk_char_end": chunk.metadata.get("evidence_chunk_char_end"),
+        "evidence_span_derivation": chunk.metadata.get("evidence_span_derivation"),
+        "evidence_query_variant_id": chunk.metadata.get("evidence_query_variant_id"),
     }
 
 
@@ -1228,7 +1319,7 @@ def _balanced_evidence(
     per_item_budget = max(1, config.context_char_budget // config.max_context_chunks)
     bounded = [
         replace(chunk, content=chunk.content[:per_item_budget])
-        if len(chunk.content) > per_item_budget
+        if not isinstance(chunk, EvidenceUnit) and len(chunk.content) > per_item_budget
         else chunk
         for chunk in ordered
     ]

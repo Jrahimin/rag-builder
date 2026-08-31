@@ -714,8 +714,7 @@ function DocumentsTab({
   const [uploadTarget, setUploadTarget] = useState("");
   const [metadataError, setMetadataError] = useState("");
   const [correctionOpen, setCorrectionOpen] = useState(false);
-  const [correctionTreatment, setCorrectionTreatment] =
-    useState<SourceCorrectionTreatment>("keep");
+  const [correctionTreatment, setCorrectionTreatment] = useState<SourceCorrectionTreatment>("keep");
   const [correctionTarget, setCorrectionTarget] = useState("");
   const [correctionDraft, setCorrectionDraft] = useState<SourceMetadataDraft | null>(null);
   const [correctionError, setCorrectionError] = useState("");
@@ -856,7 +855,9 @@ function DocumentsTab({
     event.preventDefault();
     if (!selected || !selectedSource || !correctionDraft) return;
     setCorrectionError("");
-    const target = correctionTargets?.find((item) => item.revision.id === correctionTarget)?.revision;
+    const target = correctionTargets?.find(
+      (item) => item.revision.id === correctionTarget,
+    )?.revision;
     if ((correctionTreatment === "revision" || correctionTreatment === "modifies") && !target) {
       setCorrectionError("Select the existing source this correction relates to.");
       return;
@@ -874,7 +875,11 @@ function DocumentsTab({
     if (!revision) return;
     setSavingCorrection(true);
     try {
-      const created = await operatorApiClient.createSourceRevision(projectId, selected.id, revision);
+      const created = await operatorApiClient.createSourceRevision(
+        projectId,
+        selected.id,
+        revision,
+      );
       await sourceState.refetch();
       setCorrectionOpen(false);
       onActivity({
@@ -1242,13 +1247,20 @@ function DocumentsTab({
                     <p>Correct a source choice or its retrieval metadata without reprocessing.</p>
                   </div>
                   {!correctionOpen && (
-                    <button className="button button--secondary" type="button" onClick={startCorrection}>
+                    <button
+                      className="button button--secondary"
+                      type="button"
+                      onClick={startCorrection}
+                    >
                       Correct metadata
                     </button>
                   )}
                 </div>
                 {correctionOpen && correctionDraft && (
-                  <form className="stack-form source-revision-form" onSubmit={(event) => void saveCorrection(event)}>
+                  <form
+                    className="stack-form source-revision-form"
+                    onSubmit={(event) => void saveCorrection(event)}
+                  >
                     <div className="form-grid">
                       <label className="field-control">
                         <span>Correct treatment</span>
@@ -1266,7 +1278,8 @@ function DocumentsTab({
                           <option value="modifies">Modifies an existing source</option>
                         </select>
                       </label>
-                      {(correctionTreatment === "revision" || correctionTreatment === "modifies") && (
+                      {(correctionTreatment === "revision" ||
+                        correctionTreatment === "modifies") && (
                         <label className="field-control">
                           <span>Existing source</span>
                           <select
@@ -1299,7 +1312,10 @@ function DocumentsTab({
                         <input
                           value={correctionDraft.sourceType}
                           onChange={(event) =>
-                            setCorrectionDraft({ ...correctionDraft, sourceType: event.target.value })
+                            setCorrectionDraft({
+                              ...correctionDraft,
+                              sourceType: event.target.value,
+                            })
                           }
                         />
                       </label>
@@ -1345,7 +1361,10 @@ function DocumentsTab({
                           type="date"
                           value={correctionDraft.publishedDate}
                           onChange={(event) =>
-                            setCorrectionDraft({ ...correctionDraft, publishedDate: event.target.value })
+                            setCorrectionDraft({
+                              ...correctionDraft,
+                              publishedDate: event.target.value,
+                            })
                           }
                         />
                       </label>
@@ -1356,7 +1375,10 @@ function DocumentsTab({
                           value={correctionDraft.effectiveFrom}
                           max={correctionDraft.effectiveTo || undefined}
                           onChange={(event) =>
-                            setCorrectionDraft({ ...correctionDraft, effectiveFrom: event.target.value })
+                            setCorrectionDraft({
+                              ...correctionDraft,
+                              effectiveFrom: event.target.value,
+                            })
                           }
                         />
                       </label>
@@ -1367,7 +1389,10 @@ function DocumentsTab({
                           value={correctionDraft.effectiveTo}
                           min={correctionDraft.effectiveFrom || undefined}
                           onChange={(event) =>
-                            setCorrectionDraft({ ...correctionDraft, effectiveTo: event.target.value })
+                            setCorrectionDraft({
+                              ...correctionDraft,
+                              effectiveTo: event.target.value,
+                            })
                           }
                         />
                       </label>
@@ -1379,11 +1404,18 @@ function DocumentsTab({
                         value={correctionDraft.changeReason}
                         placeholder="Why this metadata was corrected"
                         onChange={(event) =>
-                          setCorrectionDraft({ ...correctionDraft, changeReason: event.target.value })
+                          setCorrectionDraft({
+                            ...correctionDraft,
+                            changeReason: event.target.value,
+                          })
                         }
                       />
                     </label>
-                    {correctionError && <div className="failure-box" role="alert">{correctionError}</div>}
+                    {correctionError && (
+                      <div className="failure-box" role="alert">
+                        {correctionError}
+                      </div>
+                    )}
                     <div className="button-row">
                       <button className="button button--primary" disabled={savingCorrection}>
                         {savingCorrection ? "Saving…" : "Save metadata correction"}
@@ -1399,7 +1431,8 @@ function DocumentsTab({
                     </div>
                     <p className="lab-help">
                       “Latest revision” joins the selected source’s history and replaces it.
-                      “Modifies” stays separate and records the link. The file and index are unchanged.
+                      “Modifies” stays separate and records the link. The file and index are
+                      unchanged.
                     </p>
                   </form>
                 )}

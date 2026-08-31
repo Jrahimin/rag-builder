@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import (
     AIConfigPolicy,
+    ModifiesExpansionMode,
     QueryTranslationConfig,
     RequestOverrideMode,
     RerankMode,
@@ -55,6 +56,7 @@ from app.modules.retrieval.source_policy import (
     apply_source_policy,
 )
 from app.platform.config.project_ai import SourcePolicyMode, cap_source_policy_mode
+from app.platform.domain.evidence_contracts import public_query_variant
 from app.platform.providers.contracts.embedding import BaseEmbeddingProvider
 from app.platform.providers.contracts.query_translation import BaseQueryTranslationProvider
 from app.platform.providers.contracts.reranker import BaseRerankerProvider
@@ -107,7 +109,12 @@ class SearchService:
         self._duplicate_suppression = DuplicateSuppressionService(retrieval_config)
         self.resolved_query_embedder: BaseEmbeddingProvider | None = None
 
-    async def search(self, request: SearchRequest) -> SearchResponse:
+    async def search(
+        self,
+        request: SearchRequest,
+        *,
+        for_public_response: bool = False,
+    ) -> SearchResponse:
         started = time.perf_counter()
         top_k = min(
             request.top_k or self._config.default_top_k,
@@ -221,11 +228,21 @@ class SearchService:
             source_scope=source_scope,
             multilingual_plan=multilingual_plan,
             persist_translation_text=self._persist_translation_text,
+            modifies_expansion_enabled=(
+                self._config.resolved_modifies_expansion_mode() is ModifiesExpansionMode.EXPAND
+            ),
+            modifies_expansion_mode=self._config.resolved_modifies_expansion_mode(),
+            max_related_sources=self._config.max_related_sources,
+            max_relationship_candidates=self._config.max_relationship_candidates,
+            source_metadata_reader=(
+                self._source_metadata if source_scope.selectable is not None else None
+            ),
         )
 
         retriever = self._build_retriever(strategy, query_embedder)
-        candidates = await retriever.retrieve(context)
-        policy = apply_source_policy(candidates, mode=source_scope.effective_mode)
+        reranked_candidates = await retriever.retrieve(context)
+        reranked_candidate_count = len(reranked_candidates)
+        policy = apply_source_policy(reranked_candidates, mode=source_scope.effective_mode)
         candidates = add_retrieval_provenance(
             policy.candidates,
             index_build_id=active_build.id,
@@ -240,6 +257,19 @@ class SearchService:
         ]
         suppression = self._duplicate_suppression.select(hydrated_results, limit=top_k)
         results = suppression.results
+        post_rerank_removal_reasons = (
+            {
+                **policy.observed_exclusion_counts,
+                **policy.consolidation_counts,
+            }
+            if source_scope.effective_mode is SourcePolicyMode.ENFORCE
+            else {}
+        )
+        hydration_removed = len(policy.candidates) - len(hydrated_results)
+        if hydration_removed:
+            post_rerank_removal_reasons["hydration_missing"] = hydration_removed
+        for reason, count in suppression.suppressed_by_reason.items():
+            post_rerank_removal_reasons[reason] = post_rerank_removal_reasons.get(reason, 0) + count
 
         elapsed_ms = int((time.perf_counter() - started) * 1000)
         logger.info(
@@ -255,7 +285,15 @@ class SearchService:
             diversity_deferred_reasons=suppression.deferred_by_reason,
             diversity_backfilled_count=suppression.backfilled_count,
         )
-        rerank_metadata = results[0].metadata if results else {}
+        rerank_metadata = (
+            results[0].metadata
+            if results
+            else (
+                policy.candidates[0].metadata
+                if policy.candidates
+                else (reranked_candidates[0].metadata if reranked_candidates else {})
+            )
+        )
         plan_diagnostics = dict(multilingual_plan.diagnostics) if multilingual_plan else {}
         translation_meta = {**plan_diagnostics, **rerank_metadata}
         rerank_status = str(
@@ -273,8 +311,13 @@ class SearchService:
             if multilingual_plan is not None
             else []
         )
+        public_results = (
+            [_redact_translated_query_text(result) for result in results]
+            if for_public_response and not self._persist_translation_text
+            else results
+        )
         return SearchResponse(
-            results=results,
+            results=public_results,
             query=request.query,
             top_k=top_k,
             diagnostics=SearchDiagnostics(
@@ -358,7 +401,10 @@ class SearchService:
                     translation_meta.get("translation_failure_reason")
                 ),
                 translated_query=(
-                    multilingual_plan.translated_query if multilingual_plan is not None else None
+                    multilingual_plan.translated_query
+                    if multilingual_plan is not None
+                    and (self._persist_translation_text or not for_public_response)
+                    else None
                 ),
                 executed_branches=_string_list(translation_meta.get("executed_branches"))
                 or planned_branches,
@@ -369,6 +415,14 @@ class SearchService:
                     else []
                 ),
                 branch_candidate_counts=_int_dict(translation_meta.get("branch_candidate_counts")),
+                query_variants=[
+                    _query_variant_trace(
+                        variant,
+                        include_text=self._persist_translation_text
+                        or variant.variant_id == "original",
+                    )
+                    for variant in (multilingual_plan.query_variants if multilingual_plan else ())
+                ],
                 language_routing_status=_optional_string(
                     translation_meta.get("language_routing_status")
                 ),
@@ -379,6 +433,41 @@ class SearchService:
                 embedding_set_version=identity.embedding_set_version,
                 reranker_latency_ms=_optional_int(rerank_metadata.get("reranker_latency_ms")),
                 reranker_usage=_any_dict(rerank_metadata.get("reranker_usage")),
+                modifies_expansion_status=str(
+                    rerank_metadata.get(
+                        "modifies_expansion_status",
+                        (
+                            "disabled"
+                            if self._config.resolved_modifies_expansion_mode()
+                            is ModifiesExpansionMode.OFF
+                            else "no_candidates"
+                        ),
+                    )
+                ),
+                modifies_expansion_depth=1,
+                modifies_expansion_records=_dict_list(
+                    rerank_metadata.get("modifies_expansion_records")
+                ),
+                modifies_expansion_exclusion_reasons=_int_dict(
+                    rerank_metadata.get("modifies_expansion_exclusion_reasons")
+                ),
+                related_source_count=_optional_int(rerank_metadata.get("related_source_count"))
+                or 0,
+                relationship_candidate_count=_optional_int(
+                    rerank_metadata.get("relationship_candidate_count")
+                )
+                or 0,
+                retrieved_candidate_count=(
+                    _optional_int(rerank_metadata.get("retrieved_candidate_count"))
+                    or reranked_candidate_count
+                ),
+                reranked_candidate_count=(
+                    _optional_int(rerank_metadata.get("reranked_candidate_count"))
+                    or reranked_candidate_count
+                ),
+                post_rerank_removed_count=sum(post_rerank_removal_reasons.values()),
+                post_rerank_removal_reasons=post_rerank_removal_reasons,
+                post_rerank_unfilled_slots=max(0, top_k - len(results)),
                 **self._source_diagnostics(
                     source_scope,
                     index_build_id=active_build.id,
@@ -396,7 +485,9 @@ class SearchService:
             self._configured_source_policy_mode,
             deployment_cap,
         )
-        if effective_mode is SourcePolicyMode.OFF:
+        if effective_mode is SourcePolicyMode.OFF and (
+            self._config.resolved_modifies_expansion_mode() is ModifiesExpansionMode.OFF
+        ):
             return (
                 SourceMetadataScope(
                     selectable=None,
@@ -562,6 +653,12 @@ def _any_dict(value: object) -> dict[str, Any]:
     return dict(value) if isinstance(value, dict) else {}
 
 
+def _dict_list(value: object) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    return [dict(item) for item in value if isinstance(item, dict)]
+
+
 def _result_trace(result: RetrievalResult, *, rank: int) -> dict[str, Any]:
     """Return stable, sanitized retrieval facts without content or vectors."""
     branch_provenance = _branch_provenance(result.metadata)
@@ -608,7 +705,9 @@ def _branch_provenance(metadata: dict[str, Any]) -> dict[str, dict[str, Any]]:
             "score": item.get("raw_score"),
             "rrf": item.get("rrf"),
             "family": item.get("family"),
+            "query_variant_id": item.get("query_variant_id"),
             "target_language": item.get("target_language"),
+            "score_type": item.get("score_type"),
         }
     return provenance
 
@@ -637,3 +736,29 @@ def _first_prefixed(
         if branch_id.startswith(prefix):
             return {"branch_id": branch_id, **payload}
     return None
+
+
+def _redact_translated_query_text(result: RetrievalResult) -> RetrievalResult:
+    return result.model_copy(
+        update={
+            "query_variants": tuple(
+                public_query_variant(variant, include_text=False)
+                for variant in result.query_variants
+            )
+        }
+    )
+
+
+def _query_variant_trace(variant: object, *, include_text: bool) -> dict[str, Any]:
+    """Return provenance while respecting translated-query persistence policy."""
+    kind = getattr(variant, "kind", None)
+    return {
+        "variant_id": str(getattr(variant, "variant_id", "")),
+        "kind": getattr(kind, "value", str(kind) if kind is not None else None),
+        "language": str(getattr(variant, "language", "und")),
+        "text": str(getattr(variant, "text", "")) if include_text else None,
+        "source_variant_id": getattr(variant, "source_variant_id", None),
+        "translation_provider": getattr(variant, "translation_provider", None),
+        "translation_model": getattr(variant, "translation_model", None),
+        "translation_prompt_version": getattr(variant, "translation_prompt_version", None),
+    }

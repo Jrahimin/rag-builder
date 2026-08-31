@@ -42,6 +42,12 @@ class CitationSnapshot(BaseModel):
     char_end: int | None = None
     score: float | None = None
     chunk_hash: str | None = None
+    evidence_unit_id: str | None = None
+    evidence_span_hash: str | None = None
+    evidence_chunk_char_start: int | None = None
+    evidence_chunk_char_end: int | None = None
+    evidence_span_derivation: str | None = None
+    evidence_query_variant_id: str | None = None
     excerpt: str | None = None
     processing_version: int | None = None
     index_build_id: uuid.UUID | None = None
@@ -58,6 +64,7 @@ class CitationSnapshot(BaseModel):
     source_lifecycle_status: str | None = None
     source_role: str | None = None
     source_relationships: list[dict[str, Any]] = Field(default_factory=list)
+    relationship_recall_provenance: list[dict[str, Any]] = Field(default_factory=list)
     config_snapshot_id: uuid.UUID | None = None
     configuration_hash: str | None = None
     config_provenance: dict[str, Any] = Field(default_factory=dict)
@@ -122,6 +129,8 @@ class ClaimEvidence(BaseModel):
     char_start: int | None = None
     char_end: int | None = None
     excerpt: str | None = None
+    evidence_unit_id: str | None = None
+    evidence_span_hash: str | None = None
     source_kind: CitationSourceKind = CitationSourceKind.KNOWLEDGE
     web_url: str | None = None
     web_title: str | None = None

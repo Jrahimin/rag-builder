@@ -17,6 +17,7 @@ from app.core.config import (
     EvidenceGateMode,
     EvidenceScoreMode,
     LLMBackend,
+    ModifiesExpansionMode,
     RequestOverrideMode,
     RerankerBackend,
     RerankMode,
@@ -74,6 +75,10 @@ class ProjectRetrievalPolicy(BaseModel):
     rerank_candidate_window: int | None = Field(default=None, ge=1, le=100)
     rerank_return_n: int | None = Field(default=None, ge=1, le=100)
     query_translation_enabled: bool | None = None
+    modifies_expansion_enabled: bool | None = None
+    modifies_expansion_mode: ModifiesExpansionMode | None = None
+    max_related_sources: int | None = Field(default=None, ge=1, le=8)
+    max_relationship_candidates: int | None = Field(default=None, ge=1, le=20)
 
 
 class ProjectChatPolicy(BaseModel):
@@ -91,6 +96,7 @@ class ProjectChatPolicy(BaseModel):
     minimum_query_token_coverage: float | None = Field(default=None, ge=0.0, le=1.0)
     minimum_claim_token_coverage: float | None = Field(default=None, ge=0.0, le=1.0)
     minimum_reranker_evidence_score: float | None = Field(default=None, ge=0.0, le=1.0)
+    candidate_wise_grounding_enabled: bool | None = None
 
 
 class ProjectWebSearchPolicy(BaseModel):
@@ -148,6 +154,10 @@ class EffectiveRetrievalPolicy(BaseModel):
     query_translation_backend: str | None = None
     query_translation_model: str | None = None
     query_translation_prompt_version: str | None = None
+    modifies_expansion_enabled: bool = False
+    modifies_expansion_mode: ModifiesExpansionMode = ModifiesExpansionMode.OFF
+    max_related_sources: int = 8
+    max_relationship_candidates: int = 20
 
 
 class EffectiveChatPolicy(BaseModel):
@@ -163,6 +173,7 @@ class EffectiveChatPolicy(BaseModel):
     lexical_corroboration_coverage: float
     minimum_claim_token_coverage: float
     minimum_reranker_evidence_score: float = 0.40
+    candidate_wise_grounding_enabled: bool = False
 
 
 class EffectiveWebSearchPolicy(BaseModel):
@@ -241,6 +252,25 @@ def _resolve_rerank_mode(
     return settings.retrieval.rerank_mode
 
 
+def _resolve_modifies_expansion_mode(
+    project: ProjectRetrievalPolicy,
+    settings: Settings,
+    origins: dict[str, str],
+) -> ModifiesExpansionMode:
+    """Project mode wins; legacy enabled=true still means expand."""
+    if project.modifies_expansion_mode is not None:
+        origins["retrieval.modifies_expansion_mode"] = "project"
+        return project.modifies_expansion_mode
+    if project.modifies_expansion_enabled is True:
+        origins["retrieval.modifies_expansion_mode"] = "project"
+        return ModifiesExpansionMode.EXPAND
+    if project.modifies_expansion_enabled is False:
+        origins["retrieval.modifies_expansion_mode"] = "project"
+        return ModifiesExpansionMode.OFF
+    origins["retrieval.modifies_expansion_mode"] = "global"
+    return settings.retrieval.resolved_modifies_expansion_mode()
+
+
 def resolve_project_ai_config(
     settings: Settings,
     revision: ConfigRevisionRecord | None,
@@ -280,6 +310,7 @@ def resolve_project_ai_config(
         origins,
     )
     rerank_mode = _resolve_rerank_mode(project.retrieval, settings, origins)
+    modifies_mode = _resolve_modifies_expansion_mode(project.retrieval, settings, origins)
     resolved_web_backend = settings.resolved_web_search_backend()
     origins["web_search.backend"] = (
         "global" if settings.web_search.backend is not None else "llm_backend"
@@ -370,6 +401,18 @@ def resolve_project_ai_config(
             query_translation_backend=settings.query_translation.backend.value,
             query_translation_model=settings.query_translation.model,
             query_translation_prompt_version=settings.query_translation.prompt_version,
+            modifies_expansion_mode=modifies_mode,
+            modifies_expansion_enabled=modifies_mode is ModifiesExpansionMode.EXPAND,
+            max_related_sources=inherited(
+                "retrieval.max_related_sources",
+                project.retrieval.max_related_sources,
+                settings.retrieval.max_related_sources,
+            ),
+            max_relationship_candidates=inherited(
+                "retrieval.max_relationship_candidates",
+                project.retrieval.max_relationship_candidates,
+                settings.retrieval.max_relationship_candidates,
+            ),
         ),
         chat=EffectiveChatPolicy(
             response_mode=inherited(
@@ -423,6 +466,11 @@ def resolve_project_ai_config(
                 "chat.minimum_reranker_evidence_score",
                 project.chat.minimum_reranker_evidence_score,
                 settings.chat.minimum_reranker_evidence_score,
+            ),
+            candidate_wise_grounding_enabled=inherited(
+                "chat.candidate_wise_grounding_enabled",
+                project.chat.candidate_wise_grounding_enabled,
+                settings.chat.candidate_wise_grounding_enabled,
             ),
         ),
         web_search=EffectiveWebSearchPolicy(
@@ -615,6 +663,14 @@ def apply_effective_ai_config(
                     "passage_min_tokens": effective.retrieval.passage_min_tokens,
                     "rerank_candidate_window": effective.retrieval.rerank_candidate_window,
                     "rerank_return_n": effective.retrieval.rerank_return_n,
+                    "modifies_expansion_enabled": (
+                        effective.retrieval.modifies_expansion_mode is ModifiesExpansionMode.EXPAND
+                    ),
+                    "modifies_expansion_mode": effective.retrieval.modifies_expansion_mode,
+                    "max_related_sources": effective.retrieval.max_related_sources,
+                    "max_relationship_candidates": (
+                        effective.retrieval.max_relationship_candidates
+                    ),
                     "reranker_backend": (
                         effective.retrieval.reranker_backend or settings.retrieval.reranker_backend
                     ),
@@ -677,6 +733,9 @@ def apply_effective_ai_config(
                     "minimum_claim_token_coverage": effective.chat.minimum_claim_token_coverage,
                     "minimum_reranker_evidence_score": (
                         effective.chat.minimum_reranker_evidence_score
+                    ),
+                    "candidate_wise_grounding_enabled": (
+                        effective.chat.candidate_wise_grounding_enabled
                     ),
                 }
             ),

@@ -38,7 +38,7 @@ POST /messages
   → validate conversation (active, not deleted)
   → Tx1: persist user message + last_message_at → commit
   → load history + retrieve (read txn rolled back before LLM)
-  → ContextBuilder → GroundingService evidence assessment
+  → GroundingService rank-ordered candidate assessment → indivisible EvidenceUnit selection
   → enforce: insufficient score skips LLM and persists stable reason
   → observe: same diagnostics, selected context still goes to PromptBuilder
   → response_mode selects indexed-only, conditional web fallback, or combined evidence
@@ -62,7 +62,7 @@ values are `indexed_then_web` and `indexed_and_web`. Notable `ChatConfig` keys a
 `citation_excerpt_max_chars`, `minimum_semantic_evidence_score`,
 `evidence_gate_mode` (`enforce` or `observe`), `minimum_reranker_evidence_score`,
 `lexical_corroboration_floor_score`, `lexical_corroboration_coverage`,
-`minimum_claim_token_coverage`, and `include_citations`.
+`minimum_claim_token_coverage`, `candidate_wise_grounding_enabled`, and `include_citations`.
 
 Project revisions may also include a sparse `web_search` section: `enabled`, `model`,
 `max_results`, `max_evidence_chars`, `max_output_tokens`, and `request_timeout_seconds`.
@@ -79,6 +79,17 @@ Credentials, base URL, and provider backend remain deployment-owned.
   `source_provenance` and `web_search` record the selected source family, fallback use, provider,
   status, and fail-closed errors. Web citations store URL, title, retrieval time, and provider
   separately from Knowledge document/chunk locations.
+
+Every candidate presented to grounding receives exactly one assessment. Candidates removed
+earlier by policy, hydration, or dedup do not need grounding assessments; those removals stay
+visible in retrieval diagnostics (`retrieved_count`, `reranked_count`, `removed_count`,
+`post_rerank_removed_count`).
+
+An admitted `EvidenceUnit` records deterministic offsets, span derivation, query-variant identity,
+and a content hash; context budgeting may omit the whole unit but cannot truncate it. The unit ID
+and span hash remain attached to prompt evidence, citations, and claim verification. With the
+candidate-wise switch disabled, these decisions run in shadow while the legacy gate remains active.
+Quality evaluation uses the same candidate-wise lifecycle through composition.
 
 Soft-deleting a conversation sets `deleted_at` on the conversation only; messages remain for audit.
 
@@ -111,11 +122,20 @@ timeouts, failures, and empty results do not permit model-memory fallback. Clear
 handled without an awkward knowledge refusal, while referential follow-ups reuse the prior user
 question for retrieval.
 
+The OpenAI adapter requests both Responses web result objects and consulted source URLs. It treats
+consulted URLs as discovery only and admits text exclusively from a result object conservatively
+associated by provider ID or canonical HTTP(S) URL. Assistant summaries, URL annotations, malformed
+URLs, and URL-only results cannot become evidence. Every completed fallback reports one of
+`no_sources`, `sources_found_no_extractable_evidence`, `evidence_extracted_irrelevant`, or
+`evidence_accepted`; the provider layer performs no fetching, crawling, or page extraction.
+
 ## Testing strategy
 
-- Unit: `ChatService` (Tx1/Tx2, refusal, observe/enforce gate, provider resolve, errors, stream cancel),
+- Unit: `ChatService` (Tx1/Tx2, refusal, observe/enforce gate, provider resolve, errors, stream cancel,
+  combined MODIFIES → grounding → generation → no-web authority path),
   `GroundingService`, Gazette evidence-gate comparison (`0.35` / `0.30` / `observe`),
-  `ConversationService`, context/prompt builders, citation snapshots, retrieval adapter
+  captured EN→BN production fail-closed replay, `ConversationService`, context/prompt builders,
+  citation snapshots, retrieval adapter
 - Provider contract: echo LLM + factory overrides
 - Integration: `test_conversations_api` (when stack available)
 

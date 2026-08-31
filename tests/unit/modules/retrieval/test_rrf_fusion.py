@@ -8,6 +8,11 @@ import pytest
 
 from app.modules.retrieval.retrievers.models import CandidateHit, CandidateSource
 from app.modules.retrieval.retrievers.rrf_fusion import RankedList, reciprocal_rank_fusion
+from app.platform.domain.evidence_contracts import (
+    BranchScoreType,
+    QueryVariant,
+    QueryVariantKind,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -82,6 +87,13 @@ def test_rrf_tie_breaks_by_best_source_rank_then_chunk_id() -> None:
 
 def test_rrf_records_per_branch_rank_score_and_contribution() -> None:
     chunk_id = uuid.uuid4()
+    translated_variant = QueryVariant(
+        variant_id="translated:bn",
+        kind=QueryVariantKind.TRANSLATED,
+        language="bn",
+        text="উৎসে কর সংগ্রহের খাত",
+        source_variant_id="original",
+    )
     fused = reciprocal_rank_fusion(
         [
             RankedList(
@@ -96,6 +108,8 @@ def test_rrf_records_per_branch_rank_score_and_contribution() -> None:
                 branch_id="translated_dense:bn",
                 family="translated_dense",
                 target_language="bn",
+                query_variant_id=translated_variant.variant_id,
+                query_variant=translated_variant,
             ),
             RankedList(
                 hits=[CandidateHit(chunk_id, 11.2, CandidateSource.KEYWORD)],
@@ -103,6 +117,9 @@ def test_rrf_records_per_branch_rank_score_and_contribution() -> None:
                 branch_id="translated_lexical:bn",
                 family="translated_lexical",
                 target_language="bn",
+                query_variant_id=translated_variant.variant_id,
+                score_type=BranchScoreType.KEYWORD_BM25,
+                query_variant=translated_variant,
             ),
         ],
         rrf_k=60,
@@ -114,4 +131,8 @@ def test_rrf_records_per_branch_rank_score_and_contribution() -> None:
     assert contributions["translated_dense:bn"]["rank"] == 1
     assert contributions["translated_dense:bn"]["raw_score"] == 0.71
     assert contributions["translated_lexical:bn"]["rank"] == 1
+    assert contributions["translated_lexical:bn"]["query_variant_id"] == "translated:bn"
+    assert contributions["translated_lexical:bn"]["score_type"] == "keyword_bm25"
+    assert fused[0].branch_contributions[2].query_variant_id == "translated:bn"
+    assert fused[0].query_variants == (translated_variant,)
     assert fused[0].score == pytest.approx(sum(item["rrf"] for item in contributions.values()))

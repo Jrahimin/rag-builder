@@ -9,6 +9,13 @@ import pytest
 from app.composition.evaluation import GroundedEvaluationAnswerAdapter
 from app.core.config import Settings
 from app.modules.evaluation.ports import QualityHit
+from app.platform.domain.evidence_contracts import (
+    RERANKER_RELEVANCE_CALIBRATION_ID,
+    BranchContribution,
+    BranchScoreType,
+    QueryVariant,
+    QueryVariantKind,
+)
 from app.platform.providers.implementations.echo_chat import EchoLLMProvider
 
 pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
@@ -53,6 +60,86 @@ async def test_reranked_lexical_evaluation_is_grounded_without_semantic_score() 
     assert answer.claims
     assert answer.claims[0]["evidence"][0]["chunk_id"] == str(hit.chunk_id)
     assert answer.claims[0]["verification"] == "supported"
+
+
+async def test_candidate_wise_evaluation_prompts_admitted_evidence_units() -> None:
+    original_text = "What is the cobalt escalation matrix?"
+    relevant = "The cobalt escalation matrix assigns urgent incidents to Reliability."
+    decoy = "Maternity leave requests require manager approval."
+    original = QueryVariant(
+        variant_id="original",
+        kind=QueryVariantKind.ORIGINAL,
+        language="en",
+        text=original_text,
+    )
+    relevant_hit = QualityHit(
+        chunk_id=uuid.uuid4(),
+        document_id=uuid.uuid4(),
+        content=relevant,
+        score=0.82,
+        filename="policy.txt",
+        chunk_index=1,
+        semantic_score=0.12,
+        rank_score=0.82,
+        rerank_relevance_score=0.82,
+        evidence_calibration_id=RERANKER_RELEVANCE_CALIBRATION_ID,
+        query_variants=(original,),
+        branch_contributions=(
+            BranchContribution(
+                branch_id="original_lexical",
+                family="original_lexical",
+                query_variant_id=original.variant_id,
+                target_language=None,
+                rank=1,
+                raw_score=8.1,
+                score_type=BranchScoreType.KEYWORD_BM25,
+                rrf_score=0.02,
+            ),
+        ),
+        metadata={"rerank_status": "applied"},
+    )
+    decoy_hit = QualityHit(
+        chunk_id=uuid.uuid4(),
+        document_id=uuid.uuid4(),
+        content=decoy,
+        score=0.91,
+        filename="policy.txt",
+        chunk_index=0,
+        semantic_score=0.11,
+        rank_score=0.91,
+        rerank_relevance_score=0.91,
+        evidence_calibration_id=RERANKER_RELEVANCE_CALIBRATION_ID,
+        query_variants=(original,),
+        branch_contributions=(
+            BranchContribution(
+                branch_id="original_dense",
+                family="original_dense",
+                query_variant_id=original.variant_id,
+                target_language=None,
+                rank=1,
+                raw_score=0.11,
+                score_type=BranchScoreType.COSINE_SIMILARITY,
+                rrf_score=0.016,
+            ),
+        ),
+        metadata={"rerank_status": "applied"},
+    )
+    adapter = GroundedEvaluationAnswerAdapter(
+        settings=Settings(chat={"candidate_wise_grounding_enabled": True}),
+        llm=EchoLLMProvider(model="echo-test", provider_version="1"),
+    )
+
+    answer = await adapter.answer(
+        profile="reranked_lexical",
+        question=original_text,
+        hits=[decoy_hit, relevant_hit],
+    )
+
+    assert answer.generation_ran is True
+    assert answer.selected_chunk_ids == [relevant_hit.chunk_id]
+    assert answer.evidence_gate["candidate_wise"]["path"] == "candidate_wise"
+    assert answer.evidence_gate["candidate_wise"]["admitted_count"] == 1
+    assert answer.evidence_gate["candidate_wise"]["assessed_count"] == 2
 
 
 async def test_reranked_lexical_evaluation_still_refuses_unrelated_retrieved_chunk() -> None:

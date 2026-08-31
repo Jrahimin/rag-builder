@@ -1,0 +1,154 @@
+{
+  "schema_version": "phase1-production-shape-v1",
+  "capture": {
+    "captured_read_only": true,
+    "sanitized": true,
+    "removed_fields": [
+      "project_id",
+      "conversation_id",
+      "account_identity",
+      "original_filename"
+    ],
+    "baseline_key": "english_to_bangla_source_tax_2026_08_18",
+    "index_build_id": "9e6cfb61-e087-4692-966d-aa51c64e6b90",
+    "source_metadata_generation": 0
+  },
+  "turn": {
+    "query": "2. What are the source tax deduction areas?",
+    "query_language_profile": "latin_ambiguous",
+    "translated_query": "2. উৎস কর কর্তনের ক্ষেত্রগুলো কী কী?",
+    "translation_target_language": "bn",
+    "translation_prompt_version": "retrieval-translation-v2",
+    "reranker_status": "applied",
+    "reranker_model": "rerank-v4.0-pro",
+    "reranker_score_scale": "model_relevance",
+    "reranker_call_count": 1,
+    "thresholds": {
+      "minimum_reranker_evidence_score": 0.4,
+      "minimum_semantic_evidence_score": 0.35,
+      "lexical_corroboration_floor_score": 0.3,
+      "lexical_corroboration_coverage": 0.5
+    },
+    "branch_candidate_counts": {
+      "original_dense": 5,
+      "original_lexical": 0,
+      "translated_dense:bn": 5,
+      "translated_lexical:bn": 0
+    },
+    "legacy_failure": {
+      "blocked_generation": true,
+      "reason": "below_relevance_threshold",
+      "evidence_score_method": "whole_chunk_cosine",
+      "winning_chunk_id": "611be2bc-a27e-4af4-a3b1-43c9d3c841bb",
+      "winning_score": 0.2743397355079651,
+      "query_token_coverage": 0.0
+    }
+  },
+  "document": {
+    "document_id": "e9fbe249-d598-43d1-bbe7-185f0b8a48e5",
+    "filename": "sanitized-bangla-tax-ordinance-2025.pdf",
+    "version": 11,
+    "accepted_parser": "ocr",
+    "extraction_method": "ocr",
+    "parse_quality_score": 1.0,
+    "language": "bn",
+    "ocr_language": "bn",
+    "source_title": "sanitized-bangla-tax-ordinance-2025",
+    "source_revision_label": "Legacy import",
+    "source_lifecycle_status": "unspecified",
+    "source_role": "unspecified",
+    "source_relationships": [],
+    "unicode_health": {
+      "replacement_character_count": 0,
+      "candidate_scripts": ["Bengali"],
+      "classification": "healthy_unicode_bangla"
+    }
+  },
+  "candidates": [
+    {
+      "rank": 1,
+      "chunk_id": "3fb570c7-9d8e-4944-a0d1-78e5ef57c7ac",
+      "chunk_index": 3,
+      "page_number": 3,
+      "char_start": 3194,
+      "char_end": 3900,
+      "content_hash": "bee8137066e25e48966efcbe24acf34c7ea69e25209fdd8353d8e963bbe0e1c3",
+      "bounded_excerpt": "সারণী ক্রমিক আয়ের উৎস / উৎসে কর যে ধারার অধীন উৎসে যে সকল ব্যক্তির জন্য প্রযোজ্য নং | সংগ্রহের খাত | কর কর্তন / সংগ্রহযোগ্য",
+      "reranker_score": 0.8880229,
+      "original_semantic_score": 0.2708835682536237,
+      "translated_dense_shadow_score": 0.2718968472450034,
+      "rrf_score": 0.03252247488101534,
+      "branch_ranks": {"original_dense": 2, "translated_dense:bn": 1}
+    },
+    {
+      "rank": 2,
+      "chunk_id": "611be2bc-a27e-4af4-a3b1-43c9d3c841bb",
+      "chunk_index": 2,
+      "page_number": 2,
+      "char_start": 2580,
+      "char_end": 3192,
+      "content_hash": "6d3fb38ab3e41df18e2f2d2673600602e9122535000689aca61666d83c67d116",
+      "bounded_excerpt": "শব্দগুলি, সংখ্যা, চিহ্ন ও বন্ধনী প্রতিস্থাপিত হইবে। ২০২৩ সনের ১২ নং আইনের ধারা ১৬৩ এর সংশোধন।",
+      "reranker_score": 0.872825,
+      "original_semantic_score": 0.2743397355079651,
+      "translated_dense_shadow_score": 0.21621620655059814,
+      "rrf_score": 0.032266458495966696,
+      "branch_ranks": {"original_dense": 1, "translated_dense:bn": 3}
+    },
+    {
+      "rank": 3,
+      "chunk_id": "c4b1956e-660a-43cc-a998-3bb3b093251e",
+      "chunk_index": 1,
+      "page_number": 2,
+      "char_start": 1746,
+      "char_end": 2578,
+      "content_hash": "627d0b5062196638b46024fd9695a37b06d5fe8ea6c44b185c440e24a3714fb8",
+      "bounded_excerpt": "উল্লিখিত সীমা ও শর্ত সাপেক্ষে, যে কোনো পণ্য বা পণ্য শ্রেণির আমদানি বা সরবরাহ বা প্রদত্ত যে কোনো সেবা",
+      "reranker_score": 0.7985641,
+      "original_semantic_score": 0.23317677971901907,
+      "translated_dense_shadow_score": 0.24846212538399948,
+      "rrf_score": 0.03200204813108039,
+      "branch_ranks": {"original_dense": 3, "translated_dense:bn": 2}
+    },
+    {
+      "rank": 4,
+      "chunk_id": "436b2f49-223e-45e3-98b8-7f1a07ed8379",
+      "chunk_index": 4,
+      "page_number": 3,
+      "char_start": 3902,
+      "char_end": 4700,
+      "content_hash": "c9c5d02b1d5c64a9e22b15cb6936693cf1fe3c95ea7e4b0e34b91ba9bed58eff",
+      "bounded_excerpt": "উল্লিখিত সারণীর ক্রমিক নং (৬) এ বর্ণিত বিধান বাণিজ্যিকভাবে মোটরযান পরিচালনা হইতে আয়প্রাপ্ত করদাতার ক্ষেত্রে প্রযোজ্য",
+      "reranker_score": 0.7198565,
+      "original_semantic_score": 0.21860594860350813,
+      "translated_dense_shadow_score": 0.21014953912195833,
+      "rrf_score": 0.03125,
+      "branch_ranks": {"original_dense": 4, "translated_dense:bn": 4}
+    },
+    {
+      "rank": 5,
+      "chunk_id": "58d4a923-3000-4a05-82aa-604951fb45cd",
+      "chunk_index": 0,
+      "page_number": 1,
+      "char_start": 0,
+      "char_end": 1744,
+      "content_hash": "06d389abfc31fcc974fba8091d2c63699749618f470b75af0a0eba4213b99eaf",
+      "bounded_excerpt": "প্রজাতন্ত্রী বাংলাদেশ গেজেট, সরকার অতিরিক্ত সংখ্যা, কর্তৃপক্ষ কর্তৃক প্রকাশিত সোমবার, অক্টোবর ৬, ২০২৫",
+      "reranker_score": 0.71351147,
+      "original_semantic_score": 0.20838399479484626,
+      "translated_dense_shadow_score": 0.13839534590272062,
+      "rrf_score": 0.03076923076923077,
+      "branch_ranks": {"original_dense": 5, "translated_dense:bn": 5}
+    }
+  ],
+  "post_implementation_read_only_replay": {
+    "candidate_wise_sufficient": false,
+    "admitted_count": 0,
+    "reason": "no_aligned_independent_signal",
+    "explanation": "This captured EN→BN production turn is not treated as fixed. The executable reproduction correctly fails closed under current safe thresholds because independent corroboration is insufficient: translated_lexical:bn is absent, shared Bangla tokens between the translated query and rank-1 excerpt are only উৎস and কর (coverage 0.33 < 0.50) due to morphology (কর্তনের/কর্তন, ক্ষেত্রগুলো/খাত, উৎসে/উৎস), and original semantics stay below 0.35 and the 0.30 cross-language floor. Translated dense remains diagnostic-only and is not an admission path. Bangla morphology / translated-lexical recall is a separate follow-up; do not lower thresholds or admit translated dense."
+  },
+  "classification_findings": {
+    "failing_document": "legacy_governance_unspecified",
+    "finance_act_2026": "classification_unresolved"
+  }
+}

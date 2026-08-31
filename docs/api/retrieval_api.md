@@ -53,7 +53,7 @@ default is `hybrid`; semantic remains an explicit comparison/rollback strategy.
 | ----- | -------- | ----- |
 | `query` | yes | 1–32000 characters |
 | `top_k` | no | Default from `APE_RETRIEVAL__DEFAULT_TOP_K` |
-| `document_id` | no | Restrict hits to one document |
+| `document_id` | no | Hard single-document scope; current-authority expansion does not add modifier documents |
 | `metadata_filter` | no | Allowlisted keys only; others stripped |
 | `strategy` | no | `semantic` or `hybrid`; default from config |
 | `as_of` | no | Explicit historical selector; source intervals are evaluated at this date without natural-language inference |
@@ -157,10 +157,10 @@ The production default keeps fused RRF order through the enabled rerank stage wi
 `noop` occupant (`rerank_status=passthrough`, `reranker_score_scale=reciprocal_rank_fusion`).
 Pass-through does not load chunk text or rewrite ranking scores. Hybrid search always runs
 original dense and original lexical branches; one target-language translation pair is added only
-when query translation is enabled and the active build has language inventory. The translated query
-is returned on `diagnostics` (and chat `metadata.retrieval_trace.translation`) so operators can
-compare original vs translated branch ranks. It is not copied into citations, evidence excerpts, or
-application logs. On an enabled reranker failure, search still returns fused
+when query translation is enabled and the active build has language inventory. Public search hits
+keep translated variant identity without the translated query text unless persistence is enabled.
+Internal chat and evaluation keep the runtime text for grounding. It is not copied into citations,
+evidence excerpts, or application logs. On an enabled reranker failure, search still returns fused
 RRF order and diagnostics report `rerank_status=unavailable`; quality runs count this path against
 candidate promotion.
 

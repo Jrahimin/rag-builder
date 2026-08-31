@@ -6,7 +6,7 @@ import uuid
 from dataclasses import replace
 
 from app.core.config import ChatConfig
-from app.modules.conversations.ports import ContextChunk
+from app.modules.conversations.ports import ContextChunk, EvidenceUnit
 
 
 class ContextBuilder:
@@ -30,6 +30,9 @@ class ContextBuilder:
                 break
             if char_budget <= 0:
                 break
+            if isinstance(chunk, EvidenceUnit) and len(chunk.content) > char_budget:
+                # An admitted unit is indivisible: budgeting may omit it, never rewrite it.
+                continue
             if len(chunk.content) > char_budget:
                 selected.append(
                     _preserve_rerank_score(replace(chunk, content=chunk.content[:char_budget]))

@@ -10,6 +10,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from app.core.config import (
     AIConfigPolicy,
+    ModifiesExpansionMode,
     QueryTranslationConfig,
     RerankMode,
     RetrievalConfig,
@@ -30,6 +31,7 @@ from app.modules.retrieval.retrievers.models import CandidateHit, CandidateSourc
 from app.modules.retrieval.schemas.search import RetrievalResult, SearchRequest
 from app.modules.retrieval.services.search_service import SearchService
 from app.platform.config.project_ai import SourcePolicyMode
+from app.platform.domain.evidence_contracts import QueryVariant, QueryVariantKind
 from app.platform.domain.language_detection import detect_query_language_profile
 from app.platform.providers.errors import ProviderError
 
@@ -185,6 +187,60 @@ async def test_source_policy_off_skips_metadata_capture() -> None:
     source_metadata.capture.assert_not_awaited()
 
 
+async def test_modifies_expansion_captures_governance_even_when_source_policy_is_off() -> None:
+    source_metadata = MagicMock()
+    source_metadata.capture = AsyncMock(
+        return_value=MagicMock(
+            selectable=MagicMock(),
+            generation=4,
+            configured_mode=SourcePolicyMode.OFF,
+            effective_mode=SourcePolicyMode.OFF,
+            deployment_cap="enforce",
+            reference_date="2026-08-31",
+            explicit_as_of=None,
+            exclusion_counts={},
+        )
+    )
+    service = _search_service(
+        retrieval_config=RetrievalConfig(modifies_expansion_enabled=True),
+        source_metadata=source_metadata,
+        configured_source_policy_mode=SourcePolicyMode.OFF,
+    )
+
+    scope, status = await service._capture_source_scope(None)
+
+    assert scope.generation == 4
+    assert status == "off"
+    source_metadata.capture.assert_awaited_once()
+
+
+async def test_observe_modifies_expansion_captures_governance_when_source_policy_is_off() -> None:
+    source_metadata = MagicMock()
+    source_metadata.capture = AsyncMock(
+        return_value=MagicMock(
+            selectable=MagicMock(),
+            generation=4,
+            configured_mode=SourcePolicyMode.OFF,
+            effective_mode=SourcePolicyMode.OFF,
+            deployment_cap="enforce",
+            reference_date="2026-08-31",
+            explicit_as_of=None,
+            exclusion_counts={},
+        )
+    )
+    service = _search_service(
+        retrieval_config=RetrievalConfig(modifies_expansion_mode=ModifiesExpansionMode.OBSERVE),
+        source_metadata=source_metadata,
+        configured_source_policy_mode=SourcePolicyMode.OFF,
+    )
+
+    scope, status = await service._capture_source_scope(None)
+
+    assert scope.generation == 4
+    assert status == "off"
+    source_metadata.capture.assert_awaited_once()
+
+
 async def test_enforce_overfetches_before_revision_consolidation_to_fill_top_k() -> None:
     project_id = uuid.uuid4()
     source_metadata = MagicMock()
@@ -259,6 +315,13 @@ async def test_enforce_overfetches_before_revision_consolidation_to_fill_top_k()
     context = retriever.retrieve.await_args.args[0]
     assert context.top_k == 100
     assert len(response.results) == 10
+    assert response.diagnostics.reranked_candidate_count == 40
+    assert response.diagnostics.post_rerank_removed_count == 30
+    assert response.diagnostics.post_rerank_removal_reasons == {
+        "same_source_group_lower_ranked_revision": 29,
+        "result_limit": 1,
+    }
+    assert response.diagnostics.post_rerank_unfilled_slots == 0
 
 
 async def test_search_diagnostics_expose_translation_query_and_branch_provenance() -> None:
@@ -395,6 +458,84 @@ async def test_search_diagnostics_expose_translation_query_and_branch_provenance
     assert trace["translated_lexical"]["rank"] == 1
     assert trace["rrf_score"] == pytest.approx(0.0475)
     assert f"{BRANCH_TRANSLATED_DENSE}:bn" in trace["branch_provenance"]
+
+
+async def test_public_search_redacts_translated_query_variant_text() -> None:
+    translated_query = "উৎস কর কর্তনের ক্ষেত্রগুলো কী কী"
+    original = QueryVariant(
+        variant_id="original",
+        kind=QueryVariantKind.ORIGINAL,
+        language="en",
+        text="source tax deduction areas",
+    )
+    translated = QueryVariant(
+        variant_id="translated:bn",
+        kind=QueryVariantKind.TRANSLATED,
+        language="bn",
+        text=translated_query,
+        source_variant_id="original",
+    )
+    service = _search_service(
+        retrieval_config=RetrievalConfig(strategy=RetrievalStrategy.HYBRID),
+        persist_translation_text=False,
+    )
+    _ready_search(service)
+    service._hydrator.hydrate = AsyncMock(
+        return_value=[
+            RetrievalResult(
+                chunk_id=uuid.uuid4(),
+                document_id=uuid.uuid4(),
+                chunk_index=0,
+                content="x",
+                score=0.5,
+                filename="f.txt",
+                query_variants=(original, translated),
+            )
+        ]
+    )
+    profile = detect_query_language_profile("source tax deduction areas")
+    plan = MultilingualRetrievalPlan(
+        query_profile=profile,
+        inventory=LanguageInventory(
+            schema_version="2026-08-18.v1",
+            chunk_language_counts={"bn": 3},
+            document_language_counts={"bn": 1},
+            is_legacy=False,
+        ),
+        translation_status="applied",
+        target_language="bn",
+        translated_query=translated_query,
+        branches=(),
+        skipped_branches=(),
+        diagnostics={"translation_status": "applied"},
+        query_variants=(original, translated),
+    )
+
+    with patch(
+        "app.modules.retrieval.services.search_service.resolve_multilingual_plan",
+        AsyncMock(return_value=plan),
+    ):
+        public = await service.search(
+            SearchRequest(query="source tax deduction areas"),
+            for_public_response=True,
+        )
+        internal = await service.search(SearchRequest(query="source tax deduction areas"))
+
+    public_translated = next(
+        item
+        for item in public.results[0].query_variants
+        if item.kind is QueryVariantKind.TRANSLATED
+    )
+    internal_translated = next(
+        item
+        for item in internal.results[0].query_variants
+        if item.kind is QueryVariantKind.TRANSLATED
+    )
+    assert public_translated.variant_id == "translated:bn"
+    assert public_translated.text == ""
+    assert public.diagnostics.translated_query is None
+    assert internal_translated.text == translated_query
+    assert internal.diagnostics.translated_query == translated_query
 
 
 async def test_search_uses_active_openai_identity_while_target_settings_are_cohere() -> None:

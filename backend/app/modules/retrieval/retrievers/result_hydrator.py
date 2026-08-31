@@ -65,6 +65,8 @@ class ResultHydrator:
                     page_number=chunk.page_number,
                     char_start=chunk.char_start,
                     char_end=chunk.char_end,
+                    query_variants=candidate.query_variants,
+                    branch_contributions=candidate.branch_contributions,
                     metadata={
                         **chunk.chunk_metadata,
                         **_public_candidate_metadata(candidate.metadata),

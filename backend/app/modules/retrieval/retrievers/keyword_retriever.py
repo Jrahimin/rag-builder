@@ -62,6 +62,7 @@ class KeywordRetriever(BaseRetriever):
             embedding_set_version=context.embedding_set_version,
             top_k=context.keyword_candidate_top_k,
             document_id=context.filters.document_id,
+            document_ids=context.filters.document_ids,
             metadata_filter=metadata_filter,
             source_scope=context.source_scope,
             language_scope=scope,  # type: ignore[arg-type]

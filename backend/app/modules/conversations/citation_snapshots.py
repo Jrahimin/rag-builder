@@ -39,6 +39,20 @@ def build_citation_snapshots(
             char_end=None if is_web else chunk.char_end,
             score=None if is_web else chunk.score,
             chunk_hash=None if is_web else chunk.chunk_hash,
+            evidence_unit_id=(None if is_web else chunk.metadata.get("evidence_unit_id")),
+            evidence_span_hash=(None if is_web else chunk.metadata.get("evidence_span_hash")),
+            evidence_chunk_char_start=(
+                None if is_web else chunk.metadata.get("evidence_chunk_char_start")
+            ),
+            evidence_chunk_char_end=(
+                None if is_web else chunk.metadata.get("evidence_chunk_char_end")
+            ),
+            evidence_span_derivation=(
+                None if is_web else chunk.metadata.get("evidence_span_derivation")
+            ),
+            evidence_query_variant_id=(
+                None if is_web else chunk.metadata.get("evidence_query_variant_id")
+            ),
             excerpt=excerpt,
             processing_version=None if is_web else chunk.metadata.get("processing_version"),
             index_build_id=None if is_web else chunk.metadata.get("index_build_id"),
@@ -62,6 +76,9 @@ def build_citation_snapshots(
             source_role=None if is_web else chunk.metadata.get("source_role"),
             source_relationships=(
                 [] if is_web else list(chunk.metadata.get("source_relationships") or [])
+            ),
+            relationship_recall_provenance=(
+                [] if is_web else list(chunk.metadata.get("relationship_recall_provenance") or [])
             ),
             config_snapshot_id=config_snapshot_id,
             configuration_hash=chunk.metadata.get("configuration_hash"),

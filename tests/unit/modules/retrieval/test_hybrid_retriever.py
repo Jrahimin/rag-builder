@@ -181,6 +181,7 @@ async def test_applied_rerank_copies_relevance_onto_evidence_fields() -> None:
     assert result[0].evidence_relevance_score == pytest.approx(0.81)
     assert result[0].evidence_score_method == "reranker_relevance"
     assert result[0].metadata["rerank_status"] == "applied"
+    retriever._reranker.rerank.assert_awaited_once()
 
 
 async def test_passage_scoring_keeps_raw_cosine_and_winning_offsets() -> None:

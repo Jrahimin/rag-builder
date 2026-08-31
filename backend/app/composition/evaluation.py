@@ -20,6 +20,7 @@ from app.core.config import (
     Settings,
 )
 from app.modules.conversations.context_builder import ContextBuilder
+from app.modules.conversations.grounded_context import assess_and_select_knowledge
 from app.modules.conversations.grounding_service import GroundingService
 from app.modules.conversations.ports import ContextChunk
 from app.modules.conversations.prompt_builder import PromptBuilder
@@ -235,6 +236,9 @@ class SearchEvaluationAdapter(EvaluationRetrievalPort):
                     page_number=result.page_number,
                     char_start=result.char_start,
                     char_end=result.char_end,
+                    evidence_calibration_id=result.evidence_calibration_id,
+                    query_variants=result.query_variants,
+                    branch_contributions=result.branch_contributions,
                     metadata=dict(result.metadata),
                 )
                 for result in response.results
@@ -322,19 +326,22 @@ class GroundedEvaluationAnswerAdapter(EvaluationAnswerPort):
         hits: list[QualityHit],
     ) -> QualityAnswer:
         chunks = [_context_chunk(hit) for hit in hits]
-        selected = self._context.select(chunks)
         grounding = self._passage_grounding if profile == "passage" else self._whole_chunk_grounding
-        decision = grounding.assess(
-            question,
-            selected,
-            rerank_status=next(
-                (
-                    str(chunk.metadata.get("rerank_status"))
-                    for chunk in selected
-                    if chunk.metadata.get("rerank_status")
-                ),
-                None,
+        rerank_status = next(
+            (
+                str(chunk.metadata.get("rerank_status"))
+                for chunk in chunks
+                if chunk.metadata.get("rerank_status")
             ),
+            None,
+        )
+        decision, selected = assess_and_select_knowledge(
+            grounding=grounding,
+            context_builder=self._context,
+            chat_config=self._settings.chat,
+            question=question,
+            chunks=chunks,
+            rerank_status=rerank_status,
         )
         blocked = grounding.blocks_generation(decision)
         if blocked:
@@ -548,6 +555,7 @@ def _context_chunk(hit: QualityHit) -> ContextChunk:
         rerank_relevance_score=rerank_score,
         evidence_relevance_score=rerank_score,
         evidence_score_method="reranker_relevance" if rerank_score is not None else None,
+        evidence_calibration_id=hit.evidence_calibration_id,
         passage_semantic_score=hit.passage_semantic_score,
         passage_char_start=hit.passage_char_start,
         passage_char_end=hit.passage_char_end,
@@ -555,6 +563,8 @@ def _context_chunk(hit: QualityHit) -> ContextChunk:
         page_number=hit.page_number,
         char_start=hit.char_start,
         char_end=hit.char_end,
+        query_variants=hit.query_variants,
+        branch_contributions=hit.branch_contributions,
         metadata=hit.metadata,
     )
 
