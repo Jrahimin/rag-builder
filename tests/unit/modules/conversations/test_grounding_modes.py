@@ -142,9 +142,7 @@ class _NeedleEmbedder(BaseEmbeddingProvider):
         if purpose is EmbeddingPurpose.DOCUMENT:
             self.document_calls += len(texts)
         vectors = [
-            [1.0, 0.0]
-            if purpose is EmbeddingPurpose.QUERY or self._needle in text
-            else [0.0, 1.0]
+            [1.0, 0.0] if purpose is EmbeddingPurpose.QUERY or self._needle in text else [0.0, 1.0]
             for text in texts
         ]
         return EmbeddingBatchResult(
@@ -304,9 +302,7 @@ async def test_passage_rescue_scores_only_high_confidence_near_misses() -> None:
         item for item in evidence.candidate_assessments if item.chunk_id == unrelated.chunk_id
     )
     preserved = next(
-        item
-        for item in evidence.candidate_assessments
-        if item.chunk_id == already_scored.chunk_id
+        item for item in evidence.candidate_assessments if item.chunk_id == already_scored.chunk_id
     )
     assert rescued.passed is True
     assert rescued.span_derivation == "scored_passage"

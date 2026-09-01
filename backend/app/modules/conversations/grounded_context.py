@@ -177,9 +177,7 @@ def _align_winner_to_selected(
         sufficient=True,
         reason=None,
         winning_chunk_id=winner.chunk_id,
-        best_score=(
-            matching.reranker_score if matching is not None else evidence.best_score
-        ),
+        best_score=(matching.reranker_score if matching is not None else evidence.best_score),
         query_token_coverage=(
             max(
                 [
@@ -206,7 +204,5 @@ def _align_winner_to_selected(
             if matching is not None
             else evidence.winning_semantic_score
         ),
-        winning_rank_score=(
-            unit.rank_score if unit is not None else evidence.winning_rank_score
-        ),
+        winning_rank_score=(unit.rank_score if unit is not None else evidence.winning_rank_score),
     )

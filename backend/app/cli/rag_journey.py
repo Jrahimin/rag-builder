@@ -581,14 +581,10 @@ def _has_translated_branch(item: Mapping[str, Any]) -> bool:
     provenance = item.get("branch_provenance") or {}
     if not isinstance(provenance, Mapping):
         return False
-    return any(
-        str(branch_id).startswith(_TRANSLATED_BRANCH_PREFIXES) for branch_id in provenance
-    )
+    return any(str(branch_id).startswith(_TRANSLATED_BRANCH_PREFIXES) for branch_id in provenance)
 
 
-def _first_relevant_rank(
-    retrieved: list[dict[str, Any]], relevant_ids: set[str]
-) -> int | None:
+def _first_relevant_rank(retrieved: list[dict[str, Any]], relevant_ids: set[str]) -> int | None:
     for rank, item in enumerate(retrieved, start=1):
         chunk_id = item.get("chunk_id")
         if chunk_id is not None and str(chunk_id) in relevant_ids:
@@ -1789,9 +1785,7 @@ def _comparison_summary(
 
 def _admitted_chunk_ids(case: Mapping[str, Any]) -> set[str]:
     return {
-        str(item["chunk_id"])
-        for item in list(case.get("admitted") or [])
-        if item.get("chunk_id")
+        str(item["chunk_id"]) for item in list(case.get("admitted") or []) if item.get("chunk_id")
     }
 
 
@@ -2062,9 +2056,7 @@ def build_translation_comparison(
     on_cases = list(on_variant.get("cases") or [])
     off_cases = list(off_variant.get("cases") or [])
     applicable_keys = {
-        case["key"]
-        for case in on_cases
-        if (case.get("quality") or {}).get("translation_applied")
+        case["key"] for case in on_cases if (case.get("quality") or {}).get("translation_applied")
     }
 
     def _select(
@@ -2127,7 +2119,7 @@ def translation_variants(
     enabled: Mapping[str, Any] | None = None
     disabled: Mapping[str, Any] | None = None
     for variant in variants:
-        configuration = ((variant.get("effective_config") or {}).get("configuration") or {})
+        configuration = (variant.get("effective_config") or {}).get("configuration") or {}
         retrieval = dict(configuration.get("retrieval") or {})
         if retrieval.get("query_translation_enabled") is True:
             enabled = variant
@@ -2365,10 +2357,7 @@ def _render_translation_comparison(translation: Mapping[str, Any]) -> list[str]:
             f"{', '.join(f'`{key}`' for key in summary.get('required_cases') or []) or 'none'}.",
             "",
             "Pure overhead (applied translation, no retrieval/quality change): "
-            + (
-                ", ".join(f"`{key}`" for key in summary.get("pure_overhead_cases") or [])
-                or "none"
-            )
+            + (", ".join(f"`{key}`" for key in summary.get("pure_overhead_cases") or []) or "none")
             + ".",
             "",
             "Harmful: "

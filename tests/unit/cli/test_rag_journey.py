@@ -957,10 +957,10 @@ def test_user_parameter_tokens_need_not_be_cited_from_the_knowledge_base() -> No
         claims=claims,
         metadata={
             "retrieval_trace": {
-                    "retrieval_selected": [
-                        *identities,
-                        {"chunk_id": str(amount_id), "document_id": str(document_id)},
-                    ],
+                "retrieval_selected": [
+                    *identities,
+                    {"chunk_id": str(amount_id), "document_id": str(document_id)},
+                ],
                 "context_selected": identities,
             },
             "evidence_gate": {"sufficient": True},
@@ -2002,9 +2002,7 @@ def test_evaluate_case_result_records_translation_quality_without_changing_pass(
                         "translated_dense": {"rank": 1, "rrf": 0.02},
                     }
                 ],
-                "context_selected": [
-                    {"chunk_id": str(chunk_id), "document_id": str(document_id)}
-                ],
+                "context_selected": [{"chunk_id": str(chunk_id), "document_id": str(document_id)}],
                 "translation": {"status": "applied", "latency_ms": 1200},
                 "rerank": {"status": "applied", "latency_ms": 80},
                 "executed_branches": ["original_dense", "translated_dense"],

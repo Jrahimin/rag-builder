@@ -421,9 +421,7 @@ class GroundingService:
         del self
         if not previous.candidate_assessments:
             return current
-        previous_assessments = {
-            item.chunk_id: item for item in previous.candidate_assessments
-        }
+        previous_assessments = {item.chunk_id: item for item in previous.candidate_assessments}
         previous_units = {unit.chunk_id: unit for unit in previous.admitted_units}
         current_units = {unit.chunk_id: unit for unit in current.admitted_units}
         assessments: list[CandidateEvidenceAssessment] = []

@@ -326,7 +326,9 @@ class SearchService:
                 duration_ms=elapsed_ms,
                 rerank_requested=rerank_enabled and strategy is RetrievalStrategy.HYBRID,
                 rerank_status=rerank_status,
-                rerank_failure_reason=_optional_string(rerank_metadata.get("rerank_failure_reason")),
+                rerank_failure_reason=_optional_string(
+                    rerank_metadata.get("rerank_failure_reason")
+                ),
                 reranker_provider=_optional_string(rerank_metadata.get("reranker_provider")),
                 reranker_model=_optional_string(rerank_metadata.get("reranker_model")),
                 reranker_version=_optional_string(rerank_metadata.get("reranker_version")),
