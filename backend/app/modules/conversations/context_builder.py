@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
 from dataclasses import replace
 
 from app.core.config import ChatConfig
@@ -15,7 +16,7 @@ class ContextBuilder:
     def __init__(self, config: ChatConfig) -> None:
         self._config = config
 
-    def select(self, chunks: list[ContextChunk]) -> list[ContextChunk]:
+    def select(self, chunks: Sequence[ContextChunk]) -> list[ContextChunk]:
         seen_ids: set[uuid.UUID] = set()
         seen_hashes: set[str] = set()
         selected: list[ContextChunk] = []
