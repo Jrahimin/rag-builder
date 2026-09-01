@@ -68,6 +68,8 @@ RUNTIME_COMPARISON_CONFIG_KEYS = frozenset(
         "chat.minimum_query_token_coverage",
         "chat.minimum_claim_token_coverage",
         "chat.minimum_reranker_evidence_score",
+        "chat.high_confidence_reranker_evidence_score",
+        "chat.grounding_mode",
         "chat.candidate_wise_grounding_enabled",
         "web_search.enabled",
         "web_search.model",
@@ -135,7 +137,9 @@ class JourneyCase(BaseModel):
     document_scope: str | None = None
     as_of: datetime | None = None
     expected_tokens: list[str] = Field(default_factory=list)
+    expected_token_groups: list[list[str]] = Field(default_factory=list)
     expected_any: list[str] = Field(default_factory=list)
+    user_parameter_tokens: list[str] = Field(default_factory=list)
     correction: CorrectionExpectation | None = None
     mode: Literal["answerable", "scope_isolation", "no_answer"] = "answerable"
 
@@ -209,6 +213,8 @@ def load_manifest(path: Path = DEFAULT_FIXTURE) -> JourneyManifest:
             raise JourneyError(f"Case {case.key!r} references unknown anchors: {sorted(unknown)}")
         if any(not group for group in case.required_anchor_groups):
             raise JourneyError(f"Case {case.key!r} contains an empty required anchor group.")
+        if any(not group for group in case.expected_token_groups):
+            raise JourneyError(f"Case {case.key!r} contains an empty expected token group.")
         unknown_sources = set(case.prohibited_final_sources) - sources
         if unknown_sources:
             raise JourneyError(
@@ -450,6 +456,26 @@ def _failure(stage: str, message: str) -> dict[str, str]:
     return {"stage": stage, "message": message}
 
 
+_CONTEXT_SELECTION_REASONS = frozenset(
+    {
+        "authority_context_empty",
+        "context_selection_empty",
+    }
+)
+
+
+def _grounding_failure_stage(gate: Mapping[str, Any], reason: object) -> str:
+    reason_value = getattr(reason, "value", reason)
+    stage = gate.get("failure_stage")
+    if stage == "context_selection" or reason_value in _CONTEXT_SELECTION_REASONS:
+        return "context_selection"
+    if stage == "retrieval" or reason_value == "no_retrieval_results":
+        return "retrieval"
+    if gate.get("generation_ran") and reason_value is None:
+        return "generation_refusal"
+    return "admission_grounding"
+
+
 def _knowledge_document_ids(items: list[dict[str, Any]]) -> set[str]:
     return {
         str(item["document_id"])
@@ -523,6 +549,13 @@ def evaluate_case_result(
     normalized_answer = normalize_text(message.content)
     web = dict(metadata.get("web_search") or {})
     gate = dict(metadata.get("evidence_gate") or {})
+    gate_admitted_ids = {
+        str(item["chunk_id"])
+        for item in list((gate.get("candidate_wise") or {}).get("assessments") or [])
+        if item.get("passed") and item.get("chunk_id")
+    }
+    if gate_admitted_ids:
+        admitted_ids = gate_admitted_ids
     authority = dict(metadata.get("current_authority") or {})
     scope_current_authority = dict(metadata.get("scope_current_authority") or {})
     failures: list[dict[str, str]] = []
@@ -532,9 +565,7 @@ def evaluate_case_result(
         all_knowledge_evidence.extend(claim["evidence"])
         finalized_knowledge_evidence.extend(claim["evidence"])
 
-    prohibited_documents = {
-        str(document_ids[source]) for source in case.prohibited_final_sources
-    }
+    prohibited_documents = {str(document_ids[source]) for source in case.prohibited_final_sources}
     leaked_prohibited = _knowledge_document_ids(finalized_knowledge_evidence) & prohibited_documents
     if leaked_prohibited:
         failures.append(
@@ -572,6 +603,23 @@ def evaluate_case_result(
             if normalize_text(token) not in normalized_answer:
                 failures.append(
                     _failure("generation_refusal", f"Answer is missing expected fact {token!r}.")
+                )
+        for token in case.user_parameter_tokens:
+            if normalize_text(token) not in normalized_answer:
+                failures.append(
+                    _failure(
+                        "generation_refusal",
+                        f"Answer is missing user-provided parameter {token!r}.",
+                    )
+                )
+        for group in case.expected_token_groups:
+            if not any(_contains_semantic_marker(normalized_answer, token) for token in group):
+                failures.append(
+                    _failure(
+                        "generation_refusal",
+                        "Answer is missing an expected fact equivalent to "
+                        f"{group[0]!r} (accepted equivalents: {group!r}).",
+                    )
                 )
         for token in case.prohibited_answer_tokens:
             normalized_token = normalize_text(token)
@@ -635,10 +683,18 @@ def evaluate_case_result(
                     )
                 )
         if message.insufficient_evidence_reason is not None or not message.grounded:
-            failures.append(_failure("admission_grounding", "Answerable case was not grounded."))
+            failures.append(
+                _failure(
+                    _grounding_failure_stage(gate, message.insufficient_evidence_reason),
+                    "Answerable case was not grounded.",
+                )
+            )
         if not bool(gate.get("sufficient")):
             failures.append(
-                _failure("admission_grounding", "Indexed evidence did not pass the grounding gate.")
+                _failure(
+                    _grounding_failure_stage(gate, message.insufficient_evidence_reason),
+                    "Indexed evidence did not pass the grounding gate.",
+                )
             )
         if relevant_ids and not (citation_ids & relevant_ids):
             failures.append(_failure("citation", "No citation points at expected evidence."))
@@ -715,6 +771,15 @@ def evaluate_case_result(
                 )
             )
 
+    rerank = sanitize_diagnostics(trace.get("rerank") or {})
+    provider_degradation = None
+    if rerank.get("status") == "unavailable":
+        provider_degradation = {
+            "component": "rerank",
+            "status": "unavailable",
+            "failure_reason": rerank.get("failure_reason") or "unavailable",
+        }
+
     return {
         "key": case.key,
         "tags": case.tags,
@@ -743,7 +808,8 @@ def evaluate_case_result(
         "evidence_gate": sanitize_diagnostics(gate),
         "fallback": sanitize_diagnostics(web),
         "translation": sanitize_diagnostics(trace.get("translation") or {}),
-        "rerank": sanitize_diagnostics(trace.get("rerank") or {}),
+        "rerank": rerank,
+        "provider_degradation": provider_degradation,
         "timings_ms": {
             "retrieval": message.retrieval_latency_ms,
             "generation": message.provider_latency_ms,
@@ -758,10 +824,33 @@ def aggregate_results(cases: list[dict[str, Any]]) -> dict[str, Any]:
         for case in cases
         if isinstance(case.get("timings_ms", {}).get("total"), (int, float))
     ]
+    passed = sum(bool(case["passed"]) for case in cases)
+    failure_counts = {
+        stage: sum(
+            failure["stage"] == stage for case in cases for failure in case.get("failures", [])
+        )
+        for stage in (
+            "retrieval",
+            "authority",
+            "admission_grounding",
+            "context_selection",
+            "generation_refusal",
+            "citation",
+            "fallback",
+        )
+    }
+    degradation_reasons: dict[str, int] = {}
+    for case in cases:
+        degradation = case.get("provider_degradation") or {}
+        if degradation.get("component") != "rerank":
+            continue
+        reason = str(degradation.get("failure_reason") or "unavailable")
+        degradation_reasons[reason] = degradation_reasons.get(reason, 0) + 1
     return {
         "case_count": len(cases),
-        "passed": sum(bool(case["passed"]) for case in cases),
-        "pass_rate": sum(bool(case["passed"]) for case in cases) / len(cases) if cases else 0.0,
+        "passed": passed,
+        "failed": len(cases) - passed,
+        "pass_rate": passed / len(cases) if cases else 0.0,
         "mean_recall": statistics.fmean(
             float(case["retrieval"]["recall"]) for case in cases if case["mode"] == "answerable"
         )
@@ -769,18 +858,24 @@ def aggregate_results(cases: list[dict[str, Any]]) -> dict[str, Any]:
         else 0.0,
         "latency_p50_ms": statistics.median(latencies) if latencies else 0.0,
         "latency_p95_ms": _percentile(latencies, 0.95),
-        "failure_counts": {
-            stage: sum(
-                failure["stage"] == stage for case in cases for failure in case.get("failures", [])
-            )
-            for stage in (
-                "retrieval",
-                "authority",
-                "admission_grounding",
-                "generation_refusal",
-                "citation",
-                "fallback",
-            )
+        "latency_mean_ms": statistics.fmean(latencies) if latencies else 0.0,
+        "latency_max_ms": max(latencies) if latencies else 0.0,
+        "failure_counts": failure_counts,
+        "correctness": {
+            "passed": passed,
+            "failed": len(cases) - passed,
+            "pass_rate": passed / len(cases) if cases else 0.0,
+            "failure_counts": failure_counts,
+        },
+        "provider_degradation": {
+            "rerank_unavailable_count": sum(degradation_reasons.values()),
+            "by_failure_reason": dict(sorted(degradation_reasons.items())),
+        },
+        "latency": {
+            "p50_ms": statistics.median(latencies) if latencies else 0.0,
+            "p95_ms": _percentile(latencies, 0.95),
+            "mean_ms": statistics.fmean(latencies) if latencies else 0.0,
+            "max_ms": max(latencies) if latencies else 0.0,
         },
     }
 
@@ -1167,9 +1262,7 @@ def _evaluation_case(
         as_of=case.as_of,
         expected_answer_tokens=case.expected_tokens,
         expected_no_answer=case.mode == "no_answer",
-        query_language=(
-            "bn" if any("\u0980" <= char <= "\u09ff" for char in case.query) else None
-        ),
+        query_language=("bn" if any("\u0980" <= char <= "\u09ff" for char in case.query) else None),
         expected_evidence_language=None,
         query_form=query_form,
     )
@@ -1342,6 +1435,55 @@ def source_purge_order(sources: list[JourneySource]) -> list[str]:
     return order
 
 
+async def _await_document_purge(
+    session_factory: Any,
+    *,
+    project_id: uuid.UUID,
+    job_id: uuid.UUID,
+    settings: Settings,
+    timeout_seconds: float = 900.0,
+) -> None:
+    """Drain inline durable purge jobs through retry and terminal states."""
+    import asyncio
+    from datetime import UTC, datetime
+
+    from app.composition.jobs import build_job_service
+    from app.models.job_run import JobState
+    from app.platform.jobs.implementations.inline_queue import InlineJobQueue
+
+    started = datetime.now(UTC)
+    while True:
+        async with session_factory() as session:
+            service = build_job_service(
+                session=session,
+                project_id=project_id,
+                settings=settings,
+                queue=InlineJobQueue(),
+            )
+            run = (await service.get_detail(job_id)).run
+            if run.state is JobState.SUCCEEDED:
+                return
+            if run.state is JobState.FAILED:
+                raise JourneyError(
+                    "Document purge job failed "
+                    f"({run.failure_code or 'unknown'}: {run.failure_message or 'no message'})."
+                )
+            if run.state in {
+                JobState.RETRY_SCHEDULED,
+                JobState.QUEUED,
+                JobState.RUNNING,
+            }:
+                await service.dispatch(job_id)
+            else:
+                await service.dispatch_next()
+        elapsed = (datetime.now(UTC) - started).total_seconds()
+        if elapsed >= timeout_seconds:
+            raise JourneyError(
+                f"Document purge job {job_id} did not finish within {timeout_seconds:.0f}s."
+            )
+        await asyncio.sleep(0.1)
+
+
 async def _cleanup_project(
     session_factory: Any,
     *,
@@ -1386,7 +1528,16 @@ async def _cleanup_project(
                 settings=settings,
                 storage=storage,
             )
-            await service.purge(document_id)
+            document = await service.purge(document_id)
+            job_id = getattr(document, "job_id", None)
+            if job_id is None:
+                raise JourneyError(f"Document purge did not return a job id for {source_key}.")
+        await _await_document_purge(
+            session_factory,
+            project_id=project_id,
+            job_id=job_id,
+            settings=settings,
+        )
     remaining_keys = await storage.list_keys(f"{project_id}/")
     if remaining_keys:
         raise JourneyError(
@@ -1515,6 +1666,45 @@ def render_summary(result: Mapping[str, Any]) -> str:
                 f"{case['timings_ms']['total'] or 0} |"
             )
         lines.append("")
+        correctness = aggregate.get("correctness") or {}
+        degradation = aggregate.get("provider_degradation") or {}
+        latency = aggregate.get("latency") or {}
+        reason_parts = [
+            f"{reason} {count}"
+            for reason, count in (degradation.get("by_failure_reason") or {}).items()
+        ]
+        reason_text = ", ".join(reason_parts) if reason_parts else "none"
+        failure_parts = [
+            f"{stage} {count}"
+            for stage, count in (
+                correctness.get("failure_counts") or aggregate["failure_counts"]
+            ).items()
+            if count
+        ]
+        lines.extend(
+            [
+                "### Correctness",
+                "",
+                f"Passed {correctness.get('passed', aggregate['passed'])}/"
+                f"{aggregate['case_count']}; semantic RAG failures: "
+                f"{', '.join(failure_parts) or 'none'}.",
+                "",
+                "### Provider degradation",
+                "",
+                f"Rerank unavailable: {degradation.get('rerank_unavailable_count', 0)} "
+                f"({reason_text}). Provider timeouts, rate limits, and connection "
+                "failures are reported here and do not count as semantic RAG failures.",
+                "",
+                "### Latency",
+                "",
+                f"p50/p95/mean/max "
+                f"{latency.get('p50_ms', aggregate['latency_p50_ms']):.0f}/"
+                f"{latency.get('p95_ms', aggregate['latency_p95_ms']):.0f}/"
+                f"{latency.get('mean_ms', 0):.0f}/"
+                f"{latency.get('max_ms', 0):.0f} ms.",
+                "",
+            ]
+        )
         failed_cases = [case for case in variant["cases"] if not case["passed"]]
         if failed_cases:
             lines.extend(["Failure details:", ""])

@@ -65,3 +65,16 @@ class ProviderUnavailableError(ProviderError):
 
     def __init__(self, message: str, **kwargs: Any) -> None:
         super().__init__(message, retryable=True, **kwargs)
+
+
+def sanitized_provider_failure_reason(exc: ProviderError) -> str:
+    """Return a public, non-generic reason for fail-open provider degradation."""
+    if isinstance(exc, ProviderTimeoutError):
+        return "timeout"
+    if isinstance(exc, ProviderRateLimitError):
+        return "rate_limit"
+    if isinstance(exc, ProviderConnectionError):
+        return "connection"
+    if isinstance(exc, ProviderUnavailableError):
+        return "provider_unavailable"
+    return "unavailable"

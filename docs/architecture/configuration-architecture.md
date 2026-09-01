@@ -20,7 +20,9 @@ explicit allowlist and credential-presence flags; it never dumps `Settings`.
 
 Project revisions are sparse, typed documents. Effective resolution records an origin for each
 value, the active revision ID/hash, a secret-free global fingerprint, provider-capability version,
-and prompt versions. A Project without an active revision resolves exactly to deployment defaults.
+and prompt versions. A Project without an active revision resolves exactly to deployment defaults,
+including `APE_AI_POLICY__SOURCE_POLICY_MODE` (`off`) for source-policy. The deployment cap
+`APE_AI_POLICY__SOURCE_POLICY_DEPLOYMENT_CAP` may only lower that mode.
 
 The external request allowlist is `top_k`, an enabled retrieval strategy, existing allowlisted
 metadata filters, and explicit `as_of`. Provider/model, temperature, token limits, reranking,

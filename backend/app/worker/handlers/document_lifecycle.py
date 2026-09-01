@@ -14,6 +14,9 @@ from app.modules.jobs.services.job_service import JobService
 from app.modules.knowledge.domain.document_storage_keys import iter_document_storage_keys
 from app.modules.knowledge.repositories.document_chunk_repository import DocumentChunkRepository
 from app.modules.knowledge.repositories.document_repository import DocumentRepository
+from app.modules.knowledge.repositories.source_metadata_repository import (
+    SourceMetadataRepository,
+)
 from app.modules.retrieval.repositories.index_build_repository import IndexBuildRepository
 from app.modules.retrieval.services.retrieval_cleanup_service import RetrievalCleanupService
 from app.platform.jobs.contracts import JobDefinition
@@ -64,6 +67,7 @@ async def _execute(
     cleanup = RetrievalCleanupService(session, run.project_id)
     await cleanup.on_document_delete(document.id)
     await DocumentChunkRepository(session, run.project_id).delete_by_document(document.id)
+    await SourceMetadataRepository(session, run.project_id).purge_document_artifacts(document.id)
     builds = IndexBuildRepository(session, run.project_id)
     pointer = await builds.get_pointer(for_update=True)
     for build in await builds.list_all():

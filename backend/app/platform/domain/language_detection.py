@@ -67,6 +67,7 @@ _ROMANIZED_BANGLA_PARTICLES = frozenset(
         "theke",
     }
 )
+ROMANIZED_BANGLA_PARTICLES = _ROMANIZED_BANGLA_PARTICLES
 
 
 @dataclass(frozen=True, slots=True)

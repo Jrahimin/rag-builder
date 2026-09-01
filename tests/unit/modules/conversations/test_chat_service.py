@@ -497,9 +497,11 @@ async def test_candidate_wise_canary_refuses_when_admitted_unit_exceeds_context_
 
     assert llm.calls == 0
     assert turn.assistant_message.finish_reason == "insufficient_evidence"
-    assert turn.assistant_message.insufficient_evidence_reason == "below_relevance_threshold"
+    assert turn.assistant_message.insufficient_evidence_reason == "context_selection_empty"
     gate = turn.assistant_message.metadata["evidence_gate"]
+    assert gate["failure_stage"] == "context_selection"
     assert gate["candidate_wise"]["admitted_count"] == 1
+    assert gate["candidate_wise"]["context_selected_count"] == 0
     assert gate["generation_ran"] is False
 
 

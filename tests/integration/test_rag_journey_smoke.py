@@ -191,9 +191,7 @@ async def test_tax_journey_subset_uses_production_diagnostics_and_cleans_up(
     assert "setup_error" not in result
     assert result["cleanup"]["status"] == "succeeded"
     assert result["index"]["document_count"] == 6
-    structured_anchor_keys = {
-        item["key"] for item in payload["anchors"] if item.get("section")
-    }
+    structured_anchor_keys = {item["key"] for item in payload["anchors"] if item.get("section")}
     for key, chunk_ids in result["anchor_mappings"].items():
         assert chunk_ids
         if key in structured_anchor_keys:

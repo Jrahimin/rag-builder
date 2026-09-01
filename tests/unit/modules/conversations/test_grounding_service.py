@@ -474,8 +474,7 @@ async def test_bounded_citations_support_a_displayed_calculation_block() -> None
         [
             _chunk(
                 content=(
-                    "The investment rebate rate is 10%. For BDT 60,000, "
-                    "the rebate is BDT 6,000."
+                    "The investment rebate rate is 10%. For BDT 60,000, the rebate is BDT 6,000."
                 )
             )
         ],
@@ -497,8 +496,7 @@ async def test_bounded_citations_do_not_cross_an_uncited_factual_block() -> None
         [
             _chunk(
                 content=(
-                    "The investment rebate rate is 10%. For BDT 60,000, "
-                    "the rebate is BDT 6,000."
+                    "The investment rebate rate is 10%. For BDT 60,000, the rebate is BDT 6,000."
                 )
             )
         ],

@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import math
+import uuid
 from dataclasses import dataclass
 
 import regex
+
+from app.platform.providers.contracts.embedding import BaseEmbeddingProvider, EmbeddingPurpose
 
 _TOKEN_PATTERN = regex.compile(r"\S+", regex.UNICODE)
 
@@ -69,3 +72,36 @@ def cosine_similarity(left: list[float], right: list[float]) -> float:
     if left_norm == 0.0 or right_norm == 0.0:
         return 0.0
     return dot / (left_norm * right_norm)
+
+
+async def score_best_passages(
+    *,
+    embedder: BaseEmbeddingProvider,
+    query_vector: list[float],
+    texts: dict[uuid.UUID, str],
+    window_tokens: int,
+    overlap_tokens: int,
+    minimum_tokens: int,
+) -> dict[uuid.UUID, tuple[float, BoundedPassage]]:
+    """Embed bounded passages and return the best cosine window per text."""
+    passages: list[str] = []
+    owners: list[tuple[uuid.UUID, BoundedPassage]] = []
+    for chunk_id, text in texts.items():
+        for passage in bounded_token_passages(
+            text,
+            window_tokens=window_tokens,
+            overlap_tokens=overlap_tokens,
+            minimum_tokens=minimum_tokens,
+        ):
+            passages.append(passage.text)
+            owners.append((chunk_id, passage))
+    if not passages:
+        return {}
+    embedded = await embedder.embed_texts(passages, purpose=EmbeddingPurpose.DOCUMENT)
+    best: dict[uuid.UUID, tuple[float, BoundedPassage]] = {}
+    for (chunk_id, passage), vector in zip(owners, embedded.vectors, strict=True):
+        score = cosine_similarity(query_vector, vector)
+        current = best.get(chunk_id)
+        if current is None or score > current[0]:
+            best[chunk_id] = (score, passage)
+    return best

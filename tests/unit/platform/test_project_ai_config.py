@@ -223,6 +223,47 @@ def test_project_revision_is_typed_hashed_and_has_origins() -> None:
     assert resolution.provenance.project_config_hash == revision.configuration_hash
 
 
+def test_source_policy_mode_defaults_to_off_from_global_settings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("APE_AI_POLICY__SOURCE_POLICY_MODE", raising=False)
+    settings = Settings()
+    resolution = resolve_project_ai_config(settings, None)
+
+    assert settings.ai_policy.source_policy_mode.value == "off"
+    assert resolution.configuration.source_policy_mode.value == "off"
+    assert resolution.origins["source_policy_mode"] == "global"
+    assert resolution.provenance.configured_source_policy_mode.value == "off"
+    assert resolution.provenance.effective_source_policy_mode.value == "off"
+    assert resolution.provenance.source_policy_deployment_cap.value == "enforce"
+
+
+def test_global_source_policy_mode_env_is_inherited_without_project_revision(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("APE_AI_POLICY__SOURCE_POLICY_MODE", "enforce")
+    settings = Settings()
+    resolution = resolve_project_ai_config(settings, None)
+
+    assert settings.ai_policy.source_policy_mode.value == "enforce"
+    assert resolution.configuration.source_policy_mode.value == "enforce"
+    assert resolution.origins["source_policy_mode"] == "global"
+    assert resolution.provenance.configured_source_policy_mode.value == "enforce"
+    assert resolution.provenance.effective_source_policy_mode.value == "enforce"
+
+
+def test_project_source_policy_mode_overrides_global_default() -> None:
+    settings = Settings(ai_policy={"source_policy_mode": "enforce"})
+    revision = _revision({"source_policy_mode": "observe"})
+
+    resolution = resolve_project_ai_config(settings, revision)
+
+    assert resolution.configuration.source_policy_mode.value == "observe"
+    assert resolution.origins["source_policy_mode"] == "project"
+    assert resolution.provenance.configured_source_policy_mode.value == "observe"
+    assert resolution.provenance.effective_source_policy_mode.value == "observe"
+
+
 def test_deployment_source_policy_cap_lowers_effective_mode_without_mutating_revision() -> None:
     revision = _revision({"source_policy_mode": "enforce"})
 
@@ -237,6 +278,49 @@ def test_deployment_source_policy_cap_lowers_effective_mode_without_mutating_rev
     assert resolution.provenance.configured_source_policy_mode.value == "enforce"
     assert resolution.provenance.effective_source_policy_mode.value == "observe"
     assert resolution.provenance.source_policy_deployment_cap.value == "observe"
+
+
+def test_deployment_cap_restricts_global_source_policy_mode_without_activating_off() -> None:
+    inherited_off = resolve_project_ai_config(
+        Settings(
+            ai_policy={
+                "source_policy_mode": "off",
+                "source_policy_deployment_cap": "enforce",
+            }
+        ),
+        None,
+    )
+    capped_global = resolve_project_ai_config(
+        Settings(
+            ai_policy={
+                "source_policy_mode": "enforce",
+                "source_policy_deployment_cap": "observe",
+            }
+        ),
+        None,
+    )
+
+    assert inherited_off.configuration.source_policy_mode.value == "off"
+    assert inherited_off.origins["source_policy_mode"] == "global"
+    assert inherited_off.provenance.configured_source_policy_mode.value == "off"
+    assert inherited_off.provenance.effective_source_policy_mode.value == "off"
+    assert capped_global.configuration.source_policy_mode.value == "observe"
+    assert capped_global.origins["source_policy_mode"] == "deployment_safety_cap"
+    assert capped_global.provenance.configured_source_policy_mode.value == "enforce"
+    assert capped_global.provenance.effective_source_policy_mode.value == "observe"
+
+
+def test_unknown_ai_policy_env_does_not_change_source_policy_defaults(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("APE_AI_POLICY__SOURCE_POLICY_MODE", raising=False)
+    monkeypatch.setenv("APE_AI_POLICY__NOT_A_REAL_FIELD", "enforce")
+    settings = Settings()
+    resolution = resolve_project_ai_config(settings, None)
+
+    assert settings.ai_policy.source_policy_mode.value == "off"
+    assert resolution.configuration.source_policy_mode.value == "off"
+    assert resolution.origins["source_policy_mode"] == "global"
 
 
 def test_compatibility_mode_records_and_applies_deprecated_overrides() -> None:
@@ -466,6 +550,38 @@ def test_candidate_wise_grounding_can_be_enabled_for_a_project_canary() -> None:
     assert resolution.configuration.chat.candidate_wise_grounding_enabled is True
     assert resolution.origins["chat.candidate_wise_grounding_enabled"] == "project"
     assert restored.chat.candidate_wise_grounding_enabled is True
+
+
+def test_grounding_mode_defaults_to_strict_and_can_be_balanced_per_project() -> None:
+    inherited = resolve_project_ai_config(Settings(), None)
+    revision = _revision({"chat": {"grounding_mode": "balanced"}})
+
+    resolution = resolve_project_ai_config(Settings(), revision)
+    restored = apply_effective_ai_config(Settings(), resolution)
+
+    assert inherited.configuration.chat.grounding_mode.value == "strict"
+    assert inherited.origins["chat.grounding_mode"] == "global"
+    assert resolution.configuration.chat.grounding_mode.value == "balanced"
+    assert resolution.origins["chat.grounding_mode"] == "project"
+    assert restored.chat.grounding_mode.value == "balanced"
+    assert Settings().chat.grounding_mode.value == "strict"
+
+
+def test_high_confidence_reranker_bar_must_exceed_the_medium_confidence_bar() -> None:
+    revision = _revision(
+        {
+            "chat": {
+                "minimum_reranker_evidence_score": 0.75,
+                "high_confidence_reranker_evidence_score": 0.70,
+            }
+        }
+    )
+
+    with pytest.raises(BadRequestError) as caught:
+        resolve_project_ai_config(Settings(), revision)
+
+    assert caught.value.code == "invalid_evidence_thresholds"
+    assert "high_confidence_reranker_evidence_score" in caught.value.message
 
 
 def test_passage_evidence_mode_requires_passage_scoring() -> None:

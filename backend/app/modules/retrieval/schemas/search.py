@@ -58,6 +58,7 @@ class SearchDiagnostics(BaseModel):
     duration_ms: int
     rerank_requested: bool
     rerank_status: str
+    rerank_failure_reason: str | None = None
     reranker_provider: str | None = None
     reranker_model: str | None = None
     reranker_version: str | None = None

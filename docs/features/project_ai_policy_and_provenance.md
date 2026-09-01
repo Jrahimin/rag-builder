@@ -15,13 +15,18 @@ Effective AI configuration resolves in this order:
 The typed revision covers LLM provider/model/generation values, retrieval and reranking defaults
 (`rerank_mode`: Inherit / Always / Cross-language / Off; query translation Inherit / On / Off),
 chat context/history/citation/grounding behavior, domain instructions, prompt profile/version, and
-source-policy rollout mode. Embedding and chunking settings remain deployment/index-artifact
+source-policy rollout mode (`APE_AI_POLICY__SOURCE_POLICY_MODE`, default `off`; Project leaf
+overrides it; `APE_AI_POLICY__SOURCE_POLICY_DEPLOYMENT_CAP` may only lower the result). Embedding
+and chunking settings remain deployment/index-artifact
 policy. All-inherit Create Project and AI Configuration submits create no revision. If Project
 create succeeds and the optional AI-config save fails, the Project is kept on inherited defaults
 and the console offers a retry on AI Configuration.
 
 Chat policy also contains sparse `response_mode`: `indexed_only` (global default),
-`indexed_then_web`, or `indexed_and_web`. Web-enabled revisions require a configured deployment
+`indexed_then_web`, or `indexed_and_web`. Sparse chat grounding policy may set `grounding_mode`
+(`strict` default, `balanced`) and `high_confidence_reranker_evidence_score` without changing
+medium-confidence bars. Existing revisions omit these fields and continue to inherit `strict`.
+Web-enabled revisions require a configured deployment
 search provider and the v5 source-aware prompt. Sparse `web_search` policy can enable or disable
 web use per Project and bound its model, result count, evidence-character budget, output-token
 budget, and timeout. Provider credentials and endpoint remain deployment-owned. When no dedicated

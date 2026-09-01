@@ -102,6 +102,13 @@ def test_nested_env_sets_embedding_set_version(monkeypatch: pytest.MonkeyPatch) 
     assert settings.retrieval.embedding_set_version == 3
 
 
+def test_nested_env_sets_source_policy_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("APE_AI_POLICY__SOURCE_POLICY_MODE", "enforce")
+    settings = Settings()
+    assert settings.ai_policy.source_policy_mode.value == "enforce"
+    assert settings.ai_policy.source_policy_deployment_cap.value == "enforce"
+
+
 def test_settings_env_files_skip_when_testing(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("APE_APP__ENV", "testing")
     assert _settings_env_files() is None

@@ -335,13 +335,14 @@ class GroundedEvaluationAnswerAdapter(EvaluationAnswerPort):
             ),
             None,
         )
-        decision, selected = assess_and_select_knowledge(
+        decision, selected = await assess_and_select_knowledge(
             grounding=grounding,
             context_builder=self._context,
             chat_config=self._settings.chat,
             question=question,
             chunks=chunks,
             rerank_status=rerank_status,
+            retrieval_config=self._settings.retrieval,
         )
         blocked = grounding.blocks_generation(decision)
         if blocked:

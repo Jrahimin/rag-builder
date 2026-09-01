@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -14,8 +15,10 @@ from app.cli.rag_journey import (
     EvidenceAnchor,
     JourneyCase,
     JourneyError,
+    JourneyManifest,
     JourneySource,
     RuntimeChunk,
+    _await_document_purge,
     _comparison_summary,
     _ensure_indexed,
     _preflight_default_organization,
@@ -100,11 +103,24 @@ def test_tax_v1_fixture_requires_all_eligible_categories_and_stale_correction() 
     manifest = load_manifest()
     cases = {case.key: case for case in manifest.cases}
 
-    assert cases["eligible_investments_scoped"].expected_tokens == [
-        "approved savings certificates",
-        "approved retirement contributions",
-        "approved life-insurance premiums",
+    eligible = cases["eligible_investments_scoped"]
+    assert eligible.expected_tokens == []
+    assert eligible.expected_token_groups == [
+        ["approved savings certificates", "savings certificates"],
+        ["approved retirement contributions", "retirement contributions"],
+        [
+            "approved life-insurance premiums",
+            "life-insurance premiums",
+            "life insurance premiums",
+        ],
     ]
+    declared = cases["declared_investment_75000"]
+    assert declared.user_parameter_tokens == ["75000"]
+    assert declared.required_anchor_groups == [["rebate_rate_2026"]]
+    assert "declared_amount_2024_bn" not in declared.anchors
+    bilingual = cases["historical_rebate_bilingual"]
+    assert "historical_rebate_rate_2024_bn" in bilingual.required_anchor_groups[0]
+    assert bilingual.prohibited_final_sources == ["finance_2026", "finance_2027"]
     correction = cases["stale_rebate_correction"].correction
     assert correction is not None
     assert correction.old_tokens == ["15%", "9000"]
@@ -348,9 +364,7 @@ def test_phrase_only_anchor_accepts_all_matching_semantic_chunks() -> None:
         )
     ]
 
-    assert resolve_evidence_anchors([anchor], chunks) == {
-        "verification": [first_id, second_id]
-    }
+    assert resolve_evidence_anchors([anchor], chunks) == {"verification": [first_id, second_id]}
 
 
 def test_tax_v1_mixed_document_queries_have_intended_language_profiles() -> None:
@@ -390,9 +404,16 @@ def test_config_assignments_accept_only_valid_project_query_leaves() -> None:
     key, value = parse_config_assignment("retrieval.query_translation_enabled=false")
 
     assert (key, value) == ("retrieval.query_translation_enabled", False)
-    config = build_project_config({key: value, "chat.response_mode": "indexed_then_web"})
+    config = build_project_config(
+        {
+            key: value,
+            "chat.response_mode": "indexed_then_web",
+            "chat.grounding_mode": "balanced",
+        }
+    )
     assert config.retrieval.query_translation_enabled is False
     assert config.chat.response_mode is ResponseMode.INDEXED_THEN_WEB
+    assert config.chat.grounding_mode.value == "balanced"
 
 
 def test_empty_baseline_inherits_deployment_config_without_implicit_policy_overrides() -> None:
@@ -441,6 +462,115 @@ def test_source_purge_order_deletes_modifiers_before_targets() -> None:
 
     assert source_purge_order([source_2023, source_2026]) == ["finance_2026", "tax_2023"]
     assert source_purge_order([source_2026, source_2023]) == ["finance_2026", "tax_2023"]
+
+
+def test_source_purge_order_for_tax_v1_modifier_chain() -> None:
+    manifest = JourneyManifest.model_validate_json(DEFAULT_FIXTURE.read_text(encoding="utf-8"))
+    order = source_purge_order(manifest.sources)
+    assert order.index("finance_2027") < order.index("finance_2026")
+    assert order.index("finance_2026") < order.index("tax_2023")
+    assert order.index("finance_2026") < order.index("tax_2023_bn")
+
+
+async def test_await_document_purge_returns_when_job_succeeds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.models.job_run import JobRun, JobState, JobType
+
+    project_id = uuid.uuid4()
+    job_id = uuid.uuid4()
+    run = JobRun(
+        id=job_id,
+        project_id=project_id,
+        job_type=JobType.DOCUMENT_PURGE,
+        state=JobState.SUCCEEDED,
+        stage="purged",
+        progress=100,
+        payload={},
+        idempotency_key="purge:test",
+        configuration_snapshot_id=uuid.uuid4(),
+    )
+
+    class _SessionFactory:
+        def __call__(self) -> Any:
+            return self
+
+        async def __aenter__(self) -> Any:
+            return object()
+
+        async def __aexit__(self, *_args: object) -> None:
+            return None
+
+    class _Service:
+        async def get_detail(self, _job_id: uuid.UUID) -> Any:
+            return SimpleNamespace(run=run)
+
+        async def dispatch(self, _job_id: uuid.UUID) -> None:
+            raise AssertionError("dispatch should not run for succeeded jobs")
+
+        async def dispatch_next(self) -> bool:
+            raise AssertionError("dispatch_next should not run for succeeded jobs")
+
+    monkeypatch.setattr(
+        "app.composition.jobs.build_job_service",
+        lambda **_kwargs: _Service(),
+    )
+
+    await _await_document_purge(
+        _SessionFactory(),
+        project_id=project_id,
+        job_id=job_id,
+        settings=SimpleNamespace(),
+    )
+
+
+async def test_await_document_purge_raises_when_job_failed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.models.job_run import JobRun, JobState, JobType
+
+    project_id = uuid.uuid4()
+    job_id = uuid.uuid4()
+    run = JobRun(
+        id=job_id,
+        project_id=project_id,
+        job_type=JobType.DOCUMENT_PURGE,
+        state=JobState.FAILED,
+        stage="failed",
+        progress=0,
+        payload={},
+        idempotency_key="purge:test",
+        configuration_snapshot_id=uuid.uuid4(),
+        failure_code="provider_rate_limit_error",
+        failure_message="rate limited",
+    )
+
+    class _SessionFactory:
+        def __call__(self) -> Any:
+            return self
+
+        async def __aenter__(self) -> Any:
+            return object()
+
+        async def __aexit__(self, *_args: object) -> None:
+            return None
+
+    class _Service:
+        async def get_detail(self, _job_id: uuid.UUID) -> Any:
+            return SimpleNamespace(run=run)
+
+    monkeypatch.setattr(
+        "app.composition.jobs.build_job_service",
+        lambda **_kwargs: _Service(),
+    )
+
+    with pytest.raises(JourneyError, match="provider_rate_limit_error"):
+        await _await_document_purge(
+            _SessionFactory(),
+            project_id=project_id,
+            job_id=job_id,
+            settings=SimpleNamespace(),
+        )
 
 
 def test_cli_rejects_more_than_one_comparison_variant() -> None:
@@ -645,6 +775,222 @@ def test_expected_any_accepts_semantically_equivalent_inflection() -> None:
     assert result["passed"] is True
 
 
+def test_expected_token_groups_accept_equivalent_wording() -> None:
+    case = JourneyCase(
+        key="eligible",
+        tags=["factual"],
+        query="Which investments are eligible?",
+        anchors=[],
+        expected_token_groups=[
+            ["approved savings certificates", "savings certificates"],
+            ["approved retirement contributions", "retirement contributions"],
+        ],
+    )
+    message = _message(
+        content="Eligible investments include savings certificates and retirement contributions.",
+        metadata={
+            "evidence_gate": {"sufficient": True},
+            "web_search": {"status": "not_requested", "fallback_used": False},
+        },
+    )
+
+    result = evaluate_case_result(
+        case=case,
+        message=message,
+        anchor_mapping={},
+        document_ids={},
+        response_mode=ResponseMode.INDEXED_ONLY,
+        modifies_expansion_enabled=True,
+    )
+
+    assert result["passed"] is True
+
+
+def test_expected_token_groups_still_require_each_fact_family() -> None:
+    case = JourneyCase(
+        key="eligible",
+        tags=["factual"],
+        query="Which investments are eligible?",
+        anchors=[],
+        expected_token_groups=[
+            ["approved savings certificates", "savings certificates"],
+            ["approved retirement contributions", "retirement contributions"],
+        ],
+    )
+    message = _message(
+        content="Eligible investments include savings certificates.",
+        metadata={
+            "evidence_gate": {"sufficient": True},
+            "web_search": {"status": "not_requested", "fallback_used": False},
+        },
+    )
+
+    result = evaluate_case_result(
+        case=case,
+        message=message,
+        anchor_mapping={},
+        document_ids={},
+        response_mode=ResponseMode.INDEXED_ONLY,
+        modifies_expansion_enabled=True,
+    )
+
+    assert result["passed"] is False
+    assert any("retirement contributions" in item["message"] for item in result["failures"])
+
+
+def test_user_parameter_tokens_need_not_be_cited_from_the_knowledge_base() -> None:
+    rate_id = uuid.uuid4()
+    amount_id = uuid.uuid4()
+    document_id = uuid.uuid4()
+    case = JourneyCase(
+        key="declared",
+        tags=["calculation"],
+        query="Use my amount of 75,000.",
+        anchors=["rebate_rate"],
+        required_anchor_groups=[["rebate_rate"]],
+        user_parameter_tokens=["75000"],
+        expected_tokens=["10%", "75000", "7500"],
+    )
+    claims = [
+        SimpleNamespace(
+            claim_id="claim-1",
+            text="The rebate is 7,500.",
+            grounded=True,
+            verification=ClaimVerification.SUPPORTED,
+            evidence=[
+                SimpleNamespace(
+                    source_kind=CitationSourceKind.KNOWLEDGE,
+                    chunk_id=rate_id,
+                    document_id=document_id,
+                )
+            ],
+        )
+    ]
+    identities = [{"chunk_id": str(rate_id), "document_id": str(document_id)}]
+    message = _message(
+        content="Using your 75000, the 10% rebate is 7500.",
+        claims=claims,
+        metadata={
+            "retrieval_trace": {
+                    "retrieval_selected": [
+                        *identities,
+                        {"chunk_id": str(amount_id), "document_id": str(document_id)},
+                    ],
+                "context_selected": identities,
+            },
+            "evidence_gate": {"sufficient": True},
+            "web_search": {"status": "not_requested", "fallback_used": False},
+        },
+    )
+    message.citations = [
+        SimpleNamespace(
+            source_kind=CitationSourceKind.KNOWLEDGE,
+            chunk_id=rate_id,
+            document_id=document_id,
+            filename="finance.pdf",
+            source_revision_id=None,
+            web_url=None,
+        )
+    ]
+
+    result = evaluate_case_result(
+        case=case,
+        message=message,
+        anchor_mapping={"rebate_rate": [rate_id], "declared_amount": [amount_id]},
+        document_ids={},
+        response_mode=ResponseMode.INDEXED_ONLY,
+        modifies_expansion_enabled=True,
+    )
+
+    assert result["passed"] is True
+
+
+def test_rerank_timeout_is_provider_degradation_not_a_semantic_failure() -> None:
+    case = JourneyCase(
+        key="current",
+        tags=["authority"],
+        query="What is the rate?",
+        anchors=[],
+        expected_tokens=["10%"],
+    )
+    message = _message(
+        content="The current rebate rate is 10%.",
+        metadata={
+            "retrieval_trace": {
+                "rerank": {"status": "unavailable", "failure_reason": "timeout"},
+            },
+            "evidence_gate": {"sufficient": True},
+            "web_search": {"status": "not_requested", "fallback_used": False},
+        },
+    )
+
+    result = evaluate_case_result(
+        case=case,
+        message=message,
+        anchor_mapping={},
+        document_ids={},
+        response_mode=ResponseMode.INDEXED_ONLY,
+        modifies_expansion_enabled=True,
+    )
+    summary = aggregate_results([result])
+
+    assert result["passed"] is True
+    assert result["provider_degradation"] == {
+        "component": "rerank",
+        "status": "unavailable",
+        "failure_reason": "timeout",
+    }
+    assert summary["provider_degradation"]["rerank_unavailable_count"] == 1
+    assert summary["provider_degradation"]["by_failure_reason"] == {"timeout": 1}
+    assert summary["correctness"]["failed"] == 0
+    assert summary["failure_counts"]["admission_grounding"] == 0
+
+
+def test_empty_context_after_admission_is_context_selection_not_admission() -> None:
+    case = JourneyCase(
+        key="current",
+        tags=["authority"],
+        query="What is the rate?",
+        anchors=[],
+    )
+    message = _message(
+        content="There is not enough indexed evidence to answer from the knowledge base.",
+        grounded=False,
+        insufficient_evidence_reason=InsufficientEvidenceReason.AUTHORITY_CONTEXT_EMPTY,
+        metadata={
+            "retrieval_trace": {"context_selected": []},
+            "evidence_gate": {
+                "sufficient": False,
+                "reason": "authority_context_empty",
+                "failure_stage": "context_selection",
+                "generation_ran": False,
+                "candidate_wise": {
+                    "admitted_count": 1,
+                    "assessments": [
+                        {"chunk_id": str(uuid.uuid4()), "passed": True},
+                    ],
+                },
+            },
+            "web_search": {"status": "not_requested", "fallback_used": False},
+        },
+    )
+
+    result = evaluate_case_result(
+        case=case,
+        message=message,
+        anchor_mapping={},
+        document_ids={},
+        response_mode=ResponseMode.INDEXED_ONLY,
+        modifies_expansion_enabled=True,
+    )
+    summary = aggregate_results([result])
+
+    assert result["passed"] is False
+    assert {failure["stage"] for failure in result["failures"]} == {"context_selection"}
+    assert summary["failure_counts"]["context_selection"] >= 1
+    assert summary["failure_counts"]["admission_grounding"] == 0
+
+
 def test_codeswitch_case_requires_query_language_profile_diagnostics() -> None:
     case = JourneyCase(
         key="mixed_document_code_switched_retrieval",
@@ -675,8 +1021,7 @@ def test_codeswitch_case_requires_query_language_profile_diagnostics() -> None:
     )
     assert failed["passed"] is False
     assert any(
-        failure["stage"] == "retrieval"
-        and "language/translation diagnostics" in failure["message"]
+        failure["stage"] == "retrieval" and "language/translation diagnostics" in failure["message"]
         for failure in failed["failures"]
     )
 

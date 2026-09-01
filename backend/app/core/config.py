@@ -471,6 +471,20 @@ class EvidenceGateMode(StrEnum):
     OBSERVE = "observe"
 
 
+class GroundingMode(StrEnum):
+    """How independently a reranker hit must be corroborated before admission.
+
+    ``strict`` keeps the high-assurance rule: calibrated reranker relevance still
+    requires a separate semantic, lexical, or cross-language signal.
+    ``balanced`` may admit a clearly high-confidence reranker candidate whose
+    independent corroboration only narrowly misses, without lowering the
+    medium-confidence bars or admitting low-confidence hits.
+    """
+
+    STRICT = "strict"
+    BALANCED = "balanced"
+
+
 class ResponseMode(StrEnum):
     """Evidence workflows available to Project chat."""
 
@@ -670,7 +684,7 @@ class RerankerProviderConfig(BaseModel):
     cohere_api_key: str | None = None
     cohere_base_url: str = "https://api.cohere.com"
     cohere_model: str = "rerank-v4.0-pro"
-    request_timeout_seconds: float = Field(default=30.0, ge=1.0, le=120.0)
+    request_timeout_seconds: float = Field(default=10.0, ge=1.0, le=120.0)
     provider_version: str = "1"
 
 
@@ -755,6 +769,10 @@ class ChatConfig(BaseModel):
     cross_language_semantic_evidence_score_threshold: float = Field(default=0.30, ge=0.0, le=1.0)
     # Provider-specific calibration. Keep observe until this pair is measured.
     minimum_reranker_evidence_score: float = Field(default=0.40, ge=0.0, le=1.0)
+    # Clearly-high reranker bar used only by balanced near-miss admission and
+    # passage-scoring rescue. Must stay strictly above the medium-confidence bar.
+    high_confidence_reranker_evidence_score: float = Field(default=0.70, ge=0.0, le=1.0)
+    grounding_mode: GroundingMode = GroundingMode.STRICT
     # Compute candidate-wise assessments in all deployments; this switch controls
     # whether admitted evidence units affect generation or remain shadow-only.
     candidate_wise_grounding_enabled: bool = False
@@ -799,6 +817,12 @@ class ChatConfig(BaseModel):
             raise ValueError(msg)
         if self.claim_semantic_reject_floor > self.minimum_claim_semantic_score:
             msg = "claim_semantic_reject_floor must not exceed minimum_claim_semantic_score"
+            raise ValueError(msg)
+        if self.high_confidence_reranker_evidence_score <= self.minimum_reranker_evidence_score:
+            msg = (
+                "high_confidence_reranker_evidence_score must be strictly greater than "
+                "minimum_reranker_evidence_score"
+            )
             raise ValueError(msg)
         return self
 
@@ -848,6 +872,18 @@ class RequestOverrideMode(StrEnum):
     STRICT = "strict"
 
 
+class SourcePolicyMode(StrEnum):
+    """Project/query source-policy rollout mode.
+
+    Inherited by Projects that omit ``source_policy_mode``. Distinct from
+    :class:`SourcePolicyDeploymentCap`, which can only lower this value.
+    """
+
+    OFF = "off"
+    OBSERVE = "observe"
+    ENFORCE = "enforce"
+
+
 class SourcePolicyDeploymentCap(StrEnum):
     """Deployment-wide maximum source-policy enforcement level."""
 
@@ -857,10 +893,11 @@ class SourcePolicyDeploymentCap(StrEnum):
 
 
 class AIConfigPolicy(BaseModel):
-    """Deployment safety bounds around Project AI configuration."""
+    """Deployment defaults and safety bounds around Project AI configuration."""
 
     request_override_mode: RequestOverrideMode = RequestOverrideMode.COMPATIBILITY
     max_request_top_k: int = Field(default=100, ge=1, le=100)
+    source_policy_mode: SourcePolicyMode = SourcePolicyMode.OFF
     source_policy_deployment_cap: SourcePolicyDeploymentCap = SourcePolicyDeploymentCap.ENFORCE
     enabled_retrieval_strategies: Annotated[list[RetrievalStrategy], NoDecode] = Field(
         default_factory=lambda: [RetrievalStrategy.SEMANTIC, RetrievalStrategy.HYBRID]

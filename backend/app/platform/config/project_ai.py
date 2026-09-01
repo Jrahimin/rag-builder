@@ -6,7 +6,6 @@ import hashlib
 import json
 import uuid
 from datetime import datetime
-from enum import StrEnum
 from typing import Any
 
 import structlog
@@ -16,6 +15,7 @@ from app.core.config import (
     ChatConfig,
     EvidenceGateMode,
     EvidenceScoreMode,
+    GroundingMode,
     LLMBackend,
     ModifiesExpansionMode,
     RequestOverrideMode,
@@ -25,6 +25,7 @@ from app.core.config import (
     RetrievalStrategy,
     Settings,
     SourcePolicyDeploymentCap,
+    SourcePolicyMode,
     WebSearchBackend,
 )
 from app.core.exceptions import BadRequestError
@@ -35,12 +36,6 @@ from app.platform.providers.capabilities import (
 )
 
 logger = structlog.get_logger(__name__)
-
-
-class SourcePolicyMode(StrEnum):
-    OFF = "off"
-    OBSERVE = "observe"
-    ENFORCE = "enforce"
 
 
 class ProjectLLMPolicy(BaseModel):
@@ -99,6 +94,8 @@ class ProjectChatPolicy(BaseModel):
     minimum_query_token_coverage: float | None = Field(default=None, ge=0.0, le=1.0)
     minimum_claim_token_coverage: float | None = Field(default=None, ge=0.0, le=1.0)
     minimum_reranker_evidence_score: float | None = Field(default=None, ge=0.0, le=1.0)
+    high_confidence_reranker_evidence_score: float | None = Field(default=None, ge=0.0, le=1.0)
+    grounding_mode: GroundingMode | None = None
     candidate_wise_grounding_enabled: bool | None = None
 
 
@@ -177,6 +174,8 @@ class EffectiveChatPolicy(BaseModel):
     cross_language_semantic_evidence_score_threshold: float = 0.30
     minimum_claim_token_coverage: float
     minimum_reranker_evidence_score: float = 0.40
+    high_confidence_reranker_evidence_score: float = 0.70
+    grounding_mode: GroundingMode = GroundingMode.STRICT
     candidate_wise_grounding_enabled: bool = False
 
 
@@ -477,6 +476,16 @@ def resolve_project_ai_config(
                 project.chat.minimum_reranker_evidence_score,
                 settings.chat.minimum_reranker_evidence_score,
             ),
+            high_confidence_reranker_evidence_score=inherited(
+                "chat.high_confidence_reranker_evidence_score",
+                project.chat.high_confidence_reranker_evidence_score,
+                settings.chat.high_confidence_reranker_evidence_score,
+            ),
+            grounding_mode=inherited(
+                "chat.grounding_mode",
+                project.chat.grounding_mode,
+                settings.chat.grounding_mode,
+            ),
             candidate_wise_grounding_enabled=inherited(
                 "chat.candidate_wise_grounding_enabled",
                 project.chat.candidate_wise_grounding_enabled,
@@ -518,7 +527,9 @@ def resolve_project_ai_config(
             "prompt_version", project.prompt_version, settings.chat.system_prompt_version
         ),
         source_policy_mode=inherited(
-            "source_policy_mode", project.source_policy_mode, SourcePolicyMode.OFF
+            "source_policy_mode",
+            project.source_policy_mode,
+            settings.ai_policy.source_policy_mode,
         ),
     )
     if (
@@ -540,6 +551,17 @@ def resolve_project_ai_config(
             message=(
                 "cross_language_semantic_evidence_score_threshold must not exceed "
                 "the semantic evidence score threshold."
+            ),
+            code="invalid_evidence_thresholds",
+        )
+    if (
+        config.chat.high_confidence_reranker_evidence_score
+        <= config.chat.minimum_reranker_evidence_score
+    ):
+        raise BadRequestError(
+            message=(
+                "high_confidence_reranker_evidence_score must be strictly greater than "
+                "minimum_reranker_evidence_score."
             ),
             code="invalid_evidence_thresholds",
         )
@@ -758,6 +780,10 @@ def apply_effective_ai_config(
                     "minimum_reranker_evidence_score": (
                         effective.chat.minimum_reranker_evidence_score
                     ),
+                    "high_confidence_reranker_evidence_score": (
+                        effective.chat.high_confidence_reranker_evidence_score
+                    ),
+                    "grounding_mode": effective.chat.grounding_mode,
                     "candidate_wise_grounding_enabled": (
                         effective.chat.candidate_wise_grounding_enabled
                     ),

@@ -206,7 +206,11 @@
       "query": "Which investments are eligible under Section 20?",
       "document_scope": "tax_2023",
       "anchors": ["eligible_investments_2023"],
-      "expected_tokens": ["approved savings certificates", "approved retirement contributions", "approved life-insurance premiums"]
+      "expected_token_groups": [
+        ["approved savings certificates", "savings certificates"],
+        ["approved retirement contributions", "retirement contributions"],
+        ["approved life-insurance premiums", "life-insurance premiums", "life insurance premiums"]
+      ]
     },
     {
       "key": "current_rebate_calculation",
@@ -294,8 +298,8 @@
       "tags": ["multilingual", "authority", "historical"],
       "query": "On 1 January 2024 / ১ জানুয়ারি ২০২৪-এ investment rebate rate কত ছিল?",
       "as_of": "2024-01-01T00:00:00Z",
-      "anchors": ["rebate_rate_2023", "rebate_rate_2023_bn"],
-      "required_anchor_groups": [["rebate_rate_2023", "rebate_rate_2023_bn"]],
+      "anchors": ["rebate_rate_2023", "rebate_rate_2023_bn", "historical_rebate_rate_2024_bn"],
+      "required_anchor_groups": [["rebate_rate_2023", "rebate_rate_2023_bn", "historical_rebate_rate_2024_bn"]],
       "prohibited_final_sources": ["finance_2026", "finance_2027"],
       "expected_tokens": ["15%"]
     },
@@ -314,8 +318,9 @@
       "tags": ["multilingual", "authority", "calculation", "mixed_source"],
       "query": "২০২৬ সালের বর্তমান নিয়মে আমার eligible investment ৭৫,০০০ টাকা হলে rebate কত? আমার দেওয়া অঙ্কটিই ব্যবহার করুন।",
       "as_of": "2026-08-01T00:00:00Z",
-      "anchors": ["rebate_rate_2026", "declared_amount_2024_bn"],
-      "required_anchor_groups": [["rebate_rate_2026"], ["declared_amount_2024_bn"]],
+      "anchors": ["rebate_rate_2026"],
+      "required_anchor_groups": [["rebate_rate_2026"]],
+      "user_parameter_tokens": ["75000"],
       "prohibited_answer_tokens": ["60000", "6000"],
       "expected_tokens": ["10%", "75000", "7500"]
     },

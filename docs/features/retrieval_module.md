@@ -113,8 +113,9 @@ if a corpus disagrees; keep `observe` only while measuring.
 | `RetrievalConfig` | `APE_RETRIEVAL__*` | `strategy`, candidate pools, `hnsw_ef_search`, RRF weights, reranker windows, diversity caps, optional passage scoring, bounded modifier expansion, `embedding_set_version`, language-metadata schema |
 | `QueryTranslationConfig` | `APE_QUERY_TRANSLATION__*` | Query-only translation; default off; model `gpt-5-nano` |
 | `CohereConfig` | `APE_COHERE__*` | Shared credential and base URL for embed and rerank |
-| `RerankerProviderConfig` | `APE_RERANKER__*` | Rerank model/timeout; missing key or API failure degrades to RRF + cosine |
-| `AIConfigPolicy` | `APE_AI_POLICY__SOURCE_POLICY_DEPLOYMENT_CAP` | Emergency maximum for Project `off / observe / enforce` source policy |
+| `RerankerProviderConfig` | `APE_RERANKER__*` | Rerank model/timeout (default 10s); missing key or API failure degrades to RRF + cosine and records a sanitized `rerank_failure_reason` |
+| `AIConfigPolicy` | `APE_AI_POLICY__SOURCE_POLICY_MODE` | Deployment default for Project `off / observe / enforce` source policy (`off`). Inherited when a revision omits the leaf |
+| `AIConfigPolicy` | `APE_AI_POLICY__SOURCE_POLICY_DEPLOYMENT_CAP` | Emergency maximum for Project/global source policy. Restricts only; never activates a higher mode |
 
 `embedding_set_version` is a deployment-level int, independent of
 `Document.version`. Both are captured in a build manifest; search filters by the
@@ -137,8 +138,11 @@ underfill `top_k`. Diagnostics distinguish deferred, backfilled, and finally rem
 Optional bounded-passage scoring (`APE_RETRIEVAL__PASSAGE_SCORING_ENABLED`) embeds overlapping,
 minimum-sized token windows on the fused candidate window. It records raw cosine as
 `passage_semantic_score`, winning offsets, and `bounded_token_max_v1`; it never overwrites
-whole-chunk `semantic_score` or ranking `score`. It is disabled by default and may be promoted only
-after positive/hard-negative calibration and latency gates pass.
+whole-chunk `semantic_score` or ranking `score`. It stays off by default for evaluation and
+debugging. Production grounding instead runs an adaptive rescue: after normal candidate
+assessment, at most four high-confidence reranker near-misses without a passage score are
+passage-scored and reassessed. Promote always-on retrieval scoring only after
+positive/hard-negative calibration and latency gates pass.
 
 The multilingual dense baseline for `hosted_managed` is Cohere `embed-v4.0` at 1024 dimensions
 (`embedding_set_version=3`) with `QUERY`/`DOCUMENT` purpose. `hosted_openai` compatibility keeps

@@ -527,13 +527,14 @@ class ChatService:
             else self._grounding
         )
         rerank_status = str(retrieval_result.diagnostics.get("rerank_status") or "") or None
-        evidence, knowledge_selected = assess_and_select_knowledge(
+        evidence, knowledge_selected = await assess_and_select_knowledge(
             grounding=grounding,
             context_builder=self._context_builder,
             chat_config=self._chat_config,
             question=retrieval_query,
             chunks=chunks,
             rerank_status=rerank_status,
+            retrieval_config=self._retrieval_config,
         )
 
         # Capture all ORM-backed prompt inputs before closing the read
@@ -557,9 +558,13 @@ class ChatService:
         }
         web_chunks: list[ContextChunk] = []
         scoped_request = bool(request.document_id or request.metadata_filter or request.as_of)
-        web_requested = non_knowledge_response is None and scope_current_authority is None and (
-            mode is ResponseMode.INDEXED_AND_WEB
-            or (mode is ResponseMode.INDEXED_THEN_WEB and grounding.blocks_generation(evidence))
+        web_requested = (
+            non_knowledge_response is None
+            and scope_current_authority is None
+            and (
+                mode is ResponseMode.INDEXED_AND_WEB
+                or (mode is ResponseMode.INDEXED_THEN_WEB and grounding.blocks_generation(evidence))
+            )
         )
         # Retrieval/history reads may have opened an implicit transaction. Release it before
         # any potentially slow external web or LLM I/O.
@@ -1129,6 +1134,7 @@ class ChatService:
                 },
                 "rerank": {
                     "status": retrieval_diagnostics.get("rerank_status"),
+                    "failure_reason": retrieval_diagnostics.get("rerank_failure_reason"),
                     "provider": retrieval_diagnostics.get("reranker_provider"),
                     "model": retrieval_diagnostics.get("reranker_model"),
                     "version": retrieval_diagnostics.get("reranker_version"),
