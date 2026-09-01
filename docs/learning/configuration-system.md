@@ -105,9 +105,11 @@ APE_CHAT__CONTEXT_CHAR_BUDGET=12000
 APE_CHAT__MAX_HISTORY_MESSAGES=20
 ```
 
-The exact supported fields live in `backend/app/core/config.py`. Treat the root
-`.env.example` as the starting template and ignored root `.env` as the Docker
-runtime configuration file.
+The exact supported fields live in `backend/app/core/config.py`. The complete
+tabular map (meaning, options, env key, Project overlay) is
+[Configuration Map](../configuration-map.md). Treat the root `.env.example` as
+the starting template and ignored root `.env` as the Docker runtime
+configuration file.
 
 ## Development defaults versus meaningful AI
 
@@ -149,6 +151,7 @@ You understand configuration when you can look at a bad answer and say:
 
 ## Related
 
+- [Configuration Map](../configuration-map.md) — every field, env key, and option
 - [RAG from Zero](./rag-from-zero.md)
 - [Embeddings Fundamentals](./embeddings-fundamentals.md)
 - [Hybrid Retrieval Journey](./hybrid-retrieval-journey.md)

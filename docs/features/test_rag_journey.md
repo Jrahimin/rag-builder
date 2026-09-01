@@ -1,17 +1,23 @@
-# `tax_v1` RAG journey
+# Test RAG journey
 
-## Purpose
+Local production-path regression for factual RAG conversations. The shipped
+fixture pack is `tax_v1`: a temporary Project, six synthetic tax sources, and
+21 chat turns against the same retrieval, authority, grounding, citation,
+scope, refusal, and multilingual path used by the product API.
 
-`tax_v1` is a local, production-path regression journey for factual tax conversations. It creates a temporary Project, ingests the synthetic corpus through the real knowledge/index lifecycle, then runs 21 chat turns against the same retrieval, authority, grounding, citation, scope, refusal, and multilingual path used by the product API.
-
-It is not an evaluation dataset and does not replace Evidence Quality runs. It exists to catch regressions in the composed RAG path on a known bilingual authority graph. The harness may `--set` or `--compare` query-time Project AI leaves; it must not lower evidence thresholds, weaken citations, or rewrite fixtures so a local run can report 21/21.
+It is not an evaluation dataset and does not replace Evidence Quality runs. It
+exists to catch regressions on a known bilingual authority graph. The harness
+may `--set` or `--compare` query-time Project AI leaves; it must not lower
+evidence thresholds, weaken citations, or rewrite fixtures so a local run can
+report 21/21.
 
 ## Architecture
 
 ```text
 python -m app.cli rag-journey
         │
-        ├── force APE_JOBS__BACKEND=inline (this process only)
+        ├── force APE_JOBS__BACKEND=inline and
+        │         APE_JOBS__DISPATCHER_ENABLED=false (this process only)
         ├── preflight: loopback DB/storage, default Organization
         ├── Project + sparse Project AI revision
         ├── ingest 6 sources (MODIFIES + provision scopes)
@@ -30,9 +36,11 @@ python -m app.cli rag-journey
 | `backend/app/cli/rag_journey.py` | Manifest, orchestration, assertions, reports, cleanup |
 | `tests/fixtures/journeys/tax_v1/journey.json` | Sources, phrase anchors, 21 cases |
 | Knowledge + retrieval workflows | Upload → parse → chunk → embed → index, including per-document language inventory on the build manifest |
-| `ChatService` / `GroundingService` / `current_authority` | Production message path the cases assert against |
+| `ChatService` / `GroundingService` / `ContextBuilder` / `current_authority` | Production message path the cases assert against |
 
-The runner is a thin operator tool. It does not implement a second RAG stack. Cases call the same conversation send-message path, including `as_of`, hard `document_id` scope, query-language routing, and retrieval diagnostics.
+The runner is a thin operator tool. It does not implement a second RAG stack.
+Cases call the same conversation send-message path, including `as_of`, hard
+`document_id` scope, query-language routing, and retrieval diagnostics.
 
 ## Data flow
 
@@ -50,11 +58,16 @@ preflight
   → purge modifiers before targets, then delete the Project
 ```
 
-Jobs in the CLI process use inline durable-job transport even when the deployment is configured for Taskiq. That override is process-local and restored on exit.
+Jobs in the CLI process use inline durable-job transport even when the
+deployment is configured for Taskiq. The dispatcher is also disabled so outbox
+polling cannot race the in-process handler. Both overrides are process-local
+and restored on exit.
 
 ## Corpus and authority graph
 
-Fixture files live under `tests/fixtures/journeys/tax_v1/corpus/`. A representative hosted run indexes 6 documents into about 25 markdown/semantic chunks.
+Fixture files live under `tests/fixtures/journeys/tax_v1/corpus/`. A
+representative hosted run indexes 6 documents into about 25 markdown/semantic
+chunks.
 
 | Source key | File | Role |
 | ---------- | ---- | ---- |
@@ -73,11 +86,20 @@ Authority chain:
 
 The 2025 mixed-language guidance sits beside that chain as a procedural source only.
 
-Authority is provision-scoped. A newer document does not replace an entire older document. Parallel EN/BN 2023 texts are translations, not conflicting amendments. `finance_2027` does not modify the 2026 tax-free threshold or the savings-certificate source-tax provision, and the 2027 fixture **does not restate** `BDT 400,000`. Composed 2027 rebate + threshold answers must therefore retrieve both the 2027 rebate provision and the still-effective 2026 threshold.
+Authority is provision-scoped. A newer document does not replace an entire older
+document. Parallel EN/BN 2023 texts are translations, not conflicting
+amendments. `finance_2027` does not modify the 2026 tax-free threshold or the
+savings-certificate source-tax provision, and the 2027 fixture **does not
+restate** `BDT 400,000`. Composed 2027 rebate + threshold answers must therefore
+retrieve both the 2027 rebate provision and the still-effective 2026 threshold.
 
-Mixed-document journey anchors resolve by unique content phrases such as `VR-2025-APE` and `14 calendar days`. They do not depend on Markdown headings or exact semantic chunk boundaries.
+Mixed-document journey anchors resolve by unique content phrases such as
+`VR-2025-APE` and `14 calendar days`. They do not depend on Markdown headings or
+exact semantic chunk boundaries.
 
-Index builds record per-document `document_language` / chunk language counts. Hard-scoped retrieval uses that inventory so same-language documents do not spend a translation call.
+Index builds record per-document `document_language` / chunk language counts.
+Hard-scoped retrieval uses that inventory so same-language documents do not
+spend a translation call.
 
 ## Assertion model
 
@@ -90,30 +112,45 @@ Case definitions are in `tests/fixtures/journeys/tax_v1/journey.json`.
 | `expected_any` | At least one equivalent wording (discourse / unchanged-rule markers) |
 | `user_parameter_tokens` | Values supplied in the user query (for example BDT 75,000). Must appear in the answer; they do not require a knowledge-base citation by themselves. Rules and rates used to calculate from that parameter still need retrieved evidence |
 | `required_anchor_groups` | OR within a group, AND across groups. Each group must be retrieved, admitted, and used by grounded claim evidence |
+| `content_match_anchors` | Phrase-only mixed-document groups. A same-source chunk that contains the phrases, or an immediate neighbor of one that does, counts. Does not pin a runtime chunk UUID |
 | `prohibited_final_sources` | Rejects listed documents from admitted/cited/claim evidence only |
 | `prohibited_answer_tokens` | User-supplied amounts must not be replaced by fixture examples |
 | `correction` | Stale-claim cases must state the new facts plus a correction marker; repeating the old tokens is not required |
 | `mode` | `answerable` (default), `scope_isolation`, or `no_answer` |
 | `document_scope` / `as_of` | Production hard scope and effective date |
 
-Failure stages localize where the production path broke: `retrieval`, `admission_grounding`, `context_selection`, `citation`, `generation_refusal`, `authority`, `fallback`. `admitted_count > 0` with `context_selected_count == 0` is `context_selection` (`authority_context_empty` or `context_selection_empty`), not `admission_grounding`.
+Failure stages localize where the production path broke: `retrieval`,
+`admission_grounding`, `context_selection`, `citation`, `generation_refusal`,
+`authority`, `fallback`. `admitted_count > 0` with `context_selected_count == 0`
+is `context_selection` (`authority_context_empty` or `context_selection_empty`),
+not `admission_grounding`.
 
-Reports split **correctness**, **provider degradation**, and **latency**. A reranker timeout or rate limit is `rerank_status=unavailable` with a sanitized `failure_reason`; it is not a semantic RAG failure.
+Context budgeting follows production `ContextBuilder` rules: admitted
+`EvidenceUnit`s are omitted when they do not fit `context_char_budget`, never
+truncated. Selected units keep reranker relevance when provenance dropped the
+field, so later claim checks still see the applied rerank score.
+
+Reports split **correctness**, **provider degradation**, and **latency**. A
+reranker timeout or rate limit is `rerank_status=unavailable` with a sanitized
+`failure_reason`; it is not a semantic RAG failure.
 
 Harness-only details that must stay in the fixture, not in production thresholds:
 
 - **Historical 15% (`historical_rebate_rate`).** One valid source is enough: 2023 Act EN, 2023 Act BN, the 2024 Rules clarification that the 15% rate was unchanged on 1 January 2024 (`historical_rebate_rate_2024_bn`), or the 2026 sentence that the previous 15% rate remains relevant only for historical questions. `finance_2027` stays prohibited for a 2024 `as_of`. Older sources are not globally banned because unchanged provisions can remain valid.
 - **Historical bilingual (`historical_rebate_bilingual`).** Any of 2023 EN, 2023 BN, or the 2024 Rules historical restatement is enough. `finance_2026` and `finance_2027` stay prohibited as final sources.
 - **`current_2027_rebate_and_threshold`.** Requires 2027 evidence for the rebate **and** 2026 evidence for the still-effective threshold.
-- **Mixed-document cases.** Phrase-only 2025 guidance anchors. `mixed_document_bangla_retrieval` accepts grounded/cited evidence from `tax_guidance_2025` whose content contains `VR-2025-APE` or overlaps a chunk that does; it does not pin one runtime chunk ID. The code-switched case still uses exact mapped IDs and requires production `query_language_profile` translation diagnostics; it does not require a rewrite to be applied.
+- **Mixed-document cases.** Phrase-only 2025 guidance anchors. `mixed_document_bangla_retrieval` sets `content_match_anchors` so grounded/cited evidence from `tax_guidance_2025` whose content contains `VR-2025-APE` (or an adjacent semantic chunk) counts. The code-switched case still uses exact mapped IDs and requires production `query_language_profile` translation diagnostics; it does not require a rewrite to be applied.
 - **Declared 75,000 (`declared_investment_75000`).** The amount is a user-supplied parameter. The case requires the 2026 rebate-rate evidence and the calculated 10% / 7,500 result; it does not require citing the 2024 Rules example amount merely to prove the input. Prohibited tokens still catch substitution of the fixture's 60,000 example.
 - **Hard-scoped current queries.** Must distinguish the scoped document’s historical value from unavailable current authority (`unavailable_within_hard_scope` / `suppressed_document_scope` when MODIFIES expansion is on).
 
-All factual claims remain independently verified. `grounded` still means every factual claim is supported. Citation and provenance requirements are not relaxed.
+All factual claims remain independently verified. `grounded` still means every
+factual claim is supported. Citation and provenance requirements are not
+relaxed.
 
 ## Case coverage
 
-The manifest keeps the original 10 cases and adds bilingual, mixed-source, temporal, user-amount, and mixed-document coverage. Total: **21**.
+The manifest keeps the original 10 cases and adds bilingual, mixed-source,
+temporal, user-amount, and mixed-document coverage. Total: **21**.
 
 | Intent | Cases |
 | ------ | ----- |
@@ -131,21 +168,32 @@ The manifest keeps the original 10 cases and adds bilingual, mixed-source, tempo
 
 These are product behaviors the cases observe. The harness does not reimplement them.
 
-| Path | What `tax_v1` checks |
-| ---- | -------------------- |
+| Path | What the journey checks |
+| ---- | ----------------------- |
 | Hybrid retrieval | Original dense + original lexical always run. Optional one translated pair is additive and never cited |
 | Query translation routing | Bangla → English and Banglish/code-switched → English when English exists in inventory. Ordinary English queries do not auto-translate to Bangla because Bangla exists in the corpus. Mixed-script queries keep both scripts and skip the rewrite. Hard-scoped same-language documents skip with `same_language_scope`; otherwise unused rewrites skip with `no_translation_target` |
 | Translation budget | Default minimum output is 256 tokens (`APE_QUERY_TRANSLATION__MIN_OUTPUT_TOKENS`), hard-capped at 2048. Empty/failed rewrites record `finish_reason`, output tokens, reasoning tokens, attempts, and validation reasons on retrieval diagnostics |
 | Cross-language evidence | Dedicated `chat.cross_language_semantic_evidence_score_threshold` (default `0.30`). Must not exceed the semantic bar. Not lowered to pass this fixture |
 | Candidate-wise grounding | When enabled, admitted `EvidenceUnit`s drive generation; when off, assessments remain shadow-only. Toggle is query-time (`chat.candidate_wise_grounding_enabled`) |
-| Grounding mode | `chat.grounding_mode=strict` (default, high-assurance corroboration) or `balanced` (high-confidence reranker near-miss may admit). Not a tax-specific switch |
-| Source policy / MODIFIES | `source_policy_mode` (inherits `APE_AI_POLICY__SOURCE_POLICY_MODE`, default `off`) and `retrieval.modifies_expansion_mode` are query-time. Expansion-on scoped cases expect `suppressed_document_scope` |
+| Grounding mode | `chat.grounding_mode=strict` (code default, high-assurance corroboration) or `balanced` (high-confidence reranker near-miss may admit). Not a tax-specific switch. Hosted `.env.example` currently sets `balanced` |
+| Context budget | Admitted units are indivisible. Overflow is `context_selection`, not a rewritten span. Rerank relevance is preserved onto selected units |
+| Source policy / MODIFIES | `source_policy_mode` (inherits `APE_AI_POLICY__SOURCE_POLICY_MODE`, code default `off`) and `retrieval.modifies_expansion_mode` are query-time. Expansion-on scoped cases expect `suppressed_document_scope`. Hosted `.env.example` currently sets `source_policy_mode=enforce` and `modifies_expansion_mode=expand` (mode wins over the legacy boolean) |
 | Passage scoring | Always-on `retrieval.passage_scoring_enabled` stays **off** by default. Grounding may still run adaptive passage rescue on high-confidence near-misses. One-factor `--compare` of always-on scoring is allowed for debugging |
-| Web fallback | Indexed-only / sufficient indexed answers must not search the web. Hard scope and `as_of` suppress web search |
+| Web fallback | Indexed-only / sufficient indexed answers must not search the web. Hard scope and `as_of` suppress web search. `--set chat.response_mode=…` is allowlisted for A/B only; do not use this corpus to certify web modes |
 
 ## Configuration
 
-The CLI accepts only an explicit allowlist of query-time `ProjectAIConfig` leaves (`SAFE_CONFIG_KEYS` in `rag_journey.py`). Index-affecting settings (embeddings, chunking, FTS) are rejected. `--compare` and `--compare-translation` each add one second variant and must change the effective configuration hash without changing the active corpus fingerprint. They are mutually exclusive.
+The CLI accepts only an explicit allowlist of query-time `ProjectAIConfig` leaves
+(`RUNTIME_COMPARISON_CONFIG_KEYS`, aliased as `SAFE_CONFIG_KEYS` in
+`rag_journey.py`). Index-affecting settings (embeddings, chunking, FTS) are
+rejected. `--compare` and `--compare-translation` each add one second variant
+and must change the effective configuration hash without changing the active
+corpus fingerprint. They are mutually exclusive.
+
+The allowlist includes LLM/chat/retrieval policy, web-search bounds,
+`source_policy_mode`, grounding leaves, and passage-window sizes. New Project AI
+leaves stay rejected until they are classified as safe against an existing
+index. Full env meaning lives in the [Configuration Map](../configuration-map.md).
 
 Useful leaves for this journey:
 
@@ -159,25 +207,40 @@ chat.cross_language_semantic_evidence_score_threshold
 chat.evidence_gate_mode
 chat.grounding_mode
 chat.high_confidence_reranker_evidence_score
+chat.response_mode
 ```
 
-`--set` builds a **sparse** Project revision. Omitted leaves inherit deployment settings (`hosted_managed` typically uses Cohere embed/rerank, OpenAI `gpt-5.6-luna` generation, and `gpt-5-nano` translation when enabled). Query translation stays off unless inherited from `APE_QUERY_TRANSLATION__ENABLED` or overridden on the Project. The journey does not enable candidate-wise grounding, MODIFIES expansion, or source-policy enforce unless those leaves are set or already inherited from env (`APE_AI_POLICY__SOURCE_POLICY_MODE`, `APE_RETRIEVAL__MODIFIES_EXPANSION_MODE`, `APE_CHAT__CANDIDATE_WISE_GROUNDING_ENABLED`).
+`--set` builds a **sparse** Project revision. Omitted leaves inherit deployment
+settings (`hosted_managed` typically uses Cohere embed/rerank, OpenAI
+`gpt-5.6-luna` generation, and `gpt-5-nano` translation when enabled). Query
+translation stays off unless inherited from `APE_QUERY_TRANSLATION__ENABLED` or
+overridden on the Project.
 
-Deployment settings the product path uses (not journey-only):
+The journey does not itself enable candidate-wise grounding, MODIFIES expansion,
+or source-policy enforce. If you run against root `.env` / Compose, those leaves
+may already be on via env. Code defaults vs a typical hosted `.env` are called
+out in the [Configuration Map](../configuration-map.md) insight section.
 
-| Setting | Default | Role |
-| ------- | ------- | ---- |
+Deployment settings the product path uses (not journey-only). Values are **code
+defaults**; hosted example files override several:
+
+| Setting | Code default | Role |
+| ------- | ------------ | ---- |
 | `APE_QUERY_TRANSLATION__ENABLED` | `false` | Global default for `retrieval.query_translation_enabled`; Projects override Inherit / On / Off |
 | `APE_QUERY_TRANSLATION__MIN_OUTPUT_TOKENS` | `256` | Floor for retrieval-translation output |
 | `APE_CHAT__CROSS_LANGUAGE_SEMANTIC_EVIDENCE_SCORE_THRESHOLD` | `0.30` | Cross-language semantic admit bar |
-| `APE_CHAT__GROUNDING_MODE` | `strict` | High-assurance corroboration; existing Projects inherit this |
+| `APE_CHAT__GROUNDING_MODE` | `strict` | High-assurance corroboration. Hosted example: `balanced` |
+| `APE_CHAT__CANDIDATE_WISE_GROUNDING_ENABLED` | `false` | Shadow assessments unless on. Hosted example: `true` |
 | `APE_CHAT__HIGH_CONFIDENCE_RERANKER_EVIDENCE_SCORE` | `0.70` | Balanced near-miss and passage-rescue bar; must exceed the medium reranker bar |
-| `APE_AI_POLICY__SOURCE_POLICY_MODE` | `off` | Deployment default for source-policy `off / observe / enforce`; existing Projects inherit this |
+| `APE_AI_POLICY__SOURCE_POLICY_MODE` | `off` | Deployment default for source-policy. Hosted example: `enforce` |
 | `APE_AI_POLICY__SOURCE_POLICY_DEPLOYMENT_CAP` | `enforce` | Maximum allowed source-policy mode; restricts only, never activates |
-| `APE_RERANKER__REQUEST_TIMEOUT_SECONDS` | `10` | Fail-open rerank timeout |
+| `APE_RETRIEVAL__MODIFIES_EXPANSION_MODE` | `off` | Incoming MODIFIES recall. Hosted example: `expand` (wins over `ENABLED=false`) |
+| `APE_RERANKER__REQUEST_TIMEOUT_SECONDS` | `10` | Fail-open rerank timeout. Hosted example: `30` |
 | `APE_RETRIEVAL__PASSAGE_SCORING_ENABLED` | `false` | Always-on bounded-passage scoring; keep off unless measuring. Adaptive rescue is separate |
 
-Safety flags: `--allow-nonlocal-database`, `--allow-nonlocal-storage`, `--keep-project`. Without the allow flags, non-loopback PostgreSQL/MinIO hosts fail closed before creating state.
+Safety flags: `--allow-nonlocal-database`, `--allow-nonlocal-storage`,
+`--keep-project`. Without the allow flags, non-loopback PostgreSQL/MinIO hosts
+fail closed before creating state.
 
 ## Commands
 
@@ -189,7 +252,8 @@ backend\.venv\Scripts\python.exe -m ruff check backend/app/cli/rag_journey.py ba
 backend\.venv\Scripts\python.exe -m mypy --no-incremental backend/app/cli/rag_journey.py backend/app/modules/conversations/current_authority.py
 ```
 
-PostgreSQL/pgvector smoke from `backend/` (loads `.env`; skipped when `ape_test` is unavailable):
+PostgreSQL/pgvector smoke from `backend/` (loads `.env`; skipped when `ape_test`
+is unavailable):
 
 ```powershell
 .venv\Scripts\python.exe -m pytest ..\tests\integration\test_rag_journey_smoke.py -q
@@ -201,17 +265,24 @@ Full production journey from `backend/`:
 .venv\Scripts\python.exe -m app.cli rag-journey
 ```
 
-Equivalent Makefile target from the repository root: `make rag-journey` (`RAG_JOURNEY_ARGS` is forwarded).
+Equivalent Makefile target from the repository root: `make rag-journey`
+(`RAG_JOURNEY_ARGS` is forwarded).
 
-Translation on/off A/B on the same Project, ingested corpus, and active index (no rebuild):
+Translation on/off A/B on the same Project, ingested corpus, and active index
+(no rebuild):
 
 ```powershell
 .venv\Scripts\python.exe -m app.cli rag-journey --compare-translation
 ```
 
-This keeps the current configuration as `translation_on` and only sets `retrieval.query_translation_enabled=false` for `translation_off`. `summary.md` includes a paired quality/latency table. `results.json` keeps per-case timings, `translation_changed_retrieval_outcome`, and verdicts. Translation must already be enabled on the current configuration.
+This keeps the current configuration as `translation_on` and only sets
+`retrieval.query_translation_enabled=false` for `translation_off`. `summary.md`
+includes a paired quality/latency table. `results.json` keeps per-case timings,
+`translation_changed_retrieval_outcome`, and verdicts. Translation must already
+be enabled on the current configuration.
 
-Optional query-time overrides and one-factor compare (does not change product defaults):
+Optional query-time overrides and one-factor compare (does not change product
+defaults):
 
 ```powershell
 .venv\Scripts\python.exe -m app.cli rag-journey `
@@ -222,17 +293,25 @@ Optional query-time overrides and one-factor compare (does not change product de
   --compare retrieval.passage_scoring_enabled=true
 ```
 
-The full journey needs the configured database, object storage, embedding, and generation providers, plus the default/local Organization. Provider connection or rate-limit failures stop setup/indexing before case results; those are environmental failures, not passing or failing assertions.
+The full journey needs the configured database, object storage, embedding, and
+generation providers, plus the default/local Organization. Provider connection
+or rate-limit failures stop setup/indexing before case results; those are
+environmental failures, not passing or failing assertions.
 
-Exit codes: `0` all variants passed and cleanup succeeded (or `--keep-project`); `1` case or cleanup failure; `2` harness/`JourneyError` (unsafe target, invalid `--set`, missing Organization).
+Exit codes: `0` all variants passed and cleanup succeeded (or `--keep-project`);
+`1` case or cleanup failure; `2` harness/`JourneyError` (unsafe target, invalid
+`--set`, missing Organization).
 
-Reports: `artifacts/rag-journey/tax_v1/<timestamp>-<run-id>/results.json` and `summary.md`. Pass rate, recall, and latency in `summary.md` are descriptive for that local corpus and provider pair. They are not a universal production optimum.
+Reports: `artifacts/rag-journey/tax_v1/<timestamp>-<run-id>/results.json` and
+`summary.md`. Pass rate, recall, and latency in `summary.md` are descriptive for
+that local corpus and provider pair. They are not a universal production
+optimum.
 
 ## Dependencies
 
 - PostgreSQL + pgvector, object storage, and the default Organization
 - Configured embedding, generation, optional rerank, and optional query-translation providers
-- Process-local inline job transport (applied by the CLI)
+- Process-local inline job transport (applied by the CLI; dispatcher off)
 - Production modules: knowledge ingest, index lifecycle, retrieval, conversations, source metadata
 
 ## Design decisions
@@ -240,24 +319,34 @@ Reports: `artifacts/rag-journey/tax_v1/<timestamp>-<run-id>/results.json` and `s
 | Decision | Rationale |
 | -------- | --------- |
 | Phrase anchors instead of chunk UUIDs | Survives rechunking; mixed 2025 guidance has no stable Markdown headings |
+| `content_match_anchors` for mixed Bangla retrieval | Semantic chunking can split `VR-2025-APE` across neighboring windows; require the source phrase, not one UUID |
 | OR groups for equivalent EN/BN/historical sources | Avoids forcing one language or one restatement of the same 15% fact |
 | 2027 fixture omits `BDT 400,000` | Forces mixed-source composition instead of answering the threshold from 2027 text |
 | Query-time `--set` / `--compare` / `--compare-translation` allowlist | Prevents accidental index rebuilds and undocumented threshold fishing. Translation A/B reuses that path instead of a second benchmark stack |
-| Inline jobs only in this process | Makes ingest/index/purge deterministic without a sidecar worker |
+| Inline jobs + dispatcher off only in this process | Makes ingest/index/purge deterministic without a sidecar worker or outbox race |
 | Purge modifiers before targets | Honors MODIFIES foreign keys; insertion order is not the lifecycle contract |
 | Do not default passage scoring from this corpus | One local compare is not a calibration for other corpora |
+| Do not treat hosted `.env` overrides as journey defaults | Compose may already enable balanced grounding, candidate-wise units, source-policy enforce, and MODIFIES expand |
 
 ## Production considerations
 
-Do not tune embeddings, reranker thresholds, models, or generation prompts to make this journey pass. Raw retrieval may be broad; final evidence must obey effective date, hard scope, provision authority, citation, provenance, grounding, refusal, and false-accept protections.
+Do not tune embeddings, reranker thresholds, models, or generation prompts to
+make this journey pass. Raw retrieval may be broad; final evidence must obey
+effective date, hard scope, provision authority, citation, provenance,
+grounding, refusal, and false-accept protections.
 
-`hosted_managed` examples currently use Cohere `embed-v4.0` / `rerank-v4.0-pro`, OpenAI `gpt-5.6-luna`, and `gpt-5-nano` translation. Reranker unavailability falls back to fused order; empty nano translations persist as failed/skipped diagnostics rather than as a reason to raise token budgets further without measuring `finish_reason` / reasoning tokens.
+`hosted_managed` examples currently use Cohere `embed-v4.0` / `rerank-v4.0-pro`,
+OpenAI `gpt-5.6-luna`, and `gpt-5-nano` translation. Reranker unavailability
+falls back to fused order; empty nano translations persist as failed/skipped
+diagnostics rather than as a reason to raise token budgets further without
+measuring `finish_reason` / reasoning tokens.
 
-Temporary Projects are tagged `rag-journey:<uuid>` and purged unless `--keep-project`. Cleanup is part of the pass contract.
+Temporary Projects are tagged `rag-journey:<uuid>` and purged unless
+`--keep-project`. Cleanup is part of the pass contract.
 
 ## Testing strategy
 
-- Unit: `tests/unit/cli/test_rag_journey.py` — manifest shape, 21 cases, historical OR group, 2027 threshold composition, chunking paths (markdown vs semantic mixed guidance), assertion stages, semantic token groups, user-parameter tokens, provider-degradation reporting, `--set`/`--compare`/`--compare-translation` allowlist, translation A/B verdicts, purge order, Organization preflight
+- Unit: `tests/unit/cli/test_rag_journey.py` — manifest shape, 21 cases, historical OR group, 2027 threshold composition, chunking paths (markdown vs semantic mixed guidance), assertion stages, semantic token groups, user-parameter tokens, `content_match_anchors`, provider-degradation reporting, `--set`/`--compare`/`--compare-translation` allowlist, translation A/B verdicts, purge order, Organization preflight
 - Unit: `tests/unit/modules/conversations/test_grounding_modes.py` — strict vs balanced monotonic admission, additive high-confidence/passage rescue, authority fallthrough, Bangla query scaffolding
 - Unit: `tests/unit/modules/conversations/test_current_authority.py` — Bangla `ধারা` / `বিধি` provision redaction
 - Integration: `tests/integration/test_rag_journey_smoke.py` — subset of cases on real PostgreSQL/pgvector with a deterministic fixture embedder; asserts diagnostics, hard scope, refusal, and cleanup. Does not call hosted LLMs
@@ -271,6 +360,7 @@ Temporary Projects are tagged `rag-journey:<uuid>` and purged unless `--keep-pro
 
 ## Related
 
+- [Configuration Map](../configuration-map.md)
 - [Conversations](./conversation_module.md)
 - [Multilingual support](./multilingual_support.md)
 - [Retrieval](./retrieval_module.md)

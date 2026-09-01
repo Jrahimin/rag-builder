@@ -182,4 +182,4 @@ URLs, and URL-only results cannot become evidence. Every completed fallback repo
 - [ADR-019](../architecture/adr/019-grounded-response-modes.md)
 - [Implementation plan](../plans/conversation_module_plan.md)
 - [RAG journey (learning)](../learning/conversation_rag_journey.md)
-- [`tax_v1` RAG journey](./tax_v1_rag_journey.md)
+- [Test RAG journey](./test_rag_journey.md) (`tax_v1` fixture)

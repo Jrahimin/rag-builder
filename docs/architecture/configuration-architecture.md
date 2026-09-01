@@ -1,6 +1,7 @@
 # Configuration Architecture
 
 > Canonical layout: [module-architecture.md](./module-architecture.md)
+> Field-level env map (every key, options, Project overlay): [../configuration-map.md](../configuration-map.md)
 
 ## Layers (precedence, lowest → highest)
 

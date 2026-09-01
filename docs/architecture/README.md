@@ -22,6 +22,7 @@ Authoritative technical reference for **how** the AI Platform Engine (APE) is bu
 | Organization API key auth | [adr/012-organization-api-key-auth.md](./adr/012-organization-api-key-auth.md) · [learning journey](../learning/organization-api-key-auth-journey.md) |
 | Provider interfaces | [provider-architecture.md](./provider-architecture.md) |
 | Configuration hierarchy | [configuration-architecture.md](./configuration-architecture.md) |
+| Field-level config map (env keys, options, impact) | [../configuration-map.md](../configuration-map.md) |
 | Background jobs | [background-processing.md](./background-processing.md) |
 | Runtime RAG flows | [rag-runtime-flows.md](./rag-runtime-flows.md) |
 | Deployment topology | [deployment-architecture.md](./deployment-architecture.md) |
