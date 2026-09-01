@@ -25,14 +25,19 @@ from app.cli.rag_journey import (
     _project_ai_leaf_paths,
     aggregate_results,
     build_project_config,
+    build_translation_comparison,
+    case_language_bucket,
+    classify_translation_verdict,
     evaluate_case_result,
     load_manifest,
     normalize_text,
     parse_config_assignment,
+    render_summary,
     resolve_evidence_anchors,
     sanitize_diagnostics,
     source_purge_order,
     tag_aggregates,
+    translation_changed_retrieval_outcome,
 )
 from app.cli.rag_journey_cli import _options, _parser
 from app.core.config import ResponseMode
@@ -378,6 +383,10 @@ def test_tax_v1_mixed_document_queries_have_intended_language_profiles() -> None
     assert bangla.is_mixed is False
     assert switched.profile == "mixed"
     assert switched.is_mixed is True
+    assert cases["mixed_document_bangla_retrieval"].content_match_anchors == [
+        "verification_reference_2025"
+    ]
+    assert cases["mixed_document_code_switched_retrieval"].content_match_anchors == []
 
 
 def test_numeric_normalization_handles_bangla_digits_and_grouping() -> None:
@@ -587,6 +596,25 @@ def test_cli_rejects_more_than_one_comparison_variant() -> None:
         _options(args, configured_job_backend="taskiq")
 
 
+def test_cli_compare_translation_is_exclusive_with_compare() -> None:
+    args = _parser().parse_args(
+        ["--compare-translation", "--compare", "retrieval.query_translation_enabled=false"]
+    )
+
+    with pytest.raises(JourneyError, match="either --compare-translation or --compare"):
+        _options(args, configured_job_backend="taskiq")
+
+
+def test_cli_compare_translation_sets_query_time_off_variant() -> None:
+    options = _options(
+        _parser().parse_args(["--compare-translation"]),
+        configured_job_backend="taskiq",
+    )
+
+    assert options.compare_translation is True
+    assert options.comparison == ("retrieval.query_translation_enabled", False)
+
+
 def _message(
     *,
     content: str,
@@ -607,6 +635,63 @@ def _message(
         provider_latency_ms=3,
         total_latency_ms=5,
     )
+
+
+def _knowledge_claim(*, chunk_id: uuid.UUID, document_id: uuid.UUID, text: str) -> object:
+    return SimpleNamespace(
+        claim_id="claim-1",
+        text=text,
+        grounded=True,
+        verification=ClaimVerification.SUPPORTED,
+        evidence=[
+            SimpleNamespace(
+                source_kind=CitationSourceKind.KNOWLEDGE,
+                chunk_id=chunk_id,
+                document_id=document_id,
+            )
+        ],
+    )
+
+
+def _answerable_evidence_message(
+    *,
+    content: str,
+    retrieved: list[dict[str, str]],
+    admitted: list[dict[str, str]],
+    claim_chunk_id: uuid.UUID,
+    claim_document_id: uuid.UUID,
+    citation_chunk_id: uuid.UUID | None = None,
+    citation_document_id: uuid.UUID | None = None,
+) -> object:
+    message = _message(
+        content=content,
+        claims=[
+            _knowledge_claim(
+                chunk_id=claim_chunk_id,
+                document_id=claim_document_id,
+                text=content,
+            )
+        ],
+        metadata={
+            "retrieval_trace": {
+                "retrieval_selected": retrieved,
+                "context_selected": admitted,
+            },
+            "evidence_gate": {"sufficient": True},
+            "web_search": {"status": "not_requested", "fallback_used": False},
+        },
+    )
+    message.citations = [
+        SimpleNamespace(
+            source_kind=CitationSourceKind.KNOWLEDGE,
+            chunk_id=citation_chunk_id or claim_chunk_id,
+            document_id=citation_document_id or claim_document_id,
+            filename="guidance.md",
+            source_revision_id=None,
+            web_url=None,
+        )
+    ]
+    return message
 
 
 def test_no_answer_records_indexed_failure_before_web_eligibility() -> None:
@@ -1053,6 +1138,265 @@ def test_codeswitch_case_requires_query_language_profile_diagnostics() -> None:
     assert passed["translation"]["query_language_profile"] == "mixed"
 
 
+def _verification_reference_chunks() -> tuple[
+    uuid.UUID,
+    uuid.UUID,
+    uuid.UUID,
+    uuid.UUID,
+    uuid.UUID,
+    uuid.UUID,
+    uuid.UUID,
+    list[RuntimeChunk],
+    EvidenceAnchor,
+]:
+    document_id = uuid.uuid4()
+    other_document_id = uuid.uuid4()
+    phrase_id = uuid.uuid4()
+    neighbor_id = uuid.uuid4()
+    later_phrase_id = uuid.uuid4()
+    distant_id = uuid.uuid4()
+    other_id = uuid.uuid4()
+    chunks = [
+        RuntimeChunk(
+            id=phrase_id,
+            document_id=document_id,
+            source_key="tax_guidance_2025",
+            chunk_index=1,
+            content="Verification reference: VR-2025-APE",
+            metadata={},
+        ),
+        RuntimeChunk(
+            id=neighbor_id,
+            document_id=document_id,
+            source_key="tax_guidance_2025",
+            chunk_index=2,
+            content="This reference is only for workflow tracking.",
+            metadata={},
+        ),
+        RuntimeChunk(
+            id=later_phrase_id,
+            document_id=document_id,
+            source_key="tax_guidance_2025",
+            chunk_index=5,
+            content="Regression fact: verification reference VR-2025-APE",
+            metadata={},
+        ),
+        RuntimeChunk(
+            id=distant_id,
+            document_id=document_id,
+            source_key="tax_guidance_2025",
+            chunk_index=8,
+            content="The additional-document review window is 14 calendar days.",
+            metadata={},
+        ),
+        RuntimeChunk(
+            id=other_id,
+            document_id=other_document_id,
+            source_key="finance_2026",
+            chunk_index=1,
+            content="The rebate rate is 10%.",
+            metadata={},
+        ),
+    ]
+    anchor = EvidenceAnchor(
+        key="verification_reference_2025",
+        source="tax_guidance_2025",
+        phrases=["VR-2025-APE"],
+    )
+    return (
+        document_id,
+        other_document_id,
+        phrase_id,
+        neighbor_id,
+        later_phrase_id,
+        distant_id,
+        other_id,
+        chunks,
+        anchor,
+    )
+
+
+def test_bangla_mixed_document_accepts_overlapping_or_phrase_containing_2025_evidence() -> None:
+    (
+        document_id,
+        _other_document_id,
+        phrase_id,
+        neighbor_id,
+        later_phrase_id,
+        _distant_id,
+        _other_id,
+        chunks,
+        anchor,
+    ) = _verification_reference_chunks()
+    case = JourneyCase(
+        key="mixed_document_bangla_retrieval",
+        tags=["multilingual", "mixed_document"],
+        query="যাচাইয়ের স্বতন্ত্র রেফারেন্স কী?",
+        anchors=["verification_reference_2025"],
+        required_anchor_groups=[["verification_reference_2025"]],
+        content_match_anchors=["verification_reference_2025"],
+        expected_tokens=["VR-2025-APE"],
+    )
+    identities = [
+        {"chunk_id": str(phrase_id), "document_id": str(document_id)},
+        {"chunk_id": str(neighbor_id), "document_id": str(document_id)},
+        {"chunk_id": str(later_phrase_id), "document_id": str(document_id)},
+    ]
+    overlapping = evaluate_case_result(
+        case=case,
+        message=_answerable_evidence_message(
+            content="The stored verification reference is VR-2025-APE.",
+            retrieved=identities,
+            admitted=identities,
+            claim_chunk_id=neighbor_id,
+            claim_document_id=document_id,
+        ),
+        anchor_mapping={"verification_reference_2025": [phrase_id]},
+        document_ids={"tax_guidance_2025": document_id},
+        response_mode=ResponseMode.INDEXED_ONLY,
+        modifies_expansion_enabled=True,
+        chunks=chunks,
+        anchors=[anchor],
+    )
+    later_phrase = evaluate_case_result(
+        case=case,
+        message=_answerable_evidence_message(
+            content="The stored verification reference is VR-2025-APE.",
+            retrieved=identities,
+            admitted=identities,
+            claim_chunk_id=later_phrase_id,
+            claim_document_id=document_id,
+        ),
+        anchor_mapping={"verification_reference_2025": [phrase_id]},
+        document_ids={"tax_guidance_2025": document_id},
+        response_mode=ResponseMode.INDEXED_ONLY,
+        modifies_expansion_enabled=True,
+        chunks=chunks,
+        anchors=[anchor],
+    )
+
+    assert overlapping["passed"] is True
+    assert later_phrase["passed"] is True
+
+
+def test_bangla_mixed_document_still_requires_2025_evidence_not_answer_text() -> None:
+    (
+        document_id,
+        other_document_id,
+        phrase_id,
+        neighbor_id,
+        _later_phrase_id,
+        distant_id,
+        other_id,
+        chunks,
+        anchor,
+    ) = _verification_reference_chunks()
+    bangla = JourneyCase(
+        key="mixed_document_bangla_retrieval",
+        tags=["multilingual", "mixed_document"],
+        query="যাচাইয়ের স্বতন্ত্র রেফারেন্স কী?",
+        anchors=["verification_reference_2025"],
+        required_anchor_groups=[["verification_reference_2025"]],
+        content_match_anchors=["verification_reference_2025"],
+        expected_tokens=["VR-2025-APE"],
+    )
+    exact = JourneyCase(
+        key="mixed_document_code_switched_retrieval",
+        tags=["multilingual", "mixed_document", "codeswitch"],
+        query="কর নির্দেশিকায় verification reference code কী?",
+        anchors=["verification_reference_2025"],
+        required_anchor_groups=[["verification_reference_2025"]],
+        expected_tokens=["VR-2025-APE"],
+    )
+    phrase_identity = {"chunk_id": str(phrase_id), "document_id": str(document_id)}
+    neighbor_identity = {"chunk_id": str(neighbor_id), "document_id": str(document_id)}
+    distant_identity = {"chunk_id": str(distant_id), "document_id": str(document_id)}
+    other_identity = {"chunk_id": str(other_id), "document_id": str(other_document_id)}
+    retrieved = [phrase_identity, neighbor_identity]
+    exact_overlap = evaluate_case_result(
+        case=exact,
+        message=_answerable_evidence_message(
+            content="The stored verification reference is VR-2025-APE.",
+            retrieved=retrieved,
+            admitted=retrieved,
+            claim_chunk_id=neighbor_id,
+            claim_document_id=document_id,
+            citation_chunk_id=phrase_id,
+            citation_document_id=document_id,
+        ),
+        anchor_mapping={"verification_reference_2025": [phrase_id]},
+        document_ids={"tax_guidance_2025": document_id},
+        response_mode=ResponseMode.INDEXED_ONLY,
+        modifies_expansion_enabled=True,
+        chunks=chunks,
+        anchors=[anchor],
+    )
+    distant = evaluate_case_result(
+        case=bangla,
+        message=_answerable_evidence_message(
+            content="The stored verification reference is VR-2025-APE.",
+            retrieved=[*retrieved, distant_identity],
+            admitted=[*retrieved, distant_identity],
+            claim_chunk_id=distant_id,
+            claim_document_id=document_id,
+        ),
+        anchor_mapping={"verification_reference_2025": [phrase_id]},
+        document_ids={"tax_guidance_2025": document_id},
+        response_mode=ResponseMode.INDEXED_ONLY,
+        modifies_expansion_enabled=True,
+        chunks=chunks,
+        anchors=[anchor],
+    )
+    other_source = evaluate_case_result(
+        case=bangla,
+        message=_answerable_evidence_message(
+            content="The stored verification reference is VR-2025-APE.",
+            retrieved=[*retrieved, other_identity],
+            admitted=retrieved,
+            claim_chunk_id=other_id,
+            claim_document_id=other_document_id,
+        ),
+        anchor_mapping={"verification_reference_2025": [phrase_id]},
+        document_ids={"tax_guidance_2025": document_id, "finance_2026": other_document_id},
+        response_mode=ResponseMode.INDEXED_ONLY,
+        modifies_expansion_enabled=True,
+        chunks=chunks,
+        anchors=[anchor],
+    )
+    answer_only = _message(
+        content="The stored verification reference is VR-2025-APE.",
+        claims=[],
+        metadata={
+            "retrieval_trace": {
+                "retrieval_selected": retrieved,
+                "context_selected": retrieved,
+            },
+            "evidence_gate": {"sufficient": True},
+            "web_search": {"status": "not_requested", "fallback_used": False},
+        },
+    )
+
+    answer_only_result = evaluate_case_result(
+        case=bangla,
+        message=answer_only,
+        anchor_mapping={"verification_reference_2025": [phrase_id]},
+        document_ids={"tax_guidance_2025": document_id},
+        response_mode=ResponseMode.INDEXED_ONLY,
+        modifies_expansion_enabled=True,
+        chunks=chunks,
+        anchors=[anchor],
+    )
+
+    assert exact_overlap["passed"] is False
+    assert any(failure["stage"] == "citation" for failure in exact_overlap["failures"])
+    assert distant["passed"] is False
+    assert any(failure["stage"] == "citation" for failure in distant["failures"])
+    assert other_source["passed"] is False
+    assert any(failure["stage"] == "citation" for failure in other_source["failures"])
+    assert answer_only_result["passed"] is False
+    assert any(failure["stage"] == "citation" for failure in answer_only_result["failures"])
+
+
 def test_required_anchor_groups_accept_alternatives_and_require_each_source_family() -> None:
     rate_id = uuid.uuid4()
     procedure_id = uuid.uuid4()
@@ -1384,6 +1728,318 @@ def test_comparison_highlights_only_affected_tag_subsets() -> None:
     assert report["affected_tags"] == ["multilingual"]
     assert report["tags"]["multilingual"]["affected"] is True
     assert report["tags"]["authority"]["affected"] is False
+
+
+def test_language_buckets_follow_query_script_and_case_form() -> None:
+    assert (
+        case_language_bucket(
+            key="current_rebate_bangla",
+            tags=["multilingual"],
+            query="বর্তমান নিয়মে রিবেট কত?",
+        )
+        == "bangla"
+    )
+    assert (
+        case_language_bucket(
+            key="current_rebate_banglish",
+            tags=["multilingual"],
+            query="Current niyome rebate koto?",
+        )
+        == "banglish_codeswitch"
+    )
+    assert (
+        case_language_bucket(
+            key="mixed_document_code_switched_retrieval",
+            tags=["multilingual", "codeswitch"],
+            query="কর নির্দেশিকায় verification reference code কী?",
+        )
+        == "banglish_codeswitch"
+    )
+    assert (
+        case_language_bucket(
+            key="historical_rebate_bilingual",
+            tags=["multilingual"],
+            query="On 1 January 2024 / ১ জানুয়ারি investment rebate rate কত ছিল?",
+        )
+        == "mixed_language"
+    )
+    assert (
+        case_language_bucket(
+            key="current_threshold",
+            tags=["authority"],
+            query="What is the current individual tax-free threshold?",
+        )
+        == "english"
+    )
+
+
+def _paired_case(
+    *,
+    key: str,
+    passed: bool,
+    recall: float,
+    relevant_rank: int | None,
+    relevant_ids: list[str],
+    winning: str,
+    admitted: list[str],
+    total_ms: int,
+    translation_ms: int | None = None,
+    translation_applied: bool = False,
+    contributed: bool = False,
+    language_bucket: str = "bangla",
+) -> dict[str, object]:
+    item = {"chunk_id": winning, "document_id": "doc-1"}
+    if contributed:
+        item["translated_dense"] = {"rank": 1, "rrf": 0.03}
+    return {
+        "key": key,
+        "tags": ["multilingual"],
+        "language_bucket": language_bucket,
+        "passed": passed,
+        "retrieval": {
+            "recall": recall,
+            "reciprocal_rank": 0.0 if relevant_rank is None else 1.0 / relevant_rank,
+            "ndcg": recall,
+            "relevant_rank": relevant_rank,
+            "relevant_retrieved_ids": relevant_ids,
+            "selected": [item],
+        },
+        "admitted": [{"chunk_id": chunk_id} for chunk_id in admitted],
+        "quality": {
+            "expected_evidence_admitted": bool(admitted),
+            "expected_evidence_admitted_count": len(admitted),
+            "grounding_success": passed,
+            "citation_correctness": passed,
+            "generation_refusal_correctness": passed,
+            "winning_chunk_id": winning,
+            "winning_document_id": "doc-1",
+            "translation_applied": translation_applied,
+            "translation_contributed_to_winning": contributed,
+            "translation_contributed_to_admitted": contributed,
+        },
+        "timings_ms": {
+            "translation": translation_ms,
+            "retrieval": 50,
+            "rerank": 5,
+            "grounding_and_context": 10,
+            "generation": 40,
+            "total": total_ms,
+            "translation_share": (translation_ms / total_ms) if translation_ms else None,
+        },
+        "translation": {"status": "applied" if translation_applied else "disabled"},
+    }
+
+
+def test_translation_verdicts_and_retrieval_delta_are_evidence_based() -> None:
+    required_on = _paired_case(
+        key="current_rebate_bangla",
+        passed=True,
+        recall=1.0,
+        relevant_rank=1,
+        relevant_ids=["bn"],
+        winning="bn",
+        admitted=["bn"],
+        total_ms=9000,
+        translation_ms=4000,
+        translation_applied=True,
+        contributed=True,
+    )
+    required_off = _paired_case(
+        key="current_rebate_bangla",
+        passed=False,
+        recall=0.0,
+        relevant_rank=None,
+        relevant_ids=[],
+        winning="en-wrong",
+        admitted=[],
+        total_ms=3000,
+    )
+    helpful_on = _paired_case(
+        key="current_rebate_banglish",
+        passed=True,
+        recall=1.0,
+        relevant_rank=1,
+        relevant_ids=["a"],
+        winning="a",
+        admitted=["a"],
+        total_ms=8000,
+        translation_ms=3500,
+        translation_applied=True,
+        contributed=True,
+        language_bucket="banglish_codeswitch",
+    )
+    helpful_off = _paired_case(
+        key="current_rebate_banglish",
+        passed=True,
+        recall=1.0,
+        relevant_rank=3,
+        relevant_ids=["a"],
+        winning="a",
+        admitted=["a"],
+        total_ms=4000,
+        language_bucket="banglish_codeswitch",
+    )
+    overhead_on = _paired_case(
+        key="current_threshold",
+        passed=True,
+        recall=1.0,
+        relevant_rank=1,
+        relevant_ids=["t"],
+        winning="t",
+        admitted=["t"],
+        total_ms=5000,
+        translation_ms=2000,
+        translation_applied=True,
+        language_bucket="english",
+    )
+    overhead_off = _paired_case(
+        key="current_threshold",
+        passed=True,
+        recall=1.0,
+        relevant_rank=1,
+        relevant_ids=["t"],
+        winning="t",
+        admitted=["t"],
+        total_ms=3000,
+        language_bucket="english",
+    )
+    harmful_on = _paired_case(
+        key="stale_rebate_correction",
+        passed=False,
+        recall=0.5,
+        relevant_rank=2,
+        relevant_ids=["old"],
+        winning="noise",
+        admitted=["noise"],
+        total_ms=7000,
+        translation_ms=2500,
+        translation_applied=True,
+        language_bucket="english",
+    )
+    harmful_off = _paired_case(
+        key="stale_rebate_correction",
+        passed=True,
+        recall=1.0,
+        relevant_rank=1,
+        relevant_ids=["new"],
+        winning="new",
+        admitted=["new"],
+        total_ms=3200,
+        language_bucket="english",
+    )
+
+    assert classify_translation_verdict(required_on, required_off) == "required"
+    assert classify_translation_verdict(helpful_on, helpful_off) == "helpful"
+    assert classify_translation_verdict(overhead_on, overhead_off) == "no_material_benefit"
+    assert classify_translation_verdict(harmful_on, harmful_off) == "harmful"
+    introduced = translation_changed_retrieval_outcome(required_on, required_off)
+    assert introduced["introduced_relevant_candidate"] is True
+    assert introduced["summary"] == "introduced_relevant"
+    improved = translation_changed_retrieval_outcome(helpful_on, helpful_off)
+    assert improved["improved_relevant_rank"] is True
+    assert improved["summary"] == "improved_rank"
+    unchanged = translation_changed_retrieval_outcome(overhead_on, overhead_off)
+    assert unchanged["meaningful"] is False
+
+    report = build_translation_comparison(
+        {
+            "name": "translation_on",
+            "cases": [required_on, helpful_on, overhead_on, harmful_on],
+            "effective_config": {
+                "configuration": {"retrieval": {"query_translation_enabled": True}}
+            },
+        },
+        {
+            "name": "translation_off",
+            "cases": [required_off, helpful_off, overhead_off, harmful_off],
+            "effective_config": {
+                "configuration": {"retrieval": {"query_translation_enabled": False}}
+            },
+        },
+    )
+    assert report["summary"]["required_cases"] == ["current_rebate_bangla"]
+    assert report["summary"]["helpful_cases"] == ["current_rebate_banglish"]
+    assert report["summary"]["pure_overhead_cases"] == ["current_threshold"]
+    assert report["summary"]["harmful_cases"] == ["stale_rebate_correction"]
+    assert report["latency"]["all"]["translation_share"]["overall"] > 0
+    markdown = render_summary(
+        {
+            "journey": "tax_v1",
+            "status": "failed",
+            "run_id": "test",
+            "project_id": "p",
+            "job_transport": {"configured": "inline"},
+            "cleanup": {"status": "succeeded"},
+            "variants": [],
+            "translation_comparison": report,
+        }
+    )
+    assert "| Case | Lang | ON | OFF |" in markdown
+    assert "`current_rebate_bangla`" in markdown
+    assert "required" in markdown
+    assert "Pure overhead" in markdown
+
+
+def test_evaluate_case_result_records_translation_quality_without_changing_pass() -> None:
+    chunk_id = uuid.uuid4()
+    document_id = uuid.uuid4()
+    case = JourneyCase(
+        key="current_rebate_bangla",
+        tags=["multilingual", "authority"],
+        query="বর্তমান নিয়মে রিবেট কত?",
+        anchors=["rebate"],
+        expected_tokens=["10%"],
+    )
+    message = _message(
+        content="The current rebate is 10%.",
+        metadata={
+            "retrieval_trace": {
+                "retrieval_selected": [
+                    {
+                        "rank": 1,
+                        "chunk_id": str(chunk_id),
+                        "document_id": str(document_id),
+                        "translated_dense": {"rank": 1, "rrf": 0.02},
+                    }
+                ],
+                "context_selected": [
+                    {"chunk_id": str(chunk_id), "document_id": str(document_id)}
+                ],
+                "translation": {"status": "applied", "latency_ms": 1200},
+                "rerank": {"status": "applied", "latency_ms": 80},
+                "executed_branches": ["original_dense", "translated_dense"],
+            },
+            "evidence_gate": {"sufficient": True},
+            "web_search": {"status": "not_requested", "fallback_used": False},
+        },
+    )
+    message.citations = [
+        SimpleNamespace(
+            source_kind=CitationSourceKind.KNOWLEDGE,
+            chunk_id=chunk_id,
+            document_id=document_id,
+            filename="finance.md",
+            source_revision_id=None,
+            web_url=None,
+        )
+    ]
+
+    result = evaluate_case_result(
+        case=case,
+        message=message,
+        anchor_mapping={"rebate": [chunk_id]},
+        document_ids={"finance_2026": document_id},
+        response_mode=ResponseMode.INDEXED_ONLY,
+        modifies_expansion_enabled=False,
+    )
+
+    assert result["passed"] is True
+    assert result["language_bucket"] == "bangla"
+    assert result["quality"]["translation_applied"] is True
+    assert result["quality"]["translation_contributed_to_winning"] is True
+    assert result["timings_ms"]["translation"] == 1200
+    assert result["timings_ms"]["rerank"] == 80
+    assert result["timings_ms"]["translation_share"] == 1200 / 5
 
 
 async def test_inline_queue_dispatches_document_purge(monkeypatch: pytest.MonkeyPatch) -> None:

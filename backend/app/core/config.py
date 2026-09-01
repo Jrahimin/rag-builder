@@ -636,7 +636,8 @@ class QueryTranslationConfig(BaseModel):
     Runs only when the active build language inventory contains a supported
     language different from the query. Original dense + BM25 always remain.
     Projects override with Inherit / On / Off. Disabled by default so pytest
-    and local hash/echo stacks do not require an LLM key.
+    and local hash/echo stacks do not require an LLM key. Existing Projects
+    inherit this global default through `retrieval.query_translation_enabled`.
     """
 
     enabled: bool = False

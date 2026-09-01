@@ -40,6 +40,14 @@ def _parser() -> argparse.ArgumentParser:
         help="Run one second variant changing exactly one safe query-time leaf.",
     )
     parser.add_argument(
+        "--compare-translation",
+        action="store_true",
+        help=(
+            "Reuse the same Project/index and run a second variant with "
+            "retrieval.query_translation_enabled=false."
+        ),
+    )
+    parser.add_argument(
         "--keep-project",
         action="store_true",
         help="Retain the generated Project for inspection instead of purging it.",
@@ -71,14 +79,21 @@ def _options(args: argparse.Namespace, *, configured_job_backend: str) -> Journe
         if key in overrides:
             raise JourneyError(f"Duplicate --set key {key!r}.")
         overrides[key] = value
+    if args.compare_translation and args.compare:
+        raise JourneyError("Use either --compare-translation or --compare, not both.")
     if len(args.compare) > 1:
         raise JourneyError("V1 accepts only one --compare assignment.")
-    comparison = parse_config_assignment(args.compare[0]) if args.compare else None
+    comparison = (
+        ("retrieval.query_translation_enabled", False)
+        if args.compare_translation
+        else (parse_config_assignment(args.compare[0]) if args.compare else None)
+    )
     return JourneyOptions(
         fixture=args.fixture.resolve(),
         artifact_root=args.artifact_root.resolve(),
         overrides=overrides,
         comparison=comparison,
+        compare_translation=args.compare_translation,
         keep_project=args.keep_project,
         allow_nonlocal_database=args.allow_nonlocal_database,
         allow_nonlocal_storage=args.allow_nonlocal_storage,

@@ -8,7 +8,7 @@ import re
 import statistics
 import unicodedata
 import uuid
-from collections.abc import AsyncIterator, Callable, Mapping
+from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any, Literal
@@ -140,6 +140,7 @@ class JourneyCase(BaseModel):
     expected_token_groups: list[list[str]] = Field(default_factory=list)
     expected_any: list[str] = Field(default_factory=list)
     user_parameter_tokens: list[str] = Field(default_factory=list)
+    content_match_anchors: list[str] = Field(default_factory=list)
     correction: CorrectionExpectation | None = None
     mode: Literal["answerable", "scope_isolation", "no_answer"] = "answerable"
 
@@ -171,6 +172,7 @@ class JourneyOptions(BaseModel):
     artifact_root: Path = DEFAULT_ARTIFACT_ROOT
     overrides: dict[str, Any] = Field(default_factory=dict)
     comparison: tuple[str, Any] | None = None
+    compare_translation: bool = False
     keep_project: bool = False
     allow_nonlocal_database: bool = False
     allow_nonlocal_storage: bool = False
@@ -211,6 +213,12 @@ def load_manifest(path: Path = DEFAULT_FIXTURE) -> JourneyManifest:
         unknown = (set(case.anchors) | grouped_anchors) - anchors
         if unknown:
             raise JourneyError(f"Case {case.key!r} references unknown anchors: {sorted(unknown)}")
+        unknown_content_match = set(case.content_match_anchors) - anchors
+        if unknown_content_match:
+            raise JourneyError(
+                f"Case {case.key!r} content_match_anchors reference unknown "
+                f"anchors: {sorted(unknown_content_match)}"
+            )
         if any(not group for group in case.required_anchor_groups):
             raise JourneyError(f"Case {case.key!r} contains an empty required anchor group.")
         if any(not group for group in case.expected_token_groups):
@@ -317,6 +325,52 @@ def resolve_evidence_anchors(
             )
         mappings[anchor.key] = [match.id for match in matches]
     return mappings
+
+
+def _content_supporting_chunk_ids(
+    *,
+    anchor: EvidenceAnchor,
+    chunks: Sequence[RuntimeChunk],
+) -> set[str]:
+    """Same-source chunks whose content contains the phrases or overlaps one that does.
+
+    Phrase-only mixed documents can emit overlapping semantic chunks. The harness
+    still requires evidence from the named source that actually contains or
+    immediately neighbors the required phrases.
+    """
+    phrases = [normalize_text(phrase) for phrase in anchor.phrases]
+    source_chunks = [chunk for chunk in chunks if chunk.source_key == anchor.source]
+    phrase_indexes = {
+        chunk.chunk_index
+        for chunk in source_chunks
+        if all(phrase in normalize_text(chunk.content) for phrase in phrases)
+    }
+    return {
+        str(chunk.id)
+        for chunk in source_chunks
+        if chunk.chunk_index in phrase_indexes
+        or any(abs(chunk.chunk_index - index) <= 1 for index in phrase_indexes)
+    }
+
+
+def _required_group_ids(
+    group: Sequence[str],
+    *,
+    case: JourneyCase,
+    anchor_mapping: Mapping[str, list[uuid.UUID]],
+    anchors_by_key: Mapping[str, EvidenceAnchor],
+    chunks: Sequence[RuntimeChunk],
+) -> set[str]:
+    ids: set[str] = set()
+    for key in group:
+        ids.update(str(chunk_id) for chunk_id in anchor_mapping.get(key, []))
+        if key not in case.content_match_anchors:
+            continue
+        anchor = anchors_by_key.get(key)
+        if anchor is None:
+            continue
+        ids.update(_content_supporting_chunk_ids(anchor=anchor, chunks=chunks))
+    return ids
 
 
 def _project_ai_leaf_paths() -> set[str]:
@@ -438,6 +492,10 @@ def _trace_identities(items: Any) -> list[dict[str, Any]]:
         "rank_score",
         "rerank_relevance_score",
         "branch_provenance",
+        "original_dense",
+        "original_lexical",
+        "translated_dense",
+        "translated_lexical",
         "evidence_unit_id",
         "authority_redaction",
         "authority_redacted_provisions",
@@ -484,6 +542,60 @@ def _knowledge_document_ids(items: list[dict[str, Any]]) -> set[str]:
     }
 
 
+_TRANSLATED_BRANCH_PREFIXES = ("translated_dense", "translated_lexical")
+
+
+def case_language_bucket(*, key: str, tags: list[str], query: str) -> str:
+    """Classify a journey query by script/form for translation A/B slices."""
+    tag_set = set(tags)
+    if "codeswitch" in tag_set or "banglish" in key:
+        return "banglish_codeswitch"
+    has_bangla = any("\u0980" <= char <= "\u09ff" for char in query)
+    has_latin = any("a" <= char.lower() <= "z" for char in query)
+    if has_bangla and has_latin:
+        return "mixed_language"
+    if has_bangla:
+        return "bangla"
+    return "english"
+
+
+def _optional_ms(value: object) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return int(value)
+
+
+def _ratio(numerator: object, denominator: object) -> float | None:
+    if isinstance(numerator, bool) or isinstance(denominator, bool):
+        return None
+    if not isinstance(numerator, (int, float)) or not isinstance(denominator, (int, float)):
+        return None
+    if denominator <= 0:
+        return None
+    return float(numerator) / float(denominator)
+
+
+def _has_translated_branch(item: Mapping[str, Any]) -> bool:
+    if item.get("translated_dense") or item.get("translated_lexical"):
+        return True
+    provenance = item.get("branch_provenance") or {}
+    if not isinstance(provenance, Mapping):
+        return False
+    return any(
+        str(branch_id).startswith(_TRANSLATED_BRANCH_PREFIXES) for branch_id in provenance
+    )
+
+
+def _first_relevant_rank(
+    retrieved: list[dict[str, Any]], relevant_ids: set[str]
+) -> int | None:
+    for rank, item in enumerate(retrieved, start=1):
+        chunk_id = item.get("chunk_id")
+        if chunk_id is not None and str(chunk_id) in relevant_ids:
+            return rank
+    return None
+
+
 def evaluate_case_result(
     *,
     case: JourneyCase,
@@ -492,6 +604,8 @@ def evaluate_case_result(
     document_ids: Mapping[str, uuid.UUID],
     response_mode: ResponseMode,
     modifies_expansion_enabled: bool,
+    chunks: Sequence[RuntimeChunk] = (),
+    anchors: Sequence[EvidenceAnchor] = (),
 ) -> dict[str, Any]:
     """Normalize one production message and localize deterministic failures."""
     metadata = dict(message.metadata or {})
@@ -529,9 +643,17 @@ def evaluate_case_result(
         }
         for claim in message.claims
     ]
+    anchors_by_key = {anchor.key: anchor for anchor in anchors}
     relevant_ids = {
         str(chunk_id) for anchor in case.anchors for chunk_id in anchor_mapping.get(anchor, [])
     }
+    content_match_ids = _required_group_ids(
+        case.content_match_anchors,
+        case=case,
+        anchor_mapping=anchor_mapping,
+        anchors_by_key=anchors_by_key,
+        chunks=chunks,
+    )
     result_ids = [str(item.get("chunk_id")) for item in retrieved if item.get("chunk_id")]
     recall, reciprocal_rank, ndcg, relevant_retrieved = rank_metrics(result_ids, relevant_ids)
     admitted_ids = {str(item.get("chunk_id")) for item in admitted if item.get("chunk_id")}
@@ -631,9 +753,13 @@ def evaluate_case_result(
                     )
                 )
         for group in case.required_anchor_groups:
-            group_ids = {
-                str(chunk_id) for anchor in group for chunk_id in anchor_mapping.get(anchor, [])
-            }
+            group_ids = _required_group_ids(
+                group,
+                case=case,
+                anchor_mapping=anchor_mapping,
+                anchors_by_key=anchors_by_key,
+                chunks=chunks,
+            )
             label = " or ".join(group)
             if not group_ids & set(result_ids):
                 failures.append(
@@ -646,7 +772,10 @@ def evaluate_case_result(
                         f"Required evidence group was not admitted: {label}.",
                     )
                 )
-            if not group_ids & claim_evidence_ids:
+            grounded_or_cited_ids = claim_evidence_ids
+            if any(key in case.content_match_anchors for key in group):
+                grounded_or_cited_ids = claim_evidence_ids | citation_ids
+            if not group_ids & grounded_or_cited_ids:
                 failures.append(
                     _failure(
                         "citation",
@@ -696,7 +825,8 @@ def evaluate_case_result(
                     "Indexed evidence did not pass the grounding gate.",
                 )
             )
-        if relevant_ids and not (citation_ids & relevant_ids):
+        citation_relevant_ids = relevant_ids | content_match_ids
+        if citation_relevant_ids and not (citation_ids & citation_relevant_ids):
             failures.append(_failure("citation", "No citation points at expected evidence."))
         if bool(web.get("fallback_used")):
             failures.append(_failure("fallback", "Indexed answer unnecessarily used web fallback."))
@@ -780,10 +910,24 @@ def evaluate_case_result(
             "failure_reason": rerank.get("failure_reason") or "unavailable",
         }
 
+    failure_stages = {failure["stage"] for failure in failures}
+    expected_admitted_ids = admitted_ids & relevant_ids
+    winning = retrieved[0] if retrieved else None
+    translation = sanitize_diagnostics(trace.get("translation") or {})
+    retrieval_ms = _optional_ms(message.retrieval_latency_ms)
+    generation_ms = _optional_ms(message.provider_latency_ms)
+    total_ms = _optional_ms(message.total_latency_ms)
+    translation_ms = _optional_ms(translation.get("latency_ms"))
+    rerank_ms = _optional_ms(rerank.get("latency_ms"))
+    residual_ms = None
+    if retrieval_ms is not None and generation_ms is not None and total_ms is not None:
+        residual_ms = max(0, total_ms - retrieval_ms - generation_ms)
+
     return {
         "key": case.key,
         "tags": case.tags,
         "mode": case.mode,
+        "language_bucket": case_language_bucket(key=case.key, tags=case.tags, query=case.query),
         "passed": not failures,
         "failures": failures,
         "answer": message.content,
@@ -800,6 +944,10 @@ def evaluate_case_result(
             "recall": recall,
             "reciprocal_rank": reciprocal_rank,
             "ndcg": ndcg,
+            "relevant_rank": _first_relevant_rank(retrieved, relevant_ids),
+            "relevant_retrieved_ids": [
+                result_id for result_id in result_ids if result_id in relevant_ids
+            ],
         },
         "admitted": admitted,
         "citations": citations,
@@ -807,13 +955,41 @@ def evaluate_case_result(
         "authority": sanitize_diagnostics(authority),
         "evidence_gate": sanitize_diagnostics(gate),
         "fallback": sanitize_diagnostics(web),
-        "translation": sanitize_diagnostics(trace.get("translation") or {}),
+        "translation": translation,
+        "executed_branches": list(trace.get("executed_branches") or []),
+        "branch_candidate_counts": dict(trace.get("branch_candidate_counts") or {}),
         "rerank": rerank,
         "provider_degradation": provider_degradation,
+        "quality": {
+            "expected_evidence_admitted": bool(expected_admitted_ids),
+            "expected_evidence_admitted_count": len(expected_admitted_ids),
+            "grounding_success": (
+                "admission_grounding" not in failure_stages
+                and "context_selection" not in failure_stages
+                and bool(message.grounded)
+            ),
+            "citation_correctness": "citation" not in failure_stages,
+            "generation_refusal_correctness": "generation_refusal" not in failure_stages,
+            "winning_chunk_id": winning.get("chunk_id") if winning else None,
+            "winning_document_id": winning.get("document_id") if winning else None,
+            "translation_applied": translation.get("status") in {"applied", "failed"},
+            "translation_contributed_to_winning": (
+                winning is not None and _has_translated_branch(winning)
+            ),
+            "translation_contributed_to_admitted": any(
+                _has_translated_branch(item) for item in admitted
+            ),
+        },
         "timings_ms": {
-            "retrieval": message.retrieval_latency_ms,
-            "generation": message.provider_latency_ms,
-            "total": message.total_latency_ms,
+            "translation": translation_ms,
+            "dense": None,
+            "lexical": None,
+            "rerank": rerank_ms,
+            "retrieval": retrieval_ms,
+            "grounding_and_context": residual_ms,
+            "generation": generation_ms,
+            "total": total_ms,
+            "translation_share": _ratio(translation_ms, total_ms),
         },
     }
 
@@ -1276,6 +1452,7 @@ async def _run_variant(
     project_id: uuid.UUID,
     document_ids: Mapping[str, uuid.UUID],
     anchor_mapping: Mapping[str, list[uuid.UUID]],
+    chunks: Sequence[RuntimeChunk],
     settings: Settings,
     resolution: Any,
     progress: Progress,
@@ -1349,6 +1526,8 @@ async def _run_variant(
                     effective.retrieval.modifies_expansion_enabled
                     or effective.retrieval.modifies_expansion_mode.value == "expand"
                 ),
+                chunks=chunks,
+                anchors=manifest.anchors,
             )
             normalized["conversation_id"] = str(conversation.id)
             normalized["expected"] = sanitize_diagnostics(expected.model_dump(mode="json"))
@@ -1608,6 +1787,357 @@ def _comparison_summary(
     }
 
 
+def _admitted_chunk_ids(case: Mapping[str, Any]) -> set[str]:
+    return {
+        str(item["chunk_id"])
+        for item in list(case.get("admitted") or [])
+        if item.get("chunk_id")
+    }
+
+
+def _quality_snapshot(case: Mapping[str, Any]) -> dict[str, Any]:
+    quality = dict(case.get("quality") or {})
+    retrieval = dict(case.get("retrieval") or {})
+    return {
+        "passed": bool(case.get("passed")),
+        "recall": float(retrieval.get("recall") or 0.0),
+        "reciprocal_rank": float(retrieval.get("reciprocal_rank") or 0.0),
+        "ndcg": float(retrieval.get("ndcg") or 0.0),
+        "relevant_rank": retrieval.get("relevant_rank"),
+        "expected_evidence_admitted": bool(quality.get("expected_evidence_admitted")),
+        "expected_evidence_admitted_count": int(
+            quality.get("expected_evidence_admitted_count") or 0
+        ),
+        "grounding_success": bool(quality.get("grounding_success")),
+        "citation_correctness": bool(quality.get("citation_correctness")),
+        "generation_refusal_correctness": bool(quality.get("generation_refusal_correctness")),
+        "winning_chunk_id": quality.get("winning_chunk_id"),
+        "winning_document_id": quality.get("winning_document_id"),
+    }
+
+
+def _strictly_better_quality(left: Mapping[str, Any], right: Mapping[str, Any]) -> bool:
+    """Return True when left is strictly better on the ordered quality tuple."""
+    left_rank = left.get("relevant_rank")
+    right_rank = right.get("relevant_rank")
+    left_rank_score = 0 if left_rank is None else -int(left_rank)
+    right_rank_score = 0 if right_rank is None else -int(right_rank)
+    left_tuple = (
+        int(bool(left.get("passed"))),
+        float(left.get("recall") or 0.0),
+        float(left.get("reciprocal_rank") or 0.0),
+        float(left.get("ndcg") or 0.0),
+        int(bool(left.get("expected_evidence_admitted"))),
+        int(bool(left.get("grounding_success"))),
+        int(bool(left.get("citation_correctness"))),
+        int(bool(left.get("generation_refusal_correctness"))),
+        left_rank_score,
+    )
+    right_tuple = (
+        int(bool(right.get("passed"))),
+        float(right.get("recall") or 0.0),
+        float(right.get("reciprocal_rank") or 0.0),
+        float(right.get("ndcg") or 0.0),
+        int(bool(right.get("expected_evidence_admitted"))),
+        int(bool(right.get("grounding_success"))),
+        int(bool(right.get("citation_correctness"))),
+        int(bool(right.get("generation_refusal_correctness"))),
+        right_rank_score,
+    )
+    comparable_left = (
+        left_tuple[0],
+        round(left_tuple[1], 9),
+        round(left_tuple[2], 9),
+        round(left_tuple[3], 9),
+        *left_tuple[4:],
+    )
+    comparable_right = (
+        right_tuple[0],
+        round(right_tuple[1], 9),
+        round(right_tuple[2], 9),
+        round(right_tuple[3], 9),
+        *right_tuple[4:],
+    )
+    return comparable_left > comparable_right
+
+
+def translation_contribution_label(case: Mapping[str, Any]) -> str:
+    quality = dict(case.get("quality") or {})
+    winning = bool(quality.get("translation_contributed_to_winning"))
+    admitted = bool(quality.get("translation_contributed_to_admitted"))
+    if winning and admitted:
+        return "winning+admitted"
+    if admitted:
+        return "admitted"
+    if winning:
+        return "winning"
+    return "none"
+
+
+def translation_changed_retrieval_outcome(
+    on_case: Mapping[str, Any],
+    off_case: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Describe whether translation changed retrieval/admission, not just that it ran."""
+    on_relevant = set((on_case.get("retrieval") or {}).get("relevant_retrieved_ids") or [])
+    off_relevant = set((off_case.get("retrieval") or {}).get("relevant_retrieved_ids") or [])
+    on_admitted = _admitted_chunk_ids(on_case)
+    off_admitted = _admitted_chunk_ids(off_case)
+    on_quality = _quality_snapshot(on_case)
+    off_quality = _quality_snapshot(off_case)
+    on_relevant_rank = on_quality.get("relevant_rank")
+    off_relevant_rank = off_quality.get("relevant_rank")
+    introduced_relevant = bool(on_relevant - off_relevant)
+    improved_rank = (
+        isinstance(on_relevant_rank, int)
+        and isinstance(off_relevant_rank, int)
+        and on_relevant_rank < off_relevant_rank
+    )
+    changed_winning = on_quality.get("winning_chunk_id") != off_quality.get("winning_chunk_id")
+    changed_admitted = on_admitted != off_admitted
+    if introduced_relevant:
+        summary = "introduced_relevant"
+    elif improved_rank:
+        summary = "improved_rank"
+    elif changed_admitted:
+        summary = "changed_admitted"
+    elif changed_winning:
+        summary = "changed_winning"
+    else:
+        summary = "none"
+    return {
+        "introduced_relevant_candidate": introduced_relevant,
+        "improved_relevant_rank": improved_rank,
+        "changed_winning_evidence": changed_winning,
+        "changed_admitted_evidence": changed_admitted,
+        "meaningful": summary != "none",
+        "summary": summary,
+    }
+
+
+def classify_translation_verdict(
+    on_case: Mapping[str, Any],
+    off_case: Mapping[str, Any],
+) -> str:
+    on_quality = _quality_snapshot(on_case)
+    off_quality = _quality_snapshot(off_case)
+    if on_quality["passed"] and not off_quality["passed"]:
+        return "required"
+    if off_quality["passed"] and not on_quality["passed"]:
+        return "harmful"
+    if _strictly_better_quality(on_quality, off_quality):
+        return "helpful"
+    if _strictly_better_quality(off_quality, on_quality):
+        return "harmful"
+    return "no_material_benefit"
+
+
+def _latency_distribution(values: list[float]) -> dict[str, float]:
+    return {
+        "p50_ms": statistics.median(values) if values else 0.0,
+        "p95_ms": _percentile(values, 0.95),
+        "mean_ms": statistics.fmean(values) if values else 0.0,
+        "count": float(len(values)),
+    }
+
+
+def _timing_slice(cases: Sequence[Mapping[str, Any]], field: str) -> list[float]:
+    values: list[float] = []
+    for case in cases:
+        value = _optional_ms((case.get("timings_ms") or {}).get(field))
+        if value is not None:
+            values.append(float(value))
+    return values
+
+
+def _share_slice(cases: Sequence[Mapping[str, Any]]) -> list[float]:
+    values: list[float] = []
+    for case in cases:
+        share = (case.get("timings_ms") or {}).get("translation_share")
+        if isinstance(share, (int, float)) and not isinstance(share, bool):
+            values.append(float(share))
+    return values
+
+
+def _paired_latency_block(
+    on_cases: Sequence[Mapping[str, Any]],
+    off_cases: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    on_total = _timing_slice(on_cases, "total")
+    off_total = _timing_slice(off_cases, "total")
+    on_translation = _timing_slice(on_cases, "translation")
+    shares = _share_slice(on_cases)
+    on_sum = sum(on_total)
+    translation_sum = sum(on_translation)
+    return {
+        "on": {
+            "total": _latency_distribution(on_total),
+            "translation": _latency_distribution(on_translation),
+            "retrieval": _latency_distribution(_timing_slice(on_cases, "retrieval")),
+            "rerank": _latency_distribution(_timing_slice(on_cases, "rerank")),
+            "grounding_and_context": _latency_distribution(
+                _timing_slice(on_cases, "grounding_and_context")
+            ),
+            "generation": _latency_distribution(_timing_slice(on_cases, "generation")),
+        },
+        "off": {
+            "total": _latency_distribution(off_total),
+            "retrieval": _latency_distribution(_timing_slice(off_cases, "retrieval")),
+            "rerank": _latency_distribution(_timing_slice(off_cases, "rerank")),
+            "grounding_and_context": _latency_distribution(
+                _timing_slice(off_cases, "grounding_and_context")
+            ),
+            "generation": _latency_distribution(_timing_slice(off_cases, "generation")),
+        },
+        "delta_total_p50_ms": (
+            (_latency_distribution(on_total)["p50_ms"] - _latency_distribution(off_total)["p50_ms"])
+            if on_total or off_total
+            else 0.0
+        ),
+        "delta_total_p95_ms": (
+            (_latency_distribution(on_total)["p95_ms"] - _latency_distribution(off_total)["p95_ms"])
+            if on_total or off_total
+            else 0.0
+        ),
+        "delta_total_mean_ms": (
+            (
+                _latency_distribution(on_total)["mean_ms"]
+                - _latency_distribution(off_total)["mean_ms"]
+            )
+            if on_total or off_total
+            else 0.0
+        ),
+        "translation_share": {
+            "p50": statistics.median(shares) if shares else 0.0,
+            "p95": _percentile(shares, 0.95),
+            "mean": statistics.fmean(shares) if shares else 0.0,
+            "overall": (translation_sum / on_sum) if on_sum else 0.0,
+        },
+    }
+
+
+def build_translation_comparison(
+    on_variant: Mapping[str, Any],
+    off_variant: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Pair ON/OFF cases from one shared corpus index without a second harness."""
+    off_by_key = {case["key"]: case for case in off_variant.get("cases") or []}
+    pairs: list[dict[str, Any]] = []
+    for on_case in on_variant.get("cases") or []:
+        off_case = off_by_key.get(on_case["key"])
+        if off_case is None:
+            continue
+        outcome = translation_changed_retrieval_outcome(on_case, off_case)
+        on_ms = _optional_ms((on_case.get("timings_ms") or {}).get("total")) or 0
+        off_ms = _optional_ms((off_case.get("timings_ms") or {}).get("total")) or 0
+        pairs.append(
+            {
+                "key": on_case["key"],
+                "language_bucket": on_case.get("language_bucket")
+                or case_language_bucket(
+                    key=str(on_case["key"]),
+                    tags=list(on_case.get("tags") or []),
+                    query="",
+                ),
+                "on_passed": bool(on_case.get("passed")),
+                "off_passed": bool(off_case.get("passed")),
+                "on_ms": on_ms,
+                "off_ms": off_ms,
+                "delta_ms": on_ms - off_ms,
+                "retrieval_delta": outcome["summary"],
+                "translation_contribution": translation_contribution_label(on_case),
+                "verdict": classify_translation_verdict(on_case, off_case),
+                "translation_changed_retrieval_outcome": outcome,
+                "quality": {
+                    "on": _quality_snapshot(on_case),
+                    "off": _quality_snapshot(off_case),
+                },
+                "timings_ms": {
+                    "on": dict(on_case.get("timings_ms") or {}),
+                    "off": dict(off_case.get("timings_ms") or {}),
+                },
+            }
+        )
+
+    on_cases = list(on_variant.get("cases") or [])
+    off_cases = list(off_variant.get("cases") or [])
+    applicable_keys = {
+        case["key"]
+        for case in on_cases
+        if (case.get("quality") or {}).get("translation_applied")
+    }
+
+    def _select(
+        cases: Sequence[Mapping[str, Any]],
+        predicate: Callable[[Mapping[str, Any]], bool],
+    ) -> list[Mapping[str, Any]]:
+        return [case for case in cases if predicate(case)]
+
+    def _in_bucket(current: str) -> Callable[[Mapping[str, Any]], bool]:
+        return lambda case: case.get("language_bucket") == current
+
+    latency = {
+        "all": _paired_latency_block(on_cases, off_cases),
+        "translation_applicable": _paired_latency_block(
+            _select(on_cases, lambda case: case["key"] in applicable_keys),
+            _select(off_cases, lambda case: case["key"] in applicable_keys),
+        ),
+    }
+    for bucket in ("bangla", "banglish_codeswitch", "mixed_language", "english"):
+        latency[bucket] = _paired_latency_block(
+            _select(on_cases, _in_bucket(bucket)),
+            _select(off_cases, _in_bucket(bucket)),
+        )
+
+    verdicts = {
+        label: [pair["key"] for pair in pairs if pair["verdict"] == label]
+        for label in ("required", "helpful", "no_material_benefit", "harmful")
+    }
+    overhead = [
+        pair["key"]
+        for pair in pairs
+        if pair["verdict"] == "no_material_benefit"
+        and pair["translation_contribution"] == "none"
+        and not pair["translation_changed_retrieval_outcome"]["meaningful"]
+        and pair["key"] in applicable_keys
+    ]
+    return {
+        "kind": "query_translation",
+        "on_variant": on_variant.get("name"),
+        "off_variant": off_variant.get("name"),
+        "cases": pairs,
+        "summary": {
+            "verdict_counts": {label: len(keys) for label, keys in verdicts.items()},
+            "required_cases": verdicts["required"],
+            "helpful_cases": verdicts["helpful"],
+            "no_material_benefit_cases": verdicts["no_material_benefit"],
+            "harmful_cases": verdicts["harmful"],
+            "pure_overhead_cases": overhead,
+            "on_passed": sum(bool(pair["on_passed"]) for pair in pairs),
+            "off_passed": sum(bool(pair["off_passed"]) for pair in pairs),
+            "case_count": len(pairs),
+        },
+        "latency": latency,
+    }
+
+
+def translation_variants(
+    variants: list[Mapping[str, Any]],
+) -> tuple[Mapping[str, Any], Mapping[str, Any]] | None:
+    enabled: Mapping[str, Any] | None = None
+    disabled: Mapping[str, Any] | None = None
+    for variant in variants:
+        configuration = ((variant.get("effective_config") or {}).get("configuration") or {})
+        retrieval = dict(configuration.get("retrieval") or {})
+        if retrieval.get("query_translation_enabled") is True:
+            enabled = variant
+        elif retrieval.get("query_translation_enabled") is False:
+            disabled = variant
+    if enabled is None or disabled is None:
+        return None
+    return enabled, disabled
+
+
 def render_summary(result: Mapping[str, Any]) -> str:
     lines = [
         f"# RAG Journey: {result['journey']}",
@@ -1737,6 +2267,9 @@ def render_summary(result: Mapping[str, Any]) -> str:
                 f"{metrics['latency_p50_ms_delta']:+.0f} |"
             )
         lines.append("")
+    translation = result.get("translation_comparison")
+    if translation:
+        lines.extend(_render_translation_comparison(translation))
     if result["cleanup"].get("error"):
         lines.extend(["## Cleanup failure", "", str(result["cleanup"]["error"]), ""])
     lines.extend(
@@ -1749,6 +2282,118 @@ def render_summary(result: Mapping[str, Any]) -> str:
         ]
     )
     return "\n".join(lines)
+
+
+_LANGUAGE_BUCKET_LABELS = {
+    "bangla": "bn",
+    "banglish_codeswitch": "banglish",
+    "mixed_language": "mixed",
+    "english": "en",
+}
+
+
+def _fmt_ms(value: object) -> str:
+    number = _optional_ms(value)
+    return "—" if number is None else str(number)
+
+
+def _fmt_share(value: object) -> str:
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return "—"
+    return f"{float(value):.0%}"
+
+
+def _render_latency_row(label: str, block: Mapping[str, Any]) -> str:
+    on_total = dict((block.get("on") or {}).get("total") or {})
+    off_total = dict((block.get("off") or {}).get("total") or {})
+    share = dict(block.get("translation_share") or {})
+    return (
+        f"| {label} | {on_total.get('p50_ms', 0):.0f}/{on_total.get('p95_ms', 0):.0f}/"
+        f"{on_total.get('mean_ms', 0):.0f} | {off_total.get('p50_ms', 0):.0f}/"
+        f"{off_total.get('p95_ms', 0):.0f}/{off_total.get('mean_ms', 0):.0f} | "
+        f"{block.get('delta_total_p50_ms', 0):+.0f}/{block.get('delta_total_p95_ms', 0):+.0f}/"
+        f"{block.get('delta_total_mean_ms', 0):+.0f} | "
+        f"{_fmt_share(share.get('p50'))}/{_fmt_share(share.get('overall'))} |"
+    )
+
+
+def _render_translation_comparison(translation: Mapping[str, Any]) -> list[str]:
+    summary = dict(translation.get("summary") or {})
+    latency = dict(translation.get("latency") or {})
+    counts = dict(summary.get("verdict_counts") or {})
+    lines = [
+        "## Translation A/B",
+        "",
+        "Same Project, corpus, and active index. `translation_on` is the current configuration; "
+        "`translation_off` only sets `retrieval.query_translation_enabled=false`. "
+        "Quality uses journey pass/fail, recall, rank, nDCG, admission, grounding, citation, and "
+        "generation — not LLM wording similarity. `grounding_and_context` is residual "
+        "`total - retrieval - generation`. Dense/lexical branch latencies are omitted unless "
+        "the retrieval diagnostics expose them.",
+        "",
+        "| Case | Lang | ON | OFF | ON ms | OFF ms | Δ ms | Retrieval Δ "
+        "| Translation contribution | Verdict |",
+        "|---|---|---:|---:|---:|---:|---:|---|---|---|",
+    ]
+    for pair in translation.get("cases") or []:
+        lang = _LANGUAGE_BUCKET_LABELS.get(
+            str(pair.get("language_bucket")),
+            pair.get("language_bucket") or "—",
+        )
+        lines.append(
+            f"| `{pair['key']}` | {lang} | "
+            f"{'PASS' if pair.get('on_passed') else 'FAIL'} | "
+            f"{'PASS' if pair.get('off_passed') else 'FAIL'} | "
+            f"{_fmt_ms(pair.get('on_ms'))} | {_fmt_ms(pair.get('off_ms'))} | "
+            f"{int(pair.get('delta_ms') or 0):+d} | "
+            f"{str(pair.get('retrieval_delta') or 'none').replace('_', ' ')} | "
+            f"{pair.get('translation_contribution') or 'none'} | "
+            f"{str(pair.get('verdict') or '').replace('_', ' ')} |"
+        )
+    lines.extend(
+        [
+            "",
+            "### Quality",
+            "",
+            f"ON passed {summary.get('on_passed', 0)}/{summary.get('case_count', 0)}; "
+            f"OFF passed {summary.get('off_passed', 0)}/{summary.get('case_count', 0)}. "
+            f"Verdicts: required {counts.get('required', 0)}, helpful {counts.get('helpful', 0)}, "
+            f"no material benefit {counts.get('no_material_benefit', 0)}, "
+            f"harmful {counts.get('harmful', 0)}.",
+            "",
+            "Genuinely necessary (`required`): "
+            f"{', '.join(f'`{key}`' for key in summary.get('required_cases') or []) or 'none'}.",
+            "",
+            "Pure overhead (applied translation, no retrieval/quality change): "
+            + (
+                ", ".join(f"`{key}`" for key in summary.get("pure_overhead_cases") or [])
+                or "none"
+            )
+            + ".",
+            "",
+            "Harmful: "
+            f"{', '.join(f'`{key}`' for key in summary.get('harmful_cases') or []) or 'none'}.",
+            "",
+            "### Latency",
+            "",
+            "| Slice | ON p50/p95/mean | OFF p50/p95/mean | Δ p50/p95/mean "
+            "| Translation share p50/overall |",
+            "|---|---:|---:|---:|---:|",
+        ]
+    )
+    for label, key in (
+        ("all cases", "all"),
+        ("translated/applicable", "translation_applicable"),
+        ("Bangla", "bangla"),
+        ("Banglish/code-switch", "banglish_codeswitch"),
+        ("mixed-language", "mixed_language"),
+        ("ordinary English", "english"),
+    ):
+        block = latency.get(key)
+        if isinstance(block, Mapping):
+            lines.append(_render_latency_row(label, block))
+    lines.append("")
+    return lines
 
 
 def write_reports(result: dict[str, Any], artifact_dir: Path) -> None:
@@ -1807,6 +2452,7 @@ async def run_journey(
         "anchor_mappings": {},
         "variants": [],
         "comparison": None,
+        "translation_comparison": None,
         "cleanup": {"status": "not_started"},
     }
     database = Database(settings)
@@ -1886,11 +2532,12 @@ async def run_journey(
             )
         baseline = await _run_variant(
             database.session_factory,
-            name="baseline",
+            name="translation_on" if options.compare_translation else "baseline",
             manifest=manifest,
             project_id=project_id,
             document_ids=document_ids,
             anchor_mapping=anchor_mapping,
+            chunks=chunks,
             settings=settings,
             resolution=baseline_resolution,
             progress=notify,
@@ -1908,12 +2555,21 @@ async def run_journey(
                     settings=settings,
                     configuration=comparison_config,
                     expected_revision_id=baseline_revision.id,
-                    reason=f"tax_v1 one-factor comparison: {comparison_key}",
+                    reason=(
+                        "tax_v1 translation on/off comparison"
+                        if options.compare_translation
+                        else f"tax_v1 one-factor comparison: {comparison_key}"
+                    ),
                 )
                 comparison_resolution = await _effective_resolution(
                     session, project_id=project_id, settings=settings
                 )
             if comparison_resolution.configuration_hash == baseline_resolution.configuration_hash:
+                if options.compare_translation:
+                    raise JourneyError(
+                        "--compare-translation requires query translation to be enabled on the "
+                        "current configuration so the OFF variant can disable it."
+                    )
                 raise JourneyError(
                     f"--compare {comparison_key!r} does not change the effective runtime config."
                 )
@@ -1931,13 +2587,19 @@ async def run_journey(
                     "The one-factor comparison changed the active corpus index; "
                     "index-affecting comparisons are not supported."
                 )
+            comparison_name = (
+                "translation_off"
+                if options.compare_translation
+                else f"compare:{comparison_key}={comparison_value}"
+            )
             comparison_variant = await _run_variant(
                 database.session_factory,
-                name=f"compare:{comparison_key}={comparison_value}",
+                name=comparison_name,
                 manifest=manifest,
                 project_id=project_id,
                 document_ids=document_ids,
                 anchor_mapping=anchor_mapping,
+                chunks=chunks,
                 settings=settings,
                 resolution=comparison_resolution,
                 progress=notify,
@@ -1948,6 +2610,9 @@ async def run_journey(
                 comparison_variant,
                 key=comparison_key,
             )
+            paired = translation_variants(result["variants"])
+            if paired is not None:
+                result["translation_comparison"] = build_translation_comparison(*paired)
         result["status"] = (
             "passed"
             if all(case["passed"] for variant in result["variants"] for case in variant["cases"])

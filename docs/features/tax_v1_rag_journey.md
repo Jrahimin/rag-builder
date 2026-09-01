@@ -18,6 +18,7 @@ python -m app.cli rag-journey
         ├── immutable index build + activate
         ├── phrase-anchor → chunk mapping
         ├── baseline cases via ChatService
+        ├── optional --compare-translation (same index; translation_off)
         ├── optional one-factor --compare (same corpus fingerprint)
         ├── artifacts/rag-journey/tax_v1/<run-id>/
         └── relationship-aware purge (unless --keep-project)
@@ -43,6 +44,7 @@ preflight
   → wait for active vector + lexical index
   → map evidence anchors by unique phrases (not chunk UUIDs)
   → for each case: create conversation → send query → evaluate stages
+  → optional --compare-translation: one new AI revision (`query_translation_enabled=false`), same index
   → optional --compare: one new AI revision, same index, second variant
   → write results.json + summary.md
   → purge modifiers before targets, then delete the Project
@@ -103,7 +105,7 @@ Harness-only details that must stay in the fixture, not in production thresholds
 - **Historical 15% (`historical_rebate_rate`).** One valid source is enough: 2023 Act EN, 2023 Act BN, the 2024 Rules clarification that the 15% rate was unchanged on 1 January 2024 (`historical_rebate_rate_2024_bn`), or the 2026 sentence that the previous 15% rate remains relevant only for historical questions. `finance_2027` stays prohibited for a 2024 `as_of`. Older sources are not globally banned because unchanged provisions can remain valid.
 - **Historical bilingual (`historical_rebate_bilingual`).** Any of 2023 EN, 2023 BN, or the 2024 Rules historical restatement is enough. `finance_2026` and `finance_2027` stay prohibited as final sources.
 - **`current_2027_rebate_and_threshold`.** Requires 2027 evidence for the rebate **and** 2026 evidence for the still-effective threshold.
-- **Mixed-document cases.** Phrase-only 2025 guidance anchors. The code-switched case requires production `query_language_profile` translation diagnostics; it does not require a rewrite to be applied.
+- **Mixed-document cases.** Phrase-only 2025 guidance anchors. `mixed_document_bangla_retrieval` accepts grounded/cited evidence from `tax_guidance_2025` whose content contains `VR-2025-APE` or overlaps a chunk that does; it does not pin one runtime chunk ID. The code-switched case still uses exact mapped IDs and requires production `query_language_profile` translation diagnostics; it does not require a rewrite to be applied.
 - **Declared 75,000 (`declared_investment_75000`).** The amount is a user-supplied parameter. The case requires the 2026 rebate-rate evidence and the calculated 10% / 7,500 result; it does not require citing the 2024 Rules example amount merely to prove the input. Prohibited tokens still catch substitution of the fixture's 60,000 example.
 - **Hard-scoped current queries.** Must distinguish the scoped document’s historical value from unavailable current authority (`unavailable_within_hard_scope` / `suppressed_document_scope` when MODIFIES expansion is on).
 
@@ -143,7 +145,7 @@ These are product behaviors the cases observe. The harness does not reimplement 
 
 ## Configuration
 
-The CLI accepts only an explicit allowlist of query-time `ProjectAIConfig` leaves (`SAFE_CONFIG_KEYS` in `rag_journey.py`). Index-affecting settings (embeddings, chunking, FTS) are rejected. `--compare` accepts exactly one assignment and must change the effective configuration hash without changing the active corpus fingerprint.
+The CLI accepts only an explicit allowlist of query-time `ProjectAIConfig` leaves (`SAFE_CONFIG_KEYS` in `rag_journey.py`). Index-affecting settings (embeddings, chunking, FTS) are rejected. `--compare` and `--compare-translation` each add one second variant and must change the effective configuration hash without changing the active corpus fingerprint. They are mutually exclusive.
 
 Useful leaves for this journey:
 
@@ -159,12 +161,13 @@ chat.grounding_mode
 chat.high_confidence_reranker_evidence_score
 ```
 
-`--set` builds a **sparse** Project revision. Omitted leaves inherit deployment settings (`hosted_managed` typically uses Cohere embed/rerank, OpenAI `gpt-5.6-luna` generation, and `gpt-5-nano` translation). The journey does not enable candidate-wise grounding, MODIFIES expansion, or source-policy enforce unless those leaves are set or already inherited from env (`APE_AI_POLICY__SOURCE_POLICY_MODE`, `APE_RETRIEVAL__MODIFIES_EXPANSION_MODE`, `APE_CHAT__CANDIDATE_WISE_GROUNDING_ENABLED`).
+`--set` builds a **sparse** Project revision. Omitted leaves inherit deployment settings (`hosted_managed` typically uses Cohere embed/rerank, OpenAI `gpt-5.6-luna` generation, and `gpt-5-nano` translation when enabled). Query translation stays off unless inherited from `APE_QUERY_TRANSLATION__ENABLED` or overridden on the Project. The journey does not enable candidate-wise grounding, MODIFIES expansion, or source-policy enforce unless those leaves are set or already inherited from env (`APE_AI_POLICY__SOURCE_POLICY_MODE`, `APE_RETRIEVAL__MODIFIES_EXPANSION_MODE`, `APE_CHAT__CANDIDATE_WISE_GROUNDING_ENABLED`).
 
 Deployment settings the product path uses (not journey-only):
 
 | Setting | Default | Role |
 | ------- | ------- | ---- |
+| `APE_QUERY_TRANSLATION__ENABLED` | `false` | Global default for `retrieval.query_translation_enabled`; Projects override Inherit / On / Off |
 | `APE_QUERY_TRANSLATION__MIN_OUTPUT_TOKENS` | `256` | Floor for retrieval-translation output |
 | `APE_CHAT__CROSS_LANGUAGE_SEMANTIC_EVIDENCE_SCORE_THRESHOLD` | `0.30` | Cross-language semantic admit bar |
 | `APE_CHAT__GROUNDING_MODE` | `strict` | High-assurance corroboration; existing Projects inherit this |
@@ -200,6 +203,14 @@ Full production journey from `backend/`:
 
 Equivalent Makefile target from the repository root: `make rag-journey` (`RAG_JOURNEY_ARGS` is forwarded).
 
+Translation on/off A/B on the same Project, ingested corpus, and active index (no rebuild):
+
+```powershell
+.venv\Scripts\python.exe -m app.cli rag-journey --compare-translation
+```
+
+This keeps the current configuration as `translation_on` and only sets `retrieval.query_translation_enabled=false` for `translation_off`. `summary.md` includes a paired quality/latency table. `results.json` keeps per-case timings, `translation_changed_retrieval_outcome`, and verdicts. Translation must already be enabled on the current configuration.
+
 Optional query-time overrides and one-factor compare (does not change product defaults):
 
 ```powershell
@@ -231,7 +242,7 @@ Reports: `artifacts/rag-journey/tax_v1/<timestamp>-<run-id>/results.json` and `s
 | Phrase anchors instead of chunk UUIDs | Survives rechunking; mixed 2025 guidance has no stable Markdown headings |
 | OR groups for equivalent EN/BN/historical sources | Avoids forcing one language or one restatement of the same 15% fact |
 | 2027 fixture omits `BDT 400,000` | Forces mixed-source composition instead of answering the threshold from 2027 text |
-| Query-time `--set` / `--compare` allowlist | Prevents accidental index rebuilds and undocumented threshold fishing |
+| Query-time `--set` / `--compare` / `--compare-translation` allowlist | Prevents accidental index rebuilds and undocumented threshold fishing. Translation A/B reuses that path instead of a second benchmark stack |
 | Inline jobs only in this process | Makes ingest/index/purge deterministic without a sidecar worker |
 | Purge modifiers before targets | Honors MODIFIES foreign keys; insertion order is not the lifecycle contract |
 | Do not default passage scoring from this corpus | One local compare is not a calibration for other corpora |
@@ -246,16 +257,16 @@ Temporary Projects are tagged `rag-journey:<uuid>` and purged unless `--keep-pro
 
 ## Testing strategy
 
-- Unit: `tests/unit/cli/test_rag_journey.py` — manifest shape, 21 cases, historical OR group, 2027 threshold composition, chunking paths (markdown vs semantic mixed guidance), assertion stages, semantic token groups, user-parameter tokens, provider-degradation reporting, `--set`/`--compare` allowlist, purge order, Organization preflight
+- Unit: `tests/unit/cli/test_rag_journey.py` — manifest shape, 21 cases, historical OR group, 2027 threshold composition, chunking paths (markdown vs semantic mixed guidance), assertion stages, semantic token groups, user-parameter tokens, provider-degradation reporting, `--set`/`--compare`/`--compare-translation` allowlist, translation A/B verdicts, purge order, Organization preflight
 - Unit: `tests/unit/modules/conversations/test_grounding_modes.py` — strict vs balanced monotonic admission, additive high-confidence/passage rescue, authority fallthrough, Bangla query scaffolding
 - Unit: `tests/unit/modules/conversations/test_current_authority.py` — Bangla `ধারা` / `বিধি` provision redaction
 - Integration: `tests/integration/test_rag_journey_smoke.py` — subset of cases on real PostgreSQL/pgvector with a deterministic fixture embedder; asserts diagnostics, hard scope, refusal, and cleanup. Does not call hosted LLMs
-- Full CLI: real providers; optional `--compare`
+- Full CLI: real providers; optional `--compare` or `--compare-translation`
 
 ## Future improvements
 
 - Treat remaining local misses as product-path observations (citation of required mixed-source groups, scoped wording), not as harness relaxations
-- Keep passage scoring configurable until a corpus-independent calibration exists
+- Use `--compare-translation` measurements to decide whether translation stays always-on, becomes selective, or moves to a fallback/rescue path. Do not optimize translation from a single local corpus.
 - A hosted/operator-console runner is out of scope; this remains a local CLI with an integration smoke
 
 ## Related

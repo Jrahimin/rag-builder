@@ -310,6 +310,28 @@ def test_deployment_cap_restricts_global_source_policy_mode_without_activating_o
     assert capped_global.provenance.effective_source_policy_mode.value == "observe"
 
 
+def test_query_translation_defaults_off_and_project_can_enable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("APE_QUERY_TRANSLATION__ENABLED", raising=False)
+    inherited = resolve_project_ai_config(Settings(), None)
+    enabled = resolve_project_ai_config(
+        Settings(),
+        _revision({"retrieval": {"query_translation_enabled": True}}),
+    )
+    disabled = resolve_project_ai_config(
+        Settings(query_translation={"enabled": True}),
+        _revision({"retrieval": {"query_translation_enabled": False}}),
+    )
+
+    assert inherited.configuration.retrieval.query_translation_enabled is False
+    assert inherited.origins["retrieval.query_translation_enabled"] == "global"
+    assert enabled.configuration.retrieval.query_translation_enabled is True
+    assert enabled.origins["retrieval.query_translation_enabled"] == "project"
+    assert disabled.configuration.retrieval.query_translation_enabled is False
+    assert disabled.origins["retrieval.query_translation_enabled"] == "project"
+
+
 def test_unknown_ai_policy_env_does_not_change_source_policy_defaults(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

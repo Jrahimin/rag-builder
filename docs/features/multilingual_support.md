@@ -34,7 +34,7 @@ APE_RETRIEVAL__FILTERABLE_METADATA_KEYS=source,tags,ocr_confidence
 APE_EMBEDDING__MODEL=embed-v4.0
 APE_EMBEDDING__DIMENSIONS=1024
 APE_RETRIEVAL__EMBEDDING_SET_VERSION=3
-APE_QUERY_TRANSLATION__ENABLED=true
+APE_QUERY_TRANSLATION__ENABLED=false
 APE_QUERY_TRANSLATION__MODEL=gpt-5-nano
 APE_QUERY_TRANSLATION__PROMPT_VERSION=retrieval-translation-v2
 APE_QUERY_TRANSLATION__MAX_OUTPUT_TOKENS=4096
@@ -134,8 +134,9 @@ manifest so a same-language document does not spend a translation call. Translat
 include `target OR mixed OR unknown` rows. Original chunks remain the only evidence and
 citations. The default minimum translation output budget is 256 tokens, still capped at 2048
 and overridable through `APE_QUERY_TRANSLATION__MIN_OUTPUT_TOKENS` /
-`APE_QUERY_TRANSLATION__MAX_OUTPUT_TOKENS`. `hosted_managed` enables translation and Cohere
-rerank by default; local and pytest stacks keep them off. Cut over an existing OpenAI embedding
+`APE_QUERY_TRANSLATION__MAX_OUTPUT_TOKENS`. Query translation stays off by default;
+Projects can inherit that or override On / Off. `hosted_managed` enables Cohere
+rerank by default; local and pytest stacks keep rerank off. Cut over an existing OpenAI embedding
 set with rebuild → validate → activate. See [ADR-018](../architecture/adr/018-multilingual-retrieval-v1.md).
 
 ## Reindex after upgrades
