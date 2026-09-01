@@ -37,10 +37,15 @@ def test_mixed_query_does_not_hide_behind_english() -> None:
     assert profile.exact_primary is None
 
 
-def test_latin_query_translates_to_bangla_not_english_when_both_exist() -> None:
+def test_latin_query_does_not_translate_to_bangla_when_both_exist() -> None:
     profile = detect_query_language_profile("source tax deduction areas")
     target = select_translation_target(profile, {"bn": 12, "en": 80, "mixed": 1})
-    assert target == "bn"
+    assert target is None
+
+
+def test_bangla_query_translates_to_english_when_english_exists() -> None:
+    profile = detect_query_language_profile("উৎসে কর সংগ্রহের খাত কি?")
+    assert select_translation_target(profile, {"bn": 12, "en": 80, "mixed": 1}) == "en"
 
 
 def test_bangla_query_on_bangla_only_corpus_skips_translation() -> None:
@@ -96,6 +101,12 @@ def test_true_abbreviations_remain_exact_even_when_digits_normalize() -> None:
     original = "TDS ৬০,০০০"  # noqa: RUF001
     missing = missing_protected_literals(original, "60,000 tax deducted at source")
     assert "TDS" in missing
+
+
+def test_mixed_script_query_skips_translation() -> None:
+    profile = detect_query_language_profile("Refund policy উৎসে কর applies")
+    assert profile.is_mixed is True
+    assert select_translation_target(profile, {"bn": 12, "en": 80}) is None
 
 
 def test_empty_query_is_unknown() -> None:

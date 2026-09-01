@@ -64,6 +64,7 @@ RUNTIME_COMPARISON_CONFIG_KEYS = frozenset(
         "chat.evidence_score_mode",
         "chat.evidence_gate_mode",
         "chat.lexical_corroboration_floor_score",
+        "chat.cross_language_semantic_evidence_score_threshold",
         "chat.minimum_query_token_coverage",
         "chat.minimum_claim_token_coverage",
         "chat.minimum_reranker_evidence_score",
@@ -106,7 +107,7 @@ class EvidenceAnchor(BaseModel):
 
     key: str
     source: str
-    section: str
+    section: str | None = None
     phrases: list[str] = Field(min_length=1)
     expected_cardinality: int = Field(default=1, ge=1)
 
@@ -128,6 +129,9 @@ class JourneyCase(BaseModel):
     tags: list[str]
     query: str
     anchors: list[str]
+    required_anchor_groups: list[list[str]] = Field(default_factory=list)
+    prohibited_final_sources: list[str] = Field(default_factory=list)
+    prohibited_answer_tokens: list[str] = Field(default_factory=list)
     document_scope: str | None = None
     as_of: datetime | None = None
     expected_tokens: list[str] = Field(default_factory=list)
@@ -199,9 +203,17 @@ def load_manifest(path: Path = DEFAULT_FIXTURE) -> JourneyManifest:
                 f"Anchor {anchor.key!r} references unknown source {anchor.source!r}."
             )
     for case in manifest.cases:
-        unknown = set(case.anchors) - anchors
+        grouped_anchors = {anchor for group in case.required_anchor_groups for anchor in group}
+        unknown = (set(case.anchors) | grouped_anchors) - anchors
         if unknown:
             raise JourneyError(f"Case {case.key!r} references unknown anchors: {sorted(unknown)}")
+        if any(not group for group in case.required_anchor_groups):
+            raise JourneyError(f"Case {case.key!r} contains an empty required anchor group.")
+        unknown_sources = set(case.prohibited_final_sources) - sources
+        if unknown_sources:
+            raise JourneyError(
+                f"Case {case.key!r} prohibits unknown sources: {sorted(unknown_sources)}"
+            )
         if case.document_scope is not None and case.document_scope not in sources:
             raise JourneyError(
                 f"Case {case.key!r} references unknown document scope {case.document_scope!r}."
@@ -262,7 +274,7 @@ def resolve_evidence_anchors(
     """Resolve source/section/phrase anchors to ephemeral runtime chunk identities."""
     mappings: dict[str, list[uuid.UUID]] = {}
     for anchor in anchors:
-        normalized_section = normalize_text(anchor.section)
+        normalized_section = normalize_text(anchor.section) if anchor.section else ""
         normalized_phrases = [normalize_text(phrase) for phrase in anchor.phrases]
         matches: list[RuntimeChunk] = []
         for chunk in chunks:
@@ -270,18 +282,32 @@ def resolve_evidence_anchors(
                 continue
             normalized_content = normalize_text(chunk.content)
             section_title = normalize_text(str(chunk.metadata.get("section_title") or ""))
-            section_matches = (
+            section_matches = not normalized_section or (
                 normalized_section in section_title or normalized_section in normalized_content
             )
             if section_matches and all(
                 phrase in normalized_content for phrase in normalized_phrases
             ):
                 matches.append(chunk)
-        if len(matches) != anchor.expected_cardinality:
+        # Phrase-only anchors target mixed/semantic documents whose chunk
+        # boundaries are not stable. Require at least N matches rather than an
+        # exact heading-sized cardinality.
+        matched_count = len(matches)
+        cardinality_ok = (
+            matched_count >= anchor.expected_cardinality
+            if not normalized_section
+            else matched_count == anchor.expected_cardinality
+        )
+        if not cardinality_ok:
             identities = [f"{match.source_key}:{match.chunk_index}:{match.id}" for match in matches]
+            expected = (
+                f"at least {anchor.expected_cardinality}"
+                if not normalized_section
+                else str(anchor.expected_cardinality)
+            )
             raise JourneyError(
-                f"Anchor {anchor.key!r} expected {anchor.expected_cardinality} chunk(s), "
-                f"found {len(matches)}: {identities}"
+                f"Anchor {anchor.key!r} expected {expected} chunk(s), "
+                f"found {matched_count}: {identities}"
             )
         mappings[anchor.key] = [match.id for match in matches]
     return mappings
@@ -488,6 +514,12 @@ def evaluate_case_result(
         for item in citations
         if item["source_kind"] == "knowledge" and item.get("chunk_id")
     }
+    claim_evidence_ids = {
+        str(item["chunk_id"])
+        for claim in claims
+        for item in claim["evidence"]
+        if item["source_kind"] == "knowledge" and item.get("chunk_id")
+    }
     normalized_answer = normalize_text(message.content)
     web = dict(metadata.get("web_search") or {})
     gate = dict(metadata.get("evidence_gate") or {})
@@ -500,6 +532,28 @@ def evaluate_case_result(
         all_knowledge_evidence.extend(claim["evidence"])
         finalized_knowledge_evidence.extend(claim["evidence"])
 
+    prohibited_documents = {
+        str(document_ids[source]) for source in case.prohibited_final_sources
+    }
+    leaked_prohibited = _knowledge_document_ids(finalized_knowledge_evidence) & prohibited_documents
+    if leaked_prohibited:
+        failures.append(
+            _failure(
+                "authority",
+                f"Final evidence used prohibited sources: {sorted(leaked_prohibited)}.",
+            )
+        )
+
+    if "codeswitch" in case.tags:
+        translation = dict(trace.get("translation") or {})
+        if not translation.get("query_language_profile"):
+            failures.append(
+                _failure(
+                    "retrieval",
+                    "Code-switched query is missing language/translation diagnostics.",
+                )
+            )
+
     if case.document_scope is not None:
         expected_document = str(document_ids[case.document_scope])
         leaked = _knowledge_document_ids(all_knowledge_evidence) - {expected_document}
@@ -507,14 +561,6 @@ def evaluate_case_result(
             failures.append(
                 _failure("authority", f"Hard document scope leaked evidence from {sorted(leaked)}.")
             )
-    if "historical" in case.tags:
-        historical_document = str(document_ids["tax_2023"])
-        leaked = _knowledge_document_ids(finalized_knowledge_evidence) - {historical_document}
-        if leaked:
-            failures.append(
-                _failure("authority", f"Historical answer used future evidence: {sorted(leaked)}.")
-            )
-
     if case.mode == "answerable":
         if not relevant_retrieved:
             failures.append(_failure("retrieval", "No expected evidence anchor was retrieved."))
@@ -526,6 +572,38 @@ def evaluate_case_result(
             if normalize_text(token) not in normalized_answer:
                 failures.append(
                     _failure("generation_refusal", f"Answer is missing expected fact {token!r}.")
+                )
+        for token in case.prohibited_answer_tokens:
+            normalized_token = normalize_text(token)
+            if f" {normalized_token} " in f" {normalized_answer} ":
+                failures.append(
+                    _failure(
+                        "generation_refusal",
+                        f"Answer contains prohibited stale/example fact {token!r}.",
+                    )
+                )
+        for group in case.required_anchor_groups:
+            group_ids = {
+                str(chunk_id) for anchor in group for chunk_id in anchor_mapping.get(anchor, [])
+            }
+            label = " or ".join(group)
+            if not group_ids & set(result_ids):
+                failures.append(
+                    _failure("retrieval", f"Required evidence group was not retrieved: {label}.")
+                )
+            if not group_ids & admitted_ids:
+                failures.append(
+                    _failure(
+                        "admission_grounding",
+                        f"Required evidence group was not admitted: {label}.",
+                    )
+                )
+            if not group_ids & claim_evidence_ids:
+                failures.append(
+                    _failure(
+                        "citation",
+                        f"No grounded claim used required evidence group: {label}.",
+                    )
                 )
         if case.expected_any and not any(
             _contains_semantic_marker(normalized_answer, token) for token in case.expected_any
@@ -1064,12 +1142,20 @@ def _evaluation_case(
 ) -> EvaluationCase:
     if case.mode == "no_answer":
         kind = EvaluationCaseKind.NO_ANSWER
+    elif "codeswitch" in case.tags:
+        kind = EvaluationCaseKind.CODE_SWITCHED
     elif "multilingual" in case.tags:
         kind = EvaluationCaseKind.CROSS_LINGUAL
     elif case.document_scope:
         kind = EvaluationCaseKind.METADATA_FILTER
     else:
         kind = EvaluationCaseKind.CITATION
+    if "codeswitch" in case.tags:
+        query_form = "code_switched"
+    elif "banglish" in case.key:
+        query_form = "banglish"
+    else:
+        query_form = None
     return EvaluationCase(
         key=case.key,
         kind=kind,
@@ -1081,9 +1167,11 @@ def _evaluation_case(
         as_of=case.as_of,
         expected_answer_tokens=case.expected_tokens,
         expected_no_answer=case.mode == "no_answer",
-        query_language=("bn" if case.key.endswith("bangla") else None),
-        expected_evidence_language=("en" if "multilingual" in case.tags else None),
-        query_form=("banglish" if case.key.endswith("banglish") else None),
+        query_language=(
+            "bn" if any("\u0980" <= char <= "\u09ff" for char in case.query) else None
+        ),
+        expected_evidence_language=None,
+        query_form=query_form,
     )
 
 

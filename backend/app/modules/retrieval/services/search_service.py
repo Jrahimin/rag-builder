@@ -192,6 +192,7 @@ class SearchService:
                 translation_config=self._query_translation_config,
                 translator=self._query_translator,
                 persist_translation_text=self._persist_translation_text,
+                document_id=request.document_id,
             )
         context = RetrievalContext(
             project_id=self._project_id,
@@ -404,6 +405,9 @@ class SearchService:
                 translation_attempts=_optional_int(translation_meta.get("translation_attempts")),
                 translation_validation_reasons=_string_list(
                     translation_meta.get("translation_validation_reasons")
+                ),
+                translation_finish_reason=_optional_string(
+                    translation_meta.get("translation_finish_reason")
                 ),
                 translated_query=(
                     multilingual_plan.translated_query

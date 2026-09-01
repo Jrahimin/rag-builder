@@ -77,6 +77,37 @@ def test_unscoped_or_unresolved_relationship_never_suppresses_whole_document() -
     assert safe[0].content == base_chunk.content
 
 
+def test_exact_bangla_modified_provision_is_removed_without_suppressing_neighbors() -> None:
+    base = uuid.uuid4()
+    modifier = uuid.uuid4()
+    heading = "ধারা ২১ — বিনিয়োগ রিবেটের হার"
+    records = [
+        {
+            "outcome": "already_in_recall",
+            "base_revision_id": str(base),
+            "modifier_revision_id": str(modifier),
+            "target_provisions": [heading],
+        }
+    ]
+    base_chunk = _chunk(
+        revision=base,
+        records=records,
+        content=(
+            "ধারা ২০ — যোগ্য বিনিয়োগ\nঅনুমোদিত সঞ্চয়পত্র।\n\n"
+            f"{heading}\nরিবেটের হার ১৫%।\n\n"
+            "ধারা ২২ — রিবেটের সর্বোচ্চ সীমা\nরিবেট করের বেশি নয়।"
+        ),
+    )
+    modifier_chunk = _chunk(revision=modifier, records=records, content="The rebate is 10%.")
+
+    safe = remove_superseded_provisions([base_chunk, modifier_chunk])
+
+    assert "অনুমোদিত সঞ্চয়পত্র" in safe[0].content
+    assert "১৫%" not in safe[0].content
+    assert "রিবেট করের বেশি নয়" in safe[0].content
+    assert safe[0].metadata["authority_redacted_provisions"] == [heading]
+
+
 def test_scope_is_not_applied_when_modifier_is_absent_from_recall() -> None:
     base = uuid.uuid4()
     records = [

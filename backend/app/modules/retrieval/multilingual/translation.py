@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import uuid
+
 import structlog
 
 from app.core.config import QueryTranslationConfig
@@ -9,6 +11,7 @@ from app.modules.retrieval.multilingual.planner import (
     MultilingualRetrievalPlan,
     build_untranslated_plan,
     choose_translation_target,
+    inventory_for_retrieval_scope,
     language_inventory_from_manifest,
     plan_original_branches,
     plan_translated_branches,
@@ -22,6 +25,15 @@ from app.platform.providers.errors import ProviderError
 
 logger = structlog.get_logger(__name__)
 
+_TRANSLATION_FAILURE_CONTEXT_KEYS = (
+    ("latency_ms", "translation_latency_ms"),
+    ("attempts", "translation_attempts"),
+    ("validation_reasons", "translation_validation_reasons"),
+    ("finish_reason", "translation_finish_reason"),
+    ("output_tokens", "translation_output_tokens"),
+    ("reasoning_tokens", "translation_reasoning_tokens"),
+)
+
 
 async def resolve_multilingual_plan(
     query: str,
@@ -30,11 +42,25 @@ async def resolve_multilingual_plan(
     translation_config: QueryTranslationConfig,
     translator: BaseQueryTranslationProvider | None,
     persist_translation_text: bool = False,
+    document_id: uuid.UUID | None = None,
 ) -> MultilingualRetrievalPlan:
+    _ = persist_translation_text
     inventory = language_inventory_from_manifest(manifest)
+    scoped_inventory = inventory_for_retrieval_scope(
+        inventory,
+        manifest,
+        document_id=document_id,
+    )
+    routing_status = (
+        "legacy_build_no_language_inventory"
+        if scoped_inventory.is_legacy
+        else "document_scoped"
+        if document_id is not None
+        else "unfiltered"
+    )
     profile, cross_language_target = choose_translation_target(
         query,
-        inventory,
+        scoped_inventory,
         tuple(translation_config.target_languages),
     )
     if inventory.is_legacy:
@@ -43,23 +69,31 @@ async def resolve_multilingual_plan(
             inventory,
             translation_status="skipped",
             skipped_reason="legacy_build_no_language_inventory",
+            language_routing_status=routing_status,
         )
     if not translation_config.enabled or translator is None:
         return build_untranslated_plan(
             query,
-            inventory,
+            scoped_inventory,
             translation_status="disabled",
             skipped_reason="translation_disabled",
             cross_language_target=cross_language_target,
+            language_routing_status=routing_status,
         )
     target = cross_language_target
     if target is None:
+        skipped_reason = (
+            "same_language_scope"
+            if document_id is not None and profile.exact_primary is not None
+            else "no_translation_target"
+        )
         return build_untranslated_plan(
             query,
-            inventory,
+            scoped_inventory,
             translation_status="skipped",
-            skipped_reason="no_translation_target",
+            skipped_reason=skipped_reason,
             cross_language_target=None,
+            language_routing_status=routing_status,
         )
     try:
         response = await translator.translate(
@@ -79,16 +113,22 @@ async def resolve_multilingual_plan(
             "translation_prompt_version": translation_config.prompt_version,
             "translation_target_language": target,
         }
-        if isinstance(exc.context, dict) and exc.context.get("reason"):
-            failure_reason = str(exc.context["reason"])
-            for source, target_key in (
-                ("latency_ms", "translation_latency_ms"),
-                ("attempts", "translation_attempts"),
-                ("validation_reasons", "translation_validation_reasons"),
-            ):
+        if isinstance(exc.context, dict):
+            if exc.context.get("reason"):
+                failure_reason = str(exc.context["reason"])
+            for source, target_key in _TRANSLATION_FAILURE_CONTEXT_KEYS:
                 value = exc.context.get(source)
                 if value is not None:
                     failure_diagnostics[target_key] = value
+            usage: dict[str, object] = {}
+            output_tokens = exc.context.get("output_tokens")
+            reasoning_tokens = exc.context.get("reasoning_tokens")
+            if output_tokens is not None:
+                usage["output_tokens"] = output_tokens
+            if reasoning_tokens is not None:
+                usage["reasoning_tokens"] = reasoning_tokens
+            if usage:
+                failure_diagnostics["translation_usage"] = usage
         logger.warning(
             "query_translation_unavailable",
             target_language=target,
@@ -98,12 +138,13 @@ async def resolve_multilingual_plan(
         )
         return build_untranslated_plan(
             query,
-            inventory,
+            scoped_inventory,
             translation_status="failed",
             skipped_reason="translation_provider_error",
             failure_reason=failure_reason,
             cross_language_target=target,
             failure_diagnostics=failure_diagnostics,
+            language_routing_status=routing_status,
         )
     branches = plan_original_branches(query, profile) + plan_translated_branches(
         response.translated_query,
@@ -122,14 +163,15 @@ async def resolve_multilingual_plan(
         "translation_usage": {
             "input_tokens": response.usage.input_tokens,
             "output_tokens": response.usage.output_tokens,
+            "reasoning_tokens": response.usage.reasoning_tokens,
         },
         "translation_target_language": target,
         "cross_language_target": target,
-        "language_routing_status": "applied",
+        "language_routing_status": routing_status,
     }
     return MultilingualRetrievalPlan(
         query_profile=profile,
-        inventory=inventory,
+        inventory=scoped_inventory,
         translation_status="applied",
         target_language=target,
         translated_query=response.translated_query,

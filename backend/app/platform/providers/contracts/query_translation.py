@@ -23,6 +23,7 @@ class QueryTranslationRequest:
 class QueryTranslationUsage:
     input_tokens: int | None = None
     output_tokens: int | None = None
+    reasoning_tokens: int | None = None
 
 
 @dataclass(frozen=True, slots=True)

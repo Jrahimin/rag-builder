@@ -422,7 +422,7 @@ class GroundingService:
                 corroboration = "original_semantic"
             elif (
                 not _same_language(original_text, span.text)
-                and semantic_score >= self._config.lexical_corroboration_floor_score
+                and semantic_score >= self._config.cross_language_semantic_evidence_score_threshold
             ):
                 corroboration = "cross_language_semantic"
         if (
@@ -529,7 +529,7 @@ class GroundingService:
         cross_language = (
             not _same_language(question, evidence_text)
             and semantic is not None
-            and semantic >= self._config.lexical_corroboration_floor_score
+            and semantic >= self._config.cross_language_semantic_evidence_score_threshold
         )
         return direct or lexical or cross_language, coverage, lexical and not direct
 
@@ -572,6 +572,9 @@ class GroundingService:
             "lexically_corroborated": decision.lexically_corroborated,
             "semantic_threshold": self._config.minimum_semantic_evidence_score,
             "lexical_floor": self._config.lexical_corroboration_floor_score,
+            "cross_language_semantic_threshold": (
+                self._config.cross_language_semantic_evidence_score_threshold
+            ),
             "reranker_threshold": self._config.minimum_reranker_evidence_score,
             "winning_char_start": decision.evidence_char_start,
             "winning_char_end": decision.evidence_char_end,

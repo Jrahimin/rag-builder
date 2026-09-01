@@ -93,6 +93,9 @@ class ProjectChatPolicy(BaseModel):
     evidence_score_mode: EvidenceScoreMode | None = None
     evidence_gate_mode: EvidenceGateMode | None = None
     lexical_corroboration_floor_score: float | None = Field(default=None, ge=0.0, le=1.0)
+    cross_language_semantic_evidence_score_threshold: float | None = Field(
+        default=None, ge=0.0, le=1.0
+    )
     minimum_query_token_coverage: float | None = Field(default=None, ge=0.0, le=1.0)
     minimum_claim_token_coverage: float | None = Field(default=None, ge=0.0, le=1.0)
     minimum_reranker_evidence_score: float | None = Field(default=None, ge=0.0, le=1.0)
@@ -171,6 +174,7 @@ class EffectiveChatPolicy(BaseModel):
     evidence_gate_mode: EvidenceGateMode = EvidenceGateMode.ENFORCE
     lexical_corroboration_floor_score: float
     lexical_corroboration_coverage: float
+    cross_language_semantic_evidence_score_threshold: float = 0.30
     minimum_claim_token_coverage: float
     minimum_reranker_evidence_score: float = 0.40
     candidate_wise_grounding_enabled: bool = False
@@ -303,6 +307,11 @@ def resolve_project_ai_config(
         "chat.lexical_corroboration_floor_score",
         project.chat.lexical_corroboration_floor_score,
         settings.chat.lexical_corroboration_floor_score,
+    )
+    cross_language_semantic_threshold = inherited(
+        "chat.cross_language_semantic_evidence_score_threshold",
+        project.chat.cross_language_semantic_evidence_score_threshold,
+        settings.chat.cross_language_semantic_evidence_score_threshold,
     )
     rescue_coverage = _inherit_lexical_corroboration_coverage(
         project.chat.minimum_query_token_coverage,
@@ -457,6 +466,7 @@ def resolve_project_ai_config(
             ),
             lexical_corroboration_floor_score=rescue_floor,
             lexical_corroboration_coverage=rescue_coverage,
+            cross_language_semantic_evidence_score_threshold=cross_language_semantic_threshold,
             minimum_claim_token_coverage=inherited(
                 "chat.minimum_claim_token_coverage",
                 project.chat.minimum_claim_token_coverage,
@@ -518,6 +528,17 @@ def resolve_project_ai_config(
         raise BadRequestError(
             message=(
                 "lexical_corroboration_floor_score must not exceed "
+                "the semantic evidence score threshold."
+            ),
+            code="invalid_evidence_thresholds",
+        )
+    if (
+        config.chat.cross_language_semantic_evidence_score_threshold
+        > config.retrieval.semantic_evidence_score_threshold
+    ):
+        raise BadRequestError(
+            message=(
+                "cross_language_semantic_evidence_score_threshold must not exceed "
                 "the semantic evidence score threshold."
             ),
             code="invalid_evidence_thresholds",
@@ -729,6 +750,9 @@ def apply_effective_ai_config(
                     ),
                     "lexical_corroboration_coverage": (
                         effective.chat.lexical_corroboration_coverage
+                    ),
+                    "cross_language_semantic_evidence_score_threshold": (
+                        effective.chat.cross_language_semantic_evidence_score_threshold
                     ),
                     "minimum_claim_token_coverage": effective.chat.minimum_claim_token_coverage,
                     "minimum_reranker_evidence_score": (

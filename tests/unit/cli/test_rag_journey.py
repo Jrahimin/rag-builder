@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from types import SimpleNamespace
 
 import pytest
 
 from app.cli.rag_journey import (
+    DEFAULT_FIXTURE,
     SAFE_CONFIG_KEYS,
     EvidenceAnchor,
     JourneyCase,
@@ -32,6 +34,8 @@ from app.cli.rag_journey import (
 from app.cli.rag_journey_cli import _options, _parser
 from app.core.config import ResponseMode
 from app.modules.conversations.schemas.message import (
+    CitationSourceKind,
+    ClaimVerification,
     InsufficientEvidenceReason,
     SourceProvenance,
 )
@@ -66,11 +70,27 @@ async def test_default_organization_preflight_accepts_active_default_org() -> No
     )
 
 
-def test_tax_v1_manifest_has_fixed_ten_cases() -> None:
+def test_tax_v1_manifest_keeps_original_cases_and_adds_focused_authority_coverage() -> None:
     manifest = load_manifest()
 
     assert manifest.key == "tax_v1"
-    assert len(manifest.cases) == 10
+    assert len(manifest.cases) == 21
+    assert {
+        "eligible_investments_scoped",
+        "current_rebate_calculation",
+        "historical_rebate_rate",
+        "current_rebate_bangla",
+        "current_rebate_banglish",
+        "stale_rebate_correction",
+        "current_threshold",
+        "unchanged_source_tax",
+        "hard_document_scope_authority",
+        "unknown_lunar_rule",
+    }.issubset({case.key for case in manifest.cases})
+    assert {
+        "mixed_document_bangla_retrieval",
+        "mixed_document_code_switched_retrieval",
+    }.issubset({case.key for case in manifest.cases})
     assert {"multilingual", "authority", "scope", "refusal"}.issubset(
         {tag for case in manifest.cases for tag in case.tags}
     )
@@ -107,6 +127,123 @@ def test_tax_v1_fixture_requires_all_eligible_categories_and_stale_correction() 
         "Section 21 — Investment Rebate Rate",
         "Section 40 — Individual Example",
     ]
+    assert finance.modified_provisions["tax_2023_bn"] == [
+        "ধারা ১০ — করমুক্ত সীমা",
+        "ধারা ২১ — বিনিয়োগ রিবেটের হার",
+        "ধারা \u09ea\u09e6 — ব্যক্তিগত করের উদাহরণ",
+    ]
+    rules = next(source for source in manifest.sources if source.key == "tax_rules_2024_bn")
+    assert rules.modifies == []
+    guidance = next(source for source in manifest.sources if source.key == "tax_guidance_2025")
+    assert guidance.modifies == []
+    assert guidance.modified_provisions == {}
+    amendment = next(source for source in manifest.sources if source.key == "finance_2027")
+    assert amendment.modifies == ["finance_2026"]
+    assert (
+        "Section 10 — Revised Tax-Free Threshold"
+        not in amendment.modified_provisions["finance_2026"]
+    )
+    assert (
+        "Section 15 — Savings Certificate Source Tax"
+        not in amendment.modified_provisions["finance_2026"]
+    )
+    historical = cases["historical_rebate_rate"]
+    assert historical.prohibited_final_sources == ["finance_2027"]
+    assert "historical_rebate_rate_2026" in historical.required_anchor_groups[0]
+    assert "historical_rebate_rate_2024_bn" in historical.required_anchor_groups[0]
+    composed = cases["current_2027_rebate_and_threshold"]
+    assert composed.required_anchor_groups == [["rebate_rate_2027"], ["threshold_2026"]]
+    amendment_path = DEFAULT_FIXTURE.parent / "corpus" / amendment.filename
+    amendment_text = amendment_path.read_text(encoding="utf-8")
+    assert "400,000" not in amendment_text
+    assert "400000" not in amendment_text
+    assert "still-effective 2026" in amendment_text
+
+
+def test_tax_v1_fixture_sources_keep_intended_chunking_paths() -> None:
+    from app.core.config import ChunkingConfig, ChunkingStrategy
+    from app.modules.knowledge.services.chunking.chunk_strategy_selector_service import (
+        ChunkStrategySelectorService,
+    )
+    from app.modules.knowledge.services.chunking.sentence_similarity_service import (
+        HashSentenceSimilarityService,
+    )
+    from app.modules.knowledge.services.chunking.structure_analyzer_service import (
+        StructureAnalyzerService,
+    )
+    from app.modules.knowledge.services.chunking_service import ChunkingService
+    from app.platform.domain.language_detection import detect_language
+    from app.platform.providers.implementations.plain_text_parser import PlainTextParserProvider
+
+    manifest = load_manifest()
+    markdown_source_keys = {
+        "tax_2023",
+        "tax_2023_bn",
+        "tax_rules_2024_bn",
+        "finance_2026",
+        "finance_2027",
+    }
+    mixed_source_keys = {"tax_guidance_2025"}
+    assert {source.key for source in manifest.sources} == markdown_source_keys | mixed_source_keys
+    parser = PlainTextParserProvider()
+    config = ChunkingConfig()
+    analyzer = StructureAnalyzerService(config=config)
+    selector = ChunkStrategySelectorService()
+    service = ChunkingService(config=config, similarity_service=HashSentenceSimilarityService())
+    corpus = DEFAULT_FIXTURE.parent / "corpus"
+    chunks: list[RuntimeChunk] = []
+    for source in manifest.sources:
+        path = corpus / source.filename
+        parsed = parser.parse(
+            data=path.read_bytes(),
+            filename=source.filename,
+            content_type="text/markdown",
+        )
+        detected = detect_language(path.read_text(encoding="utf-8"))
+        analysis = analyzer.analyze(parsed)
+        strategy = selector.select(parsed, analysis, config)
+        text_chunks, run_metadata = asyncio.run(service.split_document(parsed))
+        if source.key in mixed_source_keys:
+            assert detected.is_mixed is True, source.key
+            assert parsed.language == "mixed", source.key
+            assert parsed.structure_hints.get("is_mixed") is True, source.key
+            assert strategy is ChunkingStrategy.SEMANTIC, source.key
+            assert run_metadata.strategy_used is ChunkingStrategy.SEMANTIC, source.key
+            assert run_metadata.semantic_refinement_used is True, source.key
+            assert text_chunks
+            assert all(
+                chunk.chunk_metadata.get("strategy_used") == "semantic" for chunk in text_chunks
+            )
+        else:
+            assert detected.is_mixed is False, source.key
+            assert strategy is ChunkingStrategy.MARKDOWN, source.key
+            assert run_metadata.strategy_used is ChunkingStrategy.MARKDOWN, source.key
+            assert len(text_chunks) > 1, source.key
+        document_id = uuid.uuid4()
+        chunks.extend(
+            RuntimeChunk(
+                id=uuid.uuid4(),
+                document_id=document_id,
+                source_key=source.key,
+                chunk_index=index,
+                content=chunk.content,
+                metadata=dict(chunk.chunk_metadata or {}),
+            )
+            for index, chunk in enumerate(text_chunks)
+        )
+
+    mapping = resolve_evidence_anchors(manifest.anchors, chunks)
+    assert mapping["savings_evidence_2024_bn"] != mapping["declared_amount_2024_bn"]
+    assert mapping["verification_reference_2025"]
+    assert mapping["review_window_2025"]
+    mixed_anchors = [anchor for anchor in manifest.anchors if anchor.source == "tax_guidance_2025"]
+    assert mixed_anchors
+    assert all(anchor.section is None for anchor in mixed_anchors)
+    structured_anchors = [
+        anchor for anchor in manifest.anchors if anchor.source in markdown_source_keys
+    ]
+    assert structured_anchors
+    assert all(anchor.section for anchor in structured_anchors)
 
 
 def test_anchor_resolution_uses_source_section_and_phrases() -> None:
@@ -153,6 +290,80 @@ def test_anchor_resolution_fails_on_ambiguity() -> None:
 
     with pytest.raises(JourneyError, match=r"expected 1 chunk.*found 2"):
         resolve_evidence_anchors([anchor], chunks)
+
+
+def test_phrase_only_anchor_matches_content_without_headings() -> None:
+    chunk_id = uuid.uuid4()
+    document_id = uuid.uuid4()
+    anchor = EvidenceAnchor(
+        key="verification",
+        source="guidance",
+        phrases=["VR-2025-APE"],
+    )
+    chunks = [
+        RuntimeChunk(
+            id=chunk_id,
+            document_id=document_id,
+            source_key="guidance",
+            chunk_index=0,
+            content="The system stores verification reference VR-2025-APE for workflow tracking.",
+            metadata={},
+        ),
+        RuntimeChunk(
+            id=uuid.uuid4(),
+            document_id=document_id,
+            source_key="guidance",
+            chunk_index=1,
+            content="This procedural note does not change the rebate rate.",
+            metadata={"section_title": "Other notes"},
+        ),
+    ]
+
+    assert resolve_evidence_anchors([anchor], chunks) == {"verification": [chunk_id]}
+
+
+def test_phrase_only_anchor_accepts_all_matching_semantic_chunks() -> None:
+    first_id = uuid.uuid4()
+    second_id = uuid.uuid4()
+    document_id = uuid.uuid4()
+    anchor = EvidenceAnchor(
+        key="verification",
+        source="guidance",
+        phrases=["VR-2025-APE"],
+    )
+    chunks = [
+        RuntimeChunk(
+            id=chunk_id,
+            document_id=document_id,
+            source_key="guidance",
+            chunk_index=index,
+            content=content,
+            metadata={},
+        )
+        for index, (chunk_id, content) in enumerate(
+            (
+                (first_id, "Verification reference: VR-2025-APE"),
+                (second_id, "The unique stored fact is VR-2025-APE."),
+            )
+        )
+    ]
+
+    assert resolve_evidence_anchors([anchor], chunks) == {
+        "verification": [first_id, second_id]
+    }
+
+
+def test_tax_v1_mixed_document_queries_have_intended_language_profiles() -> None:
+    from app.platform.domain.language_detection import detect_query_language_profile
+
+    cases = {case.key: case for case in load_manifest().cases}
+    bangla = detect_query_language_profile(cases["mixed_document_bangla_retrieval"].query)
+    switched = detect_query_language_profile(cases["mixed_document_code_switched_retrieval"].query)
+
+    assert bangla.profile == "bn"
+    assert bangla.is_mixed is False
+    assert switched.profile == "mixed"
+    assert switched.is_mixed is True
 
 
 def test_numeric_normalization_handles_bangla_digits_and_grouping() -> None:
@@ -252,12 +463,13 @@ def _message(
     metadata: dict[str, object],
     grounded: bool = True,
     insufficient_evidence_reason: InsufficientEvidenceReason | None = None,
+    claims: list[object] | None = None,
 ) -> object:
     return SimpleNamespace(
         content=content,
         metadata=metadata,
         citations=[],
-        claims=[],
+        claims=claims or [],
         grounded=grounded,
         insufficient_evidence_reason=insufficient_evidence_reason,
         source_provenance=SourceProvenance.NONE,
@@ -431,6 +643,179 @@ def test_expected_any_accepts_semantically_equivalent_inflection() -> None:
         modifies_expansion_enabled=True,
     )
     assert result["passed"] is True
+
+
+def test_codeswitch_case_requires_query_language_profile_diagnostics() -> None:
+    case = JourneyCase(
+        key="mixed_document_code_switched_retrieval",
+        tags=["multilingual", "mixed_document", "codeswitch"],
+        query="কর নির্দেশিকায় verification reference code কী?",
+        anchors=[],
+        expected_tokens=["VR-2025-APE"],
+    )
+    missing = _message(
+        content="The stored verification reference is VR-2025-APE.",
+        metadata={
+            "retrieval_trace": {
+                "retrieval_selected": [],
+                "context_selected": [],
+                "translation": {},
+            },
+            "evidence_gate": {"sufficient": True},
+            "web_search": {"status": "not_requested", "fallback_used": False},
+        },
+    )
+    failed = evaluate_case_result(
+        case=case,
+        message=missing,
+        anchor_mapping={},
+        document_ids={},
+        response_mode=ResponseMode.INDEXED_ONLY,
+        modifies_expansion_enabled=True,
+    )
+    assert failed["passed"] is False
+    assert any(
+        failure["stage"] == "retrieval"
+        and "language/translation diagnostics" in failure["message"]
+        for failure in failed["failures"]
+    )
+
+    present = _message(
+        content="The stored verification reference is VR-2025-APE.",
+        metadata={
+            "retrieval_trace": {
+                "retrieval_selected": [],
+                "context_selected": [],
+                "translation": {
+                    "query_language_profile": "mixed",
+                    "status": "skipped",
+                    "romanized_or_codeswitched": False,
+                },
+            },
+            "evidence_gate": {"sufficient": True},
+            "web_search": {"status": "not_requested", "fallback_used": False},
+        },
+    )
+    passed = evaluate_case_result(
+        case=case,
+        message=present,
+        anchor_mapping={},
+        document_ids={},
+        response_mode=ResponseMode.INDEXED_ONLY,
+        modifies_expansion_enabled=True,
+    )
+    assert passed["passed"] is True
+    assert passed["translation"]["query_language_profile"] == "mixed"
+
+
+def test_required_anchor_groups_accept_alternatives_and_require_each_source_family() -> None:
+    rate_id = uuid.uuid4()
+    procedure_id = uuid.uuid4()
+    document_id = uuid.uuid4()
+    case = JourneyCase(
+        key="mixed",
+        tags=["mixed_source"],
+        query="Rate and evidence?",
+        anchors=[],
+        required_anchor_groups=[["rate_en", "rate_bn"], ["procedure"]],
+    )
+    claims = [
+        SimpleNamespace(
+            claim_id="claim-1",
+            text="The rate is 10%.",
+            grounded=True,
+            verification=ClaimVerification.SUPPORTED,
+            evidence=[
+                SimpleNamespace(
+                    source_kind=CitationSourceKind.KNOWLEDGE,
+                    chunk_id=rate_id,
+                    document_id=document_id,
+                )
+            ],
+        ),
+        SimpleNamespace(
+            claim_id="claim-2",
+            text="Keep the certificate statement.",
+            grounded=True,
+            verification=ClaimVerification.SUPPORTED,
+            evidence=[
+                SimpleNamespace(
+                    source_kind=CitationSourceKind.KNOWLEDGE,
+                    chunk_id=procedure_id,
+                    document_id=document_id,
+                )
+            ],
+        ),
+    ]
+    identities = [
+        {"chunk_id": str(rate_id), "document_id": str(document_id)},
+        {"chunk_id": str(procedure_id), "document_id": str(document_id)},
+    ]
+    message = _message(
+        content="The rate is 10%. Keep the certificate statement.",
+        claims=claims,
+        metadata={
+            "retrieval_trace": {
+                "retrieval_selected": identities,
+                "context_selected": identities,
+            },
+            "evidence_gate": {"sufficient": True},
+            "web_search": {"status": "not_requested", "fallback_used": False},
+        },
+    )
+
+    result = evaluate_case_result(
+        case=case,
+        message=message,
+        anchor_mapping={"rate_en": [], "rate_bn": [rate_id], "procedure": [procedure_id]},
+        document_ids={},
+        response_mode=ResponseMode.INDEXED_ONLY,
+        modifies_expansion_enabled=True,
+    )
+
+    assert result["passed"] is True
+
+
+def test_prohibited_final_source_and_answer_fact_are_reported() -> None:
+    forbidden_document = uuid.uuid4()
+    forbidden_chunk = uuid.uuid4()
+    case = JourneyCase(
+        key="future",
+        tags=["authority"],
+        query="As of 2026?",
+        anchors=[],
+        prohibited_final_sources=["future"],
+        prohibited_answer_tokens=["12%"],
+    )
+    message = _message(
+        content="The rate is 12%.",
+        metadata={
+            "retrieval_trace": {
+                "context_selected": [
+                    {
+                        "chunk_id": str(forbidden_chunk),
+                        "document_id": str(forbidden_document),
+                    }
+                ]
+            },
+            "evidence_gate": {"sufficient": True},
+            "web_search": {"status": "not_requested", "fallback_used": False},
+        },
+    )
+
+    result = evaluate_case_result(
+        case=case,
+        message=message,
+        anchor_mapping={},
+        document_ids={"future": forbidden_document},
+        response_mode=ResponseMode.INDEXED_ONLY,
+        modifies_expansion_enabled=True,
+    )
+
+    assert {failure["stage"] for failure in result["failures"]} == {
+        "authority",
+        "generation_refusal",
+    }
 
 
 def test_scope_failure_is_localized_to_authority() -> None:

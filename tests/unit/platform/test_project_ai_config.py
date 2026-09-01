@@ -372,6 +372,33 @@ def test_project_can_raise_semantic_threshold_and_set_rescue_floor() -> None:
     assert restored.chat.lexical_corroboration_floor_score == 0.3
 
 
+def test_project_can_set_cross_language_semantic_threshold_independently() -> None:
+    revision = _revision(
+        {
+            "chat": {
+                "lexical_corroboration_floor_score": 0.20,
+                "cross_language_semantic_evidence_score_threshold": 0.30,
+            }
+        }
+    )
+    resolution = resolve_project_ai_config(Settings(), revision)
+    restored = apply_effective_ai_config(Settings(), resolution)
+
+    assert resolution.configuration.chat.lexical_corroboration_floor_score == 0.20
+    assert resolution.configuration.chat.cross_language_semantic_evidence_score_threshold == 0.30
+    assert restored.chat.lexical_corroboration_floor_score == 0.20
+    assert restored.chat.cross_language_semantic_evidence_score_threshold == 0.30
+
+
+def test_cross_language_threshold_above_semantic_bar_is_rejected() -> None:
+    revision = _revision({"chat": {"cross_language_semantic_evidence_score_threshold": 0.5}})
+
+    with pytest.raises(BadRequestError) as caught:
+        resolve_project_ai_config(Settings(), revision)
+
+    assert caught.value.code == "invalid_evidence_thresholds"
+
+
 def test_rescue_floor_above_semantic_bar_is_rejected() -> None:
     revision = _revision({"chat": {"lexical_corroboration_floor_score": 0.5}})
 

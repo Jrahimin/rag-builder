@@ -1151,6 +1151,7 @@ class ChatService:
                         "translation_validation_reasons"
                     )
                     or [],
+                    "finish_reason": retrieval_diagnostics.get("translation_finish_reason"),
                     "skipped_reason": retrieval_diagnostics.get("skipped_reason"),
                     "source_language": retrieval_diagnostics.get("translation_source_language"),
                     "target_language": retrieval_diagnostics.get("translation_target_language"),

@@ -125,12 +125,18 @@ candidate. The Bangla route instead OCRs every page and does not compete with na
 
 Hybrid search always runs original dense and original lexical branches with no language filter.
 When translation is enabled and the active immutable build has language inventory, at most one
-target-language rewrite is added (`gpt-5-nano` by default). Latin-script queries are
-`latin_ambiguous`, never auto-English, so a Bangla corpus spends that one slot on Bangla.
-Translated branches include `target OR mixed OR unknown` rows. Original chunks remain the only
-evidence and citations. `hosted_managed` enables translation and Cohere rerank by default; local
-and pytest stacks keep them off. Cut over an existing OpenAI embedding set with rebuild →
-validate → activate. See [ADR-018](../architecture/adr/018-multilingual-retrieval-v1.md).
+target-language rewrite is added (`gpt-5-nano` by default). Translation runs only when it can
+materially improve retrieval: Bangla → English, or a bounded Banglish/code-switched rewrite to
+English. Ordinary Latin-script queries do not auto-translate to Bangla merely because Bangla
+exists in the corpus. Mixed-script queries keep both scripts in the original branches and skip
+the rewrite. Hard-scoped retrieval uses per-document language counts from the index-build
+manifest so a same-language document does not spend a translation call. Translated branches
+include `target OR mixed OR unknown` rows. Original chunks remain the only evidence and
+citations. The default minimum translation output budget is 256 tokens, still capped at 2048
+and overridable through `APE_QUERY_TRANSLATION__MIN_OUTPUT_TOKENS` /
+`APE_QUERY_TRANSLATION__MAX_OUTPUT_TOKENS`. `hosted_managed` enables translation and Cohere
+rerank by default; local and pytest stacks keep them off. Cut over an existing OpenAI embedding
+set with rebuild → validate → activate. See [ADR-018](../architecture/adr/018-multilingual-retrieval-v1.md).
 
 ## Reindex after upgrades
 

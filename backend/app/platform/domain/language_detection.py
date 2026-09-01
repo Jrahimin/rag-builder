@@ -30,7 +30,6 @@ ROUTING_LANGUAGE_MIXED = "mixed"
 ROUTING_LANGUAGE_UNKNOWN = "unknown"
 QUERY_PROFILE_LATIN_AMBIGUOUS = "latin_ambiguous"
 DEFAULT_SUPPORTED_TARGET_LANGUAGES: tuple[str, ...] = ("bn", "en")
-NON_LATIN_ROUTING_CODES = frozenset({"bn", "ar", "hi", "ja"})
 SYSTEM_LANGUAGE_METADATA_KEYS: tuple[str, ...] = (
     "document_language",
     "chunk_language",
@@ -202,7 +201,13 @@ def select_translation_target(
     inventory_counts: Mapping[str, int],
     supported_targets: Sequence[str] = DEFAULT_SUPPORTED_TARGET_LANGUAGES,
 ) -> str | None:
-    """Pick at most one exact corpus language to translate into."""
+    """Pick at most one exact corpus language to translate into.
+
+    Translation is used only when it can materially improve retrieval:
+    Bangla → English, or a bounded Banglish/code-switched rewrite to English.
+    Ordinary Latin-script queries, mixed-script queries, and same-language
+    inventories skip the rewrite. Original dense + lexical always remain.
+    """
     exact_inventory = {
         language: count
         for language, count in inventory_counts.items()
@@ -211,17 +216,12 @@ def select_translation_target(
     candidates = [language for language in supported_targets if language in exact_inventory]
     if profile.exact_primary is not None:
         candidates = [language for language in candidates if language != profile.exact_primary]
-    if profile.exact_primary is None:
-        if profile.is_romanized_or_codeswitched:
-            # A bounded code-switch signal may use the one slot for a corpus-
-            # language rewrite. Original retrieval always remains in the plan.
-            candidates = [language for language in candidates if language == "en"]
-        else:
-            # Ordinary Latin-ambiguous / mixed / unknown queries never spend
-            # the one slot on English.
-            candidates = [
-                language for language in candidates if language in NON_LATIN_ROUTING_CODES
-            ]
+    elif profile.is_mixed:
+        return None
+    elif profile.is_romanized_or_codeswitched:
+        candidates = [language for language in candidates if language == "en"]
+    else:
+        return None
     if not candidates:
         return None
     return sorted(candidates, key=lambda language: (-exact_inventory[language], language))[0]

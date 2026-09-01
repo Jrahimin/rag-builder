@@ -21,9 +21,10 @@ from app.platform.providers.prompts.retrieval_translation import (
 
 # Page-length query + buffer. Rejects rambling, not a book-page translation.
 _MAX_TRANSLATION_CHARS = 24_000
-_MIN_TRANSLATION_OUTPUT_TOKENS = 96
+_DEFAULT_MIN_TRANSLATION_OUTPUT_TOKENS = 256
 _MAX_TRANSLATION_OUTPUT_TOKENS = 2048
 _SHORT_QUERY_CLEAN_CHARS = 400
+_ABSOLUTE_MIN_TRANSLATION_OUTPUT_TOKENS = 16
 
 
 class LLMQueryTranslationProvider(BaseQueryTranslationProvider):
@@ -34,12 +35,14 @@ class LLMQueryTranslationProvider(BaseQueryTranslationProvider):
         llm: BaseLLMProvider,
         *,
         prompt_version: str = PROMPT_VERSION,
+        min_output_tokens: int = _DEFAULT_MIN_TRANSLATION_OUTPUT_TOKENS,
         max_output_tokens: int = 4096,
         temperature: float | None = None,
         retry_max_attempts: int = 1,
     ) -> None:
         self._llm = llm
         self._prompt_version = prompt_version
+        self._min_output_tokens = min_output_tokens
         self._max_output_tokens = max_output_tokens
         self._temperature = temperature
         self._retry_max_attempts = max(0, retry_max_attempts)
@@ -62,16 +65,16 @@ class LLMQueryTranslationProvider(BaseQueryTranslationProvider):
 
     def _max_tokens(self, request: QueryTranslationRequest) -> int:
         # Bangla can approach ~1 token per 1-2 chars; English is cheaper.
-        sized = max(
-            _MIN_TRANSLATION_OUTPUT_TOKENS,
-            min(_MAX_TRANSLATION_OUTPUT_TOKENS, (len(request.query) // 2) + 96),
-        )
-        return min(
+        # A short-query floor is a starvation hypothesis, not a proven root cause.
+        configured_min = max(_ABSOLUTE_MIN_TRANSLATION_OUTPUT_TOKENS, self._min_output_tokens)
+        ceiling = min(
             request.max_output_tokens,
             self._max_output_tokens,
             _MAX_TRANSLATION_OUTPUT_TOKENS,
-            sized,
         )
+        floor = min(configured_min, ceiling)
+        sized = max(floor, min(_MAX_TRANSLATION_OUTPUT_TOKENS, (len(request.query) // 2) + 96))
+        return min(ceiling, sized)
 
     async def translate(self, request: QueryTranslationRequest) -> QueryTranslationResponse:
         payload = translation_messages(
@@ -126,18 +129,21 @@ class LLMQueryTranslationProvider(BaseQueryTranslationProvider):
                 (reason for reason in reversed(validation_reasons) if reason != "empty"),
                 error or "empty",
             )
+            failure_context: dict[str, object] = {
+                "reason": diagnostic_reason,
+                "validation_reasons": validation_reasons,
+                "attempts": attempt_count,
+                "provider": self.provider_name,
+                "model": self.model_name,
+                "prompt_version": request.prompt_version or self._prompt_version,
+                "latency_ms": latency_ms,
+            }
+            if completion is not None:
+                failure_context.update(_completion_diagnostics(completion))
             raise ProviderError(
                 "Retrieval translation failed validation.",
                 provider_name=self.provider_name,
-                context={
-                    "reason": diagnostic_reason,
-                    "validation_reasons": validation_reasons,
-                    "attempts": attempt_count,
-                    "provider": self.provider_name,
-                    "model": self.model_name,
-                    "prompt_version": request.prompt_version or self._prompt_version,
-                    "latency_ms": latency_ms,
-                },
+                context=failure_context,
             )
         return QueryTranslationResponse(
             translated_query=translated,
@@ -148,10 +154,29 @@ class LLMQueryTranslationProvider(BaseQueryTranslationProvider):
             usage=QueryTranslationUsage(
                 input_tokens=completion.usage.input_tokens,
                 output_tokens=completion.usage.output_tokens,
+                reasoning_tokens=getattr(completion.usage, "reasoning_tokens", None),
             ),
             latency_ms=latency_ms,
             attempts=attempt_count,
         )
+
+
+def _completion_diagnostics(completion: object) -> dict[str, object]:
+    """Record empty/validation-failure signals without assuming token starvation."""
+    diagnostics: dict[str, object] = {}
+    finish_reason = getattr(completion, "finish_reason", None)
+    if finish_reason is not None:
+        diagnostics["finish_reason"] = str(finish_reason)
+    usage = getattr(completion, "usage", None)
+    if usage is None:
+        return diagnostics
+    output_tokens = getattr(usage, "output_tokens", None)
+    if output_tokens is not None:
+        diagnostics["output_tokens"] = int(output_tokens)
+    reasoning_tokens = getattr(usage, "reasoning_tokens", None)
+    if reasoning_tokens is not None:
+        diagnostics["reasoning_tokens"] = int(reasoning_tokens)
+    return diagnostics
 
 
 def _clean_translation(text: str) -> str:

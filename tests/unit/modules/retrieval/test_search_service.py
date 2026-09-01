@@ -460,6 +460,50 @@ async def test_search_diagnostics_expose_translation_query_and_branch_provenance
     assert f"{BRANCH_TRANSLATED_DENSE}:bn" in trace["branch_provenance"]
 
 
+async def test_search_forwards_document_scope_to_multilingual_plan() -> None:
+    document_id = uuid.uuid4()
+    profile = detect_query_language_profile("উৎসে কর")
+    plan = MultilingualRetrievalPlan(
+        query_profile=profile,
+        inventory=LanguageInventory(
+            schema_version="2026-08-18.v1",
+            chunk_language_counts={"bn": 8},
+            document_language_counts={"bn": 1},
+            is_legacy=False,
+        ),
+        translation_status="skipped",
+        target_language=None,
+        translated_query=None,
+        branches=(
+            RetrievalBranch(
+                branch_id=BRANCH_ORIGINAL_DENSE,
+                family=BRANCH_ORIGINAL_DENSE,
+                query="উৎসে কর",
+                language_scope=None,
+            ),
+            RetrievalBranch(
+                branch_id=BRANCH_ORIGINAL_LEXICAL,
+                family=BRANCH_ORIGINAL_LEXICAL,
+                query="উৎসে কর",
+                language_scope=None,
+            ),
+        ),
+        skipped_branches=(BRANCH_TRANSLATED_DENSE, BRANCH_TRANSLATED_LEXICAL),
+    )
+    service = _search_service(
+        retrieval_config=RetrievalConfig(strategy=RetrievalStrategy.HYBRID),
+        query_translation_config=QueryTranslationConfig(enabled=True),
+    )
+    _ready_search(service)
+    resolve = AsyncMock(return_value=plan)
+    with patch(
+        "app.modules.retrieval.services.search_service.resolve_multilingual_plan",
+        resolve,
+    ):
+        await service.search(SearchRequest(query="উৎসে কর", document_id=document_id))
+    assert resolve.await_args.kwargs["document_id"] == document_id
+
+
 async def test_public_search_redacts_translated_query_variant_text() -> None:
     translated_query = "উৎস কর কর্তনের ক্ষেত্রগুলো কী কী"
     original = QueryVariant(

@@ -62,6 +62,7 @@ values are `indexed_then_web` and `indexed_and_web`. Notable `ChatConfig` keys a
 `citation_excerpt_max_chars`, `minimum_semantic_evidence_score`,
 `evidence_gate_mode` (`enforce` or `observe`), `minimum_reranker_evidence_score`,
 `lexical_corroboration_floor_score`, `lexical_corroboration_coverage`,
+`cross_language_semantic_evidence_score_threshold`,
 `minimum_claim_token_coverage`, `candidate_wise_grounding_enabled`, and `include_citations`.
 
 Project revisions may also include a sparse `web_search` section: `enabled`, `model`,

@@ -99,6 +99,7 @@ class SearchDiagnostics(BaseModel):
     translation_failure_reason: str | None = None
     translation_attempts: int | None = None
     translation_validation_reasons: list[str] = Field(default_factory=list)
+    translation_finish_reason: str | None = None
     translated_query: str | None = None
     executed_branches: list[str] = Field(default_factory=list)
     skipped_branches: list[str] = Field(default_factory=list)

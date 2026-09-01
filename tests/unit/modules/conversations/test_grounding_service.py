@@ -122,6 +122,14 @@ def test_equal_semantic_bar_and_rescue_floor_is_allowed() -> None:
 def test_default_rescue_floor_is_below_the_semantic_bar() -> None:
     config = ChatConfig()
     assert config.lexical_corroboration_floor_score < config.minimum_semantic_evidence_score
+    assert (
+        config.cross_language_semantic_evidence_score_threshold
+        < config.minimum_semantic_evidence_score
+    )
+    assert (
+        config.cross_language_semantic_evidence_score_threshold
+        == config.lexical_corroboration_floor_score
+    )
 
 
 def test_high_overlap_score_just_below_the_bar_is_rescued() -> None:
@@ -148,6 +156,14 @@ def test_rescue_floor_cannot_exceed_semantic_bar() -> None:
         ChatConfig(
             minimum_semantic_evidence_score=0.35,
             lexical_corroboration_floor_score=0.4,
+        )
+
+
+def test_cross_language_semantic_threshold_cannot_exceed_semantic_bar() -> None:
+    with pytest.raises(ValueError, match="cross_language_semantic_evidence_score_threshold"):
+        ChatConfig(
+            minimum_semantic_evidence_score=0.35,
+            cross_language_semantic_evidence_score_threshold=0.4,
         )
 
 

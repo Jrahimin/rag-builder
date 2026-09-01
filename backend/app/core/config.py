@@ -629,6 +629,7 @@ class QueryTranslationConfig(BaseModel):
     backend: LLMBackend = LLMBackend.OPENAI
     model: str = "gpt-5-nano"
     prompt_version: str = "retrieval-translation-v2"
+    min_output_tokens: int = Field(default=256, ge=16, le=2048)
     max_output_tokens: int = Field(default=4096, ge=16, le=8192)
     request_timeout_seconds: float = Field(default=45.0, ge=1.0, le=180.0)
     retry_max_attempts: int = Field(default=1, ge=0, le=3)
@@ -747,9 +748,11 @@ class ChatConfig(BaseModel):
     minimum_semantic_evidence_score: float = Field(default=0.35, ge=0.0, le=1.0)
     # Below the primary bar so same-language OCR/table hits that land just under
     # 0.35 can still pass when query tokens strongly overlap the evidence.
-    # Cross-language near-misses typically have ~0 coverage, so they still refuse.
     lexical_corroboration_floor_score: float = Field(default=0.30, ge=0.0, le=1.0)
     lexical_corroboration_coverage: float = Field(default=0.50, ge=0.0, le=1.0)
+    # Dedicated semantic bar for cross-language evidence. Starts equivalent to
+    # the lexical floor; calibrate independently rather than reusing that floor.
+    cross_language_semantic_evidence_score_threshold: float = Field(default=0.30, ge=0.0, le=1.0)
     # Provider-specific calibration. Keep observe until this pair is measured.
     minimum_reranker_evidence_score: float = Field(default=0.40, ge=0.0, le=1.0)
     # Compute candidate-wise assessments in all deployments; this switch controls
@@ -783,6 +786,15 @@ class ChatConfig(BaseModel):
         if self.lexical_corroboration_floor_score > self.minimum_semantic_evidence_score:
             msg = (
                 "lexical_corroboration_floor_score must not exceed minimum_semantic_evidence_score"
+            )
+            raise ValueError(msg)
+        if (
+            self.cross_language_semantic_evidence_score_threshold
+            > self.minimum_semantic_evidence_score
+        ):
+            msg = (
+                "cross_language_semantic_evidence_score_threshold must not exceed "
+                "minimum_semantic_evidence_score"
             )
             raise ValueError(msg)
         if self.claim_semantic_reject_floor > self.minimum_claim_semantic_score:

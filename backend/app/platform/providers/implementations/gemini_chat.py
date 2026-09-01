@@ -141,6 +141,11 @@ class GeminiChatProvider(BaseLLMProvider):
                     if usage_meta.get("candidatesTokenCount") is not None
                     else None
                 ),
+                reasoning_tokens=(
+                    int(usage_meta["thoughtsTokenCount"])
+                    if usage_meta.get("thoughtsTokenCount") is not None
+                    else None
+                ),
             ),
             provider_version=self._provider_version,
         )
@@ -224,9 +229,11 @@ def _gemini_stream_chunk(payload: dict[str, object]) -> ChatCompletionChunk | No
     if isinstance(usage_meta, dict):
         prompt = usage_meta.get("promptTokenCount")
         completion = usage_meta.get("candidatesTokenCount")
+        thoughts = usage_meta.get("thoughtsTokenCount")
         usage = ChatUsage(
             input_tokens=int(prompt) if prompt is not None else None,
             output_tokens=int(completion) if completion is not None else None,
+            reasoning_tokens=int(thoughts) if thoughts is not None else None,
         )
     if not delta and finish_reason is None and usage is None:
         return None

@@ -30,8 +30,9 @@ pytestmark = pytest.mark.integration
 class FixtureConceptEmbeddingProvider(BaseEmbeddingProvider):
     """Deterministic semantic fixture embedder for production pgvector smoke tests.
 
-    Each tax concept occupies a stable orthogonal coordinate. It deliberately
-    gives fixture/query pairs a cosine similarity of 1.0 while the lunar query
+    Each tax concept occupies a stable orthogonal coordinate. Multi-section
+    fixture chunks may activate more than one coordinate so bilingual and
+    mixed-source queries still retrieve the matching family. The lunar query
     occupies a separate coordinate, so production evidence thresholds remain
     unchanged and still reject unrelated evidence.
     """
@@ -41,8 +42,11 @@ class FixtureConceptEmbeddingProvider(BaseEmbeddingProvider):
         "rebate": 1,
         "threshold": 2,
         "source_tax": 3,
-        "unknown": 4,
-        "other_document": 5,
+        "evidence": 4,
+        "declared": 5,
+        "unknown": 6,
+        "other_document": 7,
+        "procedure": 8,
     }
 
     def __init__(self, dimensions: int) -> None:
@@ -65,21 +69,40 @@ class FixtureConceptEmbeddingProvider(BaseEmbeddingProvider):
         return "1"
 
     @classmethod
-    def _concept(cls, text: str) -> str:
+    def _concepts(cls, text: str) -> set[str]:
         value = text.casefold()
         if "lunar" in value or "moon colony" in value:
-            return "unknown"
-        if "section 20" in value and ("eligible" in value or "investment" in value):
-            return "eligible"
+            return {"unknown"}
+        found: set[str] = set()
+        if ("section 20" in value or "ধারা ২০" in value) and (
+            "eligible" in value or "investment" in value or "যোগ্য" in value or "বিনিয়োগ" in value
+        ):
+            found.add("eligible")
         if "eligible investment" in value or "rebate" in value or "রিবেট" in value:
-            return "rebate"
-        if "tax-free threshold" in value or "tax free threshold" in value:
-            return "threshold"
-        if "source tax" in value or "savings-certificate" in value:
-            return "source_tax"
-        # Documents always carry their section heading; arbitrary unrelated
-        # prose is intentionally orthogonal to the tax concepts.
-        return "unknown"
+            found.add("rebate")
+        if "tax-free threshold" in value or "tax free threshold" in value or "করমুক্ত" in value:
+            found.add("threshold")
+        if (
+            "source tax" in value
+            or "savings-certificate" in value
+            or "উৎসে কর" in value
+            or "সঞ্চয়পত্রের মুনাফা" in value
+        ):
+            found.add("source_tax")
+        if "certificate বা statement" in value or "প্রয়োজনীয় প্রমাণ" in value or "সহায়ক নথি" in value:
+            found.add("evidence")
+        if "৭৫০০০" in value.replace(",", "") or "ঘোষিত বিনিয়োগ" in value:
+            found.add("declared")
+        if (
+            "verification reference" in value
+            or "review window" in value
+            or "calendar days" in value
+            or "যাচাইয়ের" in value
+            or "স্বতন্ত্র রেফারেন্স" in value
+            or "সময়সীমা" in value
+        ):
+            found.add("procedure")
+        return found or {"unknown"}
 
     async def embed_texts(
         self,
@@ -90,10 +113,13 @@ class FixtureConceptEmbeddingProvider(BaseEmbeddingProvider):
         vectors: list[list[float]] = []
         for text in texts:
             vector = [0.0] * self._dimensions
-            concept = self._concept(text)
-            if purpose is EmbeddingPurpose.DOCUMENT and concept == "unknown":
-                concept = "other_document"
-            vector[self._CONCEPTS[concept]] = 1.0
+            concepts = self._concepts(text)
+            if purpose is EmbeddingPurpose.DOCUMENT:
+                concepts = {
+                    "other_document" if concept == "unknown" else concept for concept in concepts
+                }
+            for concept in concepts:
+                vector[self._CONCEPTS[concept]] = 1.0
             vectors.append(vector)
         return EmbeddingBatchResult(
             vectors=vectors,
@@ -164,14 +190,30 @@ async def test_tax_journey_subset_uses_production_diagnostics_and_cleans_up(
 
     assert "setup_error" not in result
     assert result["cleanup"]["status"] == "succeeded"
-    assert result["index"]["document_count"] == 2
-    assert all(len(chunk_ids) == 1 for chunk_ids in result["anchor_mappings"].values())
-    assert result["sources"]["finance_2026"]["modifies"] == [
-        {
-            "source_key": "tax_2023",
-            "target_revision_id": result["sources"]["tax_2023"]["source_revision_id"],
-        }
+    assert result["index"]["document_count"] == 6
+    structured_anchor_keys = {
+        item["key"] for item in payload["anchors"] if item.get("section")
+    }
+    for key, chunk_ids in result["anchor_mappings"].items():
+        assert chunk_ids
+        if key in structured_anchor_keys:
+            assert len(chunk_ids) == 1, key
+    finance_2026_targets = {
+        item["source_key"]: item["target_provisions"]
+        for item in result["sources"]["finance_2026"]["modifies"]
+    }
+    assert set(finance_2026_targets) == {"tax_2023", "tax_2023_bn"}
+    assert finance_2026_targets["tax_2023_bn"] == [
+        "ধারা ১০ — করমুক্ত সীমা",
+        "ধারা ২১ — বিনিয়োগ রিবেটের হার",
+        "ধারা \u09ea\u09e6 — ব্যক্তিগত করের উদাহরণ",
     ]
+    finance_2027_modifies = result["sources"]["finance_2027"]["modifies"]
+    assert [item["source_key"] for item in finance_2027_modifies] == ["finance_2026"]
+    assert (
+        "Section 10 — Revised Tax-Free Threshold"
+        not in finance_2027_modifies[0]["target_provisions"]
+    )
     assert (artifact_dir / "summary.md").is_file()
     assert (artifact_dir / "results.json").is_file()
 

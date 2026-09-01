@@ -10,7 +10,8 @@ from app.modules.conversations.ports import ContextChunk
 from app.platform.domain.content_hash import content_hash
 
 _PROVISION_HEADING = regex.compile(
-    r"^(?:section|article|rule|regulation|§)\s+\p{Number}[\p{Number}A-Za-z()./-]*\b.*$",
+    r"^(?:section|article|rule|regulation|§|ধারা|বিধি)\s+"
+    r"\p{Number}[\p{Number}A-Za-z()./-]*\b.*$",
     regex.IGNORECASE,
 )
 _ENFORCEABLE_OUTCOMES = {"expanded", "already_in_recall"}

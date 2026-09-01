@@ -30,7 +30,8 @@ class _FakeLLM:
             provider="openai",
             model="gpt-5-nano",
             provider_version="test",
-            usage=SimpleNamespace(input_tokens=1, output_tokens=1),
+            finish_reason="stop",
+            usage=SimpleNamespace(input_tokens=1, output_tokens=1, reasoning_tokens=None),
         )
 
 
@@ -57,6 +58,9 @@ async def test_empty_model_output_fails_closed_with_empty_reason() -> None:
     with pytest.raises(ProviderError) as caught:
         await translator.translate(_request())
     assert caught.value.context["reason"] == "empty"
+    assert caught.value.context["finish_reason"] == "stop"
+    assert caught.value.context["output_tokens"] == 1
+    assert caught.value.context["attempts"] == 2
 
 
 async def test_wrapped_translation_is_accepted() -> None:
@@ -96,7 +100,12 @@ class _RecordingLLM:
             provider="openai",
             model="gpt-5-nano",
             provider_version="test",
-            usage=SimpleNamespace(input_tokens=12, output_tokens=6),
+            finish_reason="stop" if content else "length",
+            usage=SimpleNamespace(
+                input_tokens=12,
+                output_tokens=6 if content else 0,
+                reasoning_tokens=48,
+            ),
         )
 
 
@@ -123,7 +132,7 @@ async def test_translation_caps_output_tokens_and_retries_empty() -> None:
     )
     assert result.translated_query == "উৎসে কর সংগ্রহ"
     assert result.attempts == 2
-    assert llm.max_tokens == [106, 106]
+    assert llm.max_tokens == [256, 256]
 
 
 async def test_page_length_query_gets_a_page_sized_output_budget() -> None:
@@ -141,6 +150,44 @@ async def test_page_length_query_gets_a_page_sized_output_budget() -> None:
     )
     expected = min(2048, (len(page) // 2) + 96)
     assert llm.max_tokens == [expected]
+
+
+async def test_configured_min_output_tokens_is_the_short_query_floor() -> None:
+    llm = _RecordingLLM(["উৎসে কর সংগ্রহ"])
+    translator = LLMQueryTranslationProvider(
+        llm, min_output_tokens=320, max_output_tokens=1024
+    )
+    await translator.translate(
+        QueryTranslationRequest(
+            query="source tax deduction",
+            source_profile="en",
+            target_language="bn",
+            prompt_version="retrieval-translation-v2",
+            max_output_tokens=1024,
+        )
+    )
+    assert llm.max_tokens == [320]
+
+
+async def test_empty_translation_records_finish_reason_and_token_usage() -> None:
+    llm = _RecordingLLM(["", ""])
+    translator = LLMQueryTranslationProvider(llm, retry_max_attempts=1)
+    with pytest.raises(ProviderError) as caught:
+        await translator.translate(
+            QueryTranslationRequest(
+                query="source tax deduction",
+                source_profile="en",
+                target_language="bn",
+                prompt_version="retrieval-translation-v2",
+                max_output_tokens=1024,
+            )
+        )
+    assert caught.value.context["reason"] == "empty"
+    assert caught.value.context["finish_reason"] == "length"
+    assert caught.value.context["output_tokens"] == 0
+    assert caught.value.context["reasoning_tokens"] == 48
+    assert caught.value.context["attempts"] == 2
+    assert llm.max_tokens == [256, 256]
 
 
 async def test_non_empty_validation_failure_retries_and_retains_diagnostics() -> None:

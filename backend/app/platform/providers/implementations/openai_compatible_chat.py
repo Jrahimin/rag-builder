@@ -305,7 +305,15 @@ def _openai_usage(payload: object) -> ChatUsage | None:
         return None
     prompt = usage.get("prompt_tokens")
     completion = usage.get("completion_tokens")
+    details = usage.get("completion_tokens_details")
+    reasoning = None
+    if isinstance(details, dict) and details.get("reasoning_tokens") is not None:
+        try:
+            reasoning = int(details["reasoning_tokens"])
+        except (TypeError, ValueError):
+            reasoning = None
     return ChatUsage(
         input_tokens=int(prompt) if prompt is not None else None,
         output_tokens=int(completion) if completion is not None else None,
+        reasoning_tokens=reasoning,
     )
