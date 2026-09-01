@@ -4,7 +4,7 @@ COMPOSE = docker compose
 
 .PHONY: help up down restart status logs rebuild up-backend up-frontend up-worker up-db up-redis up-storage \
 	migrate migrate-local migration-new migration-check migration-drift-check doctor health format format-check \
-	lint typecheck test-unit test-integration eval-smoke frontend-install frontend-format-check frontend-lint \
+	lint typecheck test-unit test-integration eval-smoke rag-journey frontend-install frontend-format-check frontend-lint \
 	frontend-typecheck frontend-test frontend-build frontend-quality quality
 
 help:
@@ -66,6 +66,9 @@ migration-drift-check:
 
 doctor:
 	cd backend && $(PYTHON) -m app.cli doctor
+
+rag-journey:
+	cd backend && $(PYTHON) -m app.cli rag-journey $(RAG_JOURNEY_ARGS)
 
 health:
 	curl --fail --silent http://127.0.0.1:8010/health/live

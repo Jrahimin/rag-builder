@@ -30,7 +30,11 @@ from app.modules.retrieval.retrievers.semantic_retriever import SemanticRetrieva
 from app.platform.domain.language_detection import detect_query_language_profile
 from app.platform.providers.contracts.embedding import EmbeddingBatchResult
 from app.platform.providers.contracts.reranker import RerankResponse, RerankResult, RerankScoreScale
-from app.platform.providers.errors import ProviderError
+from app.platform.providers.errors import (
+    ProviderError,
+    ProviderRateLimitError,
+    ProviderTimeoutError,
+)
 from app.platform.providers.implementations.noop_reranker import NoopRerankerProvider
 
 pytestmark = pytest.mark.unit
@@ -154,7 +158,34 @@ async def test_reranker_unavailable_preserves_fused_order_and_marks_fallback() -
 
     assert [item.chunk_id for item in result] == [chunk_id]
     assert result[0].metadata["rerank_status"] == "unavailable"
+    assert result[0].metadata["rerank_failure_reason"] == "unavailable"
     assert result[0].metadata["reranker_provider"] == "learned-reranker"
+
+
+@pytest.mark.parametrize(
+    ("exc", "reason"),
+    [
+        (ProviderTimeoutError("slow", provider_name="learned-reranker"), "timeout"),
+        (ProviderRateLimitError("busy", provider_name="learned-reranker"), "rate_limit"),
+    ],
+)
+async def test_reranker_fail_open_records_sanitized_failure_reason(
+    exc: ProviderError,
+    reason: str,
+) -> None:
+    chunk_id = uuid.uuid4()
+    retriever = HybridRetriever.__new__(HybridRetriever)
+    retriever._content_loader = AsyncMock()
+    retriever._content_loader.load_texts.return_value = {chunk_id: "refund policy"}
+    retriever._reranker = AsyncMock()
+    retriever._reranker.rerank.side_effect = exc
+    fused = [CandidateHit(chunk_id, 0.03, CandidateSource.HYBRID)]
+
+    result = await retriever._rerank_candidates(_context(rerank_enabled=True), fused)
+
+    assert [item.chunk_id for item in result] == [chunk_id]
+    assert result[0].metadata["rerank_status"] == "unavailable"
+    assert result[0].metadata["rerank_failure_reason"] == reason
 
 
 async def test_applied_rerank_copies_relevance_onto_evidence_fields() -> None:

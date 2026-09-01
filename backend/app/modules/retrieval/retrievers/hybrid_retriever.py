@@ -38,19 +38,15 @@ from app.platform.domain.evidence_contracts import (
     QueryVariant,
     QueryVariantKind,
 )
-from app.platform.providers.contracts.embedding import BaseEmbeddingProvider, EmbeddingPurpose
+from app.platform.providers.contracts.embedding import BaseEmbeddingProvider
 from app.platform.providers.contracts.reranker import (
     BaseRerankerProvider,
     RerankCandidate,
     RerankRequest,
     RerankScoreScale,
 )
-from app.platform.providers.embedding_similarity import (
-    BoundedPassage,
-    bounded_token_passages,
-    cosine_similarity,
-)
-from app.platform.providers.errors import ProviderError
+from app.platform.providers.embedding_similarity import score_best_passages
+from app.platform.providers.errors import ProviderError, sanitized_provider_failure_reason
 
 logger = structlog.get_logger(__name__)
 
@@ -567,23 +563,17 @@ class HybridRetriever(BaseRetriever):
         texts = await self._content_loader.load_texts(
             [candidate.chunk_id for candidate in candidates]
         )
-        passages: list[str] = []
-        owners: list[tuple[uuid.UUID, BoundedPassage]] = []
-        for candidate in candidates:
-            for passage in bounded_token_passages(
-                texts.get(candidate.chunk_id, ""),
+        try:
+            best = await score_best_passages(
+                embedder=self._embedder,
+                query_vector=query_vector,
+                texts={
+                    candidate.chunk_id: texts.get(candidate.chunk_id, "")
+                    for candidate in candidates
+                },
                 window_tokens=context.passage_window_tokens,
                 overlap_tokens=context.passage_overlap_tokens,
                 minimum_tokens=context.passage_min_tokens,
-            ):
-                passages.append(passage.text)
-                owners.append((candidate.chunk_id, passage))
-        if not passages:
-            return candidates
-        try:
-            embedded = await self._embedder.embed_texts(
-                passages,
-                purpose=EmbeddingPurpose.DOCUMENT,
             )
         except ProviderError:
             logger.warning(
@@ -593,12 +583,6 @@ class HybridRetriever(BaseRetriever):
             )
             return _annotate_candidates(candidates, passage_score_status="unavailable")
 
-        best: dict[uuid.UUID, tuple[float, BoundedPassage]] = {}
-        for (chunk_id, passage), vector in zip(owners, embedded.vectors, strict=True):
-            score = cosine_similarity(query_vector, vector)
-            current = best.get(chunk_id)
-            if current is None or score > current[0]:
-                best[chunk_id] = (score, passage)
         output: list[CandidateHit] = []
         for candidate in candidates:
             winner = best.get(candidate.chunk_id)
@@ -614,12 +598,7 @@ class HybridRetriever(BaseRetriever):
                         "passage_score_status": "applied",
                     }
                 )
-            output.append(
-                replace(
-                    candidate,
-                    metadata=metadata,
-                )
-            )
+            output.append(replace(candidate, metadata=metadata))
         return output
 
     async def _rerank_candidates(
@@ -653,14 +632,17 @@ class HybridRetriever(BaseRetriever):
         try:
             response = await self._reranker.rerank(request)
         except ProviderError as exc:
+            failure_reason = sanitized_provider_failure_reason(exc)
             logger.warning(
                 "rerank_failed_using_fused_order",
                 project_id=str(context.project_id),
                 provider=exc.provider_name,
+                failure_reason=failure_reason,
             )
             return _annotate_candidates(
                 fused,
                 rerank_status="unavailable",
+                rerank_failure_reason=failure_reason,
                 reranker_provider=exc.provider_name,
                 reranked_candidate_count=len(request.candidates),
             )
@@ -749,10 +731,15 @@ def _bound_modifier_records(
             if item.modifier_document_id in selected_documents:
                 outcome = ModifierExpansionOutcome.DUPLICATE
             elif (
-                item.modifier_revision_id in visited_revisions
-                or item.modifier_document_id in visited_documents
+                item.modifier_revision_id == item.base_revision_id
+                or item.modifier_document_id == item.base_document_id
             ):
                 outcome = ModifierExpansionOutcome.CYCLE
+            elif (
+                item.modifier_revision_id in base_revision_ids
+                or item.modifier_document_id in base_document_ids
+            ):
+                outcome = ModifierExpansionOutcome.ALREADY_IN_RECALL
             elif len(selected_documents) >= max_related_sources:
                 outcome = ModifierExpansionOutcome.SOURCE_CAP_EXCEEDED
             else:
@@ -831,11 +818,26 @@ def _expansion_diagnostics(
         if item.outcome is ModifierExpansionOutcome.EXPANDED:
             continue
         exclusions[item.outcome.value] = exclusions.get(item.outcome.value, 0) + 1
+    authority_applicable = [
+        item
+        for item in records
+        if item.outcome
+        in {ModifierExpansionOutcome.EXPANDED, ModifierExpansionOutcome.ALREADY_IN_RECALL}
+    ]
+    unscoped = sum(not item.target_provisions for item in authority_applicable)
     return {
         "modifies_expansion_status": status,
         "modifies_expansion_depth": 1,
         "modifies_expansion_records": [item.diagnostic() for item in records],
         "modifies_expansion_exclusion_reasons": exclusions,
+        "modifies_authority_scope_status": (
+            "unscoped_relationships"
+            if unscoped
+            else "scoped"
+            if authority_applicable
+            else "not_applicable"
+        ),
+        "modifies_authority_unscoped_count": unscoped,
         "related_source_count": len(
             {
                 item.modifier_document_id

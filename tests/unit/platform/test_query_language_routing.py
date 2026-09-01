@@ -37,10 +37,15 @@ def test_mixed_query_does_not_hide_behind_english() -> None:
     assert profile.exact_primary is None
 
 
-def test_latin_query_translates_to_bangla_not_english_when_both_exist() -> None:
+def test_latin_query_does_not_translate_to_bangla_when_both_exist() -> None:
     profile = detect_query_language_profile("source tax deduction areas")
     target = select_translation_target(profile, {"bn": 12, "en": 80, "mixed": 1})
-    assert target == "bn"
+    assert target is None
+
+
+def test_bangla_query_translates_to_english_when_english_exists() -> None:
+    profile = detect_query_language_profile("উৎসে কর সংগ্রহের খাত কি?")
+    assert select_translation_target(profile, {"bn": 12, "en": 80, "mixed": 1}) == "en"
 
 
 def test_bangla_query_on_bangla_only_corpus_skips_translation() -> None:
@@ -50,6 +55,20 @@ def test_bangla_query_on_bangla_only_corpus_skips_translation() -> None:
 
 def test_english_only_corpus_skips_latin_query_translation() -> None:
     profile = detect_query_language_profile("refund policy")
+    assert select_translation_target(profile, {"en": 9}) is None
+
+
+def test_banglish_query_gets_bounded_english_rewrite_with_original_fallback() -> None:
+    profile = detect_query_language_profile(
+        "Current niyome BDT 60,000 eligible investment er rebate koto?"
+    )
+    assert profile.is_romanized_or_codeswitched is True
+    assert select_translation_target(profile, {"en": 9}) == "en"
+
+
+def test_normal_english_query_does_not_get_an_english_rewrite() -> None:
+    profile = detect_query_language_profile("What is the current investment rebate rate?")
+    assert profile.is_romanized_or_codeswitched is False
     assert select_translation_target(profile, {"en": 9}) is None
 
 
@@ -69,6 +88,25 @@ def test_entity_name_drift_is_allowed_but_section_numbers_are_not() -> None:
     assert "163" not in missing_protected_literals(original, translated)
     dropped = missing_protected_literals(original, "আয়কর অধ্যাদেশ")
     assert "163" in dropped
+
+
+def test_unicode_digits_may_translate_to_ascii_without_losing_numeric_meaning() -> None:
+    original = "বর্তমান নিয়মে ৬০,০০০ টাকা বিনিয়োগ"  # noqa: RUF001
+    translated = "current rule for 60,000 taka investment"
+    assert missing_protected_literals(original, translated) == ()
+    assert missing_protected_literals(original, "current rule for 60000 taka investment") == ()
+
+
+def test_true_abbreviations_remain_exact_even_when_digits_normalize() -> None:
+    original = "TDS ৬০,০০০"  # noqa: RUF001
+    missing = missing_protected_literals(original, "60,000 tax deducted at source")
+    assert "TDS" in missing
+
+
+def test_mixed_script_query_skips_translation() -> None:
+    profile = detect_query_language_profile("Refund policy উৎসে কর applies")
+    assert profile.is_mixed is True
+    assert select_translation_target(profile, {"bn": 12, "en": 80}) is None
 
 
 def test_empty_query_is_unknown() -> None:

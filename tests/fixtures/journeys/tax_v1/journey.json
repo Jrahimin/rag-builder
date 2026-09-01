@@ -1,0 +1,410 @@
+{
+  "schema_version": 1,
+  "key": "tax_v1",
+  "description": "Synthetic current/historical Bangladesh tax journey for local RAG regression checks.",
+  "sources": [
+    {
+      "key": "tax_2023",
+      "filename": "ape_synthetic_income_tax_act_2023.md",
+      "title": "APE Synthetic Income Tax Act 2023",
+      "revision_label": "2023 Act",
+      "source_type": "synthetic_statute",
+      "published_date": "2023-07-01",
+      "effective_from": "2023-07-01"
+    },
+    {
+      "key": "tax_2023_bn",
+      "filename": "ape_synthetic_income_tax_act_2023_bn.md",
+      "title": "APE Synthetic Income Tax Act 2023 — বাংলা সংস্করণ",
+      "revision_label": "2023 Act — বাংলা",
+      "source_type": "synthetic_statute",
+      "published_date": "2023-07-01",
+      "effective_from": "2023-07-01"
+    },
+    {
+      "key": "tax_rules_2024_bn",
+      "filename": "ape_synthetic_income_tax_rules_2024_bn.md",
+      "title": "APE Synthetic Income Tax Rules 2024 — বাংলা",
+      "revision_label": "2024 Rules — বাংলা",
+      "source_type": "synthetic_rules",
+      "published_date": "2024-01-01",
+      "effective_from": "2024-01-01"
+    },
+    {
+      "key": "tax_guidance_2025",
+      "filename": "ape_synthetic_mixed_language_tax_guidance_2025.md",
+      "title": "APE Synthetic Mixed-Language Tax Guidance 2025",
+      "revision_label": "2025 Mixed-Language Guidance",
+      "source_type": "synthetic_guidance",
+      "published_date": "2025-01-01",
+      "effective_from": "2025-01-01"
+    },
+    {
+      "key": "finance_2026",
+      "filename": "ape_synthetic_finance_act_2026.md",
+      "title": "APE Synthetic Finance Act 2026",
+      "revision_label": "2026 Finance Act",
+      "source_type": "synthetic_statute",
+      "published_date": "2026-07-01",
+      "effective_from": "2026-07-01",
+      "modifies": ["tax_2023", "tax_2023_bn"],
+      "modified_provisions": {
+        "tax_2023": [
+          "Section 10 — Tax-Free Threshold",
+          "Section 21 — Investment Rebate Rate",
+          "Section 40 — Individual Example"
+        ],
+        "tax_2023_bn": [
+          "ধারা ১০ — করমুক্ত সীমা",
+          "ধারা ২১ — বিনিয়োগ রিবেটের হার",
+          "ধারা ৪০ — ব্যক্তিগত করের উদাহরণ"
+        ]
+      }
+    },
+    {
+      "key": "finance_2027",
+      "filename": "ape_synthetic_finance_amendment_act_2027.md",
+      "title": "APE Synthetic Finance Amendment Act 2027",
+      "revision_label": "2027 Finance Amendment Act",
+      "source_type": "synthetic_statute",
+      "published_date": "2027-07-01",
+      "effective_from": "2027-07-01",
+      "modifies": ["finance_2026"],
+      "modified_provisions": {
+        "finance_2026": [
+          "Section 5 — Amendment to Investment Rebate Rate",
+          "Section 6 — Example After Amendment",
+          "Section 20 — Individual Example for 2026 Rules",
+          "Section 30 — Relationship to the 2023 Act"
+        ]
+      }
+    }
+  ],
+  "anchors": [
+    {
+      "key": "eligible_investments_2023",
+      "source": "tax_2023",
+      "section": "Section 20 — Eligible Investment",
+      "phrases": ["approved savings certificates", "approved retirement contributions", "approved life-insurance premiums"],
+      "expected_cardinality": 1
+    },
+    {
+      "key": "rebate_rate_2023",
+      "source": "tax_2023",
+      "section": "Section 21 — Investment Rebate Rate",
+      "phrases": ["15% of eligible investment", "BDT 9,000"],
+      "expected_cardinality": 1
+    },
+    {
+      "key": "rebate_rate_2023_bn",
+      "source": "tax_2023_bn",
+      "section": "ধারা ২১ — বিনিয়োগ রিবেটের হার",
+      "phrases": ["যোগ্য বিনিয়োগের উপর রিবেটের হার", "৯,০০০ টাকা"],
+      "expected_cardinality": 1
+    },
+    {
+      "key": "historical_rebate_rate_2024_bn",
+      "source": "tax_rules_2024_bn",
+      "section": "বিধি ১৫ — রিবেট হার সম্পর্কে স্পষ্টীকরণ",
+      "phrases": ["১৫% রিবেট হার পরিবর্তিত হয়নি"],
+      "expected_cardinality": 1
+    },
+    {
+      "key": "source_tax_2023",
+      "source": "tax_2023",
+      "section": "Section 31 — Savings Certificate Source Tax",
+      "phrases": ["approved savings-certificate profit", "10%"],
+      "expected_cardinality": 1
+    },
+    {
+      "key": "rebate_rate_2026",
+      "source": "finance_2026",
+      "section": "Section 5 — Amendment to Investment Rebate Rate",
+      "phrases": ["changed from 15% to 10%", "10% of eligible investment"],
+      "expected_cardinality": 1
+    },
+    {
+      "key": "historical_rebate_rate_2026",
+      "source": "finance_2026",
+      "section": "Section 5 — Amendment to Investment Rebate Rate",
+      "phrases": ["previous 15% rate remains relevant only for historical questions"],
+      "expected_cardinality": 1
+    },
+    {
+      "key": "rebate_example_2026",
+      "source": "finance_2026",
+      "section": "Section 6 — Example After Amendment",
+      "phrases": ["BDT 60,000", "BDT 6,000"],
+      "expected_cardinality": 1
+    },
+    {
+      "key": "threshold_2026",
+      "source": "finance_2026",
+      "section": "Section 10 — Revised Tax-Free Threshold",
+      "phrases": ["BDT 350,000 to BDT 400,000", "applicable threshold"],
+      "expected_cardinality": 1
+    },
+    {
+      "key": "source_tax_2026",
+      "source": "finance_2026",
+      "section": "Section 15 — Savings Certificate Source Tax",
+      "phrases": ["is not changed", "remains 10%"],
+      "expected_cardinality": 1
+    },
+    {
+      "key": "savings_evidence_2024_bn",
+      "source": "tax_rules_2024_bn",
+      "section": "বিধি ৫ — সঞ্চয়পত্রের জন্য প্রয়োজনীয় প্রমাণ",
+      "phrases": ["certificate বা statement", "বিনিয়োগের তারিখ", "বিনিয়োগের পরিমাণ"],
+      "expected_cardinality": 1
+    },
+    {
+      "key": "declared_amount_2024_bn",
+      "source": "tax_rules_2024_bn",
+      "section": "বিধি ১০ — ঘোষিত বিনিয়োগের পরিমাণ",
+      "phrases": ["৭৫,০০০ টাকা", "৬০,০০০ টাকা নয়"],
+      "expected_cardinality": 1
+    },
+    {
+      "key": "rebate_rate_2027",
+      "source": "finance_2027",
+      "section": "Section 3 — Revised Investment Rebate Rate",
+      "phrases": ["changes from 10% to 12%", "12% of eligible investment"],
+      "expected_cardinality": 1
+    },
+    {
+      "key": "rebate_example_2027",
+      "source": "finance_2027",
+      "section": "Section 4 — Revised Rebate Example",
+      "phrases": ["BDT 60,000", "BDT 7,200"],
+      "expected_cardinality": 1
+    },
+    {
+      "key": "source_tax_2027",
+      "source": "finance_2027",
+      "section": "Section 15 — Savings Certificate Source Tax Remains Unchanged",
+      "phrases": ["does not change the source-tax rate", "remains 10%"],
+      "expected_cardinality": 1
+    },
+    {
+      "key": "verification_reference_2025",
+      "source": "tax_guidance_2025",
+      "phrases": ["VR-2025-APE"],
+      "expected_cardinality": 1
+    },
+    {
+      "key": "review_window_2025",
+      "source": "tax_guidance_2025",
+      "phrases": ["14 calendar days"],
+      "expected_cardinality": 1
+    }
+  ],
+  "cases": [
+    {
+      "key": "eligible_investments_scoped",
+      "tags": ["factual", "scope"],
+      "query": "Which investments are eligible under Section 20?",
+      "document_scope": "tax_2023",
+      "anchors": ["eligible_investments_2023"],
+      "expected_token_groups": [
+        ["approved savings certificates", "savings certificates"],
+        ["approved retirement contributions", "retirement contributions"],
+        ["approved life-insurance premiums", "life-insurance premiums", "life insurance premiums"]
+      ]
+    },
+    {
+      "key": "current_rebate_calculation",
+      "tags": ["authority", "calculation"],
+      "query": "Under the current rule, what rebate applies to BDT 60,000 of eligible investment?",
+      "as_of": "2026-08-01T00:00:00Z",
+      "anchors": ["rebate_rate_2026", "rebate_example_2026"],
+      "expected_tokens": ["10%", "6000"]
+    },
+    {
+      "key": "historical_rebate_rate",
+      "tags": ["authority", "historical"],
+      "query": "What investment rebate rate applied on 1 January 2024?",
+      "as_of": "2024-01-01T00:00:00Z",
+      "anchors": ["rebate_rate_2023", "rebate_rate_2023_bn", "historical_rebate_rate_2026", "historical_rebate_rate_2024_bn"],
+      "required_anchor_groups": [["rebate_rate_2023", "rebate_rate_2023_bn", "historical_rebate_rate_2026", "historical_rebate_rate_2024_bn"]],
+      "prohibited_final_sources": ["finance_2027"],
+      "expected_tokens": ["15%"]
+    },
+    {
+      "key": "current_rebate_bangla",
+      "tags": ["multilingual", "authority"],
+      "query": "বর্তমান নিয়মে ৬০,০০০ টাকা যোগ্য বিনিয়োগের রিবেট কত?",
+      "as_of": "2026-08-01T00:00:00Z",
+      "anchors": ["rebate_rate_2026", "rebate_example_2026"],
+      "expected_tokens": ["10%", "6000"]
+    },
+    {
+      "key": "current_rebate_banglish",
+      "tags": ["multilingual", "authority"],
+      "query": "Current niyome BDT 60,000 eligible investment er rebate koto?",
+      "as_of": "2026-08-01T00:00:00Z",
+      "anchors": ["rebate_rate_2026", "rebate_example_2026"],
+      "expected_tokens": ["10%", "6000"]
+    },
+    {
+      "key": "stale_rebate_correction",
+      "tags": ["authority", "stale_rule"],
+      "query": "Someone says the current rebate on BDT 60,000 is 15%, or BDT 9,000. Correct that claim using the current rule.",
+      "as_of": "2026-08-01T00:00:00Z",
+      "anchors": ["rebate_rate_2026", "rebate_example_2026"],
+      "expected_tokens": ["10%", "6000"],
+      "correction": {
+        "old_tokens": ["15%", "9000"],
+        "new_tokens": ["10%", "6000"],
+        "markers": ["incorrect", "instead", "rather than", "no longer", "not current", "old", "previous", "changed", "superseded", "historical"]
+      }
+    },
+    {
+      "key": "current_threshold",
+      "tags": ["authority", "factual"],
+      "query": "What is the current individual tax-free threshold?",
+      "as_of": "2026-08-01T00:00:00Z",
+      "anchors": ["threshold_2026"],
+      "expected_tokens": ["400000"]
+    },
+    {
+      "key": "unchanged_source_tax",
+      "tags": ["authority", "unchanged"],
+      "query": "Did the 2026 Finance Act change the savings-certificate source-tax rate, and what is the rate?",
+      "as_of": "2026-08-01T00:00:00Z",
+      "anchors": ["source_tax_2026"],
+      "expected_tokens": ["10%"],
+      "expected_any": [
+        "unchanged",
+        "not changed",
+        "remains",
+        "stayed the same",
+        "still",
+        "retained"
+      ]
+    },
+    {
+      "key": "historical_rebate_bn_scoped",
+      "tags": ["multilingual", "authority", "historical", "scope"],
+      "query": "১ জানুয়ারি ২০২৪ তারিখে বিনিয়োগ রিবেটের হার কত ছিল?",
+      "as_of": "2024-01-01T00:00:00Z",
+      "document_scope": "tax_2023_bn",
+      "anchors": ["rebate_rate_2023_bn"],
+      "required_anchor_groups": [["rebate_rate_2023_bn"]],
+      "expected_tokens": ["15%"]
+    },
+    {
+      "key": "historical_rebate_bilingual",
+      "tags": ["multilingual", "authority", "historical"],
+      "query": "On 1 January 2024 / ১ জানুয়ারি ২০২৪-এ investment rebate rate কত ছিল?",
+      "as_of": "2024-01-01T00:00:00Z",
+      "anchors": ["rebate_rate_2023", "rebate_rate_2023_bn", "historical_rebate_rate_2024_bn"],
+      "required_anchor_groups": [["rebate_rate_2023", "rebate_rate_2023_bn", "historical_rebate_rate_2024_bn"]],
+      "prohibited_final_sources": ["finance_2026", "finance_2027"],
+      "expected_tokens": ["15%"]
+    },
+    {
+      "key": "current_rebate_with_savings_evidence_bn",
+      "tags": ["multilingual", "authority", "mixed_source"],
+      "query": "বর্তমান ২০২৬ নিয়মে investment rebate rate কত, এবং অনুমোদিত সঞ্চয়পত্রের জন্য কোন supporting evidence রাখতে হবে?",
+      "as_of": "2026-08-01T00:00:00Z",
+      "anchors": ["rebate_rate_2026", "savings_evidence_2024_bn"],
+      "required_anchor_groups": [["rebate_rate_2026"], ["savings_evidence_2024_bn"]],
+      "expected_tokens": ["10%"],
+      "expected_any": ["certificate", "statement"]
+    },
+    {
+      "key": "declared_investment_75000",
+      "tags": ["multilingual", "authority", "calculation", "mixed_source"],
+      "query": "২০২৬ সালের বর্তমান নিয়মে আমার eligible investment ৭৫,০০০ টাকা হলে rebate কত? আমার দেওয়া অঙ্কটিই ব্যবহার করুন।",
+      "as_of": "2026-08-01T00:00:00Z",
+      "anchors": ["rebate_rate_2026"],
+      "required_anchor_groups": [["rebate_rate_2026"]],
+      "user_parameter_tokens": ["75000"],
+      "prohibited_answer_tokens": ["60000", "6000"],
+      "expected_tokens": ["10%", "75000", "7500"]
+    },
+    {
+      "key": "current_rebate_2027",
+      "tags": ["authority", "calculation"],
+      "query": "Under the current rule on 1 August 2027, what rebate applies to BDT 60,000 of eligible investment?",
+      "as_of": "2027-08-01T00:00:00Z",
+      "anchors": ["rebate_rate_2027", "rebate_example_2027"],
+      "required_anchor_groups": [["rebate_rate_2027"], ["rebate_example_2027"]],
+      "expected_tokens": ["12%", "7200"]
+    },
+    {
+      "key": "rebate_as_of_2026_excludes_2027",
+      "tags": ["authority", "historical", "calculation"],
+      "query": "As of 1 August 2026, what rebate applied to BDT 60,000 of eligible investment?",
+      "as_of": "2026-08-01T00:00:00Z",
+      "anchors": ["rebate_rate_2026", "rebate_example_2026"],
+      "required_anchor_groups": [["rebate_rate_2026"], ["rebate_example_2026"]],
+      "prohibited_final_sources": ["finance_2027"],
+      "expected_tokens": ["10%", "6000"]
+    },
+    {
+      "key": "current_2027_rebate_and_threshold",
+      "tags": ["authority", "mixed_source"],
+      "query": "On 1 August 2027, what are the current investment rebate rate and individual tax-free threshold?",
+      "as_of": "2027-08-01T00:00:00Z",
+      "anchors": ["rebate_rate_2027", "threshold_2026"],
+      "required_anchor_groups": [["rebate_rate_2027"], ["threshold_2026"]],
+      "expected_tokens": ["12%", "400000"]
+    },
+    {
+      "key": "current_rebate_2027_banglish",
+      "tags": ["multilingual", "authority", "calculation"],
+      "query": "2027 er current niyome BDT 60,000 eligible investment er rebate koto?",
+      "as_of": "2027-08-01T00:00:00Z",
+      "anchors": ["rebate_rate_2027", "rebate_example_2027"],
+      "required_anchor_groups": [["rebate_rate_2027"], ["rebate_example_2027"]],
+      "expected_tokens": ["12%", "7200"]
+    },
+    {
+      "key": "unchanged_source_tax_across_chain",
+      "tags": ["authority", "unchanged", "mixed_source"],
+      "query": "Across the 2026 and 2027 amendments, did the savings-certificate source-tax rate change, and what rate applies on 1 August 2027?",
+      "as_of": "2027-08-01T00:00:00Z",
+      "anchors": ["source_tax_2026", "source_tax_2027"],
+      "required_anchor_groups": [["source_tax_2026"], ["source_tax_2027"]],
+      "expected_tokens": ["10%"],
+      "expected_any": ["unchanged", "not changed", "remains", "still", "retained"]
+    },
+    {
+      "key": "hard_document_scope_authority",
+      "tags": ["scope", "authority"],
+      "query": "What is the current Section 21 investment rebate rate?",
+      "as_of": "2026-08-01T00:00:00Z",
+      "document_scope": "tax_2023",
+      "anchors": ["rebate_rate_2023"],
+      "mode": "scope_isolation"
+    },
+    {
+      "key": "unknown_lunar_rule",
+      "tags": ["refusal", "fallback"],
+      "query": "What lunar-residency tax credit applies to Moon Colony Seven?",
+      "anchors": [],
+      "mode": "no_answer"
+    },
+    {
+      "key": "mixed_document_bangla_retrieval",
+      "tags": ["multilingual", "mixed_document"],
+      "query": "মিশ্র-ভাষার কর নির্দেশিকায় যাচাইয়ের স্বতন্ত্র রেফারেন্স কী?",
+      "as_of": "2026-08-01T00:00:00Z",
+      "anchors": ["verification_reference_2025"],
+      "required_anchor_groups": [["verification_reference_2025"]],
+      "content_match_anchors": ["verification_reference_2025"],
+      "expected_tokens": ["VR-2025-APE"]
+    },
+    {
+      "key": "mixed_document_code_switched_retrieval",
+      "tags": ["multilingual", "mixed_document", "codeswitch"],
+      "query": "কর নির্দেশিকায় verification reference code কী?",
+      "as_of": "2026-08-01T00:00:00Z",
+      "anchors": ["verification_reference_2025"],
+      "required_anchor_groups": [["verification_reference_2025"]],
+      "expected_tokens": ["VR-2025-APE"]
+    }
+  ]
+}

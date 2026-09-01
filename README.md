@@ -120,7 +120,7 @@ complete pipeline, then open the source files behind each stage.
 6. [Vector storage and pgvector](docs/learning/vector-storage-and-pgvector.md)
 7. [Semantic and hybrid retrieval](docs/learning/semantic-search-for-rag.md)
 8. [Conversation RAG and prompting](docs/learning/conversation_rag_journey.md)
-9. [Configuration and tuning](docs/learning/configuration-system.md)
+9. [Configuration and tuning](docs/learning/configuration-system.md) · [full config map](docs/configuration-map.md)
 10. [Docker local development](docs/learning/docker-local-development.md)
 
 ## Architecture at a glance

@@ -23,6 +23,7 @@ class QueryTranslationRequest:
 class QueryTranslationUsage:
     input_tokens: int | None = None
     output_tokens: int | None = None
+    reasoning_tokens: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,6 +37,7 @@ class QueryTranslationResponse:
     prompt_version: str
     usage: QueryTranslationUsage = field(default_factory=QueryTranslationUsage)
     latency_ms: int | None = None
+    attempts: int = 1
 
 
 class BaseQueryTranslationProvider(ABC):

@@ -96,6 +96,7 @@ class IndexBuildWorkflow:
                     "document_id": str(document.id),
                     "document_version": document.version,
                     "chunk_count": len(chunks),
+                    **_document_language_manifest_fields(document, chunks),
                 }
             )
             all_chunks.extend((document, chunk) for chunk in chunks)
@@ -320,6 +321,29 @@ class IndexBuildWorkflow:
     async def _report(self, stage: str, progress: int) -> None:
         if self._on_progress is not None:
             await self._on_progress(stage, progress)
+
+
+def _document_language_manifest_fields(
+    document: Document,
+    chunks: list[DocumentChunk],
+) -> dict[str, object]:
+    """Persist per-document language counts so hard-scoped retrieval can skip useless rewrites."""
+    chunk_counts: dict[str, int] = {}
+    document_language = normalize_routing_language(document.language)
+    for chunk in chunks:
+        snapshot = build_index_language_snapshot(
+            content=chunk.content,
+            chunk_metadata=chunk.chunk_metadata,
+            document_language=document.language,
+        )
+        chunk_language = snapshot["chunk_language"]
+        chunk_counts[chunk_language] = chunk_counts.get(chunk_language, 0) + 1
+        if document_language in {ROUTING_LANGUAGE_MIXED, ROUTING_LANGUAGE_UNKNOWN}:
+            document_language = snapshot["document_language"]
+    return {
+        "document_language": document_language,
+        "chunk_language_counts": dict(sorted(chunk_counts.items())),
+    }
 
 
 def _language_inventory(

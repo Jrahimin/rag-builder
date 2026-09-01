@@ -117,3 +117,5 @@ frontend/.vite/
 frontend/dist/
 frontend/coverage/
 .pnpm-store/
+# Local RAG journey reports
+artifacts/rag-journey/

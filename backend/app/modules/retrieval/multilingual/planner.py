@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -95,6 +96,51 @@ def language_inventory_from_manifest(manifest: object) -> LanguageInventory:
     )
 
 
+def inventory_for_retrieval_scope(
+    inventory: LanguageInventory,
+    manifest: object,
+    *,
+    document_id: uuid.UUID | None = None,
+) -> LanguageInventory:
+    """Narrow frozen language counts to a hard-scoped document when available.
+
+    Older manifests without per-document language fields keep the corpus
+    inventory so routing remains conservative rather than inventing emptiness.
+    """
+    if document_id is None or inventory.is_legacy or not isinstance(manifest, dict):
+        return inventory
+    raw = manifest.get("documents")
+    if not isinstance(raw, list):
+        return inventory
+    needle = str(document_id)
+    for item in raw:
+        if not isinstance(item, dict) or str(item.get("document_id")) != needle:
+            continue
+        raw_counts = item.get("chunk_language_counts")
+        if not isinstance(raw_counts, dict):
+            return inventory
+        chunk_counts = {
+            str(key): int(value)
+            for key, value in raw_counts.items()
+            if isinstance(value, (int, float)) and int(value) > 0
+        }
+        if not chunk_counts:
+            return inventory
+        document_language = item.get("document_language")
+        document_counts = (
+            {str(document_language): 1}
+            if isinstance(document_language, str) and document_language
+            else {}
+        )
+        return LanguageInventory(
+            schema_version=inventory.schema_version,
+            chunk_language_counts=chunk_counts,
+            document_language_counts=document_counts,
+            is_legacy=False,
+        )
+    return inventory
+
+
 def plan_original_branches(
     query: str,
     profile: QueryLanguageProfile,
@@ -152,20 +198,29 @@ def build_untranslated_plan(
     skipped_reason: str,
     failure_reason: str | None = None,
     cross_language_target: str | None = None,
+    failure_diagnostics: dict[str, object] | None = None,
+    language_routing_status: str | None = None,
 ) -> MultilingualRetrievalPlan:
     profile = detect_query_language_profile(query)
+    if language_routing_status is not None:
+        routing_status = language_routing_status
+    elif inventory.is_legacy:
+        routing_status = "legacy_build_no_language_inventory"
+    else:
+        routing_status = "unfiltered"
     diagnostics: dict[str, object] = {
         "query_language_profile": profile.profile,
+        "romanized_or_codeswitched": profile.is_romanized_or_codeswitched,
         "translation_source_language": profile.exact_primary or profile.profile,
         "translation_status": translation_status,
         "skipped_reason": skipped_reason,
-        "language_routing_status": (
-            "legacy_build_no_language_inventory" if inventory.is_legacy else "unfiltered"
-        ),
+        "language_routing_status": routing_status,
         "cross_language_target": cross_language_target,
     }
     if failure_reason is not None:
         diagnostics["translation_failure_reason"] = failure_reason
+    if failure_diagnostics:
+        diagnostics.update(failure_diagnostics)
     return MultilingualRetrievalPlan(
         query_profile=profile,
         inventory=inventory,

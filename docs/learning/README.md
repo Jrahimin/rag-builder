@@ -57,6 +57,7 @@ Read these in order:
 When you are ready for the infrastructure story:
 
 - [Configuration System](./configuration-system.md)
+- [Configuration Map](../configuration-map.md) — complete env/field reference
 - [Application Factory and FastAPI](./application-factory-and-fastapi.md)
 - [Database and Migrations](./database-and-migrations.md)
 - [Entity Lifecycle and Reusability](./entity-lifecycle-and-reusability.md)

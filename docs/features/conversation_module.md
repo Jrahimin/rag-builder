@@ -61,8 +61,19 @@ LLM failure after Tx1: user message retained, no assistant row.
 values are `indexed_then_web` and `indexed_and_web`. Notable `ChatConfig` keys also include
 `citation_excerpt_max_chars`, `minimum_semantic_evidence_score`,
 `evidence_gate_mode` (`enforce` or `observe`), `minimum_reranker_evidence_score`,
+`high_confidence_reranker_evidence_score` (default `0.70`, must stay above the medium
+reranker bar), `grounding_mode` (`strict` default or `balanced`),
 `lexical_corroboration_floor_score`, `lexical_corroboration_coverage`,
+`cross_language_semantic_evidence_score_threshold`,
 `minimum_claim_token_coverage`, `candidate_wise_grounding_enabled`, and `include_citations`.
+`strict` still requires an independent semantic, lexical, or cross-language signal on top of
+calibrated reranker relevance. `balanced` may admit a clearly high-confidence reranker candidate
+(`>= high_confidence_reranker_evidence_score`) that has a safely derived evidence span, matched
+reranker calibration, and only a narrow corroboration miss. Medium-confidence hits still need
+normal corroboration; low-confidence reranker scores cannot enter through the mode switch.
+Every candidate that `strict` would admit remains admitted in `balanced` on the same evidence;
+balanced may only add high-confidence-reranker or adaptive-passage-rescue acceptances and must
+not replace a valid strict path. Existing Projects inherit `strict`.
 
 Project revisions may also include a sparse `web_search` section: `enabled`, `model`,
 `max_results`, `max_evidence_chars`, `max_output_tokens`, and `request_timeout_seconds`.
@@ -87,9 +98,24 @@ visible in retrieval diagnostics (`retrieved_count`, `reranked_count`, `removed_
 
 An admitted `EvidenceUnit` records deterministic offsets, span derivation, query-variant identity,
 and a content hash; context budgeting may omit the whole unit but cannot truncate it. The unit ID
-and span hash remain attached to prompt evidence, citations, and claim verification. With the
+and span hash remain attached to prompt evidence, citations, and claim verification. Retrieved
+candidates, admitted evidence, generation context, grounded claims, and user-visible citations stay
+separate: not every admitted chunk is a citation. With the
 candidate-wise switch disabled, these decisions run in shadow while the legacy gate remains active.
 Quality evaluation uses the same candidate-wise lifecycle through composition.
+
+After the first candidate-wise assessment, high-confidence reranker candidates that only narrowly
+miss corroboration may receive a bounded passage-scoring rescue and a reassessment. Rescue cannot
+drop a candidate that already passed. Always-on
+`retrieval.passage_scoring_enabled` still scores the fused window for evaluation and debugging;
+adaptive rescue skips candidates that already have a passage score. Query-token coverage treats
+conservative Bangla interrogative/copula scaffolding like English stopwords; it does not stem and
+does not encode domain vocabulary.
+
+Authority redaction runs after admission. If the highest-ranked admitted span is removed, selection
+continues with the next valid admitted/current unit. Empty context after a non-empty admission is
+`failure_stage=context_selection` (`authority_context_empty` or `context_selection_empty`), not an
+admission failure.
 
 Soft-deleting a conversation sets `deleted_at` on the conversation only; messages remain for audit.
 
@@ -114,8 +140,11 @@ Chat uses the configured retrieval strategy through `RetrievalPort`. Hybrid retr
 dense + original lexical, optional one translated pair, RRF, optional reranker) is the production
 path; semantic search remains available as an explicit rollback or comparison strategy. When rerank
 is applied, the evidence gate uses calibrated reranker relevance; otherwise it keeps whole-chunk
-cosine plus lexical rescue. `APE_CHAT__EVIDENCE_GATE_MODE=enforce` blocks generation on a failed
-score. `observe` records that decision without blocking. Empty retrieval still refuses.
+cosine plus lexical rescue. Reranker provider failure stays fail-open to fused order with
+`rerank_status=unavailable` and a sanitized `failure_reason` (`timeout` / `rate_limit` /
+`connection` / `provider_unavailable` / `unavailable`). The default Cohere rerank timeout is 10
+seconds. `APE_CHAT__EVIDENCE_GATE_MODE=enforce` blocks generation on a failed score. `observe`
+records that decision without blocking. Empty retrieval still refuses.
 
 Web-enabled modes never search for document-, metadata-, or `as_of`-scoped requests. Provider
 timeouts, failures, and empty results do not permit model-memory fallback. Clear social turns are
@@ -133,7 +162,7 @@ URLs, and URL-only results cannot become evidence. Every completed fallback repo
 
 - Unit: `ChatService` (Tx1/Tx2, refusal, observe/enforce gate, provider resolve, errors, stream cancel,
   combined MODIFIES → grounding → generation → no-web authority path),
-  `GroundingService`, Gazette evidence-gate comparison (`0.35` / `0.30` / `observe`),
+  `GroundingService`, candidate-wise grounding, strict vs balanced modes, adaptive passage rescue,
   captured EN→BN production fail-closed replay, `ConversationService`, context/prompt builders,
   citation snapshots, retrieval adapter
 - Provider contract: echo LLM + factory overrides
@@ -153,3 +182,4 @@ URLs, and URL-only results cannot become evidence. Every completed fallback repo
 - [ADR-019](../architecture/adr/019-grounded-response-modes.md)
 - [Implementation plan](../plans/conversation_module_plan.md)
 - [RAG journey (learning)](../learning/conversation_rag_journey.md)
+- [Test RAG journey](./test_rag_journey.md) (`tax_v1` fixture)

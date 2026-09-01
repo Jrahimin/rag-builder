@@ -143,8 +143,12 @@ Send a user message; returns grounded assistant answer + citations. Returns **20
 
 If retrieval evidence is insufficient, `enforce` mode skips generation and persists a deterministic
 answer with `grounded=false`, empty `claims`/`citations`, `finish_reason=insufficient_evidence`, and
-one of: `no_retrieval_results`, `below_relevance_threshold`, or
-`low_query_evidence_coverage`. `observe` mode still records that assessment on
+one of: `no_retrieval_results`, `below_relevance_threshold`,
+`authority_context_empty`, `context_selection_empty`, or
+`low_query_evidence_coverage`. Admission failures stay on `below_relevance_threshold`.
+When evidence was admitted but none remained after authority redaction or context
+budgeting, the reason is `authority_context_empty` or `context_selection_empty`
+and `metadata.evidence_gate.failure_stage` is `context_selection`. `observe` mode still records that assessment on
 `metadata.evidence_gate` but continues generation from the already-selected context unless retrieval
 returned no chunks.
 

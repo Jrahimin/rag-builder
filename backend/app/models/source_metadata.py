@@ -18,7 +18,9 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    text,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.platform.db.base import Base
@@ -174,6 +176,12 @@ class SourceRevisionRelationship(Base, UUIDPrimaryKeyMixin, ProjectScopedMixin):
             values_callable=lambda enum: [item.value for item in enum],
         ),
         nullable=False,
+    )
+    target_provisions: Mapped[list[str]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=list,
+        server_default=text("'[]'::jsonb"),
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False

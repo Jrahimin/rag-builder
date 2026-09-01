@@ -15,6 +15,7 @@ from app.core.config import (
     EmbeddingConfig,
     Environment,
     MinioConfig,
+    QueryTranslationConfig,
     RedisConfig,
     Settings,
     _settings_env_files,
@@ -100,6 +101,20 @@ def test_nested_env_sets_embedding_set_version(monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setenv("APE_RETRIEVAL__EMBEDDING_SET_VERSION", "3")
     settings = Settings()
     assert settings.retrieval.embedding_set_version == 3
+
+
+def test_nested_env_sets_source_policy_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("APE_AI_POLICY__SOURCE_POLICY_MODE", "enforce")
+    settings = Settings()
+    assert settings.ai_policy.source_policy_mode.value == "enforce"
+    assert settings.ai_policy.source_policy_deployment_cap.value == "enforce"
+
+
+def test_query_translation_defaults_to_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("APE_QUERY_TRANSLATION__ENABLED", raising=False)
+    settings = Settings()
+    assert QueryTranslationConfig().enabled is False
+    assert settings.query_translation.enabled is False
 
 
 def test_settings_env_files_skip_when_testing(monkeypatch: pytest.MonkeyPatch) -> None:

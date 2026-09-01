@@ -51,6 +51,7 @@ class ChatUsage:
 
     input_tokens: int | None
     output_tokens: int | None
+    reasoning_tokens: int | None = None
 
 
 @dataclass(frozen=True, slots=True)

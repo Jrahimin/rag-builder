@@ -192,6 +192,7 @@ class SearchService:
                 translation_config=self._query_translation_config,
                 translator=self._query_translator,
                 persist_translation_text=self._persist_translation_text,
+                document_id=request.document_id,
             )
         context = RetrievalContext(
             project_id=self._project_id,
@@ -325,6 +326,9 @@ class SearchService:
                 duration_ms=elapsed_ms,
                 rerank_requested=rerank_enabled and strategy is RetrievalStrategy.HYBRID,
                 rerank_status=rerank_status,
+                rerank_failure_reason=_optional_string(
+                    rerank_metadata.get("rerank_failure_reason")
+                ),
                 reranker_provider=_optional_string(rerank_metadata.get("reranker_provider")),
                 reranker_model=_optional_string(rerank_metadata.get("reranker_model")),
                 reranker_version=_optional_string(rerank_metadata.get("reranker_version")),
@@ -373,6 +377,7 @@ class SearchService:
                     multilingual_plan.inventory.chunk_language_counts if multilingual_plan else {}
                 ),
                 translation_status=_optional_string(translation_meta.get("translation_status")),
+                skipped_reason=_optional_string(translation_meta.get("skipped_reason")),
                 translation_source_language=_optional_string(
                     translation_meta.get("translation_source_language")
                     or (
@@ -400,6 +405,13 @@ class SearchService:
                 translation_failure_reason=_optional_string(
                     translation_meta.get("translation_failure_reason")
                 ),
+                translation_attempts=_optional_int(translation_meta.get("translation_attempts")),
+                translation_validation_reasons=_string_list(
+                    translation_meta.get("translation_validation_reasons")
+                ),
+                translation_finish_reason=_optional_string(
+                    translation_meta.get("translation_finish_reason")
+                ),
                 translated_query=(
                     multilingual_plan.translated_query
                     if multilingual_plan is not None
@@ -426,6 +438,9 @@ class SearchService:
                 language_routing_status=_optional_string(
                     translation_meta.get("language_routing_status")
                 ),
+                romanized_or_codeswitched=bool(
+                    translation_meta.get("romanized_or_codeswitched", False)
+                ),
                 embedding_identity_status="matched",
                 embedding_provider=identity.provider,
                 embedding_model=identity.model,
@@ -451,6 +466,13 @@ class SearchService:
                 modifies_expansion_exclusion_reasons=_int_dict(
                     rerank_metadata.get("modifies_expansion_exclusion_reasons")
                 ),
+                modifies_authority_scope_status=str(
+                    rerank_metadata.get("modifies_authority_scope_status", "not_applicable")
+                ),
+                modifies_authority_unscoped_count=_optional_int(
+                    rerank_metadata.get("modifies_authority_unscoped_count")
+                )
+                or 0,
                 related_source_count=_optional_int(rerank_metadata.get("related_source_count"))
                 or 0,
                 relationship_candidate_count=_optional_int(

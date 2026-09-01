@@ -107,6 +107,8 @@ class InsufficientEvidenceReason(StrEnum):
     BELOW_RELEVANCE_THRESHOLD = "below_relevance_threshold"
     # Historical persisted value. The semantic-only rejection gate never emits it.
     LOW_QUERY_EVIDENCE_COVERAGE = "low_query_evidence_coverage"
+    AUTHORITY_CONTEXT_EMPTY = "authority_context_empty"
+    CONTEXT_SELECTION_EMPTY = "context_selection_empty"
 
 
 class ClaimVerification(StrEnum):

@@ -39,6 +39,7 @@ def create_query_translation_provider(
     return LLMQueryTranslationProvider(
         llm,
         prompt_version=prompt_version or translation.prompt_version or PROMPT_VERSION,
+        min_output_tokens=translation.min_output_tokens,
         max_output_tokens=translation.max_output_tokens,
         temperature=None,
         retry_max_attempts=translation.retry_max_attempts,

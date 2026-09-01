@@ -168,8 +168,10 @@ Semantic and keyword SQL join the same Knowledge-owned source scope captured at 
 generation. `off` preserves legacy results, `observe` reports decisions without filtering, and
 `enforce` excludes inapplicable revisions before ranking and consolidates lower-ranked revisions
 only within the same source group. The deployment cap
-`APE_AI_POLICY__SOURCE_POLICY_DEPLOYMENT_CAP` can lower an effective Project mode without a schema
-or Project-policy rollback. Missing/unspecified legacy metadata stays neutral. In `enforce` mode,
+`APE_AI_POLICY__SOURCE_POLICY_MODE` is the deployment default (`off`) inherited when a Project
+omits the leaf. `APE_AI_POLICY__SOURCE_POLICY_DEPLOYMENT_CAP` can lower an effective Project or
+global mode without a schema or Project-policy rollback; the cap never raises `off` to
+`observe`/`enforce`. Missing/unspecified legacy metadata stays neutral. In `enforce` mode,
 retrieval over-fetches the bounded candidate window before same-group consolidation so distinct
 sources can still fill the requested `top_k` where available.
 

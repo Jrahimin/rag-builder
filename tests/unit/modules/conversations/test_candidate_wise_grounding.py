@@ -184,6 +184,54 @@ def test_bangla_query_admits_english_evidence_via_translated_lexical() -> None:
     assert decision.candidate_assessments[0].corroboration_method == "translated_lexical"
 
 
+def test_cross_language_semantic_admits_at_dedicated_threshold() -> None:
+    original = _variant("original", "মিশ্র নির্দেশিকায় যাচাই রেফারেন্স কী?", "bn")
+    chunk = _candidate(
+        "The unique stored verification reference is VR-2025-APE.",
+        variants=(original,),
+        contributions=(_contribution("original_dense", original.variant_id),),
+        semantic_score=0.31,
+    )
+
+    decision = _service().assess(original.text, [chunk], rerank_status="applied")
+
+    assert decision.sufficient is True
+    assert decision.candidate_assessments[0].corroboration_method == "cross_language_semantic"
+
+
+def test_cross_language_semantic_rejects_below_dedicated_threshold() -> None:
+    original = _variant("original", "মিশ্র নির্দেশিকায় যাচাই রেফারেন্স কী?", "bn")
+    chunk = _candidate(
+        "The unique stored verification reference is VR-2025-APE.",
+        variants=(original,),
+        contributions=(_contribution("original_dense", original.variant_id),),
+        semantic_score=0.29,
+    )
+
+    decision = _service().assess(original.text, [chunk], rerank_status="applied")
+
+    assert decision.sufficient is False
+    assert decision.candidate_assessments[0].terminal_reason == "no_aligned_independent_signal"
+
+
+def test_cross_language_threshold_is_independent_of_lexical_floor() -> None:
+    original = _variant("original", "মিশ্র নির্দেশিকায় যাচাই রেফারেন্স কী?", "bn")
+    chunk = _candidate(
+        "The unique stored verification reference is VR-2025-APE.",
+        variants=(original,),
+        contributions=(_contribution("original_dense", original.variant_id),),
+        semantic_score=0.31,
+    )
+
+    decision = _service(
+        lexical_corroboration_floor_score=0.20,
+        cross_language_semantic_evidence_score_threshold=0.33,
+    ).assess(original.text, [chunk], rerank_status="applied")
+
+    assert decision.sufficient is False
+    assert decision.candidate_assessments[0].terminal_reason == "no_aligned_independent_signal"
+
+
 def test_lower_ranked_candidate_is_admitted_after_rank_one_fails() -> None:
     original = _variant("original", "What are the source tax deduction categories?", "en")
     translated = _variant(
@@ -628,6 +676,10 @@ def test_captured_production_turn_fails_closed_under_candidate_wise() -> None:
     assert rank_one.original_semantic_score < turn["thresholds"]["minimum_semantic_evidence_score"]
     assert (
         rank_one.original_semantic_score < turn["thresholds"]["lexical_corroboration_floor_score"]
+    )
+    assert (
+        rank_one.original_semantic_score
+        < ChatConfig().cross_language_semantic_evidence_score_threshold
     )
     assert rank_one.original_lexical_coverage < turn["thresholds"]["lexical_corroboration_coverage"]
     assert rank_one.translated_dense_shadow_scores[translated.variant_id] == pytest.approx(

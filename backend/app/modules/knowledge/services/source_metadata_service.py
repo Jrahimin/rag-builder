@@ -301,6 +301,7 @@ class SourceMetadataService:
                     source_revision_id=revision.id,
                     target_revision_id=target.id,
                     relationship_type=relation.relationship_type,
+                    target_provisions=relation.target_provisions,
                 )
             )
 

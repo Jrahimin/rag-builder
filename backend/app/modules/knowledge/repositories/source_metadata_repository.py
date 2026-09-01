@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import date
 
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
@@ -248,3 +248,59 @@ class SourceMetadataRepository:
 
     async def flush(self) -> None:
         await self._session.flush()
+
+    async def purge_document_artifacts(self, document_id: uuid.UUID) -> None:
+        """Remove source metadata rows that block irreversible document purge."""
+        revision_ids = list(
+            await self._session.scalars(
+                select(SourceMetadataRevision.id).where(
+                    SourceMetadataRevision.project_id == self.project_id,
+                    SourceMetadataRevision.document_id == document_id,
+                )
+            )
+        )
+        if not revision_ids:
+            return
+
+        await self._session.execute(
+            delete(SourceRevisionRelationship).where(
+                SourceRevisionRelationship.project_id == self.project_id,
+                (
+                    SourceRevisionRelationship.source_revision_id.in_(revision_ids)
+                    | SourceRevisionRelationship.target_revision_id.in_(revision_ids)
+                ),
+            )
+        )
+        await self._session.execute(
+            delete(SourceActivationEvent).where(
+                SourceActivationEvent.project_id == self.project_id,
+                SourceActivationEvent.document_id == document_id,
+            )
+        )
+        group_ids = list(
+            await self._session.scalars(
+                select(SourceMetadataRevision.source_group_id).where(
+                    SourceMetadataRevision.project_id == self.project_id,
+                    SourceMetadataRevision.document_id == document_id,
+                )
+            )
+        )
+        await self._session.execute(
+            delete(SourceMetadataRevision).where(
+                SourceMetadataRevision.project_id == self.project_id,
+                SourceMetadataRevision.document_id == document_id,
+            )
+        )
+        for group_id in set(group_ids):
+            remaining = await self._session.scalar(
+                select(func.count())
+                .select_from(SourceMetadataRevision)
+                .where(SourceMetadataRevision.source_group_id == group_id)
+            )
+            if not int(remaining or 0):
+                await self._session.execute(
+                    delete(SourceGroup).where(
+                        SourceGroup.id == group_id,
+                        SourceGroup.project_id == self.project_id,
+                    )
+                )

@@ -497,9 +497,11 @@ async def test_candidate_wise_canary_refuses_when_admitted_unit_exceeds_context_
 
     assert llm.calls == 0
     assert turn.assistant_message.finish_reason == "insufficient_evidence"
-    assert turn.assistant_message.insufficient_evidence_reason == "below_relevance_threshold"
+    assert turn.assistant_message.insufficient_evidence_reason == "context_selection_empty"
     gate = turn.assistant_message.metadata["evidence_gate"]
+    assert gate["failure_stage"] == "context_selection"
     assert gate["candidate_wise"]["admitted_count"] == 1
+    assert gate["candidate_wise"]["context_selected_count"] == 0
     assert gate["generation_ran"] is False
 
 
@@ -1429,6 +1431,7 @@ async def test_modifies_expansion_survives_combined_rerank_and_skips_web(
         "outcome": "included",
         "candidate_count": 1,
         "retained_candidate_count": 1,
+        "modifier_effective_from": "2026-07-01T00:00:00+00:00",
     }
 
     class AuthorityRetrieval:
@@ -1446,7 +1449,7 @@ async def test_modifies_expansion_survives_combined_rerank_and_skips_web(
                         "rerank_status": "applied",
                         "modifies_expansion_status": "suppressed_document_scope",
                         "modifies_expansion_depth": 1,
-                        "modifies_expansion_records": [],
+                        "modifies_expansion_records": [expansion_record],
                         "related_source_count": 0,
                         "relationship_candidate_count": 0,
                         "retrieved_candidate_count": 1,
@@ -1545,9 +1548,17 @@ async def test_modifies_expansion_survives_combined_rerank_and_skips_web(
     assert scoped.assistant_message.metadata["current_authority"]["status"] == (
         "suppressed_document_scope"
     )
+    assert scoped.assistant_message.metadata["scope_current_authority"] == {
+        "status": "unavailable_within_hard_scope",
+        "reason": "effective_modifier_excluded_by_document_scope",
+        "scoped_evidence_available": True,
+        "excluded_effective_modifier_count": 1,
+    }
+    assert "current authoritative value" in scoped.assistant_message.content
+    assert "must not be presented as the current rule" in scoped.assistant_message.content
     assert scoped.assistant_message.citations == []
     assert scoped.assistant_message.source_provenance == "none"
-    assert scoped.assistant_message.metadata["web_search"]["status"] == "suppressed_scoped_request"
+    assert scoped.assistant_message.metadata["web_search"]["status"] == "not_requested"
     scoped_gate = scoped.assistant_message.metadata["evidence_gate"]["candidate_wise"]
     assert scoped_gate["assessed_count"] == 1
     assert scoped_gate["admitted_count"] == 0

@@ -122,6 +122,14 @@ def test_equal_semantic_bar_and_rescue_floor_is_allowed() -> None:
 def test_default_rescue_floor_is_below_the_semantic_bar() -> None:
     config = ChatConfig()
     assert config.lexical_corroboration_floor_score < config.minimum_semantic_evidence_score
+    assert (
+        config.cross_language_semantic_evidence_score_threshold
+        < config.minimum_semantic_evidence_score
+    )
+    assert (
+        config.cross_language_semantic_evidence_score_threshold
+        == config.lexical_corroboration_floor_score
+    )
 
 
 def test_high_overlap_score_just_below_the_bar_is_rescued() -> None:
@@ -148,6 +156,14 @@ def test_rescue_floor_cannot_exceed_semantic_bar() -> None:
         ChatConfig(
             minimum_semantic_evidence_score=0.35,
             lexical_corroboration_floor_score=0.4,
+        )
+
+
+def test_cross_language_semantic_threshold_cannot_exceed_semantic_bar() -> None:
+    with pytest.raises(ValueError, match="cross_language_semantic_evidence_score_threshold"):
+        ChatConfig(
+            minimum_semantic_evidence_score=0.35,
+            cross_language_semantic_evidence_score_threshold=0.4,
         )
 
 
@@ -417,6 +433,88 @@ async def test_trailing_citations_stay_with_each_sentence() -> None:
     assert len(result.claims) == 2
     assert [claim["evidence"][0]["citation_index"] for claim in result.claims] == [1, 2]
     assert result.citation_coverage == 1.0
+
+
+async def test_paragraph_final_citation_is_inherited_but_each_claim_is_verified() -> None:
+    service = GroundingService(ChatConfig(minimum_claim_token_coverage=0.3))
+    chunk = _chunk(
+        content=(
+            "The current investment rebate is 10% of eligible investment. "
+            "For BDT 60,000 the rebate is BDT 6,000."
+        )
+    )
+    result = await service.map_claims(
+        "The current investment rebate is 10% of eligible investment. "
+        "For BDT 60,000 the rebate is BDT 6,000. [1]",
+        [chunk],
+    )
+    assert len(result.claims) == 2
+    assert all(claim["verification"] == "supported" for claim in result.claims)
+    assert result.citation_coverage == 1.0
+    assert result.grounded is True
+
+
+async def test_inherited_citation_does_not_ground_an_unrelated_preceding_claim() -> None:
+    service = GroundingService(ChatConfig(minimum_claim_token_coverage=0.3))
+    result = await service.map_claims(
+        "Employees receive free housing. Refunds are available for thirty days. [1]",
+        [_chunk(content="Customer refunds are available for thirty days.")],
+    )
+    assert [claim["verification"] for claim in result.claims] == ["unverified", "supported"]
+    assert result.grounded is False
+
+
+async def test_bounded_citations_support_a_displayed_calculation_block() -> None:
+    service = GroundingService(ChatConfig(minimum_claim_token_coverage=0.3))
+    result = await service.map_claims(
+        "The investment rebate rate is 10%. [1]\n\n"
+        "For BDT 60,000:\n\n"
+        "**BDT 60,000 \u00d7 10% = BDT 6,000**\n\n"
+        "Therefore, the rebate is BDT 6,000. [1]",
+        [
+            _chunk(
+                content=(
+                    "The investment rebate rate is 10%. For BDT 60,000, the rebate is BDT 6,000."
+                )
+            )
+        ],
+    )
+
+    calculation = next(claim for claim in result.claims if "6,000**" in claim["text"])
+    assert calculation["verification"] == "supported"
+    assert calculation["evidence"][0]["citation_index"] == 1
+    assert result.grounded is True
+
+
+async def test_bounded_citations_do_not_cross_an_uncited_factual_block() -> None:
+    service = GroundingService(ChatConfig(minimum_claim_token_coverage=0.3))
+    result = await service.map_claims(
+        "The investment rebate rate is 10%. [1]\n\n"
+        "**BDT 60,000 \u00d7 10% = BDT 6,000**\n\n"
+        "Employees receive free housing.\n\n"
+        "Therefore, the rebate is BDT 6,000. [1]",
+        [
+            _chunk(
+                content=(
+                    "The investment rebate rate is 10%. For BDT 60,000, the rebate is BDT 6,000."
+                )
+            )
+        ],
+    )
+
+    calculation = next(claim for claim in result.claims if "6,000**" in claim["text"])
+    assert calculation["verification"] == "unsupported"
+    assert result.grounded is False
+
+
+async def test_short_meta_stance_does_not_make_a_grounded_correction_fail() -> None:
+    service = GroundingService(ChatConfig(minimum_claim_token_coverage=0.3))
+    result = await service.map_claims(
+        "The claim is incorrect. The current investment rebate is 10%. [1]",
+        [_chunk(content="The current investment rebate is 10%.")],
+    )
+    assert [claim["text"] for claim in result.claims] == ["The current investment rebate is 10%."]
+    assert result.grounded is True
 
 
 async def test_valid_citation_without_semantic_support_is_unverified() -> None:

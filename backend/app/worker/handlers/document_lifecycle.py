@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import uuid
+
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,6 +14,9 @@ from app.modules.jobs.services.job_service import JobService
 from app.modules.knowledge.domain.document_storage_keys import iter_document_storage_keys
 from app.modules.knowledge.repositories.document_chunk_repository import DocumentChunkRepository
 from app.modules.knowledge.repositories.document_repository import DocumentRepository
+from app.modules.knowledge.repositories.source_metadata_repository import (
+    SourceMetadataRepository,
+)
 from app.modules.retrieval.repositories.index_build_repository import IndexBuildRepository
 from app.modules.retrieval.services.retrieval_cleanup_service import RetrievalCleanupService
 from app.platform.jobs.contracts import JobDefinition
@@ -62,6 +67,7 @@ async def _execute(
     cleanup = RetrievalCleanupService(session, run.project_id)
     await cleanup.on_document_delete(document.id)
     await DocumentChunkRepository(session, run.project_id).delete_by_document(document.id)
+    await SourceMetadataRepository(session, run.project_id).purge_document_artifacts(document.id)
     builds = IndexBuildRepository(session, run.project_id)
     pointer = await builds.get_pointer(for_update=True)
     for build in await builds.list_all():
@@ -118,6 +124,15 @@ async def document_delete_task(*, project_id: str, job_id: str) -> None:
 
 @broker.task(task_name=JobType.DOCUMENT_PURGE.value)
 async def document_purge_task(*, project_id: str, job_id: str) -> None:
+    await run_document_purge(project_id=project_id, job_id=job_id)
+
+
+async def run_document_purge(
+    *,
+    project_id: uuid.UUID | str,
+    job_id: uuid.UUID | str,
+) -> None:
+    """Run the durable purge handler without requiring Taskiq transport."""
     await run_durable_job(
         project_id=project_id, job_id=job_id, expected_type=JobType.DOCUMENT_PURGE, operation=_purge
     )
