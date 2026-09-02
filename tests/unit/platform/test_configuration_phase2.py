@@ -246,12 +246,14 @@ def test_execution_profile_never_changes_index_artifact_identity() -> None:
         )
         assert resolution.provenance.index_profile_id == "development-hash"
         assert build_index_artifact_config(settings) == baseline
-    assert build_index_artifact_config(
-        Settings(ai_policy={"default_rag_profile": "quality"})
-    ) == baseline
-    assert build_index_artifact_config(
-        Settings(ai_policy={"default_rag_profile": "custom"})
-    ) == baseline
+    assert (
+        build_index_artifact_config(Settings(ai_policy={"default_rag_profile": "quality"}))
+        == baseline
+    )
+    assert (
+        build_index_artifact_config(Settings(ai_policy={"default_rag_profile": "custom"}))
+        == baseline
+    )
 
 
 def test_explicit_deployment_profile_adds_index_profile_identity() -> None:
@@ -324,9 +326,7 @@ def test_project_preset_provenance_uses_current_definition_hash() -> None:
         }
     )
 
-    resolution = resolve_project_ai_config(
-        Settings(), revision, allow_candidate_profiles=True
-    )
+    resolution = resolve_project_ai_config(Settings(), revision, allow_candidate_profiles=True)
     assert resolution.configuration.retrieval.top_k == 10
     assert resolution.provenance.execution_profile_hash == profile_hash(
         RAG_EXECUTION_PROFILES["standard"]

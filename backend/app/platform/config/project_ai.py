@@ -1490,12 +1490,9 @@ def normalize_v2_project_config(
             execution = ProjectExecutionV2.model_validate({"profile_id": matched})
             warnings = []
         else:
-            execution = ProjectExecutionV2.model_validate(
-                {"profile_id": "custom", **values}
-            )
+            execution = ProjectExecutionV2.model_validate({"profile_id": "custom", **values})
             warnings = [
-                "Advanced execution values differ from the preset and were materialized as "
-                "Custom."
+                "Advanced execution values differ from the preset and were materialized as Custom."
             ]
     else:
         execution = ProjectExecutionV2.model_validate({"profile_id": "custom", **values})

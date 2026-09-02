@@ -137,8 +137,7 @@ async def test_preset_write_stores_only_selection_and_clears_custom_values(
     assert revision.configuration["execution"] == {"profile_id": "standard"}
 
 
-async def test_partial_custom_write_materializes_complete_bundle_and_stays_independent(
-    ) -> None:
+async def test_partial_custom_write_materializes_complete_bundle_and_stays_independent() -> None:
     session = AsyncMock()
     repository = AsyncMock()
     repository.add = MagicMock()
