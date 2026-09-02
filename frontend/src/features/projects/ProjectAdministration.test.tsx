@@ -179,14 +179,16 @@ test("uses canonical Project administration and shows locked Organization owners
   expect(screen.queryByRole("button", { name: /Create test project/i })).not.toBeInTheDocument();
 });
 
-test("keeps inherited AI values sparse and can clear a Project override", async () => {
+test("keeps Custom execution values explicit when one value changes", async () => {
   mockProjectShell();
   const revision: ProjectAIConfigRevision = {
     id: "22222222-2222-2222-2222-222222222222",
     project_id: projectFixture.id,
     revision_number: 1,
     configuration_hash: "b".repeat(64),
-    configuration: { execution: { retrieval_top_k: 23, max_context_chunks: 7 } },
+    configuration: {
+      execution: { profile_id: "custom", retrieval_top_k: 23, max_context_chunks: 7 },
+    },
     schema_version: 2,
     source: "project_revision",
     reason: "Initial override",
@@ -209,10 +211,8 @@ test("keeps inherited AI values sparse and can clear a Project override", async 
     `/projects?project=${projectFixture.id}&section=ai-config`,
   );
 
-  const inheritTopK = await screen.findByLabelText("Top K: inherit global");
-  expect(inheritTopK).not.toBeChecked();
-  await userEvent.click(inheritTopK);
-  await userEvent.type(screen.getByLabelText("Revision reason"), "Return top K to global");
+  fireEvent.change(await screen.findByLabelText("Top K"), { target: { value: "12" } });
+  await userEvent.type(screen.getByLabelText("Revision reason"), "Tune Custom top K");
   await userEvent.click(screen.getByRole("button", { name: "Create and activate revision" }));
 
   await waitFor(() => expect(create).toHaveBeenCalled());
@@ -221,7 +221,11 @@ test("keeps inherited AI values sparse and can clear a Project override", async 
     throw new Error("Expected a project AI-config revision to be created");
   }
   const saved = firstCreateCall[1];
-  expect(saved.execution).toEqual({ max_context_chunks: 7 });
+  expect(saved.execution).toEqual({
+    profile_id: "custom",
+    retrieval_top_k: 12,
+    max_context_chunks: 7,
+  });
   expect(saved.behavior).toEqual({});
 });
 
@@ -418,7 +422,7 @@ test("persists a translation-only sparse override during Project creation", asyn
   });
 });
 
-test("selecting a certified profile becomes Custom only while values differ", async () => {
+test("editing a preset materializes Custom and reselecting the preset resets it", async () => {
   mockProjectShell();
   const config = effectiveConfig(null);
   config.custom_execution = false;
@@ -461,9 +465,11 @@ test("selecting a certified profile becomes Custom only while values differ", as
   expect(screen.getByTestId("rag-profile-state")).toHaveTextContent("standard profile");
   fireEvent.change(screen.getByLabelText("Top K"), { target: { value: "11" } });
   expect(screen.getByTestId("rag-profile-state")).toHaveTextContent(
-    "Custom — standard + execution overrides",
+    "Custom — individual execution settings",
   );
   fireEvent.change(screen.getByLabelText("Top K"), { target: { value: "10" } });
+  expect(screen.getByTestId("rag-profile-state")).toHaveTextContent("Custom");
+  await userEvent.selectOptions(screen.getByLabelText("RAG profile"), "standard");
   expect(screen.getByTestId("rag-profile-state")).toHaveTextContent("standard profile");
 
   await userEvent.type(screen.getByLabelText("Revision reason"), "Use balanced profile");
@@ -472,7 +478,7 @@ test("selecting a certified profile becomes Custom only while values differ", as
   expect(create.mock.calls[0]?.[1].execution).toEqual({ profile_id: "standard" });
 });
 
-test("an existing profile override returns to the profile when its exact value is restored", async () => {
+test("a conflicting stored value cannot make a preset custom", async () => {
   mockProjectShell();
   const revision: ProjectAIConfigRevision = {
     id: "22222222-2222-2222-2222-222222222222",
@@ -517,9 +523,10 @@ test("an existing profile override returns to the profile when its exact value i
     `/projects?project=${projectFixture.id}&section=ai-config`,
   );
 
-  expect(await screen.findByTestId("rag-profile-state")).toHaveTextContent("Custom — standard");
+  expect(await screen.findByTestId("rag-profile-state")).toHaveTextContent("standard profile");
   fireEvent.change(screen.getByLabelText("Top K"), { target: { value: "10" } });
-  expect(screen.getByTestId("rag-profile-state")).toHaveTextContent("standard profile");
+  expect(screen.getByTestId("rag-profile-state")).toHaveTextContent("Custom");
+  await userEvent.selectOptions(screen.getByLabelText("RAG profile"), "standard");
   await userEvent.type(screen.getByLabelText("Revision reason"), "Restore exact Standard");
   await userEvent.click(screen.getByRole("button", { name: "Create and activate revision" }));
 
@@ -527,7 +534,7 @@ test("an existing profile override returns to the profile when its exact value i
   expect(create.mock.calls[0]?.[1].execution).toEqual({ profile_id: "standard" });
 });
 
-test("reselecting a profile clears profile-owned hidden overrides and labels retained custom state", async () => {
+test("reselecting a profile clears all hidden execution overrides", async () => {
   mockProjectShell();
   const revision: ProjectAIConfigRevision = {
     id: "22222222-2222-2222-2222-222222222222",
@@ -572,17 +579,14 @@ test("reselecting a profile clears profile-owned hidden overrides and labels ret
     `/projects?project=${projectFixture.id}&section=ai-config`,
   );
 
-  expect(await screen.findByTestId("rag-profile-state")).toHaveTextContent("Custom — standard");
+  expect(await screen.findByTestId("rag-profile-state")).toHaveTextContent("standard profile");
   fireEvent.change(screen.getByLabelText("RAG profile"), { target: { value: "standard" } });
-  expect(screen.getByTestId("rag-profile-state")).toHaveTextContent("Custom — standard");
+  expect(screen.getByTestId("rag-profile-state")).toHaveTextContent("standard profile");
   await userEvent.type(screen.getByLabelText("Revision reason"), "Reset Standard controls");
   await userEvent.click(screen.getByRole("button", { name: "Create and activate revision" }));
 
   await waitFor(() => expect(create).toHaveBeenCalled());
-  expect(create.mock.calls[0]?.[1].execution).toEqual({
-    profile_id: "standard",
-    passage_window_tokens: 120,
-  });
+  expect(create.mock.calls[0]?.[1].execution).toEqual({ profile_id: "standard" });
 });
 
 test("shows exact generation IDs and keeps candidate profiles unavailable", async () => {

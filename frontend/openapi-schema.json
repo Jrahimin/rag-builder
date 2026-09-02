@@ -25,15 +25,8 @@
             "type": "string"
           },
           "default_rag_profile_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Default Rag Profile Id"
+            "title": "Default Rag Profile Id",
+            "type": "string"
           },
           "deployment_profile_hash": {
             "title": "Deployment Profile Hash",
@@ -9407,7 +9400,7 @@
       },
       "ProjectExecutionV2": {
         "additionalProperties": false,
-        "description": "Versioned RAG profile plus sparse canonical query-time overrides.",
+        "description": "RAG profile selection plus explicit values used only by Custom.",
         "properties": {
           "context_char_budget": {
             "anyOf": [
@@ -9563,23 +9556,16 @@
             ],
             "title": "Passage Window Tokens"
           },
-          "profile_hash": {
-            "anyOf": [
-              {
-                "pattern": "^[0-9a-f]{64}$",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Profile Hash"
-          },
           "profile_id": {
             "anyOf": [
               {
-                "maxLength": 128,
-                "minLength": 1,
+                "enum": [
+                  "inherit",
+                  "standard",
+                  "quality",
+                  "economy",
+                  "custom"
+                ],
                 "type": "string"
               },
               {

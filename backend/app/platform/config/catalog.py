@@ -99,13 +99,13 @@ _entry(
 )
 
 _entry(
-    "project.v2.execution.profile_hash",
-    SettingCategory.PROVENANCE_VERSION,
-    SettingOwner.SNAPSHOT,
-    lifecycle="immutable_revision",
-    audience="operator",
-    impact="profile_reproducibility",
-    timing="pinned_at_revision_creation",
+    "settings.ai_policy.default_rag_profile",
+    SettingCategory.RAG_EXECUTION,
+    SettingOwner.DEPLOYMENT,
+    lifecycle="process_startup",
+    audience="deployment_operator",
+    impact="query_time",
+    timing="new_conversations_jobs_and_standalone_retrieval",
 )
 
 for _path, _category, _impact in (

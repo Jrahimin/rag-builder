@@ -147,7 +147,7 @@ class ActiveConfiguration(BaseModel):
     runtime_profile: str
     deployment_profile_id: str
     deployment_profile_hash: str
-    default_rag_profile_id: str | None
+    default_rag_profile_id: str
     evidence_calibration_profile_id: str
     index_profile_id: str
     index_profile_hash: str

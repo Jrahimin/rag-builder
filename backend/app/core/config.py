@@ -991,6 +991,9 @@ class SourcePolicyDeploymentCap(StrEnum):
 class AIConfigPolicy(BaseModel):
     """Deployment defaults and safety bounds around Project AI configuration."""
 
+    # Query-time execution defaults are profile-led. Raw retrieval/chat tuning
+    # fields are consulted only when this is explicitly ``custom``.
+    default_rag_profile: Literal["standard", "quality", "economy", "custom"] = "standard"
     request_override_mode: RequestOverrideMode = RequestOverrideMode.STRICT
     max_request_top_k: int = Field(default=100, ge=1, le=100)
     source_policy_mode: SourcePolicyMode = SourcePolicyMode.ENFORCE

@@ -100,10 +100,11 @@ APE_LLM__BACKEND=openai
 APE_LLM__OPENAI_API_KEY=***
 ```
 
-Normal tuning is then stored as a Project V2 revision, for example
-`behavior.response_mode=indexed_only` plus an optional certified
-`execution.profile_id` and sparse Advanced overrides. The service pins profile
-hashes and resolved snapshots automatically.
+Normal tuning is profile-led. Set `APE_AI_POLICY__DEFAULT_RAG_PROFILE=standard`
+for the deployment, then let a Project inherit it or select `standard`, `quality`,
+`economy`, or `custom`. Presets always resolve from the current code-owned bundle;
+only Custom stores individual execution values. Conversation and job snapshots
+record the resolved profile hash and effective values automatically.
 
 The exact supported fields live in `backend/app/core/config.py`. The complete
 tabular map (meaning, options, env key, Project overlay) is

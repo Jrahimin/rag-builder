@@ -9,7 +9,6 @@ import pytest
 
 import app.platform.config.profiles as profile_registry
 from app.core.config import Settings
-from app.core.exceptions import BadRequestError
 from app.modules.evaluation.profile_certification import (
     HOSTED_RAG_CERTIFICATION_MANIFEST,
     EvaluationSuiteRequirement,
@@ -21,7 +20,6 @@ from app.modules.evaluation.profile_certification import (
 )
 from app.platform.config.index_artifact import build_index_artifact_config
 from app.platform.config.profiles import (
-    DEPLOYMENT_CAPABILITY_PROFILES,
     PROFILE_CERTIFICATIONS,
     RAG_EXECUTION_PROFILES,
     CertificationStatus,
@@ -88,16 +86,14 @@ def test_registries_are_immutable_unique_and_referentially_valid() -> None:
         RAG_EXECUTION_PROFILES["other"] = RAG_EXECUTION_PROFILES["standard"]  # type: ignore[index]
 
 
-def test_seed_profiles_remain_candidates_and_cannot_be_normal_project_defaults() -> None:
+def test_seed_profiles_are_available_as_normal_project_defaults() -> None:
     assert all(
-        item.status is CertificationStatus.CANDIDATE for item in PROFILE_CERTIFICATIONS.values()
+        item.status is CertificationStatus.CERTIFIED for item in PROFILE_CERTIFICATIONS.values()
     )
-    with pytest.raises(Exception, match="not certified"):
-        execution_profile("standard")
-    assert execution_profile("standard", allow_candidate=True).retrieval_top_k == 10
+    assert execution_profile("standard").retrieval_top_k == 10
 
 
-def test_test_lab_candidate_resolution_records_profile_hash_and_sparse_override() -> None:
+def test_conflicting_raw_project_values_cannot_alter_preset() -> None:
     resolution = resolve_project_ai_config(
         Settings(),
         _revision(
@@ -111,10 +107,91 @@ def test_test_lab_candidate_resolution_records_profile_hash_and_sparse_override(
         allow_candidate_profiles=True,
     )
     assert resolution.configuration.retrieval.semantic_candidate_top_k == 30
-    assert resolution.configuration.retrieval.top_k == 9
+    assert resolution.configuration.retrieval.top_k == 8
     assert resolution.provenance.execution_profile_id == "economy"
     assert resolution.provenance.execution_profile_hash
-    assert resolution.provenance.execution_overrides == {"retrieval_top_k": 9}
+    assert resolution.provenance.execution_overrides == {}
+
+
+def test_global_preset_is_authoritative_and_inherited() -> None:
+    resolution = resolve_project_ai_config(
+        Settings(
+            ai_policy={"default_rag_profile": "quality"},
+            retrieval={"default_top_k": 2, "semantic_candidate_top_k": 3},
+            chat={"max_context_chunks": 2},
+        ),
+        _revision({"execution": {"profile_id": "inherit"}}),
+    )
+
+    assert resolution.configuration.retrieval.top_k == 12
+    assert resolution.configuration.retrieval.semantic_candidate_top_k == 80
+    assert resolution.configuration.chat.max_context_chunks == 10
+    assert resolution.provenance.execution_profile_id == "quality"
+
+
+def test_global_custom_uses_raw_deployment_execution_values() -> None:
+    resolution = resolve_project_ai_config(
+        Settings(
+            ai_policy={"default_rag_profile": "custom"},
+            retrieval={"default_top_k": 7, "semantic_candidate_top_k": 33},
+            chat={"max_context_chunks": 5},
+        ),
+        None,
+    )
+
+    assert resolution.configuration.retrieval.top_k == 7
+    assert resolution.configuration.retrieval.semantic_candidate_top_k == 33
+    assert resolution.configuration.chat.max_context_chunks == 5
+    assert resolution.provenance.execution_profile_id == "custom"
+
+
+def test_project_preset_overrides_global_preset() -> None:
+    resolution = resolve_project_ai_config(
+        Settings(ai_policy={"default_rag_profile": "economy"}),
+        _revision({"execution": {"profile_id": "standard"}}),
+    )
+
+    assert resolution.configuration.retrieval.top_k == 10
+    assert resolution.provenance.execution_profile_id == "standard"
+
+
+def test_project_behavior_change_does_not_change_inherited_rag_profile() -> None:
+    resolution = resolve_project_ai_config(
+        Settings(ai_policy={"default_rag_profile": "economy"}),
+        _revision(
+            {
+                "behavior": {
+                    "response_mode": "indexed_only",
+                    "translation_policy": "enabled",
+                    "domain_instructions": "Use the Project terminology.",
+                }
+            }
+        ),
+    )
+
+    assert resolution.provenance.execution_profile_id == "economy"
+    assert resolution.configuration.retrieval.top_k == 8
+    assert resolution.configuration.retrieval.query_translation_enabled is True
+
+
+def test_custom_profile_uses_materialized_project_execution_values() -> None:
+    resolution = resolve_project_ai_config(
+        Settings(ai_policy={"default_rag_profile": "quality"}),
+        _revision(
+            {
+                "execution": {
+                    "profile_id": "custom",
+                    **profile_registry.execution_values(RAG_EXECUTION_PROFILES["standard"]),
+                    "retrieval_top_k": 7,
+                }
+            }
+        ),
+    )
+
+    assert resolution.configuration.retrieval.top_k == 7
+    assert resolution.configuration.retrieval.semantic_candidate_top_k == 50
+    assert resolution.provenance.execution_profile_id == "custom"
+    assert resolution.provenance.execution_profile_hash
 
 
 def test_execution_profile_never_changes_index_artifact_identity() -> None:
@@ -128,6 +205,12 @@ def test_execution_profile_never_changes_index_artifact_identity() -> None:
         )
         assert resolution.provenance.index_profile_id == "development-hash"
         assert build_index_artifact_config(settings) == baseline
+    assert build_index_artifact_config(
+        Settings(ai_policy={"default_rag_profile": "quality"})
+    ) == baseline
+    assert build_index_artifact_config(
+        Settings(ai_policy={"default_rag_profile": "custom"})
+    ) == baseline
 
 
 def test_explicit_deployment_profile_adds_index_profile_identity() -> None:
@@ -135,7 +218,6 @@ def test_explicit_deployment_profile_adds_index_profile_identity() -> None:
     artifact = build_index_artifact_config(settings)
     assert artifact.index_profile_id == "development-hash"
     assert artifact.index_profile_hash
-    assert DEPLOYMENT_CAPABILITY_PROFILES["development"].default_rag_profile_id is None
 
 
 def test_explicit_deployment_profile_rejects_incompatible_provider_wiring() -> None:
@@ -216,28 +298,41 @@ def test_profile_normalization_retains_sparse_advanced_values(
 
     assert result.base_profile_id == "standard"
     assert result.custom_execution is True
-    assert result.configuration.execution.profile_id == "standard"
-    assert result.configuration.execution.profile_hash == profile_hash(
-        RAG_EXECUTION_PROFILES["standard"]
-    )
+    assert result.configuration.execution.profile_id == "custom"
     assert result.configuration.execution.passage_window_tokens == 120
     assert result.effective_diff == {}
 
 
-def test_pinned_execution_profile_hash_rejects_definition_drift() -> None:
+def test_project_preset_provenance_uses_current_definition_hash() -> None:
     revision = _revision(
         {
             "execution": {
                 "profile_id": "standard",
-                "profile_hash": "0" * 64,
             }
         }
     )
 
-    with pytest.raises(BadRequestError, match="no longer matches") as error:
-        resolve_project_ai_config(Settings(), revision, allow_candidate_profiles=True)
+    resolution = resolve_project_ai_config(
+        Settings(), revision, allow_candidate_profiles=True
+    )
+    assert resolution.configuration.retrieval.top_k == 10
+    assert resolution.provenance.execution_profile_hash == profile_hash(
+        RAG_EXECUTION_PROFILES["standard"]
+    )
 
-    assert error.value.code == "execution_profile_hash_mismatch"
+
+def test_profile_change_only_changes_new_effective_snapshots() -> None:
+    standard = resolve_project_ai_config(
+        Settings(ai_policy={"default_rag_profile": "standard"}), None
+    ).secret_free_snapshot()
+    quality = resolve_project_ai_config(
+        Settings(ai_policy={"default_rag_profile": "quality"}), None
+    ).secret_free_snapshot()
+
+    assert standard["provenance"]["execution_profile_id"] == "standard"
+    assert standard["configuration"]["retrieval"]["top_k"] == 10
+    assert quality["provenance"]["execution_profile_id"] == "quality"
+    assert quality["configuration"]["retrieval"]["top_k"] == 12
 
 
 def test_certification_gate_consumes_manifest_requirements_without_tax_assumptions() -> None:

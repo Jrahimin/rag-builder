@@ -18,9 +18,9 @@ local Python process. The executable source of truth is:
 ## Start here
 
 ```text
-Deployment capability
-  → Index Profile + Calibration Profile + RAG execution values
-  → sparse Project behavior / Advanced overrides
+Deployment capability → Index Profile + Calibration Profile
+Global RAG profile → Project inherit/preset/Custom selection
+  → separate Project behavior
   → safety invariants
 ```
 
@@ -28,7 +28,7 @@ Deployment capability
 | --- | --- | --- | --- |
 | Deployment capability | Deployment selects; code defines | `APE_RUNTIME__CAPABILITY_PROFILE_ID` | Process startup |
 | Index / calibration profile | Code | Profile registry | Future index target / query evidence calibration |
-| RAG execution values | Code profile or deployment baseline | Profile registry; Project override | New queries only |
+| RAG execution values | Code preset or Custom values | Global profile; Project selection | New conversations/jobs; standalone retrieval immediately |
 | Project behavior | Project operator | Immutable Project revision | New conversations and jobs |
 | Safety invariants | Code | Not operator-configurable | Always enforced |
 
@@ -120,14 +120,15 @@ reranking, local storage, and no provider credentials.
 
 ## Profiles
 
-Profiles have simple development-stage IDs. Their content is frozen and hash-pinned.
-`custom` is derived state, never a stored profile ID.
+Profiles have simple development-stage IDs. Preset content is code-owned and may be refined;
+new work receives the latest definition. `custom` is an explicit stored selection whose
+individual execution values are authoritative.
 
 | RAG profile | Intended use | Status | Normal Project API/UI |
 | --- | --- | --- | --- |
-| `standard` | Balanced default values shown above | Candidate | Not selectable yet |
-| `quality` | Wider retrieval/rerank effort and larger context | Candidate | Not selectable yet |
-| `economy` | Narrower retrieval/rerank effort and smaller context | Candidate | Not selectable yet |
+| `standard` | Balanced default values shown above | Certified | Selectable |
+| `quality` | Wider retrieval/rerank effort and larger context | Certified | Selectable |
+| `economy` | Narrower retrieval/rerank effort and smaller context | Certified | Selectable |
 
 The hosted certification manifest requires named/versioned suites: `tax@v1`
 at 21/21, `ci-smoke@v1`, and `cross-lingual-quality@v2`. The certification engine
@@ -135,18 +136,22 @@ is generic: another deployment can supply a different manifest without any tax
 logic in the engine.
 
 ```text
-Select Standard
-  → apply Standard values
+Inherit
+  → apply the global profile
+
+Select Standard / Quality / Economy
+  → apply the exact current code-owned bundle
 
 Change a profile-owned value
-  → Custom — standard + execution overrides
+  → materialize current effective values and switch to Custom
 
-Restore exact Standard values
-  → Standard
+Select a preset again
+  → clear Custom execution values and apply the preset
 ```
 
-Selecting a profile clears old profile-owned execution overrides. Other Advanced
-execution overrides remain explicit and keep the state visibly Custom.
+Behavior fields do not change the RAG profile. Advanced execution controls are
+editable only in Custom. Project revisions store the selected profile ID, while
+conversation/job provenance stores the resolved ID, current profile hash, and effective values.
 
 | Capability ID | Generation / retrieval capability | Calibration profile | Index profile |
 | --- | --- | --- | --- |
@@ -181,7 +186,7 @@ translation-only override is valid and persists:
 
 | Field group | Options / bounds | Default | Effect |
 | --- | --- | --- | --- |
-| `execution.profile_id` | Certified `standard`, `quality`, or `economy` | No selected profile | Applies a frozen RAG profile. Service writes `profile_hash`. |
+| `execution.profile_id` | `inherit`, `standard`, `quality`, `economy`, `custom` | `inherit` | Presets apply the exact current code-owned bundle. Custom enables individual execution values. |
 | Candidate depth | `semantic_candidate_top_k`, `keyword_candidate_top_k`: 1–200 | 50 / 50 | Candidates before fusion and reranking. |
 | ANN / fusion | `hnsw_ef_search`: 1–1000; `rrf_k`: 1–500; weights: 0–10 | 100 / 60 / 1.0 | Recall and fusion balance. |
 | Rerank | `rerank_mode`: `always` or `cross_language`; window/return: 1–100 | always / 25 / 8 | Rerank effort. Return cannot exceed window. |
@@ -203,6 +208,7 @@ All application keys use `APE_` and `__` nesting. For example,
 | ENV key / family | Default | What it controls |
 | --- | --- | --- |
 | `APE_RUNTIME__CAPABILITY_PROFILE_ID` | unset → `development` | Capability selection. Values: `development`, `hosted-managed`, `hosted-openai`, `private-ollama`. |
+| `APE_AI_POLICY__DEFAULT_RAG_PROFILE` | `standard` | Deployment query-time profile: `standard`, `quality`, `economy`, or `custom`. Presets ignore raw profile-owned ENV tuning. |
 | `APE_DATABASE__*` | localhost / 5432 / `ape` | Database host, port, user, password, name, pool settings. |
 | `APE_REDIS__*` | localhost / 6379 | Cache and job broker connection. |
 | `APE_STORAGE__*`, `APE_MINIO__*` | local storage | Object-storage backend and connection. |
@@ -238,7 +244,8 @@ write queues processing or rebuild work by itself.
 | --- | --- | --- |
 | `APE_RETRIEVAL__AUTO_BUILD_AFTER_PROCESS` | `true` | Automatically build after successful processing. |
 | `APE_RETRIEVAL__STRATEGY` | `hybrid` | Deployment fallback retrieval strategy. |
-| `APE_RETRIEVAL__RERANK_MODE` | `always` | Fallback while no certified RAG profile is selected. |
+| `APE_RETRIEVAL__RERANK_MODE` | `always` | Raw execution input only when the global or Project profile is Custom. |
+| `APE_AI_POLICY__DEFAULT_RAG_PROFILE` | `standard` | Authoritative deployment query-time profile. |
 | `APE_QUERY_TRANSLATION__ENABLED` | `false` | Deployment translation default; Project can inherit/on/off. |
 | `APE_AI_POLICY__DEFAULT_GENERATION_MODEL_ID` | capability-specific | Default logical generation model. |
 | `APE_AI_POLICY__ALLOWED_GENERATION_MODEL_IDS` | capability-specific | Exact Project model allowlist. |

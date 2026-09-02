@@ -1,6 +1,6 @@
 """Code-owned configuration profiles and certification metadata.
 
-Profile definitions are frozen value objects and hashes pin their exact content.
+Profile definitions are frozen value objects and hashes identify their exact content in snapshots.
 The simple IDs are intentionally development-stage names; explicit public profile
 versioning can be added when profiles become a persisted compatibility contract.
 Certification stays separate so candidates can be exercised in Test Lab without
@@ -208,7 +208,9 @@ RAG_EXECUTION_PROFILES: Mapping[str, RAGExecutionProfile] = MappingProxyType(
 PROFILE_CERTIFICATIONS: Mapping[str, ProfileCertification] = MappingProxyType(
     {
         profile_id: ProfileCertification(
-            profile_id=profile_id, status=CertificationStatus.CANDIDATE
+            profile_id=profile_id,
+            status=CertificationStatus.CERTIFIED,
+            notes="Code-owned deployment preset.",
         )
         for profile_id in RAG_EXECUTION_PROFILES
     }
@@ -451,17 +453,6 @@ def registry_errors() -> list[str]:
     for profile in DEPLOYMENT_CAPABILITY_PROFILES.values():
         if profile.calibration_profile_id not in EVIDENCE_CALIBRATION_PROFILES:
             errors.append(f"{profile.id} references an unknown calibration profile")
-        if (
-            profile.default_rag_profile_id is not None
-            and profile.default_rag_profile_id not in RAG_EXECUTION_PROFILES
-        ):
-            errors.append(f"{profile.id} references an unknown RAG profile")
-        if (
-            profile.default_rag_profile_id is not None
-            and PROFILE_CERTIFICATIONS[profile.default_rag_profile_id].status
-            is not CertificationStatus.CERTIFIED
-        ):
-            errors.append(f"{profile.id} references a non-certified default RAG profile")
         if profile.default_index_profile_id not in INDEX_PROFILES:
             errors.append(f"{profile.id} references an unknown index profile")
             continue

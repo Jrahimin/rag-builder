@@ -54,7 +54,6 @@ from app.platform.config.profiles import (
     PROFILE_CERTIFICATIONS,
     RAG_EXECUTION_PROFILES,
     CertificationStatus,
-    deployment_profile,
     execution_values,
     profile_hash,
 )
@@ -319,7 +318,6 @@ async def get_project_ai_config(
     resolution = await service.effective_config()
     settings = get_settings()
     deployment_resolution = resolve_project_ai_config(settings, None)
-    deployment_capability = deployment_profile(settings)
     allowed_model_ids, _ = generation_model_policy(settings)
     return ApiResponse.ok(
         EffectiveProjectAIConfigResponse(
@@ -354,17 +352,14 @@ async def get_project_ai_config(
                     ),
                     recommended=(
                         PROFILE_CERTIFICATIONS[profile_id].status is CertificationStatus.CERTIFIED
-                        and profile_id == deployment_capability.default_rag_profile_id
+                        and profile_id == settings.ai_policy.default_rag_profile
                     ),
                     values=execution_values(profile),
                 )
                 for profile_id, profile in RAG_EXECUTION_PROFILES.items()
             ],
             base_profile_id=resolution.provenance.execution_profile_id,
-            custom_execution=(
-                resolution.provenance.execution_profile_id is None
-                or bool(resolution.provenance.execution_overrides)
-            ),
+            custom_execution=resolution.provenance.execution_profile_id == "custom",
         )
     )
 

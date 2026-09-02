@@ -139,7 +139,7 @@ export const configurationFixture: ActiveConfiguration = {
   runtime_profile: "development",
   deployment_profile_id: "development",
   deployment_profile_hash: "d".repeat(64),
-  default_rag_profile_id: null,
+  default_rag_profile_id: "standard",
   evidence_calibration_profile_id: "hash-local-whole-chunk",
   index_profile_id: "development-hash",
   index_profile_hash: "e".repeat(64),

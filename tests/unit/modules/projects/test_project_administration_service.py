@@ -18,10 +18,8 @@ from app.modules.projects.services.project_ai_config_service import (
 )
 from app.platform.config.profiles import (
     PROFILE_CERTIFICATIONS,
-    RAG_EXECUTION_PROFILES,
     CertificationStatus,
     ProfileCertification,
-    profile_hash,
 )
 from app.platform.config.project_ai import ProjectAIConfig
 from app.platform.domain.auth_context import DEFAULT_ORGANIZATION_ID
@@ -89,7 +87,7 @@ async def test_config_revision_is_append_only_and_activates_pointer() -> None:
     audit.record.assert_called_once()
 
 
-async def test_certified_profile_write_pins_exact_definition_hash(
+async def test_preset_write_stores_only_selection_and_clears_custom_values(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     certifications = {
@@ -115,15 +113,20 @@ async def test_certified_profile_write_pins_exact_definition_hash(
     service = _service(session, repository, MagicMock(), project.id)
 
     revision = await service.create_revision(
-        ProjectAIConfig.model_validate({"execution": {"profile_id": "standard"}}),
+        ProjectAIConfig.model_validate(
+            {
+                "execution": {
+                    "profile_id": "standard",
+                    "retrieval_top_k": 3,
+                    "max_context_chunks": 2,
+                }
+            }
+        ),
         expected_active_revision_id=None,
         reason="Select balanced profile",
     )
 
-    assert revision.configuration["execution"] == {
-        "profile_id": "standard",
-        "profile_hash": profile_hash(RAG_EXECUTION_PROFILES["standard"]),
-    }
+    assert revision.configuration["execution"] == {"profile_id": "standard"}
 
 
 async def test_config_revision_uses_optimistic_concurrency() -> None:

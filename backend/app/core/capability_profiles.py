@@ -29,7 +29,6 @@ class DeploymentCapabilityProfile:
     default_generation_model_id: str
     calibration_profile_id: str
     # Remains unset until one seeded Test Lab candidate clears certification.
-    default_rag_profile_id: str | None
     default_index_profile_id: str
     feature_flags: tuple[str, ...]
 
@@ -48,7 +47,6 @@ DEPLOYMENT_CAPABILITY_PROFILES: Mapping[str, DeploymentCapabilityProfile] = Mapp
                 allowed_generation_model_ids=("deployment-default",),
                 default_generation_model_id="deployment-default",
                 calibration_profile_id="hash-local-whole-chunk",
-                default_rag_profile_id=None,
                 default_index_profile_id="development-hash",
                 feature_flags=("test_lab", "ephemeral_tuning"),
             ),
@@ -62,7 +60,6 @@ DEPLOYMENT_CAPABILITY_PROFILES: Mapping[str, DeploymentCapabilityProfile] = Mapp
                 allowed_generation_model_ids=("openai-gpt-5.6-luna",),
                 default_generation_model_id="openai-gpt-5.6-luna",
                 calibration_profile_id="cohere-v4-managed-whole-chunk",
-                default_rag_profile_id=None,
                 default_index_profile_id="hosted-cohere-v4",
                 feature_flags=("hosted", "web_search", "query_translation", "rerank_fail_open"),
             ),
@@ -76,7 +73,6 @@ DEPLOYMENT_CAPABILITY_PROFILES: Mapping[str, DeploymentCapabilityProfile] = Mapp
                 allowed_generation_model_ids=("deployment-default", "openai-gpt-4o-mini"),
                 default_generation_model_id="deployment-default",
                 calibration_profile_id="openai-large-cohere-whole-chunk",
-                default_rag_profile_id=None,
                 default_index_profile_id="hosted-openai-large",
                 feature_flags=("hosted", "web_search", "query_translation", "rerank_fail_open"),
             ),
@@ -90,7 +86,6 @@ DEPLOYMENT_CAPABILITY_PROFILES: Mapping[str, DeploymentCapabilityProfile] = Mapp
                 allowed_generation_model_ids=("deployment-default",),
                 default_generation_model_id="deployment-default",
                 calibration_profile_id="ollama-1024-local-whole-chunk",
-                default_rag_profile_id=None,
                 default_index_profile_id="private-ollama-1024",
                 feature_flags=("private", "rerank_fail_open"),
             ),

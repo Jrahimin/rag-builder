@@ -9,7 +9,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
-from app.core.exceptions import BadRequestError, ConflictError, NotFoundError
+from app.core.exceptions import ConflictError, NotFoundError
 from app.models.conversation import Conversation
 from app.models.document import Document
 from app.models.generation import Generation
@@ -31,11 +31,11 @@ from app.platform.audit.contracts import (
 )
 from app.platform.auth.contracts import AuthEventPublisher
 from app.platform.auth.events import OrganizationAuthInvalidated
-from app.platform.config.profiles import execution_profile, profile_hash
 from app.platform.config.project_ai import (
     ConfigRevisionRecord,
     EffectiveConfigResolution,
     ProjectAIConfig,
+    ProjectExecutionV2,
     V1NormalizationResult,
     V2ProfileNormalizationResult,
     normalize_v1_project_config,
@@ -93,29 +93,17 @@ class ProjectAdministrationService:
                     "actual": str(project.active_ai_config_revision_id),
                 },
             )
-        if configuration.execution.profile_id is not None:
-            selected_profile = execution_profile(configuration.execution.profile_id)
-            selected_hash = profile_hash(selected_profile)
-            if (
-                configuration.execution.profile_hash is not None
-                and configuration.execution.profile_hash != selected_hash
-            ):
-                raise BadRequestError(
-                    message="The pinned RAG execution profile definition no longer matches.",
-                    code="execution_profile_hash_mismatch",
-                    context={
-                        "profile_id": configuration.execution.profile_id,
-                        "stored_hash": configuration.execution.profile_hash,
-                        "current_hash": selected_hash,
-                    },
-                )
-            configuration = configuration.model_copy(
-                update={
-                    "execution": configuration.execution.model_copy(
-                        update={"profile_hash": selected_hash}
-                    )
-                }
-            )
+        selection = configuration.execution.profile_id or "inherit"
+        execution_payload = configuration.execution.model_dump(
+            mode="python", exclude_none=True
+        )
+        if selection != "custom":
+            # Preset/inherit revisions contain only the selection. Re-selecting
+            # one therefore clears stale Custom execution values.
+            execution_payload = {} if selection == "inherit" else {"profile_id": selection}
+        configuration = configuration.model_copy(
+            update={"execution": ProjectExecutionV2.model_validate(execution_payload)}
+        )
         payload = configuration.model_dump(mode="json", exclude_none=True)
         # Resolve before persistence so unsupported provider/model parameters never activate.
         candidate = ConfigRevisionRecord(

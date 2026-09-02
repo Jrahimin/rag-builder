@@ -45,7 +45,7 @@ def test_projects_without_revision_use_canonical_v2_invariants() -> None:
     assert resolution.configuration.llm.model == "global-model"
     assert resolution.configuration.llm.max_tokens == 321
     assert resolution.configuration.retrieval.strategy.value == "hybrid"
-    assert resolution.configuration.retrieval.top_k == 7
+    assert resolution.configuration.retrieval.top_k == 10
     assert resolution.provenance.project_config_revision_id is None
     assert resolution.provenance.provider_capability_version == CAPABILITY_VERSION
     assert resolution.configuration.chat.response_mode == "indexed_only"
@@ -655,7 +655,7 @@ def test_rerank_mode_inherits_and_maps_legacy_enabled() -> None:
     inherited = resolve_project_ai_config(Settings(), None)
     assert inherited.configuration.retrieval.rerank_mode.value == "always"
     assert inherited.configuration.retrieval.rerank_enabled is True
-    assert inherited.origins["retrieval.rerank_mode"] == "global"
+    assert inherited.origins["retrieval.rerank_mode"] == "global_execution_profile"
 
     always = resolve_project_ai_config(
         Settings(),

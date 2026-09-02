@@ -1553,7 +1553,7 @@ export interface components {
             /** Chat Response Mode */
             chat_response_mode: string;
             /** Default Rag Profile Id */
-            default_rag_profile_id: string | null;
+            default_rag_profile_id: string;
             /** Deployment Profile Hash */
             deployment_profile_hash: string;
             /** Deployment Profile Id */
@@ -4656,7 +4656,7 @@ export interface components {
         };
         /**
          * ProjectExecutionV2
-         * @description Versioned RAG profile plus sparse canonical query-time overrides.
+         * @description RAG profile selection plus explicit values used only by Custom.
          */
         ProjectExecutionV2: {
             /** Context Char Budget */
@@ -4683,10 +4683,8 @@ export interface components {
             passage_scoring_enabled?: boolean | null;
             /** Passage Window Tokens */
             passage_window_tokens?: number | null;
-            /** Profile Hash */
-            profile_hash?: string | null;
             /** Profile Id */
-            profile_id?: string | null;
+            profile_id?: ("inherit" | "standard" | "quality" | "economy" | "custom") | null;
             /** Rerank Candidate Window */
             rerank_candidate_window?: number | null;
             rerank_mode?: components["schemas"]["CanonicalRerankMode"] | null;

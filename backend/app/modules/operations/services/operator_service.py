@@ -265,7 +265,7 @@ class OperatorService:
             runtime_profile=self._settings.runtime.profile.value,
             deployment_profile_id=deployment.id,
             deployment_profile_hash=profile_hash(deployment),
-            default_rag_profile_id=deployment.default_rag_profile_id,
+            default_rag_profile_id=self._settings.ai_policy.default_rag_profile,
             evidence_calibration_profile_id=deployment.calibration_profile_id,
             index_profile_id=index_profile.id,
             index_profile_hash=profile_hash(index_profile),

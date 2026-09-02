@@ -7,7 +7,7 @@ import json
 import uuid
 from datetime import datetime
 from enum import StrEnum
-from typing import Any
+from typing import Any, Literal
 
 import structlog
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -177,15 +177,11 @@ class ProjectBehaviorV2(BaseModel):
 
 
 class ProjectExecutionV2(BaseModel):
-    """Versioned RAG profile plus sparse canonical query-time overrides."""
+    """RAG profile selection plus explicit values used only by Custom."""
 
     model_config = ConfigDict(extra="forbid")
 
-    profile_id: str | None = Field(default=None, min_length=1, max_length=128)
-    # Pinned when a normal Project revision is written. Nullable keeps early V2
-    # revisions readable; a present hash is always verified against the
-    # immutable code-owned profile definition.
-    profile_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    profile_id: Literal["inherit", "standard", "quality", "economy", "custom"] | None = None
     retrieval_top_k: int | None = Field(default=None, ge=1, le=100)
     semantic_candidate_top_k: int | None = Field(default=None, ge=1, le=200)
     keyword_candidate_top_k: int | None = Field(default=None, ge=1, le=200)
@@ -206,10 +202,17 @@ class ProjectExecutionV2(BaseModel):
     context_char_budget: int | None = Field(default=None, ge=500, le=200_000)
     max_history_messages: int | None = Field(default=None, ge=0, le=200)
 
+    @model_validator(mode="before")
+    @classmethod
+    def infer_legacy_custom_selection(cls, value: object) -> object:
+        if not isinstance(value, dict) or "profile_id" in value:
+            return value
+        if value:
+            return {**value, "profile_id": "custom"}
+        return value
+
     @model_validator(mode="after")
-    def validate_profile_overrides(self) -> ProjectExecutionV2:
-        if self.profile_hash is not None and self.profile_id is None:
-            raise ValueError("profile_hash requires profile_id")
+    def validate_execution_values(self) -> ProjectExecutionV2:
         if (
             self.rerank_candidate_window is not None
             and self.rerank_return_count is not None
@@ -442,6 +445,7 @@ def _resolve_modifies_expansion_mode(
 
 
 def _v2_as_legacy_policy(
+    settings: Settings,
     project: ProjectAIConfig,
     *,
     allow_candidate_profiles: bool,
@@ -451,31 +455,36 @@ def _v2_as_legacy_policy(
     stored_execution = project.execution
     overrides = stored_execution.model_dump(mode="python", exclude_none=True)
     overrides.pop("profile_id", None)
-    overrides.pop("profile_hash", None)
-    execution_profile_id = stored_execution.profile_id
-    if execution_profile_id is not None:
+    project_profile_id = stored_execution.profile_id or "inherit"
+    execution_profile_id = (
+        settings.ai_policy.default_rag_profile
+        if project_profile_id == "inherit"
+        else project_profile_id
+    )
+    if execution_profile_id in {"standard", "quality", "economy"}:
         selected_profile = execution_profile(
             execution_profile_id,
             allow_candidate=allow_candidate_profiles,
         )
-        selected_hash = profile_hash(selected_profile)
-        if (
-            stored_execution.profile_hash is not None
-            and stored_execution.profile_hash != selected_hash
-        ):
-            raise BadRequestError(
-                message="The pinned RAG execution profile definition no longer matches.",
-                code="execution_profile_hash_mismatch",
-                context={
-                    "profile_id": execution_profile_id,
-                    "stored_hash": stored_execution.profile_hash,
-                    "current_hash": selected_hash,
-                },
-            )
-        base = execution_values(selected_profile)
-        execution = ProjectExecutionV2.model_validate({**base, **overrides})
+        # A preset is the exact registry bundle. Stored or ENV tuning cannot
+        # silently mutate any profile-owned field.
+        execution = ProjectExecutionV2.model_validate(
+            {"profile_id": execution_profile_id, **execution_values(selected_profile)}
+        )
+    elif project_profile_id == "custom":
+        global_profile_id = settings.ai_policy.default_rag_profile
+        global_profile_values = (
+            execution_values(execution_profile(global_profile_id, allow_candidate=True))
+            if global_profile_id in {"standard", "quality", "economy"}
+            else {}
+        )
+        execution = ProjectExecutionV2.model_validate(
+            {"profile_id": "custom", **global_profile_values, **overrides}
+        )
     else:
-        execution = stored_execution
+        # Inherit means the deployment's raw Custom values, never stale values
+        # that happen to coexist with an inherit marker.
+        execution = ProjectExecutionV2(profile_id="custom")
     translation_enabled = {
         TranslationPolicy.INHERIT: None,
         TranslationPolicy.ENABLED: True,
@@ -514,7 +523,7 @@ def _v2_as_legacy_policy(
             domain_instructions=behavior.domain_instructions,
         ),
         execution_profile_id,
-        overrides,
+        overrides if project_profile_id == "custom" else {},
     )
 
 
@@ -539,6 +548,7 @@ def resolve_project_ai_config(
     execution_overrides: dict[str, Any] = {}
     if canonical_v2:
         project, execution_profile_id, execution_overrides = _v2_as_legacy_policy(
+            settings,
             project_v2,
             allow_candidate_profiles=allow_candidate_profiles,
         )
@@ -897,8 +907,20 @@ def resolve_project_ai_config(
             "context_char_budget": "chat.context_char_budget",
             "max_history_messages": "chat.max_history_messages",
         }
+        profile_layer = (
+            "custom_profile"
+            if execution_profile_id == "custom"
+            else (
+                "global_execution_profile"
+                if (project_v2.execution.profile_id or "inherit") == "inherit"
+                else "project_execution_profile"
+            )
+        )
         for field, path in profile_origin_paths.items():
-            origins[path] = "project" if field in execution_overrides else "execution_profile"
+            if execution_profile_id == "custom" and field in execution_overrides:
+                origins[path] = "project"
+            elif execution_profile_id != "custom":
+                origins[path] = profile_layer
     if calibration is not None:
         for path in (
             "retrieval.evidence_score_threshold",
@@ -1089,10 +1111,10 @@ def resolve_project_ai_config(
         execution_profile_id=execution_profile_id,
         execution_profile_hash=(
             profile_hash(execution_profile(execution_profile_id, allow_candidate=True))
-            if execution_profile_id is not None
-            else None
+            if execution_profile_id in {"standard", "quality", "economy"}
+            else stable_hash(_effective_execution_values(config))
         ),
-        deployment_default_execution_profile_id=deployment_capability.default_rag_profile_id,
+        deployment_default_execution_profile_id=settings.ai_policy.default_rag_profile,
         execution_overrides=execution_overrides,
         index_profile_id=target_index_profile.id,
         index_profile_hash=profile_hash(target_index_profile),
@@ -1325,6 +1347,7 @@ def normalize_v1_project_config(
             generation_model_id=model_id,
         ),
         execution=ProjectExecutionV2(
+            profile_id="custom",
             retrieval_top_k=effective.retrieval.top_k,
             semantic_candidate_top_k=effective.retrieval.semantic_candidate_top_k,
             keyword_candidate_top_k=effective.retrieval.keyword_candidate_top_k,
@@ -1386,10 +1409,7 @@ def normalize_v2_project_config(
     if matched is not None:
         profile_only = ProjectAIConfig(
             behavior=stored.behavior,
-            execution=ProjectExecutionV2(
-                profile_id=matched,
-                profile_hash=profile_hash(execution_profile(matched)),
-            ),
+            execution=ProjectExecutionV2.model_validate({"profile_id": matched}),
         )
         profile_record = ConfigRevisionRecord(
             id=uuid.uuid4(),
@@ -1401,24 +1421,19 @@ def normalize_v2_project_config(
         profile_values = _effective_execution_values(
             resolve_project_ai_config(settings, profile_record).configuration
         )
-        sparse_overrides = {
-            key: value for key, value in values.items() if profile_values.get(key) != value
-        }
-        execution = ProjectExecutionV2(
-            profile_id=matched,
-            profile_hash=profile_hash(execution_profile(matched)),
-            **sparse_overrides,
-        )
-        warnings = (
-            [
-                "The certified base profile matches, with sparse Advanced overrides retained "
-                "to preserve the exact effective execution values."
+        if profile_values == values:
+            execution = ProjectExecutionV2.model_validate({"profile_id": matched})
+            warnings = []
+        else:
+            execution = ProjectExecutionV2.model_validate(
+                {"profile_id": "custom", **values}
+            )
+            warnings = [
+                "Advanced execution values differ from the preset and were materialized as "
+                "Custom."
             ]
-            if sparse_overrides
-            else []
-        )
     else:
-        execution = ProjectExecutionV2.model_validate(values)
+        execution = ProjectExecutionV2.model_validate({"profile_id": "custom", **values})
         warnings = [
             "No certified execution profile exactly matches this V2 revision; execution values "
             "remain explicit and are displayed as Custom."
@@ -1435,13 +1450,7 @@ def normalize_v2_project_config(
     return V2ProfileNormalizationResult(
         configuration=canonical,
         base_profile_id=matched,
-        custom_execution=matched is None
-        or bool(
-            execution.model_dump(
-                exclude={"profile_id", "profile_hash"},
-                exclude_none=True,
-            )
-        ),
+        custom_execution=execution.profile_id == "custom",
         compatibility_warnings=warnings,
         effective_diff=_effective_diff(
             before.configuration.model_dump(mode="json"),
