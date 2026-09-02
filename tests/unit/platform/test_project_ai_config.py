@@ -10,7 +10,7 @@ from app.core.config import Settings
 from app.core.exceptions import BadRequestError
 from app.platform.config.project_ai import (
     ConfigRevisionRecord,
-    ProjectAIConfig,
+    ProjectAIConfigV1,
     apply_effective_ai_config,
     resolve_project_ai_config,
     stable_hash,
@@ -34,7 +34,7 @@ def _revision(payload: dict[str, object]) -> ConfigRevisionRecord:
     )
 
 
-def test_projects_without_revision_retain_global_behavior() -> None:
+def test_projects_without_revision_use_canonical_v2_invariants() -> None:
     settings = Settings(
         llm={"backend": "echo", "model": "global-model", "max_tokens": 321},
         retrieval={"strategy": "semantic", "default_top_k": 7},
@@ -44,7 +44,7 @@ def test_projects_without_revision_retain_global_behavior() -> None:
 
     assert resolution.configuration.llm.model == "global-model"
     assert resolution.configuration.llm.max_tokens == 321
-    assert resolution.configuration.retrieval.strategy.value == "semantic"
+    assert resolution.configuration.retrieval.strategy.value == "hybrid"
     assert resolution.configuration.retrieval.top_k == 7
     assert resolution.provenance.project_config_revision_id is None
     assert resolution.provenance.provider_capability_version == CAPABILITY_VERSION
@@ -61,7 +61,7 @@ def test_project_can_override_response_mode_when_web_provider_is_configured() ->
 
     assert resolution.configuration.chat.response_mode == "indexed_then_web"
     assert resolution.origins["chat.response_mode"] == "project"
-    assert resolution.secret_free_snapshot()["schema_version"] == 2
+    assert resolution.secret_free_snapshot()["schema_version"] == 4
 
 
 def test_web_search_inherits_openai_llm_settings_when_unspecified() -> None:
@@ -125,12 +125,12 @@ def test_project_can_disable_or_bound_web_search() -> None:
     assert effective.web_search.request_timeout_seconds == 20
 
 
-def test_modifies_expansion_is_default_off_and_project_bounded() -> None:
+def test_modifies_expansion_is_automatic_for_v2_and_v1_remains_bounded() -> None:
     settings = Settings()
     default_resolution = resolve_project_ai_config(settings, None)
 
-    assert default_resolution.configuration.retrieval.modifies_expansion_enabled is False
-    assert default_resolution.configuration.retrieval.modifies_expansion_mode.value == "off"
+    assert default_resolution.configuration.retrieval.modifies_expansion_enabled is True
+    assert default_resolution.configuration.retrieval.modifies_expansion_mode.value == "expand"
     assert default_resolution.configuration.retrieval.max_related_sources == 8
     assert default_resolution.configuration.retrieval.max_relationship_candidates == 20
 
@@ -188,6 +188,7 @@ def test_chat_runtime_can_resolve_web_policy_when_provider_is_temporarily_unavai
 def test_web_response_mode_rejects_legacy_prompt_compatibility_override() -> None:
     settings = Settings(
         web_search={"backend": "openai", "openai_api_key": "test-key"},
+        ai_policy={"request_override_mode": "compatibility"},
     )
     revision = _revision({"chat": {"response_mode": "indexed_then_web"}})
 
@@ -202,7 +203,7 @@ def test_web_response_mode_rejects_legacy_prompt_compatibility_override() -> Non
 
 
 def test_project_revision_is_typed_hashed_and_has_origins() -> None:
-    payload = ProjectAIConfig.model_validate(
+    payload = ProjectAIConfigV1.model_validate(
         {
             "llm": {"model": "project-model", "temperature": 0.4},
             "retrieval": {"top_k": 12},
@@ -223,18 +224,18 @@ def test_project_revision_is_typed_hashed_and_has_origins() -> None:
     assert resolution.provenance.project_config_hash == revision.configuration_hash
 
 
-def test_source_policy_mode_defaults_to_off_from_global_settings(
+def test_source_policy_mode_defaults_to_enforced_code_invariant(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.delenv("APE_AI_POLICY__SOURCE_POLICY_MODE", raising=False)
     settings = Settings()
     resolution = resolve_project_ai_config(settings, None)
 
-    assert settings.ai_policy.source_policy_mode.value == "off"
-    assert resolution.configuration.source_policy_mode.value == "off"
-    assert resolution.origins["source_policy_mode"] == "global"
-    assert resolution.provenance.configured_source_policy_mode.value == "off"
-    assert resolution.provenance.effective_source_policy_mode.value == "off"
+    assert settings.ai_policy.source_policy_mode.value == "enforce"
+    assert resolution.configuration.source_policy_mode.value == "enforce"
+    assert resolution.origins["source_policy_mode"] == "code_invariant"
+    assert resolution.provenance.configured_source_policy_mode.value == "enforce"
+    assert resolution.provenance.effective_source_policy_mode.value == "enforce"
     assert resolution.provenance.source_policy_deployment_cap.value == "enforce"
 
 
@@ -247,7 +248,7 @@ def test_global_source_policy_mode_env_is_inherited_without_project_revision(
 
     assert settings.ai_policy.source_policy_mode.value == "enforce"
     assert resolution.configuration.source_policy_mode.value == "enforce"
-    assert resolution.origins["source_policy_mode"] == "global"
+    assert resolution.origins["source_policy_mode"] == "code_invariant"
     assert resolution.provenance.configured_source_policy_mode.value == "enforce"
     assert resolution.provenance.effective_source_policy_mode.value == "enforce"
 
@@ -300,10 +301,10 @@ def test_deployment_cap_restricts_global_source_policy_mode_without_activating_o
         None,
     )
 
-    assert inherited_off.configuration.source_policy_mode.value == "off"
-    assert inherited_off.origins["source_policy_mode"] == "global"
-    assert inherited_off.provenance.configured_source_policy_mode.value == "off"
-    assert inherited_off.provenance.effective_source_policy_mode.value == "off"
+    assert inherited_off.configuration.source_policy_mode.value == "enforce"
+    assert inherited_off.origins["source_policy_mode"] == "code_invariant"
+    assert inherited_off.provenance.configured_source_policy_mode.value == "enforce"
+    assert inherited_off.provenance.effective_source_policy_mode.value == "enforce"
     assert capped_global.configuration.source_policy_mode.value == "observe"
     assert capped_global.origins["source_policy_mode"] == "deployment_safety_cap"
     assert capped_global.provenance.configured_source_policy_mode.value == "enforce"
@@ -340,14 +341,14 @@ def test_unknown_ai_policy_env_does_not_change_source_policy_defaults(
     settings = Settings()
     resolution = resolve_project_ai_config(settings, None)
 
-    assert settings.ai_policy.source_policy_mode.value == "off"
-    assert resolution.configuration.source_policy_mode.value == "off"
-    assert resolution.origins["source_policy_mode"] == "global"
+    assert settings.ai_policy.source_policy_mode.value == "enforce"
+    assert resolution.configuration.source_policy_mode.value == "enforce"
+    assert resolution.origins["source_policy_mode"] == "code_invariant"
 
 
 def test_compatibility_mode_records_and_applies_deprecated_overrides() -> None:
     resolution = resolve_project_ai_config(
-        Settings(),
+        Settings(ai_policy={"request_override_mode": "compatibility"}),
         None,
         deprecated_overrides={"model": "legacy-model", "temperature": 0.7},
     )
@@ -436,7 +437,7 @@ def test_job_snapshot_captures_project_policy_provenance_and_no_secrets() -> Non
     )
     restored = apply_effective_ai_config(settings, resolution)
 
-    assert snapshot.schema_version == 3
+    assert snapshot.schema_version == 5
     assert snapshot.quality["llm"]["model"] == "project-model"
     assert snapshot.provenance["project_config_revision_id"] == str(revision.id)
     assert snapshot.provenance["source_metadata_generation"] == 8

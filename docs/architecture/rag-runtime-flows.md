@@ -88,7 +88,7 @@ structured job details and a sanitized Document message.
 
 ### Embedding and indexing
 
-When `auto_embed` is enabled, successful processing stages an idempotent
+When `auto_build_after_process` is enabled, successful processing stages an idempotent
 `document.embed` child job with the same configuration snapshot. The worker
 creates a private full-corpus `IndexBuild`, loads only current versioned chunks,
 batches calls through `BaseEmbeddingProvider`, then writes build-scoped vector,

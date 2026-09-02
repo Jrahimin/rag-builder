@@ -10,6 +10,7 @@ import pytest
 from app.core.config import Settings
 from app.core.exceptions import ConflictError
 from app.models.project import Project
+from app.models.project_ai_config_revision import ProjectAIConfigRevision
 from app.modules.projects.services.project_ai_config_service import (
     ProjectAdministrationService,
 )
@@ -61,13 +62,18 @@ async def test_config_revision_is_append_only_and_activates_pointer() -> None:
     service = _service(session, repository, audit, project.id)
 
     revision = await service.create_revision(
-        ProjectAIConfig.model_validate({"llm": {"model": "policy-model"}}),
+        ProjectAIConfig.model_validate(
+            {"behavior": {"domain_instructions": "Answer according to policy."}}
+        ),
         expected_active_revision_id=None,
         reason="Initial policy",
     )
 
     assert revision.revision_number == 1
-    assert revision.configuration["llm"]["model"] == "policy-model"
+    assert revision.schema_version == 2
+    assert revision.configuration["behavior"]["domain_instructions"] == (
+        "Answer according to policy."
+    )
     assert project.active_ai_config_revision_id == revision.id
     repository.add.assert_called_once_with(revision)
     session.commit.assert_awaited_once()
@@ -92,6 +98,51 @@ async def test_config_revision_uses_optimistic_concurrency() -> None:
 
     assert caught.value.code == "project_config_revision_conflict"
     repository.add.assert_not_called()
+
+
+async def test_active_v1_normalization_previews_then_appends_v2_only_on_confirmation() -> None:
+    session = AsyncMock()
+    repository = AsyncMock()
+    repository.add = MagicMock()
+    repository.next_revision_number.return_value = 4
+    project = _project(locked=True)
+    active = ProjectAIConfigRevision(
+        id=uuid.uuid4(),
+        project_id=project.id,
+        revision_number=3,
+        schema_version=1,
+        configuration_hash="a" * 64,
+        configuration={
+            "retrieval": {"rerank_enabled": False, "rerank_top_n": 30},
+            "chat": {"include_citations": False},
+        },
+        created_by="legacy",
+        source="legacy_v1",
+        reason="Historical",
+    )
+    project.active_ai_config_revision_id = active.id
+    repository.lock_project.return_value = project
+    repository.get_active.return_value = active
+    service = _service(session, repository, MagicMock(), project.id)
+
+    source, preview = await service.normalization_preview()
+
+    assert source.id == active.id
+    assert preview.configuration.execution.rerank_mode == "always"
+    assert preview.required_index_action == "none"
+    repository.add.assert_not_called()
+
+    normalized = await service.normalize_active_v1(
+        expected_active_revision_id=active.id,
+        reason="Remove legacy live semantics",
+    )
+
+    assert normalized.schema_version == 2
+    assert normalized.source == "super_admin_v1_normalization"
+    assert normalized.restored_from_revision_id == active.id
+    assert project.active_ai_config_revision_id == normalized.id
+    assert active.configuration["retrieval"]["rerank_enabled"] is False
+    repository.add.assert_called_once_with(normalized)
 
 
 async def test_locked_project_cannot_be_reassigned() -> None:

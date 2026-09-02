@@ -219,7 +219,7 @@ async def test_chat_web_policy_does_not_enrich_or_block_contextual_generation(
         repository=repository,
         project_id=project_id,
         llm=StaticLLM('"Thirty days"'),
-        settings=Settings(),
+        settings=Settings(ai_policy={"request_override_mode": "compatibility"}),
         active_revision=revision,
     )
 

@@ -15,6 +15,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
@@ -43,14 +44,29 @@ class ConversationConfigSnapshot(Base, UUIDPrimaryKeyMixin, ProjectScopedMixin):
 
     conversation_id: Mapped[uuid.UUID] = mapped_column(nullable=False)
     sequence: Mapped[int] = mapped_column(Integer, nullable=False)
-    schema_version: Mapped[int] = mapped_column(Integer, nullable=False, default=4)
+    schema_version: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=4,
+        server_default=text("1"),
+    )
     configuration_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     resolution_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
     configuration: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     provenance: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     origins: Mapped[dict[str, str]] = mapped_column(JSONB, nullable=False)
-    structured_origins: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
-    invariants: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    structured_origins: Mapped[dict[str, Any]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=dict,
+        server_default=text("'{}'::jsonb"),
+    )
+    invariants: Mapped[dict[str, Any]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=dict,
+        server_default=text("'{}'::jsonb"),
+    )
     compatibility_diagnostics: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
     created_by: Mapped[str] = mapped_column(String(255), nullable=False)
     reason: Mapped[str] = mapped_column(Text, nullable=False)

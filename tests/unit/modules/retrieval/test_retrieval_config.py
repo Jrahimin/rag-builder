@@ -19,7 +19,7 @@ def test_retrieval_config_defaults_to_production_hybrid_strategy() -> None:
 
 def test_retrieval_config_accepts_hybrid_strategy_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("APE_RETRIEVAL__STRATEGY", "hybrid")
-    monkeypatch.setenv("APE_RETRIEVAL__RERANK_ENABLED", "true")
+    monkeypatch.setenv("APE_RETRIEVAL__RERANK_MODE", "always")
     from app.core.config import Settings
 
     settings = Settings()

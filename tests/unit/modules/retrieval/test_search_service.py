@@ -119,7 +119,10 @@ def _ready_search(service: SearchService, *, build: MagicMock | None = None) -> 
 
 async def test_search_service_uses_request_strategy_override() -> None:
     config = RetrievalConfig(strategy=RetrievalStrategy.SEMANTIC)
-    service = _search_service(retrieval_config=config)
+    service = _search_service(
+        retrieval_config=config,
+        ai_policy=AIConfigPolicy(request_override_mode="compatibility"),
+    )
     _ready_search(service)
 
     response = await service.search(SearchRequest(query="test", strategy=RetrievalStrategy.HYBRID))
@@ -141,7 +144,7 @@ async def test_source_policy_read_failure_fails_closed_only_in_enforce_mode() ->
         project_id=uuid.uuid4(),
         embedder=_embedder(),
         reranker=MagicMock(),
-        retrieval_config=RetrievalConfig(),
+        retrieval_config=RetrievalConfig(modifies_expansion_mode="off"),
         source_metadata=source_metadata,
         configured_source_policy_mode=SourcePolicyMode.ENFORCE,
     )
@@ -175,7 +178,7 @@ async def test_source_policy_off_skips_metadata_capture() -> None:
         project_id=uuid.uuid4(),
         embedder=_embedder(),
         reranker=MagicMock(),
-        retrieval_config=RetrievalConfig(),
+        retrieval_config=RetrievalConfig(modifies_expansion_mode="off"),
         source_metadata=source_metadata,
         configured_source_policy_mode=SourcePolicyMode.OFF,
     )
@@ -202,7 +205,7 @@ async def test_modifies_expansion_captures_governance_even_when_source_policy_is
         )
     )
     service = _search_service(
-        retrieval_config=RetrievalConfig(modifies_expansion_enabled=True),
+        retrieval_config=RetrievalConfig(modifies_expansion_mode="expand"),
         source_metadata=source_metadata,
         configured_source_policy_mode=SourcePolicyMode.OFF,
     )
@@ -739,7 +742,7 @@ async def test_search_respects_project_rerank_mode_off() -> None:
 
     context = retriever.retrieve.await_args.args[0]
     assert context.rerank_mode is RerankMode.OFF
-    assert context.rerank_enabled is True
+    assert context.rerank_enabled is False
 
 
 async def test_search_keeps_results_when_rerank_falls_back_unavailable() -> None:

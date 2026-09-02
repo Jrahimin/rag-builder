@@ -1,4 +1,4 @@
-import { Database, FileClock, Plus, Settings2, ShieldCheck, X } from "lucide-react";
+import { Database, FileClock, Plus, Settings2, X } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
@@ -7,9 +7,9 @@ import {
   type EffectiveProjectAIConfig,
   type Organization,
   type Project,
+  type ProjectAIConfig,
   type ProjectAIConfigRevision,
   type ProjectOwnershipPreflight,
-  type ProviderCapability,
   type SourceRevision,
 } from "../../api/operatorApiClient";
 import {
@@ -27,16 +27,12 @@ import { EmptyState, ErrorState, LoadingState } from "../../components/QueryStat
 import { StatusBadge } from "../../components/StatusBadge";
 import { formatBytes, formatDate, shortId } from "../../shared/formatters";
 import {
-  FieldHint,
-  InheritanceToggle,
-  PROJECT_AI_FIELD_HINTS,
   ProjectAISettingsFields,
   buildSparseProjectConfig,
-  configOverridesFromEffective,
+  configOverridesFromStored,
   configFormFromEffective,
   configFormFromDeployment,
   emptyProjectConfigForm,
-  inheritedFormFromEffective,
   inheritedProjectConfig,
   sparseHasOverrides,
   type ProjectConfigForm,
@@ -382,15 +378,11 @@ function CreateProject({
     setForm((current) => {
       const merged = {
         ...current,
-        provider: current.provider || next.provider,
-        model: current.model || next.model,
-        strategy: current.strategy || next.strategy,
+        responseMode: next.responseMode,
       };
       setOverrides((flags) => ({
         ...flags,
-        provider: merged.provider !== next.provider,
-        model: merged.model !== next.model,
-        strategy: merged.strategy !== next.strategy,
+        responseMode: merged.responseMode !== next.responseMode,
       }));
       return merged;
     });
@@ -401,7 +393,7 @@ function CreateProject({
     setError("");
     try {
       const project = await operatorApiClient.createProject(name, organizationId, description);
-      const sparseConfiguration = buildSparseProjectConfig({}, form, overrides, undefined);
+      const sparseConfiguration = buildSparseProjectConfig({}, form, overrides);
       if (!sparseHasOverrides(sparseConfiguration)) {
         onCreated(project);
         return;
@@ -486,9 +478,8 @@ function CreateProject({
           <details className="settings-disclosure">
             <summary>Optional AI settings</summary>
             <p className="muted-copy">
-              Leave Inherit global on to use the same vendor and model as this deployment (shown in
-              the fields). Picking another value turns Inherit off; turning it back on restores the
-              default. No AI revision is created if everything stays inherited.
+              Leave Inherit global on to use this deployment's approved profile, generation model,
+              and response defaults. No AI revision is created if everything stays inherited.
             </p>
             {configuration.isPending && !configuration.data ? (
               <p className="muted-copy">Loading deployment defaults…</p>
@@ -762,7 +753,6 @@ function ProjectDetails({
 function ProjectConfig({ project }: { project: Project }) {
   const [effective, setEffective] = useState<EffectiveProjectAIConfig | null>(null);
   const [history, setHistory] = useState<ProjectAIConfigRevision[]>([]);
-  const [capabilities, setCapabilities] = useState<ProviderCapability[]>([]);
   const [overrides, setOverrides] = useState<ProjectConfigOverrides>(inheritedProjectConfig);
   const [form, setForm] = useState<ProjectConfigForm>(emptyProjectConfigForm);
   const [busy, setBusy] = useState(false);
@@ -772,76 +762,47 @@ function ProjectConfig({ project }: { project: Project }) {
       operatorApiClient.getProjectAIConfig(project.id),
       operatorApiClient.getProjectAIConfigHistory(project.id),
     ]);
-    const providerCapabilities = await operatorApiClient.getProviderCapabilities(
-      config.configuration.llm.provider,
-      config.configuration.llm.model,
-    );
     const activeRevision = revisions.find((revision) => revision.id === config.active_revision_id);
     if (config.active_revision_id && !activeRevision) {
       throw new Error("The active AI configuration revision is unavailable. Reload and try again.");
     }
+    const stored =
+      activeRevision?.schema_version === 2 ? (activeRevision.configuration as ProjectAIConfig) : {};
     setEffective(config);
     setHistory(revisions);
-    setCapabilities(providerCapabilities);
-    setOverrides(configOverridesFromEffective(config, config.deployment_configuration));
-    setForm(
-      configFormFromEffective(
-        config,
-        activeRevision?.configuration ?? {},
-        config.deployment_configuration,
-      ),
-    );
+    setOverrides(configOverridesFromStored(stored));
+    setForm(configFormFromEffective(config, stored));
   }, [project.id]);
   useEffect(() => {
     setError("");
     void load().catch((caught: Error) => setError(caught.message));
   }, [load]);
-  useEffect(() => {
-    const model = form.model.trim();
-    if (!model) return;
-    const timer = window.setTimeout(() => {
-      void operatorApiClient
-        .getProviderCapabilities(form.provider, model)
-        .then((items) => {
-          setCapabilities(items);
-          if (items[0]?.parameters.temperature.supported === false) {
-            setOverrides((current) => ({ ...current, temperature: false }));
-          }
-        })
-        .catch((caught: Error) => setError(caught.message));
-    }, 200);
-    return () => window.clearTimeout(timer);
-  }, [form.model, form.provider]);
   if (!effective && !error) return <LoadingState label="Resolving Project AI configuration" />;
-  if (error && !effective)
+  if (error && !effective) {
     return (
       <div className="failure-box" role="alert">
         {error}
       </div>
     );
+  }
+
+  const activeRevision = history.find((revision) => revision.id === effective?.active_revision_id);
   const submit = async (event: FormEvent) => {
     event.preventDefault();
+    if (activeRevision?.schema_version === 1) {
+      setError("This active V1 revision must be normalized before it can be edited.");
+      return;
+    }
     setBusy(true);
     setError("");
-    const activeRevision = history.find(
-      (revision) => revision.id === effective?.active_revision_id,
-    );
-    if (effective?.active_revision_id && !activeRevision) {
-      setError("The active AI configuration revision is unavailable. Reload and try again.");
-      setBusy(false);
-      return;
-    }
-    const stored = activeRevision?.configuration ?? {};
-    const selectedCapability = capabilities.find(
-      (item) => item.provider === form.provider && item.model === form.model,
-    );
-    const configuration = buildSparseProjectConfig(stored, form, overrides, selectedCapability);
-    if (!sparseHasOverrides(configuration) && !effective?.active_revision_id) {
-      setError("All fields inherit deployment defaults, so no Project revision was created.");
-      setBusy(false);
-      return;
-    }
     try {
+      const stored = (activeRevision?.configuration ?? {}) as ProjectAIConfig;
+      const configuration = buildSparseProjectConfig(stored, form, overrides);
+      if (!sparseHasOverrides(configuration) && !effective?.active_revision_id) {
+        throw new Error(
+          "All fields inherit deployment defaults, so no Project revision was created.",
+        );
+      }
       await operatorApiClient.createProjectAIConfig(
         project.id,
         configuration,
@@ -855,26 +816,50 @@ function ProjectConfig({ project }: { project: Project }) {
       setBusy(false);
     }
   };
-  const selectedCapability = capabilities.find(
-    (item) => item.provider === form.provider && item.model === form.model,
-  );
-  const temperatureCapability = selectedCapability?.parameters.temperature;
-  const tokenCapability = selectedCapability?.parameters.max_tokens;
-  const baseline = inheritedFormFromEffective(effective);
-  const inheritedClass = (overridden: boolean) =>
-    overridden ? "field-control" : "field-control field-control--inherited";
-  const changeField = <K extends ProjectConfigOverride>(key: K, value: ProjectConfigForm[K]) => {
-    setForm((current) => ({ ...current, [key]: value }));
-    setOverrides((current) => ({ ...current, [key]: value !== baseline[key] }));
+  const normalizeV1 = async () => {
+    if (!activeRevision || activeRevision.schema_version !== 1) return;
+    setBusy(true);
+    setError("");
+    try {
+      const preview = await operatorApiClient.previewProjectAIConfigNormalization(project.id);
+      const changed = Object.keys(preview.result.effective_diff);
+      const message = `This creates and activates an append-only V2 revision. ${
+        changed.length ? `Effective changes: ${changed.join(", ")}.` : "No effective changes."
+      } Index action: ${preview.result.required_index_action}.`;
+      if (!window.confirm(message)) return;
+      const reason = window.prompt(
+        "Normalization reason",
+        "Normalize active V1 Project configuration",
+      );
+      if (!reason) return;
+      await operatorApiClient.normalizeProjectAIConfig(project.id, activeRevision.id, reason);
+      await load();
+    } catch (caught) {
+      setError((caught as Error).message);
+    } finally {
+      setBusy(false);
+    }
   };
-  const toggleField = (key: ProjectConfigOverride, overridden: boolean) => {
-    setOverrides((current) => ({ ...current, [key]: overridden }));
-    if (!overridden) setForm((current) => ({ ...current, [key]: baseline[key] }));
+  const normalizeProfile = async () => {
+    if (!activeRevision || activeRevision.schema_version !== 2) return;
+    setBusy(true);
+    setError("");
+    try {
+      const preview = await operatorApiClient.previewProjectAIProfileNormalization(project.id);
+      const label = preview.result.base_profile_id ?? "Custom";
+      const reason = window.prompt(
+        `Normalize this append-only V2 revision to ${label}. Effective behavior and index identity remain unchanged. Enter an audit reason.`,
+        "Normalize V2 execution profile identity",
+      );
+      if (!reason?.trim()) return;
+      await operatorApiClient.normalizeProjectAIProfile(project.id, activeRevision.id, reason);
+      await load();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Unable to normalize profile identity.");
+    } finally {
+      setBusy(false);
+    }
   };
-  const setOverride = (key: ProjectConfigOverride, enabled: boolean) => {
-    setOverrides((current) => ({ ...current, [key]: enabled }));
-  };
-  const temperatureUnsupported = temperatureCapability?.supported === false;
   return (
     <>
       <section className="panel config-summary">
@@ -886,11 +871,8 @@ function ProjectConfig({ project }: { project: Project }) {
               : "Inherited deployment defaults"}
           </h3>
           <p className="muted-copy">
-            Fingerprint {effective?.configuration_hash.slice(0, 12) ?? "—"}
-            {" · "}Source policy configured{" "}
-            {effective?.provenance.configured_source_policy_mode ?? "off"}
-            {" · "}effective {effective?.provenance.effective_source_policy_mode ?? "off"}
-            {" · "}deployment cap {effective?.provenance.source_policy_deployment_cap ?? "enforce"}
+            Effective hash {effective?.effective_value_hash?.slice(0, 12) ?? "—"}
+            {" · "}resolution {effective?.resolution_fingerprint?.slice(0, 12) ?? "—"}
           </p>
         </div>
         <OriginSummary origins={effective?.origins ?? {}} />
@@ -900,163 +882,76 @@ function ProjectConfig({ project }: { project: Project }) {
           {error}
         </div>
       )}
+      {activeRevision?.schema_version === 1 && (
+        <section className="panel">
+          <h3>Active V1 configuration</h3>
+          <p className="muted-copy">
+            Historical V1 remains readable. Preview normalization creates an append-only V2 revision
+            and reports its effective diff; it never schedules index work by itself.
+          </p>
+          <button
+            className="button button--primary"
+            type="button"
+            disabled={busy}
+            onClick={() => void normalizeV1()}
+          >
+            Preview and normalize V1
+          </button>
+        </section>
+      )}
       <form className="panel progressive-form" onSubmit={(event) => void submit(event)}>
         <p className="muted-copy">
-          Inherit global omits the field from the Project revision, so the saved policy uses the
-          deployment default. Choosing another value turns Inherit off; turning it back on restores
-          the default shown here.
+          Project revisions contain only V2 behavior and sparse canonical execution overrides.
+          Provider, web budget, calibration, citation, and source-governance controls are deployment
+          or code owned.
         </p>
         <fieldset>
           <legend>
-            <Settings2 size={17} /> Provider, model, translation, and rerank
+            <Settings2 size={17} /> Project behavior and canonical execution
           </legend>
           <ProjectAISettingsFields
             form={form}
             setForm={setForm}
             overrides={overrides}
-            setOverride={setOverride}
+            setOverride={(key, enabled) =>
+              setOverrides((current) => ({ ...current, [key]: enabled }))
+            }
             effective={effective}
             deploymentConfiguration={effective?.deployment_configuration}
+            allowedGenerationModels={effective?.allowed_generation_models}
+            ragProfiles={effective?.rag_profiles}
           />
         </fieldset>
-        <fieldset>
-          <legend>Generation and chat defaults</legend>
-          <div className="form-grid">
-            <div className={inheritedClass(overrides.temperature)}>
-              <FieldHint label="Temperature" text={PROJECT_AI_FIELD_HINTS.temperature} />
-              <input
-                aria-label="Temperature"
-                type="number"
-                step="0.1"
-                min={temperatureCapability?.minimum ?? undefined}
-                max={temperatureCapability?.maximum ?? undefined}
-                value={form.temperature}
-                disabled={temperatureUnsupported}
-                onChange={(event) => changeField("temperature", event.target.value)}
-              />
-              <InheritanceToggle
-                field="Temperature"
-                overridden={overrides.temperature}
-                disabled={temperatureUnsupported}
-                onChange={(enabled) => toggleField("temperature", enabled)}
-              />
-              {temperatureUnsupported && (
-                <small>This provider/model does not support temperature.</small>
-              )}
-            </div>
-            <div className={inheritedClass(overrides.maxTokens)}>
-              <FieldHint label="Maximum output tokens" text={PROJECT_AI_FIELD_HINTS.maxTokens} />
-              <input
-                aria-label="Maximum output tokens"
-                type="number"
-                min={tokenCapability?.minimum ?? 1}
-                max={tokenCapability?.maximum ?? undefined}
-                value={form.maxTokens}
-                onChange={(event) => changeField("maxTokens", event.target.value)}
-              />
-              <InheritanceToggle
-                field="Maximum output tokens"
-                overridden={overrides.maxTokens}
-                onChange={(enabled) => toggleField("maxTokens", enabled)}
-              />
-            </div>
-          </div>
-        </fieldset>
-        <fieldset>
-          <legend>Retrieval, citation, and evidence defaults</legend>
-          <div className="form-grid">
-            <div className={inheritedClass(overrides.strategy)}>
-              <FieldHint label="Strategy" text={PROJECT_AI_FIELD_HINTS.strategy} />
-              <select
-                aria-label="Strategy"
-                value={form.strategy}
-                onChange={(event) => changeField("strategy", event.target.value)}
-              >
-                <option value="semantic">Semantic</option>
-                <option value="hybrid">Hybrid</option>
-              </select>
-              <InheritanceToggle
-                field="Strategy"
-                overridden={overrides.strategy}
-                onChange={(enabled) => toggleField("strategy", enabled)}
-              />
-            </div>
-            <div className={inheritedClass(overrides.topK)}>
-              <FieldHint label="Top K" text={PROJECT_AI_FIELD_HINTS.topK} />
-              <input
-                aria-label="Top K"
-                type="number"
-                min="1"
-                value={form.topK}
-                onChange={(event) => changeField("topK", event.target.value)}
-              />
-              <InheritanceToggle
-                field="Top K"
-                overridden={overrides.topK}
-                onChange={(enabled) => toggleField("topK", enabled)}
-              />
-            </div>
-            <div className={inheritedClass(overrides.evidence)}>
-              <FieldHint label="Evidence threshold" text={PROJECT_AI_FIELD_HINTS.evidence} />
-              <input
-                aria-label="Evidence threshold"
-                type="number"
-                min="0"
-                max="1"
-                step="0.01"
-                value={form.evidence}
-                onChange={(event) => changeField("evidence", event.target.value)}
-              />
-              <InheritanceToggle
-                field="Evidence threshold"
-                overridden={overrides.evidence}
-                onChange={(enabled) => toggleField("evidence", enabled)}
-              />
-            </div>
-          </div>
-        </fieldset>
-        <fieldset>
-          <legend>
-            <ShieldCheck size={17} /> Advanced source policy
-          </legend>
-          <div className={inheritedClass(overrides.sourcePolicy)}>
-            <FieldHint label="Rollout mode" text={PROJECT_AI_FIELD_HINTS.sourcePolicy} />
-            <select
-              aria-label="Source policy"
-              value={form.sourcePolicy}
-              onChange={(event) => changeField("sourcePolicy", event.target.value)}
-            >
-              <option value="off">Off — legacy-neutral</option>
-              <option value="observe">Observe — diagnostics only</option>
-              <option value="enforce">Enforce — filter and consolidate applicable sources</option>
-            </select>
-            <InheritanceToggle
-              field="Source policy"
-              overridden={overrides.sourcePolicy}
-              onChange={(enabled) => toggleField("sourcePolicy", enabled)}
-            />
-          </div>
-          <p className="muted-copy">
-            The effective mode may be lowered by the deployment safety cap without changing this
-            stored Project policy.
-          </p>
-        </fieldset>
         <div className="field-control">
-          <FieldHint label="Revision reason" text={PROJECT_AI_FIELD_HINTS.reason} />
+          <label htmlFor="project-ai-reason">Revision reason</label>
           <input
+            id="project-ai-reason"
             required
             aria-label="Revision reason"
             value={form.reason}
-            onChange={(event) => setForm({ ...form, reason: event.target.value })}
+            onChange={(event) => setForm((current) => ({ ...current, reason: event.target.value }))}
             placeholder="Why this policy changed"
           />
         </div>
         <p className="muted-copy">
-          New conversations capture this policy. Existing conversation snapshots do not drift.
+          New conversations capture this policy. Existing snapshots do not drift.
         </p>
-        <button className="button button--primary" disabled={busy}>
+        <button
+          className="button button--primary"
+          disabled={busy || activeRevision?.schema_version === 1}
+        >
           Create and activate revision
         </button>
+        {activeRevision?.schema_version === 2 && (
+          <button
+            className="button button--secondary"
+            type="button"
+            disabled={busy}
+            onClick={() => void normalizeProfile()}
+          >
+            Normalize profile identity
+          </button>
+        )}
       </form>
       <div className="detail-grid">
         <section className="panel">
@@ -1068,7 +963,9 @@ function ProjectConfig({ project }: { project: Project }) {
             {history.map((revision) => (
               <div className="record-row" key={revision.id}>
                 <span>
-                  <strong>Revision {revision.revision_number}</strong>
+                  <strong>
+                    Revision {revision.revision_number} · V{revision.schema_version}
+                  </strong>
                   <small>
                     {revision.reason} · {formatDate(revision.created_at)}
                   </small>
@@ -1090,6 +987,8 @@ function ProjectConfig({ project }: { project: Project }) {
                             reason,
                           );
                           await load();
+                        } catch (caught) {
+                          setError((caught as Error).message);
                         } finally {
                           setBusy(false);
                         }
@@ -1105,10 +1004,14 @@ function ProjectConfig({ project }: { project: Project }) {
         </section>
         <section className="panel">
           <div className="section-heading">
-            <h3>Capability restrictions</h3>
-            <span>{capabilities.length} providers</span>
+            <h3>Approved generation models</h3>
+            <span>{effective?.allowed_generation_models?.length ?? 0}</span>
           </div>
-          <pre className="config-json">{JSON.stringify(capabilities, null, 2)}</pre>
+          <p className="muted-copy">
+            {effective?.allowed_generation_models
+              ?.map((model) => `${model.id} (${model.provider}/${model.model})`)
+              .join(", ") || "Deployment default only"}
+          </p>
         </section>
       </div>
     </>

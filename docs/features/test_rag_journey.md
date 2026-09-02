@@ -174,12 +174,12 @@ These are product behaviors the cases observe. The harness does not reimplement 
 | Query translation routing | Bangla → English and Banglish/code-switched → English when English exists in inventory. Ordinary English queries do not auto-translate to Bangla because Bangla exists in the corpus. Mixed-script queries keep both scripts and skip the rewrite. Hard-scoped same-language documents skip with `same_language_scope`; otherwise unused rewrites skip with `no_translation_target` |
 | Translation budget | Default minimum output is 256 tokens (`APE_QUERY_TRANSLATION__MIN_OUTPUT_TOKENS`), hard-capped at 2048. Empty/failed rewrites record `finish_reason`, output tokens, reasoning tokens, attempts, and validation reasons on retrieval diagnostics |
 | Cross-language evidence | Dedicated `chat.cross_language_semantic_evidence_score_threshold` (default `0.30`). Must not exceed the semantic bar. Not lowered to pass this fixture |
-| Candidate-wise grounding | When enabled, admitted `EvidenceUnit`s drive generation; when off, assessments remain shadow-only. Toggle is query-time (`chat.candidate_wise_grounding_enabled`) |
-| Grounding mode | `chat.grounding_mode=strict` (code default, high-assurance corroboration) or `balanced` (high-confidence reranker near-miss may admit). Not a tax-specific switch. Hosted `.env.example` currently sets `balanced` |
+| Candidate-wise grounding | Internal code behavior. It remains outside the journey allowlist and is not a universal invariant or Project switch |
+| Grounding mode | V2 Project behavior `behavior.grounding_assurance` is `strict` or `balanced`; this is not a tax-specific switch |
 | Context budget | Admitted units are indivisible. Overflow is `context_selection`, not a rewritten span. Rerank relevance is preserved onto selected units |
-| Source policy / MODIFIES | `source_policy_mode` (inherits `APE_AI_POLICY__SOURCE_POLICY_MODE`, code default `off`) and `retrieval.modifies_expansion_mode` are query-time. Expansion-on scoped cases expect `suppressed_document_scope`. Hosted `.env.example` currently sets `source_policy_mode=enforce` and `modifies_expansion_mode=expand` (mode wins over the legacy boolean) |
-| Passage scoring | Always-on `retrieval.passage_scoring_enabled` stays **off** by default. Grounding may still run adaptive passage rescue on high-confidence near-misses. One-factor `--compare` of always-on scoring is allowed for debugging |
-| Web fallback | Indexed-only / sufficient indexed answers must not search the web. Hard scope and `as_of` suppress web search. `--set chat.response_mode=…` is allowlisted for A/B only; do not use this corpus to certify web modes |
+| Source policy / MODIFIES | Code applies governance automatically where source metadata/relationships exist; ungoverned Projects stay neutral. Scoped cases still expect `suppressed_document_scope` |
+| Passage scoring | `execution.passage_scoring_enabled` stays **off** by default. Grounding may still run adaptive passage rescue on high-confidence near-misses |
+| Web fallback | Indexed-only / sufficient indexed answers must not search the web. Hard scope and `as_of` suppress web search. `--set behavior.response_mode=…` is allowlisted for A/B only; do not use this corpus to certify web modes |
 
 ## Configuration
 
@@ -190,51 +190,46 @@ rejected. `--compare` and `--compare-translation` each add one second variant
 and must change the effective configuration hash without changing the active
 corpus fingerprint. They are mutually exclusive.
 
-The allowlist includes LLM/chat/retrieval policy, web-search bounds,
-`source_policy_mode`, grounding leaves, and passage-window sizes. New Project AI
-leaves stay rejected until they are classified as safe against an existing
-index. Full env meaning lives in the [Configuration Map](../configuration-map.md).
+The allowlist contains only V2 `behavior.*` and `execution.*` leaves. It excludes
+providers, raw calibration, web budgets, source policy, invariant controls, and
+index identity. New Project AI leaves stay rejected until they are classified as
+safe against an existing index. Full env meaning lives in the
+[Configuration Map](../configuration-map.md).
 
 Useful leaves for this journey:
 
 ```text
-source_policy_mode
-retrieval.modifies_expansion_mode
-retrieval.query_translation_enabled
-retrieval.passage_scoring_enabled
-chat.candidate_wise_grounding_enabled
-chat.cross_language_semantic_evidence_score_threshold
-chat.evidence_gate_mode
-chat.grounding_mode
-chat.high_confidence_reranker_evidence_score
-chat.response_mode
+behavior.translation_policy
+behavior.grounding_assurance
+behavior.response_mode
+execution.retrieval_top_k
+execution.rerank_mode
+execution.passage_scoring_enabled
+execution.passage_window_tokens
+execution.max_context_chunks
 ```
 
 `--set` builds a **sparse** Project revision. Omitted leaves inherit deployment
-settings (`hosted_managed` typically uses Cohere embed/rerank, OpenAI
-`gpt-5.6-luna` generation, and `gpt-5-nano` translation when enabled). Query
-translation stays off unless inherited from `APE_QUERY_TRANSLATION__ENABLED` or
-overridden on the Project.
+settings. Query translation stays off unless inherited from
+`APE_QUERY_TRANSLATION__ENABLED` or enabled by V2 `behavior.translation_policy`.
 
-The journey does not itself enable candidate-wise grounding, MODIFIES expansion,
-or source-policy enforce. If you run against root `.env` / Compose, those leaves
-may already be on via env. Code defaults vs a typical hosted `.env` are called
-out in the [Configuration Map](../configuration-map.md) insight section.
+The journey does not itself alter candidate-wise grounding, source policy, or
+MODIFIES expansion. These remain code-owned and conditional on source metadata.
 
 Deployment settings the product path uses (not journey-only). Values are **code
 defaults**; hosted example files override several:
 
 | Setting | Code default | Role |
 | ------- | ------------ | ---- |
-| `APE_QUERY_TRANSLATION__ENABLED` | `false` | Global default for `retrieval.query_translation_enabled`; Projects override Inherit / On / Off |
+| `APE_QUERY_TRANSLATION__ENABLED` | `false` | Global default for V2 `behavior.translation_policy`; Projects override Inherit / On / Off |
 | `APE_QUERY_TRANSLATION__MIN_OUTPUT_TOKENS` | `256` | Floor for retrieval-translation output |
 | `APE_CHAT__CROSS_LANGUAGE_SEMANTIC_EVIDENCE_SCORE_THRESHOLD` | `0.30` | Cross-language semantic admit bar |
-| `APE_CHAT__GROUNDING_MODE` | `strict` | High-assurance corroboration. Hosted example: `balanced` |
+| `APE_CHAT__GROUNDING_MODE` | `strict` | Deployment grounding default; V2 can choose strict or balanced assurance |
 | `APE_CHAT__CANDIDATE_WISE_GROUNDING_ENABLED` | `false` | Shadow assessments unless on. Hosted example: `true` |
 | `APE_CHAT__HIGH_CONFIDENCE_RERANKER_EVIDENCE_SCORE` | `0.70` | Balanced near-miss and passage-rescue bar; must exceed the medium reranker bar |
-| `APE_AI_POLICY__SOURCE_POLICY_MODE` | `off` | Deployment default for source-policy. Hosted example: `enforce` |
+| `APE_AI_POLICY__SOURCE_POLICY_MODE` | `enforce` | Code-owned source governance where metadata/relationships exist |
 | `APE_AI_POLICY__SOURCE_POLICY_DEPLOYMENT_CAP` | `enforce` | Maximum allowed source-policy mode; restricts only, never activates |
-| `APE_RETRIEVAL__MODIFIES_EXPANSION_MODE` | `off` | Incoming MODIFIES recall. Hosted example: `expand` (wins over `ENABLED=false`) |
+| `APE_RETRIEVAL__MODIFIES_EXPANSION_MODE` | `expand` | Code-owned conditional incoming MODIFIES recall |
 | `APE_RERANKER__REQUEST_TIMEOUT_SECONDS` | `10` | Fail-open rerank timeout. Hosted example: `30` |
 | `APE_RETRIEVAL__PASSAGE_SCORING_ENABLED` | `false` | Always-on bounded-passage scoring; keep off unless measuring. Adaptive rescue is separate |
 
@@ -276,7 +271,7 @@ Translation on/off A/B on the same Project, ingested corpus, and active index
 ```
 
 This keeps the current configuration as `translation_on` and only sets
-`retrieval.query_translation_enabled=false` for `translation_off`. `summary.md`
+`behavior.translation_policy=disabled` for `translation_off`. `summary.md`
 includes a paired quality/latency table. `results.json` keeps per-case timings,
 `translation_changed_retrieval_outcome`, and verdicts. Translation must already
 be enabled on the current configuration.
@@ -286,11 +281,10 @@ defaults):
 
 ```powershell
 .venv\Scripts\python.exe -m app.cli rag-journey `
-  --set source_policy_mode=enforce `
-  --set retrieval.modifies_expansion_mode=expand `
-  --set chat.candidate_wise_grounding_enabled=true `
-  --set chat.grounding_mode=balanced `
-  --compare retrieval.passage_scoring_enabled=true
+  --set behavior.grounding_assurance=balanced `
+  --set execution.rerank_mode=cross_language `
+  --set execution.retrieval_top_k=12 `
+  --compare execution.passage_scoring_enabled=true
 ```
 
 The full journey needs the configured database, object storage, embedding, and

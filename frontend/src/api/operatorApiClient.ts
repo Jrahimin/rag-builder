@@ -24,7 +24,13 @@ export type ProjectOwnershipMigration = components["schemas"]["ProjectOwnershipM
 export type ProjectOwnershipPreflight = components["schemas"]["ProjectOwnershipPreflight"];
 export type EffectiveProjectAIConfig = components["schemas"]["EffectiveProjectAIConfigResponse"];
 export type ProjectAIConfig = components["schemas"]["ProjectAIConfig"];
+export type GenerationModelOption = components["schemas"]["GenerationModelOption"];
+export type RAGProfileOption = components["schemas"]["RAGProfileOption"];
 export type ProjectAIConfigRevision = components["schemas"]["ProjectAIConfigRevisionResponse"];
+export type ProjectAIConfigNormalizationPreview =
+  components["schemas"]["ProjectAIConfigNormalizationPreview"];
+export type ProjectAIProfileNormalizationPreview =
+  components["schemas"]["ProjectAIProfileNormalizationPreview"];
 export type ProviderParameterCapability = {
   supported: boolean;
   wire_name: string | null;
@@ -459,6 +465,44 @@ export const operatorApiClient = {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ expected_active_revision_id: expectedActiveRevisionId, reason }),
+      },
+    ),
+  previewProjectAIConfigNormalization: (projectId: string) =>
+    request<ProjectAIConfigNormalizationPreview>(
+      `${apiRoot}/operator/projects/${projectId}/ai-config/normalize-v1`,
+    ),
+  normalizeProjectAIConfig: (projectId: string, expectedActiveRevisionId: string, reason: string) =>
+    request<ProjectAIConfigRevision>(
+      `${apiRoot}/operator/projects/${projectId}/ai-config/normalize-v1`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          expected_active_revision_id: expectedActiveRevisionId,
+          reason,
+          confirm: true,
+        }),
+      },
+    ),
+  previewProjectAIProfileNormalization: (projectId: string) =>
+    request<ProjectAIProfileNormalizationPreview>(
+      `${apiRoot}/operator/projects/${projectId}/ai-config/normalize-profile`,
+    ),
+  normalizeProjectAIProfile: (
+    projectId: string,
+    expectedActiveRevisionId: string,
+    reason: string,
+  ) =>
+    request<ProjectAIConfigRevision>(
+      `${apiRoot}/operator/projects/${projectId}/ai-config/normalize-profile`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          expected_active_revision_id: expectedActiveRevisionId,
+          reason,
+          confirm: true,
+        }),
       },
     ),
   getProviderCapabilities: (provider?: string, model?: string) =>
