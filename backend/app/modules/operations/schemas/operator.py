@@ -145,6 +145,12 @@ class ConfigurationSnapshotSummary(BaseModel):
 class ActiveConfiguration(BaseModel):
     environment: str
     runtime_profile: str
+    deployment_profile_id: str
+    deployment_profile_hash: str
+    default_rag_profile_id: str | None
+    evidence_calibration_profile_id: str
+    index_profile_id: str
+    index_profile_hash: str
     application_version: str
     llm: ProviderConfiguration
     web_search: ProviderConfiguration
@@ -162,6 +168,10 @@ class ActiveConfiguration(BaseModel):
     generation_full_retention_allowed: bool
     generation_max_context_bytes: int
     recent_project_snapshots: list[ConfigurationSnapshotSummary]
+
+
+class AIConfigNormalizationStatus(BaseModel):
+    active_v1_projects: int
 
 
 class RecentFailure(BaseModel):

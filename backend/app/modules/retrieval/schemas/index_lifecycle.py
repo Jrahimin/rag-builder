@@ -21,6 +21,10 @@ class IndexBuildResponse(BaseModel):
     operation: IndexBuildOperation
     embedding_set_version: int
     configuration_hash: str
+    artifact_fingerprint_version: int | None
+    artifact_fingerprint: str | None
+    index_profile_id: str | None
+    index_profile_hash: str | None
     corpus_fingerprint: str | None
     document_count: int
     chunk_count: int

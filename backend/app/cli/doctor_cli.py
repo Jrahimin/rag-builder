@@ -17,6 +17,7 @@ from app.core.config import (
     get_settings,
 )
 from app.core.runtime_validation import validate_runtime_config
+from app.platform.config.profiles import validate_profile_compatibility
 from app.platform.db.session import Database
 from app.platform.infra.connectivity.redis import RedisConnectivity
 from app.platform.providers.implementations.storage_factory import create_storage_provider
@@ -49,6 +50,7 @@ async def _run_check(
 
 def _configuration_results(settings: Settings) -> list[DoctorResult]:
     validate_runtime_config(settings)
+    validate_profile_compatibility(settings)
     validate_auth_config(settings)
     results = [DoctorResult("configuration", "PASS", "settings validated")]
     if settings.embedding.backend is EmbeddingBackend.HASH:

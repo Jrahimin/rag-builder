@@ -4,10 +4,13 @@ from __future__ import annotations
 
 from app.core.config import (
     EmbeddingBackend,
+    EvidenceGateMode,
     JobQueueBackend,
     LLMBackend,
     MalwareScannerBackend,
     OcrBackend,
+    RerankerBackend,
+    RerankMode,
     ResponseMode,
     RetrievalStrategy,
     RuntimeProfile,
@@ -15,6 +18,7 @@ from app.core.config import (
     StorageBackend,
     WebSearchBackend,
 )
+from app.core.generation_models import validate_generation_model_allowlist
 
 
 class ProductionConfigurationError(ValueError):
@@ -29,6 +33,7 @@ def validate_runtime_config(settings: Settings) -> None:
     constructed. Production additionally enforces the certified profiles.
     """
     errors = _base_configuration_errors(settings)
+    errors.extend(validate_generation_model_allowlist(settings))
     if not settings.app.is_production:
         if errors:
             raise ProductionConfigurationError(
@@ -36,9 +41,11 @@ def validate_runtime_config(settings: Settings) -> None:
             )
         return
 
-    profile = settings.runtime.profile
+    profile = _effective_runtime_profile(settings)
     if profile is RuntimeProfile.DEVELOPMENT:
-        errors.append("APE_RUNTIME__PROFILE must select a certified production profile")
+        errors.append(
+            "APE_RUNTIME__CAPABILITY_PROFILE_ID must select a production capability profile"
+        )
     if settings.embedding.backend is EmbeddingBackend.HASH:
         errors.append("hash embeddings are not allowed in production")
     if settings.llm.backend is LLMBackend.ECHO:
@@ -55,8 +62,16 @@ def validate_runtime_config(settings: Settings) -> None:
         errors.append("production requires APE_MALWARE_SCAN__BACKEND=clamav")
     if settings.retrieval.strategy is not RetrievalStrategy.HYBRID:
         errors.append("production requires hybrid retrieval")
-    if not settings.retrieval.rerank_enabled:
+    if settings.retrieval.rerank_mode is RerankMode.OFF:
         errors.append("production requires the rerank stage to be enabled")
+    if settings.retrieval.reranker_backend is RerankerBackend.NOOP:
+        errors.append("production requires a configured reranker backend")
+    if settings.chat.evidence_gate_mode is not EvidenceGateMode.ENFORCE:
+        errors.append("production requires evidence-gate enforcement")
+    if not settings.retrieval.deduplicate_by_content_hash:
+        errors.append("production requires content-hash deduplication")
+    if not settings.chat.include_citations:
+        errors.append("production requires durable citation/provenance creation")
     if (
         settings.ocr.enabled
         and settings.ocr.backend is OcrBackend.NOOP
@@ -168,6 +183,11 @@ def _base_configuration_errors(settings: Settings) -> list[str]:
     embedding = settings.embedding
     if embedding.backend is EmbeddingBackend.COHERE and not settings.resolved_cohere_api_key():
         errors.append("APE_COHERE__API_KEY is required for Cohere embeddings")
+    if (
+        settings.retrieval.reranker_backend is RerankerBackend.COHERE
+        and not settings.resolved_cohere_api_key()
+    ):
+        errors.append("APE_COHERE__API_KEY is required for Cohere reranking")
     if embedding.backend is EmbeddingBackend.OPENAI and not embedding.openai_api_key:
         errors.append("APE_EMBEDDING__OPENAI_API_KEY is required for OpenAI embeddings")
     if embedding.backend is EmbeddingBackend.GEMINI and not embedding.gemini_api_key:
@@ -215,6 +235,16 @@ def _base_configuration_errors(settings: Settings) -> list[str]:
             "APE_WEB_SEARCH__OPENAI_API_KEY or APE_LLM__OPENAI_API_KEY is required for web search"
         )
     return errors
+
+
+def _effective_runtime_profile(settings: Settings) -> RuntimeProfile:
+    """Use the canonical capability identity; retain the legacy enum as an alias."""
+    if settings.runtime.capability_profile_id is None:
+        return settings.runtime.profile
+    # Imported lazily because the profile module reuses ProductionConfigurationError.
+    from app.core.capability_profiles import deployment_capability_profile
+
+    return deployment_capability_profile(settings).legacy_runtime_alias
 
 
 def _require_secret(

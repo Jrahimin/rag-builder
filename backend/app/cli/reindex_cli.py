@@ -133,6 +133,7 @@ async def _project_job_configuration(
             revision_number=revision.revision_number,
             configuration_hash=revision.configuration_hash,
             configuration=dict(revision.configuration),
+            schema_version=revision.schema_version,
         )
         if revision is not None
         else None,

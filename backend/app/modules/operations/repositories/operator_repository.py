@@ -22,6 +22,7 @@ from app.models.job_run import JobRun, JobState
 from app.models.message import Message, MessageRole
 from app.models.organization import Organization
 from app.models.project import Project
+from app.models.project_ai_config_revision import ProjectAIConfigRevision
 from app.modules.operations.schemas.operator import UsageBucket, UsageWorkload
 
 
@@ -30,6 +31,21 @@ class OperatorRepository:
 
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
+
+    async def active_v1_project_count(self) -> int:
+        """Count live Projects whose active immutable AI revision is still V1."""
+        value = await self._session.scalar(
+            select(func.count(Project.id))
+            .join(
+                ProjectAIConfigRevision,
+                Project.active_ai_config_revision_id == ProjectAIConfigRevision.id,
+            )
+            .where(
+                Project.deleted_at.is_(None),
+                ProjectAIConfigRevision.schema_version == 1,
+            )
+        )
+        return int(value or 0)
 
     async def job_state_counts(self) -> dict[str, int]:
         rows = await self._session.execute(

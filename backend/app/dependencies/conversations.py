@@ -33,6 +33,8 @@ from app.platform.config.project_ai import (
     ConfigRevisionRecord,
     EffectiveConfigResolution,
     EffectiveProjectAIConfig,
+    InvariantState,
+    StructuredOrigin,
     apply_effective_ai_config,
     resolve_project_ai_config,
 )
@@ -174,6 +176,7 @@ async def get_conversation_service(
                 revision_number=revision.revision_number,
                 configuration_hash=revision.configuration_hash,
                 configuration=dict(revision.configuration),
+                schema_version=revision.schema_version,
             )
             if revision is not None
             else None
@@ -215,6 +218,7 @@ async def get_chat_service(
                 revision_number=revision.revision_number,
                 configuration_hash=revision.configuration_hash,
                 configuration=dict(revision.configuration),
+                schema_version=revision.schema_version,
             )
             if revision is not None
             else None,
@@ -227,8 +231,43 @@ async def get_chat_service(
         resolution = EffectiveConfigResolution(
             configuration=EffectiveProjectAIConfig.model_validate(snapshot.configuration),
             configuration_hash=snapshot.configuration_hash,
+            effective_value_hash=snapshot.configuration_hash,
+            resolution_fingerprint=(snapshot.resolution_fingerprint or snapshot.configuration_hash),
             origins=dict(snapshot.origins),
+            structured_origins={
+                path: StructuredOrigin.model_validate(value)
+                for path, value in (snapshot.structured_origins or {}).items()
+            },
             provenance=ConfigProvenance.model_validate(snapshot.provenance),
+            invariants=(
+                InvariantState.model_validate(snapshot.invariants)
+                if snapshot.invariants
+                else InvariantState(
+                    hybrid_retrieval=(
+                        snapshot.configuration.get("retrieval", {}).get("strategy") == "hybrid"
+                    ),
+                    hosted_reranking_stage=bool(
+                        snapshot.configuration.get("retrieval", {}).get("rerank_enabled")
+                    ),
+                    evidence_gate_enforced=(
+                        snapshot.configuration.get("chat", {}).get("evidence_gate_mode")
+                        == "enforce"
+                    ),
+                    # This deployment-only value was not captured by legacy
+                    # conversation snapshots; preserve that uncertainty.
+                    content_hash_deduplication=None,
+                    durable_citation_provenance=bool(
+                        snapshot.configuration.get("chat", {}).get("include_citations")
+                    ),
+                    governed_source_policy=(
+                        snapshot.configuration.get("source_policy_mode") == "enforce"
+                    ),
+                    governed_modifies_expansion=(
+                        snapshot.configuration.get("retrieval", {}).get("modifies_expansion_mode")
+                        == "expand"
+                    ),
+                )
+            ),
             compatibility_diagnostics=list(snapshot.compatibility_diagnostics),
         )
         snapshot_id = snapshot.id

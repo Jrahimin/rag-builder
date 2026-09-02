@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from app.core.config import Settings
+from app.platform.config.index_artifact import build_index_artifact_config
 from app.platform.config.project_ai import (
     EffectiveConfigResolution,
     apply_effective_ai_config,
@@ -58,6 +59,7 @@ def build_job_configuration(
             "active_index_build_id": active_index_build_id,
             "source_metadata_generation": source_metadata_generation,
         },
+        index_artifact=build_index_artifact_config(settings),
     )
 
 
@@ -80,10 +82,50 @@ def apply_job_configuration(
     processing = configuration.processing
     index = configuration.index
     quality = configuration.quality
+    historical_chunking = dict(processing["chunking"])
+    historical_chunking.pop("overlap_tokens", None)
+    if historical_chunking.get("strategy") == "recursive_character":
+        historical_chunking["strategy"] = "recursive_fallback"
+    historical_embedding = dict(index["embedding"])
+    historical_embedding.pop("provider_version", None)
+    historical_retrieval = dict(index["retrieval"])
+    historical_retrieval.pop("language_metadata_schema_version", None)
+    legacy_auto_embed = historical_retrieval.pop("auto_embed", None)
+    legacy_auto_index = historical_retrieval.pop("auto_index", None)
+    if "auto_build_after_process" not in historical_retrieval and (
+        legacy_auto_embed is not None or legacy_auto_index is not None
+    ):
+        historical_retrieval["auto_build_after_process"] = bool(
+            legacy_auto_embed is not False and legacy_auto_index is not False
+        )
+    legacy_rerank_enabled = historical_retrieval.pop("rerank_enabled", None)
+    if legacy_rerank_enabled is not None and "rerank_mode" not in historical_retrieval:
+        historical_retrieval["rerank_mode"] = "always" if legacy_rerank_enabled else "off"
+    legacy_top_n = historical_retrieval.pop("rerank_top_n", None)
+    if legacy_top_n is not None:
+        historical_retrieval["rerank_candidate_window"] = max(
+            int(legacy_top_n),
+            int(historical_retrieval.get("rerank_candidate_window") or legacy_top_n),
+        )
+    legacy_return = historical_retrieval.pop("rerank_return_n", None)
+    if "rerank_return_count" not in historical_retrieval and legacy_return is not None:
+        historical_retrieval["rerank_return_count"] = legacy_return
+    legacy_modifies = historical_retrieval.pop("modifies_expansion_enabled", None)
+    if legacy_modifies is True and historical_retrieval.get("modifies_expansion_mode") in {
+        None,
+        "off",
+    }:
+        historical_retrieval["modifies_expansion_mode"] = "expand"
+    historical_chat = dict(quality["chat"])
+    historical_chat.pop("retrieval_top_k", None)
+    historical_llm = dict(quality["llm"])
+    historical_llm.pop("provider_version", None)
+    historical_reranker = dict(quality.get("reranker", {}))
+    historical_reranker.pop("provider_version", None)
     return settings.model_copy(
         update={
             "parsing": type(settings.parsing).model_validate(processing["parsing"]),
-            "chunking": type(settings.chunking).model_validate(processing["chunking"]),
+            "chunking": type(settings.chunking).model_validate(historical_chunking),
             "ocr": type(settings.ocr).model_validate(
                 {
                     **settings.ocr.model_dump(),
@@ -93,21 +135,21 @@ def apply_job_configuration(
             "embedding": type(settings.embedding).model_validate(
                 {
                     **settings.embedding.model_dump(),
-                    **index["embedding"],
+                    **historical_embedding,
                 }
             ),
             "retrieval": type(settings.retrieval).model_validate(
                 {
                     **settings.retrieval.model_dump(),
-                    **index["retrieval"],
+                    **historical_retrieval,
                 }
             ),
-            "chat": type(settings.chat).model_validate(quality["chat"]),
+            "chat": type(settings.chat).model_validate(historical_chat),
             "evaluation": type(settings.evaluation).model_validate(quality["evaluation"]),
             "llm": type(settings.llm).model_validate(
                 {
                     **settings.llm.model_dump(),
-                    **quality["llm"],
+                    **historical_llm,
                 }
             ),
             "query_translation": type(settings.query_translation).model_validate(
@@ -116,7 +158,7 @@ def apply_job_configuration(
             "reranker": type(settings.reranker).model_validate(
                 {
                     **settings.reranker.model_dump(),
-                    **quality.get("reranker", {}),
+                    **historical_reranker,
                 }
             ),
         }

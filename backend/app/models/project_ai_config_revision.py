@@ -15,6 +15,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
@@ -36,9 +37,18 @@ class ProjectAIConfigRevision(Base, UUIDPrimaryKeyMixin, ProjectScopedMixin):
     )
 
     revision_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    schema_version: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=2,
+        server_default=text("1"),
+    )
     configuration_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     configuration: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     created_by: Mapped[str] = mapped_column(String(255), nullable=False)
+    source: Mapped[str] = mapped_column(
+        String(64), nullable=False, default="operator_write", server_default="legacy_v1"
+    )
     reason: Mapped[str] = mapped_column(Text, nullable=False)
     restored_from_revision_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
     created_at: Mapped[datetime] = mapped_column(

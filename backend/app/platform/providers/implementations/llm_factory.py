@@ -12,6 +12,7 @@ from __future__ import annotations
 from functools import lru_cache
 
 from app.core.config import LLMBackend, Settings, get_settings
+from app.core.implementation_versions import LLM_ADAPTER_VERSION
 from app.platform.providers.capabilities import describe_llm_capability
 from app.platform.providers.contracts.llm import BaseLLMProvider
 from app.platform.providers.errors import ProviderError
@@ -39,12 +40,12 @@ def _build_llm_provider(
     )
     describe_llm_capability(backend.value, model)
     if backend is LLMBackend.ECHO:
-        return EchoLLMProvider(model=model, provider_version=llm.provider_version)
+        return EchoLLMProvider(model=model, provider_version=LLM_ADAPTER_VERSION)
     if backend is LLMBackend.OLLAMA:
         return OllamaChatProvider(
             base_url=llm.ollama_base_url,
             model=model,
-            provider_version=llm.provider_version,
+            provider_version=LLM_ADAPTER_VERSION,
             request_timeout_seconds=timeout,
         )
     if backend is LLMBackend.OPENAI:
@@ -55,7 +56,7 @@ def _build_llm_provider(
             api_key=llm.openai_api_key,
             base_url=llm.openai_base_url,
             model=model,
-            provider_version=llm.provider_version,
+            provider_version=LLM_ADAPTER_VERSION,
             request_timeout_seconds=timeout,
         )
     if backend is LLMBackend.OPENAI_COMPATIBLE:
@@ -67,7 +68,7 @@ def _build_llm_provider(
             api_key=llm.openai_api_key,
             base_url=llm.openai_base_url,
             model=model,
-            provider_version=llm.provider_version,
+            provider_version=LLM_ADAPTER_VERSION,
             request_timeout_seconds=timeout,
         )
     if backend is LLMBackend.GEMINI:
@@ -78,7 +79,7 @@ def _build_llm_provider(
             api_key=llm.gemini_api_key,
             base_url=llm.gemini_base_url,
             model=model,
-            provider_version=llm.provider_version,
+            provider_version=LLM_ADAPTER_VERSION,
             request_timeout_seconds=timeout,
         )
     msg = f"Unsupported LLM backend: {backend!r}"

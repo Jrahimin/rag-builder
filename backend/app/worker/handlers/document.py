@@ -61,7 +61,7 @@ async def _process(
         expected_document_version=_document_version(run),
         on_progress=reporter.report,
     )
-    if document is None or not settings.retrieval.auto_embed:
+    if document is None or not settings.retrieval.auto_build_after_process:
         return None
     indexing = build_indexing_service(
         session=session,

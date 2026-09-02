@@ -15,6 +15,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from app.platform.config.index_artifact import IndexArtifactConfig
+
 type JobProgressCallback = Callable[[str, int], Awaitable[None]]
 
 _INDEX_OUTPUT_EXCLUDED_RETRIEVAL_KEYS = frozenset(
@@ -66,12 +68,13 @@ class JobDefinition(BaseModel):
 class JobConfiguration(BaseModel):
     """Normalized, secret-free processing, indexing, and quality configuration."""
 
-    schema_version: int = 3
+    schema_version: int = 5
     processing: dict[str, Any]
     index: dict[str, Any]
     quality: dict[str, Any]
     execution: dict[str, Any] = Field(default_factory=dict)
     provenance: dict[str, Any] = Field(default_factory=dict)
+    index_artifact: IndexArtifactConfig | None = None
 
     def digest(self) -> str:
         """Hash the complete immutable snapshot, including observed provenance."""
@@ -112,6 +115,14 @@ class JobConfiguration(BaseModel):
         concerns. They must not make an otherwise identical vector/keyword corpus
         appear to be a different build.
         """
+        if self.index_artifact is not None:
+            payload = json.dumps(
+                self.index_artifact.fingerprint_payload(),
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+            return hashlib.sha256(payload).hexdigest()
         retrieval = {
             key: value
             for key, value in self.index["retrieval"].items()

@@ -57,12 +57,12 @@ class IndexingService:
         return self._config.embedding_set_version
 
     async def enqueue_embed_if_enabled(self, document_id: uuid.UUID) -> Document | None:
-        if not self._config.auto_embed:
+        if not self._config.auto_build_after_process:
             return await self._document_repository.get_by_id(document_id)
         return await self.enqueue_embed(document_id)
 
     async def enqueue_index_if_enabled(self, document_id: uuid.UUID) -> Document | None:
-        if not self._config.auto_index:
+        if not self._config.auto_build_after_process:
             return await self._document_repository.get_by_id(document_id)
         return await self.enqueue_index(document_id)
 

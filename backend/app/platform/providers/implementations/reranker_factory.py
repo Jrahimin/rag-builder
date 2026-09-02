@@ -5,6 +5,7 @@ from __future__ import annotations
 from functools import lru_cache
 
 from app.core.config import RerankerBackend, Settings, get_settings
+from app.core.implementation_versions import RERANKER_ADAPTER_VERSION
 from app.platform.providers.contracts.reranker import (
     BaseRerankerProvider,
     RerankRequest,
@@ -75,7 +76,7 @@ def create_reranker_provider(
             api_key=api_key,
             base_url=settings.resolved_cohere_base_url(),
             model=settings.reranker.cohere_model,
-            provider_version=settings.reranker.provider_version,
+            provider_version=RERANKER_ADAPTER_VERSION,
             request_timeout_seconds=settings.reranker.request_timeout_seconds,
         )
     msg = f"Unsupported reranker backend: {selected!r}"

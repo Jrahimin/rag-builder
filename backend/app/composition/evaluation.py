@@ -14,6 +14,7 @@ from app.composition.source_metadata import KnowledgeRetrievalSourceMetadataAdap
 from app.core.config import (
     EvidenceScoreMode,
     QueryTranslationConfig,
+    RequestOverrideMode,
     RerankerBackend,
     RetrievalConfig,
     RetrievalStrategy,
@@ -269,7 +270,13 @@ class SearchEvaluationAdapter(EvaluationRetrievalPort):
             embedder=embedder,
             reranker=reranker,
             retrieval_config=retrieval_config or self._settings.retrieval,
-            ai_policy=self._settings.ai_policy,
+            # Test Lab deliberately compares retrieval/reranker candidates on
+            # one pinned corpus. Its internal profile axis is not a public API
+            # request override, so keep strict ownership at the HTTP boundary
+            # while allowing this isolated evaluation adapter to select cases.
+            ai_policy=self._settings.ai_policy.model_copy(
+                update={"request_override_mode": RequestOverrideMode.COMPATIBILITY}
+            ),
             source_metadata=self._source_metadata,
             configured_source_policy_mode=self._source_policy_mode,
             configuration_hash=self._configuration_hash,

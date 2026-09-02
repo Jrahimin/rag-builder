@@ -36,6 +36,7 @@ from app.core.exception_handlers import register_exception_handlers
 from app.core.logging import configure_logging, get_logger
 from app.core.middleware import RequestContextMiddleware
 from app.core.runtime_validation import validate_runtime_config
+from app.platform.config.profiles import validate_profile_compatibility
 from app.platform.db.session import Database
 from app.platform.http.openapi_security import configure_openapi_security
 from app.platform.infra.connectivity.redis import RedisConnectivity
@@ -130,6 +131,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     """Build and configure a FastAPI application instance."""
     settings = settings or get_settings()
     validate_runtime_config(settings)
+    validate_profile_compatibility(settings)
     validate_auth_config(settings)
     configure_logging(settings)
 

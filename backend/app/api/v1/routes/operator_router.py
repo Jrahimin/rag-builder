@@ -8,6 +8,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, Query, status
 
 from app.core.config import LLMBackend, get_settings
+from app.core.generation_models import generation_model_policy, resolve_generation_model
 from app.core.http.envelopes import ApiResponse
 from app.dependencies.admin_auth import require_super_admin
 from app.dependencies.operations import OperatorServiceDep
@@ -17,6 +18,7 @@ from app.dependencies.projects import (
 )
 from app.modules.operations.schemas.operator import (
     ActiveConfiguration,
+    AIConfigNormalizationStatus,
     AuditEventResponse,
     DependencyOverview,
     MetricsSnapshot,
@@ -29,12 +31,17 @@ from app.modules.operations.schemas.operator import (
 )
 from app.modules.projects.schemas.ai_config import (
     EffectiveProjectAIConfigResponse,
+    GenerationModelOption,
+    ProjectAIConfigNormalizationPreview,
+    ProjectAIConfigNormalizeConfirm,
     ProjectAIConfigRestore,
     ProjectAIConfigRevisionCreate,
     ProjectAIConfigRevisionResponse,
+    ProjectAIProfileNormalizationPreview,
     ProjectOwnershipChange,
     ProjectOwnershipConfirm,
     ProjectOwnershipPreflight,
+    RAGProfileOption,
 )
 from app.modules.projects.schemas.project import (
     ProjectCreate,
@@ -42,6 +49,14 @@ from app.modules.projects.schemas.project import (
     ProjectResponse,
     ProjectStatusUpdate,
     ProjectUpdate,
+)
+from app.platform.config.profiles import (
+    PROFILE_CERTIFICATIONS,
+    RAG_EXECUTION_PROFILES,
+    CertificationStatus,
+    deployment_profile,
+    execution_values,
+    profile_hash,
 )
 from app.platform.config.project_ai import resolve_project_ai_config
 from app.platform.http.pagination import OperatorListParams, PaginatedResult
@@ -99,6 +114,20 @@ async def get_usage(
 @router.get("/configuration", response_model=ApiResponse[ActiveConfiguration])
 async def get_configuration(service: OperatorServiceDep) -> ApiResponse[ActiveConfiguration]:
     return ApiResponse.ok(await service.active_configuration())
+
+
+@router.get(
+    "/ai-config/normalization-status",
+    response_model=ApiResponse[AIConfigNormalizationStatus],
+)
+async def get_ai_config_normalization_status(
+    service: OperatorServiceDep,
+) -> ApiResponse[AIConfigNormalizationStatus]:
+    return ApiResponse.ok(
+        AIConfigNormalizationStatus(
+            active_v1_projects=await service.active_v1_project_count(),
+        )
+    )
 
 
 @router.get("/failures", response_model=ApiResponse[list[RecentFailure]])
@@ -288,16 +317,55 @@ async def get_project_ai_config(
     service: ProjectAdministrationServiceDep,
 ) -> ApiResponse[EffectiveProjectAIConfigResponse]:
     resolution = await service.effective_config()
-    deployment_resolution = resolve_project_ai_config(get_settings(), None)
+    settings = get_settings()
+    deployment_resolution = resolve_project_ai_config(settings, None)
+    deployment_capability = deployment_profile(settings)
+    allowed_model_ids, _ = generation_model_policy(settings)
     return ApiResponse.ok(
         EffectiveProjectAIConfigResponse(
             project_id=project_id,
             active_revision_id=resolution.provenance.project_config_revision_id,
             configuration_hash=resolution.configuration_hash,
+            effective_value_hash=resolution.effective_value_hash,
+            resolution_fingerprint=resolution.resolution_fingerprint,
             configuration=resolution.configuration,
             deployment_configuration=deployment_resolution.configuration,
             origins=resolution.origins,
+            structured_origins=resolution.structured_origins,
             provenance=resolution.provenance,
+            invariants=resolution.invariants,
+            compatibility_warnings=resolution.compatibility_diagnostics,
+            allowed_generation_models=[
+                GenerationModelOption(
+                    id=model_id,
+                    provider=resolved.provider.value,
+                    model=resolved.model,
+                )
+                for model_id in allowed_model_ids
+                for resolved in [resolve_generation_model(settings, model_id)]
+            ],
+            rag_profiles=[
+                RAGProfileOption(
+                    id=profile_id,
+                    profile_hash=profile_hash(profile),
+                    certification_status=PROFILE_CERTIFICATIONS[profile_id].status.value,
+                    selectable=(
+                        PROFILE_CERTIFICATIONS[profile_id].status is CertificationStatus.CERTIFIED
+                    ),
+                    recommended=(
+                        PROFILE_CERTIFICATIONS[profile_id].status
+                        is CertificationStatus.CERTIFIED
+                        and profile_id == deployment_capability.default_rag_profile_id
+                    ),
+                    values=execution_values(profile),
+                )
+                for profile_id, profile in RAG_EXECUTION_PROFILES.items()
+            ],
+            base_profile_id=resolution.provenance.execution_profile_id,
+            custom_execution=(
+                resolution.provenance.execution_profile_id is None
+                or bool(resolution.provenance.execution_overrides)
+            ),
         )
     )
 
@@ -350,6 +418,80 @@ async def restore_project_ai_config_revision(
     del project_id
     row = await service.restore(
         revision_id,
+        expected_active_revision_id=body.expected_active_revision_id,
+        reason=body.reason,
+    )
+    return ApiResponse.ok(ProjectAIConfigRevisionResponse.model_validate(row))
+
+
+@router.get(
+    "/projects/{project_id}/ai-config/normalize-v1",
+    response_model=ApiResponse[ProjectAIConfigNormalizationPreview],
+)
+async def preview_project_ai_config_normalization(
+    project_id: uuid.UUID,
+    service: ProjectAdministrationServiceDep,
+) -> ApiResponse[ProjectAIConfigNormalizationPreview]:
+    active, result = await service.normalization_preview()
+    return ApiResponse.ok(
+        ProjectAIConfigNormalizationPreview(
+            project_id=project_id,
+            source_revision_id=active.id,
+            source_schema_version=active.schema_version,
+            result=result,
+        )
+    )
+
+
+@router.post(
+    "/projects/{project_id}/ai-config/normalize-v1",
+    response_model=ApiResponse[ProjectAIConfigRevisionResponse],
+    status_code=status.HTTP_201_CREATED,
+)
+async def confirm_project_ai_config_normalization(
+    project_id: uuid.UUID,
+    body: ProjectAIConfigNormalizeConfirm,
+    service: ProjectAdministrationServiceDep,
+) -> ApiResponse[ProjectAIConfigRevisionResponse]:
+    del project_id
+    row = await service.normalize_active_v1(
+        expected_active_revision_id=body.expected_active_revision_id,
+        reason=body.reason,
+    )
+    return ApiResponse.ok(ProjectAIConfigRevisionResponse.model_validate(row))
+
+
+@router.get(
+    "/projects/{project_id}/ai-config/normalize-profile",
+    response_model=ApiResponse[ProjectAIProfileNormalizationPreview],
+)
+async def preview_project_ai_profile_normalization(
+    project_id: uuid.UUID,
+    service: ProjectAdministrationServiceDep,
+) -> ApiResponse[ProjectAIProfileNormalizationPreview]:
+    active, result = await service.profile_normalization_preview()
+    return ApiResponse.ok(
+        ProjectAIProfileNormalizationPreview(
+            project_id=project_id,
+            source_revision_id=active.id,
+            source_schema_version=active.schema_version,
+            result=result,
+        )
+    )
+
+
+@router.post(
+    "/projects/{project_id}/ai-config/normalize-profile",
+    response_model=ApiResponse[ProjectAIConfigRevisionResponse],
+    status_code=status.HTTP_201_CREATED,
+)
+async def confirm_project_ai_profile_normalization(
+    project_id: uuid.UUID,
+    body: ProjectAIConfigNormalizeConfirm,
+    service: ProjectAdministrationServiceDep,
+) -> ApiResponse[ProjectAIConfigRevisionResponse]:
+    del project_id
+    row = await service.normalize_active_v2_profile(
         expected_active_revision_id=body.expected_active_revision_id,
         reason=body.reason,
     )

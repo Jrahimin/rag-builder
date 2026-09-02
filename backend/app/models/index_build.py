@@ -70,6 +70,10 @@ class IndexBuild(Base, UUIDPrimaryKeyMixin, TimestampMixin, ProjectScopedMixin):
     )
     embedding_set_version: Mapped[int] = mapped_column(Integer, nullable=False)
     configuration_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    artifact_fingerprint_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    artifact_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    index_profile_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    index_profile_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     corpus_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
     document_count: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0, server_default=text("0")

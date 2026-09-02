@@ -44,7 +44,7 @@ def _parser() -> argparse.ArgumentParser:
         action="store_true",
         help=(
             "Reuse the same Project/index and run a second variant with "
-            "retrieval.query_translation_enabled=false."
+            "behavior.translation_policy=disabled."
         ),
     )
     parser.add_argument(
@@ -84,7 +84,7 @@ def _options(args: argparse.Namespace, *, configured_job_backend: str) -> Journe
     if len(args.compare) > 1:
         raise JourneyError("V1 accepts only one --compare assignment.")
     comparison = (
-        ("retrieval.query_translation_enabled", False)
+        ("behavior.translation_policy", "disabled")
         if args.compare_translation
         else (parse_config_assignment(args.compare[0]) if args.compare else None)
     )

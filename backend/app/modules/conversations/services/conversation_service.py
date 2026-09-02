@@ -102,6 +102,11 @@ class ConversationService:
             "temperature",
             "system_prompt_version",
         } & data.model_fields_set
+        if "system_prompt_version" in config_fields:
+            _validate_prompt_version(
+                data.system_prompt_version,
+                default=self._chat_config.system_prompt_version,
+            )
         resolution = self._resolve({field: getattr(data, field, None) for field in config_fields})
         prompt_version = _validate_prompt_version(
             resolution.configuration.prompt_version,
@@ -160,6 +165,11 @@ class ConversationService:
             provider_value = getattr(data, "provider", None)
             if provider_value is not None:
                 _validate_provider(provider_value)
+            if "system_prompt_version" in config_fields:
+                _validate_prompt_version(
+                    data.system_prompt_version,
+                    default=self._chat_config.system_prompt_version,
+                )
             resolution = self._resolve(
                 {field: getattr(data, field, None) for field in config_fields}
             )
@@ -244,10 +254,17 @@ class ConversationService:
             project_id=self._project_id,
             conversation_id=conversation.id,
             sequence=await self._snapshots.next_sequence(conversation.id),
+            schema_version=4,
             configuration_hash=resolution.configuration_hash,
+            resolution_fingerprint=resolution.resolution_fingerprint,
             configuration=resolution.configuration.model_dump(mode="json"),
             provenance=resolution.provenance.model_dump(mode="json"),
             origins=resolution.origins,
+            structured_origins={
+                path: origin.model_dump(mode="json")
+                for path, origin in resolution.structured_origins.items()
+            },
+            invariants=resolution.invariants.model_dump(mode="json"),
             compatibility_diagnostics=resolution.compatibility_diagnostics,
             created_by=self._actor_id,
             reason=reason,
