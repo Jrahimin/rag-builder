@@ -1,9 +1,10 @@
-"""Immutable, versioned configuration profiles and certification metadata.
+"""Code-owned configuration profiles and certification metadata.
 
-Profiles are code-owned value objects.  Their IDs are append-only: changing any
-behavior requires a new ``@vN`` identifier.  Certification is deliberately
-separate from the definitions so candidate values can be exercised in Test Lab
-without becoming normal Project recommendations.
+Profile definitions are frozen value objects and hashes pin their exact content.
+The simple IDs are intentionally development-stage names; explicit public profile
+versioning can be added when profiles become a persisted compatibility contract.
+Certification stays separate so candidates can be exercised in Test Lab without
+becoming normal Project recommendations.
 """
 
 from __future__ import annotations
@@ -33,7 +34,7 @@ from app.core.generation_models import GENERATION_MODEL_REGISTRY
 from app.core.runtime_validation import ProductionConfigurationError
 from app.platform.domain.language_detection import LANGUAGE_METADATA_SCHEMA_VERSION
 
-PROFILE_REGISTRY_VERSION = "2026-09-02.v1"
+PROFILE_REGISTRY_VERSION = "2026-09-02"
 
 
 class CertificationStatus(StrEnum):
@@ -48,10 +49,8 @@ class ProfileCertification:
     status: CertificationStatus
     manifest_id: str | None = None
     evaluated_at: str | None = None
-    tax_cases_passed: int | None = None
-    tax_cases_total: int | None = None
-    non_tax_suites: tuple[str, ...] = ()
-    notes: str = "Seed value awaiting tax and non-tax certification."
+    evaluation_suites: tuple[str, ...] = ()
+    notes: str = "Candidate awaiting all required evaluation suites."
 
 
 @dataclass(frozen=True, slots=True)
@@ -163,7 +162,7 @@ RAG_EXECUTION_PROFILES: Mapping[str, RAGExecutionProfile] = MappingProxyType(
         profile.id: profile
         for profile in (
             RAGExecutionProfile(
-                id="economy@v1",
+                id="economy",
                 semantic_candidate_top_k=30,
                 keyword_candidate_top_k=30,
                 hnsw_ef_search=60,
@@ -176,7 +175,7 @@ RAG_EXECUTION_PROFILES: Mapping[str, RAGExecutionProfile] = MappingProxyType(
                 max_history_messages=12,
             ),
             RAGExecutionProfile(
-                id="standard@v1",
+                id="standard",
                 semantic_candidate_top_k=50,
                 keyword_candidate_top_k=50,
                 hnsw_ef_search=100,
@@ -189,7 +188,7 @@ RAG_EXECUTION_PROFILES: Mapping[str, RAGExecutionProfile] = MappingProxyType(
                 max_history_messages=20,
             ),
             RAGExecutionProfile(
-                id="quality@v1",
+                id="quality",
                 semantic_candidate_top_k=80,
                 keyword_candidate_top_k=80,
                 hnsw_ef_search=160,
@@ -221,7 +220,7 @@ EVIDENCE_CALIBRATION_PROFILES: Mapping[str, EvidenceCalibrationProfile] = Mappin
         profile.id: profile
         for profile in (
             EvidenceCalibrationProfile(
-                id="hash-local-whole-chunk@v1",
+                id="hash-local-whole-chunk",
                 embedding_provider=EmbeddingBackend.HASH,
                 embedding_model="text-embedding-3-large",
                 embedding_dimensions=1024,
@@ -238,7 +237,7 @@ EVIDENCE_CALIBRATION_PROFILES: Mapping[str, EvidenceCalibrationProfile] = Mappin
                 minimum_claim_semantic_score=0.25,
             ),
             EvidenceCalibrationProfile(
-                id="cohere-v4-managed-whole-chunk@v1",
+                id="cohere-v4-managed-whole-chunk",
                 embedding_provider=EmbeddingBackend.COHERE,
                 embedding_model="embed-v4.0",
                 embedding_dimensions=1024,
@@ -255,7 +254,7 @@ EVIDENCE_CALIBRATION_PROFILES: Mapping[str, EvidenceCalibrationProfile] = Mappin
                 minimum_claim_semantic_score=0.25,
             ),
             EvidenceCalibrationProfile(
-                id="openai-large-cohere-whole-chunk@v1",
+                id="openai-large-cohere-whole-chunk",
                 embedding_provider=EmbeddingBackend.OPENAI,
                 embedding_model="text-embedding-3-large",
                 embedding_dimensions=1024,
@@ -272,7 +271,7 @@ EVIDENCE_CALIBRATION_PROFILES: Mapping[str, EvidenceCalibrationProfile] = Mappin
                 minimum_claim_semantic_score=0.25,
             ),
             EvidenceCalibrationProfile(
-                id="ollama-1024-local-whole-chunk@v1",
+                id="ollama-1024-local-whole-chunk",
                 embedding_provider=EmbeddingBackend.OLLAMA,
                 embedding_model="mxbai-embed-large",
                 embedding_dimensions=1024,
@@ -298,7 +297,7 @@ INDEX_PROFILES: Mapping[str, IndexProfile] = MappingProxyType(
         profile.id: profile
         for profile in (
             IndexProfile(
-                id="development-hash@v1",
+                id="development-hash",
                 parsing=_COMMON_PARSING,
                 ocr=_COMMON_OCR,
                 chunking=_COMMON_CHUNKING,
@@ -311,7 +310,7 @@ INDEX_PROFILES: Mapping[str, IndexProfile] = MappingProxyType(
                 language_metadata_schema_version=LANGUAGE_METADATA_SCHEMA_VERSION,
             ),
             IndexProfile(
-                id="hosted-cohere-v4@v1",
+                id="hosted-cohere-v4",
                 parsing=_COMMON_PARSING,
                 ocr=_HOSTED_OCR,
                 chunking=_COMMON_CHUNKING,
@@ -324,7 +323,7 @@ INDEX_PROFILES: Mapping[str, IndexProfile] = MappingProxyType(
                 language_metadata_schema_version=LANGUAGE_METADATA_SCHEMA_VERSION,
             ),
             IndexProfile(
-                id="hosted-openai-large@v1",
+                id="hosted-openai-large",
                 parsing=_COMMON_PARSING,
                 ocr=_HOSTED_OCR,
                 chunking=_COMMON_CHUNKING,
@@ -337,7 +336,7 @@ INDEX_PROFILES: Mapping[str, IndexProfile] = MappingProxyType(
                 language_metadata_schema_version=LANGUAGE_METADATA_SCHEMA_VERSION,
             ),
             IndexProfile(
-                id="private-ollama-1024@v1",
+                id="private-ollama-1024",
                 parsing=_COMMON_PARSING,
                 ocr=_COMMON_OCR,
                 chunking=_COMMON_CHUNKING,

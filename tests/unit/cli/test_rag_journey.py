@@ -437,7 +437,7 @@ def test_empty_baseline_inherits_deployment_config_without_implicit_policy_overr
 
 
 def test_test_lab_materializes_candidate_profile_without_persisting_candidate_identity() -> None:
-    config = build_project_config({"execution.profile_id": "economy@v1"})
+    config = build_project_config({"execution.profile_id": "economy"})
 
     assert config.execution.profile_id is None
     assert config.execution.semantic_candidate_top_k == 30

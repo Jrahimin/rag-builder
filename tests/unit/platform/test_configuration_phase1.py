@@ -216,7 +216,7 @@ def test_index_artifact_fingerprint_changes_only_for_materialized_behavior() -> 
 def test_index_identity_ignores_profile_labels_ocr_transport_and_query_filters() -> None:
     baseline_settings = Settings()
     metadata_only_settings = Settings(
-        runtime={"capability_profile_id": "development@v1"},
+        runtime={"capability_profile_id": "development"},
         ocr={"google_timeout_seconds": 90, "google_max_attempts": 7},
         retrieval={"min_ocr_confidence": 0.75},
     )
@@ -224,7 +224,7 @@ def test_index_identity_ignores_profile_labels_ocr_transport_and_query_filters()
     metadata_only = build_index_artifact_config(metadata_only_settings)
 
     assert baseline.index_profile_id is None
-    assert metadata_only.index_profile_id == "development-hash@v1"
+    assert metadata_only.index_profile_id == "development-hash"
     assert baseline.fingerprint_payload() == metadata_only.fingerprint_payload()
     assert required_index_action(baseline, metadata_only) is RequiredIndexAction.NONE
     assert (

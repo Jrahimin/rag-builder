@@ -1,10 +1,10 @@
-"""Pure certification gate for immutable RAG execution profile candidates."""
+"""Pure certification gate for code-owned RAG execution profile candidates."""
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from app.platform.config.profiles import PROFILE_CERTIFICATIONS, RAG_EXECUTION_PROFILES
+from app.platform.config.profiles import RAG_EXECUTION_PROFILES
 
 
 class ProfileMetrics(BaseModel):
@@ -20,45 +20,153 @@ class ProfileMetrics(BaseModel):
     provider_cost: float | None = Field(default=None, ge=0.0)
 
 
+class EvaluationSuiteRequirement(BaseModel):
+    """One named, versioned suite required by a certification manifest."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    suite_id: str = Field(min_length=1, max_length=128)
+    suite_version: str = Field(min_length=1, max_length=64)
+    minimum_cases: int = Field(default=1, ge=1)
+    minimum_pass_rate: float = Field(default=1.0, gt=0.0, le=1.0)
+
+
+class EvaluationSuiteResult(BaseModel):
+    """Observed result for one exact suite identity."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    suite_id: str = Field(min_length=1, max_length=128)
+    suite_version: str = Field(min_length=1, max_length=64)
+    cases_passed: int = Field(ge=0)
+    cases_total: int = Field(ge=1)
+    artifact_id: str | None = Field(default=None, min_length=1, max_length=256)
+
+    @model_validator(mode="after")
+    def _validate_case_counts(self) -> EvaluationSuiteResult:
+        if self.cases_passed > self.cases_total:
+            raise ValueError("cases_passed must not exceed cases_total")
+        return self
+
+
+class ProfileCertificationManifest(BaseModel):
+    """Reusable requirements for a certification target such as hosted production."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    manifest_id: str = Field(min_length=1, max_length=128)
+    requirements: tuple[EvaluationSuiteRequirement, ...] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _validate_unique_requirements(self) -> ProfileCertificationManifest:
+        identities = [
+            (requirement.suite_id, requirement.suite_version) for requirement in self.requirements
+        ]
+        if len(identities) != len(set(identities)):
+            raise ValueError("certification suite requirements must be unique")
+        return self
+
+
+# Tax is a hosted-product requirement, not an assumption in the reusable gate.
+HOSTED_RAG_CERTIFICATION_MANIFEST = ProfileCertificationManifest(
+    manifest_id="hosted-rag-production",
+    requirements=(
+        EvaluationSuiteRequirement(
+            suite_id="tax",
+            suite_version="v1",
+            minimum_cases=21,
+            minimum_pass_rate=1.0,
+        ),
+        EvaluationSuiteRequirement(suite_id="ci-smoke", suite_version="v1"),
+        EvaluationSuiteRequirement(suite_id="cross-lingual-quality", suite_version="v2"),
+    ),
+)
+
+
 class ProfileCertificationInput(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     profile_id: str
-    tax_cases_passed: int = Field(ge=0)
-    tax_cases_total: int = Field(ge=1)
-    non_tax_suites: tuple[str, ...]
+    manifest: ProfileCertificationManifest
+    suite_results: tuple[EvaluationSuiteResult, ...]
     baseline: ProfileMetrics
     candidate: ProfileMetrics
     maximum_metric_regression: float = Field(default=0.02, ge=0.0, le=1.0)
     maximum_latency_ratio: float = Field(default=1.5, ge=1.0)
     minimum_quality_gain: float = Field(default=0.01, ge=0.0, le=1.0)
 
+    @model_validator(mode="after")
+    def _validate_unique_results(self) -> ProfileCertificationInput:
+        identities = [(result.suite_id, result.suite_version) for result in self.suite_results]
+        if len(identities) != len(set(identities)):
+            raise ValueError("evaluation suite results must be unique")
+        return self
+
+
+class ProfileCertificationSuiteOutcome(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    suite_id: str
+    suite_version: str
+    score: str | None
+    passed: bool
+
 
 class ProfileCertificationResult(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     profile_id: str
+    manifest_id: str
     passed: bool
     failures: tuple[str, ...]
-    tax_score: str
-    non_tax_suites: tuple[str, ...]
+    suite_outcomes: tuple[ProfileCertificationSuiteOutcome, ...]
 
 
 def evaluate_profile_candidate(
     evaluation: ProfileCertificationInput,
 ) -> ProfileCertificationResult:
-    """Evaluate a candidate without mutating the code-owned certification registry."""
+    """Evaluate a candidate without mutating the code-owned profile registry."""
     if evaluation.profile_id not in RAG_EXECUTION_PROFILES:
         raise ValueError(f"unknown RAG execution profile: {evaluation.profile_id}")
+
     failures: list[str] = []
+    results = {
+        (result.suite_id, result.suite_version): result for result in evaluation.suite_results
+    }
+    suite_outcomes: list[ProfileCertificationSuiteOutcome] = []
+    for requirement in evaluation.manifest.requirements:
+        identity = (requirement.suite_id, requirement.suite_version)
+        label = f"{requirement.suite_id}@{requirement.suite_version}"
+        observed = results.get(identity)
+        if observed is None:
+            failures.append(f"suite_missing:{label}")
+            suite_outcomes.append(
+                ProfileCertificationSuiteOutcome(
+                    suite_id=requirement.suite_id,
+                    suite_version=requirement.suite_version,
+                    score=None,
+                    passed=False,
+                )
+            )
+            continue
+        enough_cases = observed.cases_total >= requirement.minimum_cases
+        pass_rate = observed.cases_passed / observed.cases_total
+        suite_passed = enough_cases and pass_rate >= requirement.minimum_pass_rate
+        if not enough_cases:
+            failures.append(f"suite_case_count:{label}")
+        if pass_rate < requirement.minimum_pass_rate:
+            failures.append(f"suite_gate:{label}")
+        suite_outcomes.append(
+            ProfileCertificationSuiteOutcome(
+                suite_id=requirement.suite_id,
+                suite_version=requirement.suite_version,
+                score=f"{observed.cases_passed}/{observed.cases_total}",
+                passed=suite_passed,
+            )
+        )
+
     candidate = evaluation.candidate
     baseline = evaluation.baseline
-    if evaluation.tax_cases_passed != evaluation.tax_cases_total:
-        failures.append("tax_regression")
-    if evaluation.tax_cases_total != 21:
-        failures.append("tax_v1_case_count_mismatch")
-    if not evaluation.non_tax_suites:
-        failures.append("non_tax_coverage_missing")
     if candidate.false_accept_rate > baseline.false_accept_rate:
         failures.append("false_accept_regression")
     if candidate.false_accept_rate > 0.0:
@@ -74,8 +182,7 @@ def evaluate_profile_candidate(
     if candidate.false_refusal_rate > baseline.false_refusal_rate + tolerance:
         failures.append("false_refusal_non_inferiority")
 
-    family = evaluation.profile_id.split("@", maxsplit=1)[0]
-    if family == "economy":
+    if evaluation.profile_id == "economy":
         cost_improved = (
             candidate.provider_cost is not None
             and baseline.provider_cost is not None
@@ -83,7 +190,7 @@ def evaluate_profile_candidate(
         )
         if candidate.p95_latency_ms >= baseline.p95_latency_ms and not cost_improved:
             failures.append("economy_cost_or_latency_gain")
-    elif family == "quality":
+    elif evaluation.profile_id == "quality":
         primary_gain = max(
             candidate.recall_at_k - baseline.recall_at_k,
             candidate.ndcg - baseline.ndcg,
@@ -92,16 +199,13 @@ def evaluate_profile_candidate(
             failures.append("quality_primary_metric_gain")
         if candidate.p95_latency_ms > baseline.p95_latency_ms * evaluation.maximum_latency_ratio:
             failures.append("quality_latency_budget")
-    elif family != "standard":
+    elif evaluation.profile_id != "standard":
         failures.append("unsupported_profile_family")
 
-    # The seed registry remains candidate until the produced result is reviewed
-    # and checked into code as a new immutable certification manifest.
-    assert PROFILE_CERTIFICATIONS[evaluation.profile_id].status.value == "candidate"
     return ProfileCertificationResult(
         profile_id=evaluation.profile_id,
+        manifest_id=evaluation.manifest.manifest_id,
         passed=not failures,
         failures=tuple(dict.fromkeys(failures)),
-        tax_score=f"{evaluation.tax_cases_passed}/{evaluation.tax_cases_total}",
-        non_tax_suites=evaluation.non_tax_suites,
+        suite_outcomes=tuple(suite_outcomes),
     )

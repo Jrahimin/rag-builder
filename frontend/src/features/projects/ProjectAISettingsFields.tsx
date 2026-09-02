@@ -16,6 +16,9 @@ export type GroundingAssurance = "inherit" | "strict" | "balanced";
 
 export type ProjectConfigForm = {
   profileId: string;
+  profileSelectionApplied: boolean;
+  hasHiddenProfileOwnedOverrides: boolean;
+  hasNonProfileExecutionOverrides: boolean;
   generationModelId: string;
   responseMode: ResponseModeChoice;
   groundingAssurance: GroundingAssurance;
@@ -28,7 +31,12 @@ export type ProjectConfigForm = {
 
 export type ProjectConfigOverride = Exclude<
   keyof ProjectConfigForm,
-  "reason" | "translation" | "rerankMode"
+  | "reason"
+  | "translation"
+  | "rerankMode"
+  | "profileSelectionApplied"
+  | "hasHiddenProfileOwnedOverrides"
+  | "hasNonProfileExecutionOverrides"
 >;
 export type ProjectConfigOverrides = Record<ProjectConfigOverride, boolean>;
 
@@ -43,6 +51,9 @@ export const inheritedProjectConfig: ProjectConfigOverrides = {
 
 export const emptyProjectConfigForm: ProjectConfigForm = {
   profileId: "",
+  profileSelectionApplied: false,
+  hasHiddenProfileOwnedOverrides: false,
+  hasNonProfileExecutionOverrides: false,
   generationModelId: "",
   responseMode: "indexed_only",
   groundingAssurance: "inherit",
@@ -55,6 +66,37 @@ export const emptyProjectConfigForm: ProjectConfigForm = {
 
 function hasValue(value: object | undefined, key: string) {
   return value !== undefined && Object.prototype.hasOwnProperty.call(value, key);
+}
+
+const PROFILE_OWNED_EXECUTION_KEYS = [
+  "retrieval_top_k",
+  "semantic_candidate_top_k",
+  "keyword_candidate_top_k",
+  "hnsw_ef_search",
+  "rrf_k",
+  "semantic_weight",
+  "keyword_weight",
+  "rerank_mode",
+  "rerank_candidate_window",
+  "rerank_return_count",
+  "max_context_chunks",
+  "context_char_budget",
+  "max_history_messages",
+] as const;
+
+function hasNonProfileExecutionOverrides(stored: ProjectAIConfig): boolean {
+  const execution = { ...(stored.execution ?? {}) } as Record<string, unknown>;
+  delete execution.profile_id;
+  delete execution.profile_hash;
+  for (const key of PROFILE_OWNED_EXECUTION_KEYS) delete execution[key];
+  return Object.keys(execution).length > 0;
+}
+
+function hasHiddenProfileOwnedOverrides(stored: ProjectAIConfig): boolean {
+  const execution = stored.execution;
+  return PROFILE_OWNED_EXECUTION_KEYS.some(
+    (key) => key !== "retrieval_top_k" && key !== "rerank_mode" && hasValue(execution, key),
+  );
 }
 
 export function storedTranslationMode(stored: ProjectAIConfig): TranslationMode {
@@ -73,6 +115,8 @@ export function configFormFromEffective(
   return {
     ...emptyProjectConfigForm,
     profileId: stored.execution?.profile_id ?? "",
+    hasHiddenProfileOwnedOverrides: hasHiddenProfileOwnedOverrides(stored),
+    hasNonProfileExecutionOverrides: hasNonProfileExecutionOverrides(stored),
     generationModelId: configuration.llm.generation_model_id ?? "",
     responseMode: configuration.chat.response_mode,
     groundingAssurance: stored.behavior?.grounding_assurance ?? "inherit",
@@ -113,7 +157,17 @@ export function buildSparseProjectConfig(
 ): ProjectAIConfig {
   const behavior = { ...(stored.behavior ?? {}) } as Record<string, unknown>;
   const execution = { ...(stored.execution ?? {}) } as Record<string, unknown>;
-  setSparseValue(execution, "profile_id", overrides.profileId, form.profileId);
+  if (form.profileSelectionApplied) {
+    delete execution.profile_id;
+    delete execution.profile_hash;
+    for (const key of PROFILE_OWNED_EXECUTION_KEYS) delete execution[key];
+  }
+  setSparseValue(
+    execution,
+    "profile_id",
+    overrides.profileId && form.profileId.length > 0,
+    form.profileId,
+  );
   setSparseValue(
     behavior,
     "generation_model_id",
@@ -139,7 +193,6 @@ export function buildSparseProjectConfig(
 export function sparseHasOverrides(configuration: ProjectAIConfig): boolean {
   const behavior = { ...(configuration.behavior ?? {}) } as Record<string, unknown>;
   const execution = configuration.execution ?? {};
-  delete behavior.translation_policy;
   return Object.keys(behavior).length > 0 || Object.keys(execution).length > 0;
 }
 
@@ -247,6 +300,44 @@ export function ProjectAISettingsFields({
     setForm((current) => ({ ...current, [key]: value }));
     setOverride(key, value !== baseline[key]);
   };
+  const selectedProfile = ragProfiles.find((profile) => profile.id === form.profileId);
+  const selectedProfileTopK = selectedProfile?.values.retrieval_top_k;
+  const selectedProfileRerank = selectedProfile?.values.rerank_mode;
+  const selectProfile = (profileId: string) => {
+    const profile = ragProfiles.find((item) => item.id === profileId);
+    setForm((current) => ({
+      ...current,
+      profileId,
+      profileSelectionApplied: true,
+      hasHiddenProfileOwnedOverrides: false,
+      topK:
+        typeof profile?.values.retrieval_top_k === "number"
+          ? String(profile.values.retrieval_top_k)
+          : baseline.topK,
+      rerankMode: "inherit",
+    }));
+    setOverride("profileId", profileId.length > 0);
+    setOverride("topK", false);
+  };
+  const changeTopK = (value: string) => {
+    setForm((current) => ({ ...current, topK: value }));
+    setOverride(
+      "topK",
+      selectedProfileTopK === undefined
+        ? value !== baseline.topK
+        : Number(value) !== selectedProfileTopK,
+    );
+  };
+  const changeRerankMode = (value: RerankModeChoice) => {
+    const normalized = selectedProfileRerank === value ? "inherit" : value;
+    setForm((current) => ({ ...current, rerankMode: normalized }));
+  };
+  const customProfile =
+    form.profileId.length > 0 &&
+    (overrides.topK ||
+      form.rerankMode !== "inherit" ||
+      form.hasHiddenProfileOwnedOverrides ||
+      form.hasNonProfileExecutionOverrides);
   const toggleField = (key: ProjectConfigOverride, overridden: boolean) => {
     setOverride(key, overridden);
     if (!overridden) setForm((current) => ({ ...current, [key]: baseline[key] }));
@@ -261,15 +352,22 @@ export function ProjectAISettingsFields({
           <select
             aria-label="RAG profile"
             value={form.profileId}
-            onChange={(event) => changeField("profileId", event.target.value)}
+            onChange={(event) => selectProfile(event.target.value)}
           >
-            <option value="">Custom / deployment baseline</option>
+            <option value="">Deployment baseline</option>
             {ragProfiles.map((profile) => (
               <option key={profile.id} value={profile.id} disabled={!profile.selectable}>
                 {profile.id} — {profile.certification_status}
               </option>
             ))}
           </select>
+          {form.profileId && (
+            <span className="muted-copy" data-testid="rag-profile-state">
+              {customProfile
+                ? `Custom — ${form.profileId} + execution overrides`
+                : `${form.profileId} profile`}
+            </span>
+          )}
           <InheritanceToggle
             field="RAG profile"
             overridden={overrides.profileId}
@@ -374,12 +472,7 @@ export function ProjectAISettingsFields({
             <select
               aria-label="Rerank mode"
               value={form.rerankMode}
-              onChange={(event) =>
-                setForm((current) => ({
-                  ...current,
-                  rerankMode: event.target.value as RerankModeChoice,
-                }))
-              }
+              onChange={(event) => changeRerankMode(event.target.value as RerankModeChoice)}
             >
               <option value="inherit">Inherit deployment default</option>
               <option value="always">Always</option>
@@ -394,7 +487,7 @@ export function ProjectAISettingsFields({
               min="1"
               max="100"
               value={form.topK}
-              onChange={(event) => changeField("topK", event.target.value)}
+              onChange={(event) => changeTopK(event.target.value)}
             />
             <InheritanceToggle
               field="Top K"

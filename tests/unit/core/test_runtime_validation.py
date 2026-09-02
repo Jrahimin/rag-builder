@@ -287,7 +287,7 @@ def test_expected_hosted_production_effective_configuration_resolves_exactly() -
 
 def test_capability_profile_is_authoritative_over_legacy_runtime_alias() -> None:
     settings = _production_settings(
-        runtime=RuntimeConfig(capability_profile_id="hosted-openai@v1"),
+        runtime=RuntimeConfig(capability_profile_id="hosted-openai"),
         embedding=EmbeddingConfig(
             backend=EmbeddingBackend.OPENAI,
             model="text-embedding-3-large",

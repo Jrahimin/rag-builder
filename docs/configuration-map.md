@@ -1,193 +1,262 @@
 # Configuration map
 
-This is the Phase-2 configuration contract. The executable, field-complete
-catalog is [`backend/app/platform/config/catalog.py`](../../backend/app/platform/config/catalog.py);
-it classifies every applicable Settings, Project, resolver, request, and
-snapshot leaf by owner, lifecycle, audience, impact, timing, compatibility,
-and replacement. ENV is deployment configuration, not the normal AI-tuning
-surface.
+Use this page to answer three questions quickly:
 
-## Ownership and precedence
+1. Which layer owns this value?
+2. What is the current default?
+3. Will changing it affect future queries, a future index build, or neither?
 
-| Surface | Owner | Lifecycle | Effect |
+The complete copy-ready key inventory is in [`.env.example`](../.env.example)
+for Docker Compose and [`backend/.env.example`](../backend/.env.example) for a
+local Python process. The executable source of truth is:
+
+- `backend/app/core/config.py` — ENV-backed settings and defaults
+- `backend/app/core/capability_profiles.py` — deployment capabilities
+- `backend/app/platform/config/profiles.py` — RAG, calibration, and index profiles
+- `backend/app/platform/config/project_ai.py` — Project configuration and resolver
+
+## Start here
+
+```text
+Deployment capability
+  → Index Profile + Calibration Profile + RAG execution values
+  → sparse Project behavior / Advanced overrides
+  → safety invariants
+```
+
+| Layer | Owner | Where to change it | Scope |
 | --- | --- | --- | --- |
-| Code invariants and provider adapters | Code | Release | Immediate after deployment |
-| Credentials, endpoints, infrastructure | Deployment | Process startup | Restart required |
-| Capability, calibration, RAG execution, and index profiles | Code | Append-only versioned registry | Selected by immutable ID |
-| Parsing, OCR, chunking, embedding, FTS/materialized metadata | Deployment index artifact | New build only | Explicit reprocess/re-embed/reindex classification |
-| Project V2 behavior and sparse execution | Project | Immutable revision | New conversations/snapshots only |
-| `top_k`, allowlisted metadata filters, `as_of` | Request | One request | Immediate |
-| Conversation and job resolution | Snapshot | Immutable | Never drifts |
+| Deployment capability | Deployment selects; code defines | `APE_RUNTIME__CAPABILITY_PROFILE_ID` | Process startup |
+| Index / calibration profile | Code | Profile registry | Future index target / query evidence calibration |
+| RAG execution values | Code profile or deployment baseline | Profile registry; Project override | New queries only |
+| Project behavior | Project operator | Immutable Project revision | New conversations and jobs |
+| Safety invariants | Code | Not operator-configurable | Always enforced |
 
-Resolution is: code invariants → deployment profiles → connectivity Settings → active Project revision →
-supported request allowlist → code-owned invariants. Secrets are never stored
-in Project revisions or snapshots. `effective_value_hash` identifies resolved
-values; `resolution_fingerprint` additionally identifies the resolver, schema,
-registry, and source revision used to obtain them.
+ENV is for infrastructure, credentials, endpoints, deployment capability,
+operational limits, and emergency controls. It is not the normal tuning surface
+for retrieval depth, rerank windows, or context size.
 
-## Canonical Project V2 contract
+## Current defaults
 
-New writes use only this shape:
+The deployment fallback uses the **Standard** execution value set. It is the
+balanced baseline even though `standard` is not yet marked as a selectable
+certified profile. The default profile ID is therefore `null`; no unvalidated
+profile is silently selected for a Project.
+
+| Setting | Current default | What it means |
+| --- | --- | --- |
+| Runtime capability | `development` when no explicit capability ID is set | Local/test provider wiring |
+| RAG execution values | **Standard** | Balanced retrieval, rerank, context, and history limits |
+| Query translation | `false` | Translation is off unless deployment or Project enables it |
+| Response mode | `indexed_only` | No web evidence unless a Project opts into a web mode |
+| Retrieval strategy | `hybrid` | Semantic + keyword retrieval |
+| Rerank mode | `always` | Rerank is attempted; provider failure falls back safely |
+| Source policy | `enforce` when governed source metadata exists | Ungoverned Projects remain neutral |
+
+### Standard execution values
+
+| Area | Default |
+| --- | --- |
+| Semantic / keyword candidates | `50` / `50` |
+| HNSW search effort | `100` |
+| Fusion | `rrf_k=60`, semantic weight `1.0`, keyword weight `1.0` |
+| Rerank | `always`, window `25`, return `8` |
+| Answer retrieval | `top_k=10` |
+| Context | `8` chunks, `12,000` characters |
+| History | `20` messages |
+
+## Minimal hosted environment
+
+This is the practical minimum for the Docker Compose hosted-managed setup. Copy
+it to the repository-root `.env`, replace every placeholder, then add optional
+keys from [`.env.example`](../.env.example) only when needed. Compose supplies
+the internal database, Redis, and MinIO hostnames from these credentials.
+
+```dotenv
+# Application and capability
+APE_APP__ENV=production
+APE_RUNTIME__CAPABILITY_PROFILE_ID=hosted-managed
+APE_LOGGING__LEVEL=INFO
+APE_CORS__ALLOW_ORIGINS=https://console.example.com
+
+# Required application secrets
+APE_AUTH__ENABLED=true
+APE_AUTH__ADMIN_JWT_SECRET=<long-random-secret>
+APE_AUTH__KEY_PEPPER=<long-random-secret>
+APE_WEBHOOKS__SIGNING_KEY=<long-random-secret>
+
+# Docker Compose data services
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=<strong-database-password>
+POSTGRES_DB=rag_builder
+REDIS_PASSWORD=<strong-redis-password>
+MINIO_ROOT_USER=ragbuilder
+MINIO_ROOT_PASSWORD=<strong-minio-password>
+MINIO_BUCKET=ape-artifacts
+APE_STORAGE__BACKEND=minio
+
+# Hosted AI providers
+APE_LLM__BACKEND=openai
+APE_LLM__MODEL=gpt-5.6-luna
+APE_LLM__OPENAI_API_KEY=<openai-api-key>
+APE_COHERE__API_KEY=<cohere-api-key>
+
+# Hosted OCR capability
+APE_OCR__ENABLED=true
+APE_OCR__BACKEND=google_vision
+APE_OCR__BANGLA_BACKEND=google_vision
+APE_OCR__GOOGLE_API_KEY=<google-vision-api-key>
+
+# Handy safe defaults
+APE_QUERY_TRANSLATION__ENABLED=false
+APE_RETRIEVAL__AUTO_BUILD_AFTER_PROCESS=true
+APE_AI_POLICY__REQUEST_OVERRIDE_MODE=strict
+APE_AI_POLICY__SOURCE_POLICY_DEPLOYMENT_CAP=enforce
+```
+
+For a local Python process, start from [`backend/.env.example`](../backend/.env.example):
+use `APE_RUNTIME__CAPABILITY_PROFILE_ID=development`, hash embeddings, `noop`
+reranking, local storage, and no provider credentials.
+
+## Profiles
+
+Profiles have simple development-stage IDs. Their content is frozen and hash-pinned.
+`custom` is derived state, never a stored profile ID.
+
+| RAG profile | Intended use | Status | Normal Project API/UI |
+| --- | --- | --- | --- |
+| `standard` | Balanced default values shown above | Candidate | Not selectable yet |
+| `quality` | Wider retrieval/rerank effort and larger context | Candidate | Not selectable yet |
+| `economy` | Narrower retrieval/rerank effort and smaller context | Candidate | Not selectable yet |
+
+The hosted certification manifest requires named/versioned suites: `tax@v1`
+at 21/21, `ci-smoke@v1`, and `cross-lingual-quality@v2`. The certification engine
+is generic: another deployment can supply a different manifest without any tax
+logic in the engine.
+
+```text
+Select Standard
+  → apply Standard values
+
+Change a profile-owned value
+  → Custom — standard + execution overrides
+
+Restore exact Standard values
+  → Standard
+```
+
+Selecting a profile clears old profile-owned execution overrides. Other Advanced
+execution overrides remain explicit and keep the state visibly Custom.
+
+| Capability ID | Generation / retrieval capability | Calibration profile | Index profile |
+| --- | --- | --- | --- |
+| `development` | Local/test wiring | `hash-local-whole-chunk` | `development-hash` |
+| `hosted-managed` | OpenAI generation, Cohere embedding/rerank, Google Vision OCR | `cohere-v4-managed-whole-chunk` | `hosted-cohere-v4` |
+| `hosted-openai` | OpenAI generation/embedding, Cohere rerank | `openai-large-cohere-whole-chunk` | `hosted-openai-large` |
+| `private-ollama` | Ollama generation/embedding, lexical rerank | `ollama-1024-local-whole-chunk` | `private-ollama-1024` |
+
+## Project configuration
+
+Project revisions are sparse and immutable. Omit a field to inherit. A
+translation-only override is valid and persists:
 
 ```json
 {
-  "behavior": {
-    "response_mode": "indexed_only",
-    "grounding_assurance": "strict",
-    "domain_instructions": "Use the organization terminology.",
-    "translation_policy": "inherit",
-    "generation_model_id": "deployment-default"
-  },
-  "execution": {
-    "profile_id": "standard@v1",
-    "retrieval_top_k": 10,
-    "rerank_mode": "always",
-    "rerank_candidate_window": 25,
-    "rerank_return_count": 8
-  }
+  "behavior": { "translation_policy": "enabled" },
+  "execution": {}
 }
 ```
 
-Every field is optional/sparse. `execution.profile_id` selects an immutable,
-certified RAG Execution Profile; remaining execution values are Advanced sparse
-overrides. On persistence, the service adds and later verifies
-`execution.profile_hash`; clients do not invent this value. `economy@v1`,
-`standard@v1`, and `quality@v1` begin as candidates, so
-normal Project UI/API cannot select or recommend them until certification metadata
-is checked in. Candidate execution is available only through an explicit Test Lab path.
+### Behavior fields
 
-Deployment Capability Profiles select an exact generation-model allowlist, an
-Evidence Calibration Profile, an optional certified default RAG profile identity, feature flags, and
-a default Index Profile. Index Profiles remain separate from query-time execution.
+| Field | Options | Inherited default | Effect |
+| --- | --- | --- | --- |
+| `behavior.response_mode` | `indexed_only`, `indexed_then_web`, `indexed_and_web` | `indexed_only` | Controls when web evidence is used; deployment capability still applies. |
+| `behavior.grounding_assurance` | `strict`, `balanced` | Deployment setting | Bounded Project grounding posture. |
+| `behavior.domain_instructions` | Text, max 20,000 chars | Empty | Project-specific standing instructions. |
+| `behavior.translation_policy` | `inherit`, `enabled`, `disabled` | `inherit` → OFF | Enables/disables query-only translation. Original query always remains available. |
+| `behavior.generation_model_id` | Deployment-allowlisted logical ID | Deployment default | Selects an approved model identity; raw model strings are rejected. |
 
-Projects may control response behavior, grounding assurance, instructions,
-translation, an approved logical generation model, and canonical advanced
-execution fields. They cannot control providers, raw model names, credentials,
-web budgets/timeouts, raw calibration, citation/evidence/invariant switches,
-source-policy switches, or reranker disablement.
+### Execution fields
 
-The Project model chooser lists only exact deployment-approved logical IDs from
-the code-owned generation registry and capability profile. Arbitrary raw model
-strings and commercial tier labels are rejected. Custom deployments register a
-logical ID rather than accepting free-form Project model input.
+| Field group | Options / bounds | Default | Effect |
+| --- | --- | --- | --- |
+| `execution.profile_id` | Certified `standard`, `quality`, or `economy` | No selected profile | Applies a frozen RAG profile. Service writes `profile_hash`. |
+| Candidate depth | `semantic_candidate_top_k`, `keyword_candidate_top_k`: 1–200 | 50 / 50 | Candidates before fusion and reranking. |
+| ANN / fusion | `hnsw_ef_search`: 1–1000; `rrf_k`: 1–500; weights: 0–10 | 100 / 60 / 1.0 | Recall and fusion balance. |
+| Rerank | `rerank_mode`: `always` or `cross_language`; window/return: 1–100 | always / 25 / 8 | Rerank effort. Return cannot exceed window. |
+| Diversity / passages | Per-document/section caps: 1–100; passage scoring and token bounds | 4 / 2 / off | Result diversity and optional passage scoring. |
+| Answer context | `retrieval_top_k`: 1–100; chunks: 1–50; chars: 500–200,000 | 10 / 8 / 12,000 | Evidence sent to generation. |
+| History | `max_history_messages`: 0–200 | 20 | Conversation history included in generation. |
 
-## Safety and governance behavior
+Projects cannot choose provider credentials/endpoints, raw calibration thresholds,
+citation enforcement, source-policy mode, index profiles, or embedding identity.
 
-V2 resolution enforces hybrid retrieval, enabled hosted reranking, evidence
-enforcement, durable citations/provenance, content-hash deduplication, and
-governed-source behavior. Candidate-wise grounding remains an internal,
-code-owned technique; it is not a universal invariant or Project setting.
+## Deployment ENV reference
 
-Reranker provider errors and timeouts remain fail-open: retrieval falls back to
-its safe RRF order and the query remains available. “Enabled” means the stage
-is attempted, not that a transient provider incident makes chat unavailable.
+All application keys use `APE_` and `__` nesting. For example,
+`retrieval.auto_build_after_process` becomes
+`APE_RETRIEVAL__AUTO_BUILD_AFTER_PROCESS`. Lists are comma-separated.
 
-Source governance and `MODIFIES` expansion apply automatically when source
-metadata/relationships exist. Projects with ungoverned source documents remain
-neutral; migration alone does not exclude their documents.
+### Connectivity, secrets, and operations
 
-Query translation defaults to **OFF**. A V2 Project can explicitly enable it
-through `behavior.translation_policy`.
-
-## Index artifact and lifecycle
-
-`IndexArtifactConfig` is the typed, versioned identity for materialized output:
-
-- parsing behavior;
-- OCR behavior (not credentials, endpoints, retries, or timeouts);
-- chunking behavior (not semantic batching);
-- embedding backend/model/dimensions (not credentials, endpoint, or batch size);
-- FTS configuration and materialized metadata schema.
-
-Query-time controls, web settings, generation settings, and Project V2 changes
-do not change an index artifact. No configuration migration schedules document
-processing, embedding, indexing, or a rebuild. If an explicit artifact target
-changes, the service reports `none`, `reprocess`, `reembed`, `reindex`, or
-`rebuild` before activation. New explicitly-profiled manifests record Index
-Profile ID/hash plus artifact fingerprint/version; old manifests and active
-pointers retain their historical identity unchanged. RAG profile or Project
-behavior changes never alter index artifact identity or queue corpus work.
-Index Profile ID/hash are descriptive pinned provenance and are deliberately
-excluded from the materialized artifact fingerprint; assigning an equivalent
-profile label alone cannot request a rebuild.
-
-The separate `FutureProjectIndexSelection` contract remains intentionally hidden
-from normal UI. It reserves a Super Admin `index_profile_id` path for a later,
-explicitly impact-reviewed selector without coupling it to RAG execution.
-
-## Phase-2 profile normalization
-
-Existing V2 revisions remain readable and active without rewriting. Super Admin
-can preview or append an equivalent profile-backed/Custom V2 revision with:
-
-```text
-GET  /api/v1/operator/projects/{project_id}/ai-config/normalize-profile
-POST /api/v1/operator/projects/{project_id}/ai-config/normalize-profile
-```
-
-Normalization is append-only, reports the effective diff, and never queues
-reprocessing, re-embedding, reindexing, or rebuild work.
-
-## V1 historical compatibility and normalization
-
-Existing rows have `schema_version=1` and remain immutable/readable exactly as
-historical V1 payloads. Old conversation/job/index snapshots likewise retain
-their original values and hashes. V1 is a reader compatibility path, not a
-normal new-write format.
-
-New edits and ordinary restore create V2 revisions. Restoring V1 creates a V2
-copy rather than reactivating legacy live semantics. Super Admin can use:
-
-```text
-GET  /api/v1/operator/projects/{project_id}/ai-config/normalize-v1
-POST /api/v1/operator/projects/{project_id}/ai-config/normalize-v1
-```
-
-The GET is a read-only preview of the V2 payload, concise effective diff,
-warnings, and required index action. The confirmed POST takes the expected
-active revision ID and audit reason, appends a V2 revision with source metadata,
-and activates it. It never queues index work by itself. Deployment-wide
-`GET /api/v1/operator/ai-config/normalization-status` reports the active V1
-Project count for rollout tracking.
-
-## Retired inputs and compatibility bridge
-
-These are rejected for new Settings/Project V2 input with migration guidance:
-
-| Retired input | Replacement |
-| --- | --- |
-| `chunking.overlap_tokens` | Remove it; it never changed output. |
-| `chunking.strategy=recursive_character` | `recursive_fallback` |
-| `retrieval.auto_embed`, `auto_index` | `retrieval.auto_build_after_process` |
-| `rerank_enabled`, `rerank_top_n`, `rerank_return_n` | `rerank_mode`, `rerank_candidate_window`, `rerank_return_count` |
-| `modifies_expansion_enabled` | `modifies_expansion_mode` (internal) |
-| `chat.retrieval_top_k` | `retrieval.default_top_k` |
-| ENV `provider_version` | Code-owned adapter implementation versions |
-| `retrieval.language_metadata_schema_version` | Code-owned language metadata schema identity |
-| V1 provider/model/web/calibration/source/citation controls | V2 behavior/execution plus code invariants |
-
-Historical V1 readers and old job/snapshot readers adapt these values without
-rewriting their persisted JSON. Request compatibility is deployment-controlled;
-strict mode is the default and rejects deprecated request policy overrides,
-while the temporary compatibility bridge emits diagnostics.
-
-## Deployment variables that matter to this contract
-
-Use `APE_` with `__`, for example
-`APE_RETRIEVAL__AUTO_BUILD_AFTER_PROCESS=false`. Important canonical keys:
-
-| Path | ENV key | Owner |
+| ENV key / family | Default | What it controls |
 | --- | --- | --- |
-| `runtime.capability_profile_id` | `APE_RUNTIME__CAPABILITY_PROFILE_ID` | Code profile selection |
-| `retrieval.auto_build_after_process` | `APE_RETRIEVAL__AUTO_BUILD_AFTER_PROCESS` | Deployment workflow |
-| `retrieval.modifies_expansion_mode` | `APE_RETRIEVAL__MODIFIES_EXPANSION_MODE` | Code-governed execution |
-| `query_translation.enabled` | `APE_QUERY_TRANSLATION__ENABLED` | Deployment default (OFF) |
-| `ai_policy.request_override_mode` | `APE_AI_POLICY__REQUEST_OVERRIDE_MODE` | Request bridge (strict) |
+| `APE_RUNTIME__CAPABILITY_PROFILE_ID` | unset → `development` | Capability selection. Values: `development`, `hosted-managed`, `hosted-openai`, `private-ollama`. |
+| `APE_DATABASE__*` | localhost / 5432 / `ape` | Database host, port, user, password, name, pool settings. |
+| `APE_REDIS__*` | localhost / 6379 | Cache and job broker connection. |
+| `APE_STORAGE__*`, `APE_MINIO__*` | local storage | Object-storage backend and connection. |
+| `APE_LLM__*` | `echo`, `gpt-4o-mini` locally | Generation provider, model, API key, endpoint, timeout. |
+| `APE_EMBEDDING__*` | `hash`, `text-embedding-3-large`, 1024 | Embedding provider, model, dimensions, endpoint, batch size. |
+| `APE_COHERE__*`, `APE_RERANKER__*` | Cohere endpoint, `rerank-v4.0-pro` | Cohere credentials/endpoint and reranker connection. |
+| `APE_WEB_SEARCH__*` | compatible LLM connection | Optional web-search provider and connection; `disabled` is a kill switch. |
+| `APE_OCR__*` | disabled / `noop` locally | OCR capability, credentials, endpoint, quality limits. |
+| `APE_AUTH__*`, `APE_WEBHOOKS__*` | development-safe local defaults | Authentication, rate limits, session secrets, signed callbacks. |
+| `APE_JOBS__*`, `APE_LOGGING__*`, `APE_CORS__*` | local defaults | Worker dispatch/retries, logs, browser access. |
 
-Normal candidate depth, rerank windows, context budgets, and generation allowlists
-are profile-owned rather than ENV defaults. ENV continues to own credentials,
-endpoints, operational limits, and provider wiring. Explicit provider/model values
-in deployment templates must match the selected capability and index profiles.
+### Index-producing settings
 
-See the environment examples for infrastructure, credentials, provider
-endpoints, parsing/OCR/chunking, and complete deployment configuration.
+| ENV family | Typical default | Impact when changed |
+| --- | --- | --- |
+| `APE_PARSING__*` | PDF parsers `pymupdf,pdfium` | Parsed output; requires reprocess. |
+| `APE_OCR__ENABLED`, OCR backend/language/quality settings | `false`, `noop`, `en` locally | OCR output; requires reprocess. Credentials/endpoints/timeouts do not change index identity. |
+| `APE_CHUNKING__STRATEGY` | `auto` | Chunk boundaries; requires reprocess. |
+| `APE_CHUNKING__TARGET_TOKENS`, `MAX_TOKENS`, `MIN_TOKENS`, structure thresholds | 250 / 400 / 50 | Chunk boundaries; requires reprocess. |
+| `APE_EMBEDDING__BACKEND`, `MODEL`, `DIMENSIONS` | hash / text-embedding-3-large / 1024 locally | Embedding identity; requires a new embedding set and rebuild. |
+| `APE_RETRIEVAL__EMBEDDING_SET_VERSION` | 2 locally, 3 hosted-managed | Selects the target embedding set. |
+| `APE_RETRIEVAL__FTS_REGCONFIG` | `simple` | Keyword index identity; requires reindex. |
+| `APE_RETRIEVAL__FILTERABLE_METADATA_KEYS` | `source,tags,ocr_confidence` | Materialized filter schema; reindex/rebuild as classified. |
+
+`IndexArtifactConfig` decides the exact action: `none`, `reprocess`, `reembed`,
+`reindex`, or `rebuild`. Profile labels and hashes are provenance only; changing
+an equivalent label does not change the materialized fingerprint. No configuration
+write queues processing or rebuild work by itself.
+
+### Defaults, policy caps, and emergency controls
+
+| ENV key | Default | Use |
+| --- | --- | --- |
+| `APE_RETRIEVAL__AUTO_BUILD_AFTER_PROCESS` | `true` | Automatically build after successful processing. |
+| `APE_RETRIEVAL__STRATEGY` | `hybrid` | Deployment fallback retrieval strategy. |
+| `APE_RETRIEVAL__RERANK_MODE` | `always` | Fallback while no certified RAG profile is selected. |
+| `APE_QUERY_TRANSLATION__ENABLED` | `false` | Deployment translation default; Project can inherit/on/off. |
+| `APE_AI_POLICY__DEFAULT_GENERATION_MODEL_ID` | capability-specific | Default logical generation model. |
+| `APE_AI_POLICY__ALLOWED_GENERATION_MODEL_IDS` | capability-specific | Exact Project model allowlist. |
+| `APE_AI_POLICY__MAX_REQUEST_TOP_K` | `100` | Request safety cap. |
+| `APE_AI_POLICY__REQUEST_OVERRIDE_MODE` | `strict` | Deprecated request override handling. |
+| `APE_AI_POLICY__SOURCE_POLICY_MODE` | `enforce` | Governance default when source metadata exists. |
+| `APE_AI_POLICY__SOURCE_POLICY_DEPLOYMENT_CAP` | `enforce` | Emergency cap; may lower but never raise enforcement. |
+| `APE_RETRIEVAL__MODIFIES_EXPANSION_MODE` | `expand` | Related-source expansion when a source relationship graph exists. |
+| `APE_CHAT__EVIDENCE_GATE_MODE` | `enforce` | Evidence-admission rollout/emergency posture. |
+
+## Safety and reproducibility
+
+- Reranker failures and timeouts fail open to safe fused retrieval order; queries
+  remain available.
+- Translation defaults OFF and falls back to the original query on failure.
+- Source policy and `MODIFIES` behavior apply only to governed source metadata and
+  relationships. Ungoverned Projects remain neutral.
+- Query-time and Project changes do not alter index identity or queue a rebuild.
+- Conversations, jobs, revisions, and active indexes record effective values,
+  hashes, profile/calibration/index provenance, and resolver identity so they remain
+  reproducible after later configuration changes.

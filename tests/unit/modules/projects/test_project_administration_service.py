@@ -3,16 +3,25 @@
 from __future__ import annotations
 
 import uuid
+from types import MappingProxyType
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+import app.platform.config.profiles as profile_registry
 from app.core.config import Settings
 from app.core.exceptions import ConflictError
 from app.models.project import Project
 from app.models.project_ai_config_revision import ProjectAIConfigRevision
 from app.modules.projects.services.project_ai_config_service import (
     ProjectAdministrationService,
+)
+from app.platform.config.profiles import (
+    PROFILE_CERTIFICATIONS,
+    RAG_EXECUTION_PROFILES,
+    CertificationStatus,
+    ProfileCertification,
+    profile_hash,
 )
 from app.platform.config.project_ai import ProjectAIConfig
 from app.platform.domain.auth_context import DEFAULT_ORGANIZATION_ID
@@ -78,6 +87,43 @@ async def test_config_revision_is_append_only_and_activates_pointer() -> None:
     repository.add.assert_called_once_with(revision)
     session.commit.assert_awaited_once()
     audit.record.assert_called_once()
+
+
+async def test_certified_profile_write_pins_exact_definition_hash(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    certifications = {
+        profile_id: ProfileCertification(
+            profile_id=profile_id,
+            status=(
+                CertificationStatus.CERTIFIED if profile_id == "standard" else certification.status
+            ),
+        )
+        for profile_id, certification in PROFILE_CERTIFICATIONS.items()
+    }
+    monkeypatch.setattr(
+        profile_registry,
+        "PROFILE_CERTIFICATIONS",
+        MappingProxyType(certifications),
+    )
+    session = AsyncMock()
+    repository = AsyncMock()
+    repository.add = MagicMock()
+    repository.next_revision_number.return_value = 1
+    project = _project(locked=True)
+    repository.lock_project.return_value = project
+    service = _service(session, repository, MagicMock(), project.id)
+
+    revision = await service.create_revision(
+        ProjectAIConfig.model_validate({"execution": {"profile_id": "standard"}}),
+        expected_active_revision_id=None,
+        reason="Select balanced profile",
+    )
+
+    assert revision.configuration["execution"] == {
+        "profile_id": "standard",
+        "profile_hash": profile_hash(RAG_EXECUTION_PROFILES["standard"]),
+    }
 
 
 async def test_config_revision_uses_optimistic_concurrency() -> None:

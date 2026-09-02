@@ -121,8 +121,8 @@ class RuntimeConfig(BaseModel):
 
     # Preferred production value is hosted_managed. hosted_openai is compatibility-only.
     profile: RuntimeProfile = RuntimeProfile.DEVELOPMENT
-    # Phase 2 immutable deployment capability identity. ``profile`` remains a
-    # one-release alias so existing deployments keep resolving unchanged.
+    # Code-owned deployment capability identity. ``profile`` remains as the
+    # coarse deployment-mode alias for existing deployments.
     capability_profile_id: str | None = Field(default=None, min_length=1, max_length=128)
     startup_timeout_seconds: float = Field(default=30.0, ge=1.0, le=300.0)
     dependency_timeout_seconds: float = Field(default=3.0, ge=0.1, le=30.0)
@@ -137,10 +137,10 @@ class RuntimeConfig(BaseModel):
             raise ValueError(msg)
         if self.capability_profile_id not in {
             None,
-            "development@v1",
-            "hosted-managed@v1",
-            "hosted-openai@v1",
-            "private-ollama@v1",
+            "development",
+            "hosted-managed",
+            "hosted-openai",
+            "private-ollama",
         }:
             raise ValueError("runtime.capability_profile_id is not registered")
         return self

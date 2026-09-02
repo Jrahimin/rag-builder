@@ -19,7 +19,7 @@ Examples:
 ```text
 APE_APP__ENV=development
 APE_DATABASE__HOST=localhost
-APE_RUNTIME__CAPABILITY_PROFILE_ID=development@v1
+APE_RUNTIME__CAPABILITY_PROFILE_ID=development
 APE_LLM__OPENAI_API_KEY=***
 ```
 

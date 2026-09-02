@@ -144,7 +144,7 @@ function effectiveConfig(activeRevisionId: string | null): EffectiveProjectAICon
     allowed_generation_models: [{ id: "openai-o1-test", provider: "openai", model: "o1-test" }],
     rag_profiles: [
       {
-        id: "standard@v1",
+        id: "standard",
         certification_status: "candidate",
         selectable: false,
         recommended: false,
@@ -384,6 +384,207 @@ test("keeps a created Project when optional AI settings fail to save", async () 
   expect(screen.getByRole("button", { name: "Open AI configuration" })).toBeInTheDocument();
 });
 
+test("persists a translation-only sparse override during Project creation", async () => {
+  mockProjectShell();
+  const createProject = vi
+    .spyOn(operatorApiClient, "createProject")
+    .mockResolvedValue(projectFixture);
+  const createConfig = vi.spyOn(operatorApiClient, "createProjectAIConfig").mockResolvedValue({
+    id: "22222222-2222-2222-2222-222222222222",
+    project_id: projectFixture.id,
+    revision_number: 1,
+    configuration_hash: "b".repeat(64),
+    configuration: { behavior: { translation_policy: "enabled" }, execution: {} },
+    schema_version: 2,
+    source: "project_revision",
+    reason: "Initial Project AI settings",
+    created_by: "test-admin",
+    restored_from_revision_id: null,
+    created_at: "2026-08-16T00:00:00Z",
+  });
+
+  renderOperatorComponent(<OperatorConsoleApp />, `/projects?project=${projectFixture.id}`);
+  await userEvent.click(await screen.findByRole("button", { name: "Create Project" }));
+  await userEvent.type(screen.getByLabelText("Project name"), "Translation only");
+  await userEvent.click(screen.getByText("Optional AI settings"));
+  await userEvent.selectOptions(screen.getByLabelText("Query translation"), "enabled");
+  await userEvent.click(screen.getByRole("button", { name: "Create" }));
+
+  await waitFor(() => expect(createProject).toHaveBeenCalled());
+  await waitFor(() => expect(createConfig).toHaveBeenCalledTimes(1));
+  expect(createConfig.mock.calls[0]?.[1]).toEqual({
+    behavior: { translation_policy: "enabled" },
+    execution: {},
+  });
+});
+
+test("selecting a certified profile becomes Custom only while values differ", async () => {
+  mockProjectShell();
+  const config = effectiveConfig(null);
+  config.custom_execution = false;
+  config.rag_profiles = [
+    {
+      id: "standard",
+      certification_status: "certified",
+      selectable: true,
+      recommended: true,
+      profile_hash: "f".repeat(64),
+      values: { retrieval_top_k: 10, rerank_mode: "always" },
+    },
+  ];
+  vi.spyOn(operatorApiClient, "getProjectAIConfig").mockResolvedValue(config);
+  vi.spyOn(operatorApiClient, "getProjectAIConfigHistory").mockResolvedValue([]);
+  vi.spyOn(operatorApiClient, "getProviderCapabilities").mockResolvedValue([capability]);
+  const create = vi.spyOn(operatorApiClient, "createProjectAIConfig").mockResolvedValue({
+    id: "22222222-2222-2222-2222-222222222222",
+    project_id: projectFixture.id,
+    revision_number: 1,
+    configuration_hash: "b".repeat(64),
+    configuration: {
+      behavior: { translation_policy: "inherit" },
+      execution: { profile_id: "standard" },
+    },
+    schema_version: 2,
+    source: "project_revision",
+    reason: "Use balanced profile",
+    created_by: "test-admin",
+    restored_from_revision_id: null,
+    created_at: "2026-08-16T00:00:00Z",
+  });
+
+  renderOperatorComponent(
+    <OperatorConsoleApp />,
+    `/projects?project=${projectFixture.id}&section=ai-config`,
+  );
+
+  await userEvent.selectOptions(await screen.findByLabelText("RAG profile"), "standard");
+  expect(screen.getByTestId("rag-profile-state")).toHaveTextContent("standard profile");
+  fireEvent.change(screen.getByLabelText("Top K"), { target: { value: "11" } });
+  expect(screen.getByTestId("rag-profile-state")).toHaveTextContent(
+    "Custom — standard + execution overrides",
+  );
+  fireEvent.change(screen.getByLabelText("Top K"), { target: { value: "10" } });
+  expect(screen.getByTestId("rag-profile-state")).toHaveTextContent("standard profile");
+
+  await userEvent.type(screen.getByLabelText("Revision reason"), "Use balanced profile");
+  await userEvent.click(screen.getByRole("button", { name: "Create and activate revision" }));
+  await waitFor(() => expect(create).toHaveBeenCalled());
+  expect(create.mock.calls[0]?.[1].execution).toEqual({ profile_id: "standard" });
+});
+
+test("an existing profile override returns to the profile when its exact value is restored", async () => {
+  mockProjectShell();
+  const revision: ProjectAIConfigRevision = {
+    id: "22222222-2222-2222-2222-222222222222",
+    project_id: projectFixture.id,
+    revision_number: 1,
+    configuration_hash: "b".repeat(64),
+    configuration: {
+      behavior: { translation_policy: "inherit" },
+      execution: { profile_id: "standard", retrieval_top_k: 11 },
+    },
+    schema_version: 2,
+    source: "project_revision",
+    reason: "Custom top K",
+    created_by: "test-admin",
+    restored_from_revision_id: null,
+    created_at: "2026-08-16T00:00:00Z",
+  };
+  const config = effectiveConfig(revision.id);
+  config.base_profile_id = "standard";
+  config.custom_execution = true;
+  config.configuration = {
+    ...config.configuration,
+    retrieval: { ...config.configuration.retrieval, top_k: 11 },
+  };
+  config.rag_profiles = [
+    {
+      id: "standard",
+      certification_status: "certified",
+      selectable: true,
+      recommended: true,
+      profile_hash: "f".repeat(64),
+      values: { retrieval_top_k: 10, rerank_mode: "always" },
+    },
+  ];
+  vi.spyOn(operatorApiClient, "getProjectAIConfig").mockResolvedValue(config);
+  vi.spyOn(operatorApiClient, "getProjectAIConfigHistory").mockResolvedValue([revision]);
+  vi.spyOn(operatorApiClient, "getProviderCapabilities").mockResolvedValue([capability]);
+  const create = vi.spyOn(operatorApiClient, "createProjectAIConfig").mockResolvedValue(revision);
+
+  renderOperatorComponent(
+    <OperatorConsoleApp />,
+    `/projects?project=${projectFixture.id}&section=ai-config`,
+  );
+
+  expect(await screen.findByTestId("rag-profile-state")).toHaveTextContent("Custom — standard");
+  fireEvent.change(screen.getByLabelText("Top K"), { target: { value: "10" } });
+  expect(screen.getByTestId("rag-profile-state")).toHaveTextContent("standard profile");
+  await userEvent.type(screen.getByLabelText("Revision reason"), "Restore exact Standard");
+  await userEvent.click(screen.getByRole("button", { name: "Create and activate revision" }));
+
+  await waitFor(() => expect(create).toHaveBeenCalled());
+  expect(create.mock.calls[0]?.[1].execution).toEqual({ profile_id: "standard" });
+});
+
+test("reselecting a profile clears profile-owned hidden overrides and labels retained custom state", async () => {
+  mockProjectShell();
+  const revision: ProjectAIConfigRevision = {
+    id: "22222222-2222-2222-2222-222222222222",
+    project_id: projectFixture.id,
+    revision_number: 1,
+    configuration_hash: "b".repeat(64),
+    configuration: {
+      behavior: { translation_policy: "inherit" },
+      execution: {
+        profile_id: "standard",
+        semantic_candidate_top_k: 55,
+        passage_window_tokens: 120,
+      },
+    },
+    schema_version: 2,
+    source: "project_revision",
+    reason: "Custom execution",
+    created_by: "test-admin",
+    restored_from_revision_id: null,
+    created_at: "2026-08-16T00:00:00Z",
+  };
+  const config = effectiveConfig(revision.id);
+  config.base_profile_id = "standard";
+  config.custom_execution = true;
+  config.rag_profiles = [
+    {
+      id: "standard",
+      certification_status: "certified",
+      selectable: true,
+      recommended: true,
+      profile_hash: "f".repeat(64),
+      values: { retrieval_top_k: 10, rerank_mode: "always" },
+    },
+  ];
+  vi.spyOn(operatorApiClient, "getProjectAIConfig").mockResolvedValue(config);
+  vi.spyOn(operatorApiClient, "getProjectAIConfigHistory").mockResolvedValue([revision]);
+  vi.spyOn(operatorApiClient, "getProviderCapabilities").mockResolvedValue([capability]);
+  const create = vi.spyOn(operatorApiClient, "createProjectAIConfig").mockResolvedValue(revision);
+
+  renderOperatorComponent(
+    <OperatorConsoleApp />,
+    `/projects?project=${projectFixture.id}&section=ai-config`,
+  );
+
+  expect(await screen.findByTestId("rag-profile-state")).toHaveTextContent("Custom — standard");
+  fireEvent.change(screen.getByLabelText("RAG profile"), { target: { value: "standard" } });
+  expect(screen.getByTestId("rag-profile-state")).toHaveTextContent("Custom — standard");
+  await userEvent.type(screen.getByLabelText("Revision reason"), "Reset Standard controls");
+  await userEvent.click(screen.getByRole("button", { name: "Create and activate revision" }));
+
+  await waitFor(() => expect(create).toHaveBeenCalled());
+  expect(create.mock.calls[0]?.[1].execution).toEqual({
+    profile_id: "standard",
+    passage_window_tokens: 120,
+  });
+});
+
 test("shows exact generation IDs and keeps candidate profiles unavailable", async () => {
   mockProjectShell();
   vi.spyOn(operatorApiClient, "getProjectAIConfig").mockResolvedValue(effectiveConfig(null));
@@ -396,7 +597,7 @@ test("shows exact generation IDs and keeps candidate profiles unavailable", asyn
   );
 
   expect(await screen.findByRole("option", { name: /openai-o1-test/ })).toBeInTheDocument();
-  expect(screen.getByRole("option", { name: /standard@v1 — candidate/ })).toBeDisabled();
+  expect(screen.getByRole("option", { name: /standard — candidate/ })).toBeDisabled();
   expect(screen.queryByLabelText("Provider")).not.toBeInTheDocument();
 });
 
