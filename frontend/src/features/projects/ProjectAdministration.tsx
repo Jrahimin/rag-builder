@@ -902,9 +902,8 @@ function ProjectConfig({ project }: { project: Project }) {
       <form className="panel progressive-form" onSubmit={(event) => void submit(event)}>
         <p className="muted-copy">
           Project behavior is sparse. RAG execution is an inherit/preset selection or a complete
-          Custom bundle.
-          Provider, web budget, calibration, citation, and source-governance controls are deployment
-          or code owned.
+          Custom bundle. Provider, web budget, calibration, citation, and source-governance controls
+          are deployment or code owned.
         </p>
         <fieldset>
           <legend>

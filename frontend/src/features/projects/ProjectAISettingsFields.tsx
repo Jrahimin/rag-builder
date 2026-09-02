@@ -29,10 +29,7 @@ export type ProjectConfigForm = {
 
 export type ProjectConfigOverride = Exclude<
   keyof ProjectConfigForm,
-  | "reason"
-  | "translation"
-  | "rerankMode"
-  | "customExecution"
+  "reason" | "translation" | "rerankMode" | "customExecution"
 >;
 export type ProjectConfigOverrides = Record<ProjectConfigOverride, boolean>;
 
@@ -79,9 +76,7 @@ export function configFormFromEffective(
     ...emptyProjectConfigForm,
     profileId: stored.execution?.profile_id ?? "inherit",
     customExecution: Object.fromEntries(
-      Object.entries(stored.execution ?? {}).filter(
-        ([key]) => key !== "profile_id",
-      ),
+      Object.entries(stored.execution ?? {}).filter(([key]) => key !== "profile_id"),
     ),
     generationModelId: configuration.llm.generation_model_id ?? "",
     responseMode: configuration.chat.response_mode,
@@ -300,7 +295,8 @@ export function ProjectAISettingsFields({
   };
   const selectProfile = (profileId: string) => {
     const profile = ragProfiles.find((item) => item.id === profileId);
-    const currentPresetValues = ragProfiles.find((item) => item.id === form.profileId)?.values ?? {};
+    const currentPresetValues =
+      ragProfiles.find((item) => item.id === form.profileId)?.values ?? {};
     const customExecution =
       profileId === "custom"
         ? {
@@ -317,8 +313,8 @@ export function ProjectAISettingsFields({
         profileId === "custom" && typeof customExecution.retrieval_top_k === "number"
           ? String(customExecution.retrieval_top_k)
           : typeof profile?.values.retrieval_top_k === "number"
-          ? String(profile.values.retrieval_top_k)
-          : baseline.topK,
+            ? String(profile.values.retrieval_top_k)
+            : baseline.topK,
       rerankMode:
         profileId === "custom" && typeof customExecution.rerank_mode === "string"
           ? (customExecution.rerank_mode as RerankModeChoice)
@@ -483,7 +479,9 @@ export function ProjectAISettingsFields({
         </div>
       </div>
       <details className="config-advanced">
-        <summary>Advanced execution controls {customProfile ? "" : "— editing uses Custom"}</summary>
+        <summary>
+          Advanced execution controls {customProfile ? "" : "— editing uses Custom"}
+        </summary>
         <div className="form-grid">
           <div className="field-control">
             <FieldHint label="Rerank mode" text={PROJECT_AI_FIELD_HINTS.rerank} />
