@@ -38,10 +38,10 @@ for retrieval depth, rerank windows, or context size.
 
 ## Current defaults
 
-The deployment fallback uses the **Standard** execution value set. It is the
-balanced baseline even though `standard` is not yet marked as a selectable
-certified profile. The default profile ID is therefore `null`; no unvalidated
-profile is silently selected for a Project.
+The deployment default is the **Standard** execution profile:
+`APE_AI_POLICY__DEFAULT_RAG_PROFILE=standard`. Built-in profiles are selectable
+during development while their certification status remains an honest record of
+measured evaluation, not a selection gate.
 
 | Setting | Current default | What it means |
 | --- | --- | --- |
@@ -61,6 +61,10 @@ profile is silently selected for a Project.
 | HNSW search effort | `100` |
 | Fusion | `rrf_k=60`, semantic weight `1.0`, keyword weight `1.0` |
 | Rerank | `always`, window `25`, return `8` |
+| Retrieval filters | score, rerank-score, and OCR-confidence thresholds: `0.0` |
+| Diversity | 4 chunks/document, 2 chunks/section, content-hash deduplication on |
+| Passage scoring | off; window/overlap/minimum: `96` / `24` / `32` tokens |
+| Relationship expansion | 8 related sources, 20 relationship candidates |
 | Answer retrieval | `top_k=10` |
 | Context | `8` chunks, `12,000` characters |
 | History | `20` messages |
@@ -110,6 +114,7 @@ APE_OCR__GOOGLE_API_KEY=<google-vision-api-key>
 # Handy safe defaults
 APE_QUERY_TRANSLATION__ENABLED=false
 APE_RETRIEVAL__AUTO_BUILD_AFTER_PROCESS=true
+APE_AI_POLICY__DEFAULT_RAG_PROFILE=standard
 APE_AI_POLICY__REQUEST_OVERRIDE_MODE=strict
 APE_AI_POLICY__SOURCE_POLICY_DEPLOYMENT_CAP=enforce
 ```
@@ -126,9 +131,9 @@ individual execution values are authoritative.
 
 | RAG profile | Intended use | Status | Normal Project API/UI |
 | --- | --- | --- | --- |
-| `standard` | Balanced default values shown above | Certified | Selectable |
-| `quality` | Wider retrieval/rerank effort and larger context | Certified | Selectable |
-| `economy` | Narrower retrieval/rerank effort and smaller context | Certified | Selectable |
+| `standard` | Balanced default values shown above | Candidate until measured evaluation certifies it | Selectable in development |
+| `quality` | Wider retrieval/rerank effort and larger context | Candidate until measured evaluation certifies it | Selectable in development |
+| `economy` | Narrower retrieval/rerank effort and smaller context | Candidate until measured evaluation certifies it | Selectable in development |
 
 The hosted certification manifest requires named/versioned suites: `tax@v1`
 at 21/21, `ci-smoke@v1`, and `cross-lingual-quality@v2`. The certification engine
@@ -150,8 +155,9 @@ Select a preset again
 ```
 
 Behavior fields do not change the RAG profile. Advanced execution controls are
-editable only in Custom. Project revisions store the selected profile ID, while
-conversation/job provenance stores the resolved ID, current profile hash, and effective values.
+editable only in Custom. Preset and inherit revisions store only their selection;
+a Custom revision persists a complete explicit execution bundle. Conversation/job
+provenance stores the resolved ID, profile hash, and effective values.
 
 | Capability ID | Generation / retrieval capability | Calibration profile | Index profile |
 | --- | --- | --- | --- |
@@ -162,8 +168,10 @@ conversation/job provenance stores the resolved ID, current profile hash, and ef
 
 ## Project configuration
 
-Project revisions are sparse and immutable. Omit a field to inherit. A
-translation-only override is valid and persists:
+Project behavior is sparse and immutable: omit a behavior field to inherit it.
+Execution is different: `inherit` and presets store only a selection, while
+Custom persists every execution field so it cannot inherit from a later global
+profile. A translation-only override is valid and persists:
 
 ```json
 {
@@ -186,11 +194,11 @@ translation-only override is valid and persists:
 
 | Field group | Options / bounds | Default | Effect |
 | --- | --- | --- | --- |
-| `execution.profile_id` | `inherit`, `standard`, `quality`, `economy`, `custom` | `inherit` | Presets apply the exact current code-owned bundle. Custom enables individual execution values. |
+| `execution.profile_id` | `inherit`, `standard`, `quality`, `economy`, `custom` | `inherit` | Presets apply the exact current code-owned bundle. Custom is a complete persisted bundle. |
 | Candidate depth | `semantic_candidate_top_k`, `keyword_candidate_top_k`: 1–200 | 50 / 50 | Candidates before fusion and reranking. |
 | ANN / fusion | `hnsw_ef_search`: 1–1000; `rrf_k`: 1–500; weights: 0–10 | 100 / 60 / 1.0 | Recall and fusion balance. |
-| Rerank | `rerank_mode`: `always` or `cross_language`; window/return: 1–100 | always / 25 / 8 | Rerank effort. Return cannot exceed window. |
-| Diversity / passages | Per-document/section caps: 1–100; passage scoring and token bounds | 4 / 2 / off | Result diversity and optional passage scoring. |
+| Filters / rerank | score, rerank-score, OCR-confidence thresholds: 0–1; `rerank_mode`: `always` or `cross_language`; window/return: 1–100 | 0 / 0 / 0; always / 25 / 8 | Retrieval admission and rerank effort. Return cannot exceed window. |
+| Diversity / passages / relationships | Per-document/section caps: 1–100; content-hash deduplication; passage scoring/token bounds; related-source and relationship-candidate caps | 4 / 2 / on / off / 8 / 20 | Result diversity, scoring, and relationship expansion. |
 | Answer context | `retrieval_top_k`: 1–100; chunks: 1–50; chars: 500–200,000 | 10 / 8 / 12,000 | Evidence sent to generation. |
 | History | `max_history_messages`: 0–200 | 20 | Conversation history included in generation. |
 
@@ -244,7 +252,7 @@ write queues processing or rebuild work by itself.
 | --- | --- | --- |
 | `APE_RETRIEVAL__AUTO_BUILD_AFTER_PROCESS` | `true` | Automatically build after successful processing. |
 | `APE_RETRIEVAL__STRATEGY` | `hybrid` | Deployment fallback retrieval strategy. |
-| `APE_RETRIEVAL__RERANK_MODE` | `always` | Raw execution input only when the global or Project profile is Custom. |
+| `APE_RETRIEVAL__RERANK_MODE` and profile-owned retrieval/chat execution keys | registry value under a preset | Raw execution inputs only when the global profile is `custom`; Project Custom values are persisted instead of inheriting them. |
 | `APE_AI_POLICY__DEFAULT_RAG_PROFILE` | `standard` | Authoritative deployment query-time profile. |
 | `APE_QUERY_TRANSLATION__ENABLED` | `false` | Deployment translation default; Project can inherit/on/off. |
 | `APE_AI_POLICY__DEFAULT_GENERATION_MODEL_ID` | capability-specific | Default logical generation model. |
@@ -253,7 +261,7 @@ write queues processing or rebuild work by itself.
 | `APE_AI_POLICY__REQUEST_OVERRIDE_MODE` | `strict` | Deprecated request override handling. |
 | `APE_AI_POLICY__SOURCE_POLICY_MODE` | `enforce` | Governance default when source metadata exists. |
 | `APE_AI_POLICY__SOURCE_POLICY_DEPLOYMENT_CAP` | `enforce` | Emergency cap; may lower but never raise enforcement. |
-| `APE_RETRIEVAL__MODIFIES_EXPANSION_MODE` | `expand` | Related-source expansion when a source relationship graph exists. |
+| `APE_RETRIEVAL__MODIFIES_EXPANSION_MODE` | `expand` | Code invariant for canonical Project resolution; retained as a legacy/deployment fallback setting. |
 | `APE_CHAT__EVIDENCE_GATE_MODE` | `enforce` | Evidence-admission rollout/emergency posture. |
 
 ## Safety and reproducibility

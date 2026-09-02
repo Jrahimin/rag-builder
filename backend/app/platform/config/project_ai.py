@@ -82,10 +82,12 @@ class ProjectRetrievalPolicy(BaseModel):
     rrf_k: int | None = Field(default=None, ge=1, le=500)
     semantic_weight: float | None = Field(default=None, ge=0.0, le=10.0)
     keyword_weight: float | None = Field(default=None, ge=0.0, le=10.0)
+    score_threshold: float | None = Field(default=None, ge=0.0, le=1.0)
     rerank_enabled: bool | None = None
     rerank_mode: RerankMode | None = None
     rerank_top_n: int | None = Field(default=None, ge=1, le=100)
     rerank_score_threshold: float | None = Field(default=None, ge=0.0, le=1.0)
+    min_ocr_confidence: float | None = Field(default=None, ge=0.0, le=1.0)
     evidence_score_threshold: float | None = Field(default=None, ge=0.0, le=1.0)
     passage_scoring_enabled: bool | None = None
     passage_window_tokens: int | None = Field(default=None, ge=16, le=512)
@@ -100,6 +102,7 @@ class ProjectRetrievalPolicy(BaseModel):
     max_relationship_candidates: int | None = Field(default=None, ge=1, le=20)
     max_chunks_per_document: int | None = Field(default=None, ge=1, le=100)
     max_chunks_per_section: int | None = Field(default=None, ge=1, le=100)
+    deduplicate_by_content_hash: bool | None = None
 
 
 class ProjectChatPolicy(BaseModel):
@@ -189,15 +192,21 @@ class ProjectExecutionV2(BaseModel):
     rrf_k: int | None = Field(default=None, ge=1, le=500)
     semantic_weight: float | None = Field(default=None, ge=0.0, le=10.0)
     keyword_weight: float | None = Field(default=None, ge=0.0, le=10.0)
+    score_threshold: float | None = Field(default=None, ge=0.0, le=1.0)
     rerank_mode: CanonicalRerankMode | None = None
     rerank_candidate_window: int | None = Field(default=None, ge=1, le=100)
     rerank_return_count: int | None = Field(default=None, ge=1, le=100)
+    rerank_score_threshold: float | None = Field(default=None, ge=0.0, le=1.0)
+    min_ocr_confidence: float | None = Field(default=None, ge=0.0, le=1.0)
     max_chunks_per_document: int | None = Field(default=None, ge=1, le=100)
     max_chunks_per_section: int | None = Field(default=None, ge=1, le=100)
+    deduplicate_by_content_hash: bool | None = None
     passage_scoring_enabled: bool | None = None
     passage_window_tokens: int | None = Field(default=None, ge=16, le=512)
     passage_overlap_tokens: int | None = Field(default=None, ge=0, le=256)
     passage_min_tokens: int | None = Field(default=None, ge=8, le=256)
+    max_related_sources: int | None = Field(default=None, ge=1, le=8)
+    max_relationship_candidates: int | None = Field(default=None, ge=1, le=20)
     max_context_chunks: int | None = Field(default=None, ge=1, le=50)
     context_char_budget: int | None = Field(default=None, ge=500, le=200_000)
     max_history_messages: int | None = Field(default=None, ge=0, le=200)
@@ -257,7 +266,9 @@ class EffectiveRetrievalPolicy(BaseModel):
     rerank_enabled: bool
     rerank_mode: RerankMode = RerankMode.ALWAYS
     rerank_top_n: int
+    score_threshold: float | None = None
     rerank_score_threshold: float | None
+    min_ocr_confidence: float | None = None
     semantic_evidence_score_threshold: float
     passage_scoring_enabled: bool = False
     passage_window_tokens: int = 96
@@ -278,6 +289,7 @@ class EffectiveRetrievalPolicy(BaseModel):
     max_relationship_candidates: int = 20
     max_chunks_per_document: int = 4
     max_chunks_per_section: int = 2
+    deduplicate_by_content_hash: bool = True
 
 
 class EffectiveChatPolicy(BaseModel):
@@ -472,15 +484,18 @@ def _v2_as_legacy_policy(
             {"profile_id": execution_profile_id, **execution_values(selected_profile)}
         )
     elif project_profile_id == "custom":
-        global_profile_id = settings.ai_policy.default_rag_profile
-        global_profile_values = (
-            execution_values(execution_profile(global_profile_id, allow_candidate=True))
-            if global_profile_id in {"standard", "quality", "economy"}
-            else {}
-        )
-        execution = ProjectExecutionV2.model_validate(
-            {"profile_id": "custom", **global_profile_values, **overrides}
-        )
+        # A Custom revision is a complete materialized bundle.  Do not allow a
+        # persisted Project configuration to acquire values from a later global
+        # profile (or raw ENV) just because a field was omitted.
+        required = set(execution_values(execution_profile("standard", allow_candidate=True)))
+        missing = sorted(required - set(overrides))
+        if missing:
+            raise BadRequestError(
+                message="Custom RAG execution configurations must contain every execution field.",
+                code="custom_execution_incomplete",
+                context={"missing_fields": missing},
+            )
+        execution = ProjectExecutionV2.model_validate({"profile_id": "custom", **overrides})
     else:
         # Inherit means the deployment's raw Custom values, never stale values
         # that happen to coexist with an inherit marker.
@@ -500,11 +515,17 @@ def _v2_as_legacy_policy(
                 rrf_k=execution.rrf_k,
                 semantic_weight=execution.semantic_weight,
                 keyword_weight=execution.keyword_weight,
+                score_threshold=execution.score_threshold,
                 rerank_mode=(
                     RerankMode(execution.rerank_mode.value) if execution.rerank_mode else None
                 ),
+                rerank_top_n=execution.rerank_candidate_window,
                 rerank_candidate_window=execution.rerank_candidate_window,
                 rerank_return_n=execution.rerank_return_count,
+                rerank_score_threshold=execution.rerank_score_threshold,
+                min_ocr_confidence=execution.min_ocr_confidence,
+                max_related_sources=execution.max_related_sources,
+                max_relationship_candidates=execution.max_relationship_candidates,
                 passage_scoring_enabled=execution.passage_scoring_enabled,
                 passage_window_tokens=execution.passage_window_tokens,
                 passage_overlap_tokens=execution.passage_overlap_tokens,
@@ -512,6 +533,7 @@ def _v2_as_legacy_policy(
                 query_translation_enabled=translation_enabled,
                 max_chunks_per_document=execution.max_chunks_per_document,
                 max_chunks_per_section=execution.max_chunks_per_section,
+                deduplicate_by_content_hash=execution.deduplicate_by_content_hash,
             ),
             chat=ProjectChatPolicy(
                 response_mode=behavior.response_mode,
@@ -690,10 +712,20 @@ def resolve_project_ai_config(
                 project.retrieval.rerank_top_n,
                 settings.retrieval.rerank_top_n,
             ),
+            score_threshold=inherited(
+                "retrieval.score_threshold",
+                project.retrieval.score_threshold,
+                settings.retrieval.score_threshold,
+            ),
             rerank_score_threshold=inherited(
                 "retrieval.rerank_score_threshold",
                 project.retrieval.rerank_score_threshold,
                 settings.retrieval.rerank_score_threshold,
+            ),
+            min_ocr_confidence=inherited(
+                "retrieval.min_ocr_confidence",
+                project.retrieval.min_ocr_confidence,
+                settings.retrieval.min_ocr_confidence,
             ),
             semantic_evidence_score_threshold=semantic_threshold,
             passage_scoring_enabled=inherited(
@@ -766,6 +798,11 @@ def resolve_project_ai_config(
                 "retrieval.max_chunks_per_section",
                 project.retrieval.max_chunks_per_section,
                 settings.retrieval.max_chunks_per_section,
+            ),
+            deduplicate_by_content_hash=inherited(
+                "retrieval.deduplicate_by_content_hash",
+                project.retrieval.deduplicate_by_content_hash,
+                settings.retrieval.deduplicate_by_content_hash,
             ),
         ),
         chat=EffectiveChatPolicy(
@@ -900,9 +937,21 @@ def resolve_project_ai_config(
             "rrf_k": "retrieval.rrf_k",
             "semantic_weight": "retrieval.semantic_weight",
             "keyword_weight": "retrieval.keyword_weight",
+            "score_threshold": "retrieval.score_threshold",
             "rerank_mode": "retrieval.rerank_mode",
             "rerank_candidate_window": "retrieval.rerank_candidate_window",
             "rerank_return_count": "retrieval.rerank_return_count",
+            "rerank_score_threshold": "retrieval.rerank_score_threshold",
+            "min_ocr_confidence": "retrieval.min_ocr_confidence",
+            "max_chunks_per_document": "retrieval.max_chunks_per_document",
+            "max_chunks_per_section": "retrieval.max_chunks_per_section",
+            "deduplicate_by_content_hash": "retrieval.deduplicate_by_content_hash",
+            "passage_scoring_enabled": "retrieval.passage_scoring_enabled",
+            "passage_window_tokens": "retrieval.passage_window_tokens",
+            "passage_overlap_tokens": "retrieval.passage_overlap_tokens",
+            "passage_min_tokens": "retrieval.passage_min_tokens",
+            "max_related_sources": "retrieval.max_related_sources",
+            "max_relationship_candidates": "retrieval.max_relationship_candidates",
             "max_context_chunks": "chat.max_context_chunks",
             "context_char_budget": "chat.context_char_budget",
             "max_history_messages": "chat.max_history_messages",
@@ -1112,7 +1161,7 @@ def resolve_project_ai_config(
         execution_profile_hash=(
             profile_hash(execution_profile(execution_profile_id, allow_candidate=True))
             if execution_profile_id in {"standard", "quality", "economy"}
-            else stable_hash(_effective_execution_values(config))
+            else stable_hash(materialize_execution_values(config))
         ),
         deployment_default_execution_profile_id=settings.ai_policy.default_rag_profile,
         execution_overrides=execution_overrides,
@@ -1138,7 +1187,7 @@ def resolve_project_ai_config(
             )
         ),
         evidence_gate_enforced=config.chat.evidence_gate_mode is EvidenceGateMode.ENFORCE,
-        content_hash_deduplication=settings.retrieval.deduplicate_by_content_hash,
+        content_hash_deduplication=config.retrieval.deduplicate_by_content_hash,
         durable_citation_provenance=config.chat.include_citations,
         governed_source_policy=config.source_policy_mode is SourcePolicyMode.ENFORCE,
         governed_modifies_expansion=(
@@ -1194,7 +1243,9 @@ def apply_effective_ai_config(
                     "semantic_weight": effective.retrieval.semantic_weight,
                     "keyword_weight": effective.retrieval.keyword_weight,
                     "rerank_mode": effective.retrieval.rerank_mode,
+                    "score_threshold": effective.retrieval.score_threshold,
                     "rerank_score_threshold": effective.retrieval.rerank_score_threshold,
+                    "min_ocr_confidence": effective.retrieval.min_ocr_confidence,
                     "passage_scoring_enabled": effective.retrieval.passage_scoring_enabled,
                     "passage_window_tokens": effective.retrieval.passage_window_tokens,
                     "passage_overlap_tokens": effective.retrieval.passage_overlap_tokens,
@@ -1208,6 +1259,7 @@ def apply_effective_ai_config(
                     ),
                     "max_chunks_per_document": effective.retrieval.max_chunks_per_document,
                     "max_chunks_per_section": effective.retrieval.max_chunks_per_section,
+                    "deduplicate_by_content_hash": effective.retrieval.deduplicate_by_content_hash,
                     "reranker_backend": (
                         effective.retrieval.reranker_backend or settings.retrieval.reranker_backend
                     ),
@@ -1355,6 +1407,7 @@ def normalize_v1_project_config(
             rrf_k=effective.retrieval.rrf_k,
             semantic_weight=effective.retrieval.semantic_weight,
             keyword_weight=effective.retrieval.keyword_weight,
+            score_threshold=effective.retrieval.score_threshold,
             rerank_mode=(
                 CanonicalRerankMode.CROSS_LANGUAGE
                 if effective.retrieval.rerank_mode is RerankMode.CROSS_LANGUAGE
@@ -1362,16 +1415,28 @@ def normalize_v1_project_config(
             ),
             rerank_candidate_window=candidate_window,
             rerank_return_count=min(effective.retrieval.rerank_return_n, candidate_window),
+            rerank_score_threshold=effective.retrieval.rerank_score_threshold,
+            min_ocr_confidence=effective.retrieval.min_ocr_confidence,
             max_chunks_per_document=effective.retrieval.max_chunks_per_document,
             max_chunks_per_section=effective.retrieval.max_chunks_per_section,
+            deduplicate_by_content_hash=effective.retrieval.deduplicate_by_content_hash,
             passage_scoring_enabled=effective.retrieval.passage_scoring_enabled,
             passage_window_tokens=effective.retrieval.passage_window_tokens,
             passage_overlap_tokens=effective.retrieval.passage_overlap_tokens,
             passage_min_tokens=effective.retrieval.passage_min_tokens,
+            max_related_sources=effective.retrieval.max_related_sources,
+            max_relationship_candidates=effective.retrieval.max_relationship_candidates,
             max_context_chunks=effective.chat.max_context_chunks,
             context_char_budget=effective.chat.context_char_budget,
             max_history_messages=effective.chat.max_history_messages,
         ),
+    )
+    execution_payload = canonical.execution.model_dump(mode="python", exclude_none=True)
+    for field in ("score_threshold", "rerank_score_threshold", "min_ocr_confidence"):
+        if field not in execution_payload:
+            execution_payload[field] = 0.0
+    canonical = canonical.model_copy(
+        update={"execution": ProjectExecutionV2.model_validate(execution_payload)}
     )
     normalized_record = ConfigRevisionRecord(
         id=uuid.uuid4(),
@@ -1404,8 +1469,8 @@ def normalize_v2_project_config(
     stored = ProjectAIConfig.model_validate(revision.configuration)
     before = resolve_project_ai_config(settings, revision)
     effective = before.configuration
-    values = _effective_execution_values(effective)
-    matched = matching_execution_profile(values, certified_only=True)
+    values = materialize_execution_values(effective)
+    matched = matching_execution_profile(values)
     if matched is not None:
         profile_only = ProjectAIConfig(
             behavior=stored.behavior,
@@ -1418,7 +1483,7 @@ def normalize_v2_project_config(
             configuration=profile_only.model_dump(mode="json", exclude_none=True),
             schema_version=2,
         )
-        profile_values = _effective_execution_values(
+        profile_values = materialize_execution_values(
             resolve_project_ai_config(settings, profile_record).configuration
         )
         if profile_values == values:
@@ -1435,7 +1500,7 @@ def normalize_v2_project_config(
     else:
         execution = ProjectExecutionV2.model_validate({"profile_id": "custom", **values})
         warnings = [
-            "No certified execution profile exactly matches this V2 revision; execution values "
+            "No code-owned execution profile exactly matches this V2 revision; execution values "
             "remain explicit and are displayed as Custom."
         ]
     canonical = ProjectAIConfig(behavior=stored.behavior, execution=execution)
@@ -1459,7 +1524,7 @@ def normalize_v2_project_config(
     )
 
 
-def _effective_execution_values(effective: EffectiveProjectAIConfig) -> dict[str, Any]:
+def materialize_execution_values(effective: EffectiveProjectAIConfig) -> dict[str, Any]:
     return {
         "retrieval_top_k": effective.retrieval.top_k,
         "semantic_candidate_top_k": effective.retrieval.semantic_candidate_top_k,
@@ -1468,15 +1533,21 @@ def _effective_execution_values(effective: EffectiveProjectAIConfig) -> dict[str
         "rrf_k": effective.retrieval.rrf_k,
         "semantic_weight": effective.retrieval.semantic_weight,
         "keyword_weight": effective.retrieval.keyword_weight,
+        "score_threshold": effective.retrieval.score_threshold,
         "rerank_mode": effective.retrieval.rerank_mode.value,
         "rerank_candidate_window": effective.retrieval.rerank_candidate_window,
         "rerank_return_count": effective.retrieval.rerank_return_count,
+        "rerank_score_threshold": effective.retrieval.rerank_score_threshold,
+        "min_ocr_confidence": effective.retrieval.min_ocr_confidence,
         "max_chunks_per_document": effective.retrieval.max_chunks_per_document,
         "max_chunks_per_section": effective.retrieval.max_chunks_per_section,
+        "deduplicate_by_content_hash": effective.retrieval.deduplicate_by_content_hash,
         "passage_scoring_enabled": effective.retrieval.passage_scoring_enabled,
         "passage_window_tokens": effective.retrieval.passage_window_tokens,
         "passage_overlap_tokens": effective.retrieval.passage_overlap_tokens,
         "passage_min_tokens": effective.retrieval.passage_min_tokens,
+        "max_related_sources": effective.retrieval.max_related_sources,
+        "max_relationship_candidates": effective.retrieval.max_relationship_candidates,
         "max_context_chunks": effective.chat.max_context_chunks,
         "context_char_budget": effective.chat.context_char_budget,
         "max_history_messages": effective.chat.max_history_messages,
@@ -1523,17 +1594,27 @@ def _build_structured_origins(
         "retrieval.rrf_k": "project.v2.execution.rrf_k",
         "retrieval.semantic_weight": "project.v2.execution.semantic_weight",
         "retrieval.keyword_weight": "project.v2.execution.keyword_weight",
+        "retrieval.score_threshold": "project.v2.execution.score_threshold",
         "retrieval.rerank_mode": "project.v2.execution.rerank_mode",
         "retrieval.rerank_top_n": "project.v2.execution.rerank_candidate_window",
         "retrieval.rerank_candidate_window": ("project.v2.execution.rerank_candidate_window"),
         "retrieval.rerank_return_n": "project.v2.execution.rerank_return_count",
         "retrieval.rerank_return_count": "project.v2.execution.rerank_return_count",
+        "retrieval.rerank_score_threshold": "project.v2.execution.rerank_score_threshold",
+        "retrieval.min_ocr_confidence": "project.v2.execution.min_ocr_confidence",
         "retrieval.max_chunks_per_document": ("project.v2.execution.max_chunks_per_document"),
         "retrieval.max_chunks_per_section": "project.v2.execution.max_chunks_per_section",
+        "retrieval.deduplicate_by_content_hash": (
+            "project.v2.execution.deduplicate_by_content_hash"
+        ),
         "retrieval.passage_scoring_enabled": ("project.v2.execution.passage_scoring_enabled"),
         "retrieval.passage_window_tokens": "project.v2.execution.passage_window_tokens",
         "retrieval.passage_overlap_tokens": "project.v2.execution.passage_overlap_tokens",
         "retrieval.passage_min_tokens": "project.v2.execution.passage_min_tokens",
+        "retrieval.max_related_sources": "project.v2.execution.max_related_sources",
+        "retrieval.max_relationship_candidates": (
+            "project.v2.execution.max_relationship_candidates"
+        ),
         "chat.max_context_chunks": "project.v2.execution.max_context_chunks",
         "chat.context_char_budget": "project.v2.execution.context_char_budget",
         "chat.max_history_messages": "project.v2.execution.max_history_messages",

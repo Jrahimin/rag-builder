@@ -233,7 +233,7 @@ export const PROJECT_AI_FIELD_HINTS = {
     "Hosted reranking remains enabled. Projects may choose always or cross-language, never disable it.",
   topK: "How many passages enter the answer context. This is a canonical advanced execution override.",
   profile:
-    "Choose a certified immutable RAG execution profile. Candidate profiles remain Test Lab-only.",
+    "Choose an exact code-owned RAG execution bundle. Certification reports measured validation; it does not block development selection.",
   reason: "A concise audit reason for this immutable revision.",
 };
 
@@ -250,15 +250,21 @@ function materializeEffectiveExecution(
     rrf_k: retrieval.rrf_k,
     semantic_weight: retrieval.semantic_weight,
     keyword_weight: retrieval.keyword_weight,
+    score_threshold: retrieval.score_threshold,
     rerank_mode: retrieval.rerank_mode,
     rerank_candidate_window: retrieval.rerank_candidate_window,
     rerank_return_count: retrieval.rerank_return_count,
+    rerank_score_threshold: retrieval.rerank_score_threshold,
+    min_ocr_confidence: retrieval.min_ocr_confidence,
     max_chunks_per_document: retrieval.max_chunks_per_document,
     max_chunks_per_section: retrieval.max_chunks_per_section,
+    deduplicate_by_content_hash: retrieval.deduplicate_by_content_hash,
     passage_scoring_enabled: retrieval.passage_scoring_enabled,
     passage_window_tokens: retrieval.passage_window_tokens,
     passage_overlap_tokens: retrieval.passage_overlap_tokens,
     passage_min_tokens: retrieval.passage_min_tokens,
+    max_related_sources: retrieval.max_related_sources,
+    max_relationship_candidates: retrieval.max_relationship_candidates,
     max_context_chunks: chat.max_context_chunks,
     context_char_budget: chat.context_char_budget,
     max_history_messages: chat.max_history_messages,
@@ -294,10 +300,12 @@ export function ProjectAISettingsFields({
   };
   const selectProfile = (profileId: string) => {
     const profile = ragProfiles.find((item) => item.id === profileId);
+    const currentPresetValues = ragProfiles.find((item) => item.id === form.profileId)?.values ?? {};
     const customExecution =
       profileId === "custom"
         ? {
             ...materializeEffectiveExecution(effective),
+            ...currentPresetValues,
             ...(form.profileId === "custom" ? form.customExecution : {}),
           }
         : {};

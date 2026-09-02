@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import uuid
-from types import MappingProxyType
 
 import pytest
 
@@ -23,14 +22,15 @@ from app.platform.config.profiles import (
     PROFILE_CERTIFICATIONS,
     RAG_EXECUTION_PROFILES,
     CertificationStatus,
-    ProfileCertification,
     execution_profile,
+    execution_values,
     profile_hash,
     registry_errors,
     validate_profile_compatibility,
 )
 from app.platform.config.project_ai import (
     ConfigRevisionRecord,
+    materialize_execution_values,
     normalize_v2_project_config,
     resolve_project_ai_config,
 )
@@ -86,9 +86,9 @@ def test_registries_are_immutable_unique_and_referentially_valid() -> None:
         RAG_EXECUTION_PROFILES["other"] = RAG_EXECUTION_PROFILES["standard"]  # type: ignore[index]
 
 
-def test_seed_profiles_are_available_as_normal_project_defaults() -> None:
+def test_candidate_profiles_are_selectable_without_claiming_certification() -> None:
     assert all(
-        item.status is CertificationStatus.CERTIFIED for item in PROFILE_CERTIFICATIONS.values()
+        item.status is CertificationStatus.CANDIDATE for item in PROFILE_CERTIFICATIONS.values()
     )
     assert execution_profile("standard").retrieval_top_k == 10
 
@@ -127,6 +127,47 @@ def test_global_preset_is_authoritative_and_inherited() -> None:
     assert resolution.configuration.retrieval.semantic_candidate_top_k == 80
     assert resolution.configuration.chat.max_context_chunks == 10
     assert resolution.provenance.execution_profile_id == "quality"
+
+
+def test_every_preset_field_ignores_conflicting_raw_execution_settings() -> None:
+    settings = Settings(
+        retrieval={
+            "default_top_k": 1,
+            "semantic_candidate_top_k": 2,
+            "keyword_candidate_top_k": 3,
+            "hnsw_ef_search": 4,
+            "rrf_k": 5,
+            "semantic_weight": 2.0,
+            "keyword_weight": 3.0,
+            "score_threshold": 0.7,
+            "rerank_candidate_window": 11,
+            "rerank_return_count": 5,
+            "rerank_score_threshold": 0.8,
+            "min_ocr_confidence": 0.9,
+            "max_chunks_per_document": 9,
+            "max_chunks_per_section": 8,
+            "deduplicate_by_content_hash": False,
+            "passage_scoring_enabled": True,
+            "passage_window_tokens": 160,
+            "passage_overlap_tokens": 40,
+            "passage_min_tokens": 64,
+            "max_related_sources": 2,
+            "max_relationship_candidates": 3,
+        },
+        chat={
+            "max_context_chunks": 2,
+            "context_char_budget": 2_000,
+            "max_history_messages": 1,
+        },
+    )
+
+    for profile_id, profile in RAG_EXECUTION_PROFILES.items():
+        resolution = resolve_project_ai_config(
+            settings,
+            _revision({"execution": {"profile_id": profile_id}}),
+        )
+        assert materialize_execution_values(resolution.configuration) == execution_values(profile)
+        assert resolution.configuration.retrieval.rerank_top_n == profile.rerank_candidate_window
 
 
 def test_global_custom_uses_raw_deployment_execution_values() -> None:
@@ -254,41 +295,12 @@ def test_explicit_deployment_profile_rejects_index_profile_drift() -> None:
         validate_profile_compatibility(settings)
 
 
-def test_profile_normalization_retains_sparse_advanced_values(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    certifications = {
-        profile_id: ProfileCertification(
-            profile_id=profile_id,
-            status=(
-                CertificationStatus.CERTIFIED
-                if profile_id == "standard"
-                else CertificationStatus.CANDIDATE
-            ),
-        )
-        for profile_id in RAG_EXECUTION_PROFILES
-    }
-    monkeypatch.setattr(
-        profile_registry,
-        "PROFILE_CERTIFICATIONS",
-        MappingProxyType(certifications),
-    )
+def test_profile_normalization_keeps_complete_nonmatching_custom_values() -> None:
     revision = _revision(
         {
             "execution": {
-                "retrieval_top_k": 10,
-                "semantic_candidate_top_k": 50,
-                "keyword_candidate_top_k": 50,
-                "hnsw_ef_search": 100,
-                "rrf_k": 60,
-                "semantic_weight": 1.0,
-                "keyword_weight": 1.0,
-                "rerank_mode": "always",
-                "rerank_candidate_window": 25,
-                "rerank_return_count": 8,
-                "max_context_chunks": 8,
-                "context_char_budget": 12_000,
-                "max_history_messages": 20,
+                "profile_id": "custom",
+                **execution_values(RAG_EXECUTION_PROFILES["standard"]),
                 "passage_window_tokens": 120,
             }
         }
@@ -296,7 +308,7 @@ def test_profile_normalization_retains_sparse_advanced_values(
 
     result = normalize_v2_project_config(Settings(), revision)
 
-    assert result.base_profile_id == "standard"
+    assert result.base_profile_id is None
     assert result.custom_execution is True
     assert result.configuration.execution.profile_id == "custom"
     assert result.configuration.execution.passage_window_tokens == 120

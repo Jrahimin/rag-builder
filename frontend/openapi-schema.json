@@ -5585,6 +5585,11 @@
       },
       "EffectiveRetrievalPolicy": {
         "properties": {
+          "deduplicate_by_content_hash": {
+            "default": true,
+            "title": "Deduplicate By Content Hash",
+            "type": "boolean"
+          },
           "hnsw_ef_search": {
             "default": 100,
             "title": "Hnsw Ef Search",
@@ -5619,6 +5624,17 @@
             "default": 20,
             "title": "Max Relationship Candidates",
             "type": "integer"
+          },
+          "min_ocr_confidence": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Ocr Confidence"
           },
           "modifies_expansion_enabled": {
             "default": false,
@@ -5750,6 +5766,17 @@
             "default": 60,
             "title": "Rrf K",
             "type": "integer"
+          },
+          "score_threshold": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Score Threshold"
           },
           "semantic_candidate_top_k": {
             "default": 50,
@@ -9415,6 +9442,17 @@
             ],
             "title": "Context Char Budget"
           },
+          "deduplicate_by_content_hash": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deduplicate By Content Hash"
+          },
           "hnsw_ef_search": {
             "anyOf": [
               {
@@ -9505,6 +9543,45 @@
               }
             ],
             "title": "Max History Messages"
+          },
+          "max_related_sources": {
+            "anyOf": [
+              {
+                "maximum": 8.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Related Sources"
+          },
+          "max_relationship_candidates": {
+            "anyOf": [
+              {
+                "maximum": 20.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Relationship Candidates"
+          },
+          "min_ocr_confidence": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Ocr Confidence"
           },
           "passage_min_tokens": {
             "anyOf": [
@@ -9610,6 +9687,19 @@
             ],
             "title": "Rerank Return Count"
           },
+          "rerank_score_threshold": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rerank Score Threshold"
+          },
           "retrieval_top_k": {
             "anyOf": [
               {
@@ -9635,6 +9725,19 @@
               }
             ],
             "title": "Rrf K"
+          },
+          "score_threshold": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Score Threshold"
           },
           "semantic_candidate_top_k": {
             "anyOf": [
@@ -9960,6 +10063,17 @@
         "additionalProperties": false,
         "description": "Sparse retrieval overrides. ``None`` inherits the deployment default.\n\n``rerank_mode`` is the operator-facing control (Always / Cross-language / Off).\nLegacy ``rerank_enabled`` still maps true\u2192always and false\u2192off when mode is omitted.",
         "properties": {
+          "deduplicate_by_content_hash": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deduplicate By Content Hash"
+          },
           "evidence_score_threshold": {
             "anyOf": [
               {
@@ -10063,6 +10177,19 @@
               }
             ],
             "title": "Max Relationship Candidates"
+          },
+          "min_ocr_confidence": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Ocr Confidence"
           },
           "modifies_expansion_enabled": {
             "anyOf": [
@@ -10231,6 +10358,19 @@
               }
             ],
             "title": "Rrf K"
+          },
+          "score_threshold": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Score Threshold"
           },
           "semantic_candidate_top_k": {
             "anyOf": [

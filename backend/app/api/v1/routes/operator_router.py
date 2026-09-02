@@ -347,13 +347,13 @@ async def get_project_ai_config(
                     id=profile_id,
                     profile_hash=profile_hash(profile),
                     certification_status=PROFILE_CERTIFICATIONS[profile_id].status.value,
+                    # Availability is a development/operator choice. Certification
+                    # remains measured evaluation evidence, not a selection gate.
                     selectable=(
-                        PROFILE_CERTIFICATIONS[profile_id].status is CertificationStatus.CERTIFIED
+                        PROFILE_CERTIFICATIONS[profile_id].status
+                        is not CertificationStatus.REJECTED
                     ),
-                    recommended=(
-                        PROFILE_CERTIFICATIONS[profile_id].status is CertificationStatus.CERTIFIED
-                        and profile_id == settings.ai_policy.default_rag_profile
-                    ),
+                    recommended=profile_id == settings.ai_policy.default_rag_profile,
                     values=execution_values(profile),
                 )
                 for profile_id, profile in RAG_EXECUTION_PROFILES.items()

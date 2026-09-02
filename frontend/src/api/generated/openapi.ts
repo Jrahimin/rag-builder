@@ -3292,6 +3292,11 @@ export interface components {
         /** EffectiveRetrievalPolicy */
         EffectiveRetrievalPolicy: {
             /**
+             * Deduplicate By Content Hash
+             * @default true
+             */
+            deduplicate_by_content_hash: boolean;
+            /**
              * Hnsw Ef Search
              * @default 100
              */
@@ -3326,6 +3331,8 @@ export interface components {
              * @default 20
              */
             max_relationship_candidates: number;
+            /** Min Ocr Confidence */
+            min_ocr_confidence?: number | null;
             /**
              * Modifies Expansion Enabled
              * @default false
@@ -3395,6 +3402,8 @@ export interface components {
              * @default 60
              */
             rrf_k: number;
+            /** Score Threshold */
+            score_threshold?: number | null;
             /**
              * Semantic Candidate Top K
              * @default 50
@@ -4661,6 +4670,8 @@ export interface components {
         ProjectExecutionV2: {
             /** Context Char Budget */
             context_char_budget?: number | null;
+            /** Deduplicate By Content Hash */
+            deduplicate_by_content_hash?: boolean | null;
             /** Hnsw Ef Search */
             hnsw_ef_search?: number | null;
             /** Keyword Candidate Top K */
@@ -4675,6 +4686,12 @@ export interface components {
             max_context_chunks?: number | null;
             /** Max History Messages */
             max_history_messages?: number | null;
+            /** Max Related Sources */
+            max_related_sources?: number | null;
+            /** Max Relationship Candidates */
+            max_relationship_candidates?: number | null;
+            /** Min Ocr Confidence */
+            min_ocr_confidence?: number | null;
             /** Passage Min Tokens */
             passage_min_tokens?: number | null;
             /** Passage Overlap Tokens */
@@ -4690,10 +4707,14 @@ export interface components {
             rerank_mode?: components["schemas"]["CanonicalRerankMode"] | null;
             /** Rerank Return Count */
             rerank_return_count?: number | null;
+            /** Rerank Score Threshold */
+            rerank_score_threshold?: number | null;
             /** Retrieval Top K */
             retrieval_top_k?: number | null;
             /** Rrf K */
             rrf_k?: number | null;
+            /** Score Threshold */
+            score_threshold?: number | null;
             /** Semantic Candidate Top K */
             semantic_candidate_top_k?: number | null;
             /** Semantic Weight */
@@ -4823,6 +4844,8 @@ export interface components {
          *     Legacy ``rerank_enabled`` still maps true→always and false→off when mode is omitted.
          */
         ProjectRetrievalPolicy: {
+            /** Deduplicate By Content Hash */
+            deduplicate_by_content_hash?: boolean | null;
             /** Evidence Score Threshold */
             evidence_score_threshold?: number | null;
             /** Hnsw Ef Search */
@@ -4839,6 +4862,8 @@ export interface components {
             max_related_sources?: number | null;
             /** Max Relationship Candidates */
             max_relationship_candidates?: number | null;
+            /** Min Ocr Confidence */
+            min_ocr_confidence?: number | null;
             /** Modifies Expansion Enabled */
             modifies_expansion_enabled?: boolean | null;
             modifies_expansion_mode?: components["schemas"]["ModifiesExpansionMode"] | null;
@@ -4865,6 +4890,8 @@ export interface components {
             rerank_top_n?: number | null;
             /** Rrf K */
             rrf_k?: number | null;
+            /** Score Threshold */
+            score_threshold?: number | null;
             /** Semantic Candidate Top K */
             semantic_candidate_top_k?: number | null;
             /** Semantic Weight */

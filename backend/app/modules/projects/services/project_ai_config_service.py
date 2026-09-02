@@ -38,6 +38,7 @@ from app.platform.config.project_ai import (
     ProjectExecutionV2,
     V1NormalizationResult,
     V2ProfileNormalizationResult,
+    materialize_execution_values,
     normalize_v1_project_config,
     normalize_v2_project_config,
     resolve_project_ai_config,
@@ -94,10 +95,30 @@ class ProjectAdministrationService:
                 },
             )
         selection = configuration.execution.profile_id or "inherit"
-        execution_payload = configuration.execution.model_dump(
-            mode="python", exclude_none=True
-        )
-        if selection != "custom":
+        if selection == "custom":
+            active = await self._repository.get_active()
+            base = materialize_execution_values(
+                resolve_project_ai_config(
+                    self._settings,
+                    _record(active) if isinstance(active, ProjectAIConfigRevision) else None,
+                ).configuration
+            )
+            # These ``None`` ENV values mean "no threshold". Persist their
+            # deterministic no-filter equivalent for Custom rather than leave
+            # an absent value to inherit from a future deployment profile.
+            for field in ("score_threshold", "rerank_score_threshold", "min_ocr_confidence"):
+                if base[field] is None:
+                    base[field] = 0.0
+            provided = {
+                field: getattr(configuration.execution, field)
+                for field in configuration.execution.model_fields_set
+                if field != "profile_id"
+            }
+            for field in ("score_threshold", "rerank_score_threshold", "min_ocr_confidence"):
+                if provided.get(field) is None:
+                    provided.pop(field, None)
+            execution_payload = {"profile_id": "custom", **base, **provided}
+        else:
             # Preset/inherit revisions contain only the selection. Re-selecting
             # one therefore clears stale Custom execution values.
             execution_payload = {} if selection == "inherit" else {"profile_id": selection}

@@ -68,8 +68,8 @@ flowchart LR
 | --- | --- | --- |
 | Embedding backend/model | Meaning representation | Are chunks and questions in the same vector space? |
 | Embedding dimensions | Vector schema/storage compatibility | Does changing this require migration and re-embedding? |
-| RAG Execution Profile | Certified query-time baseline | Is the right chunk present but ranked too low? |
-| Project Advanced overrides | Sparse candidate/fusion/rerank/context differences | Is the override necessary and reproducible? |
+| RAG Execution Profile | Exact code-owned query-time baseline; certification is measured separately | Is the right chunk present but ranked too low? |
+| Project Custom execution | Complete persisted candidate/fusion/rerank/context bundle | Is the override necessary and reproducible? |
 | Test Lab candidate | Ephemeral one-factor experiment | Did it clear the certification gates? |
 | Metadata allowlist | Which filters become SQL predicates | Does a filter represent a real business boundary? |
 
@@ -103,7 +103,7 @@ APE_LLM__OPENAI_API_KEY=***
 Normal tuning is profile-led. Set `APE_AI_POLICY__DEFAULT_RAG_PROFILE=standard`
 for the deployment, then let a Project inherit it or select `standard`, `quality`,
 `economy`, or `custom`. Presets always resolve from the current code-owned bundle;
-only Custom stores individual execution values. Conversation and job snapshots
+only Custom stores a complete explicit execution bundle. Conversation and job snapshots
 record the resolved profile hash and effective values automatically.
 
 The exact supported fields live in `backend/app/core/config.py`. The complete
@@ -142,7 +142,8 @@ Record the returned chunk IDs, source pages, latency, and answer. Then explain w
 - Do not change embedding dimensions without a migration/re-embedding plan.
 - Pin provider/model and profile hashes with job, conversation, and index snapshots.
 - Use allowlisted metadata filters, not arbitrary SQL-shaped input.
-- Never promote a candidate RAG profile as a normal default before certification.
+- Treat certification as the evidence needed for a production recommendation; built-in profiles
+  remain selectable during development.
 - Prefer one supported deployment profile before exposing many combinations.
 
 ## Learning checkpoint

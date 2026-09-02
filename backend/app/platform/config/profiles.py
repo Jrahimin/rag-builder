@@ -69,6 +69,18 @@ class RAGExecutionProfile:
     rrf_k: int = 60
     semantic_weight: float = 1.0
     keyword_weight: float = 1.0
+    score_threshold: float = 0.0
+    rerank_score_threshold: float = 0.0
+    min_ocr_confidence: float = 0.0
+    max_chunks_per_document: int = 4
+    max_chunks_per_section: int = 2
+    deduplicate_by_content_hash: bool = True
+    passage_scoring_enabled: bool = False
+    passage_window_tokens: int = 96
+    passage_overlap_tokens: int = 24
+    passage_min_tokens: int = 32
+    max_related_sources: int = 8
+    max_relationship_candidates: int = 20
 
 
 @dataclass(frozen=True, slots=True)
@@ -173,6 +185,13 @@ RAG_EXECUTION_PROFILES: Mapping[str, RAGExecutionProfile] = MappingProxyType(
                 max_context_chunks=6,
                 context_char_budget=9_000,
                 max_history_messages=12,
+                max_chunks_per_document=3,
+                max_chunks_per_section=1,
+                passage_window_tokens=80,
+                passage_overlap_tokens=16,
+                passage_min_tokens=24,
+                max_related_sources=4,
+                max_relationship_candidates=10,
             ),
             RAGExecutionProfile(
                 id="standard",
@@ -199,6 +218,13 @@ RAG_EXECUTION_PROFILES: Mapping[str, RAGExecutionProfile] = MappingProxyType(
                 max_context_chunks=10,
                 context_char_budget=16_000,
                 max_history_messages=20,
+                max_chunks_per_document=6,
+                max_chunks_per_section=3,
+                passage_scoring_enabled=True,
+                passage_window_tokens=128,
+                passage_overlap_tokens=32,
+                max_related_sources=8,
+                max_relationship_candidates=20,
             ),
         )
     }
@@ -209,8 +235,7 @@ PROFILE_CERTIFICATIONS: Mapping[str, ProfileCertification] = MappingProxyType(
     {
         profile_id: ProfileCertification(
             profile_id=profile_id,
-            status=CertificationStatus.CERTIFIED,
-            notes="Code-owned deployment preset.",
+            status=CertificationStatus.CANDIDATE,
         )
         for profile_id in RAG_EXECUTION_PROFILES
     }
@@ -388,17 +413,17 @@ def execution_profile(profile_id: str, *, allow_candidate: bool = False) -> RAGE
             context={"profile_id": profile_id},
         ) from exc
     certification = PROFILE_CERTIFICATIONS[profile_id]
-    if certification.status is not CertificationStatus.CERTIFIED and not allow_candidate:
+    if certification.status is CertificationStatus.REJECTED and not allow_candidate:
         raise BadRequestError(
-            message="The RAG execution profile is a Test Lab candidate and is not certified.",
-            code="execution_profile_not_certified",
+            message="The RAG execution profile has been rejected by evaluation.",
+            code="execution_profile_rejected",
             context={"profile_id": profile_id, "status": certification.status.value},
         )
     return profile
 
 
 def matching_execution_profile(
-    values: Mapping[str, Any], *, certified_only: bool = True
+    values: Mapping[str, Any], *, certified_only: bool = False
 ) -> str | None:
     for profile_id, profile in RAG_EXECUTION_PROFILES.items():
         if (
@@ -421,9 +446,21 @@ def execution_values(profile: RAGExecutionProfile) -> dict[str, Any]:
         "rrf_k": profile.rrf_k,
         "semantic_weight": profile.semantic_weight,
         "keyword_weight": profile.keyword_weight,
+        "score_threshold": profile.score_threshold,
         "rerank_mode": profile.rerank_mode.value,
         "rerank_candidate_window": profile.rerank_candidate_window,
         "rerank_return_count": profile.rerank_return_count,
+        "rerank_score_threshold": profile.rerank_score_threshold,
+        "min_ocr_confidence": profile.min_ocr_confidence,
+        "max_chunks_per_document": profile.max_chunks_per_document,
+        "max_chunks_per_section": profile.max_chunks_per_section,
+        "deduplicate_by_content_hash": profile.deduplicate_by_content_hash,
+        "passage_scoring_enabled": profile.passage_scoring_enabled,
+        "passage_window_tokens": profile.passage_window_tokens,
+        "passage_overlap_tokens": profile.passage_overlap_tokens,
+        "passage_min_tokens": profile.passage_min_tokens,
+        "max_related_sources": profile.max_related_sources,
+        "max_relationship_candidates": profile.max_relationship_candidates,
         "max_context_chunks": profile.max_context_chunks,
         "context_char_budget": profile.context_char_budget,
         "max_history_messages": profile.max_history_messages,

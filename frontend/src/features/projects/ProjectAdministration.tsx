@@ -901,7 +901,8 @@ function ProjectConfig({ project }: { project: Project }) {
       )}
       <form className="panel progressive-form" onSubmit={(event) => void submit(event)}>
         <p className="muted-copy">
-          Project revisions contain only V2 behavior and sparse canonical execution overrides.
+          Project behavior is sparse. RAG execution is an inherit/preset selection or a complete
+          Custom bundle.
           Provider, web budget, calibration, citation, and source-governance controls are deployment
           or code owned.
         </p>

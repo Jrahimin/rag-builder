@@ -478,6 +478,65 @@ test("editing a preset materializes Custom and reselecting the preset resets it"
   expect(create.mock.calls[0]?.[1].execution).toEqual({ profile_id: "standard" });
 });
 
+test("unsaved preset changes materialize the currently selected preset as Custom", async () => {
+  mockProjectShell();
+  const config = effectiveConfig(null);
+  config.rag_profiles = [
+    {
+      id: "standard",
+      certification_status: "candidate",
+      selectable: true,
+      recommended: true,
+      profile_hash: "f".repeat(64),
+      values: { retrieval_top_k: 10, semantic_candidate_top_k: 50, rerank_mode: "always" },
+    },
+    {
+      id: "quality",
+      certification_status: "candidate",
+      selectable: true,
+      recommended: false,
+      profile_hash: "q".repeat(64),
+      values: { retrieval_top_k: 12, semantic_candidate_top_k: 80, rerank_mode: "always" },
+    },
+  ];
+  vi.spyOn(operatorApiClient, "getProjectAIConfig").mockResolvedValue(config);
+  vi.spyOn(operatorApiClient, "getProjectAIConfigHistory").mockResolvedValue([]);
+  vi.spyOn(operatorApiClient, "getProviderCapabilities").mockResolvedValue([capability]);
+  const create = vi.spyOn(operatorApiClient, "createProjectAIConfig").mockResolvedValue({
+    id: "22222222-2222-2222-2222-222222222222",
+    project_id: projectFixture.id,
+    revision_number: 1,
+    configuration_hash: "b".repeat(64),
+    configuration: { execution: { profile_id: "custom" } },
+    schema_version: 2,
+    source: "project_revision",
+    reason: "Keep Quality values",
+    created_by: "test-admin",
+    restored_from_revision_id: null,
+    created_at: "2026-08-16T00:00:00Z",
+  });
+
+  renderOperatorComponent(
+    <OperatorConsoleApp />,
+    `/projects?project=${projectFixture.id}&section=ai-config`,
+  );
+
+  const profile = await screen.findByLabelText("RAG profile");
+  await userEvent.selectOptions(profile, "standard");
+  await userEvent.selectOptions(profile, "quality");
+  await userEvent.selectOptions(profile, "custom");
+  await userEvent.type(screen.getByLabelText("Revision reason"), "Keep Quality values");
+  await userEvent.click(screen.getByRole("button", { name: "Create and activate revision" }));
+
+  await waitFor(() => expect(create).toHaveBeenCalled());
+  expect(create.mock.calls[0]?.[1].execution).toMatchObject({
+    profile_id: "custom",
+    retrieval_top_k: 12,
+    semantic_candidate_top_k: 80,
+    rerank_mode: "always",
+  });
+});
+
 test("a conflicting stored value cannot make a preset custom", async () => {
   mockProjectShell();
   const revision: ProjectAIConfigRevision = {
@@ -589,9 +648,14 @@ test("reselecting a profile clears all hidden execution overrides", async () => 
   expect(create.mock.calls[0]?.[1].execution).toEqual({ profile_id: "standard" });
 });
 
-test("shows exact generation IDs and keeps candidate profiles unavailable", async () => {
+test("shows exact generation IDs and keeps candidate profiles selectable", async () => {
   mockProjectShell();
-  vi.spyOn(operatorApiClient, "getProjectAIConfig").mockResolvedValue(effectiveConfig(null));
+  const config = effectiveConfig(null);
+  config.rag_profiles = (config.rag_profiles ?? []).map((profile) => ({
+    ...profile,
+    selectable: true,
+  }));
+  vi.spyOn(operatorApiClient, "getProjectAIConfig").mockResolvedValue(config);
   vi.spyOn(operatorApiClient, "getProjectAIConfigHistory").mockResolvedValue([]);
   vi.spyOn(operatorApiClient, "getProviderCapabilities").mockResolvedValue([capability]);
 
@@ -601,7 +665,7 @@ test("shows exact generation IDs and keeps candidate profiles unavailable", asyn
   );
 
   expect(await screen.findByRole("option", { name: /openai-o1-test/ })).toBeInTheDocument();
-  expect(screen.getByRole("option", { name: /standard — candidate/ })).toBeDisabled();
+  expect(screen.getByRole("option", { name: /standard — candidate/ })).not.toBeDisabled();
   expect(screen.queryByLabelText("Provider")).not.toBeInTheDocument();
 });
 

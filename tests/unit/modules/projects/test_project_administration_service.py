@@ -18,10 +18,17 @@ from app.modules.projects.services.project_ai_config_service import (
 )
 from app.platform.config.profiles import (
     PROFILE_CERTIFICATIONS,
+    RAG_EXECUTION_PROFILES,
     CertificationStatus,
     ProfileCertification,
+    execution_values,
 )
-from app.platform.config.project_ai import ProjectAIConfig
+from app.platform.config.project_ai import (
+    ConfigRevisionRecord,
+    ProjectAIConfig,
+    materialize_execution_values,
+    resolve_project_ai_config,
+)
 from app.platform.domain.auth_context import DEFAULT_ORGANIZATION_ID
 
 pytestmark = pytest.mark.unit
@@ -47,12 +54,13 @@ def _service(
     repository: AsyncMock,
     audit: MagicMock,
     project_id: uuid.UUID,
+    settings: Settings | None = None,
 ) -> ProjectAdministrationService:
     return ProjectAdministrationService(
         session=session,
         project_id=project_id,
         repository=repository,
-        settings=Settings(),
+        settings=settings or Settings(),
         audit=audit,
         actor_id="operator-1",
     )
@@ -127,6 +135,47 @@ async def test_preset_write_stores_only_selection_and_clears_custom_values(
     )
 
     assert revision.configuration["execution"] == {"profile_id": "standard"}
+
+
+async def test_partial_custom_write_materializes_complete_bundle_and_stays_independent(
+    ) -> None:
+    session = AsyncMock()
+    repository = AsyncMock()
+    repository.add = MagicMock()
+    repository.next_revision_number.return_value = 1
+    repository.get_active.return_value = None
+    project = _project(locked=True)
+    repository.lock_project.return_value = project
+    standard_settings = Settings(ai_policy={"default_rag_profile": "standard"})
+    service = _service(
+        session,
+        repository,
+        MagicMock(),
+        project.id,
+        settings=standard_settings,
+    )
+
+    revision = await service.create_revision(
+        ProjectAIConfig.model_validate(
+            {"execution": {"profile_id": "custom", "retrieval_top_k": 7}}
+        ),
+        expected_active_revision_id=None,
+        reason="Tune one execution control",
+    )
+
+    expected = {**execution_values(RAG_EXECUTION_PROFILES["standard"]), "retrieval_top_k": 7}
+    assert revision.configuration["execution"] == {"profile_id": "custom", **expected}
+    record = ConfigRevisionRecord(
+        id=revision.id,
+        revision_number=revision.revision_number,
+        configuration_hash=revision.configuration_hash,
+        configuration=revision.configuration,
+        schema_version=2,
+    )
+    after_global_change = resolve_project_ai_config(
+        Settings(ai_policy={"default_rag_profile": "quality"}), record
+    )
+    assert materialize_execution_values(after_global_change.configuration) == expected
 
 
 async def test_config_revision_uses_optimistic_concurrency() -> None:

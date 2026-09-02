@@ -24,7 +24,9 @@ explicit allowlist and credential-presence flags; it never dumps `Settings`.
 code-owned bundle supplies every profile-owned execution value and raw retrieval/chat ENV tuning
 cannot alter it. Raw execution tuning is used only when the deployment selects `custom`.
 
-Project revisions are sparse, typed documents. Effective resolution records an origin for each
+Project behavior revisions are sparse, typed documents. Execution selection is deliberately
+stricter: inherit/preset revisions store only their selection, while Custom writes materialize and
+persist every execution field server-side. Effective resolution records an origin for each
 value, the active revision ID/hash, a secret-free global fingerprint, provider-capability version,
 and prompt versions. A Project without an active revision inherits the deployment RAG profile and
 separate behavior defaults, including `APE_AI_POLICY__SOURCE_POLICY_MODE` for source policy. The deployment cap
@@ -66,6 +68,10 @@ and evaluation runs persist the same secret-free effective configuration and pro
 Project policy does not include embedding models/dimensions or chunking because those values are
 coupled to global vector schema and index artifact contracts. Generic key/value configuration is
 not used.
+
+Built-in execution profiles are available for development selection independently of their
+certification status. Certification records measured evaluation evidence; it is not inferred from
+the fact that a bundle is code-owned.
 
 ## Rules
 
