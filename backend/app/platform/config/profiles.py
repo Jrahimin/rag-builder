@@ -508,8 +508,7 @@ def compatibility_errors(settings: Settings) -> list[str]:
         and settings.resolved_web_search_backend() is not capability.web_search_provider
     ):
         errors.append(
-            f"{capability.id} requires web-search backend "
-            f"{capability.web_search_provider.value}"
+            f"{capability.id} requires web-search backend {capability.web_search_provider.value}"
         )
     if settings.embedding.backend is not index.embedding_provider:
         errors.append(

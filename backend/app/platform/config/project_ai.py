@@ -1394,9 +1394,7 @@ def normalize_v2_project_config(
         profile_record = ConfigRevisionRecord(
             id=uuid.uuid4(),
             revision_number=revision.revision_number + 1,
-            configuration_hash=stable_hash(
-                profile_only.model_dump(mode="json", exclude_none=True)
-            ),
+            configuration_hash=stable_hash(profile_only.model_dump(mode="json", exclude_none=True)),
             configuration=profile_only.model_dump(mode="json", exclude_none=True),
             schema_version=2,
         )
@@ -1510,9 +1508,7 @@ def _build_structured_origins(
         "retrieval.query_translation_enabled": "project.v2.behavior.translation_policy",
         "llm.generation_model_id": "project.v2.behavior.generation_model_id",
         "retrieval.top_k": "project.v2.execution.retrieval_top_k",
-        "retrieval.semantic_candidate_top_k": (
-            "project.v2.execution.semantic_candidate_top_k"
-        ),
+        "retrieval.semantic_candidate_top_k": ("project.v2.execution.semantic_candidate_top_k"),
         "retrieval.keyword_candidate_top_k": "project.v2.execution.keyword_candidate_top_k",
         "retrieval.hnsw_ef_search": "project.v2.execution.hnsw_ef_search",
         "retrieval.rrf_k": "project.v2.execution.rrf_k",
@@ -1520,18 +1516,12 @@ def _build_structured_origins(
         "retrieval.keyword_weight": "project.v2.execution.keyword_weight",
         "retrieval.rerank_mode": "project.v2.execution.rerank_mode",
         "retrieval.rerank_top_n": "project.v2.execution.rerank_candidate_window",
-        "retrieval.rerank_candidate_window": (
-            "project.v2.execution.rerank_candidate_window"
-        ),
+        "retrieval.rerank_candidate_window": ("project.v2.execution.rerank_candidate_window"),
         "retrieval.rerank_return_n": "project.v2.execution.rerank_return_count",
         "retrieval.rerank_return_count": "project.v2.execution.rerank_return_count",
-        "retrieval.max_chunks_per_document": (
-            "project.v2.execution.max_chunks_per_document"
-        ),
+        "retrieval.max_chunks_per_document": ("project.v2.execution.max_chunks_per_document"),
         "retrieval.max_chunks_per_section": "project.v2.execution.max_chunks_per_section",
-        "retrieval.passage_scoring_enabled": (
-            "project.v2.execution.passage_scoring_enabled"
-        ),
+        "retrieval.passage_scoring_enabled": ("project.v2.execution.passage_scoring_enabled"),
         "retrieval.passage_window_tokens": "project.v2.execution.passage_window_tokens",
         "retrieval.passage_overlap_tokens": "project.v2.execution.passage_overlap_tokens",
         "retrieval.passage_min_tokens": "project.v2.execution.passage_min_tokens",

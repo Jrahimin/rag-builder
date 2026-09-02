@@ -78,10 +78,7 @@ async def test_project_config_revision_history_and_optimistic_concurrency(
 
     assert stale.status_code == 409
     assert stale.json()["error"]["code"] == "project_config_revision_conflict"
-    assert (
-        effective.json()["data"]["configuration"]["domain_instructions"]
-        == "Policy phase1-v1"
-    )
+    assert effective.json()["data"]["configuration"]["domain_instructions"] == "Policy phase1-v1"
     assert history.json()["data"][0]["id"] == first["id"]
 
 
@@ -127,10 +124,7 @@ async def test_existing_conversation_keeps_immutable_snapshot_after_policy_chang
     assert row.config_provenance["project_config_revision_id"] == str(first["id"])
     snapshot = (
         await integration_connection.execute(
-            text(
-                "SELECT configuration FROM conversation_config_snapshots "
-                "WHERE id = :snapshot_id"
-            ),
+            text("SELECT configuration FROM conversation_config_snapshots WHERE id = :snapshot_id"),
             {"snapshot_id": uuid.UUID(conversation["active_config_snapshot_id"])},
         )
     ).one()

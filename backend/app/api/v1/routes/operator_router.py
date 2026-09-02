@@ -353,8 +353,7 @@ async def get_project_ai_config(
                         PROFILE_CERTIFICATIONS[profile_id].status is CertificationStatus.CERTIFIED
                     ),
                     recommended=(
-                        PROFILE_CERTIFICATIONS[profile_id].status
-                        is CertificationStatus.CERTIFIED
+                        PROFILE_CERTIFICATIONS[profile_id].status is CertificationStatus.CERTIFIED
                         and profile_id == deployment_capability.default_rag_profile_id
                     ),
                     values=execution_values(profile),

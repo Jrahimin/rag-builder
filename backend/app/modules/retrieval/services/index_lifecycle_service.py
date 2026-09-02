@@ -102,8 +102,7 @@ class IndexLifecycleService:
                 else None
             ),
             index_profile_id=(
-                self._configuration.index_artifact.index_profile_id
-                or "legacy-unprofiled"
+                self._configuration.index_artifact.index_profile_id or "legacy-unprofiled"
                 if self._configuration.index_artifact is not None
                 else "legacy-unprofiled"
             ),

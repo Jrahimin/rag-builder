@@ -302,9 +302,7 @@ async def test_current_historical_replacement_modifier_hybrid_and_legacy_behavio
         item for item in data["results"] if item["document_id"] == timeline_document
     )
     assert timeline_hit["metadata"]["source_revision_id"] == timeline_current["id"]
-    overlap_hit = next(
-        item for item in data["results"] if item["document_id"] == overlap_document
-    )
+    overlap_hit = next(item for item in data["results"] if item["document_id"] == overlap_document)
     assert overlap_hit["metadata"]["source_revision_id"] == overlap_current["id"]
 
     historical = await db_client.post(

@@ -406,9 +406,7 @@ def build_project_config(overrides: Mapping[str, Any]) -> ProjectAIConfig:
         # into its ephemeral Project revision so normal runtime readers never
         # need permission to activate an uncertified profile by ID.
         profile_id = str(execution.pop("profile_id"))
-        profile_values = execution_values(
-            execution_profile(profile_id, allow_candidate=True)
-        )
+        profile_values = execution_values(execution_profile(profile_id, allow_candidate=True))
         payload["execution"] = {**profile_values, **execution}
     try:
         return ProjectAIConfig.model_validate(payload)

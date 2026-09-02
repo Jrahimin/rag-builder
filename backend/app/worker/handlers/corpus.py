@@ -65,10 +65,7 @@ async def execute_index_build(
                 else None
             ),
             index_profile_id=(
-                (
-                    staged_configuration.index_artifact.index_profile_id
-                    or "legacy-unprofiled"
-                )
+                (staged_configuration.index_artifact.index_profile_id or "legacy-unprofiled")
                 if staged_configuration.index_artifact is not None
                 else "legacy-unprofiled"
             ),
