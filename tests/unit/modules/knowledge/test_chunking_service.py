@@ -120,9 +120,7 @@ async def test_split_document_uses_markdown_strategy_for_markdown() -> None:
 
 def test_split_legacy_plain_text_still_returns_chunks() -> None:
     text = " ".join(f"token{i}" for i in range(600))
-    service = ChunkingService(
-        config=ChunkingConfig(target_tokens=100, max_tokens=100, overlap_tokens=10)
-    )
+    service = ChunkingService(config=ChunkingConfig(target_tokens=100, max_tokens=100))
     chunks = service.split(text.strip(), page_count=1)
 
     assert len(chunks) > 1

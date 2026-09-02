@@ -18,6 +18,7 @@ export function ActiveConfigurationDetails() {
   const config = configuration.data;
   const rows = [
     ["Runtime profile", config.runtime_profile],
+    ["Default RAG profile", config.default_rag_profile_id],
     ["Environment", config.environment],
     ["Application version", config.application_version],
     ["Storage", config.storage_backend],

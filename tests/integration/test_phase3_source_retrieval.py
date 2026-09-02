@@ -247,8 +247,8 @@ async def test_current_historical_replacement_modifier_hybrid_and_legacy_behavio
             "expected_active_revision_id": None,
             "reason": "Enable Phase 3 source enforcement",
             "configuration": {
-                "source_policy_mode": "enforce",
-                "retrieval": {"strategy": "hybrid", "top_k": 20},
+                "behavior": {},
+                "execution": {"retrieval_top_k": 20},
             },
         },
         headers=_CSRF,
@@ -274,49 +274,42 @@ async def test_current_historical_replacement_modifier_hybrid_and_legacy_behavio
         all_documents,
     )
 
-    current_by_strategy: dict[str, set[str]] = {}
-    for strategy in ("semantic", "hybrid"):
-        response = await db_client.post(
-            f"/api/v1/projects/{project_id}/search",
-            json={"query": _QUERY, "top_k": 20, "strategy": strategy},
-        )
-        assert response.status_code == 200, response.text
-        data = response.json()["data"]
-        ids = {str(item["document_id"]) for item in data["results"]}
-        current_by_strategy[strategy] = ids
-        assert new_document in ids
-        assert modifier_document in ids
-        assert legacy_document in ids
-        assert concurrent_document in ids
-        assert timeline_document in ids
-        assert overlap_document in ids
-        assert old_document not in ids
-        assert draft_document not in ids
-        assert data["diagnostics"]["source_policy_status"] == "enforced"
-        assert data["diagnostics"]["source_metadata_generation"] >= 1
-        assert data["diagnostics"]["index_build_id"] is not None
-        assert data["diagnostics"]["configuration_hash"] is not None
-        current_hit = next(item for item in data["results"] if item["document_id"] == new_document)
-        assert current_hit["metadata"]["source_revision_id"] == new_revision["id"]
-        assert current_hit["metadata"]["source_title"] == "Current policy"
-        assert current_hit["metadata"]["source_relationships"][0]["relationship_type"] == "replaces"
-        timeline_hit = next(
-            item for item in data["results"] if item["document_id"] == timeline_document
-        )
-        assert timeline_hit["metadata"]["source_revision_id"] == timeline_current["id"]
-        overlap_hit = next(
-            item for item in data["results"] if item["document_id"] == overlap_document
-        )
-        assert overlap_hit["metadata"]["source_revision_id"] == overlap_current["id"]
-
-    assert current_by_strategy["semantic"] == current_by_strategy["hybrid"]
+    response = await db_client.post(
+        f"/api/v1/projects/{project_id}/search",
+        json={"query": _QUERY, "top_k": 20},
+    )
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    ids = {str(item["document_id"]) for item in data["results"]}
+    assert new_document in ids
+    assert modifier_document in ids
+    assert legacy_document in ids
+    assert concurrent_document in ids
+    assert timeline_document in ids
+    assert overlap_document in ids
+    assert old_document not in ids
+    assert draft_document not in ids
+    assert data["diagnostics"]["strategy"] == "hybrid"
+    assert data["diagnostics"]["source_policy_status"] == "enforced"
+    assert data["diagnostics"]["source_metadata_generation"] >= 1
+    assert data["diagnostics"]["index_build_id"] is not None
+    assert data["diagnostics"]["configuration_hash"] is not None
+    current_hit = next(item for item in data["results"] if item["document_id"] == new_document)
+    assert current_hit["metadata"]["source_revision_id"] == new_revision["id"]
+    assert current_hit["metadata"]["source_title"] == "Current policy"
+    assert current_hit["metadata"]["source_relationships"][0]["relationship_type"] == "replaces"
+    timeline_hit = next(
+        item for item in data["results"] if item["document_id"] == timeline_document
+    )
+    assert timeline_hit["metadata"]["source_revision_id"] == timeline_current["id"]
+    overlap_hit = next(item for item in data["results"] if item["document_id"] == overlap_document)
+    assert overlap_hit["metadata"]["source_revision_id"] == overlap_current["id"]
 
     historical = await db_client.post(
         f"/api/v1/projects/{project_id}/search",
         json={
             "query": _QUERY,
             "top_k": 20,
-            "strategy": "hybrid",
             "as_of": "2010-06-15T00:00:00Z",
         },
     )
@@ -522,14 +515,8 @@ async def test_depth_one_modifier_expansion_is_current_scoped_and_incoming_only(
             "expected_active_revision_id": None,
             "reason": "Enable bounded current-authority expansion",
             "configuration": {
-                "source_policy_mode": "enforce",
-                "retrieval": {
-                    "strategy": "hybrid",
-                    "top_k": 5,
-                    "modifies_expansion_enabled": True,
-                    "max_related_sources": 8,
-                    "max_relationship_candidates": 20,
-                },
+                "behavior": {},
+                "execution": {"retrieval_top_k": 5},
             },
         },
         headers=_CSRF,
@@ -549,7 +536,6 @@ async def test_depth_one_modifier_expansion_is_current_scoped_and_incoming_only(
         json={
             "query": "base authority only",
             "top_k": 5,
-            "strategy": "hybrid",
             "document_id": base_document,
         },
     )
@@ -574,7 +560,6 @@ async def test_depth_one_modifier_expansion_is_current_scoped_and_incoming_only(
         json={
             "query": "base authority only",
             "top_k": 5,
-            "strategy": "hybrid",
         },
     )
     assert unscoped.status_code == 200, unscoped.text
@@ -587,7 +572,6 @@ async def test_depth_one_modifier_expansion_is_current_scoped_and_incoming_only(
         json={
             "query": "base authority only",
             "top_k": 5,
-            "strategy": "hybrid",
             "document_id": base_document,
             "as_of": "2025-06-01T00:00:00Z",
         },
@@ -606,7 +590,6 @@ async def test_depth_one_modifier_expansion_is_current_scoped_and_incoming_only(
         json={
             "query": "amendment text searched through the incoming edge",
             "top_k": 5,
-            "strategy": "hybrid",
             "document_id": modifier_document,
         },
     )

@@ -186,6 +186,10 @@ class IndexBuildWorkflow:
         build.vector_count = count
         build.keyword_count = count
         build.manifest = {
+            "artifact_fingerprint_version": build.artifact_fingerprint_version,
+            "artifact_fingerprint": build.artifact_fingerprint,
+            "index_profile_id": build.index_profile_id or "legacy-unprofiled",
+            "index_profile_hash": build.index_profile_hash,
             "documents": manifest,
             "language_metadata_schema_version": LANGUAGE_METADATA_SCHEMA_VERSION,
             "chunk_language_counts": language_inventory["chunk_language_counts"],

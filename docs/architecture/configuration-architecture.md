@@ -19,10 +19,17 @@ explicit allowlist and credential-presence flags; it never dumps `Settings`.
 
 `ConfigLayer` + `CONFIG_PRECEDENCE_ORDER` in `platform/config/contracts.py`.
 
-Project revisions are sparse, typed documents. Effective resolution records an origin for each
+`APE_AI_POLICY__DEFAULT_RAG_PROFILE` is the authoritative deployment query-time selection:
+`standard`, `quality`, `economy`, or `custom` (`standard` by default). For a preset, the
+code-owned bundle supplies every profile-owned execution value and raw retrieval/chat ENV tuning
+cannot alter it. Raw execution tuning is used only when the deployment selects `custom`.
+
+Project behavior revisions are sparse, typed documents. Execution selection is deliberately
+stricter: inherit/preset revisions store only their selection, while Custom writes materialize and
+persist every execution field server-side. Effective resolution records an origin for each
 value, the active revision ID/hash, a secret-free global fingerprint, provider-capability version,
-and prompt versions. A Project without an active revision resolves exactly to deployment defaults,
-including `APE_AI_POLICY__SOURCE_POLICY_MODE` (`off`) for source-policy. The deployment cap
+and prompt versions. A Project without an active revision inherits the deployment RAG profile and
+separate behavior defaults, including `APE_AI_POLICY__SOURCE_POLICY_MODE` for source policy. The deployment cap
 `APE_AI_POLICY__SOURCE_POLICY_DEPLOYMENT_CAP` may only lower that mode.
 
 The external request allowlist is `top_k`, an enabled retrieval strategy, existing allowlisted
@@ -50,6 +57,9 @@ does not re-resolve changed Project policy from deployment defaults.
 
 Conversation creation similarly appends an immutable `conversation_config_snapshots` row. Messages
 reference that row, so later Project or deployment changes cannot alter an existing conversation.
+New conversations and jobs resolve the latest code-owned preset definition; standalone retrieval
+resolves it immediately. A RAG profile change is query-time only and never requests reprocessing,
+re-embedding, reindexing, or rebuilding.
 An explicit Super-Admin refresh appends a new snapshot for future messages. Contextual generations
 and evaluation runs persist the same secret-free effective configuration and provenance.
 
@@ -58,6 +68,10 @@ and evaluation runs persist the same secret-free effective configuration and pro
 Project policy does not include embedding models/dimensions or chunking because those values are
 coupled to global vector schema and index artifact contracts. Generic key/value configuration is
 not used.
+
+Built-in execution profiles are available for development selection independently of their
+certification status. Certification records measured evaluation evidence; it is not inferred from
+the fact that a bundle is code-owned.
 
 ## Rules
 

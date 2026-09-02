@@ -156,7 +156,7 @@ async def test_enqueue_embed_if_enabled_respects_flag(
         job_configuration=build_job_configuration(
             Settings(embedding={"dimensions": 8, "model": "m"})
         ),
-        retrieval_config=RetrievalConfig(auto_embed=False),
+        retrieval_config=RetrievalConfig(auto_build_after_process=False),
         job_max_attempts=3,
     )
     document = _document(project_id, DocumentStatus.CHUNKED)

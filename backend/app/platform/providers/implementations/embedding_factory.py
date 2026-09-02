@@ -5,6 +5,7 @@ from __future__ import annotations
 from functools import lru_cache
 
 from app.core.config import EmbeddingBackend, Settings, get_settings
+from app.core.implementation_versions import EMBEDDING_ADAPTER_VERSION
 from app.platform.providers.contracts.embedding import BaseEmbeddingProvider
 from app.platform.providers.errors import ProviderError
 from app.platform.providers.implementations.cohere_embedding import CohereEmbeddingProvider
@@ -41,14 +42,14 @@ def create_embedding_provider(
         return HashEmbeddingProvider(
             model=cfg.model,
             dimensions=cfg.dimensions,
-            provider_version=cfg.provider_version,
+            provider_version=EMBEDDING_ADAPTER_VERSION,
         )
     if cfg.backend is EmbeddingBackend.OLLAMA:
         return OllamaEmbeddingProvider(
             base_url=cfg.ollama_base_url,
             model=cfg.model,
             dimensions=cfg.dimensions,
-            provider_version=cfg.provider_version,
+            provider_version=EMBEDDING_ADAPTER_VERSION,
         )
     if cfg.backend is EmbeddingBackend.OPENAI:
         if not cfg.openai_api_key:
@@ -59,7 +60,7 @@ def create_embedding_provider(
             base_url=cfg.openai_base_url,
             model=cfg.model,
             dimensions=cfg.dimensions,
-            provider_version=cfg.provider_version,
+            provider_version=EMBEDDING_ADAPTER_VERSION,
         )
     if cfg.backend is EmbeddingBackend.GEMINI:
         if not cfg.gemini_api_key:
@@ -70,7 +71,7 @@ def create_embedding_provider(
             base_url=cfg.gemini_base_url,
             model=cfg.model,
             dimensions=cfg.dimensions,
-            provider_version=cfg.provider_version,
+            provider_version=EMBEDDING_ADAPTER_VERSION,
         )
     if cfg.backend is EmbeddingBackend.COHERE:
         api_key = settings.resolved_cohere_api_key()
@@ -82,7 +83,7 @@ def create_embedding_provider(
             base_url=settings.resolved_cohere_base_url(),
             model=cfg.model,
             dimensions=cfg.dimensions,
-            provider_version=cfg.provider_version,
+            provider_version=EMBEDDING_ADAPTER_VERSION,
         )
     msg = f"Unsupported embedding backend: {cfg.backend!r}"
     raise ProviderError(msg, provider_name="embedding_factory")

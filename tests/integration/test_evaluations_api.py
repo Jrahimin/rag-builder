@@ -223,7 +223,13 @@ async def test_durable_runner_persists_metrics_claims_and_refusal(
     response = await db_client.get(f"/api/v1/projects/{project_id}/evaluations/runs/{run_id}")
     assert response.status_code == 200
     run = response.json()["data"]
-    assert run["job_state"] == "succeeded"
+    job = await db_client.get(f"/api/v1/projects/{project_id}/jobs/{run['job_id']}")
+    job_data = job.json()["data"]
+    assert run["job_state"] == "succeeded", {
+        "code": job_data["failure_code"],
+        "message": job_data["failure_message"],
+        "details": job_data["failure_details"],
+    }
     assert run["completed_at"] is not None
     assert set(run["metrics"]) == {
         "semantic",

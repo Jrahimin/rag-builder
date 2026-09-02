@@ -54,6 +54,26 @@ async def execute_index_build(
             state=IndexBuildState.BUILDING,
             embedding_set_version=embedding_set_version,
             configuration_hash=staged_configuration.index_output_digest(),
+            artifact_fingerprint_version=(
+                staged_configuration.index_artifact.fingerprint_version
+                if staged_configuration.index_artifact is not None
+                else None
+            ),
+            artifact_fingerprint=(
+                staged_configuration.index_output_digest()
+                if staged_configuration.index_artifact is not None
+                else None
+            ),
+            index_profile_id=(
+                (staged_configuration.index_artifact.index_profile_id or "legacy-unprofiled")
+                if staged_configuration.index_artifact is not None
+                else "legacy-unprofiled"
+            ),
+            index_profile_hash=(
+                staged_configuration.index_artifact.index_profile_hash
+                if staged_configuration.index_artifact is not None
+                else None
+            ),
         )
         repository.add(build)
         await repository.flush()

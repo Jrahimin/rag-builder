@@ -10,6 +10,11 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from app.core.config import Settings
 from app.core.exceptions import BadRequestError, ServiceUnavailableError
+from app.core.implementation_versions import (
+    EMBEDDING_ADAPTER_VERSION,
+    LLM_ADAPTER_VERSION,
+    WEB_SEARCH_ADAPTER_VERSION,
+)
 from app.core.logging import get_logger
 from app.models.job_configuration_snapshot import JobConfigurationSnapshot
 from app.modules.operations.repositories.operator_repository import (
@@ -38,6 +43,7 @@ from app.modules.operations.schemas.operator import (
     WorkerOverview,
     WorkerStatus,
 )
+from app.platform.config.profiles import deployment_profile, index_profile_for, profile_hash
 from app.platform.jobs.worker_registry import WorkerRegistry
 from app.platform.providers.capabilities import (
     embedding_credential_configured,
@@ -66,6 +72,9 @@ class OperatorService:
         self._health = health
         self._worker_registry = worker_registry
         self._preflight = preflight
+
+    async def active_v1_project_count(self) -> int:
+        return await self._repository.active_v1_project_count()
 
     async def dependencies(self) -> DependencyOverview:
         return DependencyOverview(
@@ -249,27 +258,35 @@ class OperatorService:
             )
             for row in latest_by_project.values()
         ]
+        deployment = deployment_profile(self._settings)
+        index_profile = index_profile_for(self._settings)
         return ActiveConfiguration(
             environment=self._settings.app.env.value,
             runtime_profile=self._settings.runtime.profile.value,
+            deployment_profile_id=deployment.id,
+            deployment_profile_hash=profile_hash(deployment),
+            default_rag_profile_id=self._settings.ai_policy.default_rag_profile,
+            evidence_calibration_profile_id=deployment.calibration_profile_id,
+            index_profile_id=index_profile.id,
+            index_profile_hash=profile_hash(index_profile),
             application_version=self._settings.app.version,
             llm=ProviderConfiguration(
                 backend=self._settings.llm.backend.value,
                 model=self._settings.llm.model,
-                provider_version=self._settings.llm.provider_version,
+                provider_version=LLM_ADAPTER_VERSION,
                 credential_configured=llm_credential_configured(self._settings.llm),
             ),
             web_search=ProviderConfiguration(
                 backend=self._settings.resolved_web_search_backend().value,
                 model=self._settings.resolved_web_search_model(),
-                provider_version=self._settings.web_search.provider_version,
+                provider_version=WEB_SEARCH_ADAPTER_VERSION,
                 credential_configured=bool(self._settings.resolved_web_search_api_key()),
             ),
             embedding=ProviderConfiguration(
                 backend=self._settings.embedding.backend.value,
                 model=self._settings.embedding.model,
                 dimensions=self._settings.embedding.dimensions,
-                provider_version=self._settings.embedding.provider_version,
+                provider_version=EMBEDDING_ADAPTER_VERSION,
                 credential_configured=embedding_credential_configured(
                     self._settings.embedding,
                     cohere_api_key=self._settings.resolved_cohere_api_key(),

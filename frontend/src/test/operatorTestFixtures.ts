@@ -137,6 +137,12 @@ export const jobDetailFixture: JobDetail = {
 export const configurationFixture: ActiveConfiguration = {
   environment: "development",
   runtime_profile: "development",
+  deployment_profile_id: "development",
+  deployment_profile_hash: "d".repeat(64),
+  default_rag_profile_id: "standard",
+  evidence_calibration_profile_id: "hash-local-whole-chunk",
+  index_profile_id: "development-hash",
+  index_profile_hash: "e".repeat(64),
   application_version: "0.9.0",
   llm: { backend: "echo", model: "echo", provider_version: null, credential_configured: null },
   web_search: {

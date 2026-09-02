@@ -19,6 +19,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.core.config import ResponseMode, Settings, StorageBackend
 from app.modules.evaluation.metrics import rank_metrics
 from app.modules.evaluation.schemas.evaluation import EvaluationCase, EvaluationCaseKind
+from app.platform.config.profiles import execution_profile, execution_values
 from app.platform.config.project_ai import ProjectAIConfig
 from app.platform.domain.text_tokenization import tokenize
 
@@ -33,54 +34,31 @@ _SECRET_KEYS = ("api_key", "password", "secret", "credential", "authorization")
 # are classified as safe to compare against an existing corpus index.
 RUNTIME_COMPARISON_CONFIG_KEYS = frozenset(
     {
-        "llm.provider",
-        "llm.model",
-        "llm.temperature",
-        "llm.max_tokens",
-        "retrieval.strategy",
-        "retrieval.top_k",
-        "retrieval.rerank_enabled",
-        "retrieval.rerank_mode",
-        "retrieval.rerank_top_n",
-        "retrieval.rerank_score_threshold",
-        "retrieval.evidence_score_threshold",
-        "retrieval.passage_scoring_enabled",
-        "retrieval.passage_window_tokens",
-        "retrieval.passage_overlap_tokens",
-        "retrieval.passage_min_tokens",
-        "retrieval.rerank_candidate_window",
-        "retrieval.rerank_return_n",
-        "retrieval.query_translation_enabled",
-        "retrieval.modifies_expansion_enabled",
-        "retrieval.modifies_expansion_mode",
-        "retrieval.max_related_sources",
-        "retrieval.max_relationship_candidates",
-        "chat.response_mode",
-        "chat.max_context_chunks",
-        "chat.context_char_budget",
-        "chat.max_history_messages",
-        "chat.include_citations",
-        "chat.citation_excerpt_max_chars",
-        "chat.evidence_score_mode",
-        "chat.evidence_gate_mode",
-        "chat.lexical_corroboration_floor_score",
-        "chat.cross_language_semantic_evidence_score_threshold",
-        "chat.minimum_query_token_coverage",
-        "chat.minimum_claim_token_coverage",
-        "chat.minimum_reranker_evidence_score",
-        "chat.high_confidence_reranker_evidence_score",
-        "chat.grounding_mode",
-        "chat.candidate_wise_grounding_enabled",
-        "web_search.enabled",
-        "web_search.model",
-        "web_search.max_results",
-        "web_search.max_evidence_chars",
-        "web_search.max_output_tokens",
-        "web_search.request_timeout_seconds",
-        "domain_instructions",
-        "prompt_profile",
-        "prompt_version",
-        "source_policy_mode",
+        "behavior.response_mode",
+        "behavior.grounding_assurance",
+        "behavior.domain_instructions",
+        "behavior.translation_policy",
+        "behavior.generation_model_id",
+        "execution.profile_id",
+        "execution.retrieval_top_k",
+        "execution.semantic_candidate_top_k",
+        "execution.keyword_candidate_top_k",
+        "execution.hnsw_ef_search",
+        "execution.rrf_k",
+        "execution.semantic_weight",
+        "execution.keyword_weight",
+        "execution.rerank_mode",
+        "execution.rerank_candidate_window",
+        "execution.rerank_return_count",
+        "execution.max_chunks_per_document",
+        "execution.max_chunks_per_section",
+        "execution.passage_scoring_enabled",
+        "execution.passage_window_tokens",
+        "execution.passage_overlap_tokens",
+        "execution.passage_min_tokens",
+        "execution.max_context_chunks",
+        "execution.context_char_budget",
+        "execution.max_history_messages",
     }
 )
 
@@ -422,6 +400,14 @@ def build_project_config(overrides: Mapping[str, Any]) -> ProjectAIConfig:
         for part in parts[:-1]:
             cursor = cursor.setdefault(part, {})
         cursor[parts[-1]] = value
+    execution = payload.get("execution")
+    if isinstance(execution, dict) and execution.get("profile_id") is not None:
+        # The journey is an explicit Test Lab path. Materialize candidate values
+        # into its ephemeral Project revision so normal runtime readers never
+        # need permission to activate an uncertified profile by ID.
+        profile_id = str(execution.pop("profile_id"))
+        profile_values = execution_values(execution_profile(profile_id, allow_candidate=True))
+        payload["execution"] = {**profile_values, **execution}
     try:
         return ProjectAIConfig.model_validate(payload)
     except ValueError as exc:
@@ -1086,6 +1072,7 @@ def _active_record(revision: Any) -> Any:
         revision_number=revision.revision_number,
         configuration_hash=revision.configuration_hash,
         configuration=dict(revision.configuration),
+        schema_version=revision.schema_version,
     )
 
 
@@ -1573,7 +1560,10 @@ async def _effective_resolution(session: Any, *, project_id: uuid.UUID, settings
 
     revision = await ProjectAIConfigRepository(session, project_id).get_active()
     return resolve_project_ai_config(
-        settings, _active_record(revision), validate_web_provider=False
+        settings,
+        _active_record(revision),
+        validate_web_provider=False,
+        allow_candidate_profiles=True,
     )
 
 
@@ -1745,11 +1735,9 @@ def _comparison_summary(
     key: str,
 ) -> dict[str, Any]:
     affected: list[str] = []
-    if key.startswith("retrieval.query_translation"):
+    if key == "behavior.translation_policy":
         affected.append("multilingual")
-    if key.startswith("retrieval.modifies") or key == "source_policy_mode":
-        affected.extend(["authority", "scope"])
-    if key.startswith(("chat.", "web_search.")):
+    if key.startswith("behavior.response_mode"):
         affected.append("refusal")
     affected = list(dict.fromkeys(affected))
 
@@ -2317,7 +2305,7 @@ def _render_translation_comparison(translation: Mapping[str, Any]) -> list[str]:
         "## Translation A/B",
         "",
         "Same Project, corpus, and active index. `translation_on` is the current configuration; "
-        "`translation_off` only sets `retrieval.query_translation_enabled=false`. "
+        "`translation_off` only sets `behavior.translation_policy=disabled`. "
         "Quality uses journey pass/fail, recall, rank, nDCG, admission, grounding, citation, and "
         "generation — not LLM wording similarity. `grounding_and_context` is residual "
         "`total - retrieval - generation`. Dense/lexical branch latencies are omitted unless "

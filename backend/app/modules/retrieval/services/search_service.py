@@ -120,22 +120,25 @@ class SearchService:
             request.top_k or self._config.default_top_k,
             self._ai_policy.max_request_top_k,
         )
-        strategy = request.strategy or self._config.strategy
+        diagnostics: list[str] = []
+        request_strategy = getattr(request, "strategy", None)
+        request_rerank = request.__dict__.get("rerank")
+        if request_strategy is not None:
+            diagnostics.append("strategy")
+        if request_rerank is not None:
+            diagnostics.append("rerank")
+        if diagnostics and self._ai_policy.request_override_mode is RequestOverrideMode.STRICT:
+            raise BadRequestError(
+                message="The request contains Project-owned AI policy overrides.",
+                code="request_policy_override_forbidden",
+                context={"fields": diagnostics},
+            )
+        strategy = request_strategy or self._config.strategy
         if strategy not in self._ai_policy.enabled_retrieval_strategies:
             raise BadRequestError(
                 message="The requested retrieval strategy is not enabled.",
                 code="retrieval_strategy_not_enabled",
             )
-        diagnostics: list[str] = []
-        request_rerank = getattr(request, "rerank", None)
-        if request_rerank is not None:
-            diagnostics.append("rerank")
-            if self._ai_policy.request_override_mode is RequestOverrideMode.STRICT:
-                raise BadRequestError(
-                    message="The request contains Project-owned AI policy overrides.",
-                    code="request_policy_override_forbidden",
-                    context={"fields": diagnostics},
-                )
         rerank_enabled = (
             request_rerank if request_rerank is not None else self._config.rerank_enabled
         )

@@ -410,34 +410,39 @@ def test_config_assignments_reject_index_credentials_and_unknown_keys(raw: str) 
 
 
 def test_config_assignments_accept_only_valid_project_query_leaves() -> None:
-    key, value = parse_config_assignment("retrieval.query_translation_enabled=false")
+    key, value = parse_config_assignment("behavior.translation_policy=disabled")
 
-    assert (key, value) == ("retrieval.query_translation_enabled", False)
+    assert (key, value) == ("behavior.translation_policy", "disabled")
     config = build_project_config(
         {
             key: value,
-            "chat.response_mode": "indexed_then_web",
-            "chat.grounding_mode": "balanced",
+            "behavior.response_mode": "indexed_then_web",
+            "behavior.grounding_assurance": "balanced",
         }
     )
-    assert config.retrieval.query_translation_enabled is False
-    assert config.chat.response_mode is ResponseMode.INDEXED_THEN_WEB
-    assert config.chat.grounding_mode.value == "balanced"
+    assert config.behavior.translation_policy.value == "disabled"
+    assert config.behavior.response_mode is ResponseMode.INDEXED_THEN_WEB
+    assert config.behavior.grounding_assurance.value == "balanced"
 
 
 def test_empty_baseline_inherits_deployment_config_without_implicit_policy_overrides() -> None:
     config = build_project_config({})
     payload = config.model_dump(exclude_none=True)
 
-    assert payload.get("source_policy_mode") is None
-    assert payload.get("chat", {}).get("include_citations") is None
-    assert payload.get("retrieval", {}).get("modifies_expansion_mode") is None
-    assert payload.get("retrieval", {}).get("modifies_expansion_enabled") is None
+    assert payload["behavior"]["translation_policy"] == "inherit"
+    assert payload["execution"] == {}
 
-    explicit = build_project_config({"source_policy_mode": "enforce"})
-    assert explicit.source_policy_mode.value == "enforce"
-    assert explicit.chat.include_citations is None
-    assert explicit.retrieval.modifies_expansion_mode is None
+    with pytest.raises(JourneyError, match="Unsafe or unknown"):
+        build_project_config({"source_policy_mode": "enforce"})
+
+
+def test_test_lab_materializes_candidate_profile_without_persisting_candidate_identity() -> None:
+    config = build_project_config({"execution.profile_id": "economy"})
+
+    assert config.execution.profile_id == "custom"
+    assert config.execution.semantic_candidate_top_k == 30
+    assert config.execution.rerank_candidate_window == 15
+    assert config.execution.retrieval_top_k == 8
 
 
 def test_comparison_allowlist_stays_closed_when_project_config_schema_grows() -> None:
@@ -586,9 +591,9 @@ def test_cli_rejects_more_than_one_comparison_variant() -> None:
     args = _parser().parse_args(
         [
             "--compare",
-            "retrieval.query_translation_enabled=false",
+            "behavior.translation_policy=disabled",
             "--compare",
-            "retrieval.query_translation_enabled=true",
+            "behavior.translation_policy=enabled",
         ]
     )
 
@@ -598,7 +603,7 @@ def test_cli_rejects_more_than_one_comparison_variant() -> None:
 
 def test_cli_compare_translation_is_exclusive_with_compare() -> None:
     args = _parser().parse_args(
-        ["--compare-translation", "--compare", "retrieval.query_translation_enabled=false"]
+        ["--compare-translation", "--compare", "behavior.translation_policy=disabled"]
     )
 
     with pytest.raises(JourneyError, match="either --compare-translation or --compare"):
@@ -612,7 +617,7 @@ def test_cli_compare_translation_sets_query_time_off_variant() -> None:
     )
 
     assert options.compare_translation is True
-    assert options.comparison == ("retrieval.query_translation_enabled", False)
+    assert options.comparison == ("behavior.translation_policy", "disabled")
 
 
 def _message(
@@ -1722,7 +1727,7 @@ def test_comparison_highlights_only_affected_tag_subsets() -> None:
     report = _comparison_summary(
         base,
         comparison,
-        key="retrieval.query_translation_enabled",
+        key="behavior.translation_policy",
     )
 
     assert report["affected_tags"] == ["multilingual"]

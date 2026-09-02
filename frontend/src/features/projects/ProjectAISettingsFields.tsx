@@ -1,86 +1,57 @@
-/* eslint-disable react-refresh/only-export-components -- helpers shared by Create Project and AI Configuration */
+/* eslint-disable react-refresh/only-export-components -- helpers shared by Project forms */
 import { CircleHelp } from "lucide-react";
 import { useState, type Dispatch, type SetStateAction } from "react";
 import type {
   ActiveConfiguration,
   EffectiveProjectAIConfig,
+  GenerationModelOption,
   ProjectAIConfig,
-  ProviderCapability,
+  RAGProfileOption,
 } from "../../api/operatorApiClient";
 
-export type TranslationMode = "inherit" | "on" | "off";
-export type RerankModeChoice = "inherit" | "always" | "cross_language" | "off";
+export type TranslationMode = "inherit" | "enabled" | "disabled";
+export type RerankModeChoice = "inherit" | "always" | "cross_language";
 export type ResponseModeChoice = "indexed_only" | "indexed_then_web" | "indexed_and_web";
+export type GroundingAssurance = "inherit" | "strict" | "balanced";
 
 export type ProjectConfigForm = {
-  provider: string;
-  model: string;
-  temperature: string;
-  maxTokens: string;
+  profileId: string;
+  customExecution: Record<string, unknown>;
+  generationModelId: string;
   responseMode: ResponseModeChoice;
-  webSearchEnabled: boolean;
-  webSearchModel: string;
-  webSearchMaxResults: string;
-  webSearchMaxEvidenceChars: string;
-  webSearchMaxOutputTokens: string;
-  webSearchTimeout: string;
+  groundingAssurance: GroundingAssurance;
   domain: string;
-  topK: string;
-  strategy: string;
   translation: TranslationMode;
   rerankMode: RerankModeChoice;
-  evidence: string;
-  citations: boolean;
-  sourcePolicy: string;
+  topK: string;
   reason: string;
 };
 
 export type ProjectConfigOverride = Exclude<
   keyof ProjectConfigForm,
-  "reason" | "translation" | "rerankMode"
+  "reason" | "translation" | "rerankMode" | "customExecution"
 >;
 export type ProjectConfigOverrides = Record<ProjectConfigOverride, boolean>;
 
 export const inheritedProjectConfig: ProjectConfigOverrides = {
-  provider: false,
-  model: false,
-  temperature: false,
-  maxTokens: false,
+  profileId: false,
+  generationModelId: false,
   responseMode: false,
-  webSearchEnabled: false,
-  webSearchModel: false,
-  webSearchMaxResults: false,
-  webSearchMaxEvidenceChars: false,
-  webSearchMaxOutputTokens: false,
-  webSearchTimeout: false,
+  groundingAssurance: false,
   domain: false,
   topK: false,
-  strategy: false,
-  evidence: false,
-  citations: false,
-  sourcePolicy: false,
 };
 
 export const emptyProjectConfigForm: ProjectConfigForm = {
-  provider: "",
-  model: "",
-  temperature: "",
-  maxTokens: "",
+  profileId: "inherit",
+  customExecution: {},
+  generationModelId: "",
   responseMode: "indexed_only",
-  webSearchEnabled: false,
-  webSearchModel: "",
-  webSearchMaxResults: "",
-  webSearchMaxEvidenceChars: "",
-  webSearchMaxOutputTokens: "",
-  webSearchTimeout: "",
+  groundingAssurance: "inherit",
   domain: "",
-  topK: "",
-  strategy: "hybrid",
   translation: "inherit",
   rerankMode: "inherit",
-  evidence: "",
-  citations: true,
-  sourcePolicy: "off",
+  topK: "",
   reason: "",
 };
 
@@ -89,109 +60,45 @@ function hasValue(value: object | undefined, key: string) {
 }
 
 export function storedTranslationMode(stored: ProjectAIConfig): TranslationMode {
-  if (!hasValue(stored.retrieval, "query_translation_enabled")) return "inherit";
-  return stored.retrieval?.query_translation_enabled ? "on" : "off";
+  return stored.behavior?.translation_policy ?? "inherit";
 }
 
 export function storedRerankMode(stored: ProjectAIConfig): RerankModeChoice {
-  if (hasValue(stored.retrieval, "rerank_mode") && stored.retrieval?.rerank_mode) {
-    return stored.retrieval.rerank_mode;
-  }
-  if (hasValue(stored.retrieval, "rerank_enabled") && stored.retrieval?.rerank_enabled != null) {
-    return stored.retrieval.rerank_enabled ? "always" : "off";
-  }
-  return "inherit";
+  return stored.execution?.rerank_mode ?? "inherit";
 }
 
 export function configFormFromEffective(
   config: EffectiveProjectAIConfig,
   stored: ProjectAIConfig = {},
-  deploymentConfiguration?: EffectiveProjectAIConfig["configuration"] | null,
 ): ProjectConfigForm {
   const configuration = config.configuration;
-  const inheritsTranslation =
-    deploymentConfiguration != null &&
-    configuration.retrieval.query_translation_enabled ===
-      deploymentConfiguration.retrieval.query_translation_enabled;
-  const inheritsRerank =
-    deploymentConfiguration != null &&
-    configuration.retrieval.rerank_mode === deploymentConfiguration.retrieval.rerank_mode;
   return {
-    provider: configuration.llm.provider,
-    model: configuration.llm.model,
-    temperature:
-      configuration.llm.temperature === null ? "" : String(configuration.llm.temperature),
-    maxTokens: String(configuration.llm.max_tokens),
+    ...emptyProjectConfigForm,
+    profileId: stored.execution?.profile_id ?? "inherit",
+    customExecution: Object.fromEntries(
+      Object.entries(stored.execution ?? {}).filter(([key]) => key !== "profile_id"),
+    ),
+    generationModelId: configuration.llm.generation_model_id ?? "",
     responseMode: configuration.chat.response_mode,
-    webSearchEnabled: configuration.web_search.enabled,
-    webSearchModel: configuration.web_search.model,
-    webSearchMaxResults: String(configuration.web_search.max_results),
-    webSearchMaxEvidenceChars: String(configuration.web_search.max_evidence_chars),
-    webSearchMaxOutputTokens: String(configuration.web_search.max_output_tokens),
-    webSearchTimeout: String(configuration.web_search.request_timeout_seconds),
+    groundingAssurance: stored.behavior?.grounding_assurance ?? "inherit",
     domain: configuration.domain_instructions,
+    translation: storedTranslationMode(stored),
+    rerankMode: storedRerankMode(stored),
     topK: String(configuration.retrieval.top_k),
-    strategy: configuration.retrieval.strategy,
-    translation: inheritsTranslation ? "inherit" : storedTranslationMode(stored),
-    rerankMode: inheritsRerank ? "inherit" : storedRerankMode(stored),
-    evidence: String(configuration.retrieval.semantic_evidence_score_threshold),
-    citations: configuration.chat.include_citations,
-    sourcePolicy: configuration.source_policy_mode,
     reason: "",
-  };
-}
-
-export function configOverridesFromEffective(
-  config: EffectiveProjectAIConfig,
-  deploymentConfiguration?: EffectiveProjectAIConfig["configuration"] | null,
-): ProjectConfigOverrides {
-  if (!deploymentConfiguration) return configOverridesFromStored(config.configuration);
-  const form = configFormFromEffective(config);
-  const baseline = configFormFromEffective({
-    ...config,
-    configuration: deploymentConfiguration,
-  });
-  return {
-    provider: form.provider !== baseline.provider,
-    model: form.model !== baseline.model,
-    temperature: form.temperature !== baseline.temperature,
-    maxTokens: form.maxTokens !== baseline.maxTokens,
-    responseMode: form.responseMode !== baseline.responseMode,
-    webSearchEnabled: form.webSearchEnabled !== baseline.webSearchEnabled,
-    webSearchModel: form.webSearchModel !== baseline.webSearchModel,
-    webSearchMaxResults: form.webSearchMaxResults !== baseline.webSearchMaxResults,
-    webSearchMaxEvidenceChars:
-      form.webSearchMaxEvidenceChars !== baseline.webSearchMaxEvidenceChars,
-    webSearchMaxOutputTokens: form.webSearchMaxOutputTokens !== baseline.webSearchMaxOutputTokens,
-    webSearchTimeout: form.webSearchTimeout !== baseline.webSearchTimeout,
-    domain: form.domain !== baseline.domain,
-    topK: form.topK !== baseline.topK,
-    strategy: form.strategy !== baseline.strategy,
-    evidence: form.evidence !== baseline.evidence,
-    citations: form.citations !== baseline.citations,
-    sourcePolicy: form.sourcePolicy !== baseline.sourcePolicy,
   };
 }
 
 export function configOverridesFromStored(stored: ProjectAIConfig): ProjectConfigOverrides {
   return {
-    provider: hasValue(stored.llm, "provider"),
-    model: hasValue(stored.llm, "model"),
-    temperature: hasValue(stored.llm, "temperature") && stored.llm?.temperature !== null,
-    maxTokens: hasValue(stored.llm, "max_tokens"),
-    responseMode: hasValue(stored.chat, "response_mode"),
-    webSearchEnabled: hasValue(stored.web_search, "enabled"),
-    webSearchModel: hasValue(stored.web_search, "model"),
-    webSearchMaxResults: hasValue(stored.web_search, "max_results"),
-    webSearchMaxEvidenceChars: hasValue(stored.web_search, "max_evidence_chars"),
-    webSearchMaxOutputTokens: hasValue(stored.web_search, "max_output_tokens"),
-    webSearchTimeout: hasValue(stored.web_search, "request_timeout_seconds"),
-    domain: hasValue(stored, "domain_instructions"),
-    topK: hasValue(stored.retrieval, "top_k"),
-    strategy: hasValue(stored.retrieval, "strategy"),
-    evidence: hasValue(stored.retrieval, "evidence_score_threshold"),
-    citations: hasValue(stored.chat, "include_citations"),
-    sourcePolicy: hasValue(stored, "source_policy_mode"),
+    ...inheritedProjectConfig,
+    profileId:
+      hasValue(stored.execution, "profile_id") && stored.execution?.profile_id !== "inherit",
+    generationModelId: hasValue(stored.behavior, "generation_model_id"),
+    responseMode: hasValue(stored.behavior, "response_mode"),
+    groundingAssurance: hasValue(stored.behavior, "grounding_assurance"),
+    domain: hasValue(stored.behavior, "domain_instructions"),
+    topK: hasValue(stored.execution, "retrieval_top_k"),
   };
 }
 
@@ -209,110 +116,55 @@ export function buildSparseProjectConfig(
   stored: ProjectAIConfig,
   form: ProjectConfigForm,
   overrides: ProjectConfigOverrides,
-  capability: ProviderCapability | undefined,
 ): ProjectAIConfig {
-  const configuration = { ...stored } as Record<string, unknown>;
-  const llm = { ...(stored.llm ?? {}) } as Record<string, unknown>;
-  const retrieval = { ...(stored.retrieval ?? {}) } as Record<string, unknown>;
-  const chat = { ...(stored.chat ?? {}) } as Record<string, unknown>;
-  const webSearch = { ...(stored.web_search ?? {}) } as Record<string, unknown>;
-
-  setSparseValue(llm, "provider", overrides.provider, form.provider);
-  setSparseValue(llm, "model", overrides.model, form.model);
+  const behavior = { ...(stored.behavior ?? {}) } as Record<string, unknown>;
+  const execution: Record<string, unknown> = {};
+  if (form.profileId && form.profileId !== "inherit") execution.profile_id = form.profileId;
   setSparseValue(
-    llm,
-    "temperature",
-    overrides.temperature && capability?.parameters.temperature.supported !== false,
-    form.temperature === "" ? null : Number(form.temperature),
+    behavior,
+    "generation_model_id",
+    overrides.generationModelId,
+    form.generationModelId,
   );
-  setSparseValue(llm, "max_tokens", overrides.maxTokens, Number(form.maxTokens));
-  setSparseValue(chat, "response_mode", overrides.responseMode, form.responseMode);
-  setSparseValue(webSearch, "enabled", overrides.webSearchEnabled, form.webSearchEnabled);
-  setSparseValue(webSearch, "model", overrides.webSearchModel, form.webSearchModel);
+  setSparseValue(behavior, "response_mode", overrides.responseMode, form.responseMode);
   setSparseValue(
-    webSearch,
-    "max_results",
-    overrides.webSearchMaxResults,
-    Number(form.webSearchMaxResults),
+    behavior,
+    "grounding_assurance",
+    overrides.groundingAssurance && form.groundingAssurance !== "inherit",
+    form.groundingAssurance,
   );
-  setSparseValue(
-    webSearch,
-    "max_evidence_chars",
-    overrides.webSearchMaxEvidenceChars,
-    Number(form.webSearchMaxEvidenceChars),
-  );
-  setSparseValue(
-    webSearch,
-    "max_output_tokens",
-    overrides.webSearchMaxOutputTokens,
-    Number(form.webSearchMaxOutputTokens),
-  );
-  setSparseValue(
-    webSearch,
-    "request_timeout_seconds",
-    overrides.webSearchTimeout,
-    Number(form.webSearchTimeout),
-  );
-  setSparseValue(retrieval, "top_k", overrides.topK, Number(form.topK));
-  setSparseValue(retrieval, "strategy", overrides.strategy, form.strategy);
-  if (form.translation === "inherit") {
-    delete retrieval.query_translation_enabled;
-  } else {
-    retrieval.query_translation_enabled = form.translation === "on";
+  setSparseValue(behavior, "domain_instructions", overrides.domain, form.domain);
+  if (form.translation === "inherit") delete behavior.translation_policy;
+  else behavior.translation_policy = form.translation;
+  if (form.profileId === "custom") {
+    Object.assign(execution, form.customExecution);
+    if (form.rerankMode === "inherit") delete execution.rerank_mode;
+    else execution.rerank_mode = form.rerankMode;
+    execution.retrieval_top_k = Number(form.topK);
   }
-  if (form.rerankMode === "inherit") {
-    delete retrieval.rerank_mode;
-    delete retrieval.rerank_enabled;
-  } else {
-    retrieval.rerank_mode = form.rerankMode;
-    delete retrieval.rerank_enabled;
-  }
-  setSparseValue(retrieval, "evidence_score_threshold", overrides.evidence, Number(form.evidence));
-  setSparseValue(chat, "include_citations", overrides.citations, form.citations);
-  setSparseValue(configuration, "domain_instructions", overrides.domain, form.domain);
-  setSparseValue(configuration, "source_policy_mode", overrides.sourcePolicy, form.sourcePolicy);
-
-  configuration.llm = llm;
-  configuration.retrieval = retrieval;
-  configuration.chat = chat;
-  configuration.web_search = webSearch;
-  return configuration;
+  return { behavior, execution } as ProjectAIConfig;
 }
 
 export function sparseHasOverrides(configuration: ProjectAIConfig): boolean {
-  const llm = configuration.llm ?? {};
-  const retrieval = configuration.retrieval ?? {};
-  const chat = configuration.chat ?? {};
-  const webSearch = configuration.web_search ?? {};
+  const behavior = { ...(configuration.behavior ?? {}) } as Record<string, unknown>;
+  const execution = (configuration.execution ?? {}) as Record<string, unknown>;
   return (
-    Object.keys(llm).length > 0 ||
-    Object.keys(retrieval).length > 0 ||
-    Object.keys(chat).length > 0 ||
-    Object.keys(webSearch).length > 0 ||
-    configuration.domain_instructions != null ||
-    configuration.prompt_profile != null ||
-    configuration.prompt_version != null ||
-    configuration.source_policy_mode != null
+    Object.keys(behavior).length > 0 ||
+    (execution.profile_id !== undefined && execution.profile_id !== "inherit") ||
+    Object.keys(execution).some((key) => key !== "profile_id")
   );
 }
 
 export function inheritedFormFromEffective(
   effective?: EffectiveProjectAIConfig | null,
 ): ProjectConfigForm {
-  if (!effective) return { ...emptyProjectConfigForm };
-  return configFormFromEffective({
-    ...effective,
-    configuration: effective.deployment_configuration ?? effective.configuration,
-  });
+  return effective ? configFormFromEffective(effective) : { ...emptyProjectConfigForm };
 }
 
 export function configFormFromDeployment(config: ActiveConfiguration): ProjectConfigForm {
   return {
     ...emptyProjectConfigForm,
-    provider: config.llm.backend || "",
-    model: config.llm.model ?? "",
     responseMode: config.chat_response_mode as ResponseModeChoice,
-    strategy: config.retrieval_strategy || "hybrid",
   };
 }
 
@@ -366,45 +218,53 @@ export function InheritanceToggle({
 }
 
 export const PROJECT_AI_FIELD_HINTS = {
-  provider:
-    "Which AI vendor this Project uses for chat.\n\nLeave Inherit on to keep the deployment vendor. Example: openai in this environment. Pick ollama only when this Project should call a different vendor.",
-  model:
-    "The exact model name sent to that vendor.\n\nLeave Inherit on to keep the deployment model. Example: gpt-4.1-mini. Type a different name only for a Project-specific model.",
-  responseMode:
-    "Controls which evidence chat may use.\n\nIndexed only stays inside the Project knowledge base. Indexed then web searches the web only when Project evidence is insufficient. Indexed and web always retrieves both. Document-scoped questions remain limited to Project knowledge.",
-  webSearchEnabled:
-    "Allows this Project to use the deployment web-search provider when its response mode needs web evidence. Turn it off to keep this Project indexed-only even when web search is globally available.",
-  webSearchModel:
-    "Model used for the web-search Responses call. Inherit uses the configured web model, or this Project’s chat model when no dedicated web model is configured.",
-  webSearchMaxResults:
-    "Maximum cited web sources considered for a chat turn. Lower values reduce latency and cost.",
-  webSearchMaxEvidenceChars:
-    "Maximum total characters admitted from accepted web evidence. This is a hard prompt-budget bound.",
-  webSearchMaxOutputTokens:
-    "Maximum tokens permitted for the web-search provider response before evidence extraction.",
-  webSearchTimeout: "Maximum seconds to wait for the web-search provider before it fails closed.",
-  domain:
-    "Extra standing rules for this Project, prepended to the platform’s system prompt. This is not the full system prompt.\n\nExample: “Answer in Bengali. Use official NBR tax terms. Never invent a section number.”",
-  translation:
-    "Translate the user’s question before search when it is in a different language than the documents.\n\nExample: a Bangla question over English PDFs. Inherit follows the deployment on/off setting.",
+  generationModel:
+    "Choose only a deployment-approved logical generation model. Provider, credentials, and raw model strings remain deployment-owned.",
+  responseMode: "Choose indexed-only, fallback web, or indexed-and-web evidence behavior.",
+  grounding: "Strict is the deployment baseline. Balanced is a bounded Project behavior choice.",
+  domain: "Project-specific standing instructions. This is not a full system prompt.",
+  translation: "Translation is off by default. Enable it only for cross-language retrieval.",
   rerank:
-    "After search, reorder passages so the best evidence sits first.\n\nAlways: every question. Cross-language: only when languages differ. Off: skip rerank and use the search order.",
-  citations:
-    "Attach short source excerpts to grounded answers so you can check the evidence.\n\nLeave on for operator review. Turn off only if this Project should reply without citations.",
-  temperature:
-    "How varied the wording can be. Lower is more repeatable; higher is more free-form.\n\nExample: 0.2 for policy answers. Some models ignore this setting entirely.",
-  maxTokens:
-    "Hard cap on how long a generated answer may be, in tokens.\n\nExample: 2048. Inherit uses the deployment cap.",
-  strategy:
-    "How passages are found before answering.\n\nSemantic: meaning only. Hybrid: meaning plus keyword match — better for IDs, names, and mixed Bangla/English text.",
-  topK: "How many passages to retrieve before answering.\n\nExample: 10. Higher can add context but costs more and may add noise.",
-  evidence:
-    "Minimum retrieval score before the model may answer from a passage.\n\nExample: 0.35. Below that, the Project should refuse rather than guess.",
-  sourcePolicy:
-    "Whether retrieval must honor source lifecycle and relationships (replaces / modifies).\n\nOff: all indexed text. Enforce: only applicable current sources.",
-  reason:
-    "Short note stored with this immutable revision for audit.\n\nExample: “Raise the evidence floor after false citations.”",
+    "Hosted reranking remains enabled. Projects may choose always or cross-language, never disable it.",
+  topK: "How many passages enter the answer context. This is a canonical advanced execution override.",
+  profile:
+    "Choose an exact code-owned RAG execution bundle. Certification reports measured validation; it does not block development selection.",
+  reason: "A concise audit reason for this immutable revision.",
 };
+
+function materializeEffectiveExecution(
+  effective?: EffectiveProjectAIConfig | null,
+): Record<string, unknown> {
+  if (!effective) return {};
+  const { retrieval, chat } = effective.configuration;
+  return {
+    retrieval_top_k: retrieval.top_k,
+    semantic_candidate_top_k: retrieval.semantic_candidate_top_k,
+    keyword_candidate_top_k: retrieval.keyword_candidate_top_k,
+    hnsw_ef_search: retrieval.hnsw_ef_search,
+    rrf_k: retrieval.rrf_k,
+    semantic_weight: retrieval.semantic_weight,
+    keyword_weight: retrieval.keyword_weight,
+    score_threshold: retrieval.score_threshold,
+    rerank_mode: retrieval.rerank_mode,
+    rerank_candidate_window: retrieval.rerank_candidate_window,
+    rerank_return_count: retrieval.rerank_return_count,
+    rerank_score_threshold: retrieval.rerank_score_threshold,
+    min_ocr_confidence: retrieval.min_ocr_confidence,
+    max_chunks_per_document: retrieval.max_chunks_per_document,
+    max_chunks_per_section: retrieval.max_chunks_per_section,
+    deduplicate_by_content_hash: retrieval.deduplicate_by_content_hash,
+    passage_scoring_enabled: retrieval.passage_scoring_enabled,
+    passage_window_tokens: retrieval.passage_window_tokens,
+    passage_overlap_tokens: retrieval.passage_overlap_tokens,
+    passage_min_tokens: retrieval.passage_min_tokens,
+    max_related_sources: retrieval.max_related_sources,
+    max_relationship_candidates: retrieval.max_relationship_candidates,
+    max_context_chunks: chat.max_context_chunks,
+    context_char_budget: chat.context_char_budget,
+    max_history_messages: chat.max_history_messages,
+  };
+}
 
 export function ProjectAISettingsFields({
   form,
@@ -412,8 +272,9 @@ export function ProjectAISettingsFields({
   overrides,
   setOverride,
   effective,
-  deploymentConfiguration,
   defaults,
+  allowedGenerationModels = [],
+  ragProfiles = [],
 }: {
   form: ProjectConfigForm;
   setForm: Dispatch<SetStateAction<ProjectConfigForm>>;
@@ -422,283 +283,231 @@ export function ProjectAISettingsFields({
   effective?: EffectiveProjectAIConfig | null;
   deploymentConfiguration?: EffectiveProjectAIConfig["configuration"] | null;
   defaults?: ProjectConfigForm;
+  allowedGenerationModels?: GenerationModelOption[];
+  ragProfiles?: RAGProfileOption[];
 }) {
   const baseline = effective
-    ? configFormFromEffective({
-        ...effective,
-        configuration: deploymentConfiguration ?? effective.configuration,
-      })
+    ? configFormFromEffective(effective)
     : (defaults ?? emptyProjectConfigForm);
-  const baselineConfiguration = deploymentConfiguration ?? effective?.configuration;
-  const translationHint: Exclude<TranslationMode, "inherit"> = baselineConfiguration?.retrieval
-    .query_translation_enabled
-    ? "on"
-    : "off";
-  const resolvedRerank = baselineConfiguration?.retrieval.rerank_mode;
-  const rerankHint: Exclude<RerankModeChoice, "inherit"> =
-    resolvedRerank === "cross_language" || resolvedRerank === "off" || resolvedRerank === "always"
-      ? resolvedRerank
-      : "always";
   const changeField = <K extends ProjectConfigOverride>(key: K, value: ProjectConfigForm[K]) => {
     setForm((current) => ({ ...current, [key]: value }));
     setOverride(key, value !== baseline[key]);
   };
+  const selectProfile = (profileId: string) => {
+    const profile = ragProfiles.find((item) => item.id === profileId);
+    const currentPresetValues =
+      ragProfiles.find((item) => item.id === form.profileId)?.values ?? {};
+    const customExecution =
+      profileId === "custom"
+        ? {
+            ...materializeEffectiveExecution(effective),
+            ...currentPresetValues,
+            ...(form.profileId === "custom" ? form.customExecution : {}),
+          }
+        : {};
+    setForm((current) => ({
+      ...current,
+      profileId,
+      customExecution,
+      topK:
+        profileId === "custom" && typeof customExecution.retrieval_top_k === "number"
+          ? String(customExecution.retrieval_top_k)
+          : typeof profile?.values.retrieval_top_k === "number"
+            ? String(profile.values.retrieval_top_k)
+            : baseline.topK,
+      rerankMode:
+        profileId === "custom" && typeof customExecution.rerank_mode === "string"
+          ? (customExecution.rerank_mode as RerankModeChoice)
+          : "inherit",
+    }));
+    setOverride("profileId", profileId !== "inherit");
+    setOverride("topK", false);
+  };
+  const activateCustom = () => {
+    if (form.profileId === "custom") return;
+    const profileValues = ragProfiles.find((item) => item.id === form.profileId)?.values ?? {};
+    setForm((current) => ({
+      ...current,
+      profileId: "custom",
+      customExecution: {
+        ...materializeEffectiveExecution(effective),
+        ...profileValues,
+      },
+    }));
+    setOverride("profileId", true);
+  };
+  const changeTopK = (value: string) => {
+    activateCustom();
+    setForm((current) => ({
+      ...current,
+      profileId: "custom",
+      topK: value,
+      customExecution: { ...current.customExecution, retrieval_top_k: Number(value) },
+    }));
+    setOverride("topK", true);
+  };
+  const changeRerankMode = (value: RerankModeChoice) => {
+    activateCustom();
+    setForm((current) => ({
+      ...current,
+      profileId: "custom",
+      rerankMode: value,
+      customExecution: { ...current.customExecution, rerank_mode: value },
+    }));
+  };
+  const customProfile = form.profileId === "custom";
   const toggleField = (key: ProjectConfigOverride, overridden: boolean) => {
     setOverride(key, overridden);
-    if (!overridden) {
-      setForm((current) => ({ ...current, [key]: baseline[key] }));
-    }
+    if (!overridden) setForm((current) => ({ ...current, [key]: baseline[key] }));
   };
   const inheritedClass = (overridden: boolean) =>
     overridden ? "field-control" : "field-control field-control--inherited";
   return (
-    <div className="form-grid">
-      <div className={inheritedClass(overrides.provider)}>
-        <FieldHint label="Provider" text={PROJECT_AI_FIELD_HINTS.provider} />
-        <select
-          aria-label="Provider"
-          value={form.provider}
-          onChange={(event) => changeField("provider", event.target.value)}
-        >
-          {!baseline.provider && <option value="">Deployment default</option>}
-          {["echo", "openai", "openai_compatible", "ollama", "gemini"].map((value) => (
-            <option key={value}>{value}</option>
-          ))}
-        </select>
-        <InheritanceToggle
-          field="Provider"
-          overridden={overrides.provider}
-          onChange={(enabled) => toggleField("provider", enabled)}
-        />
+    <>
+      <div className="form-grid">
+        <div className={inheritedClass(overrides.profileId)}>
+          <FieldHint label="RAG profile" text={PROJECT_AI_FIELD_HINTS.profile} />
+          <select
+            aria-label="RAG profile"
+            value={form.profileId}
+            onChange={(event) => selectProfile(event.target.value)}
+          >
+            <option value="inherit">Inherit global profile</option>
+            {ragProfiles.map((profile) => (
+              <option key={profile.id} value={profile.id} disabled={!profile.selectable}>
+                {profile.id} — {profile.certification_status}
+              </option>
+            ))}
+            <option value="custom">Custom</option>
+          </select>
+          {form.profileId !== "inherit" && (
+            <span className="muted-copy" data-testid="rag-profile-state">
+              {customProfile
+                ? "Custom — individual execution settings"
+                : `${form.profileId} profile`}
+            </span>
+          )}
+        </div>
+        <div className={inheritedClass(overrides.generationModelId)}>
+          <FieldHint label="Generation model" text={PROJECT_AI_FIELD_HINTS.generationModel} />
+          <select
+            aria-label="Generation model"
+            value={form.generationModelId}
+            onChange={(event) => changeField("generationModelId", event.target.value)}
+          >
+            <option value="">Deployment default</option>
+            {allowedGenerationModels.map((model) => (
+              <option key={model.id} value={model.id}>
+                {model.id} — {model.provider}/{model.model}
+              </option>
+            ))}
+          </select>
+          <InheritanceToggle
+            field="Generation model"
+            overridden={overrides.generationModelId}
+            onChange={(enabled) => toggleField("generationModelId", enabled)}
+          />
+        </div>
+        <div className={inheritedClass(overrides.responseMode)}>
+          <FieldHint label="Response mode" text={PROJECT_AI_FIELD_HINTS.responseMode} />
+          <select
+            aria-label="Response mode"
+            value={form.responseMode}
+            onChange={(event) =>
+              changeField("responseMode", event.target.value as ResponseModeChoice)
+            }
+          >
+            <option value="indexed_only">Indexed only</option>
+            <option value="indexed_then_web">Indexed, then web</option>
+            <option value="indexed_and_web">Indexed and web</option>
+          </select>
+          <InheritanceToggle
+            field="Response mode"
+            overridden={overrides.responseMode}
+            onChange={(enabled) => toggleField("responseMode", enabled)}
+          />
+        </div>
+        <div className={inheritedClass(overrides.groundingAssurance)}>
+          <FieldHint label="Grounding assurance" text={PROJECT_AI_FIELD_HINTS.grounding} />
+          <select
+            aria-label="Grounding assurance"
+            value={form.groundingAssurance}
+            onChange={(event) =>
+              changeField("groundingAssurance", event.target.value as GroundingAssurance)
+            }
+          >
+            <option value="inherit">Deployment default</option>
+            <option value="strict">Strict</option>
+            <option value="balanced">Balanced</option>
+          </select>
+          <InheritanceToggle
+            field="Grounding assurance"
+            overridden={overrides.groundingAssurance}
+            onChange={(enabled) => toggleField("groundingAssurance", enabled)}
+          />
+        </div>
+        <div className={inheritedClass(overrides.domain)}>
+          <FieldHint label="Domain instructions" text={PROJECT_AI_FIELD_HINTS.domain} />
+          <textarea
+            aria-label="Domain instructions"
+            rows={3}
+            value={form.domain}
+            onChange={(event) => changeField("domain", event.target.value)}
+          />
+          <InheritanceToggle
+            field="Domain instructions"
+            overridden={overrides.domain}
+            onChange={(enabled) => toggleField("domain", enabled)}
+          />
+        </div>
+        <div className="field-control">
+          <FieldHint label="Query translation" text={PROJECT_AI_FIELD_HINTS.translation} />
+          <select
+            aria-label="Query translation"
+            value={form.translation}
+            onChange={(event) =>
+              setForm((current) => ({
+                ...current,
+                translation: event.target.value as TranslationMode,
+              }))
+            }
+          >
+            <option value="inherit">Inherit deployment default</option>
+            <option value="disabled">Off</option>
+            <option value="enabled">On</option>
+          </select>
+        </div>
       </div>
-      <div className={inheritedClass(overrides.model)}>
-        <FieldHint label="Model" text={PROJECT_AI_FIELD_HINTS.model} />
-        <input
-          aria-label="Model"
-          value={form.model}
-          placeholder={overrides.model ? undefined : "Deployment default"}
-          onChange={(event) => changeField("model", event.target.value)}
-        />
-        <InheritanceToggle
-          field="Model"
-          overridden={overrides.model}
-          onChange={(enabled) => toggleField("model", enabled)}
-        />
-      </div>
-      <div className={inheritedClass(overrides.responseMode)}>
-        <FieldHint label="Response mode" text={PROJECT_AI_FIELD_HINTS.responseMode} />
-        <select
-          aria-label="Response mode"
-          value={form.responseMode}
-          onChange={(event) =>
-            changeField("responseMode", event.target.value as ResponseModeChoice)
-          }
-        >
-          <option value="indexed_only">Indexed only</option>
-          <option value="indexed_then_web">Indexed, then web fallback</option>
-          <option value="indexed_and_web">Indexed and web</option>
-        </select>
-        <InheritanceToggle
-          field="Response mode"
-          overridden={overrides.responseMode}
-          onChange={(enabled) => toggleField("responseMode", enabled)}
-        />
-      </div>
-      <div className={inheritedClass(overrides.webSearchEnabled)}>
-        <FieldHint label="Web search" text={PROJECT_AI_FIELD_HINTS.webSearchEnabled} />
-        <label className="check-control">
-          <input
-            type="checkbox"
-            checked={form.webSearchEnabled}
-            onChange={(event) => changeField("webSearchEnabled", event.target.checked)}
-          />{" "}
-          Allow web evidence
-        </label>
-        <InheritanceToggle
-          field="Web search"
-          overridden={overrides.webSearchEnabled}
-          onChange={(enabled) => toggleField("webSearchEnabled", enabled)}
-        />
-      </div>
-      <div className={inheritedClass(overrides.webSearchModel)}>
-        <FieldHint label="Web search model" text={PROJECT_AI_FIELD_HINTS.webSearchModel} />
-        <input
-          aria-label="Web search model"
-          value={form.webSearchModel}
-          placeholder={overrides.webSearchModel ? undefined : "Inherit chat model"}
-          onChange={(event) => changeField("webSearchModel", event.target.value)}
-        />
-        <InheritanceToggle
-          field="Web search model"
-          overridden={overrides.webSearchModel}
-          onChange={(enabled) => toggleField("webSearchModel", enabled)}
-        />
-      </div>
-      <div className={inheritedClass(overrides.webSearchMaxResults)}>
-        <FieldHint label="Web results" text={PROJECT_AI_FIELD_HINTS.webSearchMaxResults} />
-        <input
-          aria-label="Web results"
-          type="number"
-          min="1"
-          max="20"
-          value={form.webSearchMaxResults}
-          onChange={(event) => changeField("webSearchMaxResults", event.target.value)}
-        />
-        <InheritanceToggle
-          field="Web results"
-          overridden={overrides.webSearchMaxResults}
-          onChange={(enabled) => toggleField("webSearchMaxResults", enabled)}
-        />
-      </div>
-      <div className={inheritedClass(overrides.webSearchMaxEvidenceChars)}>
-        <FieldHint
-          label="Web evidence budget"
-          text={PROJECT_AI_FIELD_HINTS.webSearchMaxEvidenceChars}
-        />
-        <input
-          aria-label="Web evidence budget"
-          type="number"
-          min="500"
-          max="100000"
-          value={form.webSearchMaxEvidenceChars}
-          onChange={(event) => changeField("webSearchMaxEvidenceChars", event.target.value)}
-        />
-        <InheritanceToggle
-          field="Web evidence budget"
-          overridden={overrides.webSearchMaxEvidenceChars}
-          onChange={(enabled) => toggleField("webSearchMaxEvidenceChars", enabled)}
-        />
-      </div>
-      <div className={inheritedClass(overrides.webSearchMaxOutputTokens)}>
-        <FieldHint
-          label="Web search tokens"
-          text={PROJECT_AI_FIELD_HINTS.webSearchMaxOutputTokens}
-        />
-        <input
-          aria-label="Web search tokens"
-          type="number"
-          min="256"
-          max="32000"
-          value={form.webSearchMaxOutputTokens}
-          onChange={(event) => changeField("webSearchMaxOutputTokens", event.target.value)}
-        />
-        <InheritanceToggle
-          field="Web search tokens"
-          overridden={overrides.webSearchMaxOutputTokens}
-          onChange={(enabled) => toggleField("webSearchMaxOutputTokens", enabled)}
-        />
-      </div>
-      <div className={inheritedClass(overrides.webSearchTimeout)}>
-        <FieldHint label="Web timeout" text={PROJECT_AI_FIELD_HINTS.webSearchTimeout} />
-        <input
-          aria-label="Web timeout"
-          type="number"
-          min="1"
-          max="300"
-          value={form.webSearchTimeout}
-          onChange={(event) => changeField("webSearchTimeout", event.target.value)}
-        />
-        <InheritanceToggle
-          field="Web timeout"
-          overridden={overrides.webSearchTimeout}
-          onChange={(enabled) => toggleField("webSearchTimeout", enabled)}
-        />
-      </div>
-      <div className={`${inheritedClass(overrides.domain)} field-control--wide`}>
-        <FieldHint label="Project instructions" text={PROJECT_AI_FIELD_HINTS.domain} />
-        <textarea
-          aria-label="Project instructions"
-          value={form.domain}
-          placeholder="e.g. Answer in Bengali. Use this Project’s official terms."
-          onChange={(event) => changeField("domain", event.target.value)}
-        />
-        <InheritanceToggle
-          field="Project instructions"
-          overridden={overrides.domain}
-          onChange={(enabled) => toggleField("domain", enabled)}
-        />
-      </div>
-      <div
-        className={
-          form.translation === "inherit"
-            ? "field-control field-control--inherited"
-            : "field-control"
-        }
-      >
-        <FieldHint label="Query translation" text={PROJECT_AI_FIELD_HINTS.translation} />
-        <select
-          aria-label="Query translation"
-          value={form.translation}
-          onChange={(event) =>
-            setForm((current) => ({
-              ...current,
-              translation: event.target.value as TranslationMode,
-            }))
-          }
-        >
-          <option value="inherit">Inherit ({translationHint})</option>
-          <option value="on">On</option>
-          <option value="off">Off</option>
-        </select>
-        <InheritanceToggle
-          field="Query translation"
-          overridden={form.translation !== "inherit"}
-          onChange={(overridden) =>
-            setForm((current) => ({
-              ...current,
-              translation: overridden ? translationHint : "inherit",
-            }))
-          }
-        />
-      </div>
-      <div
-        className={
-          form.rerankMode === "inherit" ? "field-control field-control--inherited" : "field-control"
-        }
-      >
-        <FieldHint label="Rerank mode" text={PROJECT_AI_FIELD_HINTS.rerank} />
-        <select
-          aria-label="Rerank mode"
-          value={form.rerankMode}
-          onChange={(event) =>
-            setForm((current) => ({
-              ...current,
-              rerankMode: event.target.value as RerankModeChoice,
-            }))
-          }
-        >
-          <option value="inherit">Inherit ({rerankHint})</option>
-          <option value="always">Always</option>
-          <option value="cross_language">Cross-language</option>
-          <option value="off">Off</option>
-        </select>
-        <InheritanceToggle
-          field="Rerank mode"
-          overridden={form.rerankMode !== "inherit"}
-          onChange={(overridden) =>
-            setForm((current) => ({
-              ...current,
-              rerankMode: overridden ? rerankHint : "inherit",
-            }))
-          }
-        />
-      </div>
-      <div className={inheritedClass(overrides.citations)}>
-        <FieldHint label="Citations" text={PROJECT_AI_FIELD_HINTS.citations} />
-        <label className="check-control">
-          <input
-            type="checkbox"
-            checked={form.citations}
-            onChange={(event) => changeField("citations", event.target.checked)}
-          />{" "}
-          Include citations
-        </label>
-        <InheritanceToggle
-          field="Citations"
-          overridden={overrides.citations}
-          onChange={(enabled) => toggleField("citations", enabled)}
-        />
-      </div>
-    </div>
+      <details className="config-advanced">
+        <summary>
+          Advanced execution controls {customProfile ? "" : "— editing uses Custom"}
+        </summary>
+        <div className="form-grid">
+          <div className="field-control">
+            <FieldHint label="Rerank mode" text={PROJECT_AI_FIELD_HINTS.rerank} />
+            <select
+              aria-label="Rerank mode"
+              value={form.rerankMode}
+              onChange={(event) => changeRerankMode(event.target.value as RerankModeChoice)}
+            >
+              <option value="inherit">Inherit deployment default</option>
+              <option value="always">Always</option>
+              <option value="cross_language">Cross-language</option>
+            </select>
+          </div>
+          <div className={inheritedClass(overrides.topK)}>
+            <FieldHint label="Top K" text={PROJECT_AI_FIELD_HINTS.topK} />
+            <input
+              aria-label="Top K"
+              type="number"
+              min="1"
+              max="100"
+              value={form.topK}
+              onChange={(event) => changeTopK(event.target.value)}
+            />
+          </div>
+        </div>
+      </details>
+    </>
   );
 }

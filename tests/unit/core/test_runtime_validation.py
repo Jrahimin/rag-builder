@@ -34,6 +34,7 @@ from app.core.config import (
     WebhooksConfig,
 )
 from app.core.runtime_validation import ProductionConfigurationError, validate_runtime_config
+from app.platform.config.project_ai import resolve_project_ai_config
 
 
 def _production_settings(**updates: object) -> Settings:
@@ -54,7 +55,10 @@ def _production_settings(**updates: object) -> Settings:
             dimensions=1536,
         ),
         "llm": LLMConfig(backend=LLMBackend.OPENAI, openai_api_key="llm-secret"),
-        "retrieval": RetrievalConfig(strategy=RetrievalStrategy.HYBRID),
+        "retrieval": RetrievalConfig(
+            strategy=RetrievalStrategy.HYBRID,
+            reranker_backend=RerankerBackend.LEXICAL,
+        ),
         "auth": AuthConfig(
             enabled=True,
             key_pepper="key-pepper-that-is-at-least-thirty-two-bytes",
@@ -74,11 +78,15 @@ def test_certified_hosted_profile_is_accepted() -> None:
     validate_runtime_config(_production_settings())
 
 
-def test_production_accepts_pass_through_rrf_rerank_stage() -> None:
-    settings = _production_settings()
-    assert settings.retrieval.rerank_enabled is True
-    assert settings.retrieval.reranker_backend is RerankerBackend.NOOP
-    validate_runtime_config(settings)
+def test_production_rejects_unconfigured_pass_through_rerank_stage() -> None:
+    settings = _production_settings(
+        retrieval=RetrievalConfig(
+            strategy=RetrievalStrategy.HYBRID,
+            reranker_backend=RerankerBackend.NOOP,
+        )
+    )
+    with pytest.raises(ProductionConfigurationError, match="reranker backend"):
+        validate_runtime_config(settings)
 
 
 @pytest.mark.parametrize(
@@ -96,7 +104,7 @@ def test_production_accepts_pass_through_rrf_rerank_stage() -> None:
             "retrieval",
             RetrievalConfig(
                 strategy=RetrievalStrategy.HYBRID,
-                rerank_enabled=False,
+                rerank_mode="off",
                 reranker_backend=RerankerBackend.NOOP,
             ),
             "rerank stage",
@@ -219,3 +227,75 @@ def test_hosted_managed_accepts_legacy_reranker_key_as_shared_secret() -> None:
             reranker={"cohere_api_key": "legacy-cohere-secret"},
         )
     )
+
+
+def test_expected_hosted_production_effective_configuration_resolves_exactly() -> None:
+    settings = _production_settings(
+        runtime=RuntimeConfig(profile=RuntimeProfile.HOSTED_MANAGED),
+        embedding=EmbeddingConfig(
+            backend=EmbeddingBackend.COHERE,
+            model="embed-v4.0",
+            dimensions=1024,
+        ),
+        llm=LLMConfig(
+            backend=LLMBackend.OPENAI,
+            model="gpt-5.6-luna",
+            openai_api_key="llm-secret",
+        ),
+        cohere=CohereConfig(api_key="cohere-secret"),
+        retrieval=RetrievalConfig(
+            strategy=RetrievalStrategy.HYBRID,
+            reranker_backend=RerankerBackend.COHERE,
+            rerank_mode="always",
+            rerank_candidate_window=25,
+            rerank_return_count=8,
+        ),
+        query_translation={"enabled": False},
+        ai_policy={
+            "request_override_mode": "strict",
+            "default_generation_model_id": "openai-gpt-5.6-luna",
+            "allowed_generation_model_ids": ["openai-gpt-5.6-luna"],
+        },
+    )
+
+    validate_runtime_config(settings)
+    effective = resolve_project_ai_config(settings, None)
+
+    assert effective.configuration.llm.generation_model_id == "openai-gpt-5.6-luna"
+    assert effective.configuration.llm.provider == "openai"
+    assert effective.configuration.llm.model == "gpt-5.6-luna"
+    assert effective.configuration.retrieval.strategy == "hybrid"
+    assert effective.configuration.retrieval.rerank_mode == "always"
+    assert effective.configuration.retrieval.reranker_backend == "cohere"
+    assert effective.configuration.retrieval.rerank_candidate_window == 25
+    assert effective.configuration.retrieval.rerank_return_count == 8
+    assert effective.configuration.retrieval.query_translation_enabled is False
+    assert effective.configuration.chat.evidence_gate_mode == "enforce"
+    assert effective.configuration.chat.include_citations is True
+    assert effective.configuration.source_policy_mode == "enforce"
+    assert effective.invariants.model_dump() == {
+        "hybrid_retrieval": True,
+        "hosted_reranking_stage": True,
+        "evidence_gate_enforced": True,
+        "content_hash_deduplication": True,
+        "durable_citation_provenance": True,
+        "governed_source_policy": True,
+        "governed_modifies_expansion": True,
+        "candidate_wise_grounding_invariant": False,
+    }
+
+
+def test_capability_profile_is_authoritative_over_legacy_runtime_alias() -> None:
+    settings = _production_settings(
+        runtime=RuntimeConfig(capability_profile_id="hosted-openai"),
+        embedding=EmbeddingConfig(
+            backend=EmbeddingBackend.OPENAI,
+            model="text-embedding-3-large",
+            dimensions=1024,
+            openai_api_key="embedding-secret",
+        ),
+        retrieval=RetrievalConfig(reranker_backend=RerankerBackend.COHERE),
+        cohere=CohereConfig(api_key="cohere-secret"),
+    )
+
+    validate_runtime_config(settings)

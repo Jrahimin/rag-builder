@@ -1,6 +1,19 @@
 {
   "components": {
     "schemas": {
+      "AIConfigNormalizationStatus": {
+        "properties": {
+          "active_v1_projects": {
+            "title": "Active V1 Projects",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "active_v1_projects"
+        ],
+        "title": "AIConfigNormalizationStatus",
+        "type": "object"
+      },
       "ActiveConfiguration": {
         "properties": {
           "application_version": {
@@ -9,6 +22,18 @@
           },
           "chat_response_mode": {
             "title": "Chat Response Mode",
+            "type": "string"
+          },
+          "default_rag_profile_id": {
+            "title": "Default Rag Profile Id",
+            "type": "string"
+          },
+          "deployment_profile_hash": {
+            "title": "Deployment Profile Hash",
+            "type": "string"
+          },
+          "deployment_profile_id": {
+            "title": "Deployment Profile Id",
             "type": "string"
           },
           "embedding": {
@@ -22,6 +47,10 @@
             "title": "Environment",
             "type": "string"
           },
+          "evidence_calibration_profile_id": {
+            "title": "Evidence Calibration Profile Id",
+            "type": "string"
+          },
           "generation_default_retention": {
             "title": "Generation Default Retention",
             "type": "string"
@@ -33,6 +62,14 @@
           "generation_max_context_bytes": {
             "title": "Generation Max Context Bytes",
             "type": "integer"
+          },
+          "index_profile_hash": {
+            "title": "Index Profile Hash",
+            "type": "string"
+          },
+          "index_profile_id": {
+            "title": "Index Profile Id",
+            "type": "string"
           },
           "job_backend": {
             "title": "Job Backend",
@@ -83,6 +120,12 @@
         "required": [
           "environment",
           "runtime_profile",
+          "deployment_profile_id",
+          "deployment_profile_hash",
+          "default_rag_profile_id",
+          "evidence_calibration_profile_id",
+          "index_profile_id",
+          "index_profile_hash",
           "application_version",
           "llm",
           "web_search",
@@ -547,6 +590,48 @@
           "status"
         ],
         "title": "ApiKeySecretResponse",
+        "type": "object"
+      },
+      "ApiResponse_AIConfigNormalizationStatus_": {
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AIConfigNormalizationStatus"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          },
+          "meta": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ResponseMeta"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "success": {
+            "default": true,
+            "title": "Success",
+            "type": "boolean"
+          }
+        },
+        "title": "ApiResponse[AIConfigNormalizationStatus]",
         "type": "object"
       },
       "ApiResponse_ActiveConfiguration_": {
@@ -2013,6 +2098,48 @@
         "title": "ApiResponse[PaginatedResult[WebhookEndpointResponse]]",
         "type": "object"
       },
+      "ApiResponse_ProjectAIConfigNormalizationPreview_": {
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProjectAIConfigNormalizationPreview"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          },
+          "meta": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ResponseMeta"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "success": {
+            "default": true,
+            "title": "Success",
+            "type": "boolean"
+          }
+        },
+        "title": "ApiResponse[ProjectAIConfigNormalizationPreview]",
+        "type": "object"
+      },
       "ApiResponse_ProjectAIConfigRevisionResponse_": {
         "properties": {
           "data": {
@@ -2053,6 +2180,48 @@
           }
         },
         "title": "ApiResponse[ProjectAIConfigRevisionResponse]",
+        "type": "object"
+      },
+      "ApiResponse_ProjectAIProfileNormalizationPreview_": {
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProjectAIProfileNormalizationPreview"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          },
+          "meta": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ResponseMeta"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "success": {
+            "default": true,
+            "title": "Success",
+            "type": "boolean"
+          }
+        },
+        "title": "ApiResponse[ProjectAIProfileNormalizationPreview]",
         "type": "object"
       },
       "ApiResponse_ProjectOwnershipMigrationStatus_": {
@@ -3284,6 +3453,78 @@
         "title": "Body_upload_document_api_v1_projects__project_id__documents_post",
         "type": "object"
       },
+      "BranchContribution": {
+        "description": "Candidate-local contribution made by one retrieval branch.",
+        "properties": {
+          "branch_id": {
+            "title": "Branch Id",
+            "type": "string"
+          },
+          "family": {
+            "title": "Family",
+            "type": "string"
+          },
+          "query_variant_id": {
+            "title": "Query Variant Id",
+            "type": "string"
+          },
+          "rank": {
+            "title": "Rank",
+            "type": "integer"
+          },
+          "raw_score": {
+            "title": "Raw Score",
+            "type": "number"
+          },
+          "rrf_score": {
+            "title": "Rrf Score",
+            "type": "number"
+          },
+          "score_type": {
+            "$ref": "#/components/schemas/BranchScoreType"
+          },
+          "target_language": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Language"
+          }
+        },
+        "required": [
+          "branch_id",
+          "family",
+          "query_variant_id",
+          "target_language",
+          "rank",
+          "raw_score",
+          "score_type",
+          "rrf_score"
+        ],
+        "title": "BranchContribution",
+        "type": "object"
+      },
+      "BranchScoreType": {
+        "description": "Meaning of a retrieval branch's raw score.",
+        "enum": [
+          "cosine_similarity",
+          "keyword_bm25"
+        ],
+        "title": "BranchScoreType",
+        "type": "string"
+      },
+      "CanonicalRerankMode": {
+        "enum": [
+          "always",
+          "cross_language"
+        ],
+        "title": "CanonicalRerankMode",
+        "type": "string"
+      },
       "ChatTurnResponse": {
         "description": "User + assistant messages from one chat turn.",
         "properties": {
@@ -3525,6 +3766,72 @@
             ],
             "title": "Document Id"
           },
+          "evidence_chunk_char_end": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence Chunk Char End"
+          },
+          "evidence_chunk_char_start": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence Chunk Char Start"
+          },
+          "evidence_query_variant_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence Query Variant Id"
+          },
+          "evidence_span_derivation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence Span Derivation"
+          },
+          "evidence_span_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence Span Hash"
+          },
+          "evidence_unit_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence Unit Id"
+          },
           "excerpt": {
             "anyOf": [
               {
@@ -3596,6 +3903,14 @@
               }
             ],
             "title": "Prompt Version"
+          },
+          "relationship_recall_provenance": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Relationship Recall Provenance",
+            "type": "array"
           },
           "score": {
             "anyOf": [
@@ -3883,6 +4198,28 @@
             ],
             "title": "Document Id"
           },
+          "evidence_span_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence Span Hash"
+          },
+          "evidence_unit_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence Unit Id"
+          },
           "excerpt": {
             "anyOf": [
               {
@@ -3978,17 +4315,143 @@
       },
       "ConfigProvenance": {
         "properties": {
+          "calibration_profile_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Calibration Profile Hash"
+          },
+          "calibration_profile_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Calibration Profile Id"
+          },
           "configured_source_policy_mode": {
             "$ref": "#/components/schemas/SourcePolicyMode",
             "default": "off"
+          },
+          "deployment_default_execution_profile_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deployment Default Execution Profile Id"
+          },
+          "deployment_profile_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deployment Profile Hash"
+          },
+          "deployment_profile_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deployment Profile Id"
           },
           "effective_source_policy_mode": {
             "$ref": "#/components/schemas/SourcePolicyMode",
             "default": "off"
           },
+          "execution_overrides": {
+            "additionalProperties": true,
+            "title": "Execution Overrides",
+            "type": "object"
+          },
+          "execution_profile_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Execution Profile Hash"
+          },
+          "execution_profile_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Execution Profile Id"
+          },
+          "generation_model_registry_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generation Model Registry Version"
+          },
           "global_config_fingerprint": {
             "title": "Global Config Fingerprint",
             "type": "string"
+          },
+          "index_profile_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Index Profile Hash"
+          },
+          "index_profile_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Index Profile Id"
+          },
+          "profile_registry_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Profile Registry Version"
           },
           "project_config_hash": {
             "anyOf": [
@@ -4024,6 +4487,17 @@
             ],
             "title": "Project Config Revision Number"
           },
+          "project_config_schema_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Config Schema Version"
+          },
           "prompt_versions": {
             "additionalProperties": {
               "type": "string"
@@ -4035,6 +4509,11 @@
             "default": "2026-08-16.v2",
             "title": "Provider Capability Version",
             "type": "string"
+          },
+          "resolution_schema_version": {
+            "default": 1,
+            "title": "Resolution Schema Version",
+            "type": "integer"
           },
           "source_policy_deployment_cap": {
             "$ref": "#/components/schemas/SourcePolicyDeploymentCap",
@@ -4807,6 +5286,11 @@
       },
       "EffectiveChatPolicy": {
         "properties": {
+          "candidate_wise_grounding_enabled": {
+            "default": false,
+            "title": "Candidate Wise Grounding Enabled",
+            "type": "boolean"
+          },
           "citation_excerpt_max_chars": {
             "title": "Citation Excerpt Max Chars",
             "type": "integer"
@@ -4815,6 +5299,11 @@
             "title": "Context Char Budget",
             "type": "integer"
           },
+          "cross_language_semantic_evidence_score_threshold": {
+            "default": 0.3,
+            "title": "Cross Language Semantic Evidence Score Threshold",
+            "type": "number"
+          },
           "evidence_gate_mode": {
             "$ref": "#/components/schemas/EvidenceGateMode",
             "default": "enforce"
@@ -4822,6 +5311,15 @@
           "evidence_score_mode": {
             "$ref": "#/components/schemas/EvidenceScoreMode",
             "default": "whole_chunk"
+          },
+          "grounding_mode": {
+            "$ref": "#/components/schemas/GroundingMode",
+            "default": "strict"
+          },
+          "high_confidence_reranker_evidence_score": {
+            "default": 0.7,
+            "title": "High Confidence Reranker Evidence Score",
+            "type": "number"
           },
           "include_citations": {
             "title": "Include Citations",
@@ -4842,6 +5340,11 @@
           "max_history_messages": {
             "title": "Max History Messages",
             "type": "integer"
+          },
+          "minimum_claim_semantic_score": {
+            "default": 0.25,
+            "title": "Minimum Claim Semantic Score",
+            "type": "number"
           },
           "minimum_claim_token_coverage": {
             "title": "Minimum Claim Token Coverage",
@@ -4872,6 +5375,17 @@
       },
       "EffectiveLLMPolicy": {
         "properties": {
+          "generation_model_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generation Model Id"
+          },
           "max_tokens": {
             "title": "Max Tokens",
             "type": "integer"
@@ -4961,12 +5475,42 @@
             ],
             "title": "Active Revision Id"
           },
+          "allowed_generation_models": {
+            "items": {
+              "$ref": "#/components/schemas/GenerationModelOption"
+            },
+            "title": "Allowed Generation Models",
+            "type": "array"
+          },
+          "base_profile_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Base Profile Id"
+          },
+          "compatibility_warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Compatibility Warnings",
+            "type": "array"
+          },
           "configuration": {
             "$ref": "#/components/schemas/EffectiveProjectAIConfig"
           },
           "configuration_hash": {
             "title": "Configuration Hash",
             "type": "string"
+          },
+          "custom_execution": {
+            "default": false,
+            "title": "Custom Execution",
+            "type": "boolean"
           },
           "deployment_configuration": {
             "anyOf": [
@@ -4977,6 +5521,13 @@
                 "type": "null"
               }
             ]
+          },
+          "effective_value_hash": {
+            "title": "Effective Value Hash",
+            "type": "string"
+          },
+          "invariants": {
+            "$ref": "#/components/schemas/InvariantState"
           },
           "origins": {
             "additionalProperties": {
@@ -4992,21 +5543,108 @@
           },
           "provenance": {
             "$ref": "#/components/schemas/ConfigProvenance"
+          },
+          "rag_profiles": {
+            "items": {
+              "$ref": "#/components/schemas/RAGProfileOption"
+            },
+            "title": "Rag Profiles",
+            "type": "array"
+          },
+          "required_index_action": {
+            "default": "none",
+            "title": "Required Index Action",
+            "type": "string"
+          },
+          "resolution_fingerprint": {
+            "title": "Resolution Fingerprint",
+            "type": "string"
+          },
+          "structured_origins": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/StructuredOrigin"
+            },
+            "title": "Structured Origins",
+            "type": "object"
           }
         },
         "required": [
           "project_id",
           "active_revision_id",
           "configuration_hash",
+          "effective_value_hash",
+          "resolution_fingerprint",
           "configuration",
           "origins",
-          "provenance"
+          "structured_origins",
+          "provenance",
+          "invariants"
         ],
         "title": "EffectiveProjectAIConfigResponse",
         "type": "object"
       },
       "EffectiveRetrievalPolicy": {
         "properties": {
+          "deduplicate_by_content_hash": {
+            "default": true,
+            "title": "Deduplicate By Content Hash",
+            "type": "boolean"
+          },
+          "hnsw_ef_search": {
+            "default": 100,
+            "title": "Hnsw Ef Search",
+            "type": "integer"
+          },
+          "keyword_candidate_top_k": {
+            "default": 50,
+            "title": "Keyword Candidate Top K",
+            "type": "integer"
+          },
+          "keyword_weight": {
+            "default": 1.0,
+            "title": "Keyword Weight",
+            "type": "number"
+          },
+          "max_chunks_per_document": {
+            "default": 4,
+            "title": "Max Chunks Per Document",
+            "type": "integer"
+          },
+          "max_chunks_per_section": {
+            "default": 2,
+            "title": "Max Chunks Per Section",
+            "type": "integer"
+          },
+          "max_related_sources": {
+            "default": 8,
+            "title": "Max Related Sources",
+            "type": "integer"
+          },
+          "max_relationship_candidates": {
+            "default": 20,
+            "title": "Max Relationship Candidates",
+            "type": "integer"
+          },
+          "min_ocr_confidence": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Ocr Confidence"
+          },
+          "modifies_expansion_enabled": {
+            "default": false,
+            "title": "Modifies Expansion Enabled",
+            "type": "boolean"
+          },
+          "modifies_expansion_mode": {
+            "$ref": "#/components/schemas/ModifiesExpansionMode",
+            "default": "off"
+          },
           "passage_min_tokens": {
             "default": 32,
             "title": "Passage Min Tokens",
@@ -5078,6 +5716,11 @@
             "$ref": "#/components/schemas/RerankMode",
             "default": "always"
           },
+          "rerank_return_count": {
+            "default": 8,
+            "title": "Rerank Return Count",
+            "type": "integer"
+          },
           "rerank_return_n": {
             "default": 8,
             "title": "Rerank Return N",
@@ -5119,8 +5762,34 @@
             ],
             "title": "Reranker Model"
           },
+          "rrf_k": {
+            "default": 60,
+            "title": "Rrf K",
+            "type": "integer"
+          },
+          "score_threshold": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Score Threshold"
+          },
+          "semantic_candidate_top_k": {
+            "default": 50,
+            "title": "Semantic Candidate Top K",
+            "type": "integer"
+          },
           "semantic_evidence_score_threshold": {
             "title": "Semantic Evidence Score Threshold",
+            "type": "number"
+          },
+          "semantic_weight": {
+            "default": 1.0,
+            "title": "Semantic Weight",
             "type": "number"
           },
           "strategy": {
@@ -5825,6 +6494,29 @@
         "title": "GenerationFailure",
         "type": "object"
       },
+      "GenerationModelOption": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "provider",
+          "model"
+        ],
+        "title": "GenerationModelOption",
+        "type": "object"
+      },
       "GenerationRequestConfig": {
         "additionalProperties": false,
         "description": "Deprecated compatibility fields; Project policy owns these values.",
@@ -6197,6 +6889,15 @@
         "title": "GenerationUsage",
         "type": "object"
       },
+      "GroundingMode": {
+        "description": "How independently a reranker hit must be corroborated before admission.\n\n``strict`` keeps the high-assurance rule: calibrated reranker relevance still\nrequires a separate semantic, lexical, or cross-language signal.\n``balanced`` may admit a clearly high-confidence reranker candidate whose\nindependent corroboration only narrowly misses, without lowering the\nmedium-confidence bars or admitting low-confidence hits.",
+        "enum": [
+          "strict",
+          "balanced"
+        ],
+        "title": "GroundingMode",
+        "type": "string"
+      },
       "GroundingStatus": {
         "description": "How the generation input was grounded.",
         "enum": [
@@ -6288,6 +6989,28 @@
             ],
             "title": "Activated At"
           },
+          "artifact_fingerprint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Artifact Fingerprint"
+          },
+          "artifact_fingerprint_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Artifact Fingerprint Version"
+          },
           "chunk_count": {
             "title": "Chunk Count",
             "type": "integer"
@@ -6346,6 +7069,28 @@
             "format": "uuid",
             "title": "Id",
             "type": "string"
+          },
+          "index_profile_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Index Profile Hash"
+          },
+          "index_profile_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Index Profile Id"
           },
           "job_id": {
             "anyOf": [
@@ -6409,6 +7154,10 @@
           "operation",
           "embedding_set_version",
           "configuration_hash",
+          "artifact_fingerprint_version",
+          "artifact_fingerprint",
+          "index_profile_id",
+          "index_profile_hash",
           "corpus_fingerprint",
           "document_count",
           "chunk_count",
@@ -6442,10 +7191,67 @@
         "enum": [
           "no_retrieval_results",
           "below_relevance_threshold",
-          "low_query_evidence_coverage"
+          "low_query_evidence_coverage",
+          "authority_context_empty",
+          "context_selection_empty"
         ],
         "title": "InsufficientEvidenceReason",
         "type": "string"
+      },
+      "InvariantState": {
+        "properties": {
+          "candidate_wise_grounding_invariant": {
+            "default": false,
+            "title": "Candidate Wise Grounding Invariant",
+            "type": "boolean"
+          },
+          "content_hash_deduplication": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content Hash Deduplication"
+          },
+          "durable_citation_provenance": {
+            "title": "Durable Citation Provenance",
+            "type": "boolean"
+          },
+          "evidence_gate_enforced": {
+            "title": "Evidence Gate Enforced",
+            "type": "boolean"
+          },
+          "governed_modifies_expansion": {
+            "title": "Governed Modifies Expansion",
+            "type": "boolean"
+          },
+          "governed_source_policy": {
+            "title": "Governed Source Policy",
+            "type": "boolean"
+          },
+          "hosted_reranking_stage": {
+            "title": "Hosted Reranking Stage",
+            "type": "boolean"
+          },
+          "hybrid_retrieval": {
+            "title": "Hybrid Retrieval",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "hybrid_retrieval",
+          "hosted_reranking_stage",
+          "evidence_gate_enforced",
+          "content_hash_deduplication",
+          "durable_citation_provenance",
+          "governed_source_policy",
+          "governed_modifies_expansion"
+        ],
+        "title": "InvariantState",
+        "type": "object"
       },
       "JobDetailResponse": {
         "properties": {
@@ -7481,6 +8287,16 @@
         "title": "MetricsSnapshot",
         "type": "object"
       },
+      "ModifiesExpansionMode": {
+        "description": "Whether incoming MODIFIES edges are ignored, diagnosed, or searched.",
+        "enum": [
+          "off",
+          "observe",
+          "expand"
+        ],
+        "title": "ModifiesExpansionMode",
+        "type": "string"
+      },
       "OperatorOverview": {
         "properties": {
           "dependencies": {
@@ -8007,68 +8823,73 @@
       },
       "ProjectAIConfig": {
         "additionalProperties": false,
-        "description": "Sparse immutable revision payload; omitted values inherit deployment defaults.",
+        "description": "Canonical V2 Project contract used for every new write and ordinary restore.",
         "properties": {
-          "chat": {
-            "$ref": "#/components/schemas/ProjectChatPolicy"
+          "behavior": {
+            "$ref": "#/components/schemas/ProjectBehaviorV2"
           },
-          "domain_instructions": {
-            "anyOf": [
-              {
-                "maxLength": 20000,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Domain Instructions"
-          },
-          "llm": {
-            "$ref": "#/components/schemas/ProjectLLMPolicy"
-          },
-          "prompt_profile": {
-            "anyOf": [
-              {
-                "maxLength": 64,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Prompt Profile"
-          },
-          "prompt_version": {
-            "anyOf": [
-              {
-                "maxLength": 64,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Prompt Version"
-          },
-          "retrieval": {
-            "$ref": "#/components/schemas/ProjectRetrievalPolicy"
-          },
-          "source_policy_mode": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/SourcePolicyMode"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "web_search": {
-            "$ref": "#/components/schemas/ProjectWebSearchPolicy"
+          "execution": {
+            "$ref": "#/components/schemas/ProjectExecutionV2"
           }
         },
         "title": "ProjectAIConfig",
+        "type": "object"
+      },
+      "ProjectAIConfigNormalizationPreview": {
+        "properties": {
+          "project_id": {
+            "format": "uuid",
+            "title": "Project Id",
+            "type": "string"
+          },
+          "result": {
+            "$ref": "#/components/schemas/V1NormalizationResult"
+          },
+          "source_revision_id": {
+            "format": "uuid",
+            "title": "Source Revision Id",
+            "type": "string"
+          },
+          "source_schema_version": {
+            "title": "Source Schema Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "project_id",
+          "source_revision_id",
+          "source_schema_version",
+          "result"
+        ],
+        "title": "ProjectAIConfigNormalizationPreview",
+        "type": "object"
+      },
+      "ProjectAIConfigNormalizeConfirm": {
+        "additionalProperties": false,
+        "properties": {
+          "confirm": {
+            "const": true,
+            "title": "Confirm",
+            "type": "boolean"
+          },
+          "expected_active_revision_id": {
+            "format": "uuid",
+            "title": "Expected Active Revision Id",
+            "type": "string"
+          },
+          "reason": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "expected_active_revision_id",
+          "reason",
+          "confirm"
+        ],
+        "title": "ProjectAIConfigNormalizeConfirm",
         "type": "object"
       },
       "ProjectAIConfigRestore": {
@@ -8134,7 +8955,15 @@
       "ProjectAIConfigRevisionResponse": {
         "properties": {
           "configuration": {
-            "$ref": "#/components/schemas/ProjectAIConfig"
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProjectAIConfig"
+              },
+              {
+                "$ref": "#/components/schemas/ProjectAIConfigV1"
+              }
+            ],
+            "title": "Configuration"
           },
           "configuration_hash": {
             "title": "Configuration Hash",
@@ -8178,15 +9007,25 @@
           "revision_number": {
             "title": "Revision Number",
             "type": "integer"
+          },
+          "schema_version": {
+            "title": "Schema Version",
+            "type": "integer"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
           }
         },
         "required": [
           "id",
           "project_id",
           "revision_number",
+          "schema_version",
           "configuration_hash",
           "configuration",
           "created_by",
+          "source",
           "reason",
           "restored_from_revision_id",
           "created_at"
@@ -8194,9 +9033,172 @@
         "title": "ProjectAIConfigRevisionResponse",
         "type": "object"
       },
+      "ProjectAIConfigV1": {
+        "additionalProperties": false,
+        "description": "Historical sparse payload retained byte-for-byte and readable indefinitely.",
+        "properties": {
+          "chat": {
+            "$ref": "#/components/schemas/ProjectChatPolicy"
+          },
+          "domain_instructions": {
+            "anyOf": [
+              {
+                "maxLength": 20000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Domain Instructions"
+          },
+          "llm": {
+            "$ref": "#/components/schemas/ProjectLLMPolicy"
+          },
+          "prompt_profile": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prompt Profile"
+          },
+          "prompt_version": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prompt Version"
+          },
+          "retrieval": {
+            "$ref": "#/components/schemas/ProjectRetrievalPolicy"
+          },
+          "source_policy_mode": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SourcePolicyMode"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "web_search": {
+            "$ref": "#/components/schemas/ProjectWebSearchPolicy"
+          }
+        },
+        "title": "ProjectAIConfigV1",
+        "type": "object"
+      },
+      "ProjectAIProfileNormalizationPreview": {
+        "properties": {
+          "project_id": {
+            "format": "uuid",
+            "title": "Project Id",
+            "type": "string"
+          },
+          "result": {
+            "$ref": "#/components/schemas/V2ProfileNormalizationResult"
+          },
+          "source_revision_id": {
+            "format": "uuid",
+            "title": "Source Revision Id",
+            "type": "string"
+          },
+          "source_schema_version": {
+            "title": "Source Schema Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "project_id",
+          "source_revision_id",
+          "source_schema_version",
+          "result"
+        ],
+        "title": "ProjectAIProfileNormalizationPreview",
+        "type": "object"
+      },
+      "ProjectBehaviorV2": {
+        "additionalProperties": false,
+        "description": "Normal Project-owned behavior; provider and safety controls are intentionally absent.",
+        "properties": {
+          "domain_instructions": {
+            "anyOf": [
+              {
+                "maxLength": 20000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Domain Instructions"
+          },
+          "generation_model_id": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Generation Model Id"
+          },
+          "grounding_assurance": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GroundingMode"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "response_mode": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ResponseMode"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "translation_policy": {
+            "$ref": "#/components/schemas/TranslationPolicy",
+            "default": "inherit"
+          }
+        },
+        "title": "ProjectBehaviorV2",
+        "type": "object"
+      },
       "ProjectChatPolicy": {
         "additionalProperties": false,
         "properties": {
+          "candidate_wise_grounding_enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Candidate Wise Grounding Enabled"
+          },
           "citation_excerpt_max_chars": {
             "anyOf": [
               {
@@ -8223,6 +9225,19 @@
             ],
             "title": "Context Char Budget"
           },
+          "cross_language_semantic_evidence_score_threshold": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cross Language Semantic Evidence Score Threshold"
+          },
           "evidence_gate_mode": {
             "anyOf": [
               {
@@ -8242,6 +9257,29 @@
                 "type": "null"
               }
             ]
+          },
+          "grounding_mode": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GroundingMode"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "high_confidence_reranker_evidence_score": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "High Confidence Reranker Evidence Score"
           },
           "include_citations": {
             "anyOf": [
@@ -8385,6 +9423,350 @@
           "name"
         ],
         "title": "ProjectCreate",
+        "type": "object"
+      },
+      "ProjectExecutionV2": {
+        "additionalProperties": false,
+        "description": "RAG profile selection plus explicit values used only by Custom.",
+        "properties": {
+          "context_char_budget": {
+            "anyOf": [
+              {
+                "maximum": 200000.0,
+                "minimum": 500.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Context Char Budget"
+          },
+          "deduplicate_by_content_hash": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deduplicate By Content Hash"
+          },
+          "hnsw_ef_search": {
+            "anyOf": [
+              {
+                "maximum": 1000.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hnsw Ef Search"
+          },
+          "keyword_candidate_top_k": {
+            "anyOf": [
+              {
+                "maximum": 200.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Keyword Candidate Top K"
+          },
+          "keyword_weight": {
+            "anyOf": [
+              {
+                "maximum": 10.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Keyword Weight"
+          },
+          "max_chunks_per_document": {
+            "anyOf": [
+              {
+                "maximum": 100.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Chunks Per Document"
+          },
+          "max_chunks_per_section": {
+            "anyOf": [
+              {
+                "maximum": 100.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Chunks Per Section"
+          },
+          "max_context_chunks": {
+            "anyOf": [
+              {
+                "maximum": 50.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Context Chunks"
+          },
+          "max_history_messages": {
+            "anyOf": [
+              {
+                "maximum": 200.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max History Messages"
+          },
+          "max_related_sources": {
+            "anyOf": [
+              {
+                "maximum": 8.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Related Sources"
+          },
+          "max_relationship_candidates": {
+            "anyOf": [
+              {
+                "maximum": 20.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Relationship Candidates"
+          },
+          "min_ocr_confidence": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Ocr Confidence"
+          },
+          "passage_min_tokens": {
+            "anyOf": [
+              {
+                "maximum": 256.0,
+                "minimum": 8.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Passage Min Tokens"
+          },
+          "passage_overlap_tokens": {
+            "anyOf": [
+              {
+                "maximum": 256.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Passage Overlap Tokens"
+          },
+          "passage_scoring_enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Passage Scoring Enabled"
+          },
+          "passage_window_tokens": {
+            "anyOf": [
+              {
+                "maximum": 512.0,
+                "minimum": 16.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Passage Window Tokens"
+          },
+          "profile_id": {
+            "anyOf": [
+              {
+                "enum": [
+                  "inherit",
+                  "standard",
+                  "quality",
+                  "economy",
+                  "custom"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Profile Id"
+          },
+          "rerank_candidate_window": {
+            "anyOf": [
+              {
+                "maximum": 100.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rerank Candidate Window"
+          },
+          "rerank_mode": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CanonicalRerankMode"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "rerank_return_count": {
+            "anyOf": [
+              {
+                "maximum": 100.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rerank Return Count"
+          },
+          "rerank_score_threshold": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rerank Score Threshold"
+          },
+          "retrieval_top_k": {
+            "anyOf": [
+              {
+                "maximum": 100.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retrieval Top K"
+          },
+          "rrf_k": {
+            "anyOf": [
+              {
+                "maximum": 500.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rrf K"
+          },
+          "score_threshold": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Score Threshold"
+          },
+          "semantic_candidate_top_k": {
+            "anyOf": [
+              {
+                "maximum": 200.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Semantic Candidate Top K"
+          },
+          "semantic_weight": {
+            "anyOf": [
+              {
+                "maximum": 10.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Semantic Weight"
+          }
+        },
+        "title": "ProjectExecutionV2",
         "type": "object"
       },
       "ProjectLLMPolicy": {
@@ -8681,6 +10063,17 @@
         "additionalProperties": false,
         "description": "Sparse retrieval overrides. ``None`` inherits the deployment default.\n\n``rerank_mode`` is the operator-facing control (Always / Cross-language / Off).\nLegacy ``rerank_enabled`` still maps true\u2192always and false\u2192off when mode is omitted.",
         "properties": {
+          "deduplicate_by_content_hash": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deduplicate By Content Hash"
+          },
           "evidence_score_threshold": {
             "anyOf": [
               {
@@ -8693,6 +10086,131 @@
               }
             ],
             "title": "Evidence Score Threshold"
+          },
+          "hnsw_ef_search": {
+            "anyOf": [
+              {
+                "maximum": 1000.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hnsw Ef Search"
+          },
+          "keyword_candidate_top_k": {
+            "anyOf": [
+              {
+                "maximum": 200.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Keyword Candidate Top K"
+          },
+          "keyword_weight": {
+            "anyOf": [
+              {
+                "maximum": 10.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Keyword Weight"
+          },
+          "max_chunks_per_document": {
+            "anyOf": [
+              {
+                "maximum": 100.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Chunks Per Document"
+          },
+          "max_chunks_per_section": {
+            "anyOf": [
+              {
+                "maximum": 100.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Chunks Per Section"
+          },
+          "max_related_sources": {
+            "anyOf": [
+              {
+                "maximum": 8.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Related Sources"
+          },
+          "max_relationship_candidates": {
+            "anyOf": [
+              {
+                "maximum": 20.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Relationship Candidates"
+          },
+          "min_ocr_confidence": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min Ocr Confidence"
+          },
+          "modifies_expansion_enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Modifies Expansion Enabled"
+          },
+          "modifies_expansion_mode": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ModifiesExpansionMode"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "passage_min_tokens": {
             "anyOf": [
@@ -8827,6 +10345,58 @@
               }
             ],
             "title": "Rerank Top N"
+          },
+          "rrf_k": {
+            "anyOf": [
+              {
+                "maximum": 500.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rrf K"
+          },
+          "score_threshold": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Score Threshold"
+          },
+          "semantic_candidate_top_k": {
+            "anyOf": [
+              {
+                "maximum": 200.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Semantic Candidate Top K"
+          },
+          "semantic_weight": {
+            "anyOf": [
+              {
+                "maximum": 10.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Semantic Weight"
           },
           "strategy": {
             "anyOf": [
@@ -9079,6 +10649,131 @@
         "title": "QualitySummary",
         "type": "object"
       },
+      "QueryVariant": {
+        "description": "One immutable runtime query with stable translation provenance.",
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/QueryVariantKind"
+          },
+          "language": {
+            "title": "Language",
+            "type": "string"
+          },
+          "source_variant_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Variant Id"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "translation_model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Translation Model"
+          },
+          "translation_prompt_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Translation Prompt Version"
+          },
+          "translation_provenance": {
+            "additionalProperties": true,
+            "title": "Translation Provenance",
+            "type": "object"
+          },
+          "translation_provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Translation Provider"
+          },
+          "variant_id": {
+            "title": "Variant Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "variant_id",
+          "kind",
+          "language",
+          "text"
+        ],
+        "title": "QueryVariant",
+        "type": "object"
+      },
+      "QueryVariantKind": {
+        "description": "How a runtime query variant was produced.",
+        "enum": [
+          "original",
+          "translated"
+        ],
+        "title": "QueryVariantKind",
+        "type": "string"
+      },
+      "RAGProfileOption": {
+        "properties": {
+          "certification_status": {
+            "title": "Certification Status",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "profile_hash": {
+            "title": "Profile Hash",
+            "type": "string"
+          },
+          "recommended": {
+            "default": false,
+            "title": "Recommended",
+            "type": "boolean"
+          },
+          "selectable": {
+            "title": "Selectable",
+            "type": "boolean"
+          },
+          "values": {
+            "additionalProperties": true,
+            "title": "Values",
+            "type": "object"
+          }
+        },
+        "required": [
+          "id",
+          "profile_hash",
+          "certification_status",
+          "selectable",
+          "values"
+        ],
+        "title": "RAGProfileOption",
+        "type": "object"
+      },
       "ReadinessStatus": {
         "description": "Readiness probe payload \u2014 downstream dependency health.",
         "properties": {
@@ -9181,7 +10876,7 @@
         "type": "object"
       },
       "RerankMode": {
-        "description": "When the multilingual reranker may run after RRF.\n\nPlatform default is ALWAYS. Projects may inherit or opt down to\ncross-language-only or off. None in a sparse Project payload means inherit.",
+        "description": "When the multilingual reranker may run after RRF.\n\nPlatform default is ALWAYS. Canonical Projects may inherit or select\ncross-language-only; disabling the stage is reserved for compatibility,\nTest Lab, and explicit emergency paths.",
         "enum": [
           "always",
           "cross_language",
@@ -9244,6 +10939,14 @@
       "RetrievalResult": {
         "description": "Stable search hit DTO for API and future Chat integration.",
         "properties": {
+          "branch_contributions": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/BranchContribution"
+            },
+            "title": "Branch Contributions",
+            "type": "array"
+          },
           "char_end": {
             "anyOf": [
               {
@@ -9380,6 +11083,14 @@
               }
             ],
             "title": "Passage Semantic Score"
+          },
+          "query_variants": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/QueryVariant"
+            },
+            "title": "Query Variants",
+            "type": "array"
           },
           "rank_score": {
             "anyOf": [
@@ -9639,6 +11350,41 @@
             ],
             "title": "Language Routing Status"
           },
+          "modifies_authority_scope_status": {
+            "default": "not_applicable",
+            "title": "Modifies Authority Scope Status",
+            "type": "string"
+          },
+          "modifies_authority_unscoped_count": {
+            "default": 0,
+            "title": "Modifies Authority Unscoped Count",
+            "type": "integer"
+          },
+          "modifies_expansion_depth": {
+            "default": 1,
+            "title": "Modifies Expansion Depth",
+            "type": "integer"
+          },
+          "modifies_expansion_exclusion_reasons": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Modifies Expansion Exclusion Reasons",
+            "type": "object"
+          },
+          "modifies_expansion_records": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Modifies Expansion Records",
+            "type": "array"
+          },
+          "modifies_expansion_status": {
+            "default": "disabled",
+            "title": "Modifies Expansion Status",
+            "type": "string"
+          },
           "passage_score_method": {
             "anyOf": [
               {
@@ -9650,6 +11396,23 @@
             ],
             "title": "Passage Score Method"
           },
+          "post_rerank_removal_reasons": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Post Rerank Removal Reasons",
+            "type": "object"
+          },
+          "post_rerank_removed_count": {
+            "default": 0,
+            "title": "Post Rerank Removed Count",
+            "type": "integer"
+          },
+          "post_rerank_unfilled_slots": {
+            "default": 0,
+            "title": "Post Rerank Unfilled Slots",
+            "type": "integer"
+          },
           "query_language_profile": {
             "anyOf": [
               {
@@ -9660,6 +11423,14 @@
               }
             ],
             "title": "Query Language Profile"
+          },
+          "query_variants": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Query Variants",
+            "type": "array"
           },
           "reference_date": {
             "anyOf": [
@@ -9673,6 +11444,27 @@
             ],
             "title": "Reference Date"
           },
+          "related_source_count": {
+            "default": 0,
+            "title": "Related Source Count",
+            "type": "integer"
+          },
+          "relationship_candidate_count": {
+            "default": 0,
+            "title": "Relationship Candidate Count",
+            "type": "integer"
+          },
+          "rerank_failure_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rerank Failure Reason"
+          },
           "rerank_requested": {
             "title": "Rerank Requested",
             "type": "boolean"
@@ -9680,6 +11472,11 @@
           "rerank_status": {
             "title": "Rerank Status",
             "type": "string"
+          },
+          "reranked_candidate_count": {
+            "default": 0,
+            "title": "Reranked Candidate Count",
+            "type": "integer"
           },
           "reranker_latency_ms": {
             "anyOf": [
@@ -9741,6 +11538,16 @@
             ],
             "title": "Reranker Version"
           },
+          "retrieved_candidate_count": {
+            "default": 0,
+            "title": "Retrieved Candidate Count",
+            "type": "integer"
+          },
+          "romanized_or_codeswitched": {
+            "default": false,
+            "title": "Romanized Or Codeswitched",
+            "type": "boolean"
+          },
           "selected_trace": {
             "items": {
               "additionalProperties": true,
@@ -9755,6 +11562,17 @@
             },
             "title": "Skipped Branches",
             "type": "array"
+          },
+          "skipped_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Skipped Reason"
           },
           "source_metadata_generation": {
             "default": 0,
@@ -9809,6 +11627,17 @@
             ],
             "title": "Translated Query"
           },
+          "translation_attempts": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Translation Attempts"
+          },
           "translation_failure_reason": {
             "anyOf": [
               {
@@ -9819,6 +11648,17 @@
               }
             ],
             "title": "Translation Failure Reason"
+          },
+          "translation_finish_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Translation Finish Reason"
           },
           "translation_latency_ms": {
             "anyOf": [
@@ -9901,6 +11741,13 @@
             "additionalProperties": true,
             "title": "Translation Usage",
             "type": "object"
+          },
+          "translation_validation_reasons": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Translation Validation Reasons",
+            "type": "array"
           }
         },
         "required": [
@@ -10098,6 +11945,7 @@
         "type": "string"
       },
       "SourcePolicyMode": {
+        "description": "Deployment/code source-governance mode.\n\nV2 Projects do not select this policy. Governance is applied conditionally\nwhen source metadata and relationships exist; the deployment cap can only\nlower the resolved mode for an emergency rollout.",
         "enum": [
           "off",
           "observe",
@@ -10122,6 +11970,14 @@
         "properties": {
           "relationship_type": {
             "$ref": "#/components/schemas/SourceRelationshipType"
+          },
+          "target_provisions": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 100,
+            "title": "Target Provisions",
+            "type": "array"
           },
           "target_revision_id": {
             "format": "uuid",
@@ -10150,6 +12006,13 @@
           },
           "relationship_type": {
             "$ref": "#/components/schemas/SourceRelationshipType"
+          },
+          "target_provisions": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Target Provisions",
+            "type": "array"
           },
           "target_revision_id": {
             "format": "uuid",
@@ -10533,6 +12396,44 @@
         "title": "SourceStateResponse",
         "type": "object"
       },
+      "StructuredOrigin": {
+        "properties": {
+          "category": {
+            "title": "Category",
+            "type": "string"
+          },
+          "effect_timing": {
+            "title": "Effect Timing",
+            "type": "string"
+          },
+          "layer": {
+            "title": "Layer",
+            "type": "string"
+          },
+          "lifecycle": {
+            "title": "Lifecycle",
+            "type": "string"
+          },
+          "owner": {
+            "title": "Owner",
+            "type": "string"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "layer",
+          "category",
+          "owner",
+          "lifecycle",
+          "effect_timing"
+        ],
+        "title": "StructuredOrigin",
+        "type": "object"
+      },
       "TokenUsageMetrics": {
         "properties": {
           "input_tokens": {
@@ -10555,6 +12456,15 @@
         ],
         "title": "TokenUsageMetrics",
         "type": "object"
+      },
+      "TranslationPolicy": {
+        "enum": [
+          "inherit",
+          "enabled",
+          "disabled"
+        ],
+        "title": "TranslationPolicy",
+        "type": "string"
       },
       "UsageAggregate": {
         "properties": {
@@ -10813,6 +12723,91 @@
         ],
         "title": "UsageWorkload",
         "type": "string"
+      },
+      "V1NormalizationResult": {
+        "properties": {
+          "compatibility_warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Compatibility Warnings",
+            "type": "array"
+          },
+          "configuration": {
+            "$ref": "#/components/schemas/ProjectAIConfig"
+          },
+          "effective_diff": {
+            "additionalProperties": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Effective Diff",
+            "type": "object"
+          },
+          "required_index_action": {
+            "default": "none",
+            "title": "Required Index Action",
+            "type": "string"
+          }
+        },
+        "required": [
+          "configuration",
+          "compatibility_warnings",
+          "effective_diff"
+        ],
+        "title": "V1NormalizationResult",
+        "type": "object"
+      },
+      "V2ProfileNormalizationResult": {
+        "properties": {
+          "base_profile_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Base Profile Id"
+          },
+          "compatibility_warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Compatibility Warnings",
+            "type": "array"
+          },
+          "configuration": {
+            "$ref": "#/components/schemas/ProjectAIConfig"
+          },
+          "custom_execution": {
+            "title": "Custom Execution",
+            "type": "boolean"
+          },
+          "effective_diff": {
+            "additionalProperties": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Effective Diff",
+            "type": "object"
+          },
+          "required_index_action": {
+            "default": "none",
+            "title": "Required Index Action",
+            "type": "string"
+          }
+        },
+        "required": [
+          "configuration",
+          "base_profile_id",
+          "custom_execution",
+          "compatibility_warnings",
+          "effective_diff"
+        ],
+        "title": "V2ProfileNormalizationResult",
+        "type": "object"
       },
       "ValidationError": {
         "properties": {
@@ -12300,6 +14295,60 @@
         ]
       }
     },
+    "/api/v1/operator/ai-config/normalization-status": {
+      "get": {
+        "operationId": "get_ai_config_normalization_status_api_v1_operator_ai_config_normalization_status_get",
+        "parameters": [
+          {
+            "in": "cookie",
+            "name": "ape_admin_access",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Ape Admin Access"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_AIConfigNormalizationStatus_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "AdminCookie": []
+          }
+        ],
+        "summary": "Get Ai Config Normalization Status",
+        "tags": [
+          "operator"
+        ]
+      }
+    },
     "/api/v1/operator/audit-events": {
       "get": {
         "operationId": "get_audit_events_api_v1_operator_audit_events_get",
@@ -13117,6 +15166,278 @@
           }
         ],
         "summary": "Get Project Ai Config",
+        "tags": [
+          "operator"
+        ]
+      }
+    },
+    "/api/v1/operator/projects/{project_id}/ai-config/normalize-profile": {
+      "get": {
+        "operationId": "preview_project_ai_profile_normalization_api_v1_operator_projects__project_id__ai_config_normalize_profile_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "ape_admin_access",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Ape Admin Access"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_ProjectAIProfileNormalizationPreview_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "AdminCookie": []
+          }
+        ],
+        "summary": "Preview Project Ai Profile Normalization",
+        "tags": [
+          "operator"
+        ]
+      },
+      "post": {
+        "operationId": "confirm_project_ai_profile_normalization_api_v1_operator_projects__project_id__ai_config_normalize_profile_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "ape_admin_access",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Ape Admin Access"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectAIConfigNormalizeConfirm"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_ProjectAIConfigRevisionResponse_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "AdminCookie": []
+          }
+        ],
+        "summary": "Confirm Project Ai Profile Normalization",
+        "tags": [
+          "operator"
+        ]
+      }
+    },
+    "/api/v1/operator/projects/{project_id}/ai-config/normalize-v1": {
+      "get": {
+        "operationId": "preview_project_ai_config_normalization_api_v1_operator_projects__project_id__ai_config_normalize_v1_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "ape_admin_access",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Ape Admin Access"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_ProjectAIConfigNormalizationPreview_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "AdminCookie": []
+          }
+        ],
+        "summary": "Preview Project Ai Config Normalization",
+        "tags": [
+          "operator"
+        ]
+      },
+      "post": {
+        "operationId": "confirm_project_ai_config_normalization_api_v1_operator_projects__project_id__ai_config_normalize_v1_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "ape_admin_access",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Ape Admin Access"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectAIConfigNormalizeConfirm"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_ProjectAIConfigRevisionResponse_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "AdminCookie": []
+          }
+        ],
+        "summary": "Confirm Project Ai Config Normalization",
         "tags": [
           "operator"
         ]

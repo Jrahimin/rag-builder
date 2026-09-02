@@ -10,6 +10,7 @@ from app.platform.jobs.configuration import (
     build_job_configuration,
     embedding_set_version_from_configuration,
 )
+from app.platform.jobs.contracts import JobConfiguration
 
 pytestmark = pytest.mark.unit
 
@@ -142,3 +143,48 @@ def test_apply_job_configuration_keeps_live_esv_when_snapshot_omits_it() -> None
 
     assert "embedding_set_version" not in incomplete.index["retrieval"]
     assert restored.retrieval.embedding_set_version == 3
+
+
+def test_apply_phase1_job_snapshot_adapts_retired_fields_without_drift() -> None:
+    current = Settings()
+    snapshot = build_job_configuration(current)
+    chunking = {
+        **snapshot.processing["chunking"],
+        "strategy": "recursive_character",
+        "overlap_tokens": 50,
+    }
+    embedding = {**snapshot.index["embedding"], "provider_version": "legacy"}
+    retrieval = dict(snapshot.index["retrieval"])
+    retrieval.pop("auto_build_after_process")
+    retrieval.pop("rerank_mode")
+    retrieval.pop("rerank_candidate_window")
+    retrieval.pop("rerank_return_count")
+    retrieval.pop("modifies_expansion_mode")
+    retrieval.update(
+        {
+            "auto_embed": True,
+            "auto_index": True,
+            "rerank_enabled": True,
+            "rerank_top_n": 25,
+            "rerank_return_n": 8,
+            "modifies_expansion_enabled": True,
+            "language_metadata_schema_version": "legacy-env-version",
+        }
+    )
+    chat = {**snapshot.quality["chat"], "retrieval_top_k": 10}
+    llm = {**snapshot.quality["llm"], "provider_version": "legacy"}
+    reranker = {**snapshot.quality["reranker"], "provider_version": "legacy"}
+    historical = JobConfiguration(
+        schema_version=3,
+        processing={**snapshot.processing, "chunking": chunking},
+        index={"embedding": embedding, "retrieval": retrieval},
+        quality={**snapshot.quality, "chat": chat, "llm": llm, "reranker": reranker},
+    )
+
+    restored = apply_job_configuration(current, historical)
+
+    assert restored.chunking.strategy is ChunkingStrategy.RECURSIVE_FALLBACK
+    assert restored.retrieval.auto_build_after_process is True
+    assert restored.retrieval.rerank_candidate_window == 25
+    assert restored.retrieval.rerank_return_count == 8
+    assert restored.retrieval.modifies_expansion_enabled is True

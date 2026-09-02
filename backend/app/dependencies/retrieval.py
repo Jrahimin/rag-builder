@@ -72,6 +72,7 @@ async def get_indexing_service(
             revision_number=revision.revision_number,
             configuration_hash=revision.configuration_hash,
             configuration=dict(revision.configuration),
+            schema_version=revision.schema_version,
         )
         if revision is not None
         else None,
@@ -107,6 +108,7 @@ async def get_search_service(
             revision_number=revision.revision_number,
             configuration_hash=revision.configuration_hash,
             configuration=dict(revision.configuration),
+            schema_version=revision.schema_version,
         )
         if revision is not None
         else None,
@@ -151,6 +153,7 @@ async def get_index_lifecycle_service(
             revision_number=revision.revision_number,
             configuration_hash=revision.configuration_hash,
             configuration=dict(revision.configuration),
+            schema_version=revision.schema_version,
         )
         if revision is not None
         else None,

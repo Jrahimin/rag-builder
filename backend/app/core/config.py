@@ -1,9 +1,9 @@
-"""Centralized, environment-driven application configuration.
+"""Deployment and infrastructure configuration for the application.
 
-All runtime configuration is loaded from environment variables (and an
-optional ``.env`` file) via Pydantic Settings. Nothing AI-related or
-infrastructure-related is hardcoded; every value is resolvable per
-deployment and, later, per Project.
+Runtime connectivity, secrets, endpoints, operational limits, and transitional
+deployment defaults are loaded through Pydantic Settings. Immutable capability,
+calibration, execution, and index-profile definitions are code-owned registries;
+normal Project behavior resolves through the bounded V2 contract.
 
 Environment variables use the ``APE_`` prefix and ``__`` as the nested
 delimiter, e.g.::
@@ -24,7 +24,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 from sqlalchemy import URL
 
@@ -121,6 +121,9 @@ class RuntimeConfig(BaseModel):
 
     # Preferred production value is hosted_managed. hosted_openai is compatibility-only.
     profile: RuntimeProfile = RuntimeProfile.DEVELOPMENT
+    # Code-owned deployment capability identity. ``profile`` remains as the
+    # coarse deployment-mode alias for existing deployments.
+    capability_profile_id: str | None = Field(default=None, min_length=1, max_length=128)
     startup_timeout_seconds: float = Field(default=30.0, ge=1.0, le=300.0)
     dependency_timeout_seconds: float = Field(default=3.0, ge=0.1, le=30.0)
     provider_timeout_seconds: float = Field(default=15.0, ge=0.5, le=120.0)
@@ -132,6 +135,14 @@ class RuntimeConfig(BaseModel):
         if self.worker_stale_seconds <= self.worker_heartbeat_seconds:
             msg = "runtime.worker_stale_seconds must exceed worker_heartbeat_seconds"
             raise ValueError(msg)
+        if self.capability_profile_id not in {
+            None,
+            "development",
+            "hosted-managed",
+            "hosted-openai",
+            "private-ollama",
+        }:
+            raise ValueError("runtime.capability_profile_id is not registered")
         return self
 
 
@@ -338,7 +349,6 @@ class ChunkingStrategy(StrEnum):
     STRUCTURE = "structure"
     SEMANTIC = "semantic"
     RECURSIVE_FALLBACK = "recursive_fallback"
-    RECURSIVE_CHARACTER = "recursive_character"
 
 
 class ChunkingConfig(BaseModel):
@@ -351,7 +361,6 @@ class ChunkingConfig(BaseModel):
     target_tokens: int = Field(default=250, ge=50, le=4096)
     max_tokens: int = Field(default=400, ge=100, le=8192)
     min_tokens: int = Field(default=50, ge=1, le=2048)
-    overlap_tokens: int = Field(default=50, ge=0, le=1024)
     structure_score_threshold: float = Field(default=0.55, ge=0.0, le=1.0)
     long_block_token_threshold: int = Field(default=600, ge=100, le=8192)
     similarity_drop_threshold: float = Field(default=0.35, ge=0.0, le=1.0)
@@ -359,6 +368,16 @@ class ChunkingConfig(BaseModel):
     chunker_version: str = "3.0.0"
     token_count_method: str = "unicode_property_v1"
     ocr_confidence_threshold: float = Field(default=0.5, ge=0.0, le=1.0)
+
+    @model_validator(mode="before")
+    @classmethod
+    def reject_retired_inputs(cls, value: object) -> object:
+        if isinstance(value, dict) and "overlap_tokens" in value:
+            raise ValueError(
+                "chunking.overlap_tokens is retired because it did not affect output; remove "
+                "APE_CHUNKING__OVERLAP_TOKENS"
+            )
+        return value
 
 
 class EmbeddingBackend(StrEnum):
@@ -388,7 +407,13 @@ class EmbeddingConfig(BaseModel):
     openai_base_url: str = "https://api.openai.com"
     gemini_api_key: str | None = None
     gemini_base_url: str = "https://generativelanguage.googleapis.com/v1beta"
-    provider_version: str = "1"
+
+    @model_validator(mode="before")
+    @classmethod
+    def reject_version_env(cls, value: object) -> object:
+        if isinstance(value, dict) and "provider_version" in value:
+            raise ValueError("embedding.provider_version is code-owned; remove its ENV value")
+        return value
 
 
 class OcrBackend(StrEnum):
@@ -448,8 +473,9 @@ class RerankerBackend(StrEnum):
 class RerankMode(StrEnum):
     """When the multilingual reranker may run after RRF.
 
-    Platform default is ALWAYS. Projects may inherit or opt down to
-    cross-language-only or off. None in a sparse Project payload means inherit.
+    Platform default is ALWAYS. Canonical Projects may inherit or select
+    cross-language-only; disabling the stage is reserved for compatibility,
+    Test Lab, and explicit emergency paths.
     """
 
     ALWAYS = "always"
@@ -510,8 +536,7 @@ class RetrievalConfig(BaseModel):
     vector representation — bump it when changing embedding provider or model.
     """
 
-    auto_embed: bool = True
-    auto_index: bool = True
+    auto_build_after_process: bool = True
     default_top_k: int = Field(default=10, ge=1, le=100)
     score_threshold: float | None = Field(default=None, ge=0.0, le=1.0)
     # Deployment-level representation id. Hosted_managed Cohere embed-v4 uses 3.
@@ -526,16 +551,12 @@ class RetrievalConfig(BaseModel):
     rrf_k: int = Field(default=60, ge=1, le=500)
     semantic_weight: float = Field(default=1.0, ge=0.0, le=10.0)
     keyword_weight: float = Field(default=1.0, ge=0.0, le=10.0)
-    rerank_enabled: bool = True
-    # Always rerank after RRF unless a Project opts down. Cross-language skips
-    # the paid call when inventory says query and corpus share a language.
+    # Always rerank after RRF unless a canonical Project selects cross-language.
     rerank_mode: RerankMode = RerankMode.ALWAYS
-    rerank_top_n: int = Field(default=20, ge=1, le=100)
     rerank_candidate_window: int = Field(default=25, ge=1, le=100)
-    rerank_return_n: int = Field(default=8, ge=1, le=100)
+    rerank_return_count: int = Field(default=8, ge=1, le=100)
     rerank_score_threshold: float | None = Field(default=None, ge=0.0, le=1.0)
     reranker_backend: RerankerBackend = RerankerBackend.NOOP
-    language_metadata_schema_version: str = "2026-08-18.v1"
     fts_regconfig: str = "simple"
     min_ocr_confidence: float | None = Field(default=None, ge=0.0, le=1.0)
     max_chunks_per_document: int = Field(default=4, ge=1, le=100)
@@ -545,18 +566,70 @@ class RetrievalConfig(BaseModel):
     passage_window_tokens: int = Field(default=96, ge=16, le=512)
     passage_overlap_tokens: int = Field(default=24, ge=0, le=256)
     passage_min_tokens: int = Field(default=32, ge=8, le=256)
-    modifies_expansion_enabled: bool = False
-    modifies_expansion_mode: ModifiesExpansionMode = ModifiesExpansionMode.OFF
+    modifies_expansion_mode: ModifiesExpansionMode = ModifiesExpansionMode.EXPAND
     max_related_sources: int = Field(default=8, ge=1, le=8)
     max_relationship_candidates: int = Field(default=20, ge=1, le=20)
 
+    @model_validator(mode="before")
+    @classmethod
+    def reject_retired_inputs(cls, value: object) -> object:
+        if not isinstance(value, dict):
+            return value
+        retired = sorted(
+            set(value)
+            & {
+                "auto_embed",
+                "auto_index",
+                "rerank_enabled",
+                "rerank_top_n",
+                "rerank_return_n",
+                "modifies_expansion_enabled",
+                "language_metadata_schema_version",
+            }
+        )
+        if retired:
+            raise ValueError(
+                "retired retrieval inputs: "
+                + ", ".join(retired)
+                + "; use auto_build_after_process, rerank_mode/candidate_window/"
+                "return_count, and modifies_expansion_mode; language metadata schema identity "
+                "is code-owned"
+            )
+        return value
+
     def resolved_modifies_expansion_mode(self) -> ModifiesExpansionMode:
-        """``mode`` wins when set; the legacy boolean still means expand."""
-        if self.modifies_expansion_mode is not ModifiesExpansionMode.OFF:
-            return self.modifies_expansion_mode
-        if self.modifies_expansion_enabled:
-            return ModifiesExpansionMode.EXPAND
-        return ModifiesExpansionMode.OFF
+        """Return the canonical internal relationship-governance mode."""
+        return self.modifies_expansion_mode
+
+    @property
+    def rerank_enabled(self) -> bool:
+        """Derived compatibility view for retrieval consumers, never an input."""
+        return self.rerank_mode is not RerankMode.OFF
+
+    @property
+    def rerank_top_n(self) -> int:
+        """Historical consumer accessor; the canonical candidate window owns this depth."""
+        return self.rerank_candidate_window
+
+    @property
+    def rerank_return_n(self) -> int:
+        """Historical consumer accessor for the canonical return count."""
+        return self.rerank_return_count
+
+    @property
+    def modifies_expansion_enabled(self) -> bool:
+        """Derived compatibility view for relationship-aware retrieval consumers."""
+        return self.modifies_expansion_mode is ModifiesExpansionMode.EXPAND
+
+    @property
+    def auto_embed(self) -> bool:
+        """Historical internal accessor while call sites migrate to the canonical name."""
+        return self.auto_build_after_process
+
+    @property
+    def auto_index(self) -> bool:
+        """Historical internal accessor while call sites migrate to the canonical name."""
+        return self.auto_build_after_process
 
     @field_validator("filterable_metadata_keys", mode="before")
     @classmethod
@@ -574,6 +647,8 @@ class RetrievalConfig(BaseModel):
             raise ValueError("passage_overlap_tokens must be smaller than passage_window_tokens")
         if self.passage_min_tokens > self.passage_window_tokens:
             raise ValueError("passage_min_tokens must not exceed passage_window_tokens")
+        if self.rerank_return_count > self.rerank_candidate_window:
+            raise ValueError("rerank_return_count must not exceed rerank_candidate_window")
         return self
 
 
@@ -604,7 +679,13 @@ class LLMConfig(BaseModel):
     openai_base_url: str = "https://api.openai.com"
     gemini_api_key: str | None = None
     gemini_base_url: str = "https://generativelanguage.googleapis.com/v1beta"
-    provider_version: str = "1"
+
+    @model_validator(mode="before")
+    @classmethod
+    def reject_version_env(cls, value: object) -> object:
+        if isinstance(value, dict) and "provider_version" in value:
+            raise ValueError("llm.provider_version is code-owned; remove its ENV value")
+        return value
 
 
 class WebSearchBackend(StrEnum):
@@ -627,7 +708,13 @@ class WebSearchConfig(BaseModel):
     request_timeout_seconds: float = Field(default=45.0, ge=1.0, le=300.0)
     openai_api_key: str | None = None
     openai_base_url: str | None = None
-    provider_version: str = "responses-web-search-v1"
+
+    @model_validator(mode="before")
+    @classmethod
+    def reject_version_env(cls, value: object) -> object:
+        if isinstance(value, dict) and "provider_version" in value:
+            raise ValueError("web_search.provider_version is code-owned; remove its ENV value")
+        return value
 
 
 class QueryTranslationConfig(BaseModel):
@@ -686,7 +773,13 @@ class RerankerProviderConfig(BaseModel):
     cohere_base_url: str = "https://api.cohere.com"
     cohere_model: str = "rerank-v4.0-pro"
     request_timeout_seconds: float = Field(default=10.0, ge=1.0, le=120.0)
-    provider_version: str = "1"
+
+    @model_validator(mode="before")
+    @classmethod
+    def reject_version_env(cls, value: object) -> object:
+        if isinstance(value, dict) and "provider_version" in value:
+            raise ValueError("reranker.provider_version is code-owned; remove its ENV value")
+        return value
 
 
 class GenerationRetentionMode(StrEnum):
@@ -750,8 +843,9 @@ class ChatConfig(BaseModel):
     measuring a corpus in Test Lab.
     """
 
+    model_config = ConfigDict(extra="forbid")
+
     response_mode: ResponseMode = ResponseMode.INDEXED_ONLY
-    retrieval_top_k: int = Field(default=10, ge=1, le=100)
     max_context_chunks: int = Field(default=8, ge=1, le=50)
     context_char_budget: int = Field(default=12_000, ge=500, le=200_000)
     max_history_messages: int = Field(default=20, ge=0, le=200)
@@ -874,10 +968,11 @@ class RequestOverrideMode(StrEnum):
 
 
 class SourcePolicyMode(StrEnum):
-    """Project/query source-policy rollout mode.
+    """Deployment/code source-governance mode.
 
-    Inherited by Projects that omit ``source_policy_mode``. Distinct from
-    :class:`SourcePolicyDeploymentCap`, which can only lower this value.
+    V2 Projects do not select this policy. Governance is applied conditionally
+    when source metadata and relationships exist; the deployment cap can only
+    lower the resolved mode for an emergency rollout.
     """
 
     OFF = "off"
@@ -896,15 +991,22 @@ class SourcePolicyDeploymentCap(StrEnum):
 class AIConfigPolicy(BaseModel):
     """Deployment defaults and safety bounds around Project AI configuration."""
 
-    request_override_mode: RequestOverrideMode = RequestOverrideMode.COMPATIBILITY
+    # Query-time execution defaults are profile-led. Raw retrieval/chat tuning
+    # fields are consulted only when this is explicitly ``custom``.
+    default_rag_profile: Literal["standard", "quality", "economy", "custom"] = "standard"
+    request_override_mode: RequestOverrideMode = RequestOverrideMode.STRICT
     max_request_top_k: int = Field(default=100, ge=1, le=100)
-    source_policy_mode: SourcePolicyMode = SourcePolicyMode.OFF
+    source_policy_mode: SourcePolicyMode = SourcePolicyMode.ENFORCE
     source_policy_deployment_cap: SourcePolicyDeploymentCap = SourcePolicyDeploymentCap.ENFORCE
+    default_generation_model_id: str = "deployment-default"
+    allowed_generation_model_ids: Annotated[list[str], NoDecode] = Field(
+        default_factory=lambda: ["deployment-default"]
+    )
     enabled_retrieval_strategies: Annotated[list[RetrievalStrategy], NoDecode] = Field(
         default_factory=lambda: [RetrievalStrategy.SEMANTIC, RetrievalStrategy.HYBRID]
     )
 
-    @field_validator("enabled_retrieval_strategies", mode="before")
+    @field_validator("enabled_retrieval_strategies", "allowed_generation_model_ids", mode="before")
     @classmethod
     def _split_enabled_strategies(cls, value: object) -> object:
         if isinstance(value, str):

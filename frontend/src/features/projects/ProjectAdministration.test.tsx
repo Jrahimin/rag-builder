@@ -81,7 +81,7 @@ const capability: ProviderCapability = {
 };
 
 function effectiveConfig(activeRevisionId: string | null): EffectiveProjectAIConfig {
-  const deploymentConfiguration: EffectiveProjectAIConfig["configuration"] = {
+  const deploymentConfiguration = {
     llm: { provider: "openai", model: "o1-test", temperature: null, max_tokens: 2048 },
     retrieval: {
       strategy: "hybrid",
@@ -126,13 +126,32 @@ function effectiveConfig(activeRevisionId: string | null): EffectiveProjectAICon
     prompt_profile: "default",
     prompt_version: "v1",
     source_policy_mode: "off" as const,
-  };
+  } as unknown as EffectiveProjectAIConfig["configuration"];
   return {
     project_id: projectFixture.id,
     active_revision_id: activeRevisionId,
     configuration_hash: "a".repeat(64),
     configuration: deploymentConfiguration,
     deployment_configuration: deploymentConfiguration,
+    effective_value_hash: "d".repeat(64),
+    resolution_fingerprint: "e".repeat(64),
+    required_index_action: "none",
+    structured_origins: {},
+    invariants: {},
+    base_profile_id: null,
+    custom_execution: true,
+    compatibility_warnings: [],
+    allowed_generation_models: [{ id: "openai-o1-test", provider: "openai", model: "o1-test" }],
+    rag_profiles: [
+      {
+        id: "standard",
+        certification_status: "candidate",
+        selectable: false,
+        recommended: false,
+        profile_hash: "f".repeat(64),
+        values: {},
+      },
+    ],
     origins: {},
     provenance: {
       project_config_revision_id: activeRevisionId,
@@ -145,7 +164,7 @@ function effectiveConfig(activeRevisionId: string | null): EffectiveProjectAICon
       effective_source_policy_mode: "off",
       source_policy_deployment_cap: "enforce",
     },
-  };
+  } as unknown as EffectiveProjectAIConfig;
 }
 
 test("uses canonical Project administration and shows locked Organization ownership", async () => {
@@ -160,7 +179,7 @@ test("uses canonical Project administration and shows locked Organization owners
   expect(screen.queryByRole("button", { name: /Create test project/i })).not.toBeInTheDocument();
 });
 
-test("keeps inherited AI values sparse and can clear a Project override", async () => {
+test("keeps Custom execution values explicit when one value changes", async () => {
   mockProjectShell();
   const revision: ProjectAIConfigRevision = {
     id: "22222222-2222-2222-2222-222222222222",
@@ -168,9 +187,10 @@ test("keeps inherited AI values sparse and can clear a Project override", async 
     revision_number: 1,
     configuration_hash: "b".repeat(64),
     configuration: {
-      retrieval: { top_k: 23, rerank_top_n: 42 },
-      chat: { context_char_budget: 20_000 },
+      execution: { profile_id: "custom", retrieval_top_k: 23, max_context_chunks: 7 },
     },
+    schema_version: 2,
+    source: "project_revision",
     reason: "Initial override",
     created_by: "test-admin",
     restored_from_revision_id: null,
@@ -191,10 +211,8 @@ test("keeps inherited AI values sparse and can clear a Project override", async 
     `/projects?project=${projectFixture.id}&section=ai-config`,
   );
 
-  const inheritTopK = await screen.findByLabelText("Top K: inherit global");
-  expect(inheritTopK).not.toBeChecked();
-  await userEvent.click(inheritTopK);
-  await userEvent.type(screen.getByLabelText("Revision reason"), "Return top K to global");
+  fireEvent.change(await screen.findByLabelText("Top K"), { target: { value: "12" } });
+  await userEvent.type(screen.getByLabelText("Revision reason"), "Tune Custom top K");
   await userEvent.click(screen.getByRole("button", { name: "Create and activate revision" }));
 
   await waitFor(() => expect(create).toHaveBeenCalled());
@@ -203,14 +221,15 @@ test("keeps inherited AI values sparse and can clear a Project override", async 
     throw new Error("Expected a project AI-config revision to be created");
   }
   const saved = firstCreateCall[1];
-  expect(saved.retrieval).toEqual({ rerank_top_n: 42 });
-  expect(saved.chat).toEqual({ context_char_budget: 20_000 });
-  expect(saved.llm).toEqual({});
-  expect(saved).not.toHaveProperty("domain_instructions");
-  expect(saved).not.toHaveProperty("source_policy_mode");
+  expect(saved.execution).toEqual({
+    profile_id: "custom",
+    retrieval_top_k: 12,
+    max_context_chunks: 7,
+  });
+  expect(saved.behavior).toEqual({});
 });
 
-test("treats Project values equal to deployment defaults as inherited on load and after edits", async () => {
+test("treats V2 Project values equal to deployment defaults as inherited", async () => {
   mockProjectShell();
   const revision: ProjectAIConfigRevision = {
     id: "33333333-3333-3333-3333-333333333333",
@@ -218,10 +237,11 @@ test("treats Project values equal to deployment defaults as inherited on load an
     revision_number: 1,
     configuration_hash: "d".repeat(64),
     configuration: {
-      llm: { provider: "openai", model: "o1-test" },
-      web_search: { enabled: true, max_results: 8 },
-      retrieval: { query_translation_enabled: false, rerank_mode: "always" },
+      behavior: { response_mode: "indexed_only", translation_policy: "disabled" },
+      execution: { retrieval_top_k: 10, rerank_mode: "always" },
     },
+    schema_version: 2,
+    source: "project_revision",
     reason: "Redundant legacy values",
     created_by: "test-admin",
     restored_from_revision_id: null,
@@ -236,17 +256,9 @@ test("treats Project values equal to deployment defaults as inherited on load an
     `/projects?project=${projectFixture.id}&section=ai-config`,
   );
 
-  const inheritProvider = await screen.findByLabelText("Provider: inherit global");
-  expect(inheritProvider).toBeChecked();
-  expect(screen.getByLabelText("Model: inherit global")).toBeChecked();
-  expect(screen.getByLabelText("Web search: inherit global")).toBeChecked();
-  expect(screen.getByLabelText("Query translation: inherit global")).toBeChecked();
-  expect(screen.getByLabelText("Rerank mode: inherit global")).toBeChecked();
-
-  await userEvent.selectOptions(screen.getByLabelText("Provider"), "ollama");
-  expect(inheritProvider).not.toBeChecked();
-  await userEvent.selectOptions(screen.getByLabelText("Provider"), "openai");
-  expect(inheritProvider).toBeChecked();
+  expect(await screen.findByLabelText("Response mode: inherit global")).not.toBeChecked();
+  expect(screen.getByLabelText("Query translation")).toHaveValue("disabled");
+  expect(screen.getByLabelText("Rerank mode")).toHaveValue("always");
 });
 
 test("does not create an AI revision when every control inherits", async () => {
@@ -282,8 +294,11 @@ test("saves query translation and rerank mode as sparse Project overrides", asyn
     revision_number: 1,
     configuration_hash: "b".repeat(64),
     configuration: {
-      retrieval: { query_translation_enabled: true, rerank_mode: "cross_language" },
+      behavior: { translation_policy: "enabled" },
+      execution: { rerank_mode: "cross_language" },
     },
+    schema_version: 2,
+    source: "project_revision",
     reason: "Enable multilingual retrieval",
     created_by: "test-admin",
     restored_from_revision_id: null,
@@ -295,21 +310,23 @@ test("saves query translation and rerank mode as sparse Project overrides", asyn
     `/projects?project=${projectFixture.id}&section=ai-config`,
   );
 
-  await userEvent.selectOptions(await screen.findByLabelText("Query translation"), "on");
+  await userEvent.selectOptions(await screen.findByLabelText("Query translation"), "enabled");
   await userEvent.selectOptions(screen.getByLabelText("Rerank mode"), "cross_language");
   await userEvent.type(screen.getByLabelText("Revision reason"), "Enable multilingual retrieval");
   await userEvent.click(screen.getByRole("button", { name: "Create and activate revision" }));
 
   await waitFor(() => expect(create).toHaveBeenCalled());
   const saved = create.mock.calls[0]?.[1];
-  expect(saved?.retrieval).toMatchObject({
-    query_translation_enabled: true,
+  expect(saved?.behavior).toMatchObject({
+    translation_policy: "enabled",
+  });
+  expect(saved?.execution).toMatchObject({
     rerank_mode: "cross_language",
   });
-  expect(saved?.retrieval).not.toHaveProperty("rerank_enabled");
+  expect(saved?.execution).not.toHaveProperty("rerank_enabled");
 });
 
-test("saves bounded web-search settings as sparse Project overrides", async () => {
+test("drives web behavior through the sparse response mode", async () => {
   mockProjectShell();
   vi.spyOn(operatorApiClient, "getProjectAIConfig").mockResolvedValue(effectiveConfig(null));
   vi.spyOn(operatorApiClient, "getProjectAIConfigHistory").mockResolvedValue([]);
@@ -319,8 +336,12 @@ test("saves bounded web-search settings as sparse Project overrides", async () =
     project_id: projectFixture.id,
     revision_number: 1,
     configuration_hash: "b".repeat(64),
-    configuration: { web_search: { enabled: true, max_results: 4 } },
-    reason: "Limit web sources",
+    configuration: {
+      behavior: { response_mode: "indexed_then_web", translation_policy: "disabled" },
+    },
+    schema_version: 2,
+    source: "project_revision",
+    reason: "Allow bounded web fallback",
     created_by: "test-admin",
     restored_from_revision_id: null,
     created_at: "2026-08-16T00:00:00Z",
@@ -331,14 +352,13 @@ test("saves bounded web-search settings as sparse Project overrides", async () =
     `/projects?project=${projectFixture.id}&section=ai-config`,
   );
 
-  await userEvent.click(await screen.findByLabelText("Web search: inherit global"));
-  await userEvent.clear(screen.getByLabelText("Web results"));
-  await userEvent.type(screen.getByLabelText("Web results"), "4");
-  await userEvent.type(screen.getByLabelText("Revision reason"), "Limit web sources");
+  await userEvent.selectOptions(await screen.findByLabelText("Response mode"), "indexed_then_web");
+  await userEvent.type(screen.getByLabelText("Revision reason"), "Allow bounded web fallback");
   await userEvent.click(screen.getByRole("button", { name: "Create and activate revision" }));
 
   await waitFor(() => expect(create).toHaveBeenCalled());
-  expect(create.mock.calls[0]?.[1].web_search).toEqual({ enabled: true, max_results: 4 });
+  expect(create.mock.calls[0]?.[1].behavior).toEqual({ response_mode: "indexed_then_web" });
+  expect(screen.queryByLabelText("Web results")).not.toBeInTheDocument();
 });
 
 test("keeps a created Project when optional AI settings fail to save", async () => {
@@ -357,7 +377,7 @@ test("keeps a created Project when optional AI settings fail to save", async () 
   await userEvent.click(await screen.findByRole("button", { name: "Create Project" }));
   await userEvent.type(screen.getByLabelText("Project name"), "Pilot");
   await userEvent.click(screen.getByText("Optional AI settings"));
-  await userEvent.selectOptions(screen.getByLabelText("Rerank mode"), "off");
+  await userEvent.selectOptions(screen.getByLabelText("Rerank mode"), "cross_language");
   await userEvent.click(screen.getByRole("button", { name: "Create" }));
 
   await waitFor(() => expect(createProject).toHaveBeenCalled());
@@ -368,9 +388,274 @@ test("keeps a created Project when optional AI settings fail to save", async () 
   expect(screen.getByRole("button", { name: "Open AI configuration" })).toBeInTheDocument();
 });
 
-test("uses provider capability rules for generation fields", async () => {
+test("persists a translation-only sparse override during Project creation", async () => {
   mockProjectShell();
-  vi.spyOn(operatorApiClient, "getProjectAIConfig").mockResolvedValue(effectiveConfig(null));
+  const createProject = vi
+    .spyOn(operatorApiClient, "createProject")
+    .mockResolvedValue(projectFixture);
+  const createConfig = vi.spyOn(operatorApiClient, "createProjectAIConfig").mockResolvedValue({
+    id: "22222222-2222-2222-2222-222222222222",
+    project_id: projectFixture.id,
+    revision_number: 1,
+    configuration_hash: "b".repeat(64),
+    configuration: { behavior: { translation_policy: "enabled" }, execution: {} },
+    schema_version: 2,
+    source: "project_revision",
+    reason: "Initial Project AI settings",
+    created_by: "test-admin",
+    restored_from_revision_id: null,
+    created_at: "2026-08-16T00:00:00Z",
+  });
+
+  renderOperatorComponent(<OperatorConsoleApp />, `/projects?project=${projectFixture.id}`);
+  await userEvent.click(await screen.findByRole("button", { name: "Create Project" }));
+  await userEvent.type(screen.getByLabelText("Project name"), "Translation only");
+  await userEvent.click(screen.getByText("Optional AI settings"));
+  await userEvent.selectOptions(screen.getByLabelText("Query translation"), "enabled");
+  await userEvent.click(screen.getByRole("button", { name: "Create" }));
+
+  await waitFor(() => expect(createProject).toHaveBeenCalled());
+  await waitFor(() => expect(createConfig).toHaveBeenCalledTimes(1));
+  expect(createConfig.mock.calls[0]?.[1]).toEqual({
+    behavior: { translation_policy: "enabled" },
+    execution: {},
+  });
+});
+
+test("editing a preset materializes Custom and reselecting the preset resets it", async () => {
+  mockProjectShell();
+  const config = effectiveConfig(null);
+  config.custom_execution = false;
+  config.rag_profiles = [
+    {
+      id: "standard",
+      certification_status: "certified",
+      selectable: true,
+      recommended: true,
+      profile_hash: "f".repeat(64),
+      values: { retrieval_top_k: 10, rerank_mode: "always" },
+    },
+  ];
+  vi.spyOn(operatorApiClient, "getProjectAIConfig").mockResolvedValue(config);
+  vi.spyOn(operatorApiClient, "getProjectAIConfigHistory").mockResolvedValue([]);
+  vi.spyOn(operatorApiClient, "getProviderCapabilities").mockResolvedValue([capability]);
+  const create = vi.spyOn(operatorApiClient, "createProjectAIConfig").mockResolvedValue({
+    id: "22222222-2222-2222-2222-222222222222",
+    project_id: projectFixture.id,
+    revision_number: 1,
+    configuration_hash: "b".repeat(64),
+    configuration: {
+      behavior: { translation_policy: "inherit" },
+      execution: { profile_id: "standard" },
+    },
+    schema_version: 2,
+    source: "project_revision",
+    reason: "Use balanced profile",
+    created_by: "test-admin",
+    restored_from_revision_id: null,
+    created_at: "2026-08-16T00:00:00Z",
+  });
+
+  renderOperatorComponent(
+    <OperatorConsoleApp />,
+    `/projects?project=${projectFixture.id}&section=ai-config`,
+  );
+
+  await userEvent.selectOptions(await screen.findByLabelText("RAG profile"), "standard");
+  expect(screen.getByTestId("rag-profile-state")).toHaveTextContent("standard profile");
+  fireEvent.change(screen.getByLabelText("Top K"), { target: { value: "11" } });
+  expect(screen.getByTestId("rag-profile-state")).toHaveTextContent(
+    "Custom — individual execution settings",
+  );
+  fireEvent.change(screen.getByLabelText("Top K"), { target: { value: "10" } });
+  expect(screen.getByTestId("rag-profile-state")).toHaveTextContent("Custom");
+  await userEvent.selectOptions(screen.getByLabelText("RAG profile"), "standard");
+  expect(screen.getByTestId("rag-profile-state")).toHaveTextContent("standard profile");
+
+  await userEvent.type(screen.getByLabelText("Revision reason"), "Use balanced profile");
+  await userEvent.click(screen.getByRole("button", { name: "Create and activate revision" }));
+  await waitFor(() => expect(create).toHaveBeenCalled());
+  expect(create.mock.calls[0]?.[1].execution).toEqual({ profile_id: "standard" });
+});
+
+test("unsaved preset changes materialize the currently selected preset as Custom", async () => {
+  mockProjectShell();
+  const config = effectiveConfig(null);
+  config.rag_profiles = [
+    {
+      id: "standard",
+      certification_status: "candidate",
+      selectable: true,
+      recommended: true,
+      profile_hash: "f".repeat(64),
+      values: { retrieval_top_k: 10, semantic_candidate_top_k: 50, rerank_mode: "always" },
+    },
+    {
+      id: "quality",
+      certification_status: "candidate",
+      selectable: true,
+      recommended: false,
+      profile_hash: "q".repeat(64),
+      values: { retrieval_top_k: 12, semantic_candidate_top_k: 80, rerank_mode: "always" },
+    },
+  ];
+  vi.spyOn(operatorApiClient, "getProjectAIConfig").mockResolvedValue(config);
+  vi.spyOn(operatorApiClient, "getProjectAIConfigHistory").mockResolvedValue([]);
+  vi.spyOn(operatorApiClient, "getProviderCapabilities").mockResolvedValue([capability]);
+  const create = vi.spyOn(operatorApiClient, "createProjectAIConfig").mockResolvedValue({
+    id: "22222222-2222-2222-2222-222222222222",
+    project_id: projectFixture.id,
+    revision_number: 1,
+    configuration_hash: "b".repeat(64),
+    configuration: { execution: { profile_id: "custom" } },
+    schema_version: 2,
+    source: "project_revision",
+    reason: "Keep Quality values",
+    created_by: "test-admin",
+    restored_from_revision_id: null,
+    created_at: "2026-08-16T00:00:00Z",
+  });
+
+  renderOperatorComponent(
+    <OperatorConsoleApp />,
+    `/projects?project=${projectFixture.id}&section=ai-config`,
+  );
+
+  const profile = await screen.findByLabelText("RAG profile");
+  await userEvent.selectOptions(profile, "standard");
+  await userEvent.selectOptions(profile, "quality");
+  await userEvent.selectOptions(profile, "custom");
+  await userEvent.type(screen.getByLabelText("Revision reason"), "Keep Quality values");
+  await userEvent.click(screen.getByRole("button", { name: "Create and activate revision" }));
+
+  await waitFor(() => expect(create).toHaveBeenCalled());
+  expect(create.mock.calls[0]?.[1].execution).toMatchObject({
+    profile_id: "custom",
+    retrieval_top_k: 12,
+    semantic_candidate_top_k: 80,
+    rerank_mode: "always",
+  });
+});
+
+test("a conflicting stored value cannot make a preset custom", async () => {
+  mockProjectShell();
+  const revision: ProjectAIConfigRevision = {
+    id: "22222222-2222-2222-2222-222222222222",
+    project_id: projectFixture.id,
+    revision_number: 1,
+    configuration_hash: "b".repeat(64),
+    configuration: {
+      behavior: { translation_policy: "inherit" },
+      execution: { profile_id: "standard", retrieval_top_k: 11 },
+    },
+    schema_version: 2,
+    source: "project_revision",
+    reason: "Custom top K",
+    created_by: "test-admin",
+    restored_from_revision_id: null,
+    created_at: "2026-08-16T00:00:00Z",
+  };
+  const config = effectiveConfig(revision.id);
+  config.base_profile_id = "standard";
+  config.custom_execution = true;
+  config.configuration = {
+    ...config.configuration,
+    retrieval: { ...config.configuration.retrieval, top_k: 11 },
+  };
+  config.rag_profiles = [
+    {
+      id: "standard",
+      certification_status: "certified",
+      selectable: true,
+      recommended: true,
+      profile_hash: "f".repeat(64),
+      values: { retrieval_top_k: 10, rerank_mode: "always" },
+    },
+  ];
+  vi.spyOn(operatorApiClient, "getProjectAIConfig").mockResolvedValue(config);
+  vi.spyOn(operatorApiClient, "getProjectAIConfigHistory").mockResolvedValue([revision]);
+  vi.spyOn(operatorApiClient, "getProviderCapabilities").mockResolvedValue([capability]);
+  const create = vi.spyOn(operatorApiClient, "createProjectAIConfig").mockResolvedValue(revision);
+
+  renderOperatorComponent(
+    <OperatorConsoleApp />,
+    `/projects?project=${projectFixture.id}&section=ai-config`,
+  );
+
+  expect(await screen.findByTestId("rag-profile-state")).toHaveTextContent("standard profile");
+  fireEvent.change(screen.getByLabelText("Top K"), { target: { value: "10" } });
+  expect(screen.getByTestId("rag-profile-state")).toHaveTextContent("Custom");
+  await userEvent.selectOptions(screen.getByLabelText("RAG profile"), "standard");
+  await userEvent.type(screen.getByLabelText("Revision reason"), "Restore exact Standard");
+  await userEvent.click(screen.getByRole("button", { name: "Create and activate revision" }));
+
+  await waitFor(() => expect(create).toHaveBeenCalled());
+  expect(create.mock.calls[0]?.[1].execution).toEqual({ profile_id: "standard" });
+});
+
+test("reselecting a profile clears all hidden execution overrides", async () => {
+  mockProjectShell();
+  const revision: ProjectAIConfigRevision = {
+    id: "22222222-2222-2222-2222-222222222222",
+    project_id: projectFixture.id,
+    revision_number: 1,
+    configuration_hash: "b".repeat(64),
+    configuration: {
+      behavior: { translation_policy: "inherit" },
+      execution: {
+        profile_id: "standard",
+        semantic_candidate_top_k: 55,
+        passage_window_tokens: 120,
+      },
+    },
+    schema_version: 2,
+    source: "project_revision",
+    reason: "Custom execution",
+    created_by: "test-admin",
+    restored_from_revision_id: null,
+    created_at: "2026-08-16T00:00:00Z",
+  };
+  const config = effectiveConfig(revision.id);
+  config.base_profile_id = "standard";
+  config.custom_execution = true;
+  config.rag_profiles = [
+    {
+      id: "standard",
+      certification_status: "certified",
+      selectable: true,
+      recommended: true,
+      profile_hash: "f".repeat(64),
+      values: { retrieval_top_k: 10, rerank_mode: "always" },
+    },
+  ];
+  vi.spyOn(operatorApiClient, "getProjectAIConfig").mockResolvedValue(config);
+  vi.spyOn(operatorApiClient, "getProjectAIConfigHistory").mockResolvedValue([revision]);
+  vi.spyOn(operatorApiClient, "getProviderCapabilities").mockResolvedValue([capability]);
+  const create = vi.spyOn(operatorApiClient, "createProjectAIConfig").mockResolvedValue(revision);
+
+  renderOperatorComponent(
+    <OperatorConsoleApp />,
+    `/projects?project=${projectFixture.id}&section=ai-config`,
+  );
+
+  expect(await screen.findByTestId("rag-profile-state")).toHaveTextContent("standard profile");
+  fireEvent.change(screen.getByLabelText("RAG profile"), { target: { value: "standard" } });
+  expect(screen.getByTestId("rag-profile-state")).toHaveTextContent("standard profile");
+  await userEvent.type(screen.getByLabelText("Revision reason"), "Reset Standard controls");
+  await userEvent.click(screen.getByRole("button", { name: "Create and activate revision" }));
+
+  await waitFor(() => expect(create).toHaveBeenCalled());
+  expect(create.mock.calls[0]?.[1].execution).toEqual({ profile_id: "standard" });
+});
+
+test("shows exact generation IDs and keeps candidate profiles selectable", async () => {
+  mockProjectShell();
+  const config = effectiveConfig(null);
+  config.rag_profiles = (config.rag_profiles ?? []).map((profile) => ({
+    ...profile,
+    selectable: true,
+  }));
+  vi.spyOn(operatorApiClient, "getProjectAIConfig").mockResolvedValue(config);
   vi.spyOn(operatorApiClient, "getProjectAIConfigHistory").mockResolvedValue([]);
   vi.spyOn(operatorApiClient, "getProviderCapabilities").mockResolvedValue([capability]);
 
@@ -379,14 +664,9 @@ test("uses provider capability rules for generation fields", async () => {
     `/projects?project=${projectFixture.id}&section=ai-config`,
   );
 
-  expect(
-    await screen.findByText("This provider/model does not support temperature."),
-  ).toBeInTheDocument();
-  expect(screen.getByLabelText("Temperature: inherit global")).toBeDisabled();
-  await userEvent.click(screen.getByLabelText("Maximum output tokens: inherit global"));
-  const maxTokens = screen.getByRole("spinbutton", { name: "Maximum output tokens" });
-  expect(maxTokens).toHaveAttribute("min", "1");
-  expect(maxTokens).toHaveAttribute("max", "128000");
+  expect(await screen.findByRole("option", { name: /openai-o1-test/ })).toBeInTheDocument();
+  expect(screen.getByRole("option", { name: /standard — candidate/ })).not.toBeDisabled();
+  expect(screen.queryByLabelText("Provider")).not.toBeInTheDocument();
 });
 
 test("keeps inherited AI fields enabled and syncs the inherit switch", async () => {
@@ -394,9 +674,6 @@ test("keeps inherited AI fields enabled and syncs the inherit switch", async () 
   vi.spyOn(operatorApiClient, "getProjectAIConfig").mockResolvedValue({
     ...effectiveConfig(null),
     origins: {
-      "llm.provider": "global",
-      "llm.model": "global",
-      "retrieval.semantic_evidence_score_threshold": "global",
       "retrieval.top_k": "project",
     },
   });
@@ -411,51 +688,34 @@ test("keeps inherited AI fields enabled and syncs the inherit switch", async () 
   expect(await screen.findByText("Top K · Project")).toBeInTheDocument();
   expect(screen.queryByText(/evidence score/i)).not.toBeInTheDocument();
 
-  const inheritProvider = screen.getByLabelText("Provider: inherit global");
-  const provider = screen.getByLabelText("Provider");
-  expect(inheritProvider).toBeChecked();
-  expect(inheritProvider).toBeEnabled();
-  expect(provider).toBeEnabled();
+  const inheritModel = screen.getByLabelText("Generation model: inherit global");
+  expect(inheritModel).toBeChecked();
+  await userEvent.selectOptions(screen.getByLabelText("Generation model"), "openai-o1-test");
+  expect(inheritModel).not.toBeChecked();
+  await userEvent.click(inheritModel);
+  expect(inheritModel).toBeChecked();
 
-  await userEvent.selectOptions(provider, "ollama");
-  expect(inheritProvider).not.toBeChecked();
-  expect(provider).toHaveValue("ollama");
-
-  await userEvent.click(inheritProvider);
-  expect(inheritProvider).toBeChecked();
-  expect(provider).toHaveValue("openai");
-
-  const inheritTranslation = screen.getByLabelText("Query translation: inherit global");
-  expect(inheritTranslation).toBeChecked();
-  await userEvent.selectOptions(screen.getByLabelText("Query translation"), "on");
-  expect(inheritTranslation).not.toBeChecked();
-  await userEvent.click(inheritTranslation);
-  expect(inheritTranslation).toBeChecked();
-  expect(screen.getByLabelText("Query translation")).toHaveValue("inherit");
+  const translation = screen.getByLabelText("Query translation");
+  expect(translation).toHaveValue("inherit");
+  await userEvent.selectOptions(translation, "enabled");
+  expect(translation).toHaveValue("enabled");
 });
 
-test("restores the deployment default in Create Project when Inherit is turned back on", async () => {
+test("restores the deployment response mode in Create Project when Inherit is turned back on", async () => {
   mockProjectShell();
 
   renderOperatorComponent(<OperatorConsoleApp />, `/projects?project=${projectFixture.id}`);
   await userEvent.click(await screen.findByRole("button", { name: "Create Project" }));
   await userEvent.click(screen.getByText("Optional AI settings"));
 
-  const provider = await screen.findByLabelText("Provider");
-  const inheritProvider = screen.getByLabelText("Provider: inherit global");
-  await waitFor(() => expect(provider).toHaveValue("openai"));
-  expect(inheritProvider).toBeChecked();
-
-  await userEvent.selectOptions(provider, "openai");
-  expect(inheritProvider).toBeChecked();
-
-  await userEvent.selectOptions(provider, "ollama");
-  expect(inheritProvider).not.toBeChecked();
-  expect(provider).toHaveValue("ollama");
-
-  await userEvent.click(inheritProvider);
-  expect(inheritProvider).toBeChecked();
-  expect(provider).toHaveValue("openai");
+  const responseMode = await screen.findByLabelText("Response mode");
+  const inheritMode = screen.getByLabelText("Response mode: inherit global");
+  expect(inheritMode).toBeChecked();
+  await userEvent.selectOptions(responseMode, "indexed_then_web");
+  expect(inheritMode).not.toBeChecked();
+  await userEvent.click(inheritMode);
+  expect(inheritMode).toBeChecked();
+  expect(responseMode).toHaveValue("indexed_only");
 });
 
 test("uploads a document into an existing source group or a modifying group", async () => {

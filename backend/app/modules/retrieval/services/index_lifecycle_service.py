@@ -91,6 +91,26 @@ class IndexLifecycleService:
             state=IndexBuildState.BUILDING,
             embedding_set_version=self._embedding_set_version,
             configuration_hash=self._configuration.index_output_digest(),
+            artifact_fingerprint_version=(
+                self._configuration.index_artifact.fingerprint_version
+                if self._configuration.index_artifact is not None
+                else None
+            ),
+            artifact_fingerprint=(
+                self._configuration.index_output_digest()
+                if self._configuration.index_artifact is not None
+                else None
+            ),
+            index_profile_id=(
+                self._configuration.index_artifact.index_profile_id or "legacy-unprofiled"
+                if self._configuration.index_artifact is not None
+                else "legacy-unprofiled"
+            ),
+            index_profile_hash=(
+                self._configuration.index_artifact.index_profile_hash
+                if self._configuration.index_artifact is not None
+                else None
+            ),
         )
         self._repository.add(build)
         await self._repository.flush()

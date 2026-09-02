@@ -48,6 +48,10 @@ const buildFixture: IndexBuild = {
   operation: "reindex",
   embedding_set_version: 1,
   configuration_hash: "b".repeat(64),
+  artifact_fingerprint: null,
+  artifact_fingerprint_version: null,
+  index_profile_id: null,
+  index_profile_hash: null,
   corpus_fingerprint: "c".repeat(64),
   document_count: 1,
   chunk_count: 2,
@@ -204,7 +208,7 @@ test("marks expected search words pass and exposes active build and result metad
         metadata: {},
       },
     ],
-  });
+  } as never);
   renderOperatorComponent(<OperatorConsoleApp />, `/lab?project=${projectFixture.id}&tab=search`);
   await userEvent.type(await screen.findByLabelText("Query"), "refund");
   await userEvent.type(screen.getByLabelText("Expected words (optional)"), "thirty days");
@@ -247,7 +251,7 @@ test("marks expected search words as needs attention when no returned chunk cont
         metadata: {},
       },
     ],
-  });
+  } as never);
   renderOperatorComponent(<OperatorConsoleApp />, `/lab?project=${projectFixture.id}&tab=search`);
   await userEvent.type(await screen.findByLabelText("Query"), "refund");
   await userEvent.type(screen.getByLabelText("Expected words (optional)"), "thirty days");

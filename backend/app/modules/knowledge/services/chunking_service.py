@@ -80,7 +80,6 @@ class ChunkingService:
                 fallback=self._fallback,
             ),
             ChunkingStrategy.RECURSIVE_FALLBACK: None,
-            ChunkingStrategy.RECURSIVE_CHARACTER: None,
         }
 
     @classmethod
@@ -120,7 +119,6 @@ class ChunkingService:
                 boundary_provider_version = semantic_strategy.last_boundary_result.provider_version
         elif strategy in {
             ChunkingStrategy.RECURSIVE_FALLBACK,
-            ChunkingStrategy.RECURSIVE_CHARACTER,
         }:
             drafts = self._fallback.split_text(
                 parsed.text,

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from typing import overload
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -34,6 +35,12 @@ from app.platform.config.project_ai import (
     ConfigRevisionRecord,
     EffectiveConfigResolution,
     ProjectAIConfig,
+    ProjectExecutionV2,
+    V1NormalizationResult,
+    V2ProfileNormalizationResult,
+    materialize_execution_values,
+    normalize_v1_project_config,
+    normalize_v2_project_config,
     resolve_project_ai_config,
     stable_hash,
 )
@@ -75,6 +82,7 @@ class ProjectAdministrationService:
         expected_active_revision_id: uuid.UUID | None,
         reason: str,
         restored_from_revision_id: uuid.UUID | None = None,
+        source: str = "operator_write",
     ) -> ProjectAIConfigRevision:
         project = await self._require_project()
         if project.active_ai_config_revision_id != expected_active_revision_id:
@@ -86,6 +94,37 @@ class ProjectAdministrationService:
                     "actual": str(project.active_ai_config_revision_id),
                 },
             )
+        selection = configuration.execution.profile_id or "inherit"
+        if selection == "custom":
+            active = await self._repository.get_active()
+            base = materialize_execution_values(
+                resolve_project_ai_config(
+                    self._settings,
+                    _record(active) if isinstance(active, ProjectAIConfigRevision) else None,
+                ).configuration
+            )
+            # These ``None`` ENV values mean "no threshold". Persist their
+            # deterministic no-filter equivalent for Custom rather than leave
+            # an absent value to inherit from a future deployment profile.
+            for field in ("score_threshold", "rerank_score_threshold", "min_ocr_confidence"):
+                if base[field] is None:
+                    base[field] = 0.0
+            provided = {
+                field: getattr(configuration.execution, field)
+                for field in configuration.execution.model_fields_set
+                if field != "profile_id"
+            }
+            for field in ("score_threshold", "rerank_score_threshold", "min_ocr_confidence"):
+                if provided.get(field) is None:
+                    provided.pop(field, None)
+            execution_payload = {"profile_id": "custom", **base, **provided}
+        else:
+            # Preset/inherit revisions contain only the selection. Re-selecting
+            # one therefore clears stale Custom execution values.
+            execution_payload = {} if selection == "inherit" else {"profile_id": selection}
+        configuration = configuration.model_copy(
+            update={"execution": ProjectExecutionV2.model_validate(execution_payload)}
+        )
         payload = configuration.model_dump(mode="json", exclude_none=True)
         # Resolve before persistence so unsupported provider/model parameters never activate.
         candidate = ConfigRevisionRecord(
@@ -93,15 +132,18 @@ class ProjectAdministrationService:
             revision_number=await self._repository.next_revision_number(),
             configuration_hash=stable_hash(payload),
             configuration=payload,
+            schema_version=2,
         )
         resolve_project_ai_config(self._settings, candidate)
         revision = ProjectAIConfigRevision(
             id=candidate.id,
             project_id=self._project_id,
             revision_number=candidate.revision_number,
+            schema_version=2,
             configuration_hash=candidate.configuration_hash,
             configuration=payload,
             created_by=self._actor_id,
+            source=source,
             reason=reason.strip(),
             restored_from_revision_id=restored_from_revision_id,
         )
@@ -125,6 +167,8 @@ class ProjectAdministrationService:
                 "revision_number": revision.revision_number,
                 "configuration_hash": revision.configuration_hash,
                 "reason": reason.strip(),
+                "schema_version": 2,
+                "source": source,
                 "restored_from_revision_id": (
                     str(restored_from_revision_id) if restored_from_revision_id else None
                 ),
@@ -147,11 +191,88 @@ class ProjectAdministrationService:
                 message="Project configuration revision not found.",
                 code="project_config_revision_not_found",
             )
+        configuration = (
+            normalize_v1_project_config(self._settings, _record(source)).configuration
+            if source.schema_version == 1
+            else ProjectAIConfig.model_validate(source.configuration)
+        )
         return await self.create_revision(
-            ProjectAIConfig.model_validate(source.configuration),
+            configuration,
             expected_active_revision_id=expected_active_revision_id,
             reason=reason,
             restored_from_revision_id=source.id,
+            source="restore_normalized_v1" if source.schema_version == 1 else "restore_v2",
+        )
+
+    async def normalization_preview(self) -> tuple[ProjectAIConfigRevision, V1NormalizationResult]:
+        await self._require_project()
+        active = await self._repository.get_active()
+        if active is None:
+            raise NotFoundError(
+                message="The Project has no active V1 configuration revision.",
+                code="active_project_config_not_found",
+            )
+        result = normalize_v1_project_config(self._settings, _record(active))
+        return active, result
+
+    async def normalize_active_v1(
+        self,
+        *,
+        expected_active_revision_id: uuid.UUID,
+        reason: str,
+    ) -> ProjectAIConfigRevision:
+        active, preview = await self.normalization_preview()
+        if active.id != expected_active_revision_id:
+            raise ConflictError(
+                message="The active Project configuration changed.",
+                code="project_config_revision_conflict",
+                context={
+                    "expected": str(expected_active_revision_id),
+                    "actual": str(active.id),
+                },
+            )
+        return await self.create_revision(
+            preview.configuration,
+            expected_active_revision_id=expected_active_revision_id,
+            reason=reason,
+            restored_from_revision_id=active.id,
+            source="super_admin_v1_normalization",
+        )
+
+    async def profile_normalization_preview(
+        self,
+    ) -> tuple[ProjectAIConfigRevision, V2ProfileNormalizationResult]:
+        await self._require_project()
+        active = await self._repository.get_active()
+        if active is None or active.schema_version != 2:
+            raise NotFoundError(
+                message="The Project has no active V2 configuration revision.",
+                code="active_v2_project_config_not_found",
+            )
+        return active, normalize_v2_project_config(self._settings, _record(active))
+
+    async def normalize_active_v2_profile(
+        self,
+        *,
+        expected_active_revision_id: uuid.UUID,
+        reason: str,
+    ) -> ProjectAIConfigRevision:
+        active, preview = await self.profile_normalization_preview()
+        if active.id != expected_active_revision_id:
+            raise ConflictError(
+                message="The active Project configuration changed.",
+                code="project_config_revision_conflict",
+                context={"expected": str(expected_active_revision_id), "actual": str(active.id)},
+            )
+        payload = preview.configuration.model_dump(mode="json", exclude_none=True)
+        if stable_hash(payload) == active.configuration_hash:
+            return active
+        return await self.create_revision(
+            preview.configuration,
+            expected_active_revision_id=expected_active_revision_id,
+            reason=reason,
+            restored_from_revision_id=active.id,
+            source="super_admin_v2_profile_normalization",
         )
 
     async def ownership_preflight(
@@ -293,6 +414,14 @@ class ProjectAdministrationService:
         )
 
 
+@overload
+def _record(revision: ProjectAIConfigRevision) -> ConfigRevisionRecord: ...
+
+
+@overload
+def _record(revision: None) -> None: ...
+
+
 def _record(revision: ProjectAIConfigRevision | None) -> ConfigRevisionRecord | None:
     if revision is None:
         return None
@@ -301,4 +430,5 @@ def _record(revision: ProjectAIConfigRevision | None) -> ConfigRevisionRecord | 
         revision_number=revision.revision_number,
         configuration_hash=revision.configuration_hash,
         configuration=dict(revision.configuration),
+        schema_version=revision.schema_version,
     )

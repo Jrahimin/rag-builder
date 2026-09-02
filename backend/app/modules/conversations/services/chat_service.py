@@ -504,7 +504,7 @@ class ChatService:
         if non_knowledge_response is None:
             retrieval_result = await self._retrieval.retrieve(
                 query=retrieval_query,
-                top_k=self._chat_config.retrieval_top_k,
+                top_k=self._retrieval_config.default_top_k,
                 document_id=request.document_id,
                 metadata_filter=request.metadata_filter or None,
                 as_of=request.as_of,
@@ -817,7 +817,7 @@ class ChatService:
             "retrieval_time_ms": prepared.retrieval_ms,
             "generation_time_ms": generation_ms,
             "retrieval_strategy": self._retrieval_config.strategy.value,
-            "retrieval_top_k": self._chat_config.retrieval_top_k,
+            "retrieval_top_k": self._retrieval_config.default_top_k,
             "retrieved_chunk_count": len(prepared.chunks),
             "provider": provider,
             "model": model,
@@ -1107,7 +1107,7 @@ class ChatService:
             "generation_time_ms": generation_ms,
             "total_time_ms": total_ms,
             "retrieval_strategy": self._retrieval_config.strategy.value,
-            "retrieval_top_k": self._chat_config.retrieval_top_k,
+            "retrieval_top_k": self._retrieval_config.default_top_k,
             "retrieved_chunk_count": retrieved_count,
             "selected_chunk_count": selected_count,
             "retrieval_trace": {

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from app.core.config import Settings, WebSearchBackend
+from app.core.implementation_versions import WEB_SEARCH_ADAPTER_VERSION
 from app.platform.providers.contracts.web_search import BaseWebSearchProvider
 from app.platform.providers.errors import ProviderError
 from app.platform.providers.implementations.openai_web_search import OpenAIWebSearchProvider
@@ -25,7 +26,7 @@ def create_web_search_provider(settings: Settings) -> BaseWebSearchProvider:
             api_key=api_key,
             base_url=settings.resolved_web_search_base_url(),
             model=settings.resolved_web_search_model(),
-            provider_version=config.provider_version,
+            provider_version=WEB_SEARCH_ADAPTER_VERSION,
             request_timeout_seconds=config.request_timeout_seconds,
             max_output_tokens=config.max_output_tokens,
             max_evidence_chars=config.max_evidence_chars,

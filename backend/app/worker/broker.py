@@ -13,6 +13,7 @@ from taskiq_redis import ListQueueBroker
 from app.core.auth_config_validation import validate_auth_config
 from app.core.config import get_settings
 from app.core.runtime_validation import validate_runtime_config
+from app.platform.config.profiles import validate_profile_compatibility
 from app.platform.db.session import Database
 from app.platform.infra.connectivity.redis import RedisConnectivity
 from app.platform.jobs.worker_registry import (
@@ -30,6 +31,7 @@ def get_taskiq_broker() -> ListQueueBroker:
     """Return a process-scoped Taskiq broker configured from application settings."""
     settings = get_settings()
     validate_runtime_config(settings)
+    validate_profile_compatibility(settings)
     validate_auth_config(settings)
     # JobRun/outbox is the only retry authority; Taskiq is transport only.
     return ListQueueBroker(url=settings.redis.dsn)

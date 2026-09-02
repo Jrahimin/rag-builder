@@ -2,7 +2,9 @@
 
 > **Beginner question:** why are there so many environment variables, and how do I know which one to change?
 
-Configuration is the engine’s control panel. It lets the same code run locally, in Docker, with a hosted provider, or with private infrastructure. The important skill is not memorising variable names; it is understanding which stage each setting changes.
+Configuration is the engine’s control plane. It lets the same code run locally,
+in Docker, with a hosted provider, or with private infrastructure. The important
+skill is knowing who owns a value and when changing it takes effect.
 
 ## The basic rule
 
@@ -17,21 +19,28 @@ Examples:
 ```text
 APE_APP__ENV=development
 APE_DATABASE__HOST=localhost
-APE_RETRIEVAL__STRATEGY=hybrid
-APE_CHAT__CONTEXT_CHAR_BUDGET=12000
+APE_RUNTIME__CAPABILITY_PROFILE_ID=development
+APE_LLM__OPENAI_API_KEY=***
 ```
 
 The double underscore represents nesting. `APE_RETRIEVAL__HNSW_EF_SEARCH` means `settings.retrieval.hnsw_ef_search`.
 
 ## Where a value comes from
 
-The foundation currently implements defaults plus environment variables:
+The current architecture resolves several explicit layers:
 
 ```text
-code defaults -> environment/.env -> Settings object -> dependencies/services/providers
+code invariants + immutable profiles
+    -> deployment capability/provider settings
+    -> immutable Project V2 revision
+    -> pinned job/conversation/index snapshot
+    -> bounded request scope/filter/pagination
 ```
 
-The architecture may later add database or project overrides. Do not assume those layers exist just because the long-term design mentions them.
+Environment variables are primarily for infrastructure, secrets, endpoints, and
+deployment capability. Normal response behavior and RAG execution belong to a
+Project revision. Calibration and invariant switches are code-owned. Historical
+V1 revisions remain readable but cannot be written through the normal API.
 
 ## Find the stage before changing the knob
 
@@ -43,15 +52,15 @@ flowchart LR
     C --> O[Operations]
 ```
 
-### Ingestion settings
+### Ingestion and index settings
 
 | Setting area | Changes | First question to ask |
 | --- | --- | --- |
 | Storage backend/root | Where raw and parsed artifacts live | Is the file present and readable by the worker? |
 | Maximum upload bytes | Which files are accepted | Are failures clear and intentional? |
-| Parser/OCR backend | How text is extracted | Is the source digital text or pixels? |
+| Parser/OCR backend | Deployment capability for extracting text | Is the source digital text or pixels? |
 | OCR language | Which recognition model is used | Does the provider support the script? |
-| Chunking strategy/limits | How text becomes retrieval units | Did the correct heading and exception stay together? |
+| Index Profile | Immutable parsing, OCR, chunking, embedding, and FTS identity | Does this require reprocess, re-embed, or rebuild? |
 
 ### Retrieval settings
 
@@ -59,23 +68,19 @@ flowchart LR
 | --- | --- | --- |
 | Embedding backend/model | Meaning representation | Are chunks and questions in the same vector space? |
 | Embedding dimensions | Vector schema/storage compatibility | Does changing this require migration and re-embedding? |
-| Strategy | Semantic, keyword, or hybrid path | Is the failure conceptual or exact-token matching? |
-| Candidate top-k | Evidence entering fusion/reranking | Is the right chunk present but ranked too low? |
-| RRF settings | How semantic/keyword ranks combine | Which searcher is bringing the useful result? |
-| Reranker | How the shortlist is reordered | Is a better second opinion worth the latency? |
+| RAG Execution Profile | Exact code-owned query-time baseline; certification is measured separately | Is the right chunk present but ranked too low? |
+| Project Custom execution | Complete persisted candidate/fusion/rerank/context bundle | Is the override necessary and reproducible? |
+| Test Lab candidate | Ephemeral one-factor experiment | Did it clear the certification gates? |
 | Metadata allowlist | Which filters become SQL predicates | Does a filter represent a real business boundary? |
-| HNSW search effort | Recall/latency trade-off | Is approximate search missing filtered neighbors? |
 
 ### Generation settings
 
 | Setting area | Changes | First question to ask |
 | --- | --- | --- |
-| LLM backend/model | Writing quality, cost, latency, language | Is retrieval correct before changing the model? |
-| Temperature | Output variability | Does the task need repeatability? |
-| Retrieval top-k | How much evidence is offered to chat | Is the answer incomplete or noisy? |
-| Context chunk/character budget | Prompt size and cost | Is the smallest sufficient packet being sent? |
-| History window | Conversational continuity | Is prior context useful or distracting? |
-| System prompt version | Grounding and safety instructions | Can we reproduce the answer later? |
+| Deployment generation allowlist | Which logical model IDs Projects may select | Is the provider/model combination supported? |
+| Project behavior | Response mode, grounding assurance, instructions, translation | Is the desired behavior Project-specific? |
+| Calibration Profile | Evidence thresholds tied to exact providers/models | Does the evidence method match the active stack? |
+| Prompt/profile versions | Reproducible generation behavior | Can we reproduce the answer later? |
 
 ## A configuration example
 
@@ -87,23 +92,19 @@ APE_APP__ENV=development
 APE_STORAGE__BACKEND=minio
 APE_MINIO__ENDPOINT=localhost:9000
 
-# Embeddings: use a real provider for semantic experiments
+# Provider capability and credentials
 APE_EMBEDDING__BACKEND=openai
 APE_EMBEDDING__MODEL=text-embedding-3-large
-APE_EMBEDDING__DIMENSIONS=1536
-
-# Retrieval
-APE_RETRIEVAL__STRATEGY=hybrid
-APE_RETRIEVAL__SEMANTIC_CANDIDATE_TOP_K=50
-APE_RETRIEVAL__KEYWORD_CANDIDATE_TOP_K=50
-APE_RETRIEVAL__HNSW_EF_SEARCH=100
-
-# Chat
-APE_CHAT__RETRIEVAL_TOP_K=10
-APE_CHAT__MAX_CONTEXT_CHUNKS=8
-APE_CHAT__CONTEXT_CHAR_BUDGET=12000
-APE_CHAT__MAX_HISTORY_MESSAGES=20
+APE_EMBEDDING__OPENAI_API_KEY=***
+APE_LLM__BACKEND=openai
+APE_LLM__OPENAI_API_KEY=***
 ```
+
+Normal tuning is profile-led. Set `APE_AI_POLICY__DEFAULT_RAG_PROFILE=standard`
+for the deployment, then let a Project inherit it or select `standard`, `quality`,
+`economy`, or `custom`. Presets always resolve from the current code-owned bundle;
+only Custom stores a complete explicit execution bundle. Conversation and job snapshots
+record the resolved profile hash and effective values automatically.
 
 The exact supported fields live in `backend/app/core/config.py`. The complete
 tabular map (meaning, options, env key, Project overlay) is
@@ -126,11 +127,12 @@ Do not make product decisions from the first category.
 
 ## A hands-on experiment
 
-Use one corpus and change only one setting:
+Use Test Lab with one pinned corpus and change only one approved candidate axis:
 
-1. `strategy=semantic`;
-2. `strategy=hybrid`;
-3. hybrid with a larger candidate pool.
+1. record the active Project/profile/index identities;
+2. run the baseline;
+3. change one safe query-time execution leaf;
+4. compare quality, refusal, citation, cost, and latency gates.
 
 Record the returned chunk IDs, source pages, latency, and answer. Then explain which stage changed and why.
 
@@ -138,9 +140,10 @@ Record the returned chunk IDs, source pages, latency, and answer. Then explain w
 
 - Keep secrets out of code and committed files.
 - Do not change embedding dimensions without a migration/re-embedding plan.
-- Pin provider/model configuration with an index snapshot.
+- Pin provider/model and profile hashes with job, conversation, and index snapshots.
 - Use allowlisted metadata filters, not arbitrary SQL-shaped input.
-- Treat production defaults as explicit, not “whatever the local demo used.”
+- Treat certification as the evidence needed for a production recommendation; built-in profiles
+  remain selectable during development.
 - Prefer one supported deployment profile before exposing many combinations.
 
 ## Learning checkpoint

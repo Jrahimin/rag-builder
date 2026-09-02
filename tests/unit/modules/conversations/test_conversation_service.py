@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from app.core.config import ChatConfig, LLMBackend, LLMConfig
+from app.core.config import ChatConfig, LLMBackend, LLMConfig, Settings
 from app.core.exceptions import BadRequestError
 from app.models.conversation import Conversation
 from app.modules.conversations.schemas.conversation import ConversationCreate, ConversationUpdate
@@ -102,6 +102,48 @@ async def test_create_persists_conversation(
     assert result.model == "test-model"
     conversation_repository.add.assert_called_once()
     session.commit.assert_awaited_once()
+
+
+async def test_new_conversations_capture_new_profile_without_mutating_old_snapshot(
+    session: AsyncMock,
+    conversation_repository: AsyncMock,
+    message_repository: AsyncMock,
+) -> None:
+    session.scalar.return_value = 0
+
+    def assign_conversation_id(conversation: Conversation) -> Conversation:
+        conversation.id = uuid.uuid4()
+        return conversation
+
+    conversation_repository.add.side_effect = assign_conversation_id
+    project_id = uuid.uuid4()
+    common = {
+        "session": session,
+        "project_id": project_id,
+        "conversation_repository": conversation_repository,
+        "message_repository": message_repository,
+        "llm_config": LLMConfig(backend=LLMBackend.ECHO, model="test-model"),
+        "chat_config": ChatConfig(),
+    }
+    standard = ConversationService(
+        **common,
+        settings=Settings(ai_policy={"default_rag_profile": "standard"}),
+    )
+    quality = ConversationService(
+        **common,
+        settings=Settings(ai_policy={"default_rag_profile": "quality"}),
+    )
+
+    await standard.create(ConversationCreate())
+    first_snapshot = session.add.await_args_list[-1].args[0]
+    await quality.create(ConversationCreate())
+    second_snapshot = session.add.await_args_list[-1].args[0]
+
+    assert first_snapshot.provenance["execution_profile_id"] == "standard"
+    assert first_snapshot.configuration["retrieval"]["top_k"] == 10
+    assert second_snapshot.provenance["execution_profile_id"] == "quality"
+    assert second_snapshot.configuration["retrieval"]["top_k"] == 12
+    assert first_snapshot.configuration["retrieval"]["top_k"] == 10
 
 
 async def test_soft_delete_does_not_touch_messages(

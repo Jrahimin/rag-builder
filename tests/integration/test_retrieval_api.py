@@ -243,28 +243,25 @@ async def test_search_metadata_filter(
         )
         await session.commit()
 
-    for strategy in ("semantic", "hybrid"):
-        snapshot_match = await db_client.post(
-            f"/api/v1/projects/{project_id}/search",
-            json={
-                "query": _UNIQUE_PHRASE,
-                "metadata_filter": {"source": "handbook"},
-                "strategy": strategy,
-            },
-        )
-        assert snapshot_match.status_code == 200
-        assert snapshot_match.json()["data"]["results"]
+    snapshot_match = await db_client.post(
+        f"/api/v1/projects/{project_id}/search",
+        json={
+            "query": _UNIQUE_PHRASE,
+            "metadata_filter": {"source": "handbook"},
+        },
+    )
+    assert snapshot_match.status_code == 200
+    assert snapshot_match.json()["data"]["results"]
 
-        live_row_only = await db_client.post(
-            f"/api/v1/projects/{project_id}/search",
-            json={
-                "query": _UNIQUE_PHRASE,
-                "metadata_filter": {"source": "changed-after-index"},
-                "strategy": strategy,
-            },
-        )
-        assert live_row_only.status_code == 200
-        assert live_row_only.json()["data"]["results"] == []
+    live_row_only = await db_client.post(
+        f"/api/v1/projects/{project_id}/search",
+        json={
+            "query": _UNIQUE_PHRASE,
+            "metadata_filter": {"source": "changed-after-index"},
+        },
+    )
+    assert live_row_only.status_code == 200
+    assert live_row_only.json()["data"]["results"] == []
 
     # A filterable key ("source") with a non-matching value excludes every hit.
     filtered = await db_client.post(
@@ -318,9 +315,18 @@ async def test_search_document_and_embedding_version_filters(
         ),
         {"project_id": uuid.UUID(project_id)},
     )
+    await integration_connection.execute(
+        text(
+            """
+            UPDATE chunk_keyword_index SET embedding_set_version = 99
+            WHERE project_id = :project_id
+            """
+        ),
+        {"project_id": uuid.UUID(project_id)},
+    )
     stale = await db_client.post(
         f"/api/v1/projects/{project_id}/search",
-        json={"query": _UNIQUE_PHRASE, "strategy": "semantic"},
+        json={"query": _UNIQUE_PHRASE},
     )
     assert stale.status_code == 200
     assert stale.json()["data"]["results"] == []
@@ -344,9 +350,7 @@ async def test_auto_embed_index_chain(
     settings = get_settings()
     auto_settings = settings.model_copy(
         update={
-            "retrieval": settings.retrieval.model_copy(
-                update={"auto_embed": True, "auto_index": True}
-            )
+            "retrieval": settings.retrieval.model_copy(update={"auto_build_after_process": True})
         }
     )
 
@@ -494,7 +498,7 @@ async def test_search_hybrid_prefers_exact_keyword_match(
 
     search = await db_client.post(
         f"/api/v1/projects/{project_id}/search",
-        json={"query": rare_token, "top_k": 5, "strategy": "hybrid", "rerank": False},
+        json={"query": rare_token, "top_k": 5},
     )
     assert search.status_code == 200
     results = search.json()["data"]["results"]
