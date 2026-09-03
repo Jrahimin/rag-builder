@@ -889,10 +889,7 @@ function ProjectConfig({ project }: { project: Project }) {
         <p className="muted-copy">
           New conversations capture this policy. Existing snapshots do not drift.
         </p>
-        <button
-          className="button button--primary"
-          disabled={busy}
-        >
+        <button className="button button--primary" disabled={busy}>
           Create and activate revision
         </button>
         {activeRevision?.schema_version === 2 && (
