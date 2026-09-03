@@ -6,7 +6,6 @@ import uuid
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-
 from pydantic import ValidationError
 
 from app.core.config import ChatConfig, LLMBackend, LLMConfig, Settings
