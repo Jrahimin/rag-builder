@@ -93,7 +93,7 @@ reranker, admission requires the candidate-local relevance score to clear the un
 and an independent signal aligned to the same selected span: original-query semantic support,
 translated lexical coverage from a contributing typed query variant, or an already calibrated
 cross-language semantic signal. RRF rank, source role, and relationship provenance never admit a
-candidate. Translated dense scores remain shadow diagnostics only.
+candidate. Translated dense scores remain diagnostics only.
 
 The admitted object is an immutable `EvidenceUnit`. A scored passage is preferred; otherwise a
 complete fitting chunk is used, or a deterministic match-local sentence/paragraph span when it can
@@ -107,9 +107,11 @@ deployment rescue coverage are ignored so they cannot loosen false-accept protec
 The pre-generation gate has two modes:
 
 - `enforce` (default) — a failed evidence score stops before LLM generation.
-- `observe` — the same assessment, winning chunk, lexical coverage, and diagnostics are recorded,
-  but a failed cosine/reranker score does not by itself block generation. Selected context is
-  passed to the existing grounded-generation prompt. Empty retrieval still refuses.
+- `enforce` (default) — a failed evidence score stops before LLM generation.
+- `observe` — the same admission and selected units as `enforce` are recorded, but a failed
+  score does not veto generation. When nothing is admitted, observe still generates from ranked
+  candidates and records `would_have_blocked` with `observe_context=ranked_candidates`. Empty
+  retrieval still refuses.
 
 `observe` is a diagnostic policy, not a production weakening of grounding instructions. It exists
 to measure false refusals when relevant chunks already sit in the selected context.
@@ -179,7 +181,8 @@ Post-generation per-claim LLM translation is not part of the claim path.
   calibration; adjust the current defaults in Test Lab rather than adding a new
   gate architecture.)
 - `APE_CHAT__MINIMUM_RERANKER_EVIDENCE_SCORE`
-- `APE_CHAT__EVIDENCE_SCORE_MODE` (`whole_chunk` by default; `passage_max` only after calibration)
+- `APE_CHAT__STORE_CANDIDATE_TRACE` (`false` by default; persists per-candidate retrieval and
+  admission traces on chat messages for debug. Evaluation rows always keep the detail.)
 - `APE_CHAT__LEXICAL_CORROBORATION_FLOOR_SCORE`
 - `APE_CHAT__LEXICAL_CORROBORATION_COVERAGE`
 - `APE_CHAT__MINIMUM_CLAIM_TOKEN_COVERAGE`
@@ -268,6 +271,25 @@ one multilingual reranker only if ranking/selection fails that run.
    `APE_CHAT__MINIMUM_SEMANTIC_EVIDENCE_SCORE` when English paraphrases still miss.
 5. Create a new conversation or refresh the conversation configuration snapshot before verifying
    chat. Historical snapshots keep the evidence mode and thresholds captured at creation.
+
+### Phase 2 admission path (2026-09-03)
+
+Candidate-wise is the only reranked admission path. When no reranker applied, the fallback uses
+whole-chunk cosine plus the dedicated cross-language bar and returns the same per-candidate
+`EvidenceUnit`s. `EvidenceScoreMode` / `passage_max` and `candidate_wise_grounding_enabled` are
+removed. Bounded-passage scores remain a span derivation for retrieval/rescue, not a second
+admission mode.
+
+The Phase 1 `rag_journey_phase1_baselines_v1.json` cases exist for measurement. No stored
+`reranker_relevance_calibration` identity showed `hard_negative_max` below the high bar (`0.70`)
+with a positive `observed_margin`, so `high_confidence_band_enabled` stays `false` on every
+calibration profile. Balanced therefore matches strict plus passage rescue until that measurement
+exists. The undocumented `0.08` corroboration margin is not used for balanced admission; it
+remains only for selecting strict passage-rescue candidates.
+
+The same Phase 1 fixture includes `multi-turn-follow-up-fragment`. There is no stored hosted
+evaluation showing a material follow-up false-refusal rate, so Phase 3 does **not** add a
+concatenated follow-up query variant. Retrieval still uses the raw latest user message.
 
 ## Intentional non-goals
 

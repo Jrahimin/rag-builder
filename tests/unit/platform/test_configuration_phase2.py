@@ -141,7 +141,6 @@ def test_every_preset_field_ignores_conflicting_raw_execution_settings() -> None
             "keyword_weight": 3.0,
             "score_threshold": 0.7,
             "rerank_candidate_window": 11,
-            "rerank_return_count": 5,
             "rerank_score_threshold": 0.8,
             "min_ocr_confidence": 0.9,
             "max_chunks_per_document": 9,
@@ -167,7 +166,10 @@ def test_every_preset_field_ignores_conflicting_raw_execution_settings() -> None
             _revision({"execution": {"profile_id": profile_id}}),
         )
         assert materialize_execution_values(resolution.configuration) == execution_values(profile)
-        assert resolution.configuration.retrieval.rerank_top_n == profile.rerank_candidate_window
+        assert (
+            resolution.configuration.retrieval.rerank_candidate_window
+            == profile.rerank_candidate_window
+        )
 
 
 def test_global_custom_uses_raw_deployment_execution_values() -> None:

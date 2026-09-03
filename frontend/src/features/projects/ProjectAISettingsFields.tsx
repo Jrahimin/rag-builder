@@ -248,7 +248,6 @@ function materializeEffectiveExecution(
     score_threshold: retrieval.score_threshold,
     rerank_mode: retrieval.rerank_mode,
     rerank_candidate_window: retrieval.rerank_candidate_window,
-    rerank_return_count: retrieval.rerank_return_count,
     rerank_score_threshold: retrieval.rerank_score_threshold,
     min_ocr_confidence: retrieval.min_ocr_confidence,
     max_chunks_per_document: retrieval.max_chunks_per_document,

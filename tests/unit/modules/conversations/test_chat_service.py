@@ -20,8 +20,12 @@ from app.core.exceptions import ConflictError, NotFoundError, ServiceUnavailable
 from app.models.conversation import Conversation
 from app.models.message import Message, MessageRole
 from app.modules.conversations.ports import ContextChunk, ContextRetrievalResult
+from app.modules.conversations.prompts.registry import GROUNDED_PROMPT_VERSION
 from app.modules.conversations.schemas.message import MessageSendRequest
-from app.modules.conversations.services.chat_service import ChatService
+from app.modules.conversations.services.chat_service import (
+    ChatService,
+    _scope_current_authority_status,
+)
 from app.platform.domain.content_hash import content_hash
 from app.platform.domain.evidence_contracts import (
     RERANKER_RELEVANCE_CALIBRATION_ID,
@@ -73,7 +77,7 @@ class EmptyRetrieval:
 
 
 class NearMissRetrieval:
-    """Relevant Bangla evidence whose whole-chunk cosine sits just under 0.35."""
+    """Same-language English evidence whose whole-chunk cosine sits just under 0.35."""
 
     chunk_id = uuid.UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
 
@@ -85,10 +89,13 @@ class NearMissRetrieval:
                     chunk_id=self.chunk_id,
                     document_id=uuid.uuid4(),
                     chunk_index=0,
-                    content="সঞ্চয়পত্র হইতে অর্জিত মুনাফা সম্পত্তির অধিগ্রহণ রপ্তানির বিপরীতে",
+                    content=(
+                        "Office stationery rules occupy most of this chapter. "
+                        "Parking permits are issued on Tuesdays only."
+                    ),
                     score=0.018,
-                    filename="gazette.pdf",
-                    chunk_hash="gazette-table",
+                    filename="policy.pdf",
+                    chunk_hash="office-stationery",
                     semantic_score=0.32,
                     rank_score=0.018,
                     metadata={
@@ -280,6 +287,7 @@ def _service(
     llm: EchoLLMProvider,
     *,
     chat_config: ChatConfig | None = None,
+    store_candidate_trace: bool = True,
 ) -> ChatService:
     return ChatService(
         session=session,
@@ -291,7 +299,35 @@ def _service(
         retrieval_config=RetrievalConfig(),
         llm_config=LLMConfig(backend=LLMBackend.ECHO, max_tokens=100, temperature=0.2),
         resolve_llm=lambda _conversation: llm,
+        store_candidate_trace=store_candidate_trace,
     )
+
+
+async def test_runtime_metadata_keeps_funnel_but_omits_candidate_payloads(
+    session: AsyncMock,
+    conversation_repository: AsyncMock,
+    message_repository: AsyncMock,
+    conversation: Conversation,
+) -> None:
+    service = _service(
+        session,
+        conversation_repository,
+        message_repository,
+        EchoLLMProvider(model="test", provider_version="1"),
+        store_candidate_trace=False,
+    )
+    service._retrieval = NearMissRetrieval()
+
+    turn = await service.send_message(
+        conversation.id,
+        MessageSendRequest(content="What are the source tax deduction categories?"),
+    )
+
+    metadata = turn.assistant_message.metadata
+    assert metadata["retrieval_trace"]["candidates"] == []
+    assert metadata["retrieval_trace"]["context_selected"] == []
+    assert "assessments" not in metadata["evidence_gate"]["candidate_wise"]
+    assert metadata["evidence_funnel"]["assessed"] == 1
 
 
 async def test_candidate_wise_canary_sends_only_passing_lower_rank_to_generation(
@@ -384,7 +420,6 @@ async def test_candidate_wise_canary_sends_only_passing_lower_rank_to_generation
         llm,
         chat_config=ChatConfig(
             system_prompt_version="v5",
-            candidate_wise_grounding_enabled=True,
         ),
     )
     service._retrieval = CandidateRetrieval()
@@ -396,6 +431,7 @@ async def test_candidate_wise_canary_sends_only_passing_lower_rank_to_generation
     assert unrelated_text not in captured_system[0]
     assert len(turn.assistant_message.citations) == 1
     assert turn.assistant_message.citations[0].chunk_id == relevant.chunk_id
+    assert turn.assistant_message.prompt_version == GROUNDED_PROMPT_VERSION
     candidate_diagnostics = turn.assistant_message.metadata["evidence_gate"]["candidate_wise"]
     assert candidate_diagnostics["assessed_count"] == 2
     assert candidate_diagnostics["admitted_count"] == 1
@@ -410,6 +446,12 @@ async def test_candidate_wise_canary_sends_only_passing_lower_rank_to_generation
         "missing_provenance_count": 0,
         "span_hash_mismatch_count": 0,
     }
+    funnel = turn.assistant_message.metadata["evidence_funnel"]
+    assert funnel["assessed"] == 2
+    assert funnel["admitted"] == 1
+    assert funnel["context_selected"] == 1
+    assert funnel["cited"] == 1
+    assert funnel["outcome"] == "answered"
 
 
 async def test_candidate_wise_canary_refuses_when_admitted_unit_exceeds_context_budget(
@@ -487,7 +529,6 @@ async def test_candidate_wise_canary_refuses_when_admitted_unit_exceeds_context_
         llm,
         chat_config=ChatConfig(
             system_prompt_version="v5",
-            candidate_wise_grounding_enabled=True,
             context_char_budget=500,
         ),
     )
@@ -596,6 +637,7 @@ async def test_send_message_llm_failure_persists_failed_execution(
     assert assistant.output_tokens is None
     assert assistant.message_metadata["execution_status"] == "failed"
     assert assistant.message_metadata["execution_error_code"] == "provider_error"
+    assert assistant.message_metadata["evidence_funnel"]["outcome"] == "failed"
 
 
 async def test_stream_failure_persists_partial_failed_execution(
@@ -711,6 +753,11 @@ async def test_observe_mode_generates_when_cosine_gate_would_refuse(
     assert gate["winning_semantic_score"] == pytest.approx(0.32)
     assert gate["winning_rank_score"] == pytest.approx(0.018)
     assert gate["winning_chunk_id"] == str(NearMissRetrieval.chunk_id)
+    assert gate["context_selection"]["observe_context"] == "ranked_candidates"
+    assert turn.assistant_message.metadata["evidence_funnel"]["would_have_blocked"] is True
+    assert turn.assistant_message.metadata["evidence_funnel"]["observe_context"] == (
+        "ranked_candidates"
+    )
 
 
 async def test_observe_mode_still_skips_generation_when_retrieval_is_empty(
@@ -821,8 +868,8 @@ async def test_applied_rerank_above_threshold_runs_generation(
                         filename="gazette.pdf",
                         chunk_hash="gazette-table",
                         semantic_score=0.323,
-                        rank_score=None,
-                        rerank_relevance_score=None,
+                        rank_score=0.8693157,
+                        rerank_relevance_score=0.8693157,
                         metadata={"rerank_status": "applied"},
                     )
                 ],
@@ -844,9 +891,7 @@ async def test_applied_rerank_above_threshold_runs_generation(
     assert gate["sufficient"] is True
     assert gate["evidence_score"] == pytest.approx(0.8693157)
     assert gate["evidence_score_method"] == "reranker_relevance"
-    assert gate["candidate_wise"]["enabled"] is False
-    assert gate["candidate_wise"]["path"] == "legacy_shadow"
-    assert gate["candidate_wise"]["shadow_sufficient"] is True
+    assert gate["candidate_wise"]["path"] == "candidate_wise"
     assert gate["candidate_wise"]["assessed_count"] == 1
     selected = turn.assistant_message.metadata["retrieval_trace"]["context_selected"]
     assert selected[0]["rerank_relevance_score"] == pytest.approx(0.8693157)
@@ -1174,7 +1219,6 @@ async def test_cited_english_answer_is_grounded_when_query_embedder_confirms(
 
     assert turn.assistant_message.finish_reason != "insufficient_evidence"
     assert turn.assistant_message.grounded is True
-    assert turn.assistant_message.metadata["grounded"] is True
     assert turn.assistant_message.metadata["citation_coverage"] == 1.0
     assert turn.assistant_message.claims[0].verification == "supported"
 
@@ -1209,7 +1253,8 @@ async def test_indexed_then_web_uses_web_only_after_knowledge_gate_fails(
     assert turn.assistant_message.source_provenance == "web"
     assert turn.assistant_message.metadata["web_search"]["fallback_used"] is True
     assert turn.assistant_message.metadata["web_search"]["status"] == "evidence_accepted"
-    assert turn.assistant_message.content.startswith("This wasn\u2019t covered")
+    assert not turn.assistant_message.content.startswith("This wasn\u2019t covered")
+    assert any(item.kind == "web_evidence_used" for item in turn.assistant_message.notices)
     assert [citation.source_kind for citation in turn.assistant_message.citations] == ["web"]
     assert turn.assistant_message.citations[0].web_url == "https://example.test/refunds"
     assert turn.assistant_message.citations[0].chunk_id is None
@@ -1428,7 +1473,7 @@ async def test_modifies_expansion_survives_combined_rerank_and_skips_web(
     )
     expansion_record = {
         **recall_provenance,
-        "outcome": "included",
+        "outcome": "expanded",
         "candidate_count": 1,
         "retained_candidate_count": 1,
         "modifier_effective_from": "2026-07-01T00:00:00+00:00",
@@ -1504,7 +1549,6 @@ async def test_modifies_expansion_survives_combined_rerank_and_skips_web(
         llm,
         chat_config=ChatConfig(
             system_prompt_version="v5",
-            candidate_wise_grounding_enabled=True,
             response_mode=ResponseMode.INDEXED_THEN_WEB,
         ),
     )
@@ -1548,16 +1592,11 @@ async def test_modifies_expansion_survives_combined_rerank_and_skips_web(
     assert scoped.assistant_message.metadata["current_authority"]["status"] == (
         "suppressed_document_scope"
     )
-    assert scoped.assistant_message.metadata["scope_current_authority"] == {
-        "status": "unavailable_within_hard_scope",
-        "reason": "effective_modifier_excluded_by_document_scope",
-        "scoped_evidence_available": True,
-        "excluded_effective_modifier_count": 1,
-    }
-    assert "current authoritative value" in scoped.assistant_message.content
-    assert "must not be presented as the current rule" in scoped.assistant_message.content
-    assert scoped.assistant_message.citations == []
-    assert scoped.assistant_message.source_provenance == "none"
+    assert scoped.assistant_message.metadata["scope_current_authority"]["status"] == (
+        "effective_modifier_excluded_by_scope"
+    )
+    notices = scoped.assistant_message.notices
+    assert any(item.kind == "scope_excludes_effective_modifier" for item in notices)
     assert scoped.assistant_message.metadata["web_search"]["status"] == "not_requested"
     scoped_gate = scoped.assistant_message.metadata["evidence_gate"]["candidate_wise"]
     assert scoped_gate["assessed_count"] == 1
@@ -1814,7 +1853,10 @@ async def test_bangla_query_uses_web_fallback_with_bangla_notice(
     )
 
     assert turn.assistant_message.source_provenance == "web"
-    assert turn.assistant_message.content.startswith("Knowledge base-এ এটি ছিল না")
+    web_notices = [
+        item for item in turn.assistant_message.notices if item.kind == "web_evidence_used"
+    ]
+    assert web_notices and web_notices[0].language == "bn"
 
 
 async def test_stream_done_event_contains_web_provenance(
@@ -1848,6 +1890,7 @@ async def test_stream_done_event_contains_web_provenance(
     assert isinstance(events[-1], dict)
     assert events[-1]["source_provenance"] == "web"
     assert events[-1]["web_search"]["fallback_used"] is True
+    assert any(item["kind"] == "web_evidence_used" for item in events[-1]["notices"])
 
 
 async def test_casual_bangla_turn_skips_retrieval_web_and_llm(
@@ -1939,3 +1982,41 @@ async def test_followup_retrieval_query_is_not_rewritten_by_substring_heuristics
     )
 
     assert captured == ["What is it used for?"]
+
+
+def test_scope_notice_ignores_modifiers_outside_as_of() -> None:
+    request = MessageSendRequest(content="Current rate?", document_id=uuid.uuid4())
+    status = _scope_current_authority_status(
+        request,
+        {
+            "modifies_expansion_status": "suppressed_document_scope",
+            "modifies_expansion_records": [
+                {
+                    "relationship_type": "modifies",
+                    "modifier_effective_from": "2027-07-01",
+                    "outcome": "outside_as_of",
+                }
+            ],
+        },
+    )
+    assert status is None
+
+
+def test_scope_notice_keeps_expanded_effective_modifiers() -> None:
+    request = MessageSendRequest(content="Current rate?", document_id=uuid.uuid4())
+    status = _scope_current_authority_status(
+        request,
+        {
+            "modifies_expansion_status": "suppressed_document_scope",
+            "modifies_expansion_records": [
+                {
+                    "relationship_type": "modifies",
+                    "modifier_effective_from": "2026-07-01",
+                    "outcome": "expanded",
+                }
+            ],
+        },
+    )
+    assert status is not None
+    assert status["status"] == "effective_modifier_excluded_by_scope"
+    assert status["excluded_effective_modifier_count"] == 1

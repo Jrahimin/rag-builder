@@ -140,7 +140,7 @@ def _candidate(
 
 
 def _service(**config: object) -> GroundingService:
-    return GroundingService(ChatConfig(candidate_wise_grounding_enabled=True, **config))
+    return GroundingService(ChatConfig(**config))
 
 
 def test_english_query_admits_bangla_evidence_via_translated_lexical() -> None:
@@ -364,7 +364,7 @@ def test_provenance_alone_and_translated_dense_remain_non_admitting() -> None:
 
     assessment = decision.candidate_assessments[0]
     assert decision.sufficient is False
-    assert assessment.translated_dense_shadow_scores == {translated.variant_id: 0.91}
+    assert assessment.translated_dense_scores == {translated.variant_id: 0.91}
     assert assessment.terminal_reason == "no_aligned_independent_signal"
 
 
@@ -647,7 +647,6 @@ def test_captured_production_turn_fails_closed_under_candidate_wise() -> None:
 
     decision = GroundingService(
         ChatConfig(
-            candidate_wise_grounding_enabled=True,
             minimum_reranker_evidence_score=float(
                 turn["thresholds"]["minimum_reranker_evidence_score"]
             ),
@@ -682,7 +681,7 @@ def test_captured_production_turn_fails_closed_under_candidate_wise() -> None:
         < ChatConfig().cross_language_semantic_evidence_score_threshold
     )
     assert rank_one.original_lexical_coverage < turn["thresholds"]["lexical_corroboration_coverage"]
-    assert rank_one.translated_dense_shadow_scores[translated.variant_id] == pytest.approx(
+    assert rank_one.translated_dense_scores[translated.variant_id] == pytest.approx(
         float(payload["candidates"][0]["translated_dense_shadow_score"])
     )
     assert rank_one.reranker_score is not None

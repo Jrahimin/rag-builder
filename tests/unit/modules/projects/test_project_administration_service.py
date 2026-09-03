@@ -197,11 +197,10 @@ async def test_config_revision_uses_optimistic_concurrency() -> None:
     repository.add.assert_not_called()
 
 
-async def test_active_v1_normalization_previews_then_appends_v2_only_on_confirmation() -> None:
+async def test_historical_v1_revision_cannot_be_restored_after_reset() -> None:
     session = AsyncMock()
     repository = AsyncMock()
     repository.add = MagicMock()
-    repository.next_revision_number.return_value = 4
     project = _project(locked=True)
     active = ProjectAIConfigRevision(
         id=uuid.uuid4(),
@@ -218,28 +217,18 @@ async def test_active_v1_normalization_previews_then_appends_v2_only_on_confirma
         reason="Historical",
     )
     project.active_ai_config_revision_id = active.id
-    repository.lock_project.return_value = project
-    repository.get_active.return_value = active
+    repository.get.return_value = active
     service = _service(session, repository, MagicMock(), project.id)
 
-    source, preview = await service.normalization_preview()
+    with pytest.raises(ConflictError) as caught:
+        await service.restore(
+            active.id,
+            expected_active_revision_id=active.id,
+            reason="Do not revive legacy runtime semantics",
+        )
 
-    assert source.id == active.id
-    assert preview.configuration.execution.rerank_mode == "always"
-    assert preview.required_index_action == "none"
+    assert caught.value.code == "legacy_project_config_requires_reset"
     repository.add.assert_not_called()
-
-    normalized = await service.normalize_active_v1(
-        expected_active_revision_id=active.id,
-        reason="Remove legacy live semantics",
-    )
-
-    assert normalized.schema_version == 2
-    assert normalized.source == "super_admin_v1_normalization"
-    assert normalized.restored_from_revision_id == active.id
-    assert project.active_ai_config_revision_id == normalized.id
-    assert active.configuration["retrieval"]["rerank_enabled"] is False
-    repository.add.assert_called_once_with(normalized)
 
 
 async def test_locked_project_cannot_be_reassigned() -> None:

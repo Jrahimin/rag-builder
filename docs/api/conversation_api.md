@@ -12,8 +12,9 @@ Create a conversation (`title` optional; auto-set after first answer). Returns *
 Conversation creation resolves deployment defaults plus active Project policy and stores an
 immutable, secret-free configuration snapshot. Messages reference the active snapshot, so later
 deployment or Project changes do not alter prior conversation behavior. `provider`, `model`,
-`temperature`, and `system_prompt_version` remain deprecated compatibility fields; strict policy
-rejects them with `request_policy_override_forbidden`.
+and `temperature` remain deprecated compatibility fields; strict policy
+rejects them with `request_policy_override_forbidden`. Prompt version is not selectable;
+chat always uses the canonical grounding prompt (`GROUNDED_PROMPT_VERSION`).
 
 Super Admins can explicitly refresh future messages with
 `POST /api/v1/projects/{project_id}/conversations/{conversation_id}/config`, supplying the expected
@@ -26,12 +27,11 @@ active snapshot ID and an audit reason. The operation appends a snapshot rather 
   "title": null,
   "provider": null,
   "model": null,
-  "temperature": null,
-  "system_prompt_version": null
+  "temperature": null
 }
 ```
 
-**Errors:** `unsupported_llm_provider`, `unknown_prompt_version`
+**Errors:** `unsupported_llm_provider`
 
 ## GET `/`
 
@@ -47,7 +47,7 @@ Get conversation by id.
 
 Update title or config snapshot. At least one field required; `title: null` is rejected.
 
-**Errors:** `empty_update`, `unsupported_llm_provider`, `unknown_prompt_version`
+**Errors:** `empty_update`, `unsupported_llm_provider`
 
 ## PATCH `/{conversation_id}/status`
 
@@ -88,6 +88,7 @@ Send a user message; returns grounded assistant answer + citations. Returns **20
     "role": "assistant",
     "content": "...",
     "source_provenance": "knowledge",
+    "notices": [],
     "citations": [
       {
         "source_kind": "knowledge",
@@ -165,7 +166,7 @@ Provider failure or empty web results fail closed. `source_provenance` is always
 `knowledge`, `web`, `knowledge_and_web`, or `none`. Web citations use `source_kind=web` and provide
 `web_url`, `web_title`, `web_retrieved_at`, and `web_provider`; Knowledge location fields are null.
 
-**Errors:** `conversation_not_found`, `conversation_deleted`, `conversation_inactive`, `unknown_prompt_version`, `llm_provider_unavailable` (503)
+**Errors:** `conversation_not_found`, `conversation_deleted`, `conversation_inactive`, `llm_provider_unavailable` (503)
 
 ## POST `/{conversation_id}/messages/stream`
 

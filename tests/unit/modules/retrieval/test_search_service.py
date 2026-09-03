@@ -16,7 +16,7 @@ from app.core.config import (
     RetrievalConfig,
     RetrievalStrategy,
 )
-from app.core.exceptions import ConflictError, ServiceUnavailableError
+from app.core.exceptions import BadRequestError, ConflictError, ServiceUnavailableError
 from app.modules.retrieval.embedding_identity import EmbeddingIdentity
 from app.modules.retrieval.multilingual.planner import (
     BRANCH_ORIGINAL_DENSE,
@@ -117,23 +117,16 @@ def _ready_search(service: SearchService, *, build: MagicMock | None = None) -> 
     return retriever
 
 
-async def test_search_service_uses_request_strategy_override() -> None:
+async def test_search_service_rejects_request_strategy_override() -> None:
     config = RetrievalConfig(strategy=RetrievalStrategy.SEMANTIC)
     service = _search_service(
         retrieval_config=config,
-        ai_policy=AIConfigPolicy(request_override_mode="compatibility"),
+        ai_policy=AIConfigPolicy(),
     )
     _ready_search(service)
 
-    response = await service.search(SearchRequest(query="test", strategy=RetrievalStrategy.HYBRID))
-
-    assert service._build_retriever.call_args.args[0] is RetrievalStrategy.HYBRID
-    assert response.top_k == config.default_top_k
-    assert response.diagnostics.best_semantic_score == 0.72
-    assert response.diagnostics.candidate_trace == response.diagnostics.selected_trace
-    assert response.diagnostics.selected_trace[0]["semantic_score"] == 0.72
-    assert "content" not in response.diagnostics.selected_trace[0]
-    assert response.diagnostics.embedding_identity_status == "matched"
+    with pytest.raises(BadRequestError, match="Project-owned AI policy overrides"):
+        await service.search(SearchRequest(query="test", strategy=RetrievalStrategy.HYBRID))
 
 
 async def test_source_policy_read_failure_fails_closed_only_in_enforce_mode() -> None:
@@ -581,8 +574,11 @@ async def test_public_search_redacts_translated_query_variant_text() -> None:
     assert public_translated.variant_id == "translated:bn"
     assert public_translated.text == ""
     assert public.diagnostics.translated_query is None
+    assert public.diagnostics.candidate_trace == []
+    assert public.diagnostics.selected_trace == []
     assert internal_translated.text == translated_query
     assert internal.diagnostics.translated_query == translated_query
+    assert internal.diagnostics.candidate_trace
 
 
 async def test_search_uses_active_openai_identity_while_target_settings_are_cohere() -> None:
@@ -742,7 +738,6 @@ async def test_search_respects_project_rerank_mode_off() -> None:
 
     context = retriever.retrieve.await_args.args[0]
     assert context.rerank_mode is RerankMode.OFF
-    assert context.rerank_enabled is False
 
 
 async def test_search_keeps_results_when_rerank_falls_back_unavailable() -> None:
@@ -771,3 +766,7 @@ async def test_search_keeps_results_when_rerank_falls_back_unavailable() -> None
     assert response.results
     assert response.diagnostics.rerank_status == "unavailable"
     assert response.diagnostics.embedding_identity_status == "matched"
+    assert response.diagnostics.evidence_funnel["rerank_status"] == "unavailable"
+    assert response.diagnostics.evidence_funnel["hydrated"] == 1
+    assert response.diagnostics.evidence_funnel["deduped"] == 1
+    assert response.diagnostics.evidence_funnel["context_selected"] == 0

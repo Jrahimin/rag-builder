@@ -760,8 +760,8 @@ curl -s -X POST "$APE_BASE_URL/api/v1/projects/$PROJECT_ID/conversations" \
 export CONVERSATION_ID="<data.id from response>"
 ```
 
-Optional at create time: `provider`, `model`, `temperature`, `system_prompt_version`
-— snapshotted for reproducible turns.
+Optional at create time: `provider`, `model`, `temperature`
+— snapshotted for reproducible turns. Prompt version is not selectable.
 
 <details>
 <summary>Sample request &amp; response — create conversation</summary>
@@ -773,8 +773,7 @@ Optional at create time: `provider`, `model`, `temperature`, `system_prompt_vers
   "title": null,
   "provider": null,
   "model": null,
-  "temperature": null,
-  "system_prompt_version": null
+  "temperature": null
 }
 ```
 

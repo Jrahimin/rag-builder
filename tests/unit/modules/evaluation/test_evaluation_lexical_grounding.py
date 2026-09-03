@@ -45,7 +45,7 @@ def _lexical_hit(*, semantic_score: float | None) -> QualityHit:
     )
 
 
-async def test_reranked_lexical_evaluation_is_grounded_without_semantic_score() -> None:
+async def test_reranked_lexical_evaluation_requires_citations_like_chat() -> None:
     hit = _lexical_hit(semantic_score=None)
     answer = await _adapter().answer(
         profile="reranked_lexical",
@@ -55,11 +55,11 @@ async def test_reranked_lexical_evaluation_is_grounded_without_semantic_score() 
 
     assert answer.insufficient_evidence_reason is None
     assert answer.generation_ran is True
-    assert answer.grounded is True
+    assert answer.grounded is False
     assert answer.citation_coverage == 0.0
     assert answer.claims
-    assert answer.claims[0]["evidence"][0]["chunk_id"] == str(hit.chunk_id)
-    assert answer.claims[0]["verification"] == "supported"
+    assert answer.claims[0]["evidence"] == []
+    assert answer.claims[0]["verification"] == "unsupported"
 
 
 async def test_candidate_wise_evaluation_prompts_admitted_evidence_units() -> None:
@@ -125,7 +125,7 @@ async def test_candidate_wise_evaluation_prompts_admitted_evidence_units() -> No
         metadata={"rerank_status": "applied"},
     )
     adapter = GroundedEvaluationAnswerAdapter(
-        settings=Settings(chat={"candidate_wise_grounding_enabled": True}),
+        settings=Settings(),
         llm=EchoLLMProvider(model="echo-test", provider_version="1"),
     )
 

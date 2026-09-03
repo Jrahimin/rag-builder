@@ -115,7 +115,6 @@ APE_OCR__GOOGLE_API_KEY=<google-vision-api-key>
 APE_QUERY_TRANSLATION__ENABLED=false
 APE_RETRIEVAL__AUTO_BUILD_AFTER_PROCESS=true
 APE_AI_POLICY__DEFAULT_RAG_PROFILE=standard
-APE_AI_POLICY__REQUEST_OVERRIDE_MODE=strict
 APE_AI_POLICY__SOURCE_POLICY_DEPLOYMENT_CAP=enforce
 ```
 
@@ -258,11 +257,12 @@ write queues processing or rebuild work by itself.
 | `APE_AI_POLICY__DEFAULT_GENERATION_MODEL_ID` | capability-specific | Default logical generation model. |
 | `APE_AI_POLICY__ALLOWED_GENERATION_MODEL_IDS` | capability-specific | Exact Project model allowlist. |
 | `APE_AI_POLICY__MAX_REQUEST_TOP_K` | `100` | Request safety cap. |
-| `APE_AI_POLICY__REQUEST_OVERRIDE_MODE` | `strict` | Deprecated request override handling. |
 | `APE_AI_POLICY__SOURCE_POLICY_MODE` | `enforce` | Governance default when source metadata exists. |
 | `APE_AI_POLICY__SOURCE_POLICY_DEPLOYMENT_CAP` | `enforce` | Emergency cap; may lower but never raise enforcement. |
 | `APE_RETRIEVAL__MODIFIES_EXPANSION_MODE` | `expand` | Code invariant for canonical Project resolution; retained as a legacy/deployment fallback setting. |
 | `APE_CHAT__EVIDENCE_GATE_MODE` | `enforce` | Evidence-admission rollout/emergency posture. |
+| `APE_CHAT__GROUNDING_MODE` | `strict` | Product grounding assurance; `balanced` high band is calibration-gated and currently off. |
+| `APE_CHAT__STORE_CANDIDATE_TRACE` | `false` | Debug-only per-candidate traces on chat messages. |
 
 ## Safety and reproducibility
 

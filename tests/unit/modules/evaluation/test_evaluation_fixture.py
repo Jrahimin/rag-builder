@@ -73,3 +73,20 @@ def test_ocr_gazette_fixture_uses_rechunk_stable_evidence_and_hard_negatives() -
     )
     assert any(case.query_form == "banglish" for case in dataset.cases)
     assert any(case.hard_negative_evidence_phrases for case in dataset.cases)
+
+
+def test_phase1_baseline_fixture_covers_new_measurement_only_scenarios() -> None:
+    path = Path("tests/fixtures/evaluation/rag_journey_phase1_baselines_v1.json")
+    dataset = EvaluationDatasetCreate.model_validate(json.loads(path.read_text(encoding="utf-8")))
+
+    forms = {case.query_form for case in dataset.cases}
+    assert {
+        "paraphrase_hard_negative",
+        "translation_off",
+        "polarity",
+        "user_parameter_arithmetic",
+        "reranker_unavailable",
+        "multi_turn_follow_up",
+    } <= forms
+    assert any(case.user_parameter_tokens for case in dataset.cases)
+    assert any(case.previous_user_query for case in dataset.cases)

@@ -73,6 +73,14 @@ hybrid query vector, never a reranker score. Promotion requires separate positiv
 calibration, zero accepted-without-relevant-evidence cases, and an explicit conversation snapshot
 with `evidence_score_mode=passage_max`.
 
+## Amendment: passage-max evidence mode retired (2026-09-03)
+
+`EvidenceScoreMode` / `APE_CHAT__EVIDENCE_SCORE_MODE=passage_max` is removed. Bounded-passage
+cosine remains a named retrieval/rescue span (`passage_semantic_score`, `bounded_token_max_v1`)
+and is preferred as the admitted evidence span when present. Admission itself uses candidate-wise
+reranker relevance when a reranker applied, or whole-chunk cosine (plus the cross-language bar)
+when it did not. Whole-chunk cosine retains the `semantic_score` name.
+
 ## Amendment: reranker-primary multilingual evidence (2026-08-18)
 
 When a true multilingual reranker is applied, its calibrated relevance is the candidate-local

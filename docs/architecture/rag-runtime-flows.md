@@ -186,9 +186,10 @@ chunks; `PromptBuilder` formats the versioned prompt and bounded history.
 `max_history_messages=0` means no prior messages.
 
 `GroundingService` records the insufficient-evidence decision before generation.
-In `enforce` mode that decision skips the LLM. In `observe` mode the same score,
-threshold result, and winning chunk are persisted, but selected context still
-reaches the grounded-generation prompt unless retrieval returned nothing.
+In `enforce` mode that decision skips the LLM. In `observe` mode the same admission
+and selected units are persisted, but the veto is disabled: generation still runs from
+ranked candidates when nothing was admitted, and the funnel records `would_have_blocked`.
+Empty retrieval still refuses.
 The service then validates generated segments against the selected source chunks.
 Non-stream responses and SSE `done` events expose the same claim/evidence structure.
 

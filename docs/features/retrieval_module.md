@@ -83,7 +83,10 @@ Query embeddings always follow the **active** index build
    now use the new identity.
 4. **Retrieve and inspect diagnostics.** Search/chat diagnostics report
    `embedding_identity_status=matched` plus provider/model/dimensions/esv,
-   translation status, and rerank status. Translation or reranker failure degrades
+   translation status, rerank status, and a compact `evidence_funnel` with stage
+   counts, loss reasons, grounding path, and terminal outcome. Detailed candidate
+   traces remain available to internal evaluation/debug callers and are omitted
+   from public runtime responses. Translation or reranker failure degrades
    (original-query retrieval; RRF + cosine; `rerank_status=unavailable`). Embedding
    incompatibility does **not** degrade: unlabeled, mixed, or unmatched identity
    returns `409 embedding_identity_unlabeled` / `embedding_identity_incompatible`
@@ -126,6 +129,8 @@ stage stays enabled with the `noop` occupant so fused RRF order is the default r
 provider seam remains in the path. Pass-through skips chunk-text loading and reports
 `rerank_status=passthrough`. Query translation stays off until gazette hard gates pass. A Cohere
 multilingual reranker may replace the noop occupant only after a stored comparison. Search responses
+send the complete bounded `rerank_candidate_window` to the reranker and pass that ranked pool to
+policy, hydration, deduplication, and diversity; `top_k` is applied only after those stages. They
 keep the final ranking `score` separate from `semantic_score` (`1 - cosine_distance`). When rerank
 is applied, calibrated `rerank_relevance_score` is the evidence signal; otherwise only
 `semantic_score` may act as evidence confidence. Diagnostics declare the reranker score scale rather

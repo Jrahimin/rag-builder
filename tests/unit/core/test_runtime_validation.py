@@ -248,11 +248,9 @@ def test_expected_hosted_production_effective_configuration_resolves_exactly() -
             reranker_backend=RerankerBackend.COHERE,
             rerank_mode="always",
             rerank_candidate_window=25,
-            rerank_return_count=8,
         ),
         query_translation={"enabled": False},
         ai_policy={
-            "request_override_mode": "strict",
             "default_generation_model_id": "openai-gpt-5.6-luna",
             "allowed_generation_model_ids": ["openai-gpt-5.6-luna"],
         },
@@ -268,7 +266,6 @@ def test_expected_hosted_production_effective_configuration_resolves_exactly() -
     assert effective.configuration.retrieval.rerank_mode == "always"
     assert effective.configuration.retrieval.reranker_backend == "cohere"
     assert effective.configuration.retrieval.rerank_candidate_window == 25
-    assert effective.configuration.retrieval.rerank_return_count == 8
     assert effective.configuration.retrieval.query_translation_enabled is False
     assert effective.configuration.chat.evidence_gate_mode == "enforce"
     assert effective.configuration.chat.include_citations is True
@@ -281,8 +278,13 @@ def test_expected_hosted_production_effective_configuration_resolves_exactly() -
         "durable_citation_provenance": True,
         "governed_source_policy": True,
         "governed_modifies_expansion": True,
-        "candidate_wise_grounding_invariant": False,
     }
+
+
+def test_capability_profile_accepts_underscore_runtime_alias() -> None:
+    runtime = RuntimeConfig(capability_profile_id="hosted_managed")
+
+    assert runtime.capability_profile_id == "hosted-managed"
 
 
 def test_capability_profile_is_authoritative_over_legacy_runtime_alias() -> None:

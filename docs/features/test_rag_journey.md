@@ -40,7 +40,10 @@ python -m app.cli rag-journey
 
 The runner is a thin operator tool. It does not implement a second RAG stack.
 Cases call the same conversation send-message path, including `as_of`, hard
-`document_id` scope, query-language routing, and retrieval diagnostics.
+`document_id` scope, query-language routing, and retrieval diagnostics. The
+journey enables `store_candidate_trace` on that ChatService only so recall and
+admission can be scored from `retrieval_selected` / `context_selected`. Production
+chat stays compact (`APE_CHAT__STORE_CANDIDATE_TRACE` defaults to `false`).
 
 ## Data flow
 
@@ -120,10 +123,13 @@ Case definitions are in `tests/fixtures/journeys/tax_v1/journey.json`.
 | `document_scope` / `as_of` | Production hard scope and effective date |
 
 Failure stages localize where the production path broke: `retrieval`,
-`admission_grounding`, `context_selection`, `citation`, `generation_refusal`,
-`authority`, `fallback`. `admitted_count > 0` with `context_selected_count == 0`
-is `context_selection` (`authority_context_empty` or `context_selection_empty`),
-not `admission_grounding`.
+`admission_grounding`, `context_selection`, `citation`, `claim_grounding`,
+`generation_refusal`, `authority`, `fallback`. `admitted_count > 0` with
+`context_selected_count == 0` is `context_selection`
+(`authority_context_empty` or `context_selection_empty`), not
+`admission_grounding`. A generated but ungrounded answerable turn is
+`claim_grounding`; `generation_refusal` is a pre-generation refusal or a
+missing expected fact.
 
 Context budgeting follows production `ContextBuilder` rules: admitted
 `EvidenceUnit`s are omitted when they do not fit `context_char_budget`, never
@@ -141,7 +147,9 @@ Harness-only details that must stay in the fixture, not in production thresholds
 - **`current_2027_rebate_and_threshold`.** Requires 2027 evidence for the rebate **and** 2026 evidence for the still-effective threshold.
 - **Mixed-document cases.** Phrase-only 2025 guidance anchors. `mixed_document_bangla_retrieval` sets `content_match_anchors` so grounded/cited evidence from `tax_guidance_2025` whose content contains `VR-2025-APE` (or an adjacent semantic chunk) counts. The code-switched case still uses exact mapped IDs and requires production `query_language_profile` translation diagnostics; it does not require a rewrite to be applied.
 - **Declared 75,000 (`declared_investment_75000`).** The amount is a user-supplied parameter. The case requires the 2026 rebate-rate evidence and the calculated 10% / 7,500 result; it does not require citing the 2024 Rules example amount merely to prove the input. Prohibited tokens still catch substitution of the fixture's 60,000 example.
-- **Hard-scoped current queries.** Must distinguish the scoped document’s historical value from unavailable current authority (`unavailable_within_hard_scope` / `suppressed_document_scope` when MODIFIES expansion is on).
+- **Hard-scoped current queries.** Answers from admitted scoped evidence and must attach
+  `notices.kind=scope_excludes_effective_modifier` when MODIFIES expansion reports
+  `suppressed_document_scope` with an effective modifier (`effective_modifier_excluded_by_scope`).
 
 All factual claims remain independently verified. `grounded` still means every
 factual claim is supported. Citation and provenance requirements are not
@@ -161,7 +169,8 @@ temporal, user-amount, and mixed-document coverage. Total: **21**.
 | Stale 15% correction | `stale_rebate_correction` |
 | Mixed 2026 rate + 2024 Rules evidence / declared amount | `current_rebate_with_savings_evidence_bn`, `declared_investment_75000` |
 | 2027 chain | `current_rebate_2027`, `rebate_as_of_2026_excludes_2027`, `current_2027_rebate_and_threshold`, `current_rebate_2027_banglish`, `unchanged_source_tax_across_chain` |
-| Hard scope + refusal | `hard_document_scope_authority`, `unknown_lunar_rule` |
+| Hard scope + scoped answer with notice | `hard_document_scope_authority` |
+| Unknown / no-answer | `unknown_lunar_rule` |
 | Mixed-language 2025 guidance | `mixed_document_bangla_retrieval`, `mixed_document_code_switched_retrieval` |
 
 ## Production paths the journey exercises
@@ -213,8 +222,8 @@ execution.max_context_chunks
 settings. Query translation stays off unless inherited from
 `APE_QUERY_TRANSLATION__ENABLED` or enabled by V2 `behavior.translation_policy`.
 
-The journey does not itself alter candidate-wise grounding, source policy, or
-MODIFIES expansion. These remain code-owned and conditional on source metadata.
+The journey does not itself alter source policy or MODIFIES expansion. Candidate-wise admission
+is the only reranked path. These remain code-owned and conditional on source metadata.
 
 Deployment settings the product path uses (not journey-only). Values are **code
 defaults**; hosted example files override several:
@@ -225,8 +234,8 @@ defaults**; hosted example files override several:
 | `APE_QUERY_TRANSLATION__MIN_OUTPUT_TOKENS` | `256` | Floor for retrieval-translation output |
 | `APE_CHAT__CROSS_LANGUAGE_SEMANTIC_EVIDENCE_SCORE_THRESHOLD` | `0.30` | Cross-language semantic admit bar |
 | `APE_CHAT__GROUNDING_MODE` | `strict` | Deployment grounding default; V2 can choose strict or balanced assurance |
-| `APE_CHAT__CANDIDATE_WISE_GROUNDING_ENABLED` | `false` | Shadow assessments unless on. Hosted example: `true` |
-| `APE_CHAT__HIGH_CONFIDENCE_RERANKER_EVIDENCE_SCORE` | `0.70` | Balanced near-miss and passage-rescue bar; must exceed the medium reranker bar |
+| `APE_CHAT__HIGH_CONFIDENCE_RERANKER_EVIDENCE_SCORE` | `0.70` | High reranker bar for measurement-gated balanced admission and passage rescue; must exceed the medium reranker bar |
+| `APE_CHAT__STORE_CANDIDATE_TRACE` | `false` | Debug-only per-candidate traces on chat messages. Evaluation rows always keep the detail. The journey runner enables traces in-process for scoring; it does not change this deployment default. |
 | `APE_AI_POLICY__SOURCE_POLICY_MODE` | `enforce` | Code-owned source governance where metadata/relationships exist |
 | `APE_AI_POLICY__SOURCE_POLICY_DEPLOYMENT_CAP` | `enforce` | Maximum allowed source-policy mode; restricts only, never activates |
 | `APE_RETRIEVAL__MODIFIES_EXPANSION_MODE` | `expand` | Code-owned conditional incoming MODIFIES recall |
@@ -236,6 +245,11 @@ defaults**; hosted example files override several:
 Safety flags: `--allow-nonlocal-database`, `--allow-nonlocal-storage`,
 `--keep-project`. Without the allow flags, non-loopback PostgreSQL/MinIO hosts
 fail closed before creating state.
+
+The checked-in `rag_journey_phase1_baselines_v1.json` dataset adds measurement-only
+hard-negative, translation-off, polarity, arithmetic, reranker-unavailable, and
+multi-turn-follow-up cases. These record baselines and do not enable new heuristics;
+the existing 21-case journey manifest remains unchanged.
 
 ## Commands
 

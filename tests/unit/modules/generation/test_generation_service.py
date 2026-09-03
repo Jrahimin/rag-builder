@@ -207,7 +207,7 @@ async def test_chat_web_policy_does_not_enrich_or_block_contextual_generation(
     repository: AsyncMock,
     project_id: uuid.UUID,
 ) -> None:
-    payload = {"chat": {"response_mode": "indexed_then_web"}}
+    payload = {"behavior": {"response_mode": "indexed_then_web"}}
     revision = ConfigRevisionRecord(
         id=uuid.uuid4(),
         revision_number=1,
@@ -219,7 +219,7 @@ async def test_chat_web_policy_does_not_enrich_or_block_contextual_generation(
         repository=repository,
         project_id=project_id,
         llm=StaticLLM('"Thirty days"'),
-        settings=Settings(ai_policy={"request_override_mode": "compatibility"}),
+        settings=Settings(),
         active_revision=revision,
     )
 

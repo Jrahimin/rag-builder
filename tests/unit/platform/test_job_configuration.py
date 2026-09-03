@@ -5,6 +5,10 @@ from __future__ import annotations
 import pytest
 
 from app.core.config import ChunkingStrategy, EmbeddingBackend, Settings
+from app.platform.config.legacy_reset import (
+    reset_job_snapshot_configuration,
+    reset_snapshot_configuration,
+)
 from app.platform.jobs.configuration import (
     apply_job_configuration,
     build_job_configuration,
@@ -145,7 +149,7 @@ def test_apply_job_configuration_keeps_live_esv_when_snapshot_omits_it() -> None
     assert restored.retrieval.embedding_set_version == 3
 
 
-def test_apply_phase1_job_snapshot_adapts_retired_fields_without_drift() -> None:
+def test_one_shot_reset_adapts_retired_job_fields_before_restore() -> None:
     current = Settings()
     snapshot = build_job_configuration(current)
     chunking = {
@@ -158,7 +162,6 @@ def test_apply_phase1_job_snapshot_adapts_retired_fields_without_drift() -> None
     retrieval.pop("auto_build_after_process")
     retrieval.pop("rerank_mode")
     retrieval.pop("rerank_candidate_window")
-    retrieval.pop("rerank_return_count")
     retrieval.pop("modifies_expansion_mode")
     retrieval.update(
         {
@@ -171,20 +174,52 @@ def test_apply_phase1_job_snapshot_adapts_retired_fields_without_drift() -> None
             "language_metadata_schema_version": "legacy-env-version",
         }
     )
-    chat = {**snapshot.quality["chat"], "retrieval_top_k": 10}
+    chat = {
+        **snapshot.quality["chat"],
+        "retrieval_top_k": 10,
+        "candidate_wise_grounding_enabled": True,
+        "evidence_score_mode": "passage_max",
+    }
     llm = {**snapshot.quality["llm"], "provider_version": "legacy"}
     reranker = {**snapshot.quality["reranker"], "provider_version": "legacy"}
-    historical = JobConfiguration(
+    historical_payload = JobConfiguration(
         schema_version=3,
         processing={**snapshot.processing, "chunking": chunking},
         index={"embedding": embedding, "retrieval": retrieval},
         quality={**snapshot.quality, "chat": chat, "llm": llm, "reranker": reranker},
-    )
+    ).model_dump(mode="json")
+    historical = JobConfiguration.model_validate(reset_snapshot_configuration(historical_payload))
 
     restored = apply_job_configuration(current, historical)
 
     assert restored.chunking.strategy is ChunkingStrategy.RECURSIVE_FALLBACK
     assert restored.retrieval.auto_build_after_process is True
     assert restored.retrieval.rerank_candidate_window == 25
-    assert restored.retrieval.rerank_return_count == 8
-    assert restored.retrieval.modifies_expansion_enabled is True
+    assert restored.retrieval.rerank_mode.value == "always"
+    assert restored.retrieval.modifies_expansion_mode.value == "expand"
+    assert not hasattr(restored.chat, "candidate_wise_grounding_enabled")
+    assert not hasattr(restored.chat, "evidence_score_mode")
+
+
+def test_one_shot_reset_backfills_missing_job_sections_from_defaults() -> None:
+    current = Settings()
+    canonical = build_job_configuration(current)
+    legacy_payload = {
+        "schema_version": 1,
+        "index": {
+            "embedding": {
+                **canonical.index["embedding"],
+                "model": "legacy-embed-model",
+            }
+        },
+    }
+
+    reset = JobConfiguration.model_validate(
+        reset_job_snapshot_configuration(current, legacy_payload)
+    )
+
+    assert reset.schema_version == canonical.schema_version
+    assert reset.processing == canonical.processing
+    assert reset.quality == canonical.quality
+    assert reset.index["embedding"]["model"] == "legacy-embed-model"
+    assert reset.index["retrieval"] == canonical.index["retrieval"]

@@ -53,8 +53,8 @@ def _context(*, rerank_enabled: bool = False) -> RetrievalContext:
         rrf_k=60,
         semantic_weight=1.0,
         keyword_weight=1.0,
-        rerank_enabled=rerank_enabled,
-        rerank_top_n=5,
+        rerank_mode=RerankMode.ALWAYS if rerank_enabled else RerankMode.OFF,
+        rerank_candidate_window=5,
         rerank_score_threshold=None,
         score_threshold=None,
         filterable_metadata_keys=(),
@@ -213,6 +213,38 @@ async def test_applied_rerank_copies_relevance_onto_evidence_fields() -> None:
     assert result[0].evidence_score_method == "reranker_relevance"
     assert result[0].metadata["rerank_status"] == "applied"
     retriever._reranker.rerank.assert_awaited_once()
+
+
+async def test_reranker_receives_and_returns_the_full_bounded_window() -> None:
+    chunk_ids = [uuid.uuid4() for _ in range(7)]
+    retriever = HybridRetriever.__new__(HybridRetriever)
+    retriever._content_loader = AsyncMock()
+    retriever._content_loader.load_texts.return_value = {
+        chunk_id: f"candidate-{index}" for index, chunk_id in enumerate(chunk_ids)
+    }
+    retriever._reranker = AsyncMock()
+    retriever._reranker.rerank.return_value = RerankResponse(
+        results=[
+            RerankResult(chunk_id=chunk_id, score=0.9 - index / 100)
+            for index, chunk_id in enumerate(chunk_ids[:5])
+        ],
+        provider="cohere",
+        model="rerank-v4.0-pro",
+        provider_version="1",
+        score_scale=RerankScoreScale.MODEL_RELEVANCE,
+        latency_ms=12,
+    )
+    fused = [
+        CandidateHit(chunk_id, 0.1 - index / 100, CandidateSource.HYBRID)
+        for index, chunk_id in enumerate(chunk_ids)
+    ]
+
+    result = await retriever._rerank_candidates(_context(rerank_enabled=True), fused)
+
+    request = retriever._reranker.rerank.await_args.args[0]
+    assert len(request.candidates) == 5
+    assert request.top_n == 5
+    assert [item.chunk_id for item in result] == chunk_ids[:5]
 
 
 async def test_passage_scoring_keeps_raw_cosine_and_winning_offsets() -> None:

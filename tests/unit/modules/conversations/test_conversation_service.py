@@ -7,6 +7,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from pydantic import ValidationError
+
 from app.core.config import ChatConfig, LLMBackend, LLMConfig, Settings
 from app.core.exceptions import BadRequestError
 from app.models.conversation import Conversation
@@ -53,12 +55,13 @@ def service(
     )
 
 
-async def test_create_rejects_unknown_prompt_version(
+async def test_create_rejects_prompt_version_request_field(
     service: ConversationService,
     conversation_repository: AsyncMock,
 ) -> None:
-    with pytest.raises(BadRequestError, match="Unknown system prompt version"):
-        await service.create(ConversationCreate(system_prompt_version="v999"))
+    del service, conversation_repository
+    with pytest.raises(ValidationError):
+        ConversationCreate(system_prompt_version="v999")  # type: ignore[call-arg]
 
 
 async def test_create_rejects_unknown_provider(
@@ -68,26 +71,13 @@ async def test_create_rejects_unknown_provider(
         await service.create(ConversationCreate(provider="not-a-provider"))
 
 
-async def test_update_rejects_unknown_prompt_version(
+async def test_update_rejects_prompt_version_request_field(
     service: ConversationService,
     conversation_repository: AsyncMock,
 ) -> None:
-    conversation_repository.get_by_id = AsyncMock(
-        return_value=MagicMock(
-            deleted_at=None,
-            is_active=True,
-            title="x",
-            provider="echo",
-            model="m",
-            temperature=0.5,
-            system_prompt_version="v1",
-        )
-    )
-    with pytest.raises(BadRequestError, match="Unknown system prompt version"):
-        await service.update(
-            uuid.uuid4(),
-            ConversationUpdate(system_prompt_version="missing"),
-        )
+    del service, conversation_repository
+    with pytest.raises(ValidationError):
+        ConversationUpdate(system_prompt_version="missing")  # type: ignore[call-arg]
 
 
 async def test_create_persists_conversation(

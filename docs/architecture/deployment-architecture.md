@@ -78,7 +78,12 @@ deployment. The detailed commands and operational checks are in the
 
    Keep embedding dimensions aligned with the pgvector migration (`1024` in
    the standard `text-embedding-3-large` setup); rotate any credential that has been exposed.
-6. **Start the canonical stack.** Run the one normal deployment command:
+6. **Apply the pre-public configuration reset.** Drain API and worker traffic and
+   back up PostgreSQL before upgrading. The migration converts active V1 Project
+   revisions and rewrites retired job/conversation snapshot keys. Confirm the
+   database is at Alembic head and no active V1 revisions remain before starting
+   the upgraded processes.
+7. **Start the canonical stack.** Run the one normal deployment command:
 
    ```bash
    docker compose up -d --build
@@ -87,7 +92,7 @@ deployment. The detailed commands and operational checks are in the
    Compose builds the production images, runs the one-shot migration and
    MinIO bucket bootstrap, then starts the API, Taskiq worker, frontend, and
    infrastructure after their health gates succeed.
-7. **Verify through both boundaries.** Check container state and local API
+8. **Verify through both boundaries.** Check container state and local API
    readiness first, then check the public Cloudflare/Nginx path:
 
    ```bash

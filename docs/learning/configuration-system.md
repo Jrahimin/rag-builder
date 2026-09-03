@@ -39,8 +39,14 @@ code invariants + immutable profiles
 
 Environment variables are primarily for infrastructure, secrets, endpoints, and
 deployment capability. Normal response behavior and RAG execution belong to a
-Project revision. Calibration and invariant switches are code-owned. Historical
-V1 revisions remain readable but cannot be written through the normal API.
+Project revision. Calibration and invariant switches are code-owned. Runtime
+resolution is V2-only; historical V1 rows and retired snapshot keys must be
+converted by the one-shot reset before the upgraded API or workers start.
+
+For the pre-public cutover, stop API and worker traffic, back up PostgreSQL, run
+`alembic upgrade head`, and verify the reset report has
+`active_v1_remaining=0` before starting the new processes. The equivalent
+operator preview is `python -m app.cli config reset-legacy --dry-run`.
 
 ## Find the stage before changing the knob
 
