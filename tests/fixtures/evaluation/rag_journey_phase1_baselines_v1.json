@@ -1,0 +1,59 @@
+{
+  "name": "rag-journey-phase1-baselines",
+  "version": "1.0.0",
+  "schema_version": 1,
+  "description": "Phase 1 measurement-only baselines. These cases must not introduce new retrieval or grounding heuristics.",
+  "cases": [
+    {
+      "key": "hard-negative-overlapping-refund",
+      "kind": "no_answer",
+      "query": "What refund applies to lunar purchases after thirty days?",
+      "expected_no_answer": true,
+      "hard_negative_evidence_phrases": ["refund", "thirty days"],
+      "query_form": "paraphrase_hard_negative"
+    },
+    {
+      "key": "bn-to-en-translation-off",
+      "kind": "cross_lingual",
+      "query": "গ্রাহক কত দিনের মধ্যে রিফান্ড চাইতে পারেন?",
+      "query_language": "bn",
+      "expected_evidence_language": "en",
+      "relevant_chunk_ids": ["30000000-0000-0000-0000-000000000001"],
+      "query_form": "translation_off"
+    },
+    {
+      "key": "polarity-unchanged-rate",
+      "kind": "citation",
+      "query": "Did the source-tax rate remain unchanged?",
+      "relevant_evidence_phrases": ["remains 10%"],
+      "expected_answer_tokens": ["10%"],
+      "query_form": "polarity"
+    },
+    {
+      "key": "user-parameter-arithmetic",
+      "kind": "citation",
+      "query": "At a 10% rebate rate, what rebate applies to my BDT 75,000 investment?",
+      "relevant_evidence_phrases": ["10% of eligible investment"],
+      "expected_answer_tokens": ["7500"],
+      "user_parameter_tokens": ["75000"],
+      "query_form": "user_parameter_arithmetic"
+    },
+    {
+      "key": "reranker-down-answerable",
+      "kind": "citation",
+      "query": "What is the individual tax-free threshold?",
+      "relevant_evidence_phrases": ["applicable threshold"],
+      "expected_answer_tokens": ["400000"],
+      "query_form": "reranker_unavailable"
+    },
+    {
+      "key": "multi-turn-follow-up-fragment",
+      "kind": "citation",
+      "query": "And for 2027?",
+      "previous_user_query": "What investment rebate rate applied in 2026?",
+      "relevant_evidence_phrases": ["12% of eligible investment"],
+      "expected_answer_tokens": ["12%"],
+      "query_form": "multi_turn_follow_up"
+    }
+  ]
+}

@@ -25,6 +25,7 @@ guides in this folder elaborate on implementation.
 | [ADR-017](./017-bangla-ocr-google-vision.md) | Google Vision as the opt-in Bangla OCR backend | Accepted |
 | [ADR-018](./018-multilingual-retrieval-v1.md) | Query-only translation, language-routed hybrid branches, Cohere rerank, reranker-primary evidence | Accepted |
 | [ADR-019](./019-grounded-response-modes.md) | Deterministic indexed/web chat workflows and caller-context generation boundary | Accepted |
+| [ADR-020](./020-authority-notices-canonical-prompt.md) | Authority redaction before admission, structured notices, canonical grounding prompt | Accepted |
 
 ## When to add an ADR
 

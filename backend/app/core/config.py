@@ -19,6 +19,7 @@ Access settings through :func:`get_settings`, which caches a single
 from __future__ import annotations
 
 import os
+import warnings
 from enum import StrEnum
 from functools import lru_cache
 from pathlib import Path
@@ -116,6 +117,21 @@ class RuntimeProfile(StrEnum):
     PRIVATE_OLLAMA = "private_ollama"
 
 
+_CAPABILITY_PROFILE_IDS = frozenset(
+    {
+        "development",
+        "hosted-managed",
+        "hosted-openai",
+        "private-ollama",
+    }
+)
+_CAPABILITY_PROFILE_ALIASES = {
+    "hosted_managed": "hosted-managed",
+    "hosted_openai": "hosted-openai",
+    "private_ollama": "private-ollama",
+}
+
+
 class RuntimeConfig(BaseModel):
     """Production preflight and worker-observability settings."""
 
@@ -130,18 +146,19 @@ class RuntimeConfig(BaseModel):
     worker_heartbeat_seconds: int = Field(default=10, ge=1, le=300)
     worker_stale_seconds: int = Field(default=35, ge=3, le=900)
 
+    @field_validator("capability_profile_id", mode="before")
+    @classmethod
+    def _normalize_capability_profile_id(cls, value: object) -> object:
+        if isinstance(value, str):
+            return _CAPABILITY_PROFILE_ALIASES.get(value, value)
+        return value
+
     @model_validator(mode="after")
     def _validate_worker_timing(self) -> RuntimeConfig:
         if self.worker_stale_seconds <= self.worker_heartbeat_seconds:
             msg = "runtime.worker_stale_seconds must exceed worker_heartbeat_seconds"
             raise ValueError(msg)
-        if self.capability_profile_id not in {
-            None,
-            "development",
-            "hosted-managed",
-            "hosted-openai",
-            "private-ollama",
-        }:
+        if self.capability_profile_id not in {None, *_CAPABILITY_PROFILE_IDS}:
             raise ValueError("runtime.capability_profile_id is not registered")
         return self
 
@@ -483,13 +500,6 @@ class RerankMode(StrEnum):
     OFF = "off"
 
 
-class EvidenceScoreMode(StrEnum):
-    """Calibrated semantic score used by the pre-generation evidence gate."""
-
-    WHOLE_CHUNK = "whole_chunk"
-    PASSAGE_MAX = "passage_max"
-
-
 class EvidenceGateMode(StrEnum):
     """Whether a failed pre-generation evidence score may block the LLM."""
 
@@ -502,9 +512,10 @@ class GroundingMode(StrEnum):
 
     ``strict`` keeps the high-assurance rule: calibrated reranker relevance still
     requires a separate semantic, lexical, or cross-language signal.
-    ``balanced`` may admit a clearly high-confidence reranker candidate whose
-    independent corroboration only narrowly misses, without lowering the
-    medium-confidence bars or admitting low-confidence hits.
+    ``balanced`` uses the same medium-confidence corroboration band. A high
+    reranker band may admit a calibrated, safely spanned candidate without that
+    corroboration only when the active identity's high band is measurement-gated
+    on. Deployment default remains ``strict``.
     """
 
     STRICT = "strict"
@@ -554,7 +565,6 @@ class RetrievalConfig(BaseModel):
     # Always rerank after RRF unless a canonical Project selects cross-language.
     rerank_mode: RerankMode = RerankMode.ALWAYS
     rerank_candidate_window: int = Field(default=25, ge=1, le=100)
-    rerank_return_count: int = Field(default=8, ge=1, le=100)
     rerank_score_threshold: float | None = Field(default=None, ge=0.0, le=1.0)
     reranker_backend: RerankerBackend = RerankerBackend.NOOP
     fts_regconfig: str = "simple"
@@ -569,67 +579,6 @@ class RetrievalConfig(BaseModel):
     modifies_expansion_mode: ModifiesExpansionMode = ModifiesExpansionMode.EXPAND
     max_related_sources: int = Field(default=8, ge=1, le=8)
     max_relationship_candidates: int = Field(default=20, ge=1, le=20)
-
-    @model_validator(mode="before")
-    @classmethod
-    def reject_retired_inputs(cls, value: object) -> object:
-        if not isinstance(value, dict):
-            return value
-        retired = sorted(
-            set(value)
-            & {
-                "auto_embed",
-                "auto_index",
-                "rerank_enabled",
-                "rerank_top_n",
-                "rerank_return_n",
-                "modifies_expansion_enabled",
-                "language_metadata_schema_version",
-            }
-        )
-        if retired:
-            raise ValueError(
-                "retired retrieval inputs: "
-                + ", ".join(retired)
-                + "; use auto_build_after_process, rerank_mode/candidate_window/"
-                "return_count, and modifies_expansion_mode; language metadata schema identity "
-                "is code-owned"
-            )
-        return value
-
-    def resolved_modifies_expansion_mode(self) -> ModifiesExpansionMode:
-        """Return the canonical internal relationship-governance mode."""
-        return self.modifies_expansion_mode
-
-    @property
-    def rerank_enabled(self) -> bool:
-        """Derived compatibility view for retrieval consumers, never an input."""
-        return self.rerank_mode is not RerankMode.OFF
-
-    @property
-    def rerank_top_n(self) -> int:
-        """Historical consumer accessor; the canonical candidate window owns this depth."""
-        return self.rerank_candidate_window
-
-    @property
-    def rerank_return_n(self) -> int:
-        """Historical consumer accessor for the canonical return count."""
-        return self.rerank_return_count
-
-    @property
-    def modifies_expansion_enabled(self) -> bool:
-        """Derived compatibility view for relationship-aware retrieval consumers."""
-        return self.modifies_expansion_mode is ModifiesExpansionMode.EXPAND
-
-    @property
-    def auto_embed(self) -> bool:
-        """Historical internal accessor while call sites migrate to the canonical name."""
-        return self.auto_build_after_process
-
-    @property
-    def auto_index(self) -> bool:
-        """Historical internal accessor while call sites migrate to the canonical name."""
-        return self.auto_build_after_process
 
     @field_validator("filterable_metadata_keys", mode="before")
     @classmethod
@@ -647,8 +596,6 @@ class RetrievalConfig(BaseModel):
             raise ValueError("passage_overlap_tokens must be smaller than passage_window_tokens")
         if self.passage_min_tokens > self.passage_window_tokens:
             raise ValueError("passage_min_tokens must not exceed passage_window_tokens")
-        if self.rerank_return_count > self.rerank_candidate_window:
-            raise ValueError("rerank_return_count must not exceed rerank_candidate_window")
         return self
 
 
@@ -833,6 +780,14 @@ class AuthConfig(BaseModel):
     admin_cookie_domain: str | None = None
 
 
+_RETIRED_CHAT_KEYS = frozenset(
+    {
+        "candidate_wise_grounding_enabled",
+        "evidence_score_mode",
+    }
+)
+
+
 class ChatConfig(BaseModel):
     """Chat / RAG orchestration defaults.
 
@@ -849,10 +804,10 @@ class ChatConfig(BaseModel):
     max_context_chunks: int = Field(default=8, ge=1, le=50)
     context_char_budget: int = Field(default=12_000, ge=500, le=200_000)
     max_history_messages: int = Field(default=20, ge=0, le=200)
-    system_prompt_version: str = "v5"
+    # Compatibility leaf only. Assistant messages stamp GROUNDED_PROMPT_VERSION.
+    system_prompt_version: str = "v6"
     include_citations: bool = True
     citation_excerpt_max_chars: int = Field(default=200, ge=0, le=2000)
-    evidence_score_mode: EvidenceScoreMode = EvidenceScoreMode.WHOLE_CHUNK
     evidence_gate_mode: EvidenceGateMode = EvidenceGateMode.ENFORCE
     minimum_semantic_evidence_score: float = Field(default=0.35, ge=0.0, le=1.0)
     # Below the primary bar so same-language OCR/table hits that land just under
@@ -864,13 +819,16 @@ class ChatConfig(BaseModel):
     cross_language_semantic_evidence_score_threshold: float = Field(default=0.30, ge=0.0, le=1.0)
     # Provider-specific calibration. Keep observe until this pair is measured.
     minimum_reranker_evidence_score: float = Field(default=0.40, ge=0.0, le=1.0)
-    # Clearly-high reranker bar used only by balanced near-miss admission and
-    # passage-scoring rescue. Must stay strictly above the medium-confidence bar.
+    # Clearly-high reranker bar used only by the measurement-gated balanced high
+    # band and by passage-scoring rescue. Must stay strictly above the medium bar.
     high_confidence_reranker_evidence_score: float = Field(default=0.70, ge=0.0, le=1.0)
+    # Off until a hard-negative calibration run shows hard_negative_max below this
+    # identity's high bar with a positive observed margin.
+    high_confidence_band_enabled: bool = False
     grounding_mode: GroundingMode = GroundingMode.STRICT
-    # Compute candidate-wise assessments in all deployments; this switch controls
-    # whether admitted evidence units affect generation or remain shadow-only.
-    candidate_wise_grounding_enabled: bool = False
+    # Persist per-candidate retrieval/admission traces on chat messages. Eval rows
+    # always keep the detail; production chat stays compact unless this is on.
+    store_candidate_trace: bool = False
     minimum_evidence_score: float | None = Field(default=None, deprecated=True)
     minimum_query_token_coverage: float | None = Field(default=None, deprecated=True)
     minimum_claim_token_coverage: float = Field(default=0.35, ge=0.0, le=1.0)
@@ -881,6 +839,26 @@ class ChatConfig(BaseModel):
         "confidently."
     )
     auto_title_max_chars: int = Field(default=80, ge=10, le=255)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _drop_retired_chat_keys(cls, value: object) -> object:
+        """Keep older .env files bootable after the pre-public config reset."""
+        if not isinstance(value, dict):
+            return value
+        retired = _RETIRED_CHAT_KEYS.intersection(value)
+        if not retired:
+            return value
+        cleaned = dict(value)
+        for key in retired:
+            cleaned.pop(key, None)
+        warnings.warn(
+            "Ignored retired chat settings "
+            f"{sorted(retired)}; they have no runtime effect after the RAG config reset.",
+            UserWarning,
+            stacklevel=2,
+        )
+        return cleaned
 
     @model_validator(mode="after")
     def reject_deprecated_evidence_thresholds(self) -> ChatConfig:
@@ -960,13 +938,6 @@ class EvaluationConfig(BaseModel):
         return value
 
 
-class RequestOverrideMode(StrEnum):
-    """Migration policy for deprecated external AI-policy overrides."""
-
-    COMPATIBILITY = "compatibility"
-    STRICT = "strict"
-
-
 class SourcePolicyMode(StrEnum):
     """Deployment/code source-governance mode.
 
@@ -994,7 +965,6 @@ class AIConfigPolicy(BaseModel):
     # Query-time execution defaults are profile-led. Raw retrieval/chat tuning
     # fields are consulted only when this is explicitly ``custom``.
     default_rag_profile: Literal["standard", "quality", "economy", "custom"] = "standard"
-    request_override_mode: RequestOverrideMode = RequestOverrideMode.STRICT
     max_request_top_k: int = Field(default=100, ge=1, le=100)
     source_policy_mode: SourcePolicyMode = SourcePolicyMode.ENFORCE
     source_policy_deployment_cap: SourcePolicyDeploymentCap = SourcePolicyDeploymentCap.ENFORCE
@@ -1005,6 +975,21 @@ class AIConfigPolicy(BaseModel):
     enabled_retrieval_strategies: Annotated[list[RetrievalStrategy], NoDecode] = Field(
         default_factory=lambda: [RetrievalStrategy.SEMANTIC, RetrievalStrategy.HYBRID]
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _drop_retired_request_override_mode(cls, value: object) -> object:
+        if not isinstance(value, dict) or "request_override_mode" not in value:
+            return value
+        cleaned = dict(value)
+        cleaned.pop("request_override_mode", None)
+        warnings.warn(
+            "Ignored retired APE_AI_POLICY__REQUEST_OVERRIDE_MODE; "
+            "request overrides are no longer a runtime policy.",
+            UserWarning,
+            stacklevel=2,
+        )
+        return cleaned
 
     @field_validator("enabled_retrieval_strategies", "allowed_generation_model_ids", mode="before")
     @classmethod

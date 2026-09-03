@@ -8,7 +8,7 @@ from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from time import perf_counter
 
-from app.core.config import MalwareScannerBackend, OcrBackend, Settings
+from app.core.config import MalwareScannerBackend, OcrBackend, RerankMode, Settings
 from app.core.logging import get_logger
 from app.platform.db.session import Database, PgVectorUnavailableError
 from app.platform.infra.connectivity.redis import RedisConnectivity
@@ -209,7 +209,7 @@ class StartupPreflightService:
         )
 
     async def _check_reranker(self) -> None:
-        if not self._settings.retrieval.rerank_enabled:
+        if self._settings.retrieval.rerank_mode is RerankMode.OFF:
             return
         provider = create_reranker_provider(self._settings)
         await provider.rerank(

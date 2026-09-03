@@ -2098,48 +2098,6 @@
         "title": "ApiResponse[PaginatedResult[WebhookEndpointResponse]]",
         "type": "object"
       },
-      "ApiResponse_ProjectAIConfigNormalizationPreview_": {
-        "properties": {
-          "data": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/ProjectAIConfigNormalizationPreview"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "message": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Message"
-          },
-          "meta": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/ResponseMeta"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "success": {
-            "default": true,
-            "title": "Success",
-            "type": "boolean"
-          }
-        },
-        "title": "ApiResponse[ProjectAIConfigNormalizationPreview]",
-        "type": "object"
-      },
       "ApiResponse_ProjectAIConfigRevisionResponse_": {
         "properties": {
           "data": {
@@ -4623,19 +4581,6 @@
             "deprecated": true,
             "title": "Provider"
           },
-          "system_prompt_version": {
-            "anyOf": [
-              {
-                "maxLength": 32,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "deprecated": true,
-            "title": "System Prompt Version"
-          },
           "temperature": {
             "anyOf": [
               {
@@ -4845,19 +4790,6 @@
             ],
             "deprecated": true,
             "title": "Provider"
-          },
-          "system_prompt_version": {
-            "anyOf": [
-              {
-                "maxLength": 32,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "deprecated": true,
-            "title": "System Prompt Version"
           },
           "temperature": {
             "anyOf": [
@@ -5286,11 +5218,6 @@
       },
       "EffectiveChatPolicy": {
         "properties": {
-          "candidate_wise_grounding_enabled": {
-            "default": false,
-            "title": "Candidate Wise Grounding Enabled",
-            "type": "boolean"
-          },
           "citation_excerpt_max_chars": {
             "title": "Citation Excerpt Max Chars",
             "type": "integer"
@@ -5308,13 +5235,14 @@
             "$ref": "#/components/schemas/EvidenceGateMode",
             "default": "enforce"
           },
-          "evidence_score_mode": {
-            "$ref": "#/components/schemas/EvidenceScoreMode",
-            "default": "whole_chunk"
-          },
           "grounding_mode": {
             "$ref": "#/components/schemas/GroundingMode",
             "default": "strict"
+          },
+          "high_confidence_band_enabled": {
+            "default": false,
+            "title": "High Confidence Band Enabled",
+            "type": "boolean"
           },
           "high_confidence_reranker_evidence_score": {
             "default": 0.7,
@@ -5636,11 +5564,6 @@
             ],
             "title": "Min Ocr Confidence"
           },
-          "modifies_expansion_enabled": {
-            "default": false,
-            "title": "Modifies Expansion Enabled",
-            "type": "boolean"
-          },
           "modifies_expansion_mode": {
             "$ref": "#/components/schemas/ModifiesExpansionMode",
             "default": "off"
@@ -5708,23 +5631,9 @@
             "title": "Rerank Candidate Window",
             "type": "integer"
           },
-          "rerank_enabled": {
-            "title": "Rerank Enabled",
-            "type": "boolean"
-          },
           "rerank_mode": {
             "$ref": "#/components/schemas/RerankMode",
             "default": "always"
-          },
-          "rerank_return_count": {
-            "default": 8,
-            "title": "Rerank Return Count",
-            "type": "integer"
-          },
-          "rerank_return_n": {
-            "default": 8,
-            "title": "Rerank Return N",
-            "type": "integer"
           },
           "rerank_score_threshold": {
             "anyOf": [
@@ -5736,10 +5645,6 @@
               }
             ],
             "title": "Rerank Score Threshold"
-          },
-          "rerank_top_n": {
-            "title": "Rerank Top N",
-            "type": "integer"
           },
           "reranker_backend": {
             "anyOf": [
@@ -5803,8 +5708,6 @@
         "required": [
           "strategy",
           "top_k",
-          "rerank_enabled",
-          "rerank_top_n",
           "rerank_score_threshold",
           "semantic_evidence_score_threshold"
         ],
@@ -5929,6 +5832,19 @@
             "title": "Metadata Filter",
             "type": "object"
           },
+          "previous_user_query": {
+            "anyOf": [
+              {
+                "maxLength": 32000,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous User Query"
+          },
           "query": {
             "maxLength": 32000,
             "minLength": 1,
@@ -5982,6 +5898,13 @@
               "type": "string"
             },
             "title": "Relevant Evidence Phrases",
+            "type": "array"
+          },
+          "user_parameter_tokens": {
+            "items": {
+              "type": "string"
+            },
+            "title": "User Parameter Tokens",
             "type": "array"
           }
         },
@@ -6384,15 +6307,6 @@
           "observe"
         ],
         "title": "EvidenceGateMode",
-        "type": "string"
-      },
-      "EvidenceScoreMode": {
-        "description": "Calibrated semantic score used by the pre-generation evidence gate.",
-        "enum": [
-          "whole_chunk",
-          "passage_max"
-        ],
-        "title": "EvidenceScoreMode",
         "type": "string"
       },
       "GenerationCreateRequest": {
@@ -6890,7 +6804,7 @@
         "type": "object"
       },
       "GroundingMode": {
-        "description": "How independently a reranker hit must be corroborated before admission.\n\n``strict`` keeps the high-assurance rule: calibrated reranker relevance still\nrequires a separate semantic, lexical, or cross-language signal.\n``balanced`` may admit a clearly high-confidence reranker candidate whose\nindependent corroboration only narrowly misses, without lowering the\nmedium-confidence bars or admitting low-confidence hits.",
+        "description": "How independently a reranker hit must be corroborated before admission.\n\n``strict`` keeps the high-assurance rule: calibrated reranker relevance still\nrequires a separate semantic, lexical, or cross-language signal.\n``balanced`` uses the same medium-confidence corroboration band. A high\nreranker band may admit a calibrated, safely spanned candidate without that\ncorroboration only when the active identity's high band is measurement-gated\non. Deployment default remains ``strict``.",
         "enum": [
           "strict",
           "balanced"
@@ -7191,8 +7105,6 @@
         "enum": [
           "no_retrieval_results",
           "below_relevance_threshold",
-          "low_query_evidence_coverage",
-          "authority_context_empty",
           "context_selection_empty"
         ],
         "title": "InsufficientEvidenceReason",
@@ -7200,11 +7112,6 @@
       },
       "InvariantState": {
         "properties": {
-          "candidate_wise_grounding_invariant": {
-            "default": false,
-            "title": "Candidate Wise Grounding Invariant",
-            "type": "boolean"
-          },
           "content_hash_deduplication": {
             "anyOf": [
               {
@@ -8067,6 +7974,13 @@
             ],
             "title": "Model"
           },
+          "notices": {
+            "items": {
+              "$ref": "#/components/schemas/NoticeSchema"
+            },
+            "title": "Notices",
+            "type": "array"
+          },
           "output_tokens": {
             "anyOf": [
               {
@@ -8296,6 +8210,35 @@
         ],
         "title": "ModifiesExpansionMode",
         "type": "string"
+      },
+      "NoticeSchema": {
+        "description": "One system-rendered notice attached to an assistant message.",
+        "properties": {
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "language": {
+            "title": "Language",
+            "type": "string"
+          },
+          "source": {
+            "additionalProperties": true,
+            "title": "Source",
+            "type": "object"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "language",
+          "text"
+        ],
+        "title": "NoticeSchema",
+        "type": "object"
       },
       "OperatorOverview": {
         "properties": {
@@ -8835,35 +8778,6 @@
         "title": "ProjectAIConfig",
         "type": "object"
       },
-      "ProjectAIConfigNormalizationPreview": {
-        "properties": {
-          "project_id": {
-            "format": "uuid",
-            "title": "Project Id",
-            "type": "string"
-          },
-          "result": {
-            "$ref": "#/components/schemas/V1NormalizationResult"
-          },
-          "source_revision_id": {
-            "format": "uuid",
-            "title": "Source Revision Id",
-            "type": "string"
-          },
-          "source_schema_version": {
-            "title": "Source Schema Version",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "project_id",
-          "source_revision_id",
-          "source_schema_version",
-          "result"
-        ],
-        "title": "ProjectAIConfigNormalizationPreview",
-        "type": "object"
-      },
       "ProjectAIConfigNormalizeConfirm": {
         "additionalProperties": false,
         "properties": {
@@ -8955,15 +8869,7 @@
       "ProjectAIConfigRevisionResponse": {
         "properties": {
           "configuration": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/ProjectAIConfig"
-              },
-              {
-                "$ref": "#/components/schemas/ProjectAIConfigV1"
-              }
-            ],
-            "title": "Configuration"
+            "$ref": "#/components/schemas/ProjectAIConfig"
           },
           "configuration_hash": {
             "title": "Configuration Hash",
@@ -9031,72 +8937,6 @@
           "created_at"
         ],
         "title": "ProjectAIConfigRevisionResponse",
-        "type": "object"
-      },
-      "ProjectAIConfigV1": {
-        "additionalProperties": false,
-        "description": "Historical sparse payload retained byte-for-byte and readable indefinitely.",
-        "properties": {
-          "chat": {
-            "$ref": "#/components/schemas/ProjectChatPolicy"
-          },
-          "domain_instructions": {
-            "anyOf": [
-              {
-                "maxLength": 20000,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Domain Instructions"
-          },
-          "llm": {
-            "$ref": "#/components/schemas/ProjectLLMPolicy"
-          },
-          "prompt_profile": {
-            "anyOf": [
-              {
-                "maxLength": 64,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Prompt Profile"
-          },
-          "prompt_version": {
-            "anyOf": [
-              {
-                "maxLength": 64,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Prompt Version"
-          },
-          "retrieval": {
-            "$ref": "#/components/schemas/ProjectRetrievalPolicy"
-          },
-          "source_policy_mode": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/SourcePolicyMode"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "web_search": {
-            "$ref": "#/components/schemas/ProjectWebSearchPolicy"
-          }
-        },
-        "title": "ProjectAIConfigV1",
         "type": "object"
       },
       "ProjectAIProfileNormalizationPreview": {
@@ -9183,205 +9023,6 @@
           }
         },
         "title": "ProjectBehaviorV2",
-        "type": "object"
-      },
-      "ProjectChatPolicy": {
-        "additionalProperties": false,
-        "properties": {
-          "candidate_wise_grounding_enabled": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Candidate Wise Grounding Enabled"
-          },
-          "citation_excerpt_max_chars": {
-            "anyOf": [
-              {
-                "maximum": 2000.0,
-                "minimum": 0.0,
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Citation Excerpt Max Chars"
-          },
-          "context_char_budget": {
-            "anyOf": [
-              {
-                "maximum": 200000.0,
-                "minimum": 500.0,
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Context Char Budget"
-          },
-          "cross_language_semantic_evidence_score_threshold": {
-            "anyOf": [
-              {
-                "maximum": 1.0,
-                "minimum": 0.0,
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Cross Language Semantic Evidence Score Threshold"
-          },
-          "evidence_gate_mode": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/EvidenceGateMode"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "evidence_score_mode": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/EvidenceScoreMode"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "grounding_mode": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/GroundingMode"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "high_confidence_reranker_evidence_score": {
-            "anyOf": [
-              {
-                "maximum": 1.0,
-                "minimum": 0.0,
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "High Confidence Reranker Evidence Score"
-          },
-          "include_citations": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Include Citations"
-          },
-          "lexical_corroboration_floor_score": {
-            "anyOf": [
-              {
-                "maximum": 1.0,
-                "minimum": 0.0,
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Lexical Corroboration Floor Score"
-          },
-          "max_context_chunks": {
-            "anyOf": [
-              {
-                "maximum": 50.0,
-                "minimum": 1.0,
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Max Context Chunks"
-          },
-          "max_history_messages": {
-            "anyOf": [
-              {
-                "maximum": 200.0,
-                "minimum": 0.0,
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Max History Messages"
-          },
-          "minimum_claim_token_coverage": {
-            "anyOf": [
-              {
-                "maximum": 1.0,
-                "minimum": 0.0,
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Minimum Claim Token Coverage"
-          },
-          "minimum_query_token_coverage": {
-            "anyOf": [
-              {
-                "maximum": 1.0,
-                "minimum": 0.0,
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Minimum Query Token Coverage"
-          },
-          "minimum_reranker_evidence_score": {
-            "anyOf": [
-              {
-                "maximum": 1.0,
-                "minimum": 0.0,
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Minimum Reranker Evidence Score"
-          },
-          "response_mode": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/ResponseMode"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          }
-        },
-        "title": "ProjectChatPolicy",
         "type": "object"
       },
       "ProjectCreate": {
@@ -9674,19 +9315,6 @@
               }
             ]
           },
-          "rerank_return_count": {
-            "anyOf": [
-              {
-                "maximum": 100.0,
-                "minimum": 1.0,
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Rerank Return Count"
-          },
           "rerank_score_threshold": {
             "anyOf": [
               {
@@ -9767,62 +9395,6 @@
           }
         },
         "title": "ProjectExecutionV2",
-        "type": "object"
-      },
-      "ProjectLLMPolicy": {
-        "additionalProperties": false,
-        "properties": {
-          "max_tokens": {
-            "anyOf": [
-              {
-                "maximum": 128000.0,
-                "minimum": 1.0,
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Max Tokens"
-          },
-          "model": {
-            "anyOf": [
-              {
-                "maxLength": 128,
-                "minLength": 1,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Model"
-          },
-          "provider": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/LLMBackend"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "temperature": {
-            "anyOf": [
-              {
-                "maximum": 2.0,
-                "minimum": 0.0,
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Temperature"
-          }
-        },
-        "title": "ProjectLLMPolicy",
         "type": "object"
       },
       "ProjectOwnershipChange": {
@@ -10059,372 +9631,6 @@
         "title": "ProjectResponse",
         "type": "object"
       },
-      "ProjectRetrievalPolicy": {
-        "additionalProperties": false,
-        "description": "Sparse retrieval overrides. ``None`` inherits the deployment default.\n\n``rerank_mode`` is the operator-facing control (Always / Cross-language / Off).\nLegacy ``rerank_enabled`` still maps true\u2192always and false\u2192off when mode is omitted.",
-        "properties": {
-          "deduplicate_by_content_hash": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Deduplicate By Content Hash"
-          },
-          "evidence_score_threshold": {
-            "anyOf": [
-              {
-                "maximum": 1.0,
-                "minimum": 0.0,
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Evidence Score Threshold"
-          },
-          "hnsw_ef_search": {
-            "anyOf": [
-              {
-                "maximum": 1000.0,
-                "minimum": 1.0,
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Hnsw Ef Search"
-          },
-          "keyword_candidate_top_k": {
-            "anyOf": [
-              {
-                "maximum": 200.0,
-                "minimum": 1.0,
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Keyword Candidate Top K"
-          },
-          "keyword_weight": {
-            "anyOf": [
-              {
-                "maximum": 10.0,
-                "minimum": 0.0,
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Keyword Weight"
-          },
-          "max_chunks_per_document": {
-            "anyOf": [
-              {
-                "maximum": 100.0,
-                "minimum": 1.0,
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Max Chunks Per Document"
-          },
-          "max_chunks_per_section": {
-            "anyOf": [
-              {
-                "maximum": 100.0,
-                "minimum": 1.0,
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Max Chunks Per Section"
-          },
-          "max_related_sources": {
-            "anyOf": [
-              {
-                "maximum": 8.0,
-                "minimum": 1.0,
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Max Related Sources"
-          },
-          "max_relationship_candidates": {
-            "anyOf": [
-              {
-                "maximum": 20.0,
-                "minimum": 1.0,
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Max Relationship Candidates"
-          },
-          "min_ocr_confidence": {
-            "anyOf": [
-              {
-                "maximum": 1.0,
-                "minimum": 0.0,
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Min Ocr Confidence"
-          },
-          "modifies_expansion_enabled": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Modifies Expansion Enabled"
-          },
-          "modifies_expansion_mode": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/ModifiesExpansionMode"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "passage_min_tokens": {
-            "anyOf": [
-              {
-                "maximum": 256.0,
-                "minimum": 8.0,
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Passage Min Tokens"
-          },
-          "passage_overlap_tokens": {
-            "anyOf": [
-              {
-                "maximum": 256.0,
-                "minimum": 0.0,
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Passage Overlap Tokens"
-          },
-          "passage_scoring_enabled": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Passage Scoring Enabled"
-          },
-          "passage_window_tokens": {
-            "anyOf": [
-              {
-                "maximum": 512.0,
-                "minimum": 16.0,
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Passage Window Tokens"
-          },
-          "query_translation_enabled": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Query Translation Enabled"
-          },
-          "rerank_candidate_window": {
-            "anyOf": [
-              {
-                "maximum": 100.0,
-                "minimum": 1.0,
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Rerank Candidate Window"
-          },
-          "rerank_enabled": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Rerank Enabled"
-          },
-          "rerank_mode": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/RerankMode"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "rerank_return_n": {
-            "anyOf": [
-              {
-                "maximum": 100.0,
-                "minimum": 1.0,
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Rerank Return N"
-          },
-          "rerank_score_threshold": {
-            "anyOf": [
-              {
-                "maximum": 1.0,
-                "minimum": 0.0,
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Rerank Score Threshold"
-          },
-          "rerank_top_n": {
-            "anyOf": [
-              {
-                "maximum": 100.0,
-                "minimum": 1.0,
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Rerank Top N"
-          },
-          "rrf_k": {
-            "anyOf": [
-              {
-                "maximum": 500.0,
-                "minimum": 1.0,
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Rrf K"
-          },
-          "score_threshold": {
-            "anyOf": [
-              {
-                "maximum": 1.0,
-                "minimum": 0.0,
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Score Threshold"
-          },
-          "semantic_candidate_top_k": {
-            "anyOf": [
-              {
-                "maximum": 200.0,
-                "minimum": 1.0,
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Semantic Candidate Top K"
-          },
-          "semantic_weight": {
-            "anyOf": [
-              {
-                "maximum": 10.0,
-                "minimum": 0.0,
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Semantic Weight"
-          },
-          "strategy": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/RetrievalStrategy"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "top_k": {
-            "anyOf": [
-              {
-                "maximum": 100.0,
-                "minimum": 1.0,
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Top K"
-          }
-        },
-        "title": "ProjectRetrievalPolicy",
-        "type": "object"
-      },
       "ProjectStatusUpdate": {
         "additionalProperties": false,
         "properties": {
@@ -10470,90 +9676,6 @@
           }
         },
         "title": "ProjectUpdate",
-        "type": "object"
-      },
-      "ProjectWebSearchPolicy": {
-        "additionalProperties": false,
-        "description": "Sparse per-Project controls for an operator-configured web provider.",
-        "properties": {
-          "enabled": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Enabled"
-          },
-          "max_evidence_chars": {
-            "anyOf": [
-              {
-                "maximum": 100000.0,
-                "minimum": 500.0,
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Max Evidence Chars"
-          },
-          "max_output_tokens": {
-            "anyOf": [
-              {
-                "maximum": 32000.0,
-                "minimum": 256.0,
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Max Output Tokens"
-          },
-          "max_results": {
-            "anyOf": [
-              {
-                "maximum": 20.0,
-                "minimum": 1.0,
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Max Results"
-          },
-          "model": {
-            "anyOf": [
-              {
-                "maxLength": 128,
-                "minLength": 1,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Model"
-          },
-          "request_timeout_seconds": {
-            "anyOf": [
-              {
-                "maximum": 300.0,
-                "minimum": 1.0,
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Request Timeout Seconds"
-          }
-        },
-        "title": "ProjectWebSearchPolicy",
         "type": "object"
       },
       "ProviderConfiguration": {
@@ -11319,6 +10441,11 @@
               }
             ],
             "title": "Embedding Set Version"
+          },
+          "evidence_funnel": {
+            "additionalProperties": true,
+            "title": "Evidence Funnel",
+            "type": "object"
           },
           "executed_branches": {
             "items": {
@@ -12723,40 +11850,6 @@
         ],
         "title": "UsageWorkload",
         "type": "string"
-      },
-      "V1NormalizationResult": {
-        "properties": {
-          "compatibility_warnings": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Compatibility Warnings",
-            "type": "array"
-          },
-          "configuration": {
-            "$ref": "#/components/schemas/ProjectAIConfig"
-          },
-          "effective_diff": {
-            "additionalProperties": {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            "title": "Effective Diff",
-            "type": "object"
-          },
-          "required_index_action": {
-            "default": "none",
-            "title": "Required Index Action",
-            "type": "string"
-          }
-        },
-        "required": [
-          "configuration",
-          "compatibility_warnings",
-          "effective_diff"
-        ],
-        "title": "V1NormalizationResult",
-        "type": "object"
       },
       "V2ProfileNormalizationResult": {
         "properties": {
@@ -15302,142 +14395,6 @@
           }
         ],
         "summary": "Confirm Project Ai Profile Normalization",
-        "tags": [
-          "operator"
-        ]
-      }
-    },
-    "/api/v1/operator/projects/{project_id}/ai-config/normalize-v1": {
-      "get": {
-        "operationId": "preview_project_ai_config_normalization_api_v1_operator_projects__project_id__ai_config_normalize_v1_get",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "project_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Project Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "cookie",
-            "name": "ape_admin_access",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Ape Admin Access"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse_ProjectAIConfigNormalizationPreview_"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "AdminCookie": []
-          }
-        ],
-        "summary": "Preview Project Ai Config Normalization",
-        "tags": [
-          "operator"
-        ]
-      },
-      "post": {
-        "operationId": "confirm_project_ai_config_normalization_api_v1_operator_projects__project_id__ai_config_normalize_v1_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "project_id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "title": "Project Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "cookie",
-            "name": "ape_admin_access",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Ape Admin Access"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ProjectAIConfigNormalizeConfirm"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiResponse_ProjectAIConfigRevisionResponse_"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "AdminCookie": []
-          }
-        ],
-        "summary": "Confirm Project Ai Config Normalization",
         "tags": [
           "operator"
         ]

@@ -16,7 +16,6 @@ class SettingCategory(StrEnum):
     RAG_EXECUTION = "rag_execution"
     PROJECT_BEHAVIOR = "project_behavior"
     TEST_LAB_EXPERIMENTAL = "test_lab_experimental"
-    DEPRECATED_COMPATIBILITY = "deprecated_compatibility"
     PROVENANCE_VERSION = "provenance_version"
 
 
@@ -136,7 +135,6 @@ for _path in (
     "project.v2.execution.score_threshold",
     "project.v2.execution.rerank_mode",
     "project.v2.execution.rerank_candidate_window",
-    "project.v2.execution.rerank_return_count",
     "project.v2.execution.rerank_score_threshold",
     "project.v2.execution.min_ocr_confidence",
     "project.v2.execution.max_chunks_per_document",
@@ -160,27 +158,6 @@ for _path in (
         audience="advanced_operator",
         impact="query_time",
         timing="next_conversation_or_explicit_snapshot_update",
-    )
-
-for _path, _replacement in {
-    "project.v1.llm.provider": "deployment provider + behavior.generation_model_id",
-    "project.v1.llm.model": "behavior.generation_model_id",
-    "project.v1.retrieval.rerank_enabled": "execution.rerank_mode",
-    "project.v1.retrieval.rerank_top_n": "execution.rerank_candidate_window",
-    "project.v1.retrieval.modifies_expansion_enabled": "code-owned conditional governance",
-    "project.v1.chat.include_citations": "code-owned invariant",
-    "project.v1.source_policy_mode": "code-owned conditional governance",
-}.items():
-    _entry(
-        _path,
-        SettingCategory.DEPRECATED_COMPATIBILITY,
-        SettingOwner.SNAPSHOT,
-        lifecycle="historical_read_only",
-        audience="super_admin",
-        impact="legacy_resolution",
-        timing="pinned_or_active_v1_only",
-        compatibility="v1_read_only",
-        replacement=_replacement,
     )
 
 
@@ -217,18 +194,6 @@ def catalog_entry(path: str) -> SettingCatalogEntry:
             audience="deployment_operator",
             impact=impact,
             effect_timing="restart",
-        )
-    if path.startswith("project.v1."):
-        return SettingCatalogEntry(
-            path=path,
-            category=SettingCategory.DEPRECATED_COMPATIBILITY,
-            owner=SettingOwner.SNAPSHOT,
-            lifecycle="historical_read_only",
-            audience="super_admin",
-            impact="legacy_resolution",
-            effect_timing="pinned_or_active_v1_only",
-            compatibility_status="v1_read_only",
-            replacement="normalize through the canonical V2 contract",
         )
     if path.startswith("request."):
         return SettingCatalogEntry(

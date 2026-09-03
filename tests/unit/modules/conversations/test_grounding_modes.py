@@ -7,7 +7,13 @@ from dataclasses import replace
 
 import pytest
 
-from app.core.config import ChatConfig, GroundingMode, RerankerProviderConfig, RetrievalConfig
+from app.core.config import (
+    ChatConfig,
+    EvidenceGateMode,
+    GroundingMode,
+    RerankerProviderConfig,
+    RetrievalConfig,
+)
 from app.modules.conversations.context_builder import ContextBuilder
 from app.modules.conversations.grounded_context import assess_and_select_knowledge
 from app.modules.conversations.grounding_service import GroundingService
@@ -107,7 +113,7 @@ def _candidate(
 
 
 def _service(**config: object) -> GroundingService:
-    return GroundingService(ChatConfig(candidate_wise_grounding_enabled=True, **config))
+    return GroundingService(ChatConfig(**config))
 
 
 class _NeedleEmbedder(BaseEmbeddingProvider):
@@ -167,10 +173,26 @@ def test_strict_rejects_high_reranker_near_miss() -> None:
     assert decision.candidate_assessments[0].terminal_reason == "no_aligned_independent_signal"
 
 
-def test_balanced_admits_high_reranker_near_miss_with_safe_span_and_calibration() -> None:
+def test_balanced_without_high_band_does_not_admit_uncorroborated_near_miss() -> None:
     chunk = _candidate(_NEAR_MISS_EVIDENCE)
 
     decision = _service(grounding_mode=GroundingMode.BALANCED).assess(
+        _NEAR_MISS_QUERY,
+        [chunk],
+        rerank_status="applied",
+    )
+
+    assert decision.sufficient is False
+    assert decision.candidate_assessments[0].terminal_reason == "no_aligned_independent_signal"
+
+
+def test_balanced_high_band_admits_calibrated_high_confidence_span() -> None:
+    chunk = _candidate(_NEAR_MISS_EVIDENCE)
+
+    decision = _service(
+        grounding_mode=GroundingMode.BALANCED,
+        high_confidence_band_enabled=True,
+    ).assess(
         _NEAR_MISS_QUERY,
         [chunk],
         rerank_status="applied",
@@ -184,7 +206,10 @@ def test_balanced_admits_high_reranker_near_miss_with_safe_span_and_calibration(
 def test_balanced_still_rejects_low_confidence_near_miss() -> None:
     chunk = _candidate(_NEAR_MISS_EVIDENCE, reranker_score=0.55)
 
-    decision = _service(grounding_mode=GroundingMode.BALANCED).assess(
+    decision = _service(
+        grounding_mode=GroundingMode.BALANCED,
+        high_confidence_band_enabled=True,
+    ).assess(
         _NEAR_MISS_QUERY,
         [chunk],
         rerank_status="applied",
@@ -194,17 +219,27 @@ def test_balanced_still_rejects_low_confidence_near_miss() -> None:
     assert decision.candidate_assessments[0].terminal_reason == "no_aligned_independent_signal"
 
 
-def test_balanced_rejects_unrelated_high_reranker_without_near_miss() -> None:
-    chunk = _candidate(_UNRELATED_EVIDENCE, reranker_score=0.92, semantic_score=0.10)
+def test_balanced_high_band_still_requires_safe_span_and_matched_calibration() -> None:
+    unrelated = _candidate(_UNRELATED_EVIDENCE, reranker_score=0.92, semantic_score=0.10)
+    mismatched = _candidate(_NEAR_MISS_EVIDENCE, calibration_id="other-reranker:v1")
 
-    decision = _service(grounding_mode=GroundingMode.BALANCED).assess(
-        _NEAR_MISS_QUERY,
-        [chunk],
-        rerank_status="applied",
+    admitted_unrelated = _service(
+        grounding_mode=GroundingMode.BALANCED,
+        high_confidence_band_enabled=True,
+    ).assess(_NEAR_MISS_QUERY, [unrelated], rerank_status="applied")
+    rejected_mismatch = _service(
+        grounding_mode=GroundingMode.BALANCED,
+        high_confidence_band_enabled=True,
+    ).assess(_NEAR_MISS_QUERY, [mismatched], rerank_status="applied")
+
+    # High band without a measured hard-negative margin is the false-accept risk;
+    # when explicitly enabled it admits a calibrated high-confidence span.
+    assert admitted_unrelated.sufficient is True
+    assert admitted_unrelated.candidate_assessments[0].corroboration_method == (
+        "high_confidence_reranker"
     )
-
-    assert decision.sufficient is False
-    assert decision.candidate_assessments[0].terminal_reason == "no_aligned_independent_signal"
+    assert rejected_mismatch.sufficient is False
+    assert rejected_mismatch.candidate_assessments[0].terminal_reason == "calibration_mismatch"
 
 
 def test_strict_rejects_unrelated_high_reranker() -> None:
@@ -222,7 +257,10 @@ def test_strict_rejects_unrelated_high_reranker() -> None:
 def test_balanced_rejects_calibration_mismatch_even_on_near_miss() -> None:
     chunk = _candidate(_NEAR_MISS_EVIDENCE, calibration_id="other-reranker:v1")
 
-    decision = _service(grounding_mode=GroundingMode.BALANCED).assess(
+    decision = _service(
+        grounding_mode=GroundingMode.BALANCED,
+        high_confidence_band_enabled=True,
+    ).assess(
         _NEAR_MISS_QUERY,
         [chunk],
         rerank_status="applied",
@@ -250,13 +288,14 @@ def test_balanced_rejects_missing_safe_span() -> None:
     assert decision.candidate_assessments[0].terminal_reason == "no_safe_evidence_span"
 
 
-def test_legacy_balanced_admits_the_same_high_confidence_near_miss() -> None:
+def test_default_balanced_matches_strict_when_high_band_is_disabled() -> None:
     chunk = _candidate(_NEAR_MISS_EVIDENCE)
     service = GroundingService(ChatConfig(grounding_mode=GroundingMode.BALANCED))
 
     decision = service.assess(_NEAR_MISS_QUERY, [chunk], rerank_status="applied")
 
-    assert decision.sufficient is True
+    assert ChatConfig().high_confidence_band_enabled is False
+    assert decision.sufficient is False
     assert decision.evidence_score_method == "reranker_relevance"
 
 
@@ -270,7 +309,6 @@ async def test_passage_rescue_scores_only_high_confidence_near_misses() -> None:
     embedder = _NeedleEmbedder("fifteen percent")
     config = ChatConfig(
         grounding_mode=GroundingMode.STRICT,
-        candidate_wise_grounding_enabled=True,
     )
     grounding = GroundingService(config, embedder=embedder)
 
@@ -317,7 +355,6 @@ async def test_passage_rescue_does_not_replace_a_stronger_whole_chunk_score() ->
     embedder = _NeedleEmbedder("this needle is absent")
     config = ChatConfig(
         grounding_mode=GroundingMode.STRICT,
-        candidate_wise_grounding_enabled=True,
     )
     grounding = GroundingService(config, embedder=embedder)
 
@@ -380,6 +417,7 @@ def test_default_chat_grounding_stays_strict() -> None:
     config = ChatConfig()
 
     assert config.grounding_mode is GroundingMode.STRICT
+    assert config.high_confidence_band_enabled is False
     assert config.high_confidence_reranker_evidence_score == pytest.approx(0.70)
     assert config.minimum_reranker_evidence_score == pytest.approx(0.40)
 
@@ -421,7 +459,7 @@ def test_strict_acceptance_implies_balanced_acceptance_on_the_same_candidates() 
     )
 
 
-def test_balanced_high_confidence_rescue_is_additive() -> None:
+def test_balanced_high_confidence_rescue_is_additive_only_when_high_band_enabled() -> None:
     strict_chunk = _candidate(_STRICT_EVIDENCE, semantic_score=0.41)
     near_miss = _candidate(_NEAR_MISS_EVIDENCE)
     chunks = [near_miss, strict_chunk]
@@ -431,21 +469,34 @@ def test_balanced_high_confidence_rescue_is_additive() -> None:
         chunks,
         rerank_status="applied",
     )
-    balanced = _service(grounding_mode=GroundingMode.BALANCED).assess(
+    balanced_disabled = _service(grounding_mode=GroundingMode.BALANCED).assess(
+        _NEAR_MISS_QUERY,
+        chunks,
+        rerank_status="applied",
+    )
+    balanced_enabled = _service(
+        grounding_mode=GroundingMode.BALANCED,
+        high_confidence_band_enabled=True,
+    ).assess(
         _NEAR_MISS_QUERY,
         chunks,
         rerank_status="applied",
     )
 
     strict_ids = {unit.chunk_id for unit in strict.admitted_units}
-    balanced_ids = {unit.chunk_id for unit in balanced.admitted_units}
     assert strict_ids == {strict_chunk.chunk_id}
-    assert balanced_ids == {strict_chunk.chunk_id, near_miss.chunk_id}
+    assert {unit.chunk_id for unit in balanced_disabled.admitted_units} == strict_ids
+    assert {unit.chunk_id for unit in balanced_enabled.admitted_units} == {
+        strict_chunk.chunk_id,
+        near_miss.chunk_id,
+    }
     near_miss_assessment = next(
-        item for item in balanced.candidate_assessments if item.chunk_id == near_miss.chunk_id
+        item
+        for item in balanced_enabled.candidate_assessments
+        if item.chunk_id == near_miss.chunk_id
     )
     assert near_miss_assessment.corroboration_method == "high_confidence_reranker"
-    assert balanced.winning_chunk_id == strict_chunk.chunk_id
+    assert balanced_enabled.winning_chunk_id == strict_chunk.chunk_id
 
 
 def test_passage_rescue_cannot_regress_already_admitted_evidence() -> None:
@@ -510,7 +561,6 @@ async def test_authority_redacted_evidence_falls_through_to_another_valid_candid
     base, modifier, _records = _authority_chunks()
     config = ChatConfig(
         grounding_mode=GroundingMode.STRICT,
-        candidate_wise_grounding_enabled=True,
     )
     evidence, selected = await assess_and_select_knowledge(
         grounding=GroundingService(config),
@@ -519,16 +569,15 @@ async def test_authority_redacted_evidence_falls_through_to_another_valid_candid
         question=_NEAR_MISS_QUERY,
         chunks=[base, modifier],
         rerank_status="applied",
+        expansion_records=_records,  # type: ignore[arg-type]
     )
 
     assert evidence.sufficient is True
     assert evidence.reason is None
-    assert evidence.usable_after_authority_count == 1
     assert {chunk.chunk_id for chunk in selected} == {modifier.chunk_id}
     assert evidence.winning_chunk_id == modifier.chunk_id
-    assert any(
-        item.chunk_id == base.chunk_id and item.passed for item in evidence.candidate_assessments
-    )
+    # Base provision is redacted before admission, so it is simply absent.
+    assert all(item.chunk_id != base.chunk_id for item in evidence.candidate_assessments)
 
 
 async def test_no_valid_remaining_candidate_after_authority_still_refuses() -> None:
@@ -545,7 +594,6 @@ async def test_no_valid_remaining_candidate_after_authority_still_refuses() -> N
     )
     config = ChatConfig(
         grounding_mode=GroundingMode.STRICT,
-        candidate_wise_grounding_enabled=True,
     )
     evidence, selected = await assess_and_select_knowledge(
         grounding=GroundingService(config),
@@ -554,18 +602,41 @@ async def test_no_valid_remaining_candidate_after_authority_still_refuses() -> N
         question=_NEAR_MISS_QUERY,
         chunks=[base, placeholder],
         rerank_status="applied",
+        expansion_records=records,  # type: ignore[arg-type]
     )
 
     assert evidence.sufficient is False
-    assert evidence.reason is InsufficientEvidenceReason.AUTHORITY_CONTEXT_EMPTY
+    assert evidence.reason is InsufficientEvidenceReason.BELOW_RELEVANCE_THRESHOLD
     assert (
         GroundingService(config).diagnostics(
             evidence,
             blocked_generation=True,
             generation_ran=False,
         )["failure_stage"]
-        == "context_selection"
+        == "admission"
     )
-    assert any(item.passed for item in evidence.candidate_assessments)
-    assert evidence.usable_after_authority_count == 0
+    assert not any(item.passed for item in evidence.candidate_assessments)
     assert selected == []
+
+
+async def test_observe_uses_ranked_candidates_when_nothing_is_admitted() -> None:
+    chunk = _candidate(_UNRELATED_EVIDENCE, reranker_score=0.92, semantic_score=0.10)
+    config = ChatConfig(
+        grounding_mode=GroundingMode.STRICT,
+        evidence_gate_mode=EvidenceGateMode.OBSERVE,
+    )
+    evidence, selected = await assess_and_select_knowledge(
+        grounding=GroundingService(config),
+        context_builder=ContextBuilder(config),
+        chat_config=config,
+        question=_NEAR_MISS_QUERY,
+        chunks=[chunk],
+        rerank_status="applied",
+    )
+
+    assert evidence.sufficient is False
+    assert evidence.reason is InsufficientEvidenceReason.BELOW_RELEVANCE_THRESHOLD
+    assert evidence.observe_context == "ranked_candidates"
+    assert [item.chunk_id for item in selected] == [chunk.chunk_id]
+    assert GroundingService(config).blocks_generation(evidence) is False
+    assert evidence.winning_chunk_id == chunk.chunk_id

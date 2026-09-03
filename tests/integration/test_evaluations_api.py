@@ -76,7 +76,7 @@ async def test_dataset_and_run_capture_reproducible_versions(db_client: AsyncCli
     assert run["job_state"] == "queued"
     assert len(run["configuration_hash"]) == 64
     assert run["versions"]["dataset"]["hash"] == dataset_data["dataset_hash"]
-    assert run["versions"]["prompt_version"] == "v5"
+    assert run["versions"]["prompt_version"] == "v6"
     assert run["versions"]["chunking"]["chunker_version"] == "3.0.0"
     assert len(run["versions"]["corpus"]["fingerprint"]) == 64
     assert run["versions"]["corpus"]["indexed_chunk_count"] == 0
@@ -234,22 +234,22 @@ async def test_durable_runner_persists_metrics_claims_and_refusal(
     assert set(run["metrics"]) == {
         "semantic",
         "hybrid",
-        "passage",
         "multilingual_hybrid",
         "reranked_lexical",
         "reranked_embedding",
         "reranked_embedding_max",
     }
-    assert len(run["case_results"]) == 42
+    assert len(run["case_results"]) == len(run["metrics"]) * 6
     assert run["versions"]["corpus"]["indexed_chunk_count"] == 1
     exact = next(
         item
         for item in run["case_results"]
         if item["case_key"] == "exact" and item["profile"] == "reranked_lexical"
     )
-    assert exact["grounded"] is True
+    assert exact["grounded"] is False
     assert exact["claims"]
-    assert exact["claims"][0]["evidence"][0]["chunk_id"] == str(chunk_id)
+    assert exact["claims"][0]["evidence"] == []
+    assert exact["claims"][0]["verification"] == "unsupported"
     assert exact["citation_coverage"] == 0.0
     no_answer = next(
         item

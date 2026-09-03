@@ -27,8 +27,6 @@ export type ProjectAIConfig = components["schemas"]["ProjectAIConfig"];
 export type GenerationModelOption = components["schemas"]["GenerationModelOption"];
 export type RAGProfileOption = components["schemas"]["RAGProfileOption"];
 export type ProjectAIConfigRevision = components["schemas"]["ProjectAIConfigRevisionResponse"];
-export type ProjectAIConfigNormalizationPreview =
-  components["schemas"]["ProjectAIConfigNormalizationPreview"];
 export type ProjectAIProfileNormalizationPreview =
   components["schemas"]["ProjectAIProfileNormalizationPreview"];
 export type ProviderParameterCapability = {
@@ -465,23 +463,6 @@ export const operatorApiClient = {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ expected_active_revision_id: expectedActiveRevisionId, reason }),
-      },
-    ),
-  previewProjectAIConfigNormalization: (projectId: string) =>
-    request<ProjectAIConfigNormalizationPreview>(
-      `${apiRoot}/operator/projects/${projectId}/ai-config/normalize-v1`,
-    ),
-  normalizeProjectAIConfig: (projectId: string, expectedActiveRevisionId: string, reason: string) =>
-    request<ProjectAIConfigRevision>(
-      `${apiRoot}/operator/projects/${projectId}/ai-config/normalize-v1`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          expected_active_revision_id: expectedActiveRevisionId,
-          reason,
-          confirm: true,
-        }),
       },
     ),
   previewProjectAIProfileNormalization: (projectId: string) =>

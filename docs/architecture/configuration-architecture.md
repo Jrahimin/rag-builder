@@ -34,9 +34,8 @@ separate behavior defaults, including `APE_AI_POLICY__SOURCE_POLICY_MODE` for so
 
 The external request allowlist is `top_k`, an enabled retrieval strategy, existing allowlisted
 metadata filters, and explicit `as_of`. Provider/model, temperature, token limits, reranking,
-prompts, evidence, citation, and grounding values remain Project policy. Deprecated legacy fields
-are observable in `compatibility` mode and fail with `request_policy_override_forbidden` in
-`strict` mode (`APE_AI_POLICY__REQUEST_OVERRIDE_MODE`).
+prompts, evidence, citation, and grounding values remain Project policy. Request-time policy
+overrides were removed in the pre-public config reset.
 
 ## Immutable execution snapshots
 

@@ -15,7 +15,6 @@ from app.core.config import (
     AIConfigPolicy,
     ModifiesExpansionMode,
     QueryTranslationConfig,
-    RequestOverrideMode,
     RerankMode,
     RetrievalConfig,
     RetrievalStrategy,
@@ -127,7 +126,7 @@ class SearchService:
             diagnostics.append("strategy")
         if request_rerank is not None:
             diagnostics.append("rerank")
-        if diagnostics and self._ai_policy.request_override_mode is RequestOverrideMode.STRICT:
+        if diagnostics:
             raise BadRequestError(
                 message="The request contains Project-owned AI policy overrides.",
                 code="request_policy_override_forbidden",
@@ -139,9 +138,7 @@ class SearchService:
                 message="The requested retrieval strategy is not enabled.",
                 code="retrieval_strategy_not_enabled",
             )
-        rerank_enabled = (
-            request_rerank if request_rerank is not None else self._config.rerank_enabled
-        )
+        rerank_active = self._config.rerank_mode is not RerankMode.OFF
         active_build = (
             await self._builds.get_by_id(self._pinned_index_build_id)
             if self._pinned_index_build_id is not None
@@ -213,11 +210,8 @@ class SearchService:
             rrf_k=self._config.rrf_k,
             semantic_weight=self._config.semantic_weight,
             keyword_weight=self._config.keyword_weight,
-            rerank_enabled=rerank_enabled,
-            rerank_mode=self._config.rerank_mode if rerank_enabled else RerankMode.OFF,
-            rerank_top_n=self._config.rerank_top_n,
+            rerank_mode=self._config.rerank_mode,
             rerank_candidate_window=self._config.rerank_candidate_window,
-            rerank_return_n=self._config.rerank_return_n,
             rerank_score_threshold=self._config.rerank_score_threshold,
             score_threshold=self._config.score_threshold,
             filterable_metadata_keys=tuple(self._config.filterable_metadata_keys),
@@ -232,10 +226,7 @@ class SearchService:
             source_scope=source_scope,
             multilingual_plan=multilingual_plan,
             persist_translation_text=self._persist_translation_text,
-            modifies_expansion_enabled=(
-                self._config.resolved_modifies_expansion_mode() is ModifiesExpansionMode.EXPAND
-            ),
-            modifies_expansion_mode=self._config.resolved_modifies_expansion_mode(),
+            modifies_expansion_mode=self._config.modifies_expansion_mode,
             max_related_sources=self._config.max_related_sources,
             max_relationship_candidates=self._config.max_relationship_candidates,
             source_metadata_reader=(
@@ -283,7 +274,7 @@ class SearchService:
             hit_count=len(results),
             top_k=top_k,
             strategy=strategy.value,
-            rerank_enabled=rerank_enabled,
+            rerank_active=rerank_active,
             duplicate_suppression_removed=suppression.suppressed_count,
             duplicate_suppression_reasons=suppression.suppressed_by_reason,
             diversity_deferred_reasons=suppression.deferred_by_reason,
@@ -305,7 +296,7 @@ class SearchService:
                 "rerank_status",
                 (
                     "disabled"
-                    if not rerank_enabled or strategy is not RetrievalStrategy.HYBRID
+                    if not rerank_active or strategy is not RetrievalStrategy.HYBRID
                     else "empty"
                 ),
             )
@@ -327,7 +318,7 @@ class SearchService:
             diagnostics=SearchDiagnostics(
                 strategy=strategy,
                 duration_ms=elapsed_ms,
-                rerank_requested=rerank_enabled and strategy is RetrievalStrategy.HYBRID,
+                rerank_requested=rerank_active and strategy is RetrievalStrategy.HYBRID,
                 rerank_status=rerank_status,
                 rerank_failure_reason=_optional_string(
                     rerank_metadata.get("rerank_failure_reason")
@@ -365,11 +356,15 @@ class SearchService:
                 duplicate_suppression_reasons=suppression.suppressed_by_reason,
                 diversity_deferred_reasons=suppression.deferred_by_reason,
                 diversity_backfilled_count=suppression.backfilled_count,
-                candidate_trace=candidate_trace,
-                selected_trace=[
-                    _result_trace(result, rank=index)
-                    for index, result in enumerate(results, start=1)
-                ],
+                candidate_trace=[] if for_public_response else candidate_trace,
+                selected_trace=(
+                    []
+                    if for_public_response
+                    else [
+                        _result_trace(result, rank=index)
+                        for index, result in enumerate(results, start=1)
+                    ]
+                ),
                 compatibility_diagnostics=diagnostics,
                 as_of=request.as_of,
                 source_policy_consolidation_reasons=policy.consolidation_counts,
@@ -456,8 +451,7 @@ class SearchService:
                         "modifies_expansion_status",
                         (
                             "disabled"
-                            if self._config.resolved_modifies_expansion_mode()
-                            is ModifiesExpansionMode.OFF
+                            if self._config.modifies_expansion_mode is ModifiesExpansionMode.OFF
                             else "no_candidates"
                         ),
                     )
@@ -493,6 +487,27 @@ class SearchService:
                 post_rerank_removed_count=sum(post_rerank_removal_reasons.values()),
                 post_rerank_removal_reasons=post_rerank_removal_reasons,
                 post_rerank_unfilled_slots=max(0, top_k - len(results)),
+                evidence_funnel=_retrieval_evidence_funnel(
+                    fused_count=(
+                        _optional_int(rerank_metadata.get("retrieved_candidate_count"))
+                        or reranked_candidate_count
+                    ),
+                    reranked_count=reranked_candidate_count,
+                    policy_count=len(policy.candidates),
+                    hydrated_count=len(hydrated_results),
+                    deduped_count=len(results),
+                    rerank_status=rerank_status,
+                    policy_reasons=(
+                        {
+                            **policy.observed_exclusion_counts,
+                            **policy.consolidation_counts,
+                        }
+                        if source_scope.effective_mode is SourcePolicyMode.ENFORCE
+                        else {}
+                    ),
+                    hydration_removed=hydration_removed,
+                    suppression_reasons=suppression.suppressed_by_reason,
+                ),
                 **self._source_diagnostics(
                     source_scope,
                     index_build_id=active_build.id,
@@ -511,7 +526,7 @@ class SearchService:
             deployment_cap,
         )
         if effective_mode is SourcePolicyMode.OFF and (
-            self._config.resolved_modifies_expansion_mode() is ModifiesExpansionMode.OFF
+            self._config.modifies_expansion_mode is ModifiesExpansionMode.OFF
         ):
             return (
                 SourceMetadataScope(
@@ -761,6 +776,48 @@ def _first_prefixed(
         if branch_id.startswith(prefix):
             return {"branch_id": branch_id, **payload}
     return None
+
+
+def _retrieval_evidence_funnel(
+    *,
+    fused_count: int,
+    reranked_count: int,
+    policy_count: int,
+    hydrated_count: int,
+    deduped_count: int,
+    rerank_status: str,
+    policy_reasons: dict[str, int],
+    hydration_removed: int,
+    suppression_reasons: dict[str, int],
+) -> dict[str, Any]:
+    """Build the compact, stage-level retrieval portion of the evidence funnel."""
+    loss_reasons: dict[str, dict[str, int]] = {}
+    rerank_removed = max(0, fused_count - reranked_count)
+    if rerank_removed and rerank_status == "applied":
+        loss_reasons["reranked"] = {"below_rerank_score_threshold": rerank_removed}
+    if policy_reasons:
+        loss_reasons["policy_survived"] = dict(policy_reasons)
+    if hydration_removed:
+        loss_reasons["hydrated"] = {"missing_chunk": hydration_removed}
+    if suppression_reasons:
+        loss_reasons["deduped"] = dict(suppression_reasons)
+    return {
+        "fused": fused_count,
+        "reranked": reranked_count,
+        "policy_survived": policy_count,
+        "hydrated": hydrated_count,
+        "deduped": deduped_count,
+        "assessed": 0,
+        "admitted": 0,
+        "context_selected": 0,
+        "cited": 0,
+        "supported_claims": 0,
+        "rerank_status": rerank_status,
+        "grounding_path": None,
+        "loss_reasons": loss_reasons,
+        "would_have_blocked": False,
+        "outcome": "retrieved",
+    }
 
 
 def _redact_translated_query_text(result: RetrievalResult) -> RetrievalResult:

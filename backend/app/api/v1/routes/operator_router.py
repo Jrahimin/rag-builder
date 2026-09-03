@@ -32,7 +32,6 @@ from app.modules.operations.schemas.operator import (
 from app.modules.projects.schemas.ai_config import (
     EffectiveProjectAIConfigResponse,
     GenerationModelOption,
-    ProjectAIConfigNormalizationPreview,
     ProjectAIConfigNormalizeConfirm,
     ProjectAIConfigRestore,
     ProjectAIConfigRevisionCreate,
@@ -412,43 +411,6 @@ async def restore_project_ai_config_revision(
     del project_id
     row = await service.restore(
         revision_id,
-        expected_active_revision_id=body.expected_active_revision_id,
-        reason=body.reason,
-    )
-    return ApiResponse.ok(ProjectAIConfigRevisionResponse.model_validate(row))
-
-
-@router.get(
-    "/projects/{project_id}/ai-config/normalize-v1",
-    response_model=ApiResponse[ProjectAIConfigNormalizationPreview],
-)
-async def preview_project_ai_config_normalization(
-    project_id: uuid.UUID,
-    service: ProjectAdministrationServiceDep,
-) -> ApiResponse[ProjectAIConfigNormalizationPreview]:
-    active, result = await service.normalization_preview()
-    return ApiResponse.ok(
-        ProjectAIConfigNormalizationPreview(
-            project_id=project_id,
-            source_revision_id=active.id,
-            source_schema_version=active.schema_version,
-            result=result,
-        )
-    )
-
-
-@router.post(
-    "/projects/{project_id}/ai-config/normalize-v1",
-    response_model=ApiResponse[ProjectAIConfigRevisionResponse],
-    status_code=status.HTTP_201_CREATED,
-)
-async def confirm_project_ai_config_normalization(
-    project_id: uuid.UUID,
-    body: ProjectAIConfigNormalizeConfirm,
-    service: ProjectAdministrationServiceDep,
-) -> ApiResponse[ProjectAIConfigRevisionResponse]:
-    del project_id
-    row = await service.normalize_active_v1(
         expected_active_revision_id=body.expected_active_revision_id,
         reason=body.reason,
     )

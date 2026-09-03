@@ -20,6 +20,7 @@ from app.cli.rag_journey import (
     RuntimeChunk,
     _await_document_purge,
     _comparison_summary,
+    _enable_journey_candidate_traces,
     _ensure_indexed,
     _preflight_default_organization,
     _project_ai_leaf_paths,
@@ -699,6 +700,53 @@ def _answerable_evidence_message(
     return message
 
 
+def test_journey_enables_candidate_traces_without_changing_chat_defaults() -> None:
+    chat = SimpleNamespace(_store_candidate_trace=False)
+
+    enabled = _enable_journey_candidate_traces(chat)
+
+    assert enabled is chat
+    assert chat._store_candidate_trace is True
+
+
+def test_answerable_case_fails_when_candidate_traces_are_missing() -> None:
+    chunk_id = uuid.uuid4()
+    document_id = uuid.uuid4()
+    case = JourneyCase(
+        key="current_rebate",
+        tags=["authority"],
+        query="What rebate applies?",
+        anchors=["rebate_rate"],
+        expected_tokens=["10%"],
+    )
+    message = _answerable_evidence_message(
+        content="The rebate is 10%.",
+        retrieved=[],
+        admitted=[],
+        claim_chunk_id=chunk_id,
+        claim_document_id=document_id,
+    )
+
+    result = evaluate_case_result(
+        case=case,
+        message=message,
+        anchor_mapping={"rebate_rate": [chunk_id]},
+        document_ids={"tax_2023": document_id},
+        response_mode=ResponseMode.INDEXED_ONLY,
+        modifies_expansion_active=True,
+    )
+
+    assert result["passed"] is False
+    assert result["retrieval"]["selected"] == []
+    assert result["retrieval"]["recall"] == 0.0
+    assert any(
+        failure["stage"] == "retrieval"
+        and failure["message"] == "No expected evidence anchor was retrieved."
+        for failure in result["failures"]
+    )
+    assert any(failure["stage"] == "admission_grounding" for failure in result["failures"])
+
+
 def test_no_answer_records_indexed_failure_before_web_eligibility() -> None:
     case = JourneyCase(
         key="unknown",
@@ -731,7 +779,7 @@ def test_no_answer_records_indexed_failure_before_web_eligibility() -> None:
         anchor_mapping={},
         document_ids={},
         response_mode=ResponseMode.INDEXED_THEN_WEB,
-        modifies_expansion_enabled=True,
+        modifies_expansion_active=True,
     )
 
     assert result["passed"] is True
@@ -764,7 +812,7 @@ def test_indexed_only_unknown_requires_refusal_before_generation_or_web() -> Non
         anchor_mapping={},
         document_ids={},
         response_mode=ResponseMode.INDEXED_ONLY,
-        modifies_expansion_enabled=True,
+        modifies_expansion_active=True,
     )
 
     assert result["passed"] is True
@@ -799,7 +847,7 @@ def test_stale_claim_requires_a_correction_marker_not_just_new_numbers() -> None
         anchor_mapping={},
         document_ids={},
         response_mode=ResponseMode.INDEXED_ONLY,
-        modifies_expansion_enabled=True,
+        modifies_expansion_active=True,
     )
 
     assert any("explicitly correct" in item["message"] for item in result["failures"])
@@ -832,7 +880,7 @@ def test_stale_correction_need_not_repeat_every_stale_literal() -> None:
         anchor_mapping={},
         document_ids={},
         response_mode=ResponseMode.INDEXED_ONLY,
-        modifies_expansion_enabled=True,
+        modifies_expansion_active=True,
     )
 
     assert result["passed"] is True
@@ -860,7 +908,7 @@ def test_expected_any_accepts_semantically_equivalent_inflection() -> None:
         anchor_mapping={},
         document_ids={},
         response_mode=ResponseMode.INDEXED_ONLY,
-        modifies_expansion_enabled=True,
+        modifies_expansion_active=True,
     )
     assert result["passed"] is True
 
@@ -890,7 +938,7 @@ def test_expected_token_groups_accept_equivalent_wording() -> None:
         anchor_mapping={},
         document_ids={},
         response_mode=ResponseMode.INDEXED_ONLY,
-        modifies_expansion_enabled=True,
+        modifies_expansion_active=True,
     )
 
     assert result["passed"] is True
@@ -921,7 +969,7 @@ def test_expected_token_groups_still_require_each_fact_family() -> None:
         anchor_mapping={},
         document_ids={},
         response_mode=ResponseMode.INDEXED_ONLY,
-        modifies_expansion_enabled=True,
+        modifies_expansion_active=True,
     )
 
     assert result["passed"] is False
@@ -989,7 +1037,7 @@ def test_user_parameter_tokens_need_not_be_cited_from_the_knowledge_base() -> No
         anchor_mapping={"rebate_rate": [rate_id], "declared_amount": [amount_id]},
         document_ids={},
         response_mode=ResponseMode.INDEXED_ONLY,
-        modifies_expansion_enabled=True,
+        modifies_expansion_active=True,
     )
 
     assert result["passed"] is True
@@ -1020,7 +1068,7 @@ def test_rerank_timeout_is_provider_degradation_not_a_semantic_failure() -> None
         anchor_mapping={},
         document_ids={},
         response_mode=ResponseMode.INDEXED_ONLY,
-        modifies_expansion_enabled=True,
+        modifies_expansion_active=True,
     )
     summary = aggregate_results([result])
 
@@ -1046,12 +1094,12 @@ def test_empty_context_after_admission_is_context_selection_not_admission() -> N
     message = _message(
         content="There is not enough indexed evidence to answer from the knowledge base.",
         grounded=False,
-        insufficient_evidence_reason=InsufficientEvidenceReason.AUTHORITY_CONTEXT_EMPTY,
+        insufficient_evidence_reason=InsufficientEvidenceReason.CONTEXT_SELECTION_EMPTY,
         metadata={
             "retrieval_trace": {"context_selected": []},
             "evidence_gate": {
                 "sufficient": False,
-                "reason": "authority_context_empty",
+                "reason": "context_selection_empty",
                 "failure_stage": "context_selection",
                 "generation_ran": False,
                 "candidate_wise": {
@@ -1071,7 +1119,7 @@ def test_empty_context_after_admission_is_context_selection_not_admission() -> N
         anchor_mapping={},
         document_ids={},
         response_mode=ResponseMode.INDEXED_ONLY,
-        modifies_expansion_enabled=True,
+        modifies_expansion_active=True,
     )
     summary = aggregate_results([result])
 
@@ -1107,7 +1155,7 @@ def test_codeswitch_case_requires_query_language_profile_diagnostics() -> None:
         anchor_mapping={},
         document_ids={},
         response_mode=ResponseMode.INDEXED_ONLY,
-        modifies_expansion_enabled=True,
+        modifies_expansion_active=True,
     )
     assert failed["passed"] is False
     assert any(
@@ -1137,7 +1185,7 @@ def test_codeswitch_case_requires_query_language_profile_diagnostics() -> None:
         anchor_mapping={},
         document_ids={},
         response_mode=ResponseMode.INDEXED_ONLY,
-        modifies_expansion_enabled=True,
+        modifies_expansion_active=True,
     )
     assert passed["passed"] is True
     assert passed["translation"]["query_language_profile"] == "mixed"
@@ -1259,7 +1307,7 @@ def test_bangla_mixed_document_accepts_overlapping_or_phrase_containing_2025_evi
         anchor_mapping={"verification_reference_2025": [phrase_id]},
         document_ids={"tax_guidance_2025": document_id},
         response_mode=ResponseMode.INDEXED_ONLY,
-        modifies_expansion_enabled=True,
+        modifies_expansion_active=True,
         chunks=chunks,
         anchors=[anchor],
     )
@@ -1275,7 +1323,7 @@ def test_bangla_mixed_document_accepts_overlapping_or_phrase_containing_2025_evi
         anchor_mapping={"verification_reference_2025": [phrase_id]},
         document_ids={"tax_guidance_2025": document_id},
         response_mode=ResponseMode.INDEXED_ONLY,
-        modifies_expansion_enabled=True,
+        modifies_expansion_active=True,
         chunks=chunks,
         anchors=[anchor],
     )
@@ -1332,7 +1380,7 @@ def test_bangla_mixed_document_still_requires_2025_evidence_not_answer_text() ->
         anchor_mapping={"verification_reference_2025": [phrase_id]},
         document_ids={"tax_guidance_2025": document_id},
         response_mode=ResponseMode.INDEXED_ONLY,
-        modifies_expansion_enabled=True,
+        modifies_expansion_active=True,
         chunks=chunks,
         anchors=[anchor],
     )
@@ -1348,7 +1396,7 @@ def test_bangla_mixed_document_still_requires_2025_evidence_not_answer_text() ->
         anchor_mapping={"verification_reference_2025": [phrase_id]},
         document_ids={"tax_guidance_2025": document_id},
         response_mode=ResponseMode.INDEXED_ONLY,
-        modifies_expansion_enabled=True,
+        modifies_expansion_active=True,
         chunks=chunks,
         anchors=[anchor],
     )
@@ -1364,7 +1412,7 @@ def test_bangla_mixed_document_still_requires_2025_evidence_not_answer_text() ->
         anchor_mapping={"verification_reference_2025": [phrase_id]},
         document_ids={"tax_guidance_2025": document_id, "finance_2026": other_document_id},
         response_mode=ResponseMode.INDEXED_ONLY,
-        modifies_expansion_enabled=True,
+        modifies_expansion_active=True,
         chunks=chunks,
         anchors=[anchor],
     )
@@ -1387,7 +1435,7 @@ def test_bangla_mixed_document_still_requires_2025_evidence_not_answer_text() ->
         anchor_mapping={"verification_reference_2025": [phrase_id]},
         document_ids={"tax_guidance_2025": document_id},
         response_mode=ResponseMode.INDEXED_ONLY,
-        modifies_expansion_enabled=True,
+        modifies_expansion_active=True,
         chunks=chunks,
         anchors=[anchor],
     )
@@ -1464,10 +1512,42 @@ def test_required_anchor_groups_accept_alternatives_and_require_each_source_fami
         anchor_mapping={"rate_en": [], "rate_bn": [rate_id], "procedure": [procedure_id]},
         document_ids={},
         response_mode=ResponseMode.INDEXED_ONLY,
-        modifies_expansion_enabled=True,
+        modifies_expansion_active=True,
     )
 
     assert result["passed"] is True
+
+
+def test_generated_ungrounded_answer_is_claim_grounding_not_refusal() -> None:
+    case = JourneyCase(
+        key="current",
+        tags=["authority"],
+        query="What is the rate?",
+        anchors=[],
+        expected_tokens=["10%"],
+    )
+    message = _message(
+        content="The current rebate rate is 10%.",
+        grounded=False,
+        metadata={
+            "retrieval_trace": {"context_selected": []},
+            "evidence_gate": {"sufficient": True, "generation_ran": True},
+            "web_search": {"status": "not_requested", "fallback_used": False},
+        },
+    )
+
+    result = evaluate_case_result(
+        case=case,
+        message=message,
+        anchor_mapping={},
+        document_ids={},
+        response_mode=ResponseMode.INDEXED_ONLY,
+        modifies_expansion_active=False,
+    )
+
+    assert {failure["stage"] for failure in result["failures"]} == {"claim_grounding"}
+    assert result["quality"]["generation_refusal_correctness"] is True
+    assert result["quality"]["grounding_success"] is False
 
 
 def test_prohibited_final_source_and_answer_fact_are_reported() -> None:
@@ -1503,7 +1583,7 @@ def test_prohibited_final_source_and_answer_fact_are_reported() -> None:
         anchor_mapping={},
         document_ids={"future": forbidden_document},
         response_mode=ResponseMode.INDEXED_ONLY,
-        modifies_expansion_enabled=True,
+        modifies_expansion_active=True,
     )
 
     assert {failure["stage"] for failure in result["failures"]} == {
@@ -1548,13 +1628,13 @@ def test_scope_failure_is_localized_to_authority() -> None:
         anchor_mapping={},
         document_ids={"old": scoped_id},
         response_mode=ResponseMode.INDEXED_THEN_WEB,
-        modifies_expansion_enabled=True,
+        modifies_expansion_active=True,
     )
 
     assert {failure["stage"] for failure in result["failures"]} == {"authority"}
 
 
-def test_scope_isolation_requires_scoped_anchor_and_allows_safe_refusal() -> None:
+def test_scope_isolation_requires_scoped_anchor_and_scope_notice() -> None:
     scoped_id = uuid.uuid4()
     scoped_chunk_id = uuid.uuid4()
     case = JourneyCase(
@@ -1564,46 +1644,50 @@ def test_scope_isolation_requires_scoped_anchor_and_allows_safe_refusal() -> Non
         anchors=["old"],
         document_scope="old",
         mode="scope_isolation",
+        expected_tokens=["15%"],
     )
-    refused = _message(
-        content=(
-            "There is not enough evidence within the requested document scope to establish "
-            "the current authoritative value."
-        ),
-        grounded=False,
-        insufficient_evidence_reason=InsufficientEvidenceReason.BELOW_RELEVANCE_THRESHOLD,
+    answered = _message(
+        content="The scoped document states the rebate rate is 15%.",
+        grounded=True,
         metadata={
             "retrieval_trace": {
                 "candidates": [{"chunk_id": str(scoped_chunk_id), "document_id": str(scoped_id)}],
                 "retrieval_selected": [
                     {"chunk_id": str(scoped_chunk_id), "document_id": str(scoped_id)}
                 ],
-                "context_selected": [],
+                "context_selected": [
+                    {"chunk_id": str(scoped_chunk_id), "document_id": str(scoped_id)}
+                ],
             },
             "current_authority": {"status": "suppressed_document_scope"},
-            "scope_current_authority": {"status": "unavailable_within_hard_scope"},
-            "evidence_gate": {"sufficient": False, "generation_ran": False},
+            "scope_current_authority": {"status": "effective_modifier_excluded_by_scope"},
+            "notices": [
+                {
+                    "kind": "scope_excludes_effective_modifier",
+                    "language": "en",
+                    "text": "The answer is drawn from the requested document scope.",
+                    "source": {},
+                }
+            ],
+            "evidence_gate": {"sufficient": True, "generation_ran": True},
             "web_search": {"status": "suppressed_scoped_request", "fallback_used": False},
         },
     )
 
     passed = evaluate_case_result(
         case=case,
-        message=refused,
+        message=answered,
         anchor_mapping={"old": [scoped_chunk_id]},
         document_ids={"old": scoped_id},
         response_mode=ResponseMode.INDEXED_THEN_WEB,
-        modifies_expansion_enabled=True,
+        modifies_expansion_active=True,
     )
     assert passed["passed"] is True
     assert passed["retrieval"]["recall"] == 1.0
 
     missing_anchor = _message(
-        content=(
-            "There is not enough evidence within the requested document scope to establish "
-            "the current authoritative value."
-        ),
-        grounded=False,
+        content="The scoped document states the rebate rate is 15%.",
+        grounded=True,
         metadata={
             "retrieval_trace": {
                 "candidates": [{"chunk_id": str(uuid.uuid4()), "document_id": str(scoped_id)}],
@@ -1611,7 +1695,15 @@ def test_scope_isolation_requires_scoped_anchor_and_allows_safe_refusal() -> Non
                 "context_selected": [],
             },
             "current_authority": {"status": "suppressed_document_scope"},
-            "scope_current_authority": {"status": "unavailable_within_hard_scope"},
+            "scope_current_authority": {"status": "effective_modifier_excluded_by_scope"},
+            "notices": [
+                {
+                    "kind": "scope_excludes_effective_modifier",
+                    "language": "en",
+                    "text": "The answer is drawn from the requested document scope.",
+                    "source": {},
+                }
+            ],
             "evidence_gate": {"sufficient": False},
             "web_search": {"status": "suppressed_scoped_request", "fallback_used": False},
         },
@@ -1622,7 +1714,7 @@ def test_scope_isolation_requires_scoped_anchor_and_allows_safe_refusal() -> Non
         anchor_mapping={"old": [scoped_chunk_id]},
         document_ids={"old": scoped_id},
         response_mode=ResponseMode.INDEXED_THEN_WEB,
-        modifies_expansion_enabled=True,
+        modifies_expansion_active=True,
     )
     assert {failure["stage"] for failure in failed["failures"]} == {"retrieval"}
 
@@ -1664,7 +1756,7 @@ def test_historical_authority_allows_raw_future_candidates_but_not_final_evidenc
         anchor_mapping={"old": [old_chunk_id]},
         document_ids={"tax_2023": old_document_id},
         response_mode=ResponseMode.INDEXED_ONLY,
-        modifies_expansion_enabled=True,
+        modifies_expansion_active=True,
     )
 
     assert all(failure["stage"] != "authority" for failure in result["failures"])
@@ -2033,7 +2125,7 @@ def test_evaluate_case_result_records_translation_quality_without_changing_pass(
         anchor_mapping={"rebate": [chunk_id]},
         document_ids={"finance_2026": document_id},
         response_mode=ResponseMode.INDEXED_ONLY,
-        modifies_expansion_enabled=False,
+        modifies_expansion_active=False,
     )
 
     assert result["passed"] is True
@@ -2096,16 +2188,27 @@ async def test_ensure_indexed_processes_every_fixture_document(
         corpus_fingerprint="fp",
     )
 
+    embed_job_ids = {tax_id: uuid.uuid4(), finance_id: uuid.uuid4()}
+    index_job_ids = {tax_id: uuid.uuid4(), finance_id: uuid.uuid4()}
+
     class _Indexing:
-        async def enqueue_embed(self, document_id: uuid.UUID) -> None:
+        async def enqueue_embed(self, document_id: uuid.UUID) -> object:
             embed_calls.append(document_id)
             documents[document_id].status = DocumentStatus.EMBEDDED
             build.document_count = len(documents)
+            return SimpleNamespace(
+                id=document_id,
+                __dict__={"job_id": embed_job_ids[document_id]},
+            )
 
-        async def enqueue_index(self, document_id: uuid.UUID) -> None:
+        async def enqueue_index(self, document_id: uuid.UUID) -> object:
             index_calls.append(document_id)
             documents[document_id].status = DocumentStatus.READY
             build.document_count = len(documents)
+            return SimpleNamespace(
+                id=document_id,
+                __dict__={"job_id": index_job_ids[document_id]},
+            )
 
     class _DocumentRepository:
         def __init__(self, _session: object, _project_id: uuid.UUID) -> None:
@@ -2133,6 +2236,10 @@ async def test_ensure_indexed_processes_every_fixture_document(
     monkeypatch.setattr(
         "app.composition.retrieval.build_indexing_service",
         lambda **_kwargs: _Indexing(),
+    )
+    monkeypatch.setattr(
+        "app.cli.rag_journey._await_durable_job",
+        lambda *_args, **_kwargs: None,
     )
 
     class _SessionFactory:

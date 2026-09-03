@@ -42,3 +42,12 @@ authoritative context and often requires deterministic structured output.
   only turns that need web evidence return the fail-closed no-answer.
 - Combined mode can expose conflicts because knowledge and web blocks/citations stay distinct.
 - Enabling a web response mode requires configured credentials and the source-aware v5 prompt.
+
+## Amendment: one admission path (2026-09-03)
+
+Grounded chat now has one reranked admission path (`assess_candidate_wise`) and one no-reranker
+fallback that includes the cross-language semantic bar. `observe` uses the same selected admitted
+units as `enforce` and disables only the generation veto. `balanced` remains a two-band structure
+whose high band stays disabled until a hard-negative calibration run shows a positive margin below
+the identity's high reranker bar. Deployment default stays `strict`. This amendment does not
+change response-mode or web-search boundaries.

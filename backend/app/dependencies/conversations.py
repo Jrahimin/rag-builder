@@ -26,19 +26,18 @@ from app.modules.conversations.services.conversation_service import Conversation
 from app.modules.projects.repositories.project_ai_config_repository import (
     ProjectAIConfigRepository,
 )
-from app.modules.retrieval.schemas.search import RetrievalResult, SearchRequest
+from app.modules.retrieval.schemas.search import SearchRequest
 from app.modules.retrieval.services.search_service import SearchService
 from app.platform.config.project_ai import (
     ConfigProvenance,
-    ConfigRevisionRecord,
     EffectiveConfigResolution,
     EffectiveProjectAIConfig,
     InvariantState,
     StructuredOrigin,
     apply_effective_ai_config,
+    config_revision_record,
     resolve_project_ai_config,
 )
-from app.platform.domain.content_hash import content_hash
 from app.platform.providers.contracts.embedding import BaseEmbeddingProvider
 from app.platform.providers.contracts.llm import BaseLLMProvider
 from app.platform.providers.contracts.web_search import BaseWebSearchProvider
@@ -85,49 +84,9 @@ class SearchServiceRetrievalAdapter:
             )
         )
         return ContextRetrievalResult(
-            chunks=[_context_chunk_from_result(result) for result in response.results],
+            chunks=[ContextChunk.from_retrieval_result(result) for result in response.results],
             diagnostics=response.diagnostics.model_dump(mode="json"),
         )
-
-
-def _context_chunk_from_result(result: RetrievalResult) -> ContextChunk:
-    """Map a search hit onto chat context without dropping rerank scores."""
-    rerank_score = result.rerank_relevance_score
-    rank_score = result.rank_score
-    evidence_score = result.evidence_relevance_score
-    if result.metadata.get("rerank_status") == "applied":
-        if rerank_score is None:
-            rerank_score = result.score
-        if rank_score is None:
-            rank_score = result.score
-        if evidence_score is None:
-            evidence_score = rerank_score
-    return ContextChunk(
-        chunk_id=result.chunk_id,
-        document_id=result.document_id,
-        chunk_index=result.chunk_index,
-        content=result.content,
-        score=result.score,
-        filename=result.filename,
-        chunk_hash=content_hash(result.content),
-        semantic_score=result.semantic_score,
-        rank_score=rank_score,
-        rerank_relevance_score=rerank_score,
-        evidence_relevance_score=evidence_score,
-        evidence_score_method=result.evidence_score_method
-        or ("reranker_relevance" if rerank_score is not None else None),
-        evidence_calibration_id=result.evidence_calibration_id,
-        passage_semantic_score=result.passage_semantic_score,
-        passage_char_start=result.passage_char_start,
-        passage_char_end=result.passage_char_end,
-        passage_score_method=result.passage_score_method,
-        page_number=result.page_number,
-        char_start=result.char_start,
-        char_end=result.char_end,
-        query_variants=result.query_variants,
-        branch_contributions=result.branch_contributions,
-        metadata=dict(result.metadata),
-    )
 
 
 def get_conversation_repository(
@@ -170,17 +129,7 @@ async def get_conversation_service(
         llm_config=settings.llm,
         chat_config=settings.chat,
         settings=settings,
-        active_revision=(
-            ConfigRevisionRecord(
-                id=revision.id,
-                revision_number=revision.revision_number,
-                configuration_hash=revision.configuration_hash,
-                configuration=dict(revision.configuration),
-                schema_version=revision.schema_version,
-            )
-            if revision is not None
-            else None
-        ),
+        active_revision=config_revision_record(revision),
         actor_id=(
             "platform_admin"
             if auth_org.is_platform_admin
@@ -213,15 +162,7 @@ async def get_chat_service(
         revision = await ProjectAIConfigRepository(session, project_id).get_active()
         resolution = resolve_project_ai_config(
             settings,
-            ConfigRevisionRecord(
-                id=revision.id,
-                revision_number=revision.revision_number,
-                configuration_hash=revision.configuration_hash,
-                configuration=dict(revision.configuration),
-                schema_version=revision.schema_version,
-            )
-            if revision is not None
-            else None,
+            config_revision_record(revision),
             # Provider availability is runtime state. Preserve the response policy here,
             # then let ChatService fail closed only if a turn actually needs web evidence.
             validate_web_provider=False,
@@ -239,35 +180,7 @@ async def get_chat_service(
                 for path, value in (snapshot.structured_origins or {}).items()
             },
             provenance=ConfigProvenance.model_validate(snapshot.provenance),
-            invariants=(
-                InvariantState.model_validate(snapshot.invariants)
-                if snapshot.invariants
-                else InvariantState(
-                    hybrid_retrieval=(
-                        snapshot.configuration.get("retrieval", {}).get("strategy") == "hybrid"
-                    ),
-                    hosted_reranking_stage=bool(
-                        snapshot.configuration.get("retrieval", {}).get("rerank_enabled")
-                    ),
-                    evidence_gate_enforced=(
-                        snapshot.configuration.get("chat", {}).get("evidence_gate_mode")
-                        == "enforce"
-                    ),
-                    # This deployment-only value was not captured by legacy
-                    # conversation snapshots; preserve that uncertainty.
-                    content_hash_deduplication=None,
-                    durable_citation_provenance=bool(
-                        snapshot.configuration.get("chat", {}).get("include_citations")
-                    ),
-                    governed_source_policy=(
-                        snapshot.configuration.get("source_policy_mode") == "enforce"
-                    ),
-                    governed_modifies_expansion=(
-                        snapshot.configuration.get("retrieval", {}).get("modifies_expansion_mode")
-                        == "expand"
-                    ),
-                )
-            ),
+            invariants=InvariantState.model_validate(snapshot.invariants),
             compatibility_diagnostics=list(snapshot.compatibility_diagnostics),
         )
         snapshot_id = snapshot.id

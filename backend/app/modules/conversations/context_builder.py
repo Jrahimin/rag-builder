@@ -34,32 +34,12 @@ class ContextBuilder:
             if isinstance(chunk, EvidenceUnit) and len(chunk.content) > char_budget:
                 # An admitted unit is indivisible: budgeting may omit it, never rewrite it.
                 continue
+            chunk = chunk.restore_applied_rerank_scores()
             if len(chunk.content) > char_budget:
-                selected.append(
-                    _preserve_rerank_score(replace(chunk, content=chunk.content[:char_budget]))
-                )
+                selected.append(replace(chunk, content=chunk.content[:char_budget]))
                 char_budget = 0
             else:
-                selected.append(_preserve_rerank_score(chunk))
+                selected.append(chunk)
                 char_budget -= len(chunk.content)
 
         return selected
-
-
-def _preserve_rerank_score(chunk: ContextChunk) -> ContextChunk:
-    """Keep Cohere relevance on the selected chunk when provenance dropped the field."""
-    if chunk.rerank_relevance_score is not None:
-        return chunk
-    if str(chunk.metadata.get("rerank_status")) != "applied" or chunk.score <= 0.0:
-        return chunk
-    return replace(
-        chunk,
-        rerank_relevance_score=chunk.score,
-        rank_score=chunk.rank_score if chunk.rank_score is not None else chunk.score,
-        evidence_relevance_score=(
-            chunk.evidence_relevance_score
-            if chunk.evidence_relevance_score is not None
-            else chunk.score
-        ),
-        evidence_score_method=chunk.evidence_score_method or "reranker_relevance",
-    )

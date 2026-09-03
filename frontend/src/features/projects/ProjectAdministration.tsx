@@ -7,7 +7,6 @@ import {
   type EffectiveProjectAIConfig,
   type Organization,
   type Project,
-  type ProjectAIConfig,
   type ProjectAIConfigRevision,
   type ProjectOwnershipPreflight,
   type SourceRevision,
@@ -766,8 +765,7 @@ function ProjectConfig({ project }: { project: Project }) {
     if (config.active_revision_id && !activeRevision) {
       throw new Error("The active AI configuration revision is unavailable. Reload and try again.");
     }
-    const stored =
-      activeRevision?.schema_version === 2 ? (activeRevision.configuration as ProjectAIConfig) : {};
+    const stored = activeRevision?.configuration ?? {};
     setEffective(config);
     setHistory(revisions);
     setOverrides(configOverridesFromStored(stored));
@@ -789,14 +787,10 @@ function ProjectConfig({ project }: { project: Project }) {
   const activeRevision = history.find((revision) => revision.id === effective?.active_revision_id);
   const submit = async (event: FormEvent) => {
     event.preventDefault();
-    if (activeRevision?.schema_version === 1) {
-      setError("This active V1 revision must be normalized before it can be edited.");
-      return;
-    }
     setBusy(true);
     setError("");
     try {
-      const stored = (activeRevision?.configuration ?? {}) as ProjectAIConfig;
+      const stored = activeRevision?.configuration ?? {};
       const configuration = buildSparseProjectConfig(stored, form, overrides);
       if (!sparseHasOverrides(configuration) && !effective?.active_revision_id) {
         throw new Error(
@@ -809,30 +803,6 @@ function ProjectConfig({ project }: { project: Project }) {
         effective?.active_revision_id ?? null,
         form.reason,
       );
-      await load();
-    } catch (caught) {
-      setError((caught as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  };
-  const normalizeV1 = async () => {
-    if (!activeRevision || activeRevision.schema_version !== 1) return;
-    setBusy(true);
-    setError("");
-    try {
-      const preview = await operatorApiClient.previewProjectAIConfigNormalization(project.id);
-      const changed = Object.keys(preview.result.effective_diff);
-      const message = `This creates and activates an append-only V2 revision. ${
-        changed.length ? `Effective changes: ${changed.join(", ")}.` : "No effective changes."
-      } Index action: ${preview.result.required_index_action}.`;
-      if (!window.confirm(message)) return;
-      const reason = window.prompt(
-        "Normalization reason",
-        "Normalize active V1 Project configuration",
-      );
-      if (!reason) return;
-      await operatorApiClient.normalizeProjectAIConfig(project.id, activeRevision.id, reason);
       await load();
     } catch (caught) {
       setError((caught as Error).message);
@@ -882,23 +852,6 @@ function ProjectConfig({ project }: { project: Project }) {
           {error}
         </div>
       )}
-      {activeRevision?.schema_version === 1 && (
-        <section className="panel">
-          <h3>Active V1 configuration</h3>
-          <p className="muted-copy">
-            Historical V1 remains readable. Preview normalization creates an append-only V2 revision
-            and reports its effective diff; it never schedules index work by itself.
-          </p>
-          <button
-            className="button button--primary"
-            type="button"
-            disabled={busy}
-            onClick={() => void normalizeV1()}
-          >
-            Preview and normalize V1
-          </button>
-        </section>
-      )}
       <form className="panel progressive-form" onSubmit={(event) => void submit(event)}>
         <p className="muted-copy">
           Project behavior is sparse. RAG execution is an inherit/preset selection or a complete
@@ -936,10 +889,7 @@ function ProjectConfig({ project }: { project: Project }) {
         <p className="muted-copy">
           New conversations capture this policy. Existing snapshots do not drift.
         </p>
-        <button
-          className="button button--primary"
-          disabled={busy || activeRevision?.schema_version === 1}
-        >
+        <button className="button button--primary" disabled={busy}>
           Create and activate revision
         </button>
         {activeRevision?.schema_version === 2 && (

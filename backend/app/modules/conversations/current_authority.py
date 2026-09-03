@@ -17,21 +17,33 @@ _PROVISION_HEADING = regex.compile(
 _ENFORCEABLE_OUTCOMES = {"expanded", "already_in_recall"}
 
 
-def remove_superseded_provisions(chunks: list[ContextChunk]) -> list[ContextChunk]:
+def remove_superseded_provisions(
+    chunks: list[ContextChunk],
+    expansion_records: list[dict[str, object]] | None = None,
+) -> list[ContextChunk]:
     """Redact only explicitly scoped base provisions with a recalled modifier.
 
+    ``expansion_records`` should come from the top-level retrieval diagnostics
+    (``SearchDiagnostics.modifies_expansion_records`` or the equivalent dict
+    from ``retrieval_result.diagnostics``).  When not supplied the function
+    falls back to reading the list from the first chunk that carries it
+    (legacy path; kept so callers that have not yet been migrated continue to
+    work but no new callers should rely on it).
+
     Unscoped relationships and headings that cannot be resolved exactly are
-    intentionally left untouched. This is fail-closed for authority metadata:
+    intentionally left untouched.  This is fail-closed for authority metadata:
     document-level MODIFIES never implies whole-document invalidation.
     """
+    if expansion_records is None:
+        expansion_records = _records_from_chunks(chunks)
+
     present_revisions = {
         str(value)
         for chunk in chunks
         if (value := chunk.metadata.get("source_revision_id")) is not None
     }
-    records = _records(chunks)
     scopes_by_base: dict[str, set[str]] = {}
-    for record in records:
+    for record in expansion_records:
         if str(record.get("outcome")) not in _ENFORCEABLE_OUTCOMES:
             continue
         if str(record.get("modifier_revision_id")) not in present_revisions:
@@ -58,6 +70,7 @@ def remove_superseded_provisions(chunks: list[ContextChunk]) -> list[ContextChun
             output.append(chunk)
             continue
         if not redacted.strip():
+            # Whole chunk is superseded; absent from admission.
             continue
         output.append(
             replace(
@@ -74,7 +87,14 @@ def remove_superseded_provisions(chunks: list[ContextChunk]) -> list[ContextChun
     return output
 
 
-def _records(chunks: list[ContextChunk]) -> list[dict[str, object]]:
+# ---------------------------------------------------------------------------
+# Backward-compat helper: read records from chunk metadata when the caller
+# has not yet been updated to pass them from the top-level diagnostics.
+# No new callers should use this path.
+# ---------------------------------------------------------------------------
+
+
+def _records_from_chunks(chunks: list[ContextChunk]) -> list[dict[str, object]]:
     for chunk in chunks:
         value = chunk.metadata.get("modifies_expansion_records")
         if isinstance(value, list):

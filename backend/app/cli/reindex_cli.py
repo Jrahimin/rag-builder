@@ -19,7 +19,7 @@ from app.modules.knowledge.services.document_service import DocumentService
 from app.modules.projects.repositories.project_ai_config_repository import (
     ProjectAIConfigRepository,
 )
-from app.platform.config.project_ai import ConfigRevisionRecord, resolve_project_ai_config
+from app.platform.config.project_ai import config_revision_record, resolve_project_ai_config
 from app.platform.db.session import Database
 from app.platform.jobs.configuration import build_job_configuration
 from app.platform.jobs.contracts import JobConfiguration
@@ -128,15 +128,7 @@ async def _project_job_configuration(
     pointer = await session.get(ProjectIndexPointer, project_id)
     resolution = resolve_project_ai_config(
         settings,
-        ConfigRevisionRecord(
-            id=revision.id,
-            revision_number=revision.revision_number,
-            configuration_hash=revision.configuration_hash,
-            configuration=dict(revision.configuration),
-            schema_version=revision.schema_version,
-        )
-        if revision is not None
-        else None,
+        config_revision_record(revision),
     )
     return build_job_configuration(
         settings,

@@ -10,7 +10,10 @@ from app.core.config import ChatConfig, LLMBackend, LLMConfig, Settings
 from app.core.exceptions import BadRequestError, ConflictError
 from app.models.conversation import Conversation
 from app.models.conversation_config_snapshot import ConversationConfigSnapshot
-from app.modules.conversations.prompts.registry import require_prompt_template
+from app.modules.conversations.prompts.registry import (
+    GROUNDED_PROMPT_VERSION,
+    require_prompt_template,
+)
 from app.modules.conversations.repositories.config_snapshot_repository import (
     ConversationConfigSnapshotRepository,
 )
@@ -57,10 +60,9 @@ def _validate_provider(value: str | None) -> str | None:
     return value
 
 
-def _validate_prompt_version(value: str | None, *, default: str) -> str:
-    version = value or default
-    require_prompt_template(version)
-    return version
+def _canonical_prompt_version() -> str:
+    require_prompt_template(GROUNDED_PROMPT_VERSION)
+    return GROUNDED_PROMPT_VERSION
 
 
 class ConversationService:
@@ -100,18 +102,10 @@ class ConversationService:
             "provider",
             "model",
             "temperature",
-            "system_prompt_version",
         } & data.model_fields_set
-        if "system_prompt_version" in config_fields:
-            _validate_prompt_version(
-                data.system_prompt_version,
-                default=self._chat_config.system_prompt_version,
-            )
+        # system_prompt_version removed from request surface in Phase 3.
         resolution = self._resolve({field: getattr(data, field, None) for field in config_fields})
-        prompt_version = _validate_prompt_version(
-            resolution.configuration.prompt_version,
-            default=self._chat_config.system_prompt_version,
-        )
+        prompt_version = _canonical_prompt_version()
         conversation = Conversation(
             project_id=self._project_id,
             title=data.title,
@@ -159,27 +153,19 @@ class ConversationService:
             "provider",
             "model",
             "temperature",
-            "system_prompt_version",
         } & data.model_fields_set
+        # system_prompt_version removed from request surface in Phase 3.
         if config_fields:
             provider_value = getattr(data, "provider", None)
             if provider_value is not None:
                 _validate_provider(provider_value)
-            if "system_prompt_version" in config_fields:
-                _validate_prompt_version(
-                    data.system_prompt_version,
-                    default=self._chat_config.system_prompt_version,
-                )
             resolution = self._resolve(
                 {field: getattr(data, field, None) for field in config_fields}
             )
             conversation.provider = resolution.configuration.llm.provider.value
             conversation.model = resolution.configuration.llm.model
             conversation.temperature = resolution.configuration.llm.temperature
-            conversation.system_prompt_version = _validate_prompt_version(
-                resolution.configuration.prompt_version,
-                default=self._chat_config.system_prompt_version,
-            )
+            conversation.system_prompt_version = _canonical_prompt_version()
             snapshot = await self._append_snapshot(
                 conversation,
                 resolution,
@@ -216,7 +202,7 @@ class ConversationService:
         conversation.provider = resolution.configuration.llm.provider.value
         conversation.model = resolution.configuration.llm.model
         conversation.temperature = resolution.configuration.llm.temperature
-        conversation.system_prompt_version = resolution.configuration.prompt_version
+        conversation.system_prompt_version = GROUNDED_PROMPT_VERSION
         if self._audit is not None:
             self._audit.record(
                 event_type=AuditEventType.CONVERSATION_CONFIG_UPDATED,

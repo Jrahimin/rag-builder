@@ -50,7 +50,7 @@ def test_exact_modified_provision_is_removed_but_neighboring_rules_remain() -> N
     )
     modifier_chunk = _chunk(revision=modifier, records=records, content="The rebate is 10%.")
 
-    safe = remove_superseded_provisions([base_chunk, modifier_chunk])
+    safe = remove_superseded_provisions([base_chunk, modifier_chunk], records)
 
     assert "Approved savings certificates" in safe[0].content
     assert "15%" not in safe[0].content
@@ -73,7 +73,7 @@ def test_unscoped_or_unresolved_relationship_never_suppresses_whole_document() -
     ]
     base_chunk = _chunk(revision=base, records=records, content="Section 20\nStill valid.")
     modifier_chunk = _chunk(revision=modifier, records=records, content="Amendment.")
-    safe = remove_superseded_provisions([base_chunk, modifier_chunk])
+    safe = remove_superseded_provisions([base_chunk, modifier_chunk], records)
     assert safe[0].content == base_chunk.content
 
 
@@ -100,7 +100,7 @@ def test_exact_bangla_modified_provision_is_removed_without_suppressing_neighbor
     )
     modifier_chunk = _chunk(revision=modifier, records=records, content="The rebate is 10%.")
 
-    safe = remove_superseded_provisions([base_chunk, modifier_chunk])
+    safe = remove_superseded_provisions([base_chunk, modifier_chunk], records)
 
     assert "অনুমোদিত সঞ্চয়পত্র" in safe[0].content
     assert "১৫%" not in safe[0].content
@@ -119,4 +119,4 @@ def test_scope_is_not_applied_when_modifier_is_absent_from_recall() -> None:
         }
     ]
     base_chunk = _chunk(revision=base, records=records, content="Section 21\nHistorical text.")
-    assert remove_superseded_provisions([base_chunk])[0].content == base_chunk.content
+    assert remove_superseded_provisions([base_chunk], records)[0].content == base_chunk.content

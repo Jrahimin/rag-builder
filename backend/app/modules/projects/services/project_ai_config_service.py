@@ -36,10 +36,9 @@ from app.platform.config.project_ai import (
     EffectiveConfigResolution,
     ProjectAIConfig,
     ProjectExecutionV2,
-    V1NormalizationResult,
     V2ProfileNormalizationResult,
+    config_revision_record,
     materialize_execution_values,
-    normalize_v1_project_config,
     normalize_v2_project_config,
     resolve_project_ai_config,
     stable_hash,
@@ -191,52 +190,18 @@ class ProjectAdministrationService:
                 message="Project configuration revision not found.",
                 code="project_config_revision_not_found",
             )
-        configuration = (
-            normalize_v1_project_config(self._settings, _record(source)).configuration
-            if source.schema_version == 1
-            else ProjectAIConfig.model_validate(source.configuration)
-        )
+        if source.schema_version != 2:
+            raise ConflictError(
+                message="Legacy Project revisions cannot be restored after the config reset.",
+                code="legacy_project_config_requires_reset",
+            )
+        configuration = ProjectAIConfig.model_validate(source.configuration)
         return await self.create_revision(
             configuration,
             expected_active_revision_id=expected_active_revision_id,
             reason=reason,
             restored_from_revision_id=source.id,
-            source="restore_normalized_v1" if source.schema_version == 1 else "restore_v2",
-        )
-
-    async def normalization_preview(self) -> tuple[ProjectAIConfigRevision, V1NormalizationResult]:
-        await self._require_project()
-        active = await self._repository.get_active()
-        if active is None:
-            raise NotFoundError(
-                message="The Project has no active V1 configuration revision.",
-                code="active_project_config_not_found",
-            )
-        result = normalize_v1_project_config(self._settings, _record(active))
-        return active, result
-
-    async def normalize_active_v1(
-        self,
-        *,
-        expected_active_revision_id: uuid.UUID,
-        reason: str,
-    ) -> ProjectAIConfigRevision:
-        active, preview = await self.normalization_preview()
-        if active.id != expected_active_revision_id:
-            raise ConflictError(
-                message="The active Project configuration changed.",
-                code="project_config_revision_conflict",
-                context={
-                    "expected": str(expected_active_revision_id),
-                    "actual": str(active.id),
-                },
-            )
-        return await self.create_revision(
-            preview.configuration,
-            expected_active_revision_id=expected_active_revision_id,
-            reason=reason,
-            restored_from_revision_id=active.id,
-            source="super_admin_v1_normalization",
+            source="restore_v2",
         )
 
     async def profile_normalization_preview(
@@ -423,12 +388,4 @@ def _record(revision: None) -> None: ...
 
 
 def _record(revision: ProjectAIConfigRevision | None) -> ConfigRevisionRecord | None:
-    if revision is None:
-        return None
-    return ConfigRevisionRecord(
-        id=revision.id,
-        revision_number=revision.revision_number,
-        configuration_hash=revision.configuration_hash,
-        configuration=dict(revision.configuration),
-        schema_version=revision.schema_version,
-    )
+    return config_revision_record(revision)

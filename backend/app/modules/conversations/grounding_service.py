@@ -8,7 +8,7 @@ from typing import Any
 
 import regex
 
-from app.core.config import ChatConfig, EvidenceGateMode, EvidenceScoreMode, GroundingMode
+from app.core.config import ChatConfig, EvidenceGateMode, GroundingMode
 from app.modules.conversations.ports import (
     CandidateEvidenceAssessment,
     ContextChunk,
@@ -56,11 +56,30 @@ _SPAN_BOUNDARY_PATTERN = regex.compile(
     regex.UNICODE,
 )
 _INSUFFICIENCY_MARKER = "not enough indexed evidence"
-_SOURCE_NOTICE_MARKERS = (
-    "this wasn\u2019t covered in the knowledge base, so i used current web sources",
-    "knowledge base-এ এটি ছিল না, তাই আমি সাম্প্রতিক web সূত্র ব্যবহার করেছি",
-)
+# _SOURCE_NOTICE_MARKERS removed in Phase 3: web-fallback notice text is no longer
+# prepended to answer content; it is a structured Notice metadata field instead.
 _MAX_CITATION_INHERITANCE_STRUCTURAL_GAP = 1
+_MAX_CITATION_INHERITANCE_LIST_GAP = 8
+_BENGALI_DIGIT_FOLD = str.maketrans("০১২৩৪৫৬৭৮৯", "0123456789")
+_MARKDOWN_LIST_ITEM_PATTERN = regex.compile(r"^[-*+]\s+\S")
+_QUANTITY_SETUP_PATTERN = regex.compile(
+    r"^(?:[-*+]\s+)?.+[:：]\s*(?:[A-Za-z]{1,6}\s+)*[\d,.]+\s*"  # noqa: RUF001
+    r"(?:[A-Za-z\p{Bengali}]{0,12})?\s*$"
+)
+_CURRENCY_TOKEN = r"(?:[A-Za-z]{1,6}\s+)*"
+_AMOUNT_PATTERN = regex.compile(r"\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?")
+_EVIDENCE_RATE_PATTERN = regex.compile(r"(\d+(?:\.\d+)?)\s*%")
+_CALCULATION_PATTERN = regex.compile(
+    r"(?P<base>\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?)\s*[×x*]\s*"  # noqa: RUF001
+    r"(?P<rate>\d+(?:\.\d+)?)\s*%\s*=\s*"
+    rf"{_CURRENCY_TOKEN}"
+    r"(?P<result>\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?)",
+    regex.IGNORECASE,
+)
+_CALCULATION_OPERATOR_PATTERN = regex.compile(
+    r"[%＝=×]|[x*]\s*\d|\d\s*%",  # noqa: RUF001
+    regex.IGNORECASE,
+)
 _ENGLISH_STOPWORDS = {
     "a",
     "an",
@@ -140,7 +159,9 @@ _STRICT_CORROBORATION_METHODS = frozenset(
 )
 _CONTEXT_SELECTION_REASONS = frozenset(
     {
-        InsufficientEvidenceReason.AUTHORITY_CONTEXT_EMPTY,
+        # AUTHORITY_CONTEXT_EMPTY was removed in Phase 3: authority redaction now
+        # happens before admission so a redacted chunk is simply absent and cannot
+        # cause a post-admission empty selection.
         InsufficientEvidenceReason.CONTEXT_SELECTION_EMPTY,
     }
 )
@@ -162,23 +183,19 @@ class EvidenceDecision:
     winning_rank_score: float | None = None
     admitted_units: tuple[EvidenceUnit, ...] = ()
     candidate_assessments: tuple[CandidateEvidenceAssessment, ...] = ()
-    grounding_path: str = "legacy"
-    shadow_candidate_wise_sufficient: bool | None = None
-    shadow_candidate_wise_winning_chunk_id: uuid.UUID | None = None
-    shadow_candidate_wise_admitted_count: int = 0
-    legacy_sufficient: bool | None = None
-    legacy_winning_chunk_id: uuid.UUID | None = None
+    grounding_path: str = "no_reranker"
     passage_rescue_status: str | None = None
     passage_rescue_candidate_count: int = 0
-    usable_after_authority_count: int | None = None
+    observe_context: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class GroundingResult:
     claims: list[dict]
-    grounded: bool
+    grounded: bool | None
     citation_coverage: float
     unverified_claim_rate: float = 0.0
+    claims_status: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -217,162 +234,44 @@ class GroundingService:
         *,
         rerank_status: str | None = None,
     ) -> EvidenceDecision:
-        if self._config.candidate_wise_grounding_enabled and _rerank_applied(
-            chunks, rerank_status=rerank_status
-        ):
+        if _rerank_applied(chunks, rerank_status=rerank_status):
             return self.assess_candidate_wise(
                 question,
                 chunks,
                 rerank_status=rerank_status,
             )
-        return self.assess_legacy(question, chunks, rerank_status=rerank_status)
+        return self.assess_without_reranker(question, chunks, rerank_status=rerank_status)
 
-    def assess_legacy(
+    def assess_without_reranker(
         self,
         question: str,
         chunks: list[ContextChunk],
         *,
         rerank_status: str | None = None,
     ) -> EvidenceDecision:
+        """Admit independently supported candidates when no reranker was applied."""
+        del rerank_status
         if not chunks:
             return EvidenceDecision(
                 sufficient=False,
                 reason=InsufficientEvidenceReason.NO_RETRIEVAL_RESULTS,
+                evidence_score_method="whole_chunk_cosine",
+                evidence_calibration_id="whole_chunk_cosine:v1",
+                grounding_path="no_reranker",
             )
-        if _rerank_applied(chunks, rerank_status=rerank_status):
-            return self._assess_reranker_legacy(
-                question,
-                chunks,
-                rerank_status=rerank_status,
-            )
-        scored = [
-            item
-            for chunk in chunks
-            if (item := self._candidate_evidence(question, chunk)) is not None
-        ]
-        if not scored:
-            return EvidenceDecision(
-                sufficient=False,
-                reason=InsufficientEvidenceReason.BELOW_RELEVANCE_THRESHOLD,
-                evidence_score_method=self._evidence_score_method,
-                evidence_calibration_id=self._evidence_calibration_id,
-            )
-        best = max(scored, key=lambda item: (item[0], item[1], str(item[2].chunk_id)))
-        direct = [
-            item for item in scored if item[0] >= self._config.minimum_semantic_evidence_score
-        ]
-        if direct:
-            winner = max(direct, key=lambda item: (item[0], item[1], str(item[2].chunk_id)))
-            return self._accepted(winner)
-        rescued = [
-            item
-            for item in scored
-            if item[0] >= self._config.lexical_corroboration_floor_score
-            and item[1] >= self._config.lexical_corroboration_coverage
-        ]
-        if rescued:
-            winner = max(rescued, key=lambda item: (item[0], item[1], str(item[2].chunk_id)))
-            return self._accepted(winner, lexically_corroborated=True)
-        return EvidenceDecision(
-            sufficient=False,
-            reason=InsufficientEvidenceReason.BELOW_RELEVANCE_THRESHOLD,
-            query_token_coverage=best[1],
-            best_score=best[0],
-            winning_chunk_id=best[2].chunk_id,
-            evidence_score_method=self._evidence_score_method,
-            evidence_calibration_id=self._evidence_calibration_id,
-            evidence_char_start=best[3],
-            evidence_char_end=best[4],
-            winning_semantic_score=best[2].semantic_score,
-            winning_rank_score=best[2].rank_score,
-        )
-
-    def _assess_reranker_legacy(
-        self,
-        question: str,
-        chunks: list[ContextChunk],
-        *,
-        rerank_status: str | None = None,
-    ) -> EvidenceDecision:
-        scored = [
-            (score, chunk)
-            for chunk in chunks
-            if (score := _reranker_relevance(chunk, rerank_status=rerank_status)) is not None
-        ]
-        method = "reranker_relevance"
-        calibration_id = RERANKER_RELEVANCE_CALIBRATION_ID
-        if not scored:
-            return EvidenceDecision(
-                sufficient=False,
-                reason=InsufficientEvidenceReason.BELOW_RELEVANCE_THRESHOLD,
-                evidence_score_method=method,
-                evidence_calibration_id=calibration_id,
-                best_score=None,
-            )
-        best_score = max(score for score, _ in scored)
-        winner_score, winner_chunk = next(item for item in scored if item[0] == best_score)
-        corroborated, coverage, lexical = self._independent_corroboration(question, winner_chunk)
-        if winner_score >= self._config.minimum_reranker_evidence_score and corroborated:
-            return EvidenceDecision(
-                sufficient=True,
-                query_token_coverage=coverage,
-                best_score=winner_score,
-                lexically_corroborated=lexical,
-                winning_chunk_id=winner_chunk.chunk_id,
-                evidence_score_method=method,
-                evidence_calibration_id=calibration_id,
-                evidence_char_start=winner_chunk.char_start,
-                evidence_char_end=winner_chunk.char_end,
-                winning_semantic_score=winner_chunk.semantic_score,
-                winning_rank_score=winner_chunk.rank_score,
-            )
-        span = _select_evidence_span(
-            winner_chunk,
-            (
-                QueryVariant(
-                    variant_id="original",
-                    kind=QueryVariantKind.ORIGINAL,
-                    language=detect_language(question).primary_language or "und",
-                    text=question,
-                ),
-            ),
-            max_chars=self._config.context_char_budget,
-        )
-        if _balanced_high_confidence_admission(
-            self._config,
-            reranker_score=winner_score,
-            calibration_status=_reranker_calibration_status(winner_chunk),
-            span=span,
-            near_miss=_legacy_corroboration_near_miss(
-                self._config, question, winner_chunk, coverage
-            ),
-        ):
-            return EvidenceDecision(
-                sufficient=True,
-                query_token_coverage=coverage,
-                best_score=winner_score,
-                lexically_corroborated=lexical,
-                winning_chunk_id=winner_chunk.chunk_id,
-                evidence_score_method=method,
-                evidence_calibration_id=calibration_id,
-                evidence_char_start=winner_chunk.char_start,
-                evidence_char_end=winner_chunk.char_end,
-                winning_semantic_score=winner_chunk.semantic_score,
-                winning_rank_score=winner_chunk.rank_score,
-            )
-        return EvidenceDecision(
-            sufficient=False,
-            reason=InsufficientEvidenceReason.BELOW_RELEVANCE_THRESHOLD,
-            query_token_coverage=coverage,
-            best_score=winner_score,
-            lexically_corroborated=lexical,
-            winning_chunk_id=winner_chunk.chunk_id,
-            evidence_score_method=method,
-            evidence_calibration_id=calibration_id,
-            evidence_char_start=winner_chunk.char_start,
-            evidence_char_end=winner_chunk.char_end,
-            winning_semantic_score=winner_chunk.semantic_score,
-            winning_rank_score=winner_chunk.rank_score,
+        assessments: list[CandidateEvidenceAssessment] = []
+        units: list[EvidenceUnit] = []
+        for rank, chunk in enumerate(chunks, start=1):
+            assessment, unit = self._assess_unreranked_candidate(question, chunk, rank=rank)
+            assessments.append(assessment)
+            if unit is not None:
+                units.append(unit)
+        return _admission_decision(
+            assessments,
+            units,
+            grounding_path="no_reranker",
+            evidence_score_method="whole_chunk_cosine",
+            evidence_calibration_id="whole_chunk_cosine:v1",
         )
 
     def assess_candidate_wise(
@@ -392,10 +291,7 @@ class GroundingService:
                 grounding_path="candidate_wise",
             )
         if not _rerank_applied(chunks, rerank_status=rerank_status):
-            return replace(
-                self.assess_legacy(question, chunks, rerank_status=rerank_status),
-                grounding_path="legacy_no_reranker",
-            )
+            return self.assess_without_reranker(question, chunks, rerank_status=rerank_status)
 
         assessments: list[CandidateEvidenceAssessment] = []
         units: list[EvidenceUnit] = []
@@ -410,7 +306,13 @@ class GroundingService:
             if unit is not None:
                 units.append(unit)
 
-        return _candidate_wise_decision(assessments, units)
+        return _admission_decision(
+            assessments,
+            units,
+            grounding_path="candidate_wise",
+            evidence_score_method="reranker_relevance",
+            evidence_calibration_id=RERANKER_RELEVANCE_CALIBRATION_ID,
+        )
 
     def merge_monotonic_admissions(
         self,
@@ -437,7 +339,13 @@ class GroundingService:
             if unit is not None:
                 units.append(unit)
         return replace(
-            _candidate_wise_decision(assessments, units),
+            _admission_decision(
+                assessments,
+                units,
+                grounding_path=current.grounding_path,
+                evidence_score_method=current.evidence_score_method,
+                evidence_calibration_id=current.evidence_calibration_id,
+            ),
             grounding_path=current.grounding_path,
         )
 
@@ -524,14 +432,6 @@ class GroundingService:
                     corroborating_variant_id = variant.variant_id
                     break
 
-        near_miss = _candidate_corroboration_near_miss(
-            self._config,
-            original_text=original_text,
-            span=span,
-            semantic_score=semantic_score,
-            original_coverage=original_coverage,
-            translated_coverages=translated_coverages,
-        )
         terminal_reason = "admitted"
         if reranker_score is None:
             terminal_reason = "missing_reranker_score"
@@ -546,7 +446,6 @@ class GroundingService:
             reranker_score=reranker_score,
             calibration_status=calibration_status,
             span=span,
-            near_miss=near_miss,
         ):
             corroboration = "high_confidence_reranker"
         elif corroboration is None:
@@ -580,7 +479,7 @@ class GroundingService:
             semantic_span_aligned=span.semantic_span_aligned if span is not None else False,
             original_lexical_coverage=original_coverage,
             translated_lexical_coverage=translated_coverages,
-            translated_dense_shadow_scores=translated_dense_scores,
+            translated_dense_scores=translated_dense_scores,
             corroboration_method=corroboration,
             query_variant_provenance_missing=provenance_missing,
             passed=passed,
@@ -588,50 +487,103 @@ class GroundingService:
         )
         return assessment, unit
 
-    def _independent_corroboration(
+    def _assess_unreranked_candidate(
         self,
         question: str,
         chunk: ContextChunk,
-    ) -> tuple[bool, float, bool]:
-        """Require a non-rerank signal so forced ranking cannot admit unrelated hits.
-
-        Query-token coverage is a valid independent signal on the reranker path,
-        including when semantic cosine is missing (keyword-only / hash embeddings).
-        Semantic cosine can still admit or rescue on its own calibrated bars.
-        """
-        item = self._candidate_evidence(question, chunk)
-        evidence_text = chunk.content
-        semantic: float | None = None
-        passage_text, passage_semantic = _passage_local_evidence(chunk)
-        if passage_text is not None and passage_semantic is not None:
-            evidence_text = passage_text
-            semantic = passage_semantic
-            coverage = _coverage(
-                _significant_tokens(question),
-                _significant_tokens(evidence_text),
-            )
-        elif item is None:
-            coverage = _coverage(
-                _significant_tokens(question),
-                _significant_tokens(evidence_text),
-            )
-        else:
-            semantic, coverage, _, start, end = item
-            if (
-                self._config.evidence_score_mode is EvidenceScoreMode.PASSAGE_MAX
-                and start is not None
-                and end is not None
-                and 0 <= start < end <= len(chunk.content)
-            ):
-                evidence_text = chunk.content[start:end]
-        direct = semantic is not None and semantic >= self._config.minimum_semantic_evidence_score
-        lexical = coverage >= self._config.lexical_corroboration_coverage
-        cross_language = (
-            not _same_language(question, evidence_text)
-            and semantic is not None
-            and semantic >= self._config.cross_language_semantic_evidence_score_threshold
+        *,
+        rank: int,
+    ) -> tuple[CandidateEvidenceAssessment, EvidenceUnit | None]:
+        provenance_missing = not chunk.query_variants
+        variants = chunk.query_variants or (
+            QueryVariant(
+                variant_id="original",
+                kind=QueryVariantKind.ORIGINAL,
+                language=detect_language(question).primary_language or "und",
+                text=question,
+            ),
         )
-        return direct or lexical or cross_language, coverage, lexical and not direct
+        original = next(
+            (variant for variant in variants if variant.kind is QueryVariantKind.ORIGINAL),
+            None,
+        )
+        original_text = original.text if original is not None else question
+        span = (
+            _SelectedSpan(
+                text=chunk.content,
+                char_start=0,
+                char_end=len(chunk.content),
+                derivation="complete_chunk",
+                semantic_score=chunk.semantic_score,
+                semantic_span_aligned=True,
+            )
+            if chunk.content
+            else None
+        )
+        original_coverage = (
+            _evidence_coverage(original_text, span.text) if span is not None else 0.0
+        )
+        semantic_score = chunk.semantic_score
+        corroboration: str | None = None
+        corroborating_variant_id = original.variant_id if original is not None else "original"
+        terminal_reason = "admitted"
+        if span is None:
+            terminal_reason = "no_safe_evidence_span"
+        elif semantic_score is None:
+            terminal_reason = "missing_semantic_score"
+        elif semantic_score >= self._config.minimum_semantic_evidence_score:
+            corroboration = "original_semantic"
+        elif (
+            not _same_language(original_text, span.text)
+            and semantic_score >= self._config.cross_language_semantic_evidence_score_threshold
+        ):
+            corroboration = "cross_language_semantic"
+        elif semantic_score >= self._config.lexical_corroboration_floor_score and _lexical_support(
+            original_text,
+            span.text,
+            minimum_coverage=self._config.lexical_corroboration_coverage,
+        ):
+            corroboration = "original_lexical"
+        else:
+            terminal_reason = "no_aligned_independent_signal"
+        passed = terminal_reason == "admitted" and corroboration is not None
+        if not passed and terminal_reason == "admitted":
+            terminal_reason = "no_aligned_independent_signal"
+        unit = (
+            _evidence_unit(
+                chunk,
+                span,
+                query_variant_id=corroborating_variant_id,
+                corroboration_method=corroboration,
+            )
+            if passed and span is not None and corroboration is not None
+            else None
+        )
+        assessment = CandidateEvidenceAssessment(
+            candidate_rank=rank,
+            chunk_id=chunk.chunk_id,
+            reranker_score=None,
+            reranker_threshold=self._config.minimum_reranker_evidence_score,
+            reranker_calibration_id=None,
+            calibration_status="not_applicable",
+            query_variant_ids=tuple(variant.variant_id for variant in variants),
+            branch_contributions=chunk.branch_contributions,
+            span_derivation=span.derivation if span is not None else None,
+            evidence_char_start=span.char_start if span is not None else None,
+            evidence_char_end=span.char_end if span is not None else None,
+            evidence_span_hash=content_hash(span.text) if span is not None else None,
+            evidence_unit_id=unit.evidence_unit_id if unit is not None else None,
+            original_semantic_score=semantic_score,
+            semantic_span_aligned=span.semantic_span_aligned if span is not None else False,
+            original_lexical_coverage=original_coverage,
+            translated_lexical_coverage={},
+            translated_dense_scores={},
+            corroboration_method=corroboration,
+            query_variant_provenance_missing=provenance_missing,
+            passed=passed,
+            terminal_reason=terminal_reason,
+        )
+        return assessment, unit
 
     def passage_rescue_chunk_ids(
         self,
@@ -779,6 +731,7 @@ class GroundingService:
                 self._config.high_confidence_reranker_evidence_score
             ),
             "grounding_mode": self._config.grounding_mode.value,
+            "high_confidence_band_enabled": self._config.high_confidence_band_enabled,
             "winning_char_start": decision.evidence_char_start,
             "winning_char_end": decision.evidence_char_end,
             "winning_evidence_unit_id": (
@@ -791,24 +744,10 @@ class GroundingService:
             },
             "context_selection": {
                 "reason": reason if stage == "context_selection" else None,
-                "usable_after_authority_count": decision.usable_after_authority_count,
+                "observe_context": decision.observe_context,
             },
             "candidate_wise": {
-                "enabled": self._config.candidate_wise_grounding_enabled,
                 "path": decision.grounding_path,
-                "shadow_sufficient": decision.shadow_candidate_wise_sufficient,
-                "shadow_winning_chunk_id": (
-                    str(decision.shadow_candidate_wise_winning_chunk_id)
-                    if decision.shadow_candidate_wise_winning_chunk_id is not None
-                    else None
-                ),
-                "shadow_admitted_count": decision.shadow_candidate_wise_admitted_count,
-                "legacy_sufficient": decision.legacy_sufficient,
-                "legacy_winning_chunk_id": (
-                    str(decision.legacy_winning_chunk_id)
-                    if decision.legacy_winning_chunk_id is not None
-                    else None
-                ),
                 "assessed_count": len(decision.candidate_assessments),
                 "admitted_count": len(decision.admitted_units),
                 "alerts": {
@@ -831,66 +770,6 @@ class GroundingService:
             },
         }
 
-    def _accepted(
-        self,
-        winner: tuple[float, float, ContextChunk, int | None, int | None],
-        *,
-        lexically_corroborated: bool = False,
-    ) -> EvidenceDecision:
-        return EvidenceDecision(
-            sufficient=True,
-            query_token_coverage=winner[1],
-            best_score=winner[0],
-            lexically_corroborated=lexically_corroborated,
-            winning_chunk_id=winner[2].chunk_id,
-            evidence_score_method=self._evidence_score_method,
-            evidence_calibration_id=self._evidence_calibration_id,
-            evidence_char_start=winner[3],
-            evidence_char_end=winner[4],
-            winning_semantic_score=winner[2].semantic_score,
-            winning_rank_score=winner[2].rank_score,
-        )
-
-    @property
-    def _evidence_score_method(self) -> str:
-        if self._config.evidence_score_mode is EvidenceScoreMode.PASSAGE_MAX:
-            return "bounded_token_max_v1"
-        return "whole_chunk_cosine"
-
-    @property
-    def _evidence_calibration_id(self) -> str:
-        return f"{self._evidence_score_method}:v1"
-
-    def _candidate_evidence(
-        self,
-        question: str,
-        chunk: ContextChunk,
-    ) -> tuple[float, float, ContextChunk, int | None, int | None] | None:
-        if self._config.evidence_score_mode is EvidenceScoreMode.PASSAGE_MAX:
-            score = chunk.passage_semantic_score
-            start = chunk.passage_char_start
-            end = chunk.passage_char_end
-            evidence_text = (
-                chunk.content[start:end]
-                if score is not None
-                and start is not None
-                and end is not None
-                and 0 <= start < end <= len(chunk.content)
-                else chunk.content
-            )
-        else:
-            score = chunk.semantic_score
-            start = chunk.char_start
-            end = chunk.char_end
-            evidence_text = chunk.content
-        if score is None:
-            return None
-        coverage = _coverage(
-            _significant_tokens(question),
-            _significant_tokens(evidence_text),
-        )
-        return score, coverage, chunk, start, end
-
     async def map_claims(
         self,
         answer: str,
@@ -900,7 +779,8 @@ class GroundingService:
     ) -> GroundingResult:
         drafts: list[_ClaimDraft] = []
         semantic_pairs: list[tuple[str, str]] = []
-        for index, raw_segment in enumerate(_answer_segments(answer), start=1):
+        segments = _answer_segments(answer)
+        for index, raw_segment in enumerate(segments, start=1):
             segment = raw_segment.strip()
             if not segment:
                 continue
@@ -944,22 +824,34 @@ class GroundingService:
             if not draft.evidence_chunks:
                 verification = ClaimVerification.UNSUPPORTED
             else:
-                uses_lexical = _uses_lexical_verification(draft.text, evidence_texts)
-                lexical = (
-                    self._lexical_verification(draft.text, evidence_texts) if uses_lexical else None
+                neighbor = _nearest_matching_cited_calculation(segments, draft.index - 1)
+                adjacent_texts = (segments[neighbor],) if neighbor is not None else ()
+                derived = _derived_calculation_verification(
+                    draft.text,
+                    evidence_texts,
+                    adjacent_texts=adjacent_texts,
                 )
-                scores = [
-                    similarities.get((draft.text, chunk.content))
-                    for _, chunk in draft.evidence_chunks
-                ]
-                numeric = [value for value in scores if value is not None]
-                score = max(numeric) if numeric else None
-                semantic = (
-                    self._cross_language_verification(score)
-                    if not uses_lexical or _usable_embedder(self._embedder)
-                    else None
-                )
-                verification = _combine_claim_verification(lexical, semantic)
+                if derived is not None:
+                    verification = derived
+                else:
+                    uses_lexical = _uses_lexical_verification(draft.text, evidence_texts)
+                    lexical = (
+                        self._lexical_verification(draft.text, evidence_texts)
+                        if uses_lexical
+                        else None
+                    )
+                    scores = [
+                        similarities.get((draft.text, chunk.content))
+                        for _, chunk in draft.evidence_chunks
+                    ]
+                    numeric = [value for value in scores if value is not None]
+                    score = max(numeric) if numeric else None
+                    semantic = (
+                        self._cross_language_verification(score)
+                        if not uses_lexical or _usable_embedder(self._embedder)
+                        else None
+                    )
+                    verification = _combine_claim_verification(lexical, semantic)
             claim_grounded = verification is ClaimVerification.SUPPORTED
             supported += int(claim_grounded)
             unverified += int(verification is ClaimVerification.UNVERIFIED)
@@ -977,6 +869,18 @@ class GroundingService:
                 )
             )
         total = len(claims)
+        if not claims:
+            # All segments were polarity-only, headings, or other non-factual
+            # content.  grounded=None distinguishes this from an ungrounded
+            # factual answer (grounded=False).  The caller (chat_service) only
+            # uses this when generation ran on admitted evidence.
+            return GroundingResult(
+                claims=[],
+                grounded=None,
+                citation_coverage=0.0,
+                unverified_claim_rate=0.0,
+                claims_status="no_verifiable_claims",
+            )
         return GroundingResult(
             claims=[claim.model_dump(mode="json") for claim in claims],
             grounded=bool(claims) and supported == total,
@@ -1049,22 +953,31 @@ def failure_stage_for(decision: EvidenceDecision) -> str | None:
     return "admission"
 
 
-def _candidate_wise_decision(
+def _admission_decision(
     assessments: list[CandidateEvidenceAssessment],
     units: list[EvidenceUnit],
+    *,
+    grounding_path: str,
+    evidence_score_method: str,
+    evidence_calibration_id: str,
 ) -> EvidenceDecision:
     if not assessments:
         return EvidenceDecision(
             sufficient=False,
             reason=InsufficientEvidenceReason.NO_RETRIEVAL_RESULTS,
-            evidence_score_method="reranker_relevance",
-            evidence_calibration_id=RERANKER_RELEVANCE_CALIBRATION_ID,
-            grounding_path="candidate_wise",
+            evidence_score_method=evidence_score_method,
+            evidence_calibration_id=evidence_calibration_id,
+            grounding_path=grounding_path,
         )
     winner = _winning_assessment(assessments)
     winning_unit = next(
         (unit for unit in units if unit.chunk_id == winner.chunk_id),
         None,
+    )
+    best_score = (
+        winner.reranker_score
+        if grounding_path == "candidate_wise"
+        else winner.original_semantic_score
     )
     return EvidenceDecision(
         sufficient=bool(units),
@@ -1075,15 +988,15 @@ def _candidate_wise_decision(
                 *winner.translated_lexical_coverage.values(),
             ]
         ),
-        best_score=winner.reranker_score,
+        best_score=best_score,
         lexically_corroborated=winner.corroboration_method
         in {
             "original_lexical",
             "translated_lexical",
         },
         winning_chunk_id=winner.chunk_id,
-        evidence_score_method="reranker_relevance",
-        evidence_calibration_id=RERANKER_RELEVANCE_CALIBRATION_ID,
+        evidence_score_method=evidence_score_method,
+        evidence_calibration_id=evidence_calibration_id,
         evidence_char_start=(
             winning_unit.evidence_char_start if winning_unit is not None else None
         ),
@@ -1092,7 +1005,7 @@ def _candidate_wise_decision(
         winning_rank_score=(winning_unit.rank_score if winning_unit is not None else None),
         admitted_units=tuple(units),
         candidate_assessments=tuple(assessments),
-        grounding_path="candidate_wise",
+        grounding_path=grounding_path,
     )
 
 
@@ -1355,19 +1268,6 @@ def _lexical_support(query: str, evidence: str, *, minimum_coverage: float) -> b
     return len(shared) >= minimum_shared and _coverage(expected, actual) >= minimum_coverage
 
 
-def _passage_local_evidence(chunk: ContextChunk) -> tuple[str | None, float | None]:
-    start = chunk.passage_char_start
-    end = chunk.passage_char_end
-    if (
-        chunk.passage_semantic_score is not None
-        and start is not None
-        and end is not None
-        and 0 <= start < end <= len(chunk.content)
-    ):
-        return chunk.content[start:end], chunk.passage_semantic_score
-    return None, None
-
-
 def _high_confidence_reranker(score: float | None, config: ChatConfig) -> bool:
     return score is not None and score >= config.high_confidence_reranker_evidence_score
 
@@ -1392,73 +1292,19 @@ def _assessment_near_miss(config: ChatConfig, assessment: CandidateEvidenceAsses
     )
 
 
-def _candidate_corroboration_near_miss(
-    config: ChatConfig,
-    *,
-    original_text: str,
-    span: _SelectedSpan | None,
-    semantic_score: float | None,
-    original_coverage: float,
-    translated_coverages: dict[str, float],
-) -> bool:
-    if span is None:
-        return False
-    if span.semantic_span_aligned and semantic_score is not None:
-        bar = (
-            config.minimum_semantic_evidence_score
-            if _same_language(original_text, span.text)
-            else config.cross_language_semantic_evidence_score_threshold
-        )
-        if _near_miss_value(semantic_score, bar):
-            return True
-    return any(
-        _near_miss_value(coverage, config.lexical_corroboration_coverage)
-        for coverage in (original_coverage, *translated_coverages.values())
-    )
-
-
-def _legacy_corroboration_near_miss(
-    config: ChatConfig,
-    question: str,
-    chunk: ContextChunk,
-    coverage: float,
-) -> bool:
-    evidence_text = chunk.content
-    semantic = chunk.passage_semantic_score
-    if (
-        semantic is not None
-        and chunk.passage_char_start is not None
-        and chunk.passage_char_end is not None
-        and 0 <= chunk.passage_char_start < chunk.passage_char_end <= len(chunk.content)
-    ):
-        evidence_text = chunk.content[chunk.passage_char_start : chunk.passage_char_end]
-    elif chunk.semantic_score is not None:
-        semantic = chunk.semantic_score
-    if semantic is not None:
-        bar = (
-            config.minimum_semantic_evidence_score
-            if _same_language(question, evidence_text)
-            else config.cross_language_semantic_evidence_score_threshold
-        )
-        if _near_miss_value(semantic, bar):
-            return True
-    return _near_miss_value(coverage, config.lexical_corroboration_coverage)
-
-
 def _balanced_high_confidence_admission(
     config: ChatConfig,
     *,
     reranker_score: float | None,
     calibration_status: str,
     span: _SelectedSpan | None,
-    near_miss: bool,
 ) -> bool:
     return (
         config.grounding_mode is GroundingMode.BALANCED
+        and config.high_confidence_band_enabled
         and _high_confidence_reranker(reranker_score, config)
         and calibration_status == "matched"
         and span is not None
-        and near_miss
     )
 
 
@@ -1492,7 +1338,7 @@ def _assessment_diagnostic(assessment: CandidateEvidenceAssessment) -> dict[str,
         "semantic_span_aligned": assessment.semantic_span_aligned,
         "original_lexical_coverage": assessment.original_lexical_coverage,
         "translated_lexical_coverage": dict(assessment.translated_lexical_coverage),
-        "translated_dense_shadow_scores": dict(assessment.translated_dense_shadow_scores),
+        "translated_dense_scores": dict(assessment.translated_dense_scores),
         "corroboration_method": assessment.corroboration_method,
         "admission_kind": _admission_kind(assessment.corroboration_method, assessment.passed),
         "query_variant_provenance_missing": assessment.query_variant_provenance_missing,
@@ -1537,9 +1383,15 @@ def _inherit_bounded_block_citations(segments: list[str]) -> list[str]:
 
     Generators often put a calculation in its own displayed Markdown block
     while citing the factual sentence immediately before and after it. This
-    accepts only that bounded pattern: the nearest factual neighbours must
-    both be cited and share a citation; at most one heading or list preamble
-    may appear between them, and another factual claim is a hard boundary.
+    accepts that bounded pattern: the nearest factual neighbours must both be
+    cited and share a citation. Uncited Markdown list items in between are
+    treated as one block rather than a hard boundary. At most one heading or
+    list preamble may appear between them, and another non-list factual claim
+    is a hard boundary.
+
+    A derived conclusion that restates the result of an adjacent cited
+    calculation may inherit that calculation's citations from one side.
+    Restating only the base amount is not enough.
     """
     inherited = list(segments)
     for index, segment in enumerate(segments):
@@ -1547,11 +1399,16 @@ def _inherit_bounded_block_citations(segments: list[str]) -> list[str]:
             continue
         before = _nearest_cited_factual_segment(segments, index, direction=-1)
         after = _nearest_cited_factual_segment(segments, index, direction=1)
-        if before is None or after is None:
-            continue
-        shared = set(_CITATION_PATTERN.findall(segments[before])) & set(
-            _CITATION_PATTERN.findall(segments[after])
-        )
+        shared: set[str] = set()
+        if before is not None and after is not None:
+            shared = set(_CITATION_PATTERN.findall(segments[before])) & set(
+                _CITATION_PATTERN.findall(segments[after])
+            )
+        if not shared:
+            neighbor = _nearest_matching_cited_calculation(segments, index)
+            if neighbor is None:
+                continue
+            shared = set(_CITATION_PATTERN.findall(segments[neighbor]))
         if shared:
             citations = " ".join(f"[{value}]" for value in sorted(shared))
             inherited[index] = f"{segment} {citations}"
@@ -1567,16 +1424,62 @@ def _nearest_cited_factual_segment(
     """Find an adjacent cited fact without crossing another factual claim."""
     cursor = index + direction
     structural_gap = 0
+    list_gap = 0
     while 0 <= cursor < len(segments):
         candidate = segments[cursor]
+        cited = bool(_CITATION_PATTERN.search(candidate))
+        # Quantity-setup list items are structural, but they belong to the list
+        # block budget rather than the single heading/preamble gap.
+        if not cited and _is_markdown_list_item(candidate):
+            list_gap += 1
+            if list_gap > _MAX_CITATION_INHERITANCE_LIST_GAP:
+                return None
+            cursor += direction
+            continue
         if _is_non_factual_segment(candidate):
             structural_gap += 1
             if structural_gap > _MAX_CITATION_INHERITANCE_STRUCTURAL_GAP:
                 return None
             cursor += direction
             continue
-        return cursor if _CITATION_PATTERN.search(candidate) else None
+        return cursor if cited else None
     return None
+
+
+def _nearest_matching_cited_calculation(segments: list[str], index: int) -> int | None:
+    """Inherit from one adjacent cited equation whose result this claim restates."""
+    amounts = _amount_set(segments[index])
+    if not amounts:
+        return None
+    for direction in (-1, 1):
+        neighbor = _nearest_cited_factual_segment(segments, index, direction=direction)
+        if neighbor is None:
+            continue
+        parsed = _parse_calculation(segments[neighbor])
+        if parsed is None:
+            continue
+        base, rate, result = parsed
+        if _restates_cited_calculation(amounts, base, rate, result):
+            return neighbor
+    return None
+
+
+def _restates_cited_calculation(
+    amounts: set[float],
+    base: float,
+    rate: float,
+    result: float,
+) -> bool:
+    """Accept a wrap-up that repeats the result, not an unrelated shared base."""
+    if not _arithmetic_matches(base, rate, result):
+        return False
+    if not _amounts_include(amounts, result):
+        return False
+    allowed = (base, rate, result)
+    return all(
+        any(abs(amount - value) <= _amount_tolerance(value) for value in allowed)
+        for amount in amounts
+    )
 
 
 def _is_non_factual_segment(text: str) -> bool:
@@ -1600,16 +1503,151 @@ def _is_structural_segment(text: str) -> bool:
         or _MARKDOWN_ORDINAL_PATTERN.fullmatch(stripped)
         or _MARKDOWN_TABLE_DIVIDER_PATTERN.fullmatch(stripped)
         or _LIST_PREAMBLE_PATTERN.fullmatch(stripped)
+        or _is_quantity_setup_segment(stripped)
         or _POLARITY_PATTERN.fullmatch(stripped)
     )
+
+
+def _fold_indic_digits(text: str) -> str:
+    return text.translate(_BENGALI_DIGIT_FOLD)
+
+
+def _plain_claim_text(text: str) -> str:
+    stripped = _CITATION_PATTERN.sub("", text)
+    return regex.sub(r"[*_`]+", "", stripped).strip()
+
+
+def _is_markdown_list_item(text: str) -> bool:
+    return bool(_MARKDOWN_LIST_ITEM_PATTERN.match(_plain_claim_text(text)))
+
+
+def _is_quantity_setup_segment(text: str) -> bool:
+    """Treat labeled amounts as calculation setup, not independent corpus claims."""
+    folded = _fold_indic_digits(_plain_claim_text(text))
+    if _CALCULATION_OPERATOR_PATTERN.search(folded):
+        return False
+    return bool(_QUANTITY_SETUP_PATTERN.fullmatch(folded))
+
+
+def _parse_amount(value: str) -> float:
+    return float(value.replace(",", ""))
+
+
+def _amount_tolerance(value: float) -> float:
+    return max(0.5, abs(value) * 0.005)
+
+
+def _arithmetic_matches(base: float, rate: float, result: float) -> bool:
+    expected = base * rate / 100.0
+    return abs(expected - result) <= _amount_tolerance(expected)
+
+
+def _amount_set(text: str) -> set[float]:
+    folded = _fold_indic_digits(_plain_claim_text(text))
+    return {_parse_amount(match) for match in _AMOUNT_PATTERN.findall(folded)}
+
+
+def _amounts_include(amounts: set[float], value: float) -> bool:
+    tolerance = _amount_tolerance(value)
+    return any(abs(value - other) <= tolerance for other in amounts)
+
+
+def _parse_calculation(text: str) -> tuple[float, float, float] | None:
+    folded = _fold_indic_digits(_plain_claim_text(text))
+    match = _CALCULATION_PATTERN.search(folded)
+    if match is None:
+        return None
+    return (
+        _parse_amount(match.group("base")),
+        _parse_amount(match.group("rate")),
+        _parse_amount(match.group("result")),
+    )
+
+
+def _rate_in_evidence(rate: float, evidence_texts: list[str]) -> bool:
+    folded_evidence = _fold_indic_digits(" ".join(evidence_texts))
+    rendered = f"{rate:g}"
+    markers = (f"{rendered}%", f"{rendered} %")
+    return any(marker in folded_evidence for marker in markers)
+
+
+def _rates_in_evidence(evidence_texts: list[str]) -> tuple[float, ...]:
+    folded_evidence = _fold_indic_digits(" ".join(evidence_texts))
+    found = (_parse_amount(match) for match in _EVIDENCE_RATE_PATTERN.findall(folded_evidence))
+    return tuple(dict.fromkeys(found))
+
+
+def _derived_calculation_verification(
+    text: str,
+    evidence_texts: list[str],
+    *,
+    adjacent_texts: tuple[str, ...] = (),
+) -> ClaimVerification | None:
+    """Verify rate x amount arithmetic against cited evidence.
+
+    User-supplied operands are not required to appear in the corpus. The cited
+    rate must, and the arithmetic must evaluate. A conclusion that restates
+    the result of an adjacent cited calculation is verified the same way.
+    """
+    parsed = _parse_calculation(text)
+    if parsed is not None:
+        base, rate, result = parsed
+        if not _arithmetic_matches(base, rate, result):
+            return ClaimVerification.UNSUPPORTED
+        if not _rate_in_evidence(rate, evidence_texts):
+            return ClaimVerification.UNSUPPORTED
+        return ClaimVerification.SUPPORTED
+    pair = _derived_amount_pair_verification(text, evidence_texts)
+    if pair is not None:
+        return pair
+    return _derived_adjacent_result_verification(text, evidence_texts, adjacent_texts)
+
+
+def _derived_adjacent_result_verification(
+    text: str,
+    evidence_texts: list[str],
+    adjacent_texts: tuple[str, ...],
+) -> ClaimVerification | None:
+    amounts = _amount_set(text)
+    if not amounts or not adjacent_texts:
+        return None
+    matched = False
+    for neighbor in adjacent_texts:
+        parsed = _parse_calculation(neighbor)
+        if parsed is None:
+            continue
+        base, rate, result = parsed
+        if not _restates_cited_calculation(amounts, base, rate, result):
+            continue
+        matched = True
+        if _rate_in_evidence(rate, evidence_texts):
+            return ClaimVerification.SUPPORTED
+    if matched:
+        return ClaimVerification.UNSUPPORTED
+    return None
+
+
+def _derived_amount_pair_verification(
+    text: str,
+    evidence_texts: list[str],
+) -> ClaimVerification | None:
+    amounts = sorted(_amount_set(text), reverse=True)
+    if len(amounts) < 2:
+        return None
+    rates = _rates_in_evidence(evidence_texts)
+    if not rates:
+        return None
+    for index, base in enumerate(amounts):
+        for result in amounts[index + 1 :]:
+            if any(_arithmetic_matches(base, rate, result) for rate in rates):
+                return ClaimVerification.SUPPORTED
+    return None
 
 
 def _is_insufficiency_statement(text: str) -> bool:
     """Prompted refusals are not factual claims about the corpus."""
     folded = text.casefold()
-    return _INSUFFICIENCY_MARKER in folded or any(
-        marker in folded for marker in _SOURCE_NOTICE_MARKERS
-    )
+    return _INSUFFICIENCY_MARKER in folded
 
 
 def _evidence_snapshot(
@@ -1644,7 +1682,11 @@ def _evidence_snapshot(
 
 
 def _significant_tokens(text: str) -> set[str]:
-    return {token for token in tokenize(text, for_query=True) if token not in _QUERY_SCAFFOLDING}
+    return {
+        token
+        for token in tokenize(_fold_indic_digits(text), for_query=True)
+        if token not in _QUERY_SCAFFOLDING
+    }
 
 
 def _uses_lexical_verification(claim: str, evidence_texts: list[str]) -> bool:
@@ -1717,20 +1759,9 @@ def _reranker_relevance(
     *,
     rerank_status: str | None = None,
 ) -> float | None:
-    """Return the Cohere relevance score, never a missing-value default of 0.0."""
-    if chunk.rerank_relevance_score is not None:
-        return chunk.rerank_relevance_score
-    if (
-        chunk.evidence_relevance_score is not None
-        and chunk.evidence_score_method == "reranker_relevance"
-    ):
-        return chunk.evidence_relevance_score
-    applied = rerank_status == "applied" or str(chunk.metadata.get("rerank_status")) == "applied"
-    if applied and chunk.score > 0.0:
-        # Successful rerank overwrites CandidateHit.score with model relevance. If the
-        # dedicated field was dropped in provenance, that score is still the signal.
-        return chunk.score
-    return None
+    """Return the dedicated reranker relevance score mapped onto the chunk."""
+    del rerank_status
+    return chunk.rerank_relevance_score
 
 
 def _rerank_applied(

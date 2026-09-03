@@ -243,6 +243,11 @@ def _case_result(case: EvaluationCase, profile: str, search: Any, answer: Any) -
     token_coverage = (
         len(expected_tokens & answer_tokens) / len(expected_tokens) if expected_tokens else 1.0
     )
+    parameter_tokens = {token.lower() for token in case.user_parameter_tokens}
+    parameter_coverage = (
+        len(parameter_tokens & answer_tokens) / len(parameter_tokens) if parameter_tokens else 1.0
+    )
+    evidence_funnel = _evaluation_evidence_funnel(search, answer)
     return {
         "case_key": case.key,
         "kind": case.kind.value,
@@ -308,6 +313,8 @@ def _case_result(case: EvaluationCase, profile: str, search: Any, answer: Any) -
             max(hard_negative_rerank_scores) if hard_negative_rerank_scores else None
         ),
         "query_form": case.query_form,
+        "user_parameter_tokens": list(case.user_parameter_tokens),
+        "previous_user_query": case.previous_user_query,
         "relevant_branch_families": relevant_families,
         "translated_branch_contributed": bool(
             {"translated_dense", "translated_lexical"} & set(relevant_families)
@@ -333,6 +340,7 @@ def _case_result(case: EvaluationCase, profile: str, search: Any, answer: Any) -
             else answer.insufficient_evidence_reason is None
         ),
         "evidence_gate": dict(answer.evidence_gate),
+        "evidence_funnel": evidence_funnel,
         "evidence_gate_mode": answer.evidence_gate.get("mode"),
         "evidence_gate_sufficient": answer.evidence_gate.get("sufficient"),
         "evidence_gate_reason": answer.evidence_gate.get("reason"),
@@ -348,12 +356,76 @@ def _case_result(case: EvaluationCase, profile: str, search: Any, answer: Any) -
         "claims": answer.claims,
         "unverified_claim_rate": _unverified_claim_rate(answer.claims),
         "answer_token_coverage": token_coverage,
+        "user_parameter_token_coverage": parameter_coverage,
         "provider": answer.provider,
         "model": answer.model,
         "input_tokens": answer.input_tokens,
         "output_tokens": answer.output_tokens,
         "provider_latency_ms": answer.provider_latency_ms,
     }
+
+
+def _evaluation_evidence_funnel(search: Any, answer: Any) -> dict[str, Any]:
+    """Combine production retrieval and grounding facts without candidate payloads."""
+    provenance = search.provenance or {}
+    source = provenance.get("evidence_funnel")
+    funnel = dict(source) if isinstance(source, dict) else {}
+    gate = dict(answer.evidence_gate or {})
+    candidate = dict(gate.get("candidate_wise") or {})
+    assessments = list(candidate.get("assessments") or [])
+    losses = dict(funnel.get("loss_reasons") or {})
+    rejected: dict[str, int] = {}
+    for assessment in assessments:
+        if not isinstance(assessment, dict) or assessment.get("passed"):
+            continue
+        reason = str(assessment.get("terminal_reason") or "not_admitted")
+        rejected[reason] = rejected.get(reason, 0) + 1
+    if rejected:
+        losses["admitted"] = rejected
+    selected_ids = {str(value) for value in answer.selected_chunk_ids}
+    cited_ids = {
+        str(evidence.get("chunk_id"))
+        for claim in answer.claims
+        if isinstance(claim, dict)
+        for evidence in claim.get("evidence", [])
+        if isinstance(evidence, dict) and evidence.get("chunk_id")
+    }
+    supported_claims = sum(
+        bool(claim.get("grounded")) for claim in answer.claims if isinstance(claim, dict)
+    )
+    assessed = int(candidate.get("assessed_count") or len(search.hits))
+    admitted = int(
+        candidate.get("admitted_count")
+        or (len(selected_ids) if gate.get("sufficient", False) else 0)
+    )
+    if not rejected and assessed > admitted:
+        reason = str(gate.get("reason") or "not_admitted")
+        losses["admitted"] = {reason: assessed - admitted}
+    if admitted > len(selected_ids):
+        losses["context_selected"] = {"context_budget": admitted - len(selected_ids)}
+    if len(selected_ids) > len(cited_ids):
+        losses["cited"] = {"not_cited": len(selected_ids) - len(cited_ids)}
+    for stage in ("fused", "reranked", "policy_survived", "hydrated", "deduped"):
+        funnel.setdefault(stage, 0)
+    funnel.update(
+        {
+            "assessed": assessed,
+            "admitted": admitted,
+            "context_selected": len(selected_ids),
+            "cited": len(cited_ids),
+            "supported_claims": supported_claims,
+            "rerank_status": search.rerank_status,
+            "grounding_path": candidate.get("path"),
+            "loss_reasons": losses,
+            "would_have_blocked": bool(
+                gate.get("mode") == "observe" and not gate.get("sufficient", False)
+            ),
+            "outcome": (
+                "refused" if answer.insufficient_evidence_reason is not None else "answered"
+            ),
+        }
+    )
+    return funnel
 
 
 def _relevant_in_selected(

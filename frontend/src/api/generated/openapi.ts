@@ -349,24 +349,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/operator/projects/{project_id}/ai-config/normalize-v1": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Preview Project Ai Config Normalization */
-        get: operations["preview_project_ai_config_normalization_api_v1_operator_projects__project_id__ai_config_normalize_v1_get"];
-        put?: never;
-        /** Confirm Project Ai Config Normalization */
-        post: operations["confirm_project_ai_config_normalization_api_v1_operator_projects__project_id__ai_config_normalize_v1_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v1/operator/projects/{project_id}/ai-config/revisions": {
         parameters: {
             query?: never;
@@ -2211,18 +2193,6 @@ export interface components {
              */
             success: boolean;
         };
-        /** ApiResponse[ProjectAIConfigNormalizationPreview] */
-        ApiResponse_ProjectAIConfigNormalizationPreview_: {
-            data?: components["schemas"]["ProjectAIConfigNormalizationPreview"] | null;
-            /** Message */
-            message?: string | null;
-            meta?: components["schemas"]["ResponseMeta"] | null;
-            /**
-             * Success
-             * @default true
-             */
-            success: boolean;
-        };
         /** ApiResponse[ProjectAIConfigRevisionResponse] */
         ApiResponse_ProjectAIConfigRevisionResponse_: {
             data?: components["schemas"]["ProjectAIConfigRevisionResponse"] | null;
@@ -2946,11 +2916,6 @@ export interface components {
              */
             provider?: string | null;
             /**
-             * System Prompt Version
-             * @deprecated
-             */
-            system_prompt_version?: string | null;
-            /**
              * Temperature
              * @deprecated
              */
@@ -3019,11 +2984,6 @@ export interface components {
              * @deprecated
              */
             provider?: string | null;
-            /**
-             * System Prompt Version
-             * @deprecated
-             */
-            system_prompt_version?: string | null;
             /**
              * Temperature
              * @deprecated
@@ -3167,11 +3127,6 @@ export interface components {
         DocumentStatus: "uploaded" | "queued" | "parsing" | "chunking" | "chunked" | "failed" | "embedding" | "embedded" | "indexing" | "ready" | "deleting" | "purging";
         /** EffectiveChatPolicy */
         EffectiveChatPolicy: {
-            /**
-             * Candidate Wise Grounding Enabled
-             * @default false
-             */
-            candidate_wise_grounding_enabled: boolean;
             /** Citation Excerpt Max Chars */
             citation_excerpt_max_chars: number;
             /** Context Char Budget */
@@ -3183,10 +3138,13 @@ export interface components {
             cross_language_semantic_evidence_score_threshold: number;
             /** @default enforce */
             evidence_gate_mode: components["schemas"]["EvidenceGateMode"];
-            /** @default whole_chunk */
-            evidence_score_mode: components["schemas"]["EvidenceScoreMode"];
             /** @default strict */
             grounding_mode: components["schemas"]["GroundingMode"];
+            /**
+             * High Confidence Band Enabled
+             * @default false
+             */
+            high_confidence_band_enabled: boolean;
             /**
              * High Confidence Reranker Evidence Score
              * @default 0.7
@@ -3333,11 +3291,6 @@ export interface components {
             max_relationship_candidates: number;
             /** Min Ocr Confidence */
             min_ocr_confidence?: number | null;
-            /**
-             * Modifies Expansion Enabled
-             * @default false
-             */
-            modifies_expansion_enabled: boolean;
             /** @default off */
             modifies_expansion_mode: components["schemas"]["ModifiesExpansionMode"];
             /**
@@ -3376,24 +3329,10 @@ export interface components {
              * @default 25
              */
             rerank_candidate_window: number;
-            /** Rerank Enabled */
-            rerank_enabled: boolean;
             /** @default always */
             rerank_mode: components["schemas"]["RerankMode"];
-            /**
-             * Rerank Return Count
-             * @default 8
-             */
-            rerank_return_count: number;
-            /**
-             * Rerank Return N
-             * @default 8
-             */
-            rerank_return_n: number;
             /** Rerank Score Threshold */
             rerank_score_threshold: number | null;
-            /** Rerank Top N */
-            rerank_top_n: number;
             reranker_backend?: components["schemas"]["RerankerBackend"] | null;
             /** Reranker Model */
             reranker_model?: string | null;
@@ -3460,6 +3399,8 @@ export interface components {
             metadata_filter?: {
                 [key: string]: string;
             };
+            /** Previous User Query */
+            previous_user_query?: string | null;
             /** Query */
             query: string;
             /** Query Form */
@@ -3472,6 +3413,8 @@ export interface components {
             relevant_document_ids?: string[];
             /** Relevant Evidence Phrases */
             relevant_evidence_phrases?: string[];
+            /** User Parameter Tokens */
+            user_parameter_tokens?: string[];
         };
         /**
          * EvaluationCaseKind
@@ -3622,12 +3565,6 @@ export interface components {
          * @enum {string}
          */
         EvidenceGateMode: "enforce" | "observe";
-        /**
-         * EvidenceScoreMode
-         * @description Calibrated semantic score used by the pre-generation evidence gate.
-         * @enum {string}
-         */
-        EvidenceScoreMode: "whole_chunk" | "passage_max";
         /**
          * GenerationCreateRequest
          * @description Trusted caller input and context for one registered generation use case.
@@ -3811,9 +3748,10 @@ export interface components {
          *
          *     ``strict`` keeps the high-assurance rule: calibrated reranker relevance still
          *     requires a separate semantic, lexical, or cross-language signal.
-         *     ``balanced`` may admit a clearly high-confidence reranker candidate whose
-         *     independent corroboration only narrowly misses, without lowering the
-         *     medium-confidence bars or admitting low-confidence hits.
+         *     ``balanced`` uses the same medium-confidence corroboration band. A high
+         *     reranker band may admit a calibrated, safely spanned candidate without that
+         *     corroboration only when the active identity's high band is measurement-gated
+         *     on. Deployment default remains ``strict``.
          * @enum {string}
          */
         GroundingMode: "strict" | "balanced";
@@ -3913,14 +3851,9 @@ export interface components {
          * @description Stable reasons for a correct no-answer outcome.
          * @enum {string}
          */
-        InsufficientEvidenceReason: "no_retrieval_results" | "below_relevance_threshold" | "low_query_evidence_coverage" | "authority_context_empty" | "context_selection_empty";
+        InsufficientEvidenceReason: "no_retrieval_results" | "below_relevance_threshold" | "context_selection_empty";
         /** InvariantState */
         InvariantState: {
-            /**
-             * Candidate Wise Grounding Invariant
-             * @default false
-             */
-            candidate_wise_grounding_invariant: boolean;
             /** Content Hash Deduplication */
             content_hash_deduplication: boolean | null;
             /** Durable Citation Provenance */
@@ -4223,6 +4156,8 @@ export interface components {
             };
             /** Model */
             model?: string | null;
+            /** Notices */
+            notices?: components["schemas"]["NoticeSchema"][];
             /** Output Tokens */
             output_tokens?: number | null;
             /**
@@ -4298,6 +4233,22 @@ export interface components {
          * @enum {string}
          */
         ModifiesExpansionMode: "off" | "observe" | "expand";
+        /**
+         * NoticeSchema
+         * @description One system-rendered notice attached to an assistant message.
+         */
+        NoticeSchema: {
+            /** Kind */
+            kind: string;
+            /** Language */
+            language: string;
+            /** Source */
+            source?: {
+                [key: string]: unknown;
+            };
+            /** Text */
+            text: string;
+        };
         /** OperatorOverview */
         OperatorOverview: {
             dependencies: components["schemas"]["DependencyOverview"];
@@ -4493,22 +4444,6 @@ export interface components {
             behavior?: components["schemas"]["ProjectBehaviorV2"];
             execution?: components["schemas"]["ProjectExecutionV2"];
         };
-        /** ProjectAIConfigNormalizationPreview */
-        ProjectAIConfigNormalizationPreview: {
-            /**
-             * Project Id
-             * Format: uuid
-             */
-            project_id: string;
-            result: components["schemas"]["V1NormalizationResult"];
-            /**
-             * Source Revision Id
-             * Format: uuid
-             */
-            source_revision_id: string;
-            /** Source Schema Version */
-            source_schema_version: number;
-        };
         /** ProjectAIConfigNormalizeConfirm */
         ProjectAIConfigNormalizeConfirm: {
             /**
@@ -4541,8 +4476,7 @@ export interface components {
         };
         /** ProjectAIConfigRevisionResponse */
         ProjectAIConfigRevisionResponse: {
-            /** Configuration */
-            configuration: components["schemas"]["ProjectAIConfig"] | components["schemas"]["ProjectAIConfigV1"];
+            configuration: components["schemas"]["ProjectAIConfig"];
             /** Configuration Hash */
             configuration_hash: string;
             /**
@@ -4573,23 +4507,6 @@ export interface components {
             /** Source */
             source: string;
         };
-        /**
-         * ProjectAIConfigV1
-         * @description Historical sparse payload retained byte-for-byte and readable indefinitely.
-         */
-        ProjectAIConfigV1: {
-            chat?: components["schemas"]["ProjectChatPolicy"];
-            /** Domain Instructions */
-            domain_instructions?: string | null;
-            llm?: components["schemas"]["ProjectLLMPolicy"];
-            /** Prompt Profile */
-            prompt_profile?: string | null;
-            /** Prompt Version */
-            prompt_version?: string | null;
-            retrieval?: components["schemas"]["ProjectRetrievalPolicy"];
-            source_policy_mode?: components["schemas"]["SourcePolicyMode"] | null;
-            web_search?: components["schemas"]["ProjectWebSearchPolicy"];
-        };
         /** ProjectAIProfileNormalizationPreview */
         ProjectAIProfileNormalizationPreview: {
             /**
@@ -4619,37 +4536,6 @@ export interface components {
             response_mode?: components["schemas"]["ResponseMode"] | null;
             /** @default inherit */
             translation_policy: components["schemas"]["TranslationPolicy"];
-        };
-        /** ProjectChatPolicy */
-        ProjectChatPolicy: {
-            /** Candidate Wise Grounding Enabled */
-            candidate_wise_grounding_enabled?: boolean | null;
-            /** Citation Excerpt Max Chars */
-            citation_excerpt_max_chars?: number | null;
-            /** Context Char Budget */
-            context_char_budget?: number | null;
-            /** Cross Language Semantic Evidence Score Threshold */
-            cross_language_semantic_evidence_score_threshold?: number | null;
-            evidence_gate_mode?: components["schemas"]["EvidenceGateMode"] | null;
-            evidence_score_mode?: components["schemas"]["EvidenceScoreMode"] | null;
-            grounding_mode?: components["schemas"]["GroundingMode"] | null;
-            /** High Confidence Reranker Evidence Score */
-            high_confidence_reranker_evidence_score?: number | null;
-            /** Include Citations */
-            include_citations?: boolean | null;
-            /** Lexical Corroboration Floor Score */
-            lexical_corroboration_floor_score?: number | null;
-            /** Max Context Chunks */
-            max_context_chunks?: number | null;
-            /** Max History Messages */
-            max_history_messages?: number | null;
-            /** Minimum Claim Token Coverage */
-            minimum_claim_token_coverage?: number | null;
-            /** Minimum Query Token Coverage */
-            minimum_query_token_coverage?: number | null;
-            /** Minimum Reranker Evidence Score */
-            minimum_reranker_evidence_score?: number | null;
-            response_mode?: components["schemas"]["ResponseMode"] | null;
         };
         /**
          * ProjectCreate
@@ -4705,8 +4591,6 @@ export interface components {
             /** Rerank Candidate Window */
             rerank_candidate_window?: number | null;
             rerank_mode?: components["schemas"]["CanonicalRerankMode"] | null;
-            /** Rerank Return Count */
-            rerank_return_count?: number | null;
             /** Rerank Score Threshold */
             rerank_score_threshold?: number | null;
             /** Retrieval Top K */
@@ -4719,16 +4603,6 @@ export interface components {
             semantic_candidate_top_k?: number | null;
             /** Semantic Weight */
             semantic_weight?: number | null;
-        };
-        /** ProjectLLMPolicy */
-        ProjectLLMPolicy: {
-            /** Max Tokens */
-            max_tokens?: number | null;
-            /** Model */
-            model?: string | null;
-            provider?: components["schemas"]["LLMBackend"] | null;
-            /** Temperature */
-            temperature?: number | null;
         };
         /** ProjectOwnershipChange */
         ProjectOwnershipChange: {
@@ -4836,70 +4710,6 @@ export interface components {
              */
             updated_at: string;
         };
-        /**
-         * ProjectRetrievalPolicy
-         * @description Sparse retrieval overrides. ``None`` inherits the deployment default.
-         *
-         *     ``rerank_mode`` is the operator-facing control (Always / Cross-language / Off).
-         *     Legacy ``rerank_enabled`` still maps true→always and false→off when mode is omitted.
-         */
-        ProjectRetrievalPolicy: {
-            /** Deduplicate By Content Hash */
-            deduplicate_by_content_hash?: boolean | null;
-            /** Evidence Score Threshold */
-            evidence_score_threshold?: number | null;
-            /** Hnsw Ef Search */
-            hnsw_ef_search?: number | null;
-            /** Keyword Candidate Top K */
-            keyword_candidate_top_k?: number | null;
-            /** Keyword Weight */
-            keyword_weight?: number | null;
-            /** Max Chunks Per Document */
-            max_chunks_per_document?: number | null;
-            /** Max Chunks Per Section */
-            max_chunks_per_section?: number | null;
-            /** Max Related Sources */
-            max_related_sources?: number | null;
-            /** Max Relationship Candidates */
-            max_relationship_candidates?: number | null;
-            /** Min Ocr Confidence */
-            min_ocr_confidence?: number | null;
-            /** Modifies Expansion Enabled */
-            modifies_expansion_enabled?: boolean | null;
-            modifies_expansion_mode?: components["schemas"]["ModifiesExpansionMode"] | null;
-            /** Passage Min Tokens */
-            passage_min_tokens?: number | null;
-            /** Passage Overlap Tokens */
-            passage_overlap_tokens?: number | null;
-            /** Passage Scoring Enabled */
-            passage_scoring_enabled?: boolean | null;
-            /** Passage Window Tokens */
-            passage_window_tokens?: number | null;
-            /** Query Translation Enabled */
-            query_translation_enabled?: boolean | null;
-            /** Rerank Candidate Window */
-            rerank_candidate_window?: number | null;
-            /** Rerank Enabled */
-            rerank_enabled?: boolean | null;
-            rerank_mode?: components["schemas"]["RerankMode"] | null;
-            /** Rerank Return N */
-            rerank_return_n?: number | null;
-            /** Rerank Score Threshold */
-            rerank_score_threshold?: number | null;
-            /** Rerank Top N */
-            rerank_top_n?: number | null;
-            /** Rrf K */
-            rrf_k?: number | null;
-            /** Score Threshold */
-            score_threshold?: number | null;
-            /** Semantic Candidate Top K */
-            semantic_candidate_top_k?: number | null;
-            /** Semantic Weight */
-            semantic_weight?: number | null;
-            strategy?: components["schemas"]["RetrievalStrategy"] | null;
-            /** Top K */
-            top_k?: number | null;
-        };
         /** ProjectStatusUpdate */
         ProjectStatusUpdate: {
             /** Is Active */
@@ -4914,24 +4724,6 @@ export interface components {
             description?: string | null;
             /** Name */
             name?: string | null;
-        };
-        /**
-         * ProjectWebSearchPolicy
-         * @description Sparse per-Project controls for an operator-configured web provider.
-         */
-        ProjectWebSearchPolicy: {
-            /** Enabled */
-            enabled?: boolean | null;
-            /** Max Evidence Chars */
-            max_evidence_chars?: number | null;
-            /** Max Output Tokens */
-            max_output_tokens?: number | null;
-            /** Max Results */
-            max_results?: number | null;
-            /** Model */
-            model?: string | null;
-            /** Request Timeout Seconds */
-            request_timeout_seconds?: number | null;
         };
         /** ProviderConfiguration */
         ProviderConfiguration: {
@@ -5220,6 +5012,10 @@ export interface components {
             embedding_provider?: string | null;
             /** Embedding Set Version */
             embedding_set_version?: number | null;
+            /** Evidence Funnel */
+            evidence_funnel?: {
+                [key: string]: unknown;
+            };
             /** Executed Branches */
             executed_branches?: string[];
             /** Index Build Id */
@@ -5758,23 +5554,6 @@ export interface components {
          * @enum {string}
          */
         UsageWorkload: "chat" | "contextual_generation" | "evaluation";
-        /** V1NormalizationResult */
-        V1NormalizationResult: {
-            /** Compatibility Warnings */
-            compatibility_warnings: string[];
-            configuration: components["schemas"]["ProjectAIConfig"];
-            /** Effective Diff */
-            effective_diff: {
-                [key: string]: {
-                    [key: string]: unknown;
-                };
-            };
-            /**
-             * Required Index Action
-             * @default none
-             */
-            required_index_action: string;
-        };
         /** V2ProfileNormalizationResult */
         V2ProfileNormalizationResult: {
             /** Base Profile Id */
@@ -6944,76 +6723,6 @@ export interface operations {
         };
     };
     confirm_project_ai_profile_normalization_api_v1_operator_projects__project_id__ai_config_normalize_profile_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                project_id: string;
-            };
-            cookie?: {
-                ape_admin_access?: string | null;
-            };
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ProjectAIConfigNormalizeConfirm"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ApiResponse_ProjectAIConfigRevisionResponse_"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    preview_project_ai_config_normalization_api_v1_operator_projects__project_id__ai_config_normalize_v1_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                project_id: string;
-            };
-            cookie?: {
-                ape_admin_access?: string | null;
-            };
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ApiResponse_ProjectAIConfigNormalizationPreview_"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    confirm_project_ai_config_normalization_api_v1_operator_projects__project_id__ai_config_normalize_v1_post: {
         parameters: {
             query?: never;
             header?: never;

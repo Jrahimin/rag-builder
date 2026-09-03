@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from app.core.config import ModifiesExpansionMode, RetrievalStrategy
+from app.core.config import ModifiesExpansionMode, RerankMode, RetrievalStrategy
 from app.models.source_metadata import SourceLifecycleStatus
 from app.modules.knowledge.source_metadata_read import _modifier_outcome
 from app.modules.retrieval.retrievers.hybrid_retriever import (
@@ -328,17 +328,14 @@ async def test_base_and_bounded_related_candidates_share_one_reranker_call() -> 
         rrf_k=60,
         semantic_weight=1.0,
         keyword_weight=1.0,
-        rerank_enabled=True,
-        rerank_top_n=5,
+        rerank_mode=RerankMode.ALWAYS,
         rerank_score_threshold=None,
         score_threshold=None,
         filterable_metadata_keys=(),
         index_build_id=build_id,
         rerank_candidate_window=5,
-        rerank_return_n=5,
         source_scope=SimpleNamespace(generation=7, explicit_as_of=None),
         source_metadata_reader=source_reader,
-        modifies_expansion_enabled=True,
         modifies_expansion_mode=ModifiesExpansionMode.EXPAND,
         max_related_sources=8,
         max_relationship_candidates=1,
@@ -359,6 +356,7 @@ async def test_base_and_bounded_related_candidates_share_one_reranker_call() -> 
         "expanded",
         "candidate_cap_exceeded",
     }
+    assert all("modifies_expansion_records" not in item.metadata for item in results[1:])
     assert results[0].metadata["relationship_candidate_count"] == 1
     assert any(
         contribution.branch_id.startswith("related_modifier:")
@@ -445,17 +443,14 @@ def _expansion_harness(
         rrf_k=60,
         semantic_weight=1.0,
         keyword_weight=1.0,
-        rerank_enabled=True,
-        rerank_top_n=5,
+        rerank_mode=RerankMode.ALWAYS,
         rerank_score_threshold=None,
         score_threshold=None,
         filterable_metadata_keys=(),
         index_build_id=build_id,
         rerank_candidate_window=5,
-        rerank_return_n=5,
         source_scope=SimpleNamespace(generation=7, explicit_as_of=None),
         source_metadata_reader=source_reader,
-        modifies_expansion_enabled=mode is ModifiesExpansionMode.EXPAND,
         modifies_expansion_mode=mode,
         max_related_sources=8,
         max_relationship_candidates=20,

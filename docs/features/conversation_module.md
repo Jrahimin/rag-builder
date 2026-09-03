@@ -40,10 +40,11 @@ POST /messages
   → load history + retrieve (read txn rolled back before LLM)
   → GroundingService rank-ordered candidate assessment → indivisible EvidenceUnit selection
   → enforce: insufficient score skips LLM and persists stable reason
-  → observe: same diagnostics, selected context still goes to PromptBuilder
+  → observe: same admission and selected units as enforce; veto disabled
+    (zero admissions still generate from ranked candidates)
   → response_mode selects indexed-only, conditional web fallback, or combined evidence
-  → sufficient evidence: PromptBuilder v5 → LLM generate / stream → map claims
-  → Tx2: persist assistant (+ claims, citations, metadata, auto-title) → commit
+  → sufficient evidence: canonical grounding prompt → LLM generate / stream → map claims
+  → Tx2: persist assistant (+ claims, citations, notices, metadata, auto-title) → commit
 ```
 
 LLM failure after Tx1: user message retained, no assistant row.
@@ -65,15 +66,17 @@ values are `indexed_then_web` and `indexed_and_web`. Notable `ChatConfig` keys a
 reranker bar), `grounding_mode` (`strict` default or `balanced`),
 `lexical_corroboration_floor_score`, `lexical_corroboration_coverage`,
 `cross_language_semantic_evidence_score_threshold`,
-`minimum_claim_token_coverage`, `candidate_wise_grounding_enabled`, and `include_citations`.
+`minimum_claim_token_coverage`, `store_candidate_trace` (debug; default off), and
+`include_citations`. Candidate-wise admission is the only reranked path; when no
+reranker applied, the no-reranker fallback uses whole-chunk cosine plus the
+cross-language bar and returns the same per-candidate `EvidenceUnit`s.
 `strict` still requires an independent semantic, lexical, or cross-language signal on top of
-calibrated reranker relevance. `balanced` may admit a clearly high-confidence reranker candidate
-(`>= high_confidence_reranker_evidence_score`) that has a safely derived evidence span, matched
-reranker calibration, and only a narrow corroboration miss. Medium-confidence hits still need
-normal corroboration; low-confidence reranker scores cannot enter through the mode switch.
-Every candidate that `strict` would admit remains admitted in `balanced` on the same evidence;
-balanced may only add high-confidence-reranker or adaptive-passage-rescue acceptances and must
-not replace a valid strict path. Existing Projects inherit `strict`.
+calibrated reranker relevance. `balanced` uses the same medium band. A high reranker band may
+admit a calibrated, safely spanned candidate without that corroboration only when
+`high_confidence_band_enabled` is on for the active calibration identity. That flag stays off
+until a hard-negative run shows `hard_negative_max` below the identity's high bar with a
+positive `observed_margin`. Deployment default remains `strict`. Every candidate that
+`strict` would admit remains admitted in `balanced` on the same evidence.
 
 Project revisions may also include a sparse `web_search` section: `enabled`, `model`,
 `max_results`, `max_evidence_chars`, `max_output_tokens`, and `request_timeout_seconds`.
@@ -84,12 +87,23 @@ Credentials, base URL, and provider backend remain deployment-owned.
 - `conversations` — config snapshot (`provider`, `model`, `temperature`), nullable `title`, `last_message_at`
 - `messages` — no `sequence`; ordered by `created_at`, `id`; assistant `metadata`, `citations`,
   `claims`, `grounded`, and `insufficient_evidence_reason`. `metadata.evidence_gate` records the
-  score decision even when `observe` still generates. `metadata.retrieval_trace` includes
-  translation status/languages/query/provider and per-candidate branch provenance. Translated query
+  score decision even when `observe` still generates. `observe` uses the same admitted selection
+  as `enforce`; when nothing is admitted it generates from ranked candidates and records
+  `would_have_blocked` / `observe_context=ranked_candidates`. `metadata.retrieval_trace` includes
+  translation status/languages/query/provider and per-candidate branch provenance. Per-candidate
+  traces are stored on chat messages only when `APE_CHAT__STORE_CANDIDATE_TRACE=true`. Translated query
   text stays in diagnostics only; citations and evidence excerpts remain original chunk text.
   `source_provenance` and `web_search` record the selected source family, fallback use, provider,
-  status, and fail-closed errors. Web citations store URL, title, retrieval time, and provider
+  status, and fail-closed errors. Structured `notices` (scope caveat, web evidence used,
+  insufficient evidence) are system-rendered metadata, never LLM text or citations. Web citations store URL, title, retrieval time, and provider
   separately from Knowledge document/chunk locations.
+
+Authority redaction of superseded provisions runs **before** admission from
+`modifies_expansion_records` on retrieval diagnostics. Hard document scope that excludes an
+effective MODIFIES record still answers from admitted scoped evidence and attaches
+`scope_excludes_effective_modifier`. There is one canonical grounding prompt; conversation
+create/update no longer select a prompt version. `grounded` may be `null` when generation ran
+on admitted evidence but the answer had no verifiable claims (for example polarity-only `Yes.`).
 
 Every candidate presented to grounding receives exactly one assessment. Candidates removed
 earlier by policy, hydration, or dedup do not need grounding assessments; those removals stay
@@ -100,9 +114,8 @@ An admitted `EvidenceUnit` records deterministic offsets, span derivation, query
 and a content hash; context budgeting may omit the whole unit but cannot truncate it. The unit ID
 and span hash remain attached to prompt evidence, citations, and claim verification. Retrieved
 candidates, admitted evidence, generation context, grounded claims, and user-visible citations stay
-separate: not every admitted chunk is a citation. With the
-candidate-wise switch disabled, these decisions run in shadow while the legacy gate remains active.
-Quality evaluation uses the same candidate-wise lifecycle through composition.
+separate: not every admitted chunk is a citation. Quality evaluation uses the same
+candidate-wise lifecycle through composition.
 
 After the first candidate-wise assessment, high-confidence reranker candidates that only narrowly
 miss corroboration may receive a bounded passage-scoring rescue and a reassessment. Rescue cannot

@@ -25,12 +25,19 @@ async def assess_and_select_knowledge(
     chunks: list[ContextChunk],
     rerank_status: str | None,
     retrieval_config: RetrievalConfig | None = None,
+    expansion_records: list[dict[str, object]] | None = None,
 ) -> tuple[EvidenceDecision, list[ContextChunk]]:
     """Assess retrieved candidates, then select context the same way chat does.
 
-    Candidate-wise admission runs on the full retrieved set. Budgeting may omit
-    an admitted unit but must not truncate it. Legacy generation still uses the
-    existing truncated selection so default-off behavior stays compatible.
+    One admission path runs on the full retrieved set: candidate-wise when a
+    reranker applied, otherwise the no-reranker fallback. Budgeting may omit an
+    admitted unit but must not truncate it.
+
+    Authority redaction is applied *before* admission using ``expansion_records``
+    from the top-level retrieval diagnostics.  A chunk whose superseded provision
+    spans the entire content is simply absent from the candidate set; there is no
+    post-admission reconciliation step.  If the modifier revision is not present
+    among the retrieved chunks, redaction is skipped (``not_applicable``).
 
     After the first assessment, high-confidence reranker candidates that only
     narrowly miss corroboration may receive bounded passage scoring and a
@@ -38,28 +45,28 @@ async def assess_and_select_knowledge(
     fields, so rescue is skipped for those candidates. Rescue is additive: a
     later pass cannot drop a candidate that already satisfied the strict path.
 
-    Authority redaction is applied after admission. If the highest-ranked
-    admitted unit becomes unusable, selection continues with the next valid
-    admitted unit rather than blocking generation.
+    Observe uses the same selected admitted units as enforce. When nothing is
+    admitted, observe still generates from ranked candidates and records
+    would-have-blocked rather than substituting a different winner path.
     """
-    candidate_evidence = grounding.assess_candidate_wise(
-        question,
-        chunks,
-        rerank_status=rerank_status,
-    )
-    rescue_ids = grounding.passage_rescue_chunk_ids(
-        chunks,
-        candidate_evidence.candidate_assessments,
+    # --- Phase 3: redact superseded provisions before admission ---
+    authority_safe_chunks = remove_superseded_provisions(chunks, expansion_records)
+
+    evidence = grounding.assess(question, authority_safe_chunks, rerank_status=rerank_status)
+    rescued_chunks = authority_safe_chunks
+    rescue_ids = (
+        grounding.passage_rescue_chunk_ids(authority_safe_chunks, evidence.candidate_assessments)
+        if evidence.grounding_path == "candidate_wise"
+        else []
     )
     rescue_status = "not_needed"
-    rescued_chunks = chunks
     if rescue_ids:
         window_tokens = retrieval_config.passage_window_tokens if retrieval_config else 96
         overlap_tokens = retrieval_config.passage_overlap_tokens if retrieval_config else 24
         min_tokens = retrieval_config.passage_min_tokens if retrieval_config else 32
         rescued_chunks, rescue_status = await grounding.apply_passage_rescue(
             question,
-            chunks,
+            authority_safe_chunks,
             rescue_ids,
             window_tokens=window_tokens,
             overlap_tokens=overlap_tokens,
@@ -70,86 +77,37 @@ async def assess_and_select_knowledge(
             rescued_chunks,
             rerank_status=rerank_status,
         )
-        candidate_evidence = grounding.merge_monotonic_admissions(
-            candidate_evidence,
+        evidence = grounding.merge_monotonic_admissions(
+            evidence,
             rescued_evidence,
         )
-    candidate_evidence = replace(
-        candidate_evidence,
+    evidence = replace(
+        evidence,
         passage_rescue_status=rescue_status,
         passage_rescue_candidate_count=len(rescue_ids),
     )
 
-    authority_safe_chunks = remove_superseded_provisions(rescued_chunks)
-    legacy_selected = context_builder.select(authority_safe_chunks)
-    legacy_evidence = grounding.assess_legacy(
-        question,
-        legacy_selected,
-        rerank_status=rerank_status,
-    )
-    if not chat_config.candidate_wise_grounding_enabled:
-        evidence = replace(
-            legacy_evidence,
-            grounding_path="legacy_shadow",
-            candidate_assessments=candidate_evidence.candidate_assessments,
-            admitted_units=candidate_evidence.admitted_units,
-            shadow_candidate_wise_sufficient=candidate_evidence.sufficient,
-            shadow_candidate_wise_winning_chunk_id=candidate_evidence.winning_chunk_id,
-            shadow_candidate_wise_admitted_count=len(candidate_evidence.admitted_units),
-            passage_rescue_status=candidate_evidence.passage_rescue_status,
-            passage_rescue_candidate_count=candidate_evidence.passage_rescue_candidate_count,
-        )
-        return evidence, legacy_selected
-
-    evidence = replace(
-        candidate_evidence,
-        legacy_sufficient=legacy_evidence.sufficient,
-        legacy_winning_chunk_id=legacy_evidence.winning_chunk_id,
-    )
-    if evidence.grounding_path != "candidate_wise":
-        return evidence, legacy_selected
-
-    usable_units = _usable_admitted_units(evidence.admitted_units, authority_safe_chunks)
-    ordered_units = _monotonic_context_order(usable_units)
+    ordered_units = _monotonic_context_order(list(evidence.admitted_units))
     knowledge_selected = context_builder.select(ordered_units)
-    evidence = replace(evidence, usable_after_authority_count=len(usable_units))
-    if not knowledge_selected and chat_config.evidence_gate_mode is EvidenceGateMode.OBSERVE:
-        return evidence, legacy_selected
-    if evidence.admitted_units and not knowledge_selected:
-        reason = (
-            InsufficientEvidenceReason.AUTHORITY_CONTEXT_EMPTY
-            if not usable_units
-            else InsufficientEvidenceReason.CONTEXT_SELECTION_EMPTY
-        )
-        evidence = replace(evidence, sufficient=False, reason=reason)
-        return evidence, knowledge_selected
     if knowledge_selected:
-        evidence = _align_winner_to_selected(evidence, knowledge_selected)
+        return _align_winner_to_selected(evidence, knowledge_selected), knowledge_selected
+    if chat_config.evidence_gate_mode is EvidenceGateMode.OBSERVE:
+        ranked_selected = context_builder.select(rescued_chunks)
+        evidence = replace(evidence, observe_context="ranked_candidates")
+        if ranked_selected:
+            evidence = _align_winner_to_selected(
+                evidence,
+                ranked_selected,
+                admitted=False,
+            )
+        return evidence, ranked_selected
+    if evidence.admitted_units and not knowledge_selected:
+        evidence = replace(
+            evidence,
+            sufficient=False,
+            reason=InsufficientEvidenceReason.CONTEXT_SELECTION_EMPTY,
+        )
     return evidence, knowledge_selected
-
-
-def _usable_admitted_units(
-    admitted_units: tuple[EvidenceUnit, ...],
-    authority_safe_chunks: list[ContextChunk],
-) -> list[EvidenceUnit]:
-    """Keep admitted spans whose text still exists after provision redaction."""
-    redacted = {chunk.chunk_id: chunk for chunk in authority_safe_chunks}
-    usable: list[EvidenceUnit] = []
-    for unit in admitted_units:
-        source = redacted.get(unit.chunk_id)
-        if source is None or not _admitted_span_survives_authority(unit, source):
-            continue
-        usable.append(unit)
-    return usable
-
-
-def _admitted_span_survives_authority(unit: EvidenceUnit, redacted: ContextChunk) -> bool:
-    start = unit.evidence_char_start
-    end = unit.evidence_char_end
-    if not (0 <= start < end <= len(redacted.content)):
-        return False
-    redacted_span = redacted.content[start:end]
-    return "".join(redacted_span.split()) == "".join(unit.content.split())
 
 
 def _monotonic_context_order(units: list[EvidenceUnit]) -> list[EvidenceUnit]:
@@ -162,6 +120,8 @@ def _monotonic_context_order(units: list[EvidenceUnit]) -> list[EvidenceUnit]:
 def _align_winner_to_selected(
     evidence: EvidenceDecision,
     selected: list[ContextChunk],
+    *,
+    admitted: bool = True,
 ) -> EvidenceDecision:
     winner = selected[0]
     matching = next(
@@ -172,12 +132,19 @@ def _align_winner_to_selected(
         (item for item in evidence.admitted_units if item.chunk_id == winner.chunk_id),
         None,
     )
+    best_score = evidence.best_score
+    if matching is not None:
+        best_score = (
+            matching.reranker_score
+            if matching.reranker_score is not None
+            else matching.original_semantic_score
+        )
     return replace(
         evidence,
-        sufficient=True,
-        reason=None,
+        sufficient=True if admitted else evidence.sufficient,
+        reason=None if admitted else evidence.reason,
         winning_chunk_id=winner.chunk_id,
-        best_score=(matching.reranker_score if matching is not None else evidence.best_score),
+        best_score=best_score,
         query_token_coverage=(
             max(
                 [
@@ -204,5 +171,5 @@ def _align_winner_to_selected(
             if matching is not None
             else evidence.winning_semantic_score
         ),
-        winning_rank_score=(unit.rank_score if unit is not None else evidence.winning_rank_score),
+        winning_rank_score=(unit.rank_score if unit is not None else winner.rank_score),
     )

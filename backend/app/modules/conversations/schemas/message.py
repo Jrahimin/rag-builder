@@ -105,9 +105,9 @@ class InsufficientEvidenceReason(StrEnum):
 
     NO_RETRIEVAL_RESULTS = "no_retrieval_results"
     BELOW_RELEVANCE_THRESHOLD = "below_relevance_threshold"
-    # Historical persisted value. The semantic-only rejection gate never emits it.
-    LOW_QUERY_EVIDENCE_COVERAGE = "low_query_evidence_coverage"
-    AUTHORITY_CONTEXT_EMPTY = "authority_context_empty"
+    # AUTHORITY_CONTEXT_EMPTY removed in Phase 3: authority redaction now
+    # happens before admission so a redacted chunk is simply absent from
+    # candidates; CONTEXT_SELECTION_EMPTY covers any remaining empty-after-admit case.
     CONTEXT_SELECTION_EMPTY = "context_selection_empty"
 
 
@@ -200,6 +200,15 @@ class AnswerClaim(BaseModel):
         return value
 
 
+class NoticeSchema(BaseModel):
+    """One system-rendered notice attached to an assistant message."""
+
+    kind: str
+    language: str
+    text: str
+    source: dict[Any, Any] = Field(default_factory=dict)
+
+
 class MessageResponse(BaseModel):
     """Serialized message entity."""
 
@@ -229,6 +238,7 @@ class MessageResponse(BaseModel):
     claims: list[AnswerClaim] = Field(default_factory=list)
     grounded: bool | None = None
     insufficient_evidence_reason: InsufficientEvidenceReason | None = None
+    notices: list[NoticeSchema] = Field(default_factory=list)
     source_provenance: SourceProvenance = SourceProvenance.NONE
     created_at: datetime
     updated_at: datetime
@@ -252,7 +262,13 @@ class MessageResponse(BaseModel):
             source_provenance = SourceProvenance(provenance)
         except ValueError:
             source_provenance = SourceProvenance.NONE
-        base = base.model_copy(update={"source_provenance": source_provenance})
+        raw_notices = metadata.get("notices") or []
+        notices = [
+            NoticeSchema(**item) if isinstance(item, dict) else item
+            for item in raw_notices
+            if isinstance(item, (dict, NoticeSchema))
+        ]
+        base = base.model_copy(update={"source_provenance": source_provenance, "notices": notices})
         return base
 
 

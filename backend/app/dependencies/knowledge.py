@@ -22,7 +22,7 @@ from app.modules.knowledge.services.document_service import DocumentService
 from app.modules.knowledge.services.file_validation_service import FileValidationService
 from app.modules.knowledge.services.source_metadata_service import SourceMetadataService
 from app.modules.projects.repositories.project_ai_config_repository import ProjectAIConfigRepository
-from app.platform.config.project_ai import ConfigRevisionRecord, resolve_project_ai_config
+from app.platform.config.project_ai import config_revision_record, resolve_project_ai_config
 from app.platform.jobs.configuration import build_job_configuration
 from app.platform.jobs.contracts import DurableJobSubmitter
 from app.platform.providers.contracts.storage import BaseStorageProvider
@@ -73,15 +73,7 @@ async def get_document_service(
     revision = await ProjectAIConfigRepository(session, repository.project_id).get_active()
     resolution = resolve_project_ai_config(
         settings,
-        ConfigRevisionRecord(
-            id=revision.id,
-            revision_number=revision.revision_number,
-            configuration_hash=revision.configuration_hash,
-            configuration=dict(revision.configuration),
-            schema_version=revision.schema_version,
-        )
-        if revision is not None
-        else None,
+        config_revision_record(revision),
     )
     project = await session.get(Project, repository.project_id)
     pointer = await session.get(ProjectIndexPointer, repository.project_id)

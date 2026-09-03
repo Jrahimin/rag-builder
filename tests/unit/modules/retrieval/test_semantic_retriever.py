@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from app.core.config import RetrievalStrategy
+from app.core.config import RerankMode, RetrievalStrategy
 from app.modules.retrieval.repositories.chunk_embedding_repository import ChunkEmbeddingRepository
 from app.modules.retrieval.retrievers.models import (
     CandidateHit,
@@ -41,8 +41,8 @@ def _context(project_id: uuid.UUID, **changes: object) -> RetrievalContext:
         rrf_k=60,
         semantic_weight=1.0,
         keyword_weight=1.0,
-        rerank_enabled=False,
-        rerank_top_n=20,
+        rerank_mode=RerankMode.OFF,
+        rerank_candidate_window=20,
         rerank_score_threshold=None,
         score_threshold=None,
         filterable_metadata_keys=("source",),

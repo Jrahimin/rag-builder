@@ -16,7 +16,7 @@ from app.modules.generation.services.generation_service import GenerationService
 from app.modules.projects.repositories.project_ai_config_repository import (
     ProjectAIConfigRepository,
 )
-from app.platform.config.project_ai import ConfigRevisionRecord
+from app.platform.config.project_ai import config_revision_record
 from app.platform.providers.contracts.llm import BaseLLMProvider
 from app.platform.providers.implementations.llm_factory import (
     create_llm_provider_for_config,
@@ -58,17 +58,7 @@ async def get_generation_service(
         llm_config=settings.llm,
         resolve_llm=resolve_llm,
         settings=settings,
-        active_revision=(
-            ConfigRevisionRecord(
-                id=revision.id,
-                revision_number=revision.revision_number,
-                configuration_hash=revision.configuration_hash,
-                configuration=dict(revision.configuration),
-                schema_version=revision.schema_version,
-            )
-            if revision is not None
-            else None
-        ),
+        active_revision=config_revision_record(revision),
         execution_provenance={
             "active_index_build_id": (
                 str(pointer.active_build_id) if pointer and pointer.active_build_id else None
