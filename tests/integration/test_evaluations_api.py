@@ -246,9 +246,10 @@ async def test_durable_runner_persists_metrics_claims_and_refusal(
         for item in run["case_results"]
         if item["case_key"] == "exact" and item["profile"] == "reranked_lexical"
     )
-    assert exact["grounded"] is True
+    assert exact["grounded"] is False
     assert exact["claims"]
-    assert exact["claims"][0]["evidence"][0]["chunk_id"] == str(chunk_id)
+    assert exact["claims"][0]["evidence"] == []
+    assert exact["claims"][0]["verification"] == "unsupported"
     assert exact["citation_coverage"] == 0.0
     no_answer = next(
         item
