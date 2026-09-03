@@ -29,7 +29,7 @@ async def get_evaluation_service(
     revision = await ProjectAIConfigRepository(session, project_id).get_active()
     resolution = resolve_project_ai_config(
         settings,
-            config_revision_record(revision),
+        config_revision_record(revision),
     )
     project = await session.get(Project, project_id)
     return build_evaluation_service(

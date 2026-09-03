@@ -16,6 +16,7 @@ from typing import Any
 # Notice kinds
 # ---------------------------------------------------------------------------
 
+
 class NoticeKind:
     """Known notice kind identifiers."""
 
@@ -36,6 +37,7 @@ class NoticeKind:
 # ---------------------------------------------------------------------------
 # Notice data model
 # ---------------------------------------------------------------------------
+
 
 @dataclass(frozen=True, slots=True)
 class Notice:
@@ -82,9 +84,7 @@ _BN_TEXTS: dict[str, str] = {
     NoticeKind.WEB_EVIDENCE_USED: (
         "এই উত্তরের কিছু বা সব অংশ indexed knowledge নয়, বর্তমান web সূত্র থেকে নেওয়া হয়েছে।"
     ),
-    NoticeKind.INSUFFICIENT_EVIDENCE: (
-        "এই প্রশ্নের উত্তর দেওয়ার জন্য যথেষ্ট indexed evidence নেই।"
-    ),
+    NoticeKind.INSUFFICIENT_EVIDENCE: ("এই প্রশ্নের উত্তর দেওয়ার জন্য যথেষ্ট indexed evidence নেই।"),
 }
 
 
@@ -96,6 +96,7 @@ def _notice_text(kind: str, language: str) -> str:
 # ---------------------------------------------------------------------------
 # Factory functions
 # ---------------------------------------------------------------------------
+
 
 def scope_excludes_effective_modifier_notice(
     *,

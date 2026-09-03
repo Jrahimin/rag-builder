@@ -93,6 +93,7 @@ def remove_superseded_provisions(
 # No new callers should use this path.
 # ---------------------------------------------------------------------------
 
+
 def _records_from_chunks(chunks: list[ContextChunk]) -> list[dict[str, object]]:
     for chunk in chunks:
         value = chunk.metadata.get("modifies_expansion_records")

@@ -67,7 +67,7 @@ async def get_indexing_service(
     revision = await ProjectAIConfigRepository(session, project_id).get_active()
     resolution = resolve_project_ai_config(
         settings,
-            config_revision_record(revision),
+        config_revision_record(revision),
     )
     project = await session.get(Project, project_id)
     pointer = await session.get(ProjectIndexPointer, project_id)
@@ -95,7 +95,7 @@ async def get_search_service(
     revision = await ProjectAIConfigRepository(session, project_id).get_active()
     resolution = resolve_project_ai_config(
         settings,
-            config_revision_record(revision),
+        config_revision_record(revision),
     )
     effective = apply_effective_ai_config(settings, resolution)
     reranker = create_reranker_provider(effective)
@@ -132,7 +132,7 @@ async def get_index_lifecycle_service(
     revision = await ProjectAIConfigRepository(session, project_id).get_active()
     resolution = resolve_project_ai_config(
         settings,
-            config_revision_record(revision),
+        config_revision_record(revision),
     )
     project = await session.get(Project, project_id)
     pointer = await session.get(ProjectIndexPointer, project_id)

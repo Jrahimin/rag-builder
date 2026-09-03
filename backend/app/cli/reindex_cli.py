@@ -128,7 +128,7 @@ async def _project_job_configuration(
     pointer = await session.get(ProjectIndexPointer, project_id)
     resolution = resolve_project_ai_config(
         settings,
-            config_revision_record(revision),
+        config_revision_record(revision),
     )
     return build_job_configuration(
         settings,

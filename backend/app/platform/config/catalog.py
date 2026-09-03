@@ -160,6 +160,7 @@ for _path in (
         timing="next_conversation_or_explicit_snapshot_update",
     )
 
+
 def catalog_entry(path: str) -> SettingCatalogEntry:
     """Return explicit metadata or a deterministic deployment-owned classification."""
     explicit = _EXPLICIT.get(path)

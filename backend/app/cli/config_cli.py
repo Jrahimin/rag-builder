@@ -55,15 +55,18 @@ async def reset_legacy_configuration(
             dict(legacy.configuration),
         )
         payload = configuration.model_dump(mode="json", exclude_none=True)
-        next_number = int(
-            await session.scalar(
-                select(ProjectAIConfigRevision.revision_number)
-                .where(ProjectAIConfigRevision.project_id == project.id)
-                .order_by(ProjectAIConfigRevision.revision_number.desc())
-                .limit(1)
+        next_number = (
+            int(
+                await session.scalar(
+                    select(ProjectAIConfigRevision.revision_number)
+                    .where(ProjectAIConfigRevision.project_id == project.id)
+                    .order_by(ProjectAIConfigRevision.revision_number.desc())
+                    .limit(1)
+                )
+                or 0
             )
-            or 0
-        ) + 1
+            + 1
+        )
         revision = ProjectAIConfigRevision(
             id=uuid.uuid4(),
             project_id=project.id,
@@ -84,9 +87,7 @@ async def reset_legacy_configuration(
     revisions = list(
         (
             await session.scalars(
-                select(ProjectAIConfigRevision).where(
-                    ProjectAIConfigRevision.schema_version == 2
-                )
+                select(ProjectAIConfigRevision).where(ProjectAIConfigRevision.schema_version == 2)
             )
         ).all()
     )
@@ -129,9 +130,7 @@ async def reset_legacy_configuration(
     for job_snapshot in jobs:
         cleaned = reset_job_snapshot_configuration(settings, dict(job_snapshot.configuration))
         parsed = JobConfiguration.model_validate(cleaned)
-        grouped[(job_snapshot.project_id, parsed.output_digest())].append(
-            (job_snapshot, cleaned)
-        )
+        grouped[(job_snapshot.project_id, parsed.output_digest())].append((job_snapshot, cleaned))
     targets: list[tuple[JobConfigurationSnapshot, dict[str, Any], str]] = []
     for (_, digest), rows in grouped.items():
         target, cleaned = rows[0]

@@ -57,11 +57,14 @@ def legacy_project_configuration_to_v2(
 
     provider = _enum_or_default(LLMBackend, llm.get("provider"), settings.llm.backend)
     model = str(llm.get("model") or settings.llm.model)
-    model_id = generation_model_id_for_legacy_pair(
-        settings,
-        provider=provider,
-        model=model,
-    ) or generation_model_policy(settings)[1]
+    model_id = (
+        generation_model_id_for_legacy_pair(
+            settings,
+            provider=provider,
+            model=model,
+        )
+        or generation_model_policy(settings)[1]
+    )
 
     legacy_rerank_mode = retrieval.get("rerank_mode")
     if legacy_rerank_mode is None and retrieval.get("rerank_enabled") is not None:
@@ -226,9 +229,7 @@ def _reset_mapping(value: Any) -> None:
         value["modifies_expansion_mode"] = (
             "expand" if value["modifies_expansion_enabled"] else "off"
         )
-    if "auto_build_after_process" not in value and (
-        "auto_embed" in value or "auto_index" in value
-    ):
+    if "auto_build_after_process" not in value and ("auto_embed" in value or "auto_index" in value):
         value["auto_build_after_process"] = bool(
             value.get("auto_embed") is not False and value.get("auto_index") is not False
         )

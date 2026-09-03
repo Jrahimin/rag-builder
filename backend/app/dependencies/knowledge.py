@@ -73,7 +73,7 @@ async def get_document_service(
     revision = await ProjectAIConfigRepository(session, repository.project_id).get_active()
     resolution = resolve_project_ai_config(
         settings,
-            config_revision_record(revision),
+        config_revision_record(revision),
     )
     project = await session.get(Project, repository.project_id)
     pointer = await session.get(ProjectIndexPointer, repository.project_id)

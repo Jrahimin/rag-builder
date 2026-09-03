@@ -149,9 +149,7 @@ class HybridRetriever(BaseRetriever):
 
         rerank_active = context.rerank_mode is not RerankMode.OFF
         fusion_top_k = (
-            max(context.rerank_candidate_window, context.top_k)
-            if rerank_active
-            else context.top_k
+            max(context.rerank_candidate_window, context.top_k) if rerank_active else context.top_k
         )
         expansion_diagnostics: dict[str, object] = {
             "modifies_expansion_status": "disabled",

@@ -55,9 +55,7 @@ async def assess_and_select_knowledge(
     evidence = grounding.assess(question, authority_safe_chunks, rerank_status=rerank_status)
     rescued_chunks = authority_safe_chunks
     rescue_ids = (
-        grounding.passage_rescue_chunk_ids(
-            authority_safe_chunks, evidence.candidate_assessments
-        )
+        grounding.passage_rescue_chunk_ids(authority_safe_chunks, evidence.candidate_assessments)
         if evidence.grounding_path == "candidate_wise"
         else []
     )
@@ -173,7 +171,5 @@ def _align_winner_to_selected(
             if matching is not None
             else evidence.winning_semantic_score
         ),
-        winning_rank_score=(
-            unit.rank_score if unit is not None else winner.rank_score
-        ),
+        winning_rank_score=(unit.rank_score if unit is not None else winner.rank_score),
     )
