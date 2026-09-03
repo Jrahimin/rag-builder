@@ -105,7 +105,61 @@ def compute_profile_metrics(results: list[dict[str, Any]]) -> dict[str, Any]:
         positive_field="best_relevant_rerank_score",
         hard_negative_field="best_hard_negative_rerank_score",
     )
+    metrics["evidence_funnel"] = _aggregate_evidence_funnels(results)
+    parameter_cases = [result for result in results if result.get("user_parameter_tokens")]
+    metrics["user_parameter_cases"] = {
+        "case_count": float(len(parameter_cases)),
+        "token_coverage": _mean_or_zero(
+            [float(result.get("user_parameter_token_coverage", 0.0)) for result in parameter_cases]
+        ),
+        "unverified_claim_rate": _mean_or_zero(
+            [float(result.get("unverified_claim_rate", 0.0)) for result in parameter_cases]
+        ),
+    }
     return metrics
+
+
+def _aggregate_evidence_funnels(results: list[dict[str, Any]]) -> dict[str, Any]:
+    stages = (
+        "fused",
+        "reranked",
+        "policy_survived",
+        "hydrated",
+        "deduped",
+        "assessed",
+        "admitted",
+        "context_selected",
+        "cited",
+        "supported_claims",
+    )
+    totals: dict[str, int] = dict.fromkeys(stages, 0)
+    losses: dict[str, dict[str, int]] = {}
+    outcomes: dict[str, int] = {}
+    would_have_blocked = 0
+    for result in results:
+        funnel = result.get("evidence_funnel")
+        if not isinstance(funnel, dict):
+            continue
+        for stage in stages:
+            value = funnel.get(stage)
+            if isinstance(value, int) and not isinstance(value, bool):
+                totals[stage] += value
+        for stage, reasons in (funnel.get("loss_reasons") or {}).items():
+            if not isinstance(reasons, dict):
+                continue
+            target = losses.setdefault(str(stage), {})
+            for reason, count in reasons.items():
+                if isinstance(count, int) and not isinstance(count, bool):
+                    target[str(reason)] = target.get(str(reason), 0) + count
+        outcome = str(funnel.get("outcome") or "unknown")
+        outcomes[outcome] = outcomes.get(outcome, 0) + 1
+        would_have_blocked += int(bool(funnel.get("would_have_blocked")))
+    return {
+        **totals,
+        "loss_reasons": losses,
+        "would_have_blocked": would_have_blocked,
+        "outcomes": outcomes,
+    }
 
 
 def rank_metrics(

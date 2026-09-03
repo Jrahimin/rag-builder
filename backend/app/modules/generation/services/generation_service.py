@@ -87,10 +87,9 @@ class GenerationService:
             )
             for field in explicit_generation_fields
         }
-        prompt_version_field = "prompt_version"
-        prompt_version = getattr(request, prompt_version_field)
-        if prompt_version_field in request.model_fields_set:
-            deprecated_overrides[prompt_version_field] = prompt_version
+        # Prompt-version selection remains part of the contextual generation
+        # contract until the dedicated prompt consolidation phase.
+        prompt_version = request.prompt_version
         resolution = resolve_project_ai_config(
             self._settings,
             self._active_revision,

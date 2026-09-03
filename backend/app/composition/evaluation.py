@@ -12,10 +12,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.composition.jobs import build_job_service
 from app.composition.source_metadata import KnowledgeRetrievalSourceMetadataAdapter
 from app.core.config import (
-    EvidenceScoreMode,
     QueryTranslationConfig,
-    RequestOverrideMode,
     RerankerBackend,
+    RerankMode,
     RetrievalConfig,
     RetrievalStrategy,
     Settings,
@@ -25,7 +24,10 @@ from app.modules.conversations.grounded_context import assess_and_select_knowled
 from app.modules.conversations.grounding_service import GroundingService
 from app.modules.conversations.ports import ContextChunk
 from app.modules.conversations.prompt_builder import PromptBuilder
-from app.modules.conversations.prompts.registry import require_prompt_template
+from app.modules.conversations.prompts.registry import (
+    GROUNDED_PROMPT_VERSION,
+    require_prompt_template,
+)
 from app.modules.evaluation.ports import (
     EvaluationAnswerPort,
     EvaluationRetrievalPort,
@@ -51,7 +53,6 @@ from app.platform.config.project_ai import (
     apply_effective_ai_config,
     resolve_project_ai_config,
 )
-from app.platform.domain.content_hash import content_hash
 from app.platform.jobs.configuration import build_job_configuration
 from app.platform.jobs.contracts import DurableJobSubmitter, JobQueue
 from app.platform.jobs.implementations.job_queue_factory import create_job_queue
@@ -101,21 +102,22 @@ class SearchEvaluationAdapter(EvaluationRetrievalPort):
         original_only = settings.query_translation.model_copy(update={"enabled": False})
         translated = settings.query_translation.model_copy(update={"enabled": True})
         self._services: dict[str, SearchService] = {
-            "semantic": self._service(session, project_id, embedder, NoopRerankerProvider()),
-            "hybrid": self._service(
-                session,
-                project_id,
-                embedder,
-                NoopRerankerProvider(),
-                query_translation_config=original_only,
-            ),
-            "passage": self._service(
+            "semantic": self._service(
                 session,
                 project_id,
                 embedder,
                 NoopRerankerProvider(),
                 retrieval_config=settings.retrieval.model_copy(
-                    update={"passage_scoring_enabled": True}
+                    update={"strategy": RetrievalStrategy.SEMANTIC, "rerank_mode": RerankMode.OFF}
+                ),
+            ),
+            "hybrid": self._service(
+                session,
+                project_id,
+                embedder,
+                NoopRerankerProvider(),
+                retrieval_config=settings.retrieval.model_copy(
+                    update={"strategy": RetrievalStrategy.HYBRID, "rerank_mode": RerankMode.OFF}
                 ),
                 query_translation_config=original_only,
             ),
@@ -124,6 +126,9 @@ class SearchEvaluationAdapter(EvaluationRetrievalPort):
                 project_id,
                 embedder,
                 NoopRerankerProvider(),
+                retrieval_config=settings.retrieval.model_copy(
+                    update={"strategy": RetrievalStrategy.HYBRID, "rerank_mode": RerankMode.OFF}
+                ),
                 query_translator=translator,
                 query_translation_config=translated,
                 persist_translation_text=True,
@@ -132,10 +137,6 @@ class SearchEvaluationAdapter(EvaluationRetrievalPort):
         self._profile_metadata: dict[str, dict[str, Any]] = {
             "semantic": {"learned": False, "stage": "A"},
             "hybrid": {"learned": False, "stage": "B"},
-            "passage": {
-                "learned": embedder.provider_name != "hash",
-                "evidence_score_method": "bounded_token_max_v1",
-            },
             "multilingual_hybrid": {
                 "learned": False,
                 "stage": "E",
@@ -155,6 +156,16 @@ class SearchEvaluationAdapter(EvaluationRetrievalPort):
                 project_id,
                 embedder,
                 provider,
+                retrieval_config=settings.retrieval.model_copy(
+                    update={
+                        "strategy": RetrievalStrategy.HYBRID,
+                        "rerank_mode": (
+                            settings.retrieval.rerank_mode
+                            if settings.retrieval.rerank_mode is not RerankMode.OFF
+                            else RerankMode.ALWAYS
+                        ),
+                    }
+                ),
                 query_translator=translator,
                 query_translation_config=translated,
                 persist_translation_text=True,
@@ -184,9 +195,10 @@ class SearchEvaluationAdapter(EvaluationRetrievalPort):
         retrieval = self._settings.retrieval
         if retrieval.strategy is RetrievalStrategy.SEMANTIC:
             return "semantic"
-        if self._settings.chat.evidence_score_mode is EvidenceScoreMode.PASSAGE_MAX:
-            return "passage"
-        if not retrieval.rerank_enabled or retrieval.reranker_backend is RerankerBackend.NOOP:
+        if (
+            retrieval.rerank_mode is RerankMode.OFF
+            or retrieval.reranker_backend is RerankerBackend.NOOP
+        ):
             return "hybrid"
         profile = f"reranked_{retrieval.reranker_backend.value}"
         return profile if profile in self._services else "hybrid"
@@ -206,15 +218,12 @@ class SearchEvaluationAdapter(EvaluationRetrievalPort):
         as_of: datetime | None,
     ) -> QualitySearchResult:
         service = self._services[profile]
-        semantic = profile == "semantic"
         response = await service.search(
             SearchRequest(
                 query=query,
                 top_k=top_k,
                 document_id=document_id,
                 metadata_filter=metadata_filter,
-                strategy=(RetrievalStrategy.SEMANTIC if semantic else RetrievalStrategy.HYBRID),
-                rerank=profile.startswith("reranked_"),
                 as_of=as_of,
             )
         )
@@ -270,13 +279,7 @@ class SearchEvaluationAdapter(EvaluationRetrievalPort):
             embedder=embedder,
             reranker=reranker,
             retrieval_config=retrieval_config or self._settings.retrieval,
-            # Test Lab deliberately compares retrieval/reranker candidates on
-            # one pinned corpus. Its internal profile axis is not a public API
-            # request override, so keep strict ownership at the HTTP boundary
-            # while allowing this isolated evaluation adapter to select cases.
-            ai_policy=self._settings.ai_policy.model_copy(
-                update={"request_override_mode": RequestOverrideMode.COMPATIBILITY}
-            ),
+            ai_policy=self._settings.ai_policy,
             source_metadata=self._source_metadata,
             configured_source_policy_mode=self._source_policy_mode,
             configuration_hash=self._configuration_hash,
@@ -314,14 +317,7 @@ class GroundedEvaluationAnswerAdapter(EvaluationAnswerPort):
         self._llm = llm
         self._context = ContextBuilder(settings.chat)
         self._prompt = PromptBuilder()
-        self._whole_chunk_grounding = GroundingService(
-            settings.chat.model_copy(update={"evidence_score_mode": EvidenceScoreMode.WHOLE_CHUNK}),
-            embedder=embedder,
-        )
-        self._passage_grounding = GroundingService(
-            settings.chat.model_copy(update={"evidence_score_mode": EvidenceScoreMode.PASSAGE_MAX}),
-            embedder=embedder,
-        )
+        self._grounding = GroundingService(settings.chat, embedder=embedder)
         self._domain_instructions = domain_instructions
         self._prompt_profile = prompt_profile
 
@@ -332,8 +328,9 @@ class GroundedEvaluationAnswerAdapter(EvaluationAnswerPort):
         question: str,
         hits: list[QualityHit],
     ) -> QualityAnswer:
-        chunks = [_context_chunk(hit) for hit in hits]
-        grounding = self._passage_grounding if profile == "passage" else self._whole_chunk_grounding
+        del profile
+        chunks = [ContextChunk.from_retrieval_result(hit) for hit in hits]
+        grounding = self._grounding
         rerank_status = next(
             (
                 str(chunk.metadata.get("rerank_status"))
@@ -377,7 +374,7 @@ class GroundedEvaluationAnswerAdapter(EvaluationAnswerPort):
                 ),
             )
         messages = self._prompt.build(
-            template=require_prompt_template(self._settings.chat.system_prompt_version),
+            template=require_prompt_template(GROUNDED_PROMPT_VERSION),
             context_chunks=selected,
             history=[],
             user_question=question,
@@ -391,16 +388,17 @@ class GroundedEvaluationAnswerAdapter(EvaluationAnswerPort):
             max_tokens=self._settings.llm.max_tokens,
         )
         provider_latency_ms = int((time.perf_counter() - provider_started) * 1000)
-        # Evaluation measures support against retrieved evidence, not citation syntax.
         result = await grounding.map_claims(
             completion.content,
             selected,
-            require_citations=False,
+            require_citations=True,
         )
         return QualityAnswer(
             answer=completion.content,
             insufficient_evidence_reason=None,
-            grounded=result.grounded,
+            # grounded=None (polarity-only, no verifiable claims) is treated as
+            # False for evaluation metrics; the chat API exposes it as null.
+            grounded=bool(result.grounded),
             citation_coverage=result.citation_coverage,
             claims=result.claims,
             provider=completion.provider,
@@ -515,7 +513,7 @@ def build_quality_version_snapshot(settings: Settings) -> dict[str, Any]:
             mode="json",
             exclude={"openai_api_key", "gemini_api_key"},
         ),
-        "prompt_version": settings.chat.system_prompt_version,
+        "prompt_version": GROUNDED_PROMPT_VERSION,
         "evaluator_version": settings.evaluation.evaluator_version,
     }
 
@@ -544,40 +542,3 @@ def _optional_translator(settings: Settings) -> BaseQueryTranslationProvider | N
         return create_query_translation_provider(settings)
     except ProviderError:
         return None
-
-
-def _context_chunk(hit: QualityHit) -> ContextChunk:
-    rerank_score = _optional_hit_float(hit.rerank_relevance_score)
-    if rerank_score is None and hit.metadata.get("rerank_status") == "applied":
-        rerank_score = float(hit.score)
-    return ContextChunk(
-        chunk_id=hit.chunk_id,
-        document_id=hit.document_id,
-        chunk_index=hit.chunk_index,
-        content=hit.content,
-        score=hit.score,
-        filename=hit.filename,
-        chunk_hash=content_hash(hit.content),
-        semantic_score=hit.semantic_score,
-        rank_score=hit.rank_score if hit.rank_score is not None else rerank_score,
-        rerank_relevance_score=rerank_score,
-        evidence_relevance_score=rerank_score,
-        evidence_score_method="reranker_relevance" if rerank_score is not None else None,
-        evidence_calibration_id=hit.evidence_calibration_id,
-        passage_semantic_score=hit.passage_semantic_score,
-        passage_char_start=hit.passage_char_start,
-        passage_char_end=hit.passage_char_end,
-        passage_score_method=hit.passage_score_method,
-        page_number=hit.page_number,
-        char_start=hit.char_start,
-        char_end=hit.char_end,
-        query_variants=hit.query_variants,
-        branch_contributions=hit.branch_contributions,
-        metadata=hit.metadata,
-    )
-
-
-def _optional_hit_float(value: object) -> float | None:
-    if isinstance(value, (int, float)) and not isinstance(value, bool):
-        return float(value)
-    return None

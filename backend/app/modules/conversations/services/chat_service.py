@@ -12,7 +12,14 @@ from typing import Any
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import ChatConfig, LLMConfig, ResponseMode, RetrievalConfig, WebSearchConfig
+from app.core.config import (
+    ChatConfig,
+    EvidenceGateMode,
+    LLMConfig,
+    ResponseMode,
+    RetrievalConfig,
+    WebSearchConfig,
+)
 from app.core.exceptions import NotFoundError, ServiceUnavailableError
 from app.models.conversation import Conversation
 from app.models.message import Message, MessageRole
@@ -20,6 +27,12 @@ from app.modules.conversations.citation_snapshots import build_citation_snapshot
 from app.modules.conversations.context_builder import ContextBuilder
 from app.modules.conversations.grounded_context import assess_and_select_knowledge
 from app.modules.conversations.grounding_service import EvidenceDecision, GroundingService
+from app.modules.conversations.notices import (
+    Notice,
+    insufficient_evidence_notice,
+    scope_excludes_effective_modifier_notice,
+    web_evidence_used_notice,
+)
 from app.modules.conversations.ports import (
     ContextChunk,
     ContextRetrievalResult,
@@ -27,7 +40,11 @@ from app.modules.conversations.ports import (
     RetrievalPort,
 )
 from app.modules.conversations.prompt_builder import PromptBuilder, PromptHistoryMessage
-from app.modules.conversations.prompts.registry import PromptTemplate, require_prompt_template
+from app.modules.conversations.prompts.registry import (
+    GROUNDED_PROMPT_VERSION,
+    PromptTemplate,
+    require_prompt_template,
+)
 from app.modules.conversations.repositories.conversation_repository import ConversationRepository
 from app.modules.conversations.repositories.message_repository import MessageRepository
 from app.modules.conversations.schemas.message import (
@@ -113,8 +130,8 @@ class _PreparedTurn:
     web_search_diagnostics: dict[str, Any]
     web_fallback_used: bool = False
     non_knowledge_response: str | None = None
-    scope_limited_response: str | None = None
     scope_current_authority: dict[str, Any] | None = None
+    notices: tuple[Notice, ...] = ()
 
 
 class ChatService:
@@ -139,6 +156,7 @@ class ChatService:
         prompt_profile: str = "default",
         web_search: BaseWebSearchProvider | None = None,
         web_search_config: WebSearchConfig | None = None,
+        store_candidate_trace: bool | None = None,
     ) -> None:
         self._session = session
         self._project_id = project_id
@@ -155,6 +173,11 @@ class ChatService:
         self._prompt_profile = prompt_profile
         self._web_search = web_search
         self._web_search_config = web_search_config or WebSearchConfig()
+        self._store_candidate_trace = (
+            store_candidate_trace
+            if store_candidate_trace is not None
+            else chat_config.store_candidate_trace
+        )
         self._context_builder = ContextBuilder(chat_config)
         self._prompt_builder = PromptBuilder()
         self._grounding = GroundingService(
@@ -203,34 +226,6 @@ class ChatService:
                 output_tokens_logged=0,
                 generation_ran=False,
                 non_knowledge_turn=True,
-            )
-            return ChatTurnResponse(
-                user_message=user_message_response,
-                assistant_message=self._to_response(
-                    assistant_message,
-                    conversation_provider=conversation_provider,
-                    conversation_model=conversation_model,
-                ),
-            )
-
-        if prepared.scope_limited_response is not None:
-            assistant_message = await self._persist_assistant_turn(
-                conversation=conversation,
-                prepared=prepared,
-                content=prepared.scope_limited_response,
-                finish_reason="insufficient_evidence",
-                input_tokens=0,
-                output_tokens=0,
-                provider=prepared.llm.provider_name,
-                model=prepared.llm.model_name,
-                generation_ms=0,
-                total_ms=int((time.perf_counter() - started) * 1000),
-                user_content_for_title=request.content,
-                streamed=False,
-                input_tokens_logged=0,
-                output_tokens_logged=0,
-                insufficient_reason="below_relevance_threshold",
-                generation_ran=False,
             )
             return ChatTurnResponse(
                 user_message=user_message_response,
@@ -293,7 +288,7 @@ class ChatService:
         generation_ms = int((time.perf_counter() - generation_started) * 1000)
         total_ms = int((time.perf_counter() - started) * 1000)
 
-        content = self._with_web_fallback_notice(completion.content, prepared, request.content)
+        content = completion.content
         assistant_message = await self._persist_assistant_turn(
             conversation=conversation,
             prepared=prepared,
@@ -367,30 +362,6 @@ class ChatService:
             yield self._done_event(assistant_message, conversation)
             return
 
-        if prepared.scope_limited_response is not None:
-            content = prepared.scope_limited_response
-            yield content
-            assistant_message = await self._persist_assistant_turn(
-                conversation=conversation,
-                prepared=prepared,
-                content=content,
-                finish_reason="insufficient_evidence",
-                input_tokens=0,
-                output_tokens=0,
-                provider=prepared.llm.provider_name,
-                model=prepared.llm.model_name,
-                generation_ms=0,
-                total_ms=int((time.perf_counter() - started) * 1000),
-                user_content_for_title=request.content,
-                streamed=True,
-                input_tokens_logged=0,
-                output_tokens_logged=0,
-                insufficient_reason="below_relevance_threshold",
-                generation_ran=False,
-            )
-            yield self._done_event(assistant_message, conversation)
-            return
-
         if not prepared.selected:
             content = self._insufficient_content(prepared, request.content)
             yield content
@@ -416,12 +387,7 @@ class ChatService:
             return
 
         generation_started = time.perf_counter()
-        notice = self._web_fallback_notice(request.content) if prepared.web_fallback_used else ""
         content_parts: list[str] = []
-        if notice:
-            prefix = f"{notice}\n\n"
-            content_parts.append(prefix)
-            yield prefix
         finish_reason: str | None = None
         final_usage: ChatUsage | None = None
 
@@ -527,6 +493,9 @@ class ChatService:
             else self._grounding
         )
         rerank_status = str(retrieval_result.diagnostics.get("rerank_status") or "") or None
+        expansion_records = list(
+            retrieval_result.diagnostics.get("modifies_expansion_records") or []
+        )
         evidence, knowledge_selected = await assess_and_select_knowledge(
             grounding=grounding,
             context_builder=self._context_builder,
@@ -535,6 +504,7 @@ class ChatService:
             chunks=chunks,
             rerank_status=rerank_status,
             retrieval_config=self._retrieval_config,
+            expansion_records=expansion_records,
         )
 
         # Capture all ORM-backed prompt inputs before closing the read
@@ -544,9 +514,7 @@ class ChatService:
         prompt_history = [
             PromptHistoryMessage(role=message.role, content=message.content) for message in history
         ]
-        prompt_version = (
-            conversation.system_prompt_version or self._chat_config.system_prompt_version
-        )
+        prompt_version = GROUNDED_PROMPT_VERSION
         template = require_prompt_template(prompt_version)
         llm = self._resolve_llm(conversation)
         temperature = self._effective_temperature(conversation)
@@ -631,7 +599,7 @@ class ChatService:
                 }
 
         knowledge_usable = not grounding.blocks_generation(evidence)
-        if non_knowledge_response is not None or scope_current_authority is not None:
+        if non_knowledge_response is not None:
             selected: list[ContextChunk] = []
         elif mode is ResponseMode.INDEXED_ONLY:
             selected = knowledge_selected if knowledge_usable else []
@@ -661,6 +629,22 @@ class ChatService:
             domain_instructions=self._domain_instructions,
             prompt_profile=self._prompt_profile,
         )
+        # Build structured notices (language-neutral; system metadata, not LLM text).
+        question_language = detect_language(request.content).primary_language
+        notices: list[Notice] = []
+        if scope_current_authority is not None:
+            effective_modifiers = _effective_scope_modifier_records(
+                retrieval_result.diagnostics.get("modifies_expansion_records") or []
+            )
+            notices.append(
+                scope_excludes_effective_modifier_notice(
+                    language=question_language,
+                    modifier_records=effective_modifiers,
+                )
+            )
+        if web_fallback_used:
+            notices.append(web_evidence_used_notice(language=question_language))
+
         return _PreparedTurn(
             prompt_version=prompt_version,
             template=template,
@@ -679,12 +663,8 @@ class ChatService:
             web_search_diagnostics=web_diagnostics,
             web_fallback_used=web_fallback_used,
             non_knowledge_response=non_knowledge_response,
-            scope_limited_response=(
-                _scope_limited_current_authority_content(request.content)
-                if scope_current_authority is not None
-                else None
-            ),
             scope_current_authority=scope_current_authority,
+            notices=tuple(notices),
         )
 
     async def _persist_assistant_turn(
@@ -714,6 +694,15 @@ class ChatService:
             grounding = type(grounding)(claims=[], grounded=False, citation_coverage=1.0)
         elif non_knowledge_turn:
             grounding = type(grounding)(claims=[], grounded=False, citation_coverage=0.0)
+        # grounded=None is only valid when generation ran on admitted evidence
+        # and all segments were polarity-only / non-factual.  If generation did
+        # not run, keep grounded=False as before.
+        if grounding.grounded is None and not generation_ran:
+            grounding = type(grounding)(
+                claims=[],
+                grounded=False,
+                citation_coverage=grounding.citation_coverage,
+            )
         metadata = self._build_metadata(
             retrieval_ms=prepared.retrieval_ms,
             generation_ms=generation_ms,
@@ -728,6 +717,8 @@ class ChatService:
             blocked_generation=reason_value is not None,
             generation_ran=generation_ran,
         )
+        if grounding.claims_status:
+            evidence_gate["claims_status"] = grounding.claims_status
         citations = (
             []
             if reason_value is not None or non_knowledge_turn
@@ -767,31 +758,47 @@ class ChatService:
             content_hash(chunk.content) != chunk.metadata.get("evidence_span_hash")
             for chunk in selected_evidence_units
         )
+        evidence_funnel = _complete_evidence_funnel(
+            prepared.retrieval_diagnostics.get("evidence_funnel"),
+            evidence=prepared.evidence,
+            retrieved_count=len(prepared.chunks),
+            selected_count=len(selected_evidence_units),
+            citations=citations,
+            claims=grounding.claims,
+            rerank_status=prepared.retrieval_diagnostics.get("rerank_status"),
+            blocked=reason_value is not None,
+            generation_ran=generation_ran,
+            observe=self._chat_config.evidence_gate_mode is EvidenceGateMode.OBSERVE,
+            non_knowledge_turn=non_knowledge_turn,
+        )
+        if not self._store_candidate_trace:
+            candidate_diagnostics.pop("assessments", None)
         metadata.update(
             {
                 "response_mode": self._chat_config.response_mode.value,
                 "source_provenance": prepared.source_provenance.value,
                 "web_search": prepared.web_search_diagnostics,
                 "non_knowledge_turn": non_knowledge_turn,
-                "grounded": grounding.grounded,
                 "citation_coverage": grounding.citation_coverage,
                 "unverified_claim_rate": grounding.unverified_claim_rate,
                 "best_semantic_evidence_score": prepared.evidence.winning_semantic_score,
-                "best_evidence_score": prepared.evidence.best_score,
-                "evidence_score_method": prepared.evidence.evidence_score_method,
-                "winning_evidence_chunk_id": (
-                    str(prepared.evidence.winning_chunk_id)
-                    if prepared.evidence.winning_chunk_id is not None
-                    else None
-                ),
-                "winning_evidence_char_start": prepared.evidence.evidence_char_start,
-                "winning_evidence_char_end": prepared.evidence.evidence_char_end,
-                "query_evidence_token_coverage": prepared.evidence.query_token_coverage,
-                "lexically_corroborated": prepared.evidence.lexically_corroborated,
-                "insufficient_evidence_reason": reason_value,
                 "evidence_gate": evidence_gate,
+                "evidence_funnel": evidence_funnel,
                 "scope_current_authority": prepared.scope_current_authority
                 or {"status": "not_applicable"},
+                "notices": [
+                    n.to_dict()
+                    for n in (
+                        prepared.notices
+                        if reason_value is None
+                        else (
+                            *prepared.notices,
+                            insufficient_evidence_notice(
+                                language=detect_language(user_content_for_title).primary_language
+                            ),
+                        )
+                    )
+                ],
             }
         )
         assistant_message = await self._commit_assistant_message(
@@ -872,6 +879,21 @@ class ChatService:
                 "citation_coverage": 0.0,
             }
         )
+        failed_funnel = _complete_evidence_funnel(
+            prepared.retrieval_diagnostics.get("evidence_funnel"),
+            evidence=prepared.evidence,
+            retrieved_count=len(prepared.chunks),
+            selected_count=len(prepared.selected),
+            citations=[],
+            claims=[],
+            rerank_status=prepared.retrieval_diagnostics.get("rerank_status"),
+            blocked=False,
+            generation_ran=False,
+            observe=self._chat_config.evidence_gate_mode is EvidenceGateMode.OBSERVE,
+            non_knowledge_turn=prepared.non_knowledge_response is not None,
+        )
+        failed_funnel["outcome"] = "failed"
+        metadata["evidence_funnel"] = failed_funnel
         try:
             await self._commit_assistant_message(
                 conversation=conversation,
@@ -912,6 +934,7 @@ class ChatService:
             "claims": [item.model_dump(mode="json") for item in response.claims],
             "grounded": response.grounded,
             "insufficient_evidence_reason": response.insufficient_evidence_reason,
+            "notices": [item.model_dump(mode="json") for item in response.notices],
             "response_mode": self._chat_config.response_mode.value,
             "source_provenance": response.source_provenance.value,
             "web_search": response.metadata.get("web_search", {}),
@@ -963,20 +986,8 @@ class ChatService:
             return "উপলভ্য knowledge base-এ আত্মবিশ্বাসের সঙ্গে উত্তর দেওয়ার মতো যথেষ্ট তথ্য পাইনি।"
         return self._chat_config.insufficient_evidence_message
 
-    def _with_web_fallback_notice(
-        self,
-        content: str,
-        prepared: _PreparedTurn,
-        question: str,
-    ) -> str:
-        if not prepared.web_fallback_used:
-            return content
-        return f"{self._web_fallback_notice(question)}\n\n{content}"
-
-    def _web_fallback_notice(self, question: str) -> str:
-        if detect_language(question).primary_language == "bn":
-            return "Knowledge base-এ এটি ছিল না, তাই আমি সাম্প্রতিক web সূত্র ব্যবহার করেছি।"
-        return "This wasn\u2019t covered in the knowledge base, so I used current web sources."
+    # _with_web_fallback_notice / _web_fallback_notice removed in Phase 3.
+    # Web evidence is now announced via a structured Notice, not prepended text.
 
     async def _release_read_transaction(self) -> None:
         """Close any implicit read transaction before slow external I/O."""
@@ -1041,7 +1052,7 @@ class ChatService:
         metadata: dict[str, Any],
         citations: list[dict],
         claims: list[dict],
-        grounded: bool,
+        grounded: bool | None,
         insufficient_evidence_reason: str | None,
         user_content_for_title: str,
     ) -> Message:
@@ -1111,12 +1122,24 @@ class ChatService:
             "retrieved_chunk_count": retrieved_count,
             "selected_chunk_count": selected_count,
             "retrieval_trace": {
-                "candidates": retrieval_diagnostics.get("candidate_trace", []),
-                "retrieval_selected": retrieval_diagnostics.get("selected_trace", []),
-                "context_selected": [
-                    _context_trace_item(index, chunk)
-                    for index, chunk in enumerate(selected_chunks, start=1)
-                ],
+                "candidates": (
+                    retrieval_diagnostics.get("candidate_trace", [])
+                    if self._store_candidate_trace
+                    else []
+                ),
+                "retrieval_selected": (
+                    retrieval_diagnostics.get("selected_trace", [])
+                    if self._store_candidate_trace
+                    else []
+                ),
+                "context_selected": (
+                    [
+                        _context_trace_item(index, chunk)
+                        for index, chunk in enumerate(selected_chunks, start=1)
+                    ]
+                    if self._store_candidate_trace
+                    else []
+                ),
                 "suppression": {
                     "input_count": retrieval_diagnostics.get(
                         "duplicate_suppression_input_count", 0
@@ -1372,6 +1395,76 @@ def _context_trace_item(index: int, chunk: ContextChunk) -> dict[str, Any]:
     }
 
 
+def _complete_evidence_funnel(
+    retrieval_funnel: object,
+    *,
+    evidence: EvidenceDecision,
+    retrieved_count: int,
+    selected_count: int,
+    citations: list[dict[str, Any]],
+    claims: list[dict[str, Any]],
+    rerank_status: object,
+    blocked: bool,
+    generation_ran: bool,
+    observe: bool,
+    non_knowledge_turn: bool,
+) -> dict[str, Any]:
+    """Complete the compact retrieval funnel with admission and answer stages."""
+    funnel = dict(retrieval_funnel) if isinstance(retrieval_funnel, dict) else {}
+    for stage in ("fused", "reranked", "policy_survived", "hydrated", "deduped"):
+        funnel.setdefault(stage, 0)
+    losses = dict(funnel.get("loss_reasons") or {})
+    rejected: dict[str, int] = {}
+    for assessment in evidence.candidate_assessments:
+        if assessment.passed:
+            continue
+        reason = assessment.terminal_reason or "not_admitted"
+        rejected[reason] = rejected.get(reason, 0) + 1
+    if rejected:
+        losses["admitted"] = rejected
+    assessed_count = len(evidence.candidate_assessments) or retrieved_count
+    admitted_count = len(evidence.admitted_units)
+    if not rejected and assessed_count > admitted_count:
+        reason = evidence.reason.value if evidence.reason is not None else "not_admitted"
+        losses["admitted"] = {reason: assessed_count - admitted_count}
+    if admitted_count > selected_count:
+        losses["context_selected"] = {
+            "authority_or_context_budget": admitted_count - selected_count
+        }
+    cited_unit_ids = {
+        str(citation.get("evidence_unit_id"))
+        for citation in citations
+        if citation.get("evidence_unit_id")
+    }
+    if selected_count > len(cited_unit_ids):
+        losses["cited"] = {"not_cited": selected_count - len(cited_unit_ids)}
+    supported_claims = sum(bool(claim.get("grounded")) for claim in claims)
+    funnel.update(
+        {
+            "assessed": assessed_count,
+            "admitted": admitted_count,
+            "context_selected": selected_count,
+            "cited": len(cited_unit_ids),
+            "supported_claims": supported_claims,
+            "rerank_status": str(rerank_status or funnel.get("rerank_status") or "unknown"),
+            "grounding_path": evidence.grounding_path,
+            "loss_reasons": losses,
+            "would_have_blocked": bool(observe and not evidence.sufficient),
+            "observe_context": evidence.observe_context,
+            "outcome": (
+                "non_knowledge"
+                if non_knowledge_turn
+                else "refused"
+                if blocked
+                else "answered"
+                if generation_ran
+                else "not_generated"
+            ),
+        }
+    )
+    return funnel
+
+
 def _source_provenance(chunks: list[ContextChunk]) -> SourceProvenance:
     has_web = any(
         chunk.metadata.get("source_kind") == CitationSourceKind.WEB.value for chunk in chunks
@@ -1436,45 +1529,60 @@ def _non_knowledge_response(content: str) -> str | None:
     return english.get(normalized) or bangla.get(normalized)
 
 
-def _scope_current_authority_status(
-    request: MessageSendRequest,
-    diagnostics: dict[str, Any],
-) -> dict[str, Any] | None:
-    """Refuse a current-rule answer when hard scope excludes its effective modifier."""
-    if request.document_id is None or "current" not in set(tokenize(request.content)):
-        return None
-    if diagnostics.get("modifies_expansion_status") != "suppressed_document_scope":
-        return None
-    records = diagnostics.get("modifies_expansion_records") or []
-    effective_modifiers = [
+_EFFECTIVE_MODIFIER_OUTCOMES = frozenset(
+    {
+        "expanded",
+        "already_in_recall",
+        "candidate_cap_exceeded",
+        "source_cap_exceeded",
+    }
+)
+
+
+def _effective_scope_modifier_records(records: object) -> list[dict[str, Any]]:
+    """Keep only MODIFIES records that were eligible for this as-of window."""
+    if not isinstance(records, list):
+        return []
+    return [
         record
         for record in records
         if isinstance(record, dict)
         and record.get("relationship_type") == "modifies"
         and record.get("modifier_effective_from")
+        and record.get("outcome") in _EFFECTIVE_MODIFIER_OUTCOMES
     ]
+
+
+def _scope_current_authority_status(
+    request: MessageSendRequest,
+    diagnostics: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Detect when a hard-scope request excludes its effective modifier.
+
+    This is now language-neutral: the English 'current' token guard has been
+    removed.  Any document-scoped request where MODIFIES expansion was suppressed
+    and at least one effective modifier record exists triggers a structured notice
+    (not a refusal); generation proceeds from admitted scoped evidence.
+    """
+    if request.document_id is None:
+        return None
+    if diagnostics.get("modifies_expansion_status") != "suppressed_document_scope":
+        return None
+    records = diagnostics.get("modifies_expansion_records") or []
+    effective_modifiers = _effective_scope_modifier_records(records)
     if not effective_modifiers:
         return None
     return {
-        "status": "unavailable_within_hard_scope",
+        "status": "effective_modifier_excluded_by_scope",
         "reason": "effective_modifier_excluded_by_document_scope",
         "scoped_evidence_available": True,
         "excluded_effective_modifier_count": len(effective_modifiers),
     }
 
 
-def _scope_limited_current_authority_content(question: str) -> str:
-    if detect_language(question).primary_language == "bn":
-        return (
-            "অনুরোধ করা document scope-এর মধ্যে বর্তমান কর্তৃত্বপূর্ণ মান নির্ধারণের জন্য "
-            "যথেষ্ট indexed evidence নেই; scoped document-এর পুরোনো মানকে বর্তমান নিয়ম "
-            "হিসেবে উপস্থাপন করা যাবে না।"
-        )
-    return (
-        "There is not enough indexed evidence within the requested document scope to "
-        "establish the current authoritative value; a value in the scoped document must "
-        "not be presented as the current rule."
-    )
+# _scope_limited_current_authority_content removed in Phase 3.
+# Hard-scope + effective-modifier excluded now answers from admitted scoped
+# evidence with a structured notice rather than refusing generation.
 
 
 def _optional_uuid(value: object) -> uuid.UUID | None:

@@ -23,8 +23,8 @@ from app.modules.retrieval.services.index_lifecycle_service import IndexLifecycl
 from app.modules.retrieval.services.indexing_service import IndexingService
 from app.modules.retrieval.services.search_service import SearchService
 from app.platform.config.project_ai import (
-    ConfigRevisionRecord,
     apply_effective_ai_config,
+    config_revision_record,
     resolve_project_ai_config,
 )
 from app.platform.jobs.configuration import (
@@ -67,15 +67,7 @@ async def get_indexing_service(
     revision = await ProjectAIConfigRepository(session, project_id).get_active()
     resolution = resolve_project_ai_config(
         settings,
-        ConfigRevisionRecord(
-            id=revision.id,
-            revision_number=revision.revision_number,
-            configuration_hash=revision.configuration_hash,
-            configuration=dict(revision.configuration),
-            schema_version=revision.schema_version,
-        )
-        if revision is not None
-        else None,
+            config_revision_record(revision),
     )
     project = await session.get(Project, project_id)
     pointer = await session.get(ProjectIndexPointer, project_id)
@@ -103,15 +95,7 @@ async def get_search_service(
     revision = await ProjectAIConfigRepository(session, project_id).get_active()
     resolution = resolve_project_ai_config(
         settings,
-        ConfigRevisionRecord(
-            id=revision.id,
-            revision_number=revision.revision_number,
-            configuration_hash=revision.configuration_hash,
-            configuration=dict(revision.configuration),
-            schema_version=revision.schema_version,
-        )
-        if revision is not None
-        else None,
+            config_revision_record(revision),
     )
     effective = apply_effective_ai_config(settings, resolution)
     reranker = create_reranker_provider(effective)
@@ -148,15 +132,7 @@ async def get_index_lifecycle_service(
     revision = await ProjectAIConfigRepository(session, project_id).get_active()
     resolution = resolve_project_ai_config(
         settings,
-        ConfigRevisionRecord(
-            id=revision.id,
-            revision_number=revision.revision_number,
-            configuration_hash=revision.configuration_hash,
-            configuration=dict(revision.configuration),
-            schema_version=revision.schema_version,
-        )
-        if revision is not None
-        else None,
+            config_revision_record(revision),
     )
     project = await session.get(Project, project_id)
     pointer = await session.get(ProjectIndexPointer, project_id)

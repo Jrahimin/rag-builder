@@ -24,7 +24,6 @@ from app.core.capability_profiles import (
 )
 from app.core.config import (
     EmbeddingBackend,
-    EvidenceScoreMode,
     RerankerBackend,
     RerankMode,
     Settings,
@@ -34,7 +33,7 @@ from app.core.generation_models import GENERATION_MODEL_REGISTRY
 from app.core.runtime_validation import ProductionConfigurationError
 from app.platform.domain.language_detection import LANGUAGE_METADATA_SCHEMA_VERSION
 
-PROFILE_REGISTRY_VERSION = "2026-09-02"
+PROFILE_REGISTRY_VERSION = "2026-09-03"
 
 
 class CertificationStatus(StrEnum):
@@ -61,7 +60,6 @@ class RAGExecutionProfile:
     hnsw_ef_search: int
     rerank_mode: RerankMode
     rerank_candidate_window: int
-    rerank_return_count: int
     retrieval_top_k: int
     max_context_chunks: int
     context_char_budget: int
@@ -91,13 +89,13 @@ class EvidenceCalibrationProfile:
     embedding_dimensions: int
     reranker_provider: RerankerBackend
     reranker_model: str
-    score_method: EvidenceScoreMode
     semantic_threshold: float
     lexical_floor: float
     lexical_coverage: float
     cross_language_semantic_threshold: float
     minimum_reranker_score: float
     high_confidence_reranker_score: float
+    high_confidence_band_enabled: bool
     minimum_claim_token_coverage: float
     minimum_claim_semantic_score: float
 
@@ -138,7 +136,7 @@ _COMMON_OCR = _frozen_mapping(
         "lang": "en",
         "use_gpu": False,
         "bangla_min_ratio": 0.10,
-        "max_ocr_pages_per_document": 100,
+        "max_ocr_pages_per_document": 300,
         "min_text_chars": 20,
         "min_image_area_ratio": 0.08,
         "dpi": 200,
@@ -180,7 +178,6 @@ RAG_EXECUTION_PROFILES: Mapping[str, RAGExecutionProfile] = MappingProxyType(
                 hnsw_ef_search=60,
                 rerank_mode=RerankMode.ALWAYS,
                 rerank_candidate_window=15,
-                rerank_return_count=6,
                 retrieval_top_k=8,
                 max_context_chunks=6,
                 context_char_budget=9_000,
@@ -200,7 +197,6 @@ RAG_EXECUTION_PROFILES: Mapping[str, RAGExecutionProfile] = MappingProxyType(
                 hnsw_ef_search=100,
                 rerank_mode=RerankMode.ALWAYS,
                 rerank_candidate_window=25,
-                rerank_return_count=8,
                 retrieval_top_k=10,
                 max_context_chunks=8,
                 context_char_budget=12_000,
@@ -213,7 +209,6 @@ RAG_EXECUTION_PROFILES: Mapping[str, RAGExecutionProfile] = MappingProxyType(
                 hnsw_ef_search=160,
                 rerank_mode=RerankMode.ALWAYS,
                 rerank_candidate_window=40,
-                rerank_return_count=12,
                 retrieval_top_k=12,
                 max_context_chunks=10,
                 context_char_budget=16_000,
@@ -253,13 +248,13 @@ EVIDENCE_CALIBRATION_PROFILES: Mapping[str, EvidenceCalibrationProfile] = Mappin
                 embedding_dimensions=1024,
                 reranker_provider=RerankerBackend.NOOP,
                 reranker_model="noop",
-                score_method=EvidenceScoreMode.WHOLE_CHUNK,
                 semantic_threshold=0.35,
                 lexical_floor=0.30,
                 lexical_coverage=0.50,
                 cross_language_semantic_threshold=0.30,
                 minimum_reranker_score=0.40,
                 high_confidence_reranker_score=0.70,
+                high_confidence_band_enabled=False,
                 minimum_claim_token_coverage=0.35,
                 minimum_claim_semantic_score=0.25,
             ),
@@ -270,13 +265,13 @@ EVIDENCE_CALIBRATION_PROFILES: Mapping[str, EvidenceCalibrationProfile] = Mappin
                 embedding_dimensions=1024,
                 reranker_provider=RerankerBackend.COHERE,
                 reranker_model="rerank-v4.0-pro",
-                score_method=EvidenceScoreMode.WHOLE_CHUNK,
                 semantic_threshold=0.35,
                 lexical_floor=0.30,
                 lexical_coverage=0.50,
                 cross_language_semantic_threshold=0.30,
                 minimum_reranker_score=0.40,
                 high_confidence_reranker_score=0.70,
+                high_confidence_band_enabled=False,
                 minimum_claim_token_coverage=0.35,
                 minimum_claim_semantic_score=0.25,
             ),
@@ -287,13 +282,13 @@ EVIDENCE_CALIBRATION_PROFILES: Mapping[str, EvidenceCalibrationProfile] = Mappin
                 embedding_dimensions=1024,
                 reranker_provider=RerankerBackend.COHERE,
                 reranker_model="rerank-v4.0-pro",
-                score_method=EvidenceScoreMode.WHOLE_CHUNK,
                 semantic_threshold=0.35,
                 lexical_floor=0.30,
                 lexical_coverage=0.50,
                 cross_language_semantic_threshold=0.30,
                 minimum_reranker_score=0.40,
                 high_confidence_reranker_score=0.70,
+                high_confidence_band_enabled=False,
                 minimum_claim_token_coverage=0.35,
                 minimum_claim_semantic_score=0.25,
             ),
@@ -304,13 +299,13 @@ EVIDENCE_CALIBRATION_PROFILES: Mapping[str, EvidenceCalibrationProfile] = Mappin
                 embedding_dimensions=1024,
                 reranker_provider=RerankerBackend.LEXICAL,
                 reranker_model="unicode-lexical-v1",
-                score_method=EvidenceScoreMode.WHOLE_CHUNK,
                 semantic_threshold=0.35,
                 lexical_floor=0.30,
                 lexical_coverage=0.50,
                 cross_language_semantic_threshold=0.30,
                 minimum_reranker_score=0.40,
                 high_confidence_reranker_score=0.70,
+                high_confidence_band_enabled=False,
                 minimum_claim_token_coverage=0.35,
                 minimum_claim_semantic_score=0.25,
             ),
@@ -449,7 +444,6 @@ def execution_values(profile: RAGExecutionProfile) -> dict[str, Any]:
         "score_threshold": profile.score_threshold,
         "rerank_mode": profile.rerank_mode.value,
         "rerank_candidate_window": profile.rerank_candidate_window,
-        "rerank_return_count": profile.rerank_return_count,
         "rerank_score_threshold": profile.rerank_score_threshold,
         "min_ocr_confidence": profile.min_ocr_confidence,
         "max_chunks_per_document": profile.max_chunks_per_document,

@@ -16,12 +16,11 @@ from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.core.config import ResponseMode, Settings, StorageBackend
+from app.core.config import ModifiesExpansionMode, ResponseMode, Settings, StorageBackend
 from app.modules.evaluation.metrics import rank_metrics
 from app.modules.evaluation.schemas.evaluation import EvaluationCase, EvaluationCaseKind
 from app.platform.config.profiles import execution_profile, execution_values
 from app.platform.config.project_ai import ProjectAIConfig
-from app.platform.domain.text_tokenization import tokenize
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_FIXTURE = _REPO_ROOT / "tests" / "fixtures" / "journeys" / "tax_v1" / "journey.json"
@@ -49,7 +48,6 @@ RUNTIME_COMPARISON_CONFIG_KEYS = frozenset(
         "execution.keyword_weight",
         "execution.rerank_mode",
         "execution.rerank_candidate_window",
-        "execution.rerank_return_count",
         "execution.max_chunks_per_document",
         "execution.max_chunks_per_section",
         "execution.passage_scoring_enabled",
@@ -225,13 +223,16 @@ def normalize_text(value: str) -> str:
     return " ".join(re.sub(r"[^\w%]+", " ", normalized, flags=re.UNICODE).split())
 
 
-def _scope_current_authority_response_is_safe(normalized_answer: str) -> bool:
-    """Accept a scope-qualified refusal, not a scoped value labelled current."""
-    tokens = set(normalized_answer.split())
-    has_scope = bool(tokens & {"scope", "scoped", "document"})
-    has_current = "current" in tokens
-    has_unavailability = bool(tokens & {"cannot", "unavailable", "insufficient", "enough"})
-    return has_scope and has_current and has_unavailability
+def _has_scope_excludes_notice(message: object, metadata: dict[str, Any]) -> bool:
+    """True when the turn carries the structured hard-scope modifier notice."""
+    raw = metadata.get("notices") or getattr(message, "notices", None) or []
+    kinds: list[str] = []
+    for item in raw:
+        if isinstance(item, dict):
+            kinds.append(str(item.get("kind") or ""))
+        else:
+            kinds.append(str(getattr(item, "kind", "") or ""))
+    return "scope_excludes_effective_modifier" in kinds
 
 
 def _contains_semantic_marker(normalized_answer: str, marker: str) -> bool:
@@ -516,7 +517,7 @@ def _grounding_failure_stage(gate: Mapping[str, Any], reason: object) -> str:
     if stage == "retrieval" or reason_value == "no_retrieval_results":
         return "retrieval"
     if gate.get("generation_ran") and reason_value is None:
-        return "generation_refusal"
+        return "claim_grounding"
     return "admission_grounding"
 
 
@@ -585,7 +586,7 @@ def evaluate_case_result(
     anchor_mapping: Mapping[str, list[uuid.UUID]],
     document_ids: Mapping[str, uuid.UUID],
     response_mode: ResponseMode,
-    modifies_expansion_enabled: bool,
+    modifies_expansion_active: bool,
     chunks: Sequence[RuntimeChunk] = (),
     anchors: Sequence[EvidenceAnchor] = (),
 ) -> dict[str, Any]:
@@ -823,7 +824,7 @@ def evaluate_case_result(
             failures.append(
                 _failure("retrieval", "No expected scoped evidence anchor was retrieved.")
             )
-        if modifies_expansion_enabled and authority.get("status") != "suppressed_document_scope":
+        if modifies_expansion_active and authority.get("status") != "suppressed_document_scope":
             failures.append(
                 _failure(
                     "authority",
@@ -842,21 +843,31 @@ def evaluate_case_result(
             failures.append(
                 _failure("fallback", "Eligible web fallback was not suppressed by hard scope.")
             )
-        if "current" in set(tokenize(case.query)):
-            if scope_current_authority.get("status") != "unavailable_within_hard_scope":
+        if modifies_expansion_active:
+            status = scope_current_authority.get("status")
+            if status not in {
+                "effective_modifier_excluded_by_scope",
+                "not_applicable",
+            }:
                 failures.append(
                     _failure(
                         "authority",
-                        "Current hard-scope request was not marked unavailable within scope.",
+                        "Hard-scope request did not report a structured scope-authority status.",
                     )
                 )
-            if not _scope_current_authority_response_is_safe(normalized_answer):
+            if status == "effective_modifier_excluded_by_scope" and not _has_scope_excludes_notice(
+                message, metadata
+            ):
                 failures.append(
                     _failure(
-                        "generation_refusal",
-                        "Hard-scoped current response did not distinguish scoped evidence "
-                        "from current authority.",
+                        "authority",
+                        "Excluded effective modifier was not reported as a structured notice.",
                     )
+                )
+        for token in case.expected_tokens:
+            if normalize_text(token) not in normalized_answer:
+                failures.append(
+                    _failure("generation_refusal", f"Answer is missing expected fact {token!r}.")
                 )
 
     if case.mode == "no_answer":
@@ -992,6 +1003,7 @@ def aggregate_results(cases: list[dict[str, Any]]) -> dict[str, Any]:
             "authority",
             "admission_grounding",
             "context_selection",
+            "claim_grounding",
             "generation_refusal",
             "citation",
             "fallback",
@@ -1063,17 +1075,9 @@ async def _file_stream(path: Path, *, chunk_size: int = 64 * 1024) -> AsyncItera
 
 
 def _active_record(revision: Any) -> Any:
-    from app.platform.config.project_ai import ConfigRevisionRecord
+    from app.platform.config.project_ai import config_revision_record
 
-    if revision is None:
-        return None
-    return ConfigRevisionRecord(
-        id=revision.id,
-        revision_number=revision.revision_number,
-        configuration_hash=revision.configuration_hash,
-        configuration=dict(revision.configuration),
-        schema_version=revision.schema_version,
-    )
+    return config_revision_record(revision)
 
 
 async def _activate_configuration(
@@ -1259,6 +1263,76 @@ async def _ingest_sources(
     return revision_ids
 
 
+async def _latest_document_job_id(
+    session: Any,
+    *,
+    project_id: uuid.UUID,
+    document_id: uuid.UUID,
+    job_type: Any,
+) -> uuid.UUID | None:
+    from app.modules.jobs.repositories.job_run_repository import JobRunRepository
+
+    runs = await JobRunRepository(session, project_id).list_filtered(
+        limit=1,
+        offset=0,
+        job_type=job_type,
+        document_id=document_id,
+    )
+    if not runs:
+        return None
+    return runs[0].id
+
+
+async def _await_durable_job(
+    session_factory: Any,
+    *,
+    project_id: uuid.UUID,
+    job_id: uuid.UUID,
+    settings: Settings,
+    timeout_seconds: float = 900.0,
+    failure_prefix: str = "Durable job",
+) -> None:
+    """Drain one inline durable job through retry and terminal states."""
+    import asyncio
+    from datetime import UTC, datetime
+
+    from app.composition.jobs import build_job_service
+    from app.models.job_run import JobState
+    from app.platform.jobs.implementations.inline_queue import InlineJobQueue
+
+    started = datetime.now(UTC)
+    while True:
+        async with session_factory() as session:
+            service = build_job_service(
+                session=session,
+                project_id=project_id,
+                settings=settings,
+                queue=InlineJobQueue(),
+            )
+            run = (await service.get_detail(job_id)).run
+            if run.state is JobState.SUCCEEDED:
+                return
+            if run.state is JobState.FAILED:
+                raise JourneyError(
+                    f"{failure_prefix} failed "
+                    f"({run.failure_code or 'unknown'}: {run.failure_message or 'no message'})."
+                )
+            if run.state in {
+                JobState.RETRY_SCHEDULED,
+                JobState.QUEUED,
+                JobState.RUNNING,
+            }:
+                await service.dispatch(job_id)
+            else:
+                await service.dispatch_next()
+        elapsed = (datetime.now(UTC) - started).total_seconds()
+        if elapsed >= timeout_seconds:
+            raise JourneyError(
+                f"{failure_prefix} {job_id} did not finish within {timeout_seconds:.0f}s."
+            )
+        await asyncio.sleep(0.1)
+
+
 async def _ensure_indexed(
     session_factory: Any,
     *,
@@ -1268,6 +1342,7 @@ async def _ensure_indexed(
 ) -> dict[str, Any]:
     from app.composition.retrieval import build_indexing_service
     from app.models.document import DocumentStatus
+    from app.models.job_run import JobType
     from app.modules.knowledge.repositories.document_repository import DocumentRepository
     from app.modules.retrieval.repositories.index_build_repository import IndexBuildRepository
     from app.platform.jobs.implementations.inline_queue import InlineJobQueue
@@ -1276,52 +1351,108 @@ async def _ensure_indexed(
         DocumentStatus.CHUNKED,
         DocumentStatus.EMBEDDED,
         DocumentStatus.READY,
+        DocumentStatus.EMBEDDING,
+        DocumentStatus.INDEXING,
     }
 
     async def active_build() -> Any:
         async with session_factory() as session:
             return await IndexBuildRepository(session, project_id).get_active()
 
+    async def current_document(source_key: str, document_id: uuid.UUID) -> Any:
+        async with session_factory() as session:
+            document = await DocumentRepository(session, project_id).get_by_id(
+                document_id, include_deleted=True
+            )
+            if document is None:
+                raise JourneyError(f"Indexing target {source_key!r} disappeared during setup.")
+            return document
+
     async def index_document(source_key: str, document_id: uuid.UUID) -> None:
-        async with session_factory() as session:
-            document = await DocumentRepository(session, project_id).get_by_id(
-                document_id, include_deleted=True
+        document = await current_document(source_key, document_id)
+        if document.status is DocumentStatus.READY:
+            return
+        if document.status not in indexable:
+            raise JourneyError(
+                f"Document {source_key!r} has status {document.status.value}; expected "
+                "chunked, embedding, embedded, indexing, or ready. The required production "
+                "embed/index path cannot run for this indexing mode."
             )
-            if document is None:
-                raise JourneyError(f"Indexing target {source_key!r} disappeared during setup.")
-            if document.status not in indexable:
-                raise JourneyError(
-                    f"Document {source_key!r} has status {document.status.value}; expected "
-                    "chunked, embedded, or ready. The required production embed/index path "
-                    "cannot run for this indexing mode."
+
+        embed_job_id: uuid.UUID | None = None
+        if document.status in {DocumentStatus.CHUNKED, DocumentStatus.EMBEDDING}:
+            async with session_factory() as session:
+                document = await DocumentRepository(session, project_id).get_by_id(
+                    document_id, include_deleted=True
                 )
-            if document.status in {DocumentStatus.CHUNKED, DocumentStatus.READY}:
-                indexing = build_indexing_service(
-                    session=session,
+                if document.status is DocumentStatus.CHUNKED:
+                    indexing = build_indexing_service(
+                        session=session,
+                        project_id=project_id,
+                        settings=settings,
+                        job_queue=InlineJobQueue(),
+                    )
+                    updated = await indexing.enqueue_embed(document.id)
+                    embed_job_id = updated.__dict__.get("job_id")
+                elif document.status is DocumentStatus.EMBEDDING:
+                    embed_job_id = await _latest_document_job_id(
+                        session,
+                        project_id=project_id,
+                        document_id=document_id,
+                        job_type=JobType.DOCUMENT_EMBED,
+                    )
+            if embed_job_id is not None:
+                await _await_durable_job(
+                    session_factory,
                     project_id=project_id,
+                    job_id=embed_job_id,
                     settings=settings,
-                    job_queue=InlineJobQueue(),
+                    failure_prefix=f"Document {source_key!r} embed job",
                 )
-                await indexing.enqueue_embed(document.id)
-        async with session_factory() as session:
-            document = await DocumentRepository(session, project_id).get_by_id(
-                document_id, include_deleted=True
-            )
-            if document is None:
-                raise JourneyError(f"Indexing target {source_key!r} disappeared during setup.")
-            if document.status is DocumentStatus.EMBEDDED:
-                indexing = build_indexing_service(
-                    session=session,
+
+        document = await current_document(source_key, document_id)
+        if document.status is DocumentStatus.READY:
+            return
+
+        index_job_id: uuid.UUID | None = None
+        if document.status in {DocumentStatus.EMBEDDED, DocumentStatus.INDEXING}:
+            async with session_factory() as session:
+                document = await DocumentRepository(session, project_id).get_by_id(
+                    document_id, include_deleted=True
+                )
+                if document.status is DocumentStatus.EMBEDDED:
+                    indexing = build_indexing_service(
+                        session=session,
+                        project_id=project_id,
+                        settings=settings,
+                        job_queue=InlineJobQueue(),
+                    )
+                    updated = await indexing.enqueue_index(document.id)
+                    index_job_id = updated.__dict__.get("job_id")
+                elif document.status is DocumentStatus.INDEXING:
+                    index_job_id = await _latest_document_job_id(
+                        session,
+                        project_id=project_id,
+                        document_id=document_id,
+                        job_type=JobType.DOCUMENT_INDEX,
+                    )
+            if index_job_id is not None:
+                await _await_durable_job(
+                    session_factory,
                     project_id=project_id,
+                    job_id=index_job_id,
                     settings=settings,
-                    job_queue=InlineJobQueue(),
+                    failure_prefix=f"Document {source_key!r} index job",
                 )
-                await indexing.enqueue_index(document.id)
-            elif document.status is not DocumentStatus.READY:
-                raise JourneyError(
-                    f"Document {source_key!r} remained {document.status.value} after the "
-                    "production embed/index path."
-                )
+
+        document = await current_document(source_key, document_id)
+        if document.status is DocumentStatus.READY:
+            return
+        detail = document.error_message or "no document error recorded"
+        raise JourneyError(
+            f"Document {source_key!r} remained {document.status.value} after the "
+            f"production embed/index path ({detail})."
+        )
 
     build = await active_build()
     if build is None or build.document_count != len(document_ids):
@@ -1427,6 +1558,12 @@ def _evaluation_case(
     )
 
 
+def _enable_journey_candidate_traces(chat: Any) -> Any:
+    """Keep production chat compact; journey scoring needs retrieval identities."""
+    chat._store_candidate_trace = True
+    return chat
+
+
 async def _run_variant(
     session_factory: Any,
     *,
@@ -1483,13 +1620,15 @@ async def _run_variant(
                 audit=DatabaseAuditRecorder(session, project_id),
             )
             conversation = await service.create(ConversationCreate(title=f"{name}: {case.key}"))
-            chat = await get_chat_service(
-                session,
-                project_id,
-                conversations,
-                messages,
-                conversation.id,
-                embedder,
+            chat = _enable_journey_candidate_traces(
+                await get_chat_service(
+                    session,
+                    project_id,
+                    conversations,
+                    messages,
+                    conversation.id,
+                    embedder,
+                )
             )
             turn = await chat.send_message(
                 conversation.id,
@@ -1505,8 +1644,8 @@ async def _run_variant(
                 anchor_mapping=anchor_mapping,
                 document_ids=document_ids,
                 response_mode=effective.chat.response_mode,
-                modifies_expansion_enabled=(
-                    effective.retrieval.modifies_expansion_enabled
+                modifies_expansion_active=(
+                    effective.retrieval.modifies_expansion_mode is ModifiesExpansionMode.EXPAND
                     or effective.retrieval.modifies_expansion_mode.value == "expand"
                 ),
                 chunks=chunks,
@@ -1609,44 +1748,14 @@ async def _await_document_purge(
     timeout_seconds: float = 900.0,
 ) -> None:
     """Drain inline durable purge jobs through retry and terminal states."""
-    import asyncio
-    from datetime import UTC, datetime
-
-    from app.composition.jobs import build_job_service
-    from app.models.job_run import JobState
-    from app.platform.jobs.implementations.inline_queue import InlineJobQueue
-
-    started = datetime.now(UTC)
-    while True:
-        async with session_factory() as session:
-            service = build_job_service(
-                session=session,
-                project_id=project_id,
-                settings=settings,
-                queue=InlineJobQueue(),
-            )
-            run = (await service.get_detail(job_id)).run
-            if run.state is JobState.SUCCEEDED:
-                return
-            if run.state is JobState.FAILED:
-                raise JourneyError(
-                    "Document purge job failed "
-                    f"({run.failure_code or 'unknown'}: {run.failure_message or 'no message'})."
-                )
-            if run.state in {
-                JobState.RETRY_SCHEDULED,
-                JobState.QUEUED,
-                JobState.RUNNING,
-            }:
-                await service.dispatch(job_id)
-            else:
-                await service.dispatch_next()
-        elapsed = (datetime.now(UTC) - started).total_seconds()
-        if elapsed >= timeout_seconds:
-            raise JourneyError(
-                f"Document purge job {job_id} did not finish within {timeout_seconds:.0f}s."
-            )
-        await asyncio.sleep(0.1)
+    await _await_durable_job(
+        session_factory,
+        project_id=project_id,
+        job_id=job_id,
+        settings=settings,
+        timeout_seconds=timeout_seconds,
+        failure_prefix="Document purge job",
+    )
 
 
 async def _cleanup_project(

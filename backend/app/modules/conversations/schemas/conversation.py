@@ -18,7 +18,8 @@ class ConversationCreate(BaseModel):
     provider: str | None = Field(default=None, max_length=64, deprecated=True)
     model: str | None = Field(default=None, max_length=128, deprecated=True)
     temperature: float | None = Field(default=None, ge=0.0, le=2.0, deprecated=True)
-    system_prompt_version: str | None = Field(default=None, max_length=32, deprecated=True)
+    # system_prompt_version removed from request in Phase 3: there is one canonical
+    # prompt; the field is provenance-only on existing conversation rows.
 
     @field_validator("title")
     @classmethod
@@ -38,7 +39,7 @@ class ConversationUpdate(BaseModel):
     provider: str | None = Field(default=None, max_length=64, deprecated=True)
     model: str | None = Field(default=None, max_length=128, deprecated=True)
     temperature: float | None = Field(default=None, ge=0.0, le=2.0, deprecated=True)
-    system_prompt_version: str | None = Field(default=None, max_length=32, deprecated=True)
+    # system_prompt_version removed from request in Phase 3.
 
     @model_validator(mode="before")
     @classmethod

@@ -54,8 +54,17 @@ class SemanticRetriever(BaseRetriever):
         query: str | None = None,
         language_scope: object | None = None,
         record_semantic_score: bool = True,
+        query_vector: list[float] | None = None,
+        provider: str | None = None,
+        model: str | None = None,
     ) -> SemanticRetrievalBatch:
-        """Retrieve candidates and retain the query vector for hybrid score backfill."""
+        """Retrieve candidates and retain the query vector for hybrid score backfill.
+
+        When ``query_vector`` (and its provider/model identity) is already known
+        for the same query text, the embedder call is skipped.  Used by
+        HybridRetriever to reuse the original-query embedding for modifier
+        dense branches.
+        """
         started = time.perf_counter()
         effective_top_k = (
             context.semantic_candidate_top_k
@@ -66,11 +75,14 @@ class SemanticRetriever(BaseRetriever):
         scope = language_scope if language_scope is not None else context.language_scope
 
         try:
-            embedded = await self._embedder.embed_texts(
-                [query_text],
-                purpose=EmbeddingPurpose.QUERY,
-            )
-            query_vector = embedded.vectors[0]
+            if query_vector is None or provider is None or model is None:
+                embedded = await self._embedder.embed_texts(
+                    [query_text],
+                    purpose=EmbeddingPurpose.QUERY,
+                )
+                query_vector = embedded.vectors[0]
+                provider = embedded.provider
+                model = embedded.model
             candidates = await self._repository.search_cosine(
                 query_vector=query_vector,
                 top_k=effective_top_k,
@@ -78,8 +90,8 @@ class SemanticRetriever(BaseRetriever):
                 document_id=context.filters.document_id,
                 document_ids=context.filters.document_ids,
                 embedding_set_version=context.embedding_set_version,
-                provider=embedded.provider,
-                model=embedded.model,
+                provider=provider,
+                model=model,
                 metadata_filter=context.sanitized_metadata_filter(),
                 score_threshold=context.score_threshold,
                 hnsw_ef_search=context.hnsw_ef_search,
@@ -113,8 +125,8 @@ class SemanticRetriever(BaseRetriever):
         return SemanticRetrievalBatch(
             hits=candidates,
             query_vector=query_vector,
-            provider=embedded.provider,
-            model=embedded.model,
+            provider=provider,
+            model=model,
         )
 
     async def score_chunk_ids(

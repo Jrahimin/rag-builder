@@ -128,6 +128,7 @@ class SearchDiagnostics(BaseModel):
     post_rerank_removed_count: int = 0
     post_rerank_removal_reasons: dict[str, int] = Field(default_factory=dict)
     post_rerank_unfilled_slots: int = 0
+    evidence_funnel: dict[str, Any] = Field(default_factory=dict)
 
 
 class SearchResponse(BaseModel):

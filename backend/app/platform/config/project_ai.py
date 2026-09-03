@@ -7,19 +7,16 @@ import json
 import uuid
 from datetime import datetime
 from enum import StrEnum
-from typing import Any, Literal
+from typing import Any, Literal, Protocol
 
-import structlog
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.core.config import (
     ChatConfig,
     EvidenceGateMode,
-    EvidenceScoreMode,
     GroundingMode,
     LLMBackend,
     ModifiesExpansionMode,
-    RequestOverrideMode,
     RerankerBackend,
     RerankMode,
     ResponseMode,
@@ -32,8 +29,6 @@ from app.core.config import (
 from app.core.exceptions import BadRequestError
 from app.core.generation_models import (
     GENERATION_MODEL_REGISTRY_VERSION,
-    generation_model_id_for_legacy_pair,
-    generation_model_policy,
     resolve_generation_model,
 )
 from app.platform.config.catalog import catalog_entry
@@ -53,8 +48,6 @@ from app.platform.providers.capabilities import (
     validate_generation_parameters,
 )
 
-logger = structlog.get_logger(__name__)
-
 
 class ProjectLLMPolicy(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -66,11 +59,7 @@ class ProjectLLMPolicy(BaseModel):
 
 
 class ProjectRetrievalPolicy(BaseModel):
-    """Sparse retrieval overrides. ``None`` inherits the deployment default.
-
-    ``rerank_mode`` is the operator-facing control (Always / Cross-language / Off).
-    Legacy ``rerank_enabled`` still maps true→always and false→off when mode is omitted.
-    """
+    """Internal sparse policy used by the V2-to-effective resolver adapter."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -83,9 +72,7 @@ class ProjectRetrievalPolicy(BaseModel):
     semantic_weight: float | None = Field(default=None, ge=0.0, le=10.0)
     keyword_weight: float | None = Field(default=None, ge=0.0, le=10.0)
     score_threshold: float | None = Field(default=None, ge=0.0, le=1.0)
-    rerank_enabled: bool | None = None
     rerank_mode: RerankMode | None = None
-    rerank_top_n: int | None = Field(default=None, ge=1, le=100)
     rerank_score_threshold: float | None = Field(default=None, ge=0.0, le=1.0)
     min_ocr_confidence: float | None = Field(default=None, ge=0.0, le=1.0)
     evidence_score_threshold: float | None = Field(default=None, ge=0.0, le=1.0)
@@ -94,9 +81,7 @@ class ProjectRetrievalPolicy(BaseModel):
     passage_overlap_tokens: int | None = Field(default=None, ge=0, le=256)
     passage_min_tokens: int | None = Field(default=None, ge=8, le=256)
     rerank_candidate_window: int | None = Field(default=None, ge=1, le=100)
-    rerank_return_n: int | None = Field(default=None, ge=1, le=100)
     query_translation_enabled: bool | None = None
-    modifies_expansion_enabled: bool | None = None
     modifies_expansion_mode: ModifiesExpansionMode | None = None
     max_related_sources: int | None = Field(default=None, ge=1, le=8)
     max_relationship_candidates: int | None = Field(default=None, ge=1, le=20)
@@ -114,7 +99,6 @@ class ProjectChatPolicy(BaseModel):
     max_history_messages: int | None = Field(default=None, ge=0, le=200)
     include_citations: bool | None = None
     citation_excerpt_max_chars: int | None = Field(default=None, ge=0, le=2000)
-    evidence_score_mode: EvidenceScoreMode | None = None
     evidence_gate_mode: EvidenceGateMode | None = None
     lexical_corroboration_floor_score: float | None = Field(default=None, ge=0.0, le=1.0)
     cross_language_semantic_evidence_score_threshold: float | None = Field(
@@ -125,7 +109,6 @@ class ProjectChatPolicy(BaseModel):
     minimum_reranker_evidence_score: float | None = Field(default=None, ge=0.0, le=1.0)
     high_confidence_reranker_evidence_score: float | None = Field(default=None, ge=0.0, le=1.0)
     grounding_mode: GroundingMode | None = None
-    candidate_wise_grounding_enabled: bool | None = None
 
 
 class ProjectWebSearchPolicy(BaseModel):
@@ -141,8 +124,8 @@ class ProjectWebSearchPolicy(BaseModel):
     request_timeout_seconds: float | None = Field(default=None, ge=1.0, le=300.0)
 
 
-class ProjectAIConfigV1(BaseModel):
-    """Historical sparse payload retained byte-for-byte and readable indefinitely."""
+class _ResolvedProjectPolicy(BaseModel):
+    """Internal sparse shape consumed by the established effective resolver."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -195,7 +178,6 @@ class ProjectExecutionV2(BaseModel):
     score_threshold: float | None = Field(default=None, ge=0.0, le=1.0)
     rerank_mode: CanonicalRerankMode | None = None
     rerank_candidate_window: int | None = Field(default=None, ge=1, le=100)
-    rerank_return_count: int | None = Field(default=None, ge=1, le=100)
     rerank_score_threshold: float | None = Field(default=None, ge=0.0, le=1.0)
     min_ocr_confidence: float | None = Field(default=None, ge=0.0, le=1.0)
     max_chunks_per_document: int | None = Field(default=None, ge=1, le=100)
@@ -222,12 +204,6 @@ class ProjectExecutionV2(BaseModel):
 
     @model_validator(mode="after")
     def validate_execution_values(self) -> ProjectExecutionV2:
-        if (
-            self.rerank_candidate_window is not None
-            and self.rerank_return_count is not None
-            and self.rerank_return_count > self.rerank_candidate_window
-        ):
-            raise ValueError("rerank_return_count must not exceed rerank_candidate_window")
         if (
             self.passage_overlap_tokens is not None
             and self.passage_window_tokens is not None
@@ -263,9 +239,7 @@ class EffectiveRetrievalPolicy(BaseModel):
     rrf_k: int = 60
     semantic_weight: float = 1.0
     keyword_weight: float = 1.0
-    rerank_enabled: bool
     rerank_mode: RerankMode = RerankMode.ALWAYS
-    rerank_top_n: int
     score_threshold: float | None = None
     rerank_score_threshold: float | None
     min_ocr_confidence: float | None = None
@@ -275,15 +249,12 @@ class EffectiveRetrievalPolicy(BaseModel):
     passage_overlap_tokens: int = 24
     passage_min_tokens: int = 32
     rerank_candidate_window: int = 25
-    rerank_return_n: int = 8
-    rerank_return_count: int = 8
     reranker_backend: RerankerBackend | None = None
     reranker_model: str | None = None
     query_translation_enabled: bool = False
     query_translation_backend: str | None = None
     query_translation_model: str | None = None
     query_translation_prompt_version: str | None = None
-    modifies_expansion_enabled: bool = False
     modifies_expansion_mode: ModifiesExpansionMode = ModifiesExpansionMode.OFF
     max_related_sources: int = 8
     max_relationship_candidates: int = 20
@@ -299,7 +270,6 @@ class EffectiveChatPolicy(BaseModel):
     max_history_messages: int
     include_citations: bool
     citation_excerpt_max_chars: int
-    evidence_score_mode: EvidenceScoreMode = EvidenceScoreMode.WHOLE_CHUNK
     evidence_gate_mode: EvidenceGateMode = EvidenceGateMode.ENFORCE
     lexical_corroboration_floor_score: float
     lexical_corroboration_coverage: float
@@ -308,8 +278,8 @@ class EffectiveChatPolicy(BaseModel):
     minimum_claim_semantic_score: float = 0.25
     minimum_reranker_evidence_score: float = 0.40
     high_confidence_reranker_evidence_score: float = 0.70
+    high_confidence_band_enabled: bool = False
     grounding_mode: GroundingMode = GroundingMode.STRICT
-    candidate_wise_grounding_enabled: bool = False
 
 
 class EffectiveWebSearchPolicy(BaseModel):
@@ -341,7 +311,6 @@ class InvariantState(BaseModel):
     durable_citation_provenance: bool
     governed_source_policy: bool
     governed_modifies_expansion: bool
-    candidate_wise_grounding_invariant: bool = False
 
 
 class StructuredOrigin(BaseModel):
@@ -416,7 +385,37 @@ class ConfigRevisionRecord(BaseModel):
     revision_number: int
     configuration_hash: str
     configuration: dict[str, Any]
-    schema_version: int = Field(default=1, ge=1, le=2)
+    schema_version: int = Field(default=2, ge=2, le=2)
+
+
+class _PersistedRevision(Protocol):
+    id: uuid.UUID
+    revision_number: int
+    configuration_hash: str
+    configuration: dict[str, Any]
+    schema_version: int
+
+
+def config_revision_record(revision: _PersistedRevision | None) -> ConfigRevisionRecord | None:
+    """Adapt a persisted Project revision for runtime resolution.
+
+    Historical V1 rows remain in the table for restore conflict handling, but
+    they must not be constructed into the V2-only resolver record.
+    """
+    if revision is None:
+        return None
+    if int(revision.schema_version) != 2:
+        raise BadRequestError(
+            message="Legacy Project configuration must be reset before runtime resolution.",
+            code="legacy_project_config_requires_reset",
+        )
+    return ConfigRevisionRecord(
+        id=revision.id,
+        revision_number=int(revision.revision_number),
+        configuration_hash=str(revision.configuration_hash),
+        configuration=dict(revision.configuration),
+        schema_version=2,
+    )
 
 
 def _resolve_rerank_mode(
@@ -424,16 +423,11 @@ def _resolve_rerank_mode(
     settings: Settings,
     origins: dict[str, str],
 ) -> RerankMode:
-    """Project rerank_mode wins; legacy rerank_enabled maps true→always, false→off."""
+    """Resolve the canonical rerank mode."""
     if project.rerank_mode is not None:
         origins["retrieval.rerank_mode"] = "project"
         return project.rerank_mode
-    if project.rerank_enabled is not None:
-        origins["retrieval.rerank_mode"] = "project"
-        return RerankMode.ALWAYS if project.rerank_enabled else RerankMode.OFF
     origins["retrieval.rerank_mode"] = "global"
-    if not settings.retrieval.rerank_enabled:
-        return RerankMode.OFF
     return settings.retrieval.rerank_mode
 
 
@@ -442,18 +436,12 @@ def _resolve_modifies_expansion_mode(
     settings: Settings,
     origins: dict[str, str],
 ) -> ModifiesExpansionMode:
-    """Project mode wins; legacy enabled=true still means expand."""
+    """Resolve the canonical MODIFIES expansion mode."""
     if project.modifies_expansion_mode is not None:
         origins["retrieval.modifies_expansion_mode"] = "project"
         return project.modifies_expansion_mode
-    if project.modifies_expansion_enabled is True:
-        origins["retrieval.modifies_expansion_mode"] = "project"
-        return ModifiesExpansionMode.EXPAND
-    if project.modifies_expansion_enabled is False:
-        origins["retrieval.modifies_expansion_mode"] = "project"
-        return ModifiesExpansionMode.OFF
     origins["retrieval.modifies_expansion_mode"] = "global"
-    return settings.retrieval.resolved_modifies_expansion_mode()
+    return settings.retrieval.modifies_expansion_mode
 
 
 def _v2_as_legacy_policy(
@@ -461,7 +449,7 @@ def _v2_as_legacy_policy(
     project: ProjectAIConfig,
     *,
     allow_candidate_profiles: bool,
-) -> tuple[ProjectAIConfigV1, str | None, dict[str, Any]]:
+) -> tuple[_ResolvedProjectPolicy, str | None, dict[str, Any]]:
     """Adapt the bounded V2 surface into the established effective-resolution machinery."""
     behavior = project.behavior
     stored_execution = project.execution
@@ -506,7 +494,7 @@ def _v2_as_legacy_policy(
         TranslationPolicy.DISABLED: False,
     }[behavior.translation_policy]
     return (
-        ProjectAIConfigV1(
+        _ResolvedProjectPolicy(
             retrieval=ProjectRetrievalPolicy(
                 top_k=execution.retrieval_top_k,
                 semantic_candidate_top_k=execution.semantic_candidate_top_k,
@@ -519,9 +507,7 @@ def _v2_as_legacy_policy(
                 rerank_mode=(
                     RerankMode(execution.rerank_mode.value) if execution.rerank_mode else None
                 ),
-                rerank_top_n=execution.rerank_candidate_window,
                 rerank_candidate_window=execution.rerank_candidate_window,
-                rerank_return_n=execution.rerank_return_count,
                 rerank_score_threshold=execution.rerank_score_threshold,
                 min_ocr_confidence=execution.min_ocr_confidence,
                 max_related_sources=execution.max_related_sources,
@@ -558,31 +544,30 @@ def resolve_project_ai_config(
     validate_web_provider: bool = True,
     allow_candidate_profiles: bool = False,
 ) -> EffectiveConfigResolution:
-    """Apply global -> Project -> compatibility overrides -> safety/capability rules."""
-    schema_version = revision.schema_version if revision is not None else 2
-    canonical_v2 = schema_version == 2
+    """Apply global -> canonical V2 Project -> safety/capability rules."""
+    if revision is not None and revision.schema_version != 2:
+        raise BadRequestError(
+            message="Legacy Project configuration must be reset before runtime resolution.",
+            code="legacy_project_config_requires_reset",
+        )
     project_v2 = (
         ProjectAIConfig.model_validate(revision.configuration)
-        if revision is not None and canonical_v2
+        if revision is not None
         else ProjectAIConfig()
     )
     execution_profile_id: str | None = None
     execution_overrides: dict[str, Any] = {}
-    if canonical_v2:
-        project, execution_profile_id, execution_overrides = _v2_as_legacy_policy(
-            settings,
-            project_v2,
-            allow_candidate_profiles=allow_candidate_profiles,
-        )
-    else:
-        assert revision is not None
-        project = ProjectAIConfigV1.model_validate(revision.configuration)
+    project, execution_profile_id, execution_overrides = _v2_as_legacy_policy(
+        settings,
+        project_v2,
+        allow_candidate_profiles=allow_candidate_profiles,
+    )
     origins: dict[str, str] = {}
 
     deployment_capability = deployment_profile(settings)
     calibration = (
         calibration_profile_for(settings)
-        if canonical_v2 and settings.runtime.capability_profile_id is not None
+        if settings.runtime.capability_profile_id is not None
         else None
     )
     target_index_profile = index_profile_for(settings)
@@ -594,12 +579,12 @@ def resolve_project_ai_config(
         origins[path] = "project"
         return project_value
 
-    semantic_threshold = _inherit_semantic_evidence_threshold(
+    semantic_threshold = inherited(
+        "retrieval.evidence_score_threshold",
         project.retrieval.evidence_score_threshold,
         calibration.semantic_threshold
         if calibration is not None
         else settings.chat.minimum_semantic_evidence_score,
-        origins,
     )
     rescue_floor = inherited(
         "chat.lexical_corroboration_floor_score",
@@ -615,12 +600,12 @@ def resolve_project_ai_config(
         if calibration is not None
         else settings.chat.cross_language_semantic_evidence_score_threshold,
     )
-    rescue_coverage = _inherit_lexical_corroboration_coverage(
+    rescue_coverage = inherited(
+        "chat.minimum_query_token_coverage",
         project.chat.minimum_query_token_coverage,
         calibration.lexical_coverage
         if calibration is not None
         else settings.chat.lexical_corroboration_coverage,
-        origins,
     )
     rerank_mode = _resolve_rerank_mode(project.retrieval, settings, origins)
     modifies_mode = _resolve_modifies_expansion_mode(project.retrieval, settings, origins)
@@ -642,25 +627,21 @@ def resolve_project_ai_config(
         )
 
     generation_model_id: str | None = None
-    if canonical_v2:
-        selected_model = resolve_generation_model(
-            settings,
-            project_v2.behavior.generation_model_id,
-        )
-        generation_model_id = selected_model.id
-        llm_provider = selected_model.provider
-        llm_model = selected_model.model
-        model_origin = (
-            "project"
-            if project_v2.behavior.generation_model_id is not None
-            else "deployment_allowlist_default"
-        )
-        origins["llm.generation_model_id"] = model_origin
-        origins["llm.provider"] = "generation_model_registry"
-        origins["llm.model"] = "generation_model_registry"
-    else:
-        llm_provider = inherited("llm.provider", project.llm.provider, settings.llm.backend)
-        llm_model = inherited("llm.model", project.llm.model, settings.llm.model)
+    selected_model = resolve_generation_model(
+        settings,
+        project_v2.behavior.generation_model_id,
+    )
+    generation_model_id = selected_model.id
+    llm_provider = selected_model.provider
+    llm_model = selected_model.model
+    model_origin = (
+        "project"
+        if project_v2.behavior.generation_model_id is not None
+        else "deployment_allowlist_default"
+    )
+    origins["llm.generation_model_id"] = model_origin
+    origins["llm.provider"] = "generation_model_registry"
+    origins["llm.model"] = "generation_model_registry"
 
     config = EffectiveProjectAIConfig(
         llm=EffectiveLLMPolicy(
@@ -706,12 +687,6 @@ def resolve_project_ai_config(
                 settings.retrieval.keyword_weight,
             ),
             rerank_mode=rerank_mode,
-            rerank_enabled=rerank_mode is not RerankMode.OFF,
-            rerank_top_n=inherited(
-                "retrieval.rerank_top_n",
-                project.retrieval.rerank_top_n,
-                settings.retrieval.rerank_top_n,
-            ),
             score_threshold=inherited(
                 "retrieval.score_threshold",
                 project.retrieval.score_threshold,
@@ -753,16 +728,6 @@ def resolve_project_ai_config(
                 project.retrieval.rerank_candidate_window,
                 settings.retrieval.rerank_candidate_window,
             ),
-            rerank_return_n=inherited(
-                "retrieval.rerank_return_n",
-                project.retrieval.rerank_return_n,
-                settings.retrieval.rerank_return_n,
-            ),
-            rerank_return_count=inherited(
-                "retrieval.rerank_return_count",
-                project.retrieval.rerank_return_n,
-                settings.retrieval.rerank_return_count,
-            ),
             reranker_backend=settings.retrieval.reranker_backend,
             reranker_model=(
                 settings.reranker.cohere_model
@@ -778,7 +743,6 @@ def resolve_project_ai_config(
             query_translation_model=settings.query_translation.model,
             query_translation_prompt_version=settings.query_translation.prompt_version,
             modifies_expansion_mode=modifies_mode,
-            modifies_expansion_enabled=modifies_mode is ModifiesExpansionMode.EXPAND,
             max_related_sources=inherited(
                 "retrieval.max_related_sources",
                 project.retrieval.max_related_sources,
@@ -836,13 +800,6 @@ def resolve_project_ai_config(
                 project.chat.citation_excerpt_max_chars,
                 settings.chat.citation_excerpt_max_chars,
             ),
-            evidence_score_mode=inherited(
-                "chat.evidence_score_mode",
-                project.chat.evidence_score_mode,
-                calibration.score_method
-                if calibration is not None
-                else settings.chat.evidence_score_mode,
-            ),
             evidence_gate_mode=inherited(
                 "chat.evidence_gate_mode",
                 project.chat.evidence_gate_mode,
@@ -877,15 +834,15 @@ def resolve_project_ai_config(
                 if calibration is not None
                 else settings.chat.high_confidence_reranker_evidence_score,
             ),
+            high_confidence_band_enabled=(
+                calibration.high_confidence_band_enabled
+                if calibration is not None
+                else settings.chat.high_confidence_band_enabled
+            ),
             grounding_mode=inherited(
                 "chat.grounding_mode",
                 project.chat.grounding_mode,
                 settings.chat.grounding_mode,
-            ),
-            candidate_wise_grounding_enabled=inherited(
-                "chat.candidate_wise_grounding_enabled",
-                project.chat.candidate_wise_grounding_enabled,
-                settings.chat.candidate_wise_grounding_enabled,
             ),
         ),
         web_search=EffectiveWebSearchPolicy(
@@ -919,9 +876,7 @@ def resolve_project_ai_config(
         ),
         domain_instructions=inherited("domain_instructions", project.domain_instructions, ""),
         prompt_profile=inherited("prompt_profile", project.prompt_profile, "default"),
-        prompt_version=inherited(
-            "prompt_version", project.prompt_version, settings.chat.system_prompt_version
-        ),
+        prompt_version=settings.chat.system_prompt_version,
         source_policy_mode=inherited(
             "source_policy_mode",
             project.source_policy_mode,
@@ -940,7 +895,6 @@ def resolve_project_ai_config(
             "score_threshold": "retrieval.score_threshold",
             "rerank_mode": "retrieval.rerank_mode",
             "rerank_candidate_window": "retrieval.rerank_candidate_window",
-            "rerank_return_count": "retrieval.rerank_return_count",
             "rerank_score_threshold": "retrieval.rerank_score_threshold",
             "min_ocr_confidence": "retrieval.min_ocr_confidence",
             "max_chunks_per_document": "retrieval.max_chunks_per_document",
@@ -976,49 +930,46 @@ def resolve_project_ai_config(
             "chat.lexical_corroboration_floor_score",
             "chat.minimum_query_token_coverage",
             "chat.cross_language_semantic_evidence_score_threshold",
-            "chat.evidence_score_mode",
             "chat.minimum_claim_token_coverage",
             "chat.minimum_claim_semantic_score",
             "chat.minimum_reranker_evidence_score",
             "chat.high_confidence_reranker_evidence_score",
+            "chat.high_confidence_band_enabled",
         ):
             origins[path] = "calibration_profile"
     else:
         origins["chat.minimum_claim_semantic_score"] = "global"
-    if canonical_v2:
-        canonical_rerank_mode = (
-            config.retrieval.rerank_mode
-            if config.retrieval.rerank_mode is not RerankMode.OFF
-            else RerankMode.ALWAYS
-        )
-        config = config.model_copy(
-            update={
-                "retrieval": config.retrieval.model_copy(
-                    update={
-                        "strategy": RetrievalStrategy.HYBRID,
-                        "rerank_mode": canonical_rerank_mode,
-                        "rerank_enabled": True,
-                        "modifies_expansion_mode": ModifiesExpansionMode.EXPAND,
-                        "modifies_expansion_enabled": True,
-                    }
-                ),
-                "chat": config.chat.model_copy(
-                    update={
-                        "include_citations": True,
-                        "evidence_gate_mode": EvidenceGateMode.ENFORCE,
-                    }
-                ),
-                "source_policy_mode": SourcePolicyMode.ENFORCE,
-            }
-        )
-        for path in (
-            "retrieval.strategy",
-            "retrieval.modifies_expansion_mode",
-            "chat.include_citations",
-            "chat.evidence_gate_mode",
-            "source_policy_mode",
-        ):
-            origins[path] = "code_invariant"
+    canonical_rerank_mode = (
+        config.retrieval.rerank_mode
+        if config.retrieval.rerank_mode is not RerankMode.OFF
+        else RerankMode.ALWAYS
+    )
+    config = config.model_copy(
+        update={
+            "retrieval": config.retrieval.model_copy(
+                update={
+                    "strategy": RetrievalStrategy.HYBRID,
+                    "rerank_mode": canonical_rerank_mode,
+                    "modifies_expansion_mode": ModifiesExpansionMode.EXPAND,
+                }
+            ),
+            "chat": config.chat.model_copy(
+                update={
+                    "include_citations": True,
+                    "evidence_gate_mode": EvidenceGateMode.ENFORCE,
+                }
+            ),
+            "source_policy_mode": SourcePolicyMode.ENFORCE,
+        }
+    )
+    for path in (
+        "retrieval.strategy",
+        "retrieval.modifies_expansion_mode",
+        "chat.include_citations",
+        "chat.evidence_gate_mode",
+        "source_policy_mode",
+    ):
+        origins[path] = "code_invariant"
     if (
         config.chat.lexical_corroboration_floor_score
         > config.retrieval.semantic_evidence_score_threshold
@@ -1052,22 +1003,6 @@ def resolve_project_ai_config(
             ),
             code="invalid_evidence_thresholds",
         )
-    if (
-        config.chat.evidence_score_mode is EvidenceScoreMode.PASSAGE_MAX
-        and not config.retrieval.passage_scoring_enabled
-    ):
-        raise BadRequestError(
-            message="passage_max evidence mode requires passage scoring to be enabled.",
-            code="passage_evidence_scoring_disabled",
-        )
-    if (
-        config.chat.evidence_score_mode is EvidenceScoreMode.PASSAGE_MAX
-        and config.retrieval.strategy is not RetrievalStrategy.HYBRID
-    ):
-        raise BadRequestError(
-            message="passage_max evidence mode currently requires hybrid retrieval.",
-            code="passage_evidence_requires_hybrid",
-        )
     configured_source_policy_mode = config.source_policy_mode
     effective_source_policy_mode = cap_source_policy_mode(
         configured_source_policy_mode,
@@ -1078,44 +1013,17 @@ def resolve_project_ai_config(
         origins["source_policy_mode"] = "deployment_safety_cap"
 
     diagnostics: list[str] = []
-    if not canonical_v2:
-        diagnostics.append("v1_historical_revision")
     if not settings.cohere.api_key and settings.reranker.cohere_api_key:
         diagnostics.append("legacy_cohere_credential_fallback")
     overrides = deprecated_overrides or {}
     explicit = dict(overrides)
     if explicit:
         diagnostics.extend(sorted(explicit))
-        if settings.ai_policy.request_override_mode is RequestOverrideMode.STRICT:
-            raise BadRequestError(
-                message="The request contains Project-owned AI policy overrides.",
-                code="request_policy_override_forbidden",
-                context={"fields": diagnostics},
-            )
-        payload = config.model_dump(mode="python")
-        mapping = {
-            "provider": ("llm", "provider"),
-            "model": ("llm", "model"),
-            "temperature": ("llm", "temperature"),
-            "max_tokens": ("llm", "max_tokens"),
-            "system_prompt_version": (None, "prompt_version"),
-            "prompt_version": (None, "prompt_version"),
-            "rerank": ("retrieval", "rerank_enabled"),
-        }
-        for key, value in explicit.items():
-            if value is None:
-                continue
-            target = mapping.get(key)
-            if target is None:
-                continue
-            section, field = target
-            if section is None:
-                payload[field] = value
-                origins[field] = "deprecated_request_compatibility"
-            else:
-                payload[section][field] = value
-                origins[f"{section}.{field}"] = "deprecated_request_compatibility"
-        config = EffectiveProjectAIConfig.model_validate(payload)
+        raise BadRequestError(
+            message="The request contains Project-owned AI policy overrides.",
+            code="request_policy_override_forbidden",
+            context={"fields": sorted(explicit)},
+        )
 
     if validate_chat_response_policy:
         _validate_web_response_policy(
@@ -1175,11 +1083,11 @@ def resolve_project_ai_config(
         effective_source_policy_mode=effective_source_policy_mode,
         source_policy_deployment_cap=settings.ai_policy.source_policy_deployment_cap,
     )
-    structured_origins = _build_structured_origins(origins, canonical_v2=canonical_v2)
+    structured_origins = _build_structured_origins(origins, canonical_v2=True)
     invariants = InvariantState(
         hybrid_retrieval=config.retrieval.strategy is RetrievalStrategy.HYBRID,
         hosted_reranking_stage=(
-            config.retrieval.rerank_enabled
+            config.retrieval.rerank_mode is not RerankMode.OFF
             and (
                 not settings.app.is_production
                 or "hosted" not in deployment_capability.feature_flags
@@ -1251,7 +1159,6 @@ def apply_effective_ai_config(
                     "passage_overlap_tokens": effective.retrieval.passage_overlap_tokens,
                     "passage_min_tokens": effective.retrieval.passage_min_tokens,
                     "rerank_candidate_window": effective.retrieval.rerank_candidate_window,
-                    "rerank_return_count": effective.retrieval.rerank_return_count,
                     "modifies_expansion_mode": effective.retrieval.modifies_expansion_mode,
                     "max_related_sources": effective.retrieval.max_related_sources,
                     "max_relationship_candidates": (
@@ -1307,7 +1214,6 @@ def apply_effective_ai_config(
                     "response_mode": effective.chat.response_mode,
                     "include_citations": effective.chat.include_citations,
                     "citation_excerpt_max_chars": effective.chat.citation_excerpt_max_chars,
-                    "evidence_score_mode": effective.chat.evidence_score_mode,
                     "evidence_gate_mode": effective.chat.evidence_gate_mode,
                     "minimum_semantic_evidence_score": (
                         effective.retrieval.semantic_evidence_score_threshold
@@ -1329,21 +1235,12 @@ def apply_effective_ai_config(
                     "high_confidence_reranker_evidence_score": (
                         effective.chat.high_confidence_reranker_evidence_score
                     ),
+                    "high_confidence_band_enabled": effective.chat.high_confidence_band_enabled,
                     "grounding_mode": effective.chat.grounding_mode,
-                    "candidate_wise_grounding_enabled": (
-                        effective.chat.candidate_wise_grounding_enabled
-                    ),
                 }
             ),
         }
     )
-
-
-class V1NormalizationResult(BaseModel):
-    configuration: ProjectAIConfig
-    compatibility_warnings: list[str]
-    effective_diff: dict[str, dict[str, Any]]
-    required_index_action: str = "none"
 
 
 class V2ProfileNormalizationResult(BaseModel):
@@ -1353,107 +1250,6 @@ class V2ProfileNormalizationResult(BaseModel):
     compatibility_warnings: list[str]
     effective_diff: dict[str, dict[str, Any]]
     required_index_action: str = "none"
-
-
-def normalize_v1_project_config(
-    settings: Settings,
-    revision: ConfigRevisionRecord,
-) -> V1NormalizationResult:
-    """Canonicalize a historical V1 source into an append-only V2 write candidate."""
-    if revision.schema_version != 1:
-        raise BadRequestError(
-            message="Only V1 Project configuration revisions require normalization.",
-            code="project_config_normalization_not_required",
-        )
-    before = resolve_project_ai_config(settings, revision)
-    effective = before.configuration
-    warnings = [
-        "V1 provider, web-budget, citation, source-policy, invariant, and raw-calibration "
-        "controls are not carried into V2.",
-    ]
-    model_id = generation_model_id_for_legacy_pair(
-        settings,
-        provider=effective.llm.provider,
-        model=effective.llm.model,
-    )
-    if model_id is None:
-        model_id = generation_model_policy(settings)[1]
-        warnings.append(
-            "The V1 provider/model pair is not in the deployment allowlist; V2 uses the "
-            "deployment default generation model ID."
-        )
-    candidate_window = max(
-        effective.retrieval.rerank_top_n,
-        effective.retrieval.rerank_candidate_window,
-    )
-    canonical = ProjectAIConfig(
-        behavior=ProjectBehaviorV2(
-            response_mode=effective.chat.response_mode,
-            grounding_assurance=effective.chat.grounding_mode,
-            domain_instructions=effective.domain_instructions or None,
-            translation_policy=(
-                TranslationPolicy.ENABLED
-                if effective.retrieval.query_translation_enabled
-                else TranslationPolicy.DISABLED
-            ),
-            generation_model_id=model_id,
-        ),
-        execution=ProjectExecutionV2(
-            profile_id="custom",
-            retrieval_top_k=effective.retrieval.top_k,
-            semantic_candidate_top_k=effective.retrieval.semantic_candidate_top_k,
-            keyword_candidate_top_k=effective.retrieval.keyword_candidate_top_k,
-            hnsw_ef_search=effective.retrieval.hnsw_ef_search,
-            rrf_k=effective.retrieval.rrf_k,
-            semantic_weight=effective.retrieval.semantic_weight,
-            keyword_weight=effective.retrieval.keyword_weight,
-            score_threshold=effective.retrieval.score_threshold,
-            rerank_mode=(
-                CanonicalRerankMode.CROSS_LANGUAGE
-                if effective.retrieval.rerank_mode is RerankMode.CROSS_LANGUAGE
-                else CanonicalRerankMode.ALWAYS
-            ),
-            rerank_candidate_window=candidate_window,
-            rerank_return_count=min(effective.retrieval.rerank_return_n, candidate_window),
-            rerank_score_threshold=effective.retrieval.rerank_score_threshold,
-            min_ocr_confidence=effective.retrieval.min_ocr_confidence,
-            max_chunks_per_document=effective.retrieval.max_chunks_per_document,
-            max_chunks_per_section=effective.retrieval.max_chunks_per_section,
-            deduplicate_by_content_hash=effective.retrieval.deduplicate_by_content_hash,
-            passage_scoring_enabled=effective.retrieval.passage_scoring_enabled,
-            passage_window_tokens=effective.retrieval.passage_window_tokens,
-            passage_overlap_tokens=effective.retrieval.passage_overlap_tokens,
-            passage_min_tokens=effective.retrieval.passage_min_tokens,
-            max_related_sources=effective.retrieval.max_related_sources,
-            max_relationship_candidates=effective.retrieval.max_relationship_candidates,
-            max_context_chunks=effective.chat.max_context_chunks,
-            context_char_budget=effective.chat.context_char_budget,
-            max_history_messages=effective.chat.max_history_messages,
-        ),
-    )
-    execution_payload = canonical.execution.model_dump(mode="python", exclude_none=True)
-    for field in ("score_threshold", "rerank_score_threshold", "min_ocr_confidence"):
-        if field not in execution_payload:
-            execution_payload[field] = 0.0
-    canonical = canonical.model_copy(
-        update={"execution": ProjectExecutionV2.model_validate(execution_payload)}
-    )
-    normalized_record = ConfigRevisionRecord(
-        id=uuid.uuid4(),
-        revision_number=revision.revision_number + 1,
-        configuration_hash=stable_hash(canonical.model_dump(mode="json", exclude_none=True)),
-        configuration=canonical.model_dump(mode="json", exclude_none=True),
-        schema_version=2,
-    )
-    after = resolve_project_ai_config(settings, normalized_record)
-    return V1NormalizationResult(
-        configuration=canonical,
-        compatibility_warnings=warnings,
-        effective_diff=_effective_diff(
-            before.configuration.model_dump(mode="json"),
-            after.configuration.model_dump(mode="json"),
-        ),
-    )
 
 
 def normalize_v2_project_config(
@@ -1533,7 +1329,6 @@ def materialize_execution_values(effective: EffectiveProjectAIConfig) -> dict[st
         "score_threshold": effective.retrieval.score_threshold,
         "rerank_mode": effective.retrieval.rerank_mode.value,
         "rerank_candidate_window": effective.retrieval.rerank_candidate_window,
-        "rerank_return_count": effective.retrieval.rerank_return_count,
         "rerank_score_threshold": effective.retrieval.rerank_score_threshold,
         "min_ocr_confidence": effective.retrieval.min_ocr_confidence,
         "max_chunks_per_document": effective.retrieval.max_chunks_per_document,
@@ -1593,10 +1388,7 @@ def _build_structured_origins(
         "retrieval.keyword_weight": "project.v2.execution.keyword_weight",
         "retrieval.score_threshold": "project.v2.execution.score_threshold",
         "retrieval.rerank_mode": "project.v2.execution.rerank_mode",
-        "retrieval.rerank_top_n": "project.v2.execution.rerank_candidate_window",
         "retrieval.rerank_candidate_window": ("project.v2.execution.rerank_candidate_window"),
-        "retrieval.rerank_return_n": "project.v2.execution.rerank_return_count",
-        "retrieval.rerank_return_count": "project.v2.execution.rerank_return_count",
         "retrieval.rerank_score_threshold": "project.v2.execution.rerank_score_threshold",
         "retrieval.min_ocr_confidence": "project.v2.execution.min_ocr_confidence",
         "retrieval.max_chunks_per_document": ("project.v2.execution.max_chunks_per_document"),
@@ -1671,51 +1463,6 @@ def stable_hash(value: object) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
-_LEGACY_RANKING_SCORE_CEILING = 0.15
-
-
-def _inherit_semantic_evidence_threshold(
-    project_value: float | None,
-    global_value: float,
-    origins: dict[str, str],
-) -> float:
-    """Ignore leftover RRF-scale project thresholds instead of failing chat."""
-    if project_value is None:
-        origins["retrieval.evidence_score_threshold"] = "global"
-        return global_value
-    if project_value < _LEGACY_RANKING_SCORE_CEILING:
-        origins["retrieval.evidence_score_threshold"] = "global"
-        logger.info(
-            "ignored_legacy_evidence_score_threshold",
-            project_value=project_value,
-            applied_value=global_value,
-        )
-        return global_value
-    origins["retrieval.evidence_score_threshold"] = "project"
-    return project_value
-
-
-def _inherit_lexical_corroboration_coverage(
-    project_value: float | None,
-    global_value: float,
-    origins: dict[str, str],
-) -> float:
-    """Ignore leftover rejection-gate coverage values that would loosen rescue."""
-    if project_value is None:
-        origins["chat.minimum_query_token_coverage"] = "global"
-        return global_value
-    if project_value < global_value:
-        origins["chat.minimum_query_token_coverage"] = "global"
-        logger.info(
-            "ignored_legacy_query_token_coverage",
-            project_value=project_value,
-            applied_value=global_value,
-        )
-        return global_value
-    origins["chat.minimum_query_token_coverage"] = "project"
-    return project_value
-
-
 def cap_source_policy_mode(
     configured: SourcePolicyMode,
     deployment_cap: SourcePolicyDeploymentCap,
@@ -1738,11 +1485,8 @@ def _validate_web_response_policy(
 ) -> None:
     if config.chat.response_mode is ResponseMode.INDEXED_ONLY:
         return
-    if config.prompt_version != "v5":
-        raise BadRequestError(
-            message="Web-enabled response modes require the source-aware v5 chat prompt.",
-            code="web_response_mode_requires_source_prompt",
-        )
+    # prompt_version gate removed in Phase 3: the canonical prompt is always
+    # source-aware; there is no longer a version-based restriction on web modes.
     if not require_provider:
         return
     if config.web_search.backend is WebSearchBackend.DISABLED:

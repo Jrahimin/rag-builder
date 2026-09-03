@@ -13,9 +13,7 @@ from app.platform.config.project_ai import (
     EffectiveProjectAIConfig,
     InvariantState,
     ProjectAIConfig,
-    ProjectAIConfigV1,
     StructuredOrigin,
-    V1NormalizationResult,
     V2ProfileNormalizationResult,
 )
 
@@ -43,7 +41,7 @@ class ProjectAIConfigRevisionResponse(BaseModel):
     revision_number: int
     schema_version: int
     configuration_hash: str
-    configuration: ProjectAIConfig | ProjectAIConfigV1
+    configuration: ProjectAIConfig
     created_by: str
     source: str
     reason: str
@@ -95,13 +93,6 @@ class ProjectAIConfigNormalizeConfirm(BaseModel):
     expected_active_revision_id: uuid.UUID
     reason: str = Field(min_length=1, max_length=2000)
     confirm: Literal[True]
-
-
-class ProjectAIConfigNormalizationPreview(BaseModel):
-    project_id: uuid.UUID
-    source_revision_id: uuid.UUID
-    source_schema_version: int
-    result: V1NormalizationResult
 
 
 class ProjectAIProfileNormalizationPreview(BaseModel):

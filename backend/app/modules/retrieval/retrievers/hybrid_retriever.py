@@ -147,9 +147,10 @@ class HybridRetriever(BaseRetriever):
                 "branch_candidate_counts": branch_counts,
             }
 
+        rerank_active = context.rerank_mode is not RerankMode.OFF
         fusion_top_k = (
-            max(context.rerank_candidate_window, context.rerank_top_n, context.top_k)
-            if context.rerank_enabled
+            max(context.rerank_candidate_window, context.top_k)
+            if rerank_active
             else context.top_k
         )
         expansion_diagnostics: dict[str, object] = {
@@ -180,6 +181,9 @@ class HybridRetriever(BaseRetriever):
                 base_fused,
                 plan,
                 retrieve_related=retrieve_related,
+                original_query_vector=original_query_vector,
+                original_provider=original_provider,
+                original_model=original_model,
             )
             if not retrieve_related:
                 scoped = context.filters.document_id is not None
@@ -217,7 +221,7 @@ class HybridRetriever(BaseRetriever):
             )
 
         final_candidates = fused
-        if context.rerank_enabled and fused:
+        if rerank_active and fused:
             skip_reason = _rerank_skip_reason(context)
             if skip_reason is not None:
                 final_candidates = _annotate_candidates(
@@ -240,12 +244,31 @@ class HybridRetriever(BaseRetriever):
             else:
                 final_candidates = await self._rerank_candidates(context, fused)
 
+        # Strip the expansion record list from per-hit metadata; records belong
+        # to the request-level diagnostics, not to individual candidates.  The
+        # first candidate still carries them so SearchService can extract them
+        # via the existing rerank_metadata pattern.
+        expansion_records_list = expansion_diagnostics.pop("modifies_expansion_records", [])
+        expansion_diagnostics_per_hit = expansion_diagnostics  # records excluded
         final_candidates = _annotate_candidates(
             final_candidates,
             **multilingual_diagnostics,
-            **expansion_diagnostics,
+            **expansion_diagnostics_per_hit,
             retrieved_candidate_count=len(fused),
         )
+        # Stamp records only on the first candidate for SearchService extraction.
+        if final_candidates:
+            first = final_candidates[0]
+            final_candidates = [
+                replace(
+                    first,
+                    metadata={
+                        **first.metadata,
+                        "modifies_expansion_records": expansion_records_list,
+                    },
+                ),
+                *final_candidates[1:],
+            ]
         elapsed_ms = int((time.perf_counter() - started) * 1000)
         logger.info(
             "hybrid_retrieve_complete",
@@ -267,15 +290,9 @@ class HybridRetriever(BaseRetriever):
             fused_candidates=len(fused),
             final_candidates=len(final_candidates),
         )
-        return_n = context.top_k
-        if (
-            context.rerank_enabled
-            and not self._reranker.is_passthrough
-            and final_candidates
-            and final_candidates[0].metadata.get("rerank_status") == "applied"
-        ):
-            return_n = min(return_n, max(context.rerank_return_n, 1))
-        return final_candidates[:return_n]
+        # SearchService owns policy, hydration, diversity, and the final top-k
+        # cut. Preserve the whole bounded rerank window for those stages.
+        return final_candidates[: context.top_k]
 
     async def _retrieve_modifier_branches(
         self,
@@ -284,6 +301,9 @@ class HybridRetriever(BaseRetriever):
         plan: object,
         *,
         retrieve_related: bool = True,
+        original_query_vector: list[float] | None = None,
+        original_provider: str | None = None,
+        original_model: str | None = None,
     ) -> tuple[list[RankedList], dict[str, int], dict[str, object]]:
         reader = context.source_metadata_reader
         base_revision_ids = tuple(
@@ -338,7 +358,6 @@ class HybridRetriever(BaseRetriever):
                 document_id=None,
                 document_ids=selected_documents,
             ),
-            modifies_expansion_enabled=False,
             modifies_expansion_mode=ModifiesExpansionMode.OFF,
         )
         record_by_document = {item.modifier_document_id: item for item in selected}
@@ -352,7 +371,12 @@ class HybridRetriever(BaseRetriever):
                 related_lists.append(replace(ranked, hits=hits, branch_id=branch_id))
                 branch_counts[branch_id] = len(hits)
         else:
-            semantic_batch = await self._semantic.retrieve_batch(related_context)
+            semantic_batch = await self._semantic.retrieve_batch(
+                related_context,
+                query_vector=original_query_vector,
+                provider=original_provider,
+                model=original_model,
+            )
             keyword_hits = await self._keyword.retrieve(related_context)
             original_variant = QueryVariant(
                 variant_id="original",
@@ -606,24 +630,24 @@ class HybridRetriever(BaseRetriever):
         context: RetrievalContext,
         fused: list[CandidateHit],
     ) -> list[CandidateHit]:
-        rerank_window = fused[: max(context.rerank_candidate_window, context.rerank_top_n)]
+        rerank_window = fused[: context.rerank_candidate_window]
         texts = await self._content_loader.load_texts(
             [candidate.chunk_id for candidate in rerank_window]
         )
-        top_n = min(len(rerank_window), max(context.rerank_return_n, 1))
+        request_candidates = [
+            RerankCandidate(
+                chunk_id=candidate.chunk_id,
+                text=texts.get(candidate.chunk_id, ""),
+                source_score=candidate.score,
+                metadata=dict(candidate.metadata),
+            )
+            for candidate in rerank_window
+            if candidate.chunk_id in texts
+        ]
         request = RerankRequest(
             query=context.query,
-            candidates=[
-                RerankCandidate(
-                    chunk_id=candidate.chunk_id,
-                    text=texts.get(candidate.chunk_id, ""),
-                    source_score=candidate.score,
-                    metadata=dict(candidate.metadata),
-                )
-                for candidate in rerank_window
-                if candidate.chunk_id in texts
-            ],
-            top_n=top_n,
+            candidates=request_candidates,
+            top_n=len(request_candidates),
             metadata=dict(context.metadata),
         )
         if not request.candidates:
@@ -800,11 +824,7 @@ def _uuid_value(value: object) -> uuid.UUID | None:
 
 
 def _expansion_mode(context: RetrievalContext) -> ModifiesExpansionMode:
-    if context.modifies_expansion_mode is not ModifiesExpansionMode.OFF:
-        return context.modifies_expansion_mode
-    if context.modifies_expansion_enabled:
-        return ModifiesExpansionMode.EXPAND
-    return ModifiesExpansionMode.OFF
+    return context.modifies_expansion_mode
 
 
 def _expansion_diagnostics(

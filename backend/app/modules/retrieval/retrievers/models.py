@@ -62,13 +62,11 @@ class RetrievalContext:
     rrf_k: int
     semantic_weight: float
     keyword_weight: float
-    rerank_enabled: bool
-    rerank_top_n: int
+    rerank_mode: RerankMode
     rerank_score_threshold: float | None
     score_threshold: float | None
     filterable_metadata_keys: tuple[str, ...]
     index_build_id: uuid.UUID = field(default_factory=lambda: uuid.UUID(int=0))
-    rerank_mode: RerankMode = RerankMode.ALWAYS
     fts_regconfig: str = "simple"
     min_ocr_confidence: float | None = None
     hnsw_ef_search: int = 100
@@ -80,10 +78,8 @@ class RetrievalContext:
     source_scope: Any | None = None
     language_scope: Any | None = None
     rerank_candidate_window: int = 25
-    rerank_return_n: int = 8
     multilingual_plan: Any | None = None
     persist_translation_text: bool = False
-    modifies_expansion_enabled: bool = False
     modifies_expansion_mode: ModifiesExpansionMode = ModifiesExpansionMode.OFF
     max_related_sources: int = 8
     max_relationship_candidates: int = 20

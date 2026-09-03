@@ -59,7 +59,10 @@ class ProjectAIConfigRepository:
     async def list(self, *, limit: int, offset: int) -> list[ProjectAIConfigRevision]:
         result = await self._session.execute(
             select(ProjectAIConfigRevision)
-            .where(ProjectAIConfigRevision.project_id == self._project_id)
+            .where(
+                ProjectAIConfigRevision.project_id == self._project_id,
+                ProjectAIConfigRevision.schema_version == 2,
+            )
             .order_by(ProjectAIConfigRevision.revision_number.desc())
             .offset(offset)
             .limit(limit)

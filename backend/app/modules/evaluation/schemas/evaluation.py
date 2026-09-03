@@ -39,6 +39,8 @@ class EvaluationCase(BaseModel):
     expected_evidence_language: str | None = Field(default=None, min_length=2, max_length=35)
     hard_negative_evidence_phrases: list[str] = Field(default_factory=list)
     query_form: str | None = Field(default=None, min_length=1, max_length=64)
+    user_parameter_tokens: list[str] = Field(default_factory=list)
+    previous_user_query: str | None = Field(default=None, min_length=1, max_length=32_000)
 
     @model_validator(mode="after")
     def validate_expectation(self) -> EvaluationCase:

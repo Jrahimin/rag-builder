@@ -89,35 +89,10 @@ def apply_job_configuration(
     historical_embedding = dict(index["embedding"])
     historical_embedding.pop("provider_version", None)
     historical_retrieval = dict(index["retrieval"])
-    historical_retrieval.pop("language_metadata_schema_version", None)
-    legacy_auto_embed = historical_retrieval.pop("auto_embed", None)
-    legacy_auto_index = historical_retrieval.pop("auto_index", None)
-    if "auto_build_after_process" not in historical_retrieval and (
-        legacy_auto_embed is not None or legacy_auto_index is not None
-    ):
-        historical_retrieval["auto_build_after_process"] = bool(
-            legacy_auto_embed is not False and legacy_auto_index is not False
-        )
-    legacy_rerank_enabled = historical_retrieval.pop("rerank_enabled", None)
-    if legacy_rerank_enabled is not None and "rerank_mode" not in historical_retrieval:
-        historical_retrieval["rerank_mode"] = "always" if legacy_rerank_enabled else "off"
-    legacy_top_n = historical_retrieval.pop("rerank_top_n", None)
-    if legacy_top_n is not None:
-        historical_retrieval["rerank_candidate_window"] = max(
-            int(legacy_top_n),
-            int(historical_retrieval.get("rerank_candidate_window") or legacy_top_n),
-        )
-    legacy_return = historical_retrieval.pop("rerank_return_n", None)
-    if "rerank_return_count" not in historical_retrieval and legacy_return is not None:
-        historical_retrieval["rerank_return_count"] = legacy_return
-    legacy_modifies = historical_retrieval.pop("modifies_expansion_enabled", None)
-    if legacy_modifies is True and historical_retrieval.get("modifies_expansion_mode") in {
-        None,
-        "off",
-    }:
-        historical_retrieval["modifies_expansion_mode"] = "expand"
     historical_chat = dict(quality["chat"])
     historical_chat.pop("retrieval_top_k", None)
+    historical_chat.pop("candidate_wise_grounding_enabled", None)
+    historical_chat.pop("evidence_score_mode", None)
     historical_llm = dict(quality["llm"])
     historical_llm.pop("provider_version", None)
     historical_reranker = dict(quality.get("reranker", {}))
