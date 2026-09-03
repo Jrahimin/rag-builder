@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Any, Protocol
 
@@ -69,15 +69,6 @@ class ContextChunk:
         rank_score = getattr(result, "rank_score", None)
         evidence_score = getattr(result, "evidence_relevance_score", None)
         evidence_method = getattr(result, "evidence_score_method", None)
-        if metadata.get("rerank_status") == "applied":
-            if rerank_score is None and score > 0.0:
-                rerank_score = score
-            if rank_score is None:
-                rank_score = score
-            if evidence_score is None:
-                evidence_score = rerank_score
-            if not evidence_method and rerank_score is not None:
-                evidence_method = "reranker_relevance"
         return cls(
             chunk_id=result.chunk_id,
             document_id=result.document_id,
@@ -102,6 +93,37 @@ class ContextChunk:
             query_variants=tuple(getattr(result, "query_variants", ()) or ()),
             branch_contributions=tuple(getattr(result, "branch_contributions", ()) or ()),
             metadata=metadata,
+        ).restore_applied_rerank_scores()
+
+    def restore_applied_rerank_scores(self) -> ContextChunk:
+        """Recover applied rerank scores when retrieval copied only ``score``."""
+        if self.metadata.get("rerank_status") != "applied":
+            return self
+        rerank_score = self.rerank_relevance_score
+        rank_score = self.rank_score
+        evidence_score = self.evidence_relevance_score
+        evidence_method = self.evidence_score_method
+        if rerank_score is None and self.score > 0.0:
+            rerank_score = self.score
+        if rank_score is None:
+            rank_score = self.score
+        if evidence_score is None:
+            evidence_score = rerank_score
+        if not evidence_method and rerank_score is not None:
+            evidence_method = "reranker_relevance"
+        if (
+            rerank_score == self.rerank_relevance_score
+            and rank_score == self.rank_score
+            and evidence_score == self.evidence_relevance_score
+            and evidence_method == self.evidence_score_method
+        ):
+            return self
+        return replace(
+            self,
+            rank_score=rank_score,
+            rerank_relevance_score=rerank_score,
+            evidence_relevance_score=evidence_score,
+            evidence_score_method=evidence_method,
         )
 
 

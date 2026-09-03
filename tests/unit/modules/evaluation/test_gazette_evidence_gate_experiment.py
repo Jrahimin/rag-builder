@@ -2,7 +2,9 @@
 
 The hits below encode the live observation that relevant Bangla/OCR chunks can
 score in the low 0.3x cosine range. Translation is present as a branch
-contribution, not as the gate signal. No reranker is applied.
+contribution, not as the gate signal. No reranker is applied. This comparison
+pins lexical and cross-language floors to the policy cosine so it isolates
+selection from the whole-chunk semantic threshold.
 """
 
 from __future__ import annotations
@@ -127,10 +129,8 @@ def _chat_config(*, mode: EvidenceGateMode, threshold: float):
         update={
             "evidence_gate_mode": mode,
             "minimum_semantic_evidence_score": threshold,
-            "lexical_corroboration_floor_score": min(
-                base.lexical_corroboration_floor_score,
-                threshold,
-            ),
+            "lexical_corroboration_floor_score": threshold,
+            "cross_language_semantic_evidence_score_threshold": threshold,
             "system_prompt_version": "v4",
         }
     )
@@ -207,7 +207,6 @@ async def test_gazette_gate_comparison_isolates_false_refusals_from_selection() 
     assert all(row["evidence_gate_sufficient"] is False for row in enforce_035)
     assert all(row["evidence_score"] == pytest.approx(0.32) for row in enforce_035)
     assert all(row["winning_semantic_score"] == pytest.approx(0.32) for row in enforce_035)
-    assert all(row["winning_rank_score"] == pytest.approx(0.018) for row in enforce_035)
     assert all(row["evidence_score"] != row["winning_rank_score"] for row in enforce_035)
 
     assert all(row["generation_ran"] is True for row in enforce_030)

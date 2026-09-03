@@ -34,6 +34,7 @@ class ContextBuilder:
             if isinstance(chunk, EvidenceUnit) and len(chunk.content) > char_budget:
                 # An admitted unit is indivisible: budgeting may omit it, never rewrite it.
                 continue
+            chunk = chunk.restore_applied_rerank_scores()
             if len(chunk.content) > char_budget:
                 selected.append(replace(chunk, content=chunk.content[:char_budget]))
                 char_budget = 0

@@ -284,6 +284,7 @@ def test_explicit_hosted_profile_accepts_exact_index_and_calibration_wiring() ->
             "enabled": True,
             "backend": "google_vision",
             "bangla_backend": "google_vision",
+            "max_ocr_pages_per_document": 300,
         },
     )
 
