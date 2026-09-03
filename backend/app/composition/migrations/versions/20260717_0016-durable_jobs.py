@@ -134,7 +134,8 @@ def _backfill_interrupted_document_work() -> None:
     ).mappings()
     snapshot_ids: dict[uuid.UUID, uuid.UUID] = {}
     for row in rows:
-        job_type = _backfill_job_type(row["status"], settings.retrieval.auto_embed, settings.retrieval.auto_index)
+        auto_build = settings.retrieval.auto_build_after_process
+        job_type = _backfill_job_type(row["status"], auto_build, auto_build)
         if job_type is None:
             continue
         project_id = row["project_id"]

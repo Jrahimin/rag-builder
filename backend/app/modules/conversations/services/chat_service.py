@@ -630,7 +630,7 @@ class ChatService:
             prompt_profile=self._prompt_profile,
         )
         # Build structured notices (language-neutral; system metadata, not LLM text).
-        question_language = detect_language(request.content).primary_language
+        question_language = detect_language(request.content).primary_language or "en"
         notices: list[Notice] = []
         if scope_current_authority is not None:
             effective_modifiers = _effective_scope_modifier_records(
@@ -795,6 +795,7 @@ class ChatService:
                             *prepared.notices,
                             insufficient_evidence_notice(
                                 language=detect_language(user_content_for_title).primary_language
+                                or "en"
                             ),
                         )
                     )

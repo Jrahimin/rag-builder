@@ -11,6 +11,26 @@ from app.platform.domain.content_hash import content_hash
 from app.platform.domain.evidence_contracts import BranchContribution, QueryVariant
 
 
+class _RetrievalResultLike(Protocol):
+    @property
+    def chunk_id(self) -> uuid.UUID: ...
+
+    @property
+    def document_id(self) -> uuid.UUID: ...
+
+    @property
+    def chunk_index(self) -> int: ...
+
+    @property
+    def content(self) -> str: ...
+
+    @property
+    def score(self) -> float: ...
+
+    @property
+    def filename(self) -> str: ...
+
+
 @dataclass(frozen=True, slots=True)
 class ContextChunk:
     """Already-ranked chunk from retrieval, ready for context budgeting."""
@@ -40,7 +60,7 @@ class ContextChunk:
     metadata: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
-    def from_retrieval_result(cls, result: object) -> ContextChunk:
+    def from_retrieval_result(cls, result: _RetrievalResultLike) -> ContextChunk:
         """Map a ranked search hit onto chat context without dropping rerank scores."""
         metadata = dict(getattr(result, "metadata", None) or {})
         content = str(result.content)

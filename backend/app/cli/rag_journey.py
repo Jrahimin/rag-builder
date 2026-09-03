@@ -1385,6 +1385,8 @@ async def _ensure_indexed(
                 document = await DocumentRepository(session, project_id).get_by_id(
                     document_id, include_deleted=True
                 )
+                if document is None:
+                    raise JourneyError(f"Indexing target {source_key!r} disappeared during embed.")
                 if document.status is DocumentStatus.CHUNKED:
                     indexing = build_indexing_service(
                         session=session,
@@ -1420,6 +1422,8 @@ async def _ensure_indexed(
                 document = await DocumentRepository(session, project_id).get_by_id(
                     document_id, include_deleted=True
                 )
+                if document is None:
+                    raise JourneyError(f"Indexing target {source_key!r} disappeared during index.")
                 if document.status is DocumentStatus.EMBEDDED:
                     indexing = build_indexing_service(
                         session=session,
