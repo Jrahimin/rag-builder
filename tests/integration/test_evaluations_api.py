@@ -239,7 +239,7 @@ async def test_durable_runner_persists_metrics_claims_and_refusal(
         "reranked_embedding",
         "reranked_embedding_max",
     }
-    assert len(run["case_results"]) == 42
+    assert len(run["case_results"]) == len(run["metrics"]) * 6
     assert run["versions"]["corpus"]["indexed_chunk_count"] == 1
     exact = next(
         item
