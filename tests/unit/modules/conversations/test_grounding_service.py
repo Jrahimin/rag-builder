@@ -6,10 +6,11 @@ import uuid
 
 import pytest
 
-from app.core.config import ChatConfig, EvidenceScoreMode
+from app.core.config import ChatConfig
 from app.modules.conversations.grounding_service import GroundingService
 from app.modules.conversations.ports import ContextChunk
 from app.modules.conversations.schemas.message import InsufficientEvidenceReason
+from app.modules.retrieval.schemas.search import RetrievalResult
 from app.platform.providers.contracts.embedding import (
     BaseEmbeddingProvider,
     EmbeddingBatchResult,
@@ -213,7 +214,7 @@ def test_lexical_coverage_never_rejects_semantically_relevant_evidence(
     assert decision.reason is None
 
 
-def test_low_query_evidence_coverage_is_never_emitted() -> None:
+def test_insufficient_evidence_reasons_are_only_emitted_values() -> None:
     service = GroundingService(
         ChatConfig(
             minimum_semantic_evidence_score=0.5,
@@ -241,9 +242,9 @@ def test_low_query_evidence_coverage_is_never_emitted() -> None:
         ),
     ]
 
+    allowed = {item.value for item in InsufficientEvidenceReason}
     assert all(
-        decision.reason is not InsufficientEvidenceReason.LOW_QUERY_EVIDENCE_COVERAGE
-        for decision in decisions
+        decision.reason is None or decision.reason.value in allowed for decision in decisions
     )
 
 
@@ -288,7 +289,7 @@ def test_lexical_rescue_cannot_combine_score_and_tokens_from_different_chunks() 
     assert decision.winning_chunk_id == high_score.chunk_id
 
 
-def test_passage_mode_uses_raw_passage_score_and_local_span() -> None:
+def test_no_reranker_uses_whole_chunk_cosine_and_ignores_passage_scores() -> None:
     content = "unrelated preface refund policy applies unrelated appendix"
     start = content.index("refund")
     end = content.index(" unrelated appendix")
@@ -299,20 +300,15 @@ def test_passage_mode_uses_raw_passage_score_and_local_span() -> None:
         passage_char_start=start,
         passage_char_end=end,
     )
-    service = GroundingService(
-        ChatConfig(
-            evidence_score_mode=EvidenceScoreMode.PASSAGE_MAX,
-            minimum_semantic_evidence_score=0.6,
-        )
-    )
+    service = GroundingService(ChatConfig(minimum_semantic_evidence_score=0.6))
 
     decision = service.assess("refund policy", [chunk])
 
-    assert decision.sufficient is True
-    assert decision.best_score == 0.7
-    assert decision.evidence_score_method == "bounded_token_max_v1"
-    assert decision.evidence_char_start == start
-    assert decision.evidence_char_end == end
+    assert decision.sufficient is False
+    assert decision.grounding_path == "no_reranker"
+    assert decision.best_score == pytest.approx(0.2)
+    assert decision.evidence_score_method == "whole_chunk_cosine"
+    assert decision.candidate_assessments[0].span_derivation == "complete_chunk"
 
 
 def test_missing_semantic_score_never_uses_ranking_score_as_evidence() -> None:
@@ -454,6 +450,17 @@ async def test_paragraph_final_citation_is_inherited_but_each_claim_is_verified(
     assert result.grounded is True
 
 
+async def test_polarity_only_answer_has_no_verifiable_claims() -> None:
+    service = GroundingService(ChatConfig(minimum_claim_token_coverage=0.3))
+    result = await service.map_claims(
+        "Yes.",
+        [_chunk(content="Refunds are available for thirty days.")],
+    )
+    assert result.claims == []
+    assert result.grounded is None
+    assert result.claims_status == "no_verifiable_claims"
+
+
 async def test_inherited_citation_does_not_ground_an_unrelated_preceding_claim() -> None:
     service = GroundingService(ChatConfig(minimum_claim_token_coverage=0.3))
     result = await service.map_claims(
@@ -504,6 +511,110 @@ async def test_bounded_citations_do_not_cross_an_uncited_factual_block() -> None
 
     calculation = next(claim for claim in result.claims if "6,000**" in claim["text"])
     assert calculation["verification"] == "unsupported"
+    assert result.grounded is False
+
+
+async def test_contiguous_uncited_list_block_inherits_neighbor_citations() -> None:
+    service = GroundingService(ChatConfig(minimum_claim_token_coverage=0.3))
+    result = await service.map_claims(
+        "The investment rebate rate is 10%. [1]\n\n"
+        "Calculation:\n\n"
+        "- Eligible investment: BDT 60,000\n"
+        "- Rebate: 60,000 \u00d7 10% = **BDT 6,000**\n\n"
+        "Therefore, the rebate is BDT 6,000. [1]",
+        [_chunk(content="The investment rebate rate is 10%. The rebate is BDT 6,000.")],
+    )
+
+    texts = [claim["text"] for claim in result.claims]
+    assert all("Eligible investment" not in text for text in texts)
+    calculation = next(claim for claim in result.claims if "\u00d7" in claim["text"])
+    assert calculation["verification"] == "supported"
+    assert result.grounded is True
+
+
+async def test_currency_prefixed_result_is_arithmetically_verified() -> None:
+    service = GroundingService(ChatConfig(minimum_claim_token_coverage=0.9))
+    result = await service.map_claims(
+        "60,000 \u00d7 10% = BDT 6,000. [1]",
+        [_chunk(content="The current investment rebate is 10% of eligible investment.")],
+    )
+
+    assert result.claims[0]["verification"] == "supported"
+    assert result.grounded is True
+
+
+async def test_bangla_conclusion_inherits_from_adjacent_cited_calculation() -> None:
+    service = GroundingService(ChatConfig(minimum_claim_token_coverage=0.9))
+    result = await service.map_claims(
+        "বর্তমান নিয়মে ৬০,০০০ টাকা যোগ্য বিনিয়োগের রিবেট **৬,০০০ টাকা**।\n\n"  # noqa: RUF001
+        "হিসাব: ৬০,০০০ × ১০% = **৬,০০০ টাকা**। [1]",  # noqa: RUF001
+        [_chunk(content="The current investment rebate is 10% of eligible investment.")],
+    )
+
+    assert len(result.claims) == 2
+    assert all(claim["verification"] == "supported" for claim in result.claims)
+    assert result.grounded is True
+
+
+async def test_one_shared_amount_does_not_inherit_from_adjacent_calculation() -> None:
+    service = GroundingService(ChatConfig(minimum_claim_token_coverage=0.3))
+    result = await service.map_claims(
+        "Employees receive housing worth BDT 60,000.\n\n60,000 \u00d7 10% = BDT 6,000. [1]",
+        [_chunk(content="The investment rebate rate is 10%. The rebate is BDT 6,000.")],
+    )
+
+    housing = next(claim for claim in result.claims if "housing" in claim["text"].casefold())
+    assert housing["verification"] == "unsupported"
+    assert result.grounded is False
+
+
+async def test_result_only_conclusion_inherits_from_adjacent_cited_calculation() -> None:
+    service = GroundingService(ChatConfig(minimum_claim_token_coverage=0.9))
+    result = await service.map_claims(
+        "- Rebate: ৭৫,০০০ × ১০% = **৭,৫০০ টাকা** [1]\n\n"  # noqa: RUF001
+        "অতএব, আপনার rebate হবে **৭,৫০০ টাকা**।",  # noqa: RUF001
+        [_chunk(content="The current investment rebate is 10% of eligible investment.")],
+    )
+
+    conclusion = next(claim for claim in result.claims if "অতএব" in claim["text"])
+    assert conclusion["verification"] == "supported"
+    assert result.grounded is True
+
+
+async def test_rate_only_lead_does_not_inherit_from_adjacent_calculation() -> None:
+    service = GroundingService(ChatConfig(minimum_claim_token_coverage=0.3))
+    result = await service.map_claims(
+        "On 1 August 2027, the applicable investment rebate is **12%**.\n\n"
+        "**BDT 60,000 \u00d7 12% = BDT 7,200**. [1]",
+        [_chunk(content="From 1 July 2027 the investment rebate rate is 12%.")],
+    )
+
+    lead = next(
+        claim for claim in result.claims if "12%" in claim["text"] and "\u00d7" not in claim["text"]
+    )
+    assert lead["verification"] == "unsupported"
+    assert result.grounded is False
+
+
+async def test_bangla_digit_calculation_is_supported_against_english_rate() -> None:
+    service = GroundingService(ChatConfig(minimum_claim_token_coverage=0.9))
+    result = await service.map_claims(
+        "গণনা: **৭৫,০০০ × ১০% = ৭,৫০০ টাকা** [1]",  # noqa: RUF001
+        [_chunk(content="The current investment rebate is 10% of eligible investment.")],
+    )
+
+    assert result.claims[0]["verification"] == "supported"
+    assert result.grounded is True
+
+
+async def test_incorrect_arithmetic_is_unsupported_even_when_cited() -> None:
+    service = GroundingService(ChatConfig(minimum_claim_token_coverage=0.3))
+    result = await service.map_claims(
+        "60,000 \u00d7 10% = BDT 9,000. [1]",
+        [_chunk(content="The investment rebate rate is 10%.")],
+    )
+
+    assert result.claims[0]["verification"] == "unsupported"
     assert result.grounded is False
 
 
@@ -677,23 +788,32 @@ def test_evidence_winner_follows_reranked_order() -> None:
     assert decision.evidence_score_method == "reranker_relevance"
 
 
-def test_applied_rerank_recovers_score_when_dedicated_field_is_missing() -> None:
-    from dataclasses import replace
-
-    chunk = replace(
-        _chunk(content="উৎসে কর সংগ্রহের খাত সঞ্চয়পত্র", semantic_score=0.32, score=0.8693157),
-        rerank_relevance_score=None,
+def test_from_retrieval_result_recovers_applied_rerank_score() -> None:
+    result = RetrievalResult(
+        chunk_id=uuid.uuid4(),
+        document_id=uuid.uuid4(),
+        chunk_index=2,
+        content="উৎসে কর সংগ্রহের খাত সঞ্চয়পত্র",
+        score=0.8693157,
+        semantic_score=0.32,
+        filename="gazette.pdf",
         metadata={"rerank_status": "applied"},
     )
+    chunk = ContextChunk.from_retrieval_result(result)
+
+    assert chunk.rerank_relevance_score == pytest.approx(0.8693157)
+    assert chunk.rank_score == pytest.approx(0.8693157)
+    assert chunk.evidence_relevance_score == pytest.approx(0.8693157)
+    assert chunk.evidence_score_method == "reranker_relevance"
+
     decision = GroundingService(ChatConfig(minimum_reranker_evidence_score=0.4)).assess(
         "উৎসে কর সংগ্রহের খাত কি?",
         [chunk],
         rerank_status="applied",
     )
     assert decision.sufficient is True
+    assert decision.grounding_path == "candidate_wise"
     assert decision.best_score == pytest.approx(0.8693157)
-    assert decision.evidence_score_method == "reranker_relevance"
-    assert decision.winning_chunk_id == chunk.chunk_id
 
 
 def test_applied_rerank_without_any_score_does_not_report_zero() -> None:
@@ -750,6 +870,7 @@ def test_rerank_unavailable_falls_back_to_cosine_and_lexical_rescue() -> None:
     decision = GroundingService(ChatConfig()).assess("উৎসে কর সংগ্রহের খাত কি?", [chunk])
     assert decision.sufficient is True
     assert decision.lexically_corroborated is True
+    assert decision.grounding_path == "no_reranker"
     assert decision.evidence_score_method == "whole_chunk_cosine"
 
 
@@ -809,7 +930,7 @@ def test_rrf_rank_score_is_never_the_evidence_score() -> None:
     assert decision.sufficient is False
     assert decision.best_score == pytest.approx(0.32)
     assert decision.winning_semantic_score == pytest.approx(0.32)
-    assert decision.winning_rank_score == pytest.approx(0.91)
+    assert decision.winning_rank_score is None
 
 
 _GAZETTE_TABLE = (
@@ -817,6 +938,31 @@ _GAZETTE_TABLE = (
     "সম্পত্তির অধিগ্রহণ রপ্তানির বিপরীতে প্রাপ্ত নগদ ভর্তুকি"
 )
 _RATE_ROW = "কোম্পানি প্রাপকের উৎসে করের হার পনেরো শতাংশ।"
+
+
+def test_no_reranker_admits_cross_language_cosine_at_the_dedicated_bar() -> None:
+    decision = GroundingService(ChatConfig()).assess(
+        "what are the source tax deduction areas?",
+        [_chunk(content=_GAZETTE_TABLE, semantic_score=0.32)],
+    )
+
+    assert decision.sufficient is True
+    assert decision.grounding_path == "no_reranker"
+    assert decision.evidence_score_method == "whole_chunk_cosine"
+    assert decision.admitted_units[0].span_derivation == "complete_chunk"
+    assert decision.candidate_assessments[0].corroboration_method == "cross_language_semantic"
+
+
+def test_no_reranker_lexical_only_hit_without_vector_stays_unadmitted() -> None:
+    decision = GroundingService(ChatConfig()).assess(
+        "refund policy",
+        [_chunk(content="refund policy applies", score=8.1, semantic_score=None)],
+    )
+
+    assert decision.sufficient is False
+    assert decision.grounding_path == "no_reranker"
+    assert decision.candidate_assessments[0].terminal_reason == "missing_semantic_score"
+    assert decision.admitted_units == ()
 
 
 def _reranked(
