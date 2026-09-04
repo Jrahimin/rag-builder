@@ -1,4 +1,4 @@
-import { Database, FileClock, Plus, Settings2, X } from "lucide-react";
+import { ChevronRight, Database, FileClock, Plus, Settings2, X } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
@@ -60,24 +60,92 @@ const originFieldLabels: Record<string, string> = {
   "llm.model": "Model",
   "llm.temperature": "Temperature",
   "llm.max_tokens": "Max tokens",
+  "llm.generation_model_id": "Generation model",
   "retrieval.strategy": "Strategy",
   "retrieval.top_k": "Top K",
   "retrieval.rerank_mode": "Rerank",
   "retrieval.query_translation_enabled": "Query translation",
   "retrieval.semantic_evidence_score_threshold": "Evidence threshold",
+  "retrieval.semantic_candidate_top_k": "Semantic candidates",
+  "retrieval.keyword_candidate_top_k": "Keyword candidates",
+  "retrieval.hnsw_ef_search": "HNSW ef search",
+  "retrieval.rrf_k": "RRF k",
+  "retrieval.semantic_weight": "Semantic weight",
+  "retrieval.keyword_weight": "Keyword weight",
+  "retrieval.score_threshold": "Score threshold",
+  "retrieval.rerank_candidate_window": "Rerank window",
+  "retrieval.rerank_score_threshold": "Rerank threshold",
+  "retrieval.min_ocr_confidence": "Min OCR confidence",
+  "retrieval.max_chunks_per_document": "Max chunks per document",
+  "retrieval.max_chunks_per_section": "Max chunks per section",
+  "retrieval.deduplicate_by_content_hash": "Deduplicate by hash",
+  "retrieval.passage_scoring_enabled": "Passage scoring",
+  "retrieval.passage_window_tokens": "Passage window",
+  "retrieval.passage_overlap_tokens": "Passage overlap",
+  "retrieval.passage_min_tokens": "Passage min tokens",
+  "retrieval.max_related_sources": "Max related sources",
+  "retrieval.max_relationship_candidates": "Relationship candidates",
+  "retrieval.modifies_expansion_mode": "Modifies expansion",
   "chat.include_citations": "Citations",
+  "chat.response_mode": "Response mode",
+  "chat.max_context_chunks": "Max context chunks",
+  "chat.context_char_budget": "Context character budget",
+  "chat.max_history_messages": "Max history messages",
+  "chat.grounding_mode": "Grounding",
+  "web_search.backend": "Backend",
+  "web_search.model": "Web model",
+  "web_search.enabled": "Web search",
   domain_instructions: "Project instructions",
   source_policy_mode: "Source policy",
 };
 
+const originGroupLabels: Record<string, string> = {
+  llm: "Generation",
+  retrieval: "Retrieval",
+  chat: "Chat",
+  web_search: "Web search",
+  domain_instructions: "Behavior",
+  source_policy_mode: "Sources",
+};
+
+const originGroupOrder = ["Behavior", "Generation", "Retrieval", "Chat", "Web search", "Sources"];
+
 function originFieldLabel(field: string) {
-  return originFieldLabels[field] ?? (field.split(".").pop() ?? field).replaceAll("_", " ");
+  if (originFieldLabels[field]) return originFieldLabels[field];
+  const leaf = field.split(".").pop() ?? field;
+  return leaf.replaceAll("_", " ");
 }
 
 function originKindLabel(origin: string) {
-  if (origin === "global") return "deployment";
+  if (origin === "global") return "Deployment";
   if (origin === "project") return "Project";
   return origin.replaceAll("_", " ");
+}
+
+function originGroup(field: string) {
+  const prefix = field.includes(".") ? field.slice(0, field.indexOf(".")) : field;
+  return originGroupLabels[prefix] ?? originGroupLabels[field] ?? originFieldLabel(prefix);
+}
+
+function groupedOriginOverrides(overrides: Array<[string, string]>) {
+  const groups = new Map<string, Array<[string, string]>>();
+  for (const item of overrides) {
+    const group = originGroup(item[0]);
+    const list = groups.get(group) ?? [];
+    list.push(item);
+    groups.set(group, list);
+  }
+  for (const list of groups.values()) {
+    list.sort((left, right) => originFieldLabel(left[0]).localeCompare(originFieldLabel(right[0])));
+  }
+  return [...groups.entries()].sort((left, right) => {
+    const leftRank = originGroupOrder.indexOf(left[0]);
+    const rightRank = originGroupOrder.indexOf(right[0]);
+    if (leftRank === -1 && rightRank === -1) return left[0].localeCompare(right[0]);
+    if (leftRank === -1) return 1;
+    if (rightRank === -1) return -1;
+    return leftRank - rightRank;
+  });
 }
 
 type SourceRevisionForm = {
@@ -125,27 +193,90 @@ function sourceRevisionForm(
 }
 
 function OriginSummary({ origins }: { origins: Record<string, string> }) {
+  const [open, setOpen] = useState(false);
   const overrides = Object.entries(origins).filter(([, origin]) => origin !== "global");
+  const groups = groupedOriginOverrides(overrides);
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      document.body.style.overflow = previous;
+    };
+  }, [open]);
   if (overrides.length === 0) {
     return (
-      <p className="origin-summary">
-        All settings inherit deployment defaults. This strip only lists values this Project
-        overrides.
+      <p className="origin-summary origin-summary--empty">
+        All settings inherit deployment defaults.
       </p>
     );
   }
   return (
     <div className="origin-summary">
-      <p>
-        {overrides.length} Project override{overrides.length === 1 ? "" : "s"}
-      </p>
-      <div className="origin-pills">
-        {overrides.map(([field, origin]) => (
-          <span key={field} title={field}>
-            {originFieldLabel(field)} · {originKindLabel(origin)}
-          </span>
-        ))}
-      </div>
+      <button
+        type="button"
+        className="origin-summary__trigger"
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        onClick={() => setOpen(true)}
+      >
+        <span className="origin-summary__count">{overrides.length}</span>
+        Project override{overrides.length === 1 ? "" : "s"}
+        <ChevronRight size={15} aria-hidden="true" />
+      </button>
+      {open && (
+        <div className="modal-overlay" role="presentation" onClick={() => setOpen(false)}>
+          <section
+            className="modal-card origin-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="project-overrides-title"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <header className="modal-card__header">
+              <div>
+                <p className="eyebrow">Active policy</p>
+                <h2 id="project-overrides-title">Project overrides</h2>
+                <p>
+                  {overrides.length} setting{overrides.length === 1 ? "" : "s"} differ from
+                  deployment defaults. Grouped by area for review.
+                </p>
+              </div>
+              <button
+                className="icon-button"
+                type="button"
+                aria-label="Close"
+                onClick={() => setOpen(false)}
+              >
+                <X size={16} aria-hidden="true" />
+              </button>
+            </header>
+            <div className="modal-card__body origin-modal__body">
+              {groups.map(([group, items]) => (
+                <section className="origin-group" key={group}>
+                  <h3>
+                    {group}
+                    <span>{items.length}</span>
+                  </h3>
+                  <div className="origin-group__list">
+                    {items.map(([field, origin]) => (
+                      <div className="origin-group__row" key={field} title={field}>
+                        <span>{originFieldLabel(field)}</span>
+                        <span className="origin-group__layer">{originKindLabel(origin)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              ))}
+            </div>
+          </section>
+        </div>
+      )}
     </div>
   );
 }
@@ -875,33 +1006,39 @@ function ProjectConfig({ project }: { project: Project }) {
             ragProfiles={effective?.rag_profiles}
           />
         </fieldset>
-        <div className="field-control">
-          <label htmlFor="project-ai-reason">Revision reason</label>
-          <input
-            id="project-ai-reason"
-            required
-            aria-label="Revision reason"
-            value={form.reason}
-            onChange={(event) => setForm((current) => ({ ...current, reason: event.target.value }))}
-            placeholder="Why this policy changed"
-          />
+        <div className="progressive-form__commit">
+          <div className="field-control">
+            <label htmlFor="project-ai-reason">Revision reason</label>
+            <input
+              id="project-ai-reason"
+              required
+              aria-label="Revision reason"
+              value={form.reason}
+              onChange={(event) =>
+                setForm((current) => ({ ...current, reason: event.target.value }))
+              }
+              placeholder="Why this policy changed"
+            />
+          </div>
+          <p className="muted-copy">
+            New conversations capture this policy. Existing snapshots do not drift.
+          </p>
+          <div className="progressive-form__actions">
+            <button className="button button--primary" disabled={busy}>
+              Create and activate revision
+            </button>
+            {activeRevision?.schema_version === 2 && (
+              <button
+                className="button button--secondary"
+                type="button"
+                disabled={busy}
+                onClick={() => void normalizeProfile()}
+              >
+                Normalize profile identity
+              </button>
+            )}
+          </div>
         </div>
-        <p className="muted-copy">
-          New conversations capture this policy. Existing snapshots do not drift.
-        </p>
-        <button className="button button--primary" disabled={busy}>
-          Create and activate revision
-        </button>
-        {activeRevision?.schema_version === 2 && (
-          <button
-            className="button button--secondary"
-            type="button"
-            disabled={busy}
-            onClick={() => void normalizeProfile()}
-          >
-            Normalize profile identity
-          </button>
-        )}
       </form>
       <div className="detail-grid">
         <section className="panel">

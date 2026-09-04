@@ -2225,7 +2225,7 @@ function MessagesTab({
                   <textarea
                     aria-label="Message"
                     required
-                    rows={3}
+                    rows={2}
                     value={content}
                     onChange={(event) => setContent(event.target.value)}
                     onKeyDown={(event) => {

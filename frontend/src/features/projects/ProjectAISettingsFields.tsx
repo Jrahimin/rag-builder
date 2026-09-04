@@ -1,6 +1,6 @@
 /* eslint-disable react-refresh/only-export-components -- helpers shared by Project forms */
 import { CircleHelp } from "lucide-react";
-import { useState, type Dispatch, type SetStateAction } from "react";
+import { useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
 import type {
   ActiveConfiguration,
   EffectiveProjectAIConfig,
@@ -168,6 +168,47 @@ export function configFormFromDeployment(config: ActiveConfiguration): ProjectCo
   };
 }
 
+export function deploymentFormBaseline(
+  deployment?: EffectiveProjectAIConfig["configuration"] | null,
+  fallback?: ProjectConfigForm,
+): ProjectConfigForm {
+  if (!deployment) return fallback ?? emptyProjectConfigForm;
+  return {
+    ...emptyProjectConfigForm,
+    generationModelId: deployment.llm.generation_model_id ?? "",
+    responseMode: deployment.chat.response_mode,
+    groundingAssurance: deployment.chat.grounding_mode === "balanced" ? "balanced" : "strict",
+    domain: deployment.domain_instructions ?? "",
+    topK: String(deployment.retrieval.top_k),
+  };
+}
+
+export function valueMatchesDeployment<K extends ProjectConfigOverride>(
+  key: K,
+  value: ProjectConfigForm[K],
+  baseline: ProjectConfigForm,
+): boolean {
+  if (key === "generationModelId") {
+    return value === "" || value === baseline.generationModelId;
+  }
+  if (key === "groundingAssurance") {
+    return value === "inherit" || value === baseline.groundingAssurance;
+  }
+  if (key === "profileId") {
+    return value === "inherit";
+  }
+  return value === baseline[key];
+}
+
+export function inheritedDisplayValue<K extends ProjectConfigOverride>(
+  key: K,
+  baseline: ProjectConfigForm,
+): ProjectConfigForm[K] {
+  if (key === "groundingAssurance") return "inherit" as ProjectConfigForm[K];
+  if (key === "profileId") return "inherit" as ProjectConfigForm[K];
+  return baseline[key];
+}
+
 export function FieldHint({ label, text }: { label: string; text: string }) {
   const [open, setOpen] = useState(false);
   return (
@@ -265,6 +306,33 @@ function materializeEffectiveExecution(
   };
 }
 
+function SettingsField({
+  className,
+  label,
+  hint,
+  inherit,
+  meta,
+  children,
+}: {
+  className?: string;
+  label: string;
+  hint: string;
+  inherit?: ReactNode;
+  meta?: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <div className={className ?? "field-control"}>
+      <div className="field-control__header">
+        <FieldHint label={label} text={hint} />
+        {inherit}
+      </div>
+      {children}
+      {meta}
+    </div>
+  );
+}
+
 export function ProjectAISettingsFields({
   form,
   setForm,
@@ -272,6 +340,7 @@ export function ProjectAISettingsFields({
   setOverride,
   effective,
   defaults,
+  deploymentConfiguration,
   allowedGenerationModels = [],
   ragProfiles = [],
 }: {
@@ -285,12 +354,13 @@ export function ProjectAISettingsFields({
   allowedGenerationModels?: GenerationModelOption[];
   ragProfiles?: RAGProfileOption[];
 }) {
-  const baseline = effective
-    ? configFormFromEffective(effective)
-    : (defaults ?? emptyProjectConfigForm);
+  const baseline = deploymentFormBaseline(
+    deploymentConfiguration ?? effective?.deployment_configuration ?? null,
+    defaults ?? emptyProjectConfigForm,
+  );
   const changeField = <K extends ProjectConfigOverride>(key: K, value: ProjectConfigForm[K]) => {
     setForm((current) => ({ ...current, [key]: value }));
-    setOverride(key, value !== baseline[key]);
+    setOverride(key, !valueMatchesDeployment(key, value, baseline));
   };
   const selectProfile = (profileId: string) => {
     const profile = ragProfiles.find((item) => item.id === profileId);
@@ -343,7 +413,7 @@ export function ProjectAISettingsFields({
       topK: value,
       customExecution: { ...current.customExecution, retrieval_top_k: Number(value) },
     }));
-    setOverride("topK", true);
+    setOverride("topK", !valueMatchesDeployment("topK", value, baseline));
   };
   const changeRerankMode = (value: RerankModeChoice) => {
     activateCustom();
@@ -356,16 +426,35 @@ export function ProjectAISettingsFields({
   };
   const customProfile = form.profileId === "custom";
   const toggleField = (key: ProjectConfigOverride, overridden: boolean) => {
-    setOverride(key, overridden);
-    if (!overridden) setForm((current) => ({ ...current, [key]: baseline[key] }));
+    if (!overridden) {
+      const restored = inheritedDisplayValue(key, baseline);
+      setForm((current) => ({ ...current, [key]: restored }));
+      setOverride(key, false);
+      return;
+    }
+    setOverride(key, true);
   };
   const inheritedClass = (overridden: boolean) =>
     overridden ? "field-control" : "field-control field-control--inherited";
   return (
     <>
-      <div className="form-grid">
-        <div className={inheritedClass(overrides.profileId)}>
-          <FieldHint label="RAG profile" text={PROJECT_AI_FIELD_HINTS.profile} />
+      <div className="form-grid ai-settings-grid">
+        <SettingsField
+          className={inheritedClass(overrides.profileId)}
+          label="RAG profile"
+          hint={PROJECT_AI_FIELD_HINTS.profile}
+          meta={
+            form.profileId !== "inherit" ? (
+              <span className="field-control__meta" data-testid="rag-profile-state">
+                {customProfile
+                  ? "Custom — individual execution settings"
+                  : `${form.profileId} profile`}
+              </span>
+            ) : (
+              <span className="field-control__meta" aria-hidden="true" />
+            )
+          }
+        >
           <select
             aria-label="RAG profile"
             value={form.profileId}
@@ -379,16 +468,20 @@ export function ProjectAISettingsFields({
             ))}
             <option value="custom">Custom</option>
           </select>
-          {form.profileId !== "inherit" && (
-            <span className="muted-copy" data-testid="rag-profile-state">
-              {customProfile
-                ? "Custom — individual execution settings"
-                : `${form.profileId} profile`}
-            </span>
-          )}
-        </div>
-        <div className={inheritedClass(overrides.generationModelId)}>
-          <FieldHint label="Generation model" text={PROJECT_AI_FIELD_HINTS.generationModel} />
+        </SettingsField>
+        <SettingsField
+          className={inheritedClass(overrides.generationModelId)}
+          label="Generation model"
+          hint={PROJECT_AI_FIELD_HINTS.generationModel}
+          inherit={
+            <InheritanceToggle
+              field="Generation model"
+              overridden={overrides.generationModelId}
+              onChange={(enabled) => toggleField("generationModelId", enabled)}
+            />
+          }
+          meta={<span className="field-control__meta" aria-hidden="true" />}
+        >
           <select
             aria-label="Generation model"
             value={form.generationModelId}
@@ -401,14 +494,19 @@ export function ProjectAISettingsFields({
               </option>
             ))}
           </select>
-          <InheritanceToggle
-            field="Generation model"
-            overridden={overrides.generationModelId}
-            onChange={(enabled) => toggleField("generationModelId", enabled)}
-          />
-        </div>
-        <div className={inheritedClass(overrides.responseMode)}>
-          <FieldHint label="Response mode" text={PROJECT_AI_FIELD_HINTS.responseMode} />
+        </SettingsField>
+        <SettingsField
+          className={inheritedClass(overrides.responseMode)}
+          label="Response mode"
+          hint={PROJECT_AI_FIELD_HINTS.responseMode}
+          inherit={
+            <InheritanceToggle
+              field="Response mode"
+              overridden={overrides.responseMode}
+              onChange={(enabled) => toggleField("responseMode", enabled)}
+            />
+          }
+        >
           <select
             aria-label="Response mode"
             value={form.responseMode}
@@ -420,14 +518,19 @@ export function ProjectAISettingsFields({
             <option value="indexed_then_web">Indexed, then web</option>
             <option value="indexed_and_web">Indexed and web</option>
           </select>
-          <InheritanceToggle
-            field="Response mode"
-            overridden={overrides.responseMode}
-            onChange={(enabled) => toggleField("responseMode", enabled)}
-          />
-        </div>
-        <div className={inheritedClass(overrides.groundingAssurance)}>
-          <FieldHint label="Grounding assurance" text={PROJECT_AI_FIELD_HINTS.grounding} />
+        </SettingsField>
+        <SettingsField
+          className={inheritedClass(overrides.groundingAssurance)}
+          label="Grounding assurance"
+          hint={PROJECT_AI_FIELD_HINTS.grounding}
+          inherit={
+            <InheritanceToggle
+              field="Grounding assurance"
+              overridden={overrides.groundingAssurance}
+              onChange={(enabled) => toggleField("groundingAssurance", enabled)}
+            />
+          }
+        >
           <select
             aria-label="Grounding assurance"
             value={form.groundingAssurance}
@@ -439,28 +542,8 @@ export function ProjectAISettingsFields({
             <option value="strict">Strict</option>
             <option value="balanced">Balanced</option>
           </select>
-          <InheritanceToggle
-            field="Grounding assurance"
-            overridden={overrides.groundingAssurance}
-            onChange={(enabled) => toggleField("groundingAssurance", enabled)}
-          />
-        </div>
-        <div className={inheritedClass(overrides.domain)}>
-          <FieldHint label="Domain instructions" text={PROJECT_AI_FIELD_HINTS.domain} />
-          <textarea
-            aria-label="Domain instructions"
-            rows={3}
-            value={form.domain}
-            onChange={(event) => changeField("domain", event.target.value)}
-          />
-          <InheritanceToggle
-            field="Domain instructions"
-            overridden={overrides.domain}
-            onChange={(enabled) => toggleField("domain", enabled)}
-          />
-        </div>
-        <div className="field-control">
-          <FieldHint label="Query translation" text={PROJECT_AI_FIELD_HINTS.translation} />
+        </SettingsField>
+        <SettingsField label="Query translation" hint={PROJECT_AI_FIELD_HINTS.translation}>
           <select
             aria-label="Query translation"
             value={form.translation}
@@ -475,15 +558,33 @@ export function ProjectAISettingsFields({
             <option value="disabled">Off</option>
             <option value="enabled">On</option>
           </select>
-        </div>
+        </SettingsField>
+        <SettingsField
+          className={`${inheritedClass(overrides.domain)} field-control--wide`}
+          label="Domain instructions"
+          hint={PROJECT_AI_FIELD_HINTS.domain}
+          inherit={
+            <InheritanceToggle
+              field="Domain instructions"
+              overridden={overrides.domain}
+              onChange={(enabled) => toggleField("domain", enabled)}
+            />
+          }
+        >
+          <textarea
+            aria-label="Domain instructions"
+            rows={4}
+            value={form.domain}
+            onChange={(event) => changeField("domain", event.target.value)}
+          />
+        </SettingsField>
       </div>
       <details className="config-advanced">
         <summary>
           Advanced execution controls {customProfile ? "" : "— editing uses Custom"}
         </summary>
         <div className="form-grid">
-          <div className="field-control">
-            <FieldHint label="Rerank mode" text={PROJECT_AI_FIELD_HINTS.rerank} />
+          <SettingsField label="Rerank mode" hint={PROJECT_AI_FIELD_HINTS.rerank}>
             <select
               aria-label="Rerank mode"
               value={form.rerankMode}
@@ -493,9 +594,12 @@ export function ProjectAISettingsFields({
               <option value="always">Always</option>
               <option value="cross_language">Cross-language</option>
             </select>
-          </div>
-          <div className={inheritedClass(overrides.topK)}>
-            <FieldHint label="Top K" text={PROJECT_AI_FIELD_HINTS.topK} />
+          </SettingsField>
+          <SettingsField
+            className={inheritedClass(overrides.topK)}
+            label="Top K"
+            hint={PROJECT_AI_FIELD_HINTS.topK}
+          >
             <input
               aria-label="Top K"
               type="number"
@@ -504,7 +608,7 @@ export function ProjectAISettingsFields({
               value={form.topK}
               onChange={(event) => changeTopK(event.target.value)}
             />
-          </div>
+          </SettingsField>
         </div>
       </details>
     </>

@@ -1,4 +1,4 @@
-import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, vi } from "vitest";
 import {
@@ -82,7 +82,13 @@ const capability: ProviderCapability = {
 
 function effectiveConfig(activeRevisionId: string | null): EffectiveProjectAIConfig {
   const deploymentConfiguration = {
-    llm: { provider: "openai", model: "o1-test", temperature: null, max_tokens: 2048 },
+    llm: {
+      provider: "openai",
+      model: "o1-test",
+      temperature: null,
+      max_tokens: 2048,
+      generation_model_id: "openai-o1-test",
+    },
     retrieval: {
       strategy: "hybrid",
       top_k: 10,
@@ -98,6 +104,7 @@ function effectiveConfig(activeRevisionId: string | null): EffectiveProjectAICon
     },
     chat: {
       response_mode: "indexed_only",
+      grounding_mode: "strict",
       max_context_chunks: 8,
       context_char_budget: 12_000,
       max_history_messages: 10,
@@ -137,7 +144,10 @@ function effectiveConfig(activeRevisionId: string | null): EffectiveProjectAICon
     base_profile_id: null,
     custom_execution: true,
     compatibility_warnings: [],
-    allowed_generation_models: [{ id: "openai-o1-test", provider: "openai", model: "o1-test" }],
+    allowed_generation_models: [
+      { id: "openai-o1-test", provider: "openai", model: "o1-test" },
+      { id: "openai-gpt-4o-mini", provider: "openai", model: "gpt-4o-mini" },
+    ],
     rag_profiles: [
       {
         id: "standard",
@@ -681,20 +691,149 @@ test("keeps inherited AI fields enabled and syncs the inherit switch", async () 
     `/projects?project=${projectFixture.id}&section=ai-config`,
   );
 
-  expect(await screen.findByText("Top K · Project")).toBeInTheDocument();
-  expect(screen.queryByText(/evidence score/i)).not.toBeInTheDocument();
+  const overrideTrigger = await screen.findByRole("button", { name: /1 Project override/ });
+  expect(overrideTrigger).toBeInTheDocument();
+  expect(screen.queryByRole("dialog", { name: "Project overrides" })).not.toBeInTheDocument();
+  await userEvent.click(overrideTrigger);
+  const overrideDialog = await screen.findByRole("dialog", { name: "Project overrides" });
+  expect(within(overrideDialog).getByText("Top K")).toBeInTheDocument();
+  expect(within(overrideDialog).getByText("Project")).toBeInTheDocument();
+  expect(within(overrideDialog).queryByText(/evidence score/i)).not.toBeInTheDocument();
+  await userEvent.click(within(overrideDialog).getByRole("button", { name: "Close" }));
+  expect(screen.queryByRole("dialog", { name: "Project overrides" })).not.toBeInTheDocument();
 
+  const model = screen.getByLabelText("Generation model");
   const inheritModel = screen.getByLabelText("Generation model: inherit global");
   expect(inheritModel).toBeChecked();
-  await userEvent.selectOptions(screen.getByLabelText("Generation model"), "openai-o1-test");
+  expect(model).toHaveValue("openai-o1-test");
+  await userEvent.selectOptions(model, "openai-gpt-4o-mini");
   expect(inheritModel).not.toBeChecked();
+  await userEvent.selectOptions(model, "openai-o1-test");
+  expect(inheritModel).toBeChecked();
+  await userEvent.selectOptions(model, "openai-gpt-4o-mini");
+  expect(inheritModel).not.toBeChecked();
+  await userEvent.selectOptions(model, "");
+  expect(inheritModel).toBeChecked();
+  await userEvent.selectOptions(model, "openai-gpt-4o-mini");
   await userEvent.click(inheritModel);
   expect(inheritModel).toBeChecked();
+  expect(model).toHaveValue("openai-o1-test");
+
+  const responseMode = screen.getByLabelText("Response mode");
+  const inheritResponse = screen.getByLabelText("Response mode: inherit global");
+  expect(inheritResponse).toBeChecked();
+  expect(responseMode).toHaveValue("indexed_only");
+  await userEvent.selectOptions(responseMode, "indexed_then_web");
+  expect(inheritResponse).not.toBeChecked();
+  await userEvent.selectOptions(responseMode, "indexed_only");
+  expect(inheritResponse).toBeChecked();
+
+  const grounding = screen.getByLabelText("Grounding assurance");
+  const inheritGrounding = screen.getByLabelText("Grounding assurance: inherit global");
+  expect(inheritGrounding).toBeChecked();
+  await userEvent.selectOptions(grounding, "balanced");
+  expect(inheritGrounding).not.toBeChecked();
+  await userEvent.selectOptions(grounding, "strict");
+  expect(inheritGrounding).toBeChecked();
+  await userEvent.selectOptions(grounding, "balanced");
+  await userEvent.click(inheritGrounding);
+  expect(inheritGrounding).toBeChecked();
+  expect(grounding).toHaveValue("inherit");
+
+  const domain = screen.getByLabelText("Domain instructions");
+  const inheritDomain = screen.getByLabelText("Domain instructions: inherit global");
+  expect(inheritDomain).toBeChecked();
+  await userEvent.type(domain, "Project-specific tax instructions");
+  expect(inheritDomain).not.toBeChecked();
+  await userEvent.clear(domain);
+  expect(inheritDomain).toBeChecked();
 
   const translation = screen.getByLabelText("Query translation");
   expect(translation).toHaveValue("inherit");
   await userEvent.selectOptions(translation, "enabled");
   expect(translation).toHaveValue("enabled");
+});
+
+test("restores deployment values when Inherit is turned back on for an overridden Project", async () => {
+  mockProjectShell();
+  const revision: ProjectAIConfigRevision = {
+    id: "22222222-2222-2222-2222-222222222222",
+    project_id: projectFixture.id,
+    revision_number: 1,
+    configuration_hash: "b".repeat(64),
+    configuration: {
+      behavior: {
+        generation_model_id: "openai-gpt-4o-mini",
+        response_mode: "indexed_then_web",
+        grounding_assurance: "balanced",
+        domain_instructions: "Use only this Project's tax notes.",
+      },
+    },
+    schema_version: 2,
+    source: "project_revision",
+    reason: "Project-specific AI settings",
+    created_by: "test-admin",
+    restored_from_revision_id: null,
+    created_at: "2026-08-16T00:00:00Z",
+  };
+  const config = effectiveConfig(revision.id);
+  config.configuration = {
+    ...config.configuration,
+    llm: { ...config.configuration.llm, generation_model_id: "openai-gpt-4o-mini" },
+    chat: {
+      ...config.configuration.chat,
+      response_mode: "indexed_then_web",
+      grounding_mode: "balanced",
+    },
+    domain_instructions: "Use only this Project's tax notes.",
+  };
+  vi.spyOn(operatorApiClient, "getProjectAIConfig").mockResolvedValue(config);
+  vi.spyOn(operatorApiClient, "getProjectAIConfigHistory").mockResolvedValue([revision]);
+  vi.spyOn(operatorApiClient, "getProviderCapabilities").mockResolvedValue([capability]);
+
+  renderOperatorComponent(
+    <OperatorConsoleApp />,
+    `/projects?project=${projectFixture.id}&section=ai-config`,
+  );
+
+  const model = await screen.findByLabelText("Generation model");
+  const inheritModel = screen.getByLabelText("Generation model: inherit global");
+  expect(model).toHaveValue("openai-gpt-4o-mini");
+  expect(inheritModel).not.toBeChecked();
+  await userEvent.selectOptions(model, "openai-o1-test");
+  expect(inheritModel).toBeChecked();
+  await userEvent.selectOptions(model, "openai-gpt-4o-mini");
+  expect(inheritModel).not.toBeChecked();
+  await userEvent.click(inheritModel);
+  expect(inheritModel).toBeChecked();
+  expect(model).toHaveValue("openai-o1-test");
+
+  const responseMode = screen.getByLabelText("Response mode");
+  const inheritResponse = screen.getByLabelText("Response mode: inherit global");
+  expect(responseMode).toHaveValue("indexed_then_web");
+  expect(inheritResponse).not.toBeChecked();
+  await userEvent.selectOptions(responseMode, "indexed_only");
+  expect(inheritResponse).toBeChecked();
+  await userEvent.selectOptions(responseMode, "indexed_then_web");
+  await userEvent.click(inheritResponse);
+  expect(inheritResponse).toBeChecked();
+  expect(responseMode).toHaveValue("indexed_only");
+
+  const grounding = screen.getByLabelText("Grounding assurance");
+  const inheritGrounding = screen.getByLabelText("Grounding assurance: inherit global");
+  expect(grounding).toHaveValue("balanced");
+  expect(inheritGrounding).not.toBeChecked();
+  await userEvent.click(inheritGrounding);
+  expect(inheritGrounding).toBeChecked();
+  expect(grounding).toHaveValue("inherit");
+
+  const domain = screen.getByLabelText("Domain instructions");
+  const inheritDomain = screen.getByLabelText("Domain instructions: inherit global");
+  expect(domain).toHaveValue("Use only this Project's tax notes.");
+  expect(inheritDomain).not.toBeChecked();
+  await userEvent.click(inheritDomain);
+  expect(inheritDomain).toBeChecked();
+  expect(domain).toHaveValue("");
 });
 
 test("restores the deployment response mode in Create Project when Inherit is turned back on", async () => {
