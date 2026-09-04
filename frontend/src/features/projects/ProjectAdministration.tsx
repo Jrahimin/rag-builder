@@ -480,9 +480,7 @@ function CreateProject({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const configuration = useActiveConfiguration();
-  const defaults = configuration.data
-    ? configFormFromDeployment(configuration.data)
-    : emptyProjectConfigForm;
+  const defaults = configuration.data ? configFormFromDeployment() : emptyProjectConfigForm;
   const [form, setForm] = useState<ProjectConfigForm>(() => defaults);
   const [overrides, setOverrides] = useState<ProjectConfigOverrides>(inheritedProjectConfig);
   const setOverride = (key: ProjectConfigOverride, enabled: boolean) => {
@@ -504,7 +502,7 @@ function CreateProject({
   }, [onCancel]);
   useEffect(() => {
     if (!configuration.data) return;
-    const next = configFormFromDeployment(configuration.data);
+    const next = configFormFromDeployment();
     setForm((current) => {
       const merged = {
         ...current,
@@ -620,6 +618,12 @@ function CreateProject({
                 overrides={overrides}
                 setOverride={setOverride}
                 defaults={defaults}
+                globalRagProfileId={configuration.data?.default_rag_profile_id}
+                deploymentGenerationModelLabel={configuration.data?.llm.model}
+                deploymentResponseMode={
+                  configuration.data?.chat_response_mode as
+                    "indexed_only" | "indexed_then_web" | "indexed_and_web" | undefined
+                }
               />
             )}
           </details>
@@ -1004,6 +1008,7 @@ function ProjectConfig({ project }: { project: Project }) {
             deploymentConfiguration={effective?.deployment_configuration}
             allowedGenerationModels={effective?.allowed_generation_models}
             ragProfiles={effective?.rag_profiles}
+            globalRagProfileId={effective?.provenance.deployment_default_execution_profile_id}
           />
         </fieldset>
         <div className="progressive-form__commit">

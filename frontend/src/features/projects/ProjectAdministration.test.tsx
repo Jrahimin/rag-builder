@@ -227,15 +227,18 @@ test("keeps Custom execution values explicit when one value changes", async () =
     throw new Error("Expected a project AI-config revision to be created");
   }
   const saved = firstCreateCall[1];
-  expect(saved.execution).toEqual({
+  expect(saved.execution).toMatchObject({
     profile_id: "custom",
     retrieval_top_k: 12,
     max_context_chunks: 7,
+    rerank_mode: "always",
   });
+  expect(saved.execution).toHaveProperty("semantic_candidate_top_k");
+  expect(saved.execution).toHaveProperty("context_char_budget");
   expect(saved.behavior).toEqual({});
 });
 
-test("treats V2 Project values equal to deployment defaults as inherited", async () => {
+test("preserves explicit Project values that equal deployment defaults", async () => {
   mockProjectShell();
   const revision: ProjectAIConfigRevision = {
     id: "33333333-3333-3333-3333-333333333333",
@@ -262,9 +265,11 @@ test("treats V2 Project values equal to deployment defaults as inherited", async
     `/projects?project=${projectFixture.id}&section=ai-config`,
   );
 
-  expect(await screen.findByLabelText("Response mode: inherit global")).not.toBeChecked();
+  expect(await screen.findByLabelText("Response mode")).toHaveValue("indexed_only");
+  expect(screen.getByRole("option", { name: "Global — Indexed only" })).toHaveValue("inherit");
   expect(screen.getByLabelText("Query translation")).toHaveValue("disabled");
   expect(screen.getByLabelText("Rerank mode")).toHaveValue("always");
+  expect(screen.getByRole("radio", { name: "Custom RAG profile" })).toBeChecked();
 });
 
 test("does not create an AI revision when every control inherits", async () => {
@@ -364,6 +369,7 @@ test("drives web behavior through the sparse response mode", async () => {
 
   await waitFor(() => expect(create).toHaveBeenCalled());
   expect(create.mock.calls[0]?.[1].behavior).toEqual({ response_mode: "indexed_then_web" });
+  expect(create.mock.calls[0]?.[1].execution).toEqual({});
   expect(screen.queryByLabelText("Web results")).not.toBeInTheDocument();
 });
 
@@ -383,7 +389,7 @@ test("keeps a created Project when optional AI settings fail to save", async () 
   await userEvent.click(await screen.findByRole("button", { name: "Create Project" }));
   await userEvent.type(screen.getByLabelText("Project name"), "Pilot");
   await userEvent.click(screen.getByText("Optional AI settings"));
-  await userEvent.selectOptions(screen.getByLabelText("Rerank mode"), "cross_language");
+  await userEvent.selectOptions(screen.getByLabelText("Response mode"), "indexed_then_web");
   await userEvent.click(screen.getByRole("button", { name: "Create" }));
 
   await waitFor(() => expect(createProject).toHaveBeenCalled());
@@ -467,16 +473,16 @@ test("editing a preset materializes Custom and reselecting the preset resets it"
     `/projects?project=${projectFixture.id}&section=ai-config`,
   );
 
-  await userEvent.selectOptions(await screen.findByLabelText("RAG profile"), "standard");
-  expect(screen.getByTestId("rag-profile-state")).toHaveTextContent("standard profile");
+  await userEvent.click(await screen.findByRole("radio", { name: "Standard RAG profile" }));
+  expect(screen.getByTestId("rag-profile-state")).toHaveTextContent("Standard profile");
   fireEvent.change(screen.getByLabelText("Top K"), { target: { value: "11" } });
   expect(screen.getByTestId("rag-profile-state")).toHaveTextContent(
-    "Custom — individual execution settings",
+    "Custom — complete explicit execution",
   );
   fireEvent.change(screen.getByLabelText("Top K"), { target: { value: "10" } });
   expect(screen.getByTestId("rag-profile-state")).toHaveTextContent("Custom");
-  await userEvent.selectOptions(screen.getByLabelText("RAG profile"), "standard");
-  expect(screen.getByTestId("rag-profile-state")).toHaveTextContent("standard profile");
+  await userEvent.click(screen.getByRole("radio", { name: "Standard RAG profile" }));
+  expect(screen.getByTestId("rag-profile-state")).toHaveTextContent("Standard profile");
 
   await userEvent.type(screen.getByLabelText("Revision reason"), "Use balanced profile");
   await userEvent.click(screen.getByRole("button", { name: "Create and activate revision" }));
@@ -527,10 +533,9 @@ test("unsaved preset changes materialize the currently selected preset as Custom
     `/projects?project=${projectFixture.id}&section=ai-config`,
   );
 
-  const profile = await screen.findByLabelText("RAG profile");
-  await userEvent.selectOptions(profile, "standard");
-  await userEvent.selectOptions(profile, "quality");
-  await userEvent.selectOptions(profile, "custom");
+  await userEvent.click(await screen.findByRole("radio", { name: "Standard RAG profile" }));
+  await userEvent.click(screen.getByRole("radio", { name: "Quality RAG profile" }));
+  await userEvent.click(screen.getByRole("radio", { name: "Custom RAG profile" }));
   await userEvent.type(screen.getByLabelText("Revision reason"), "Keep Quality values");
   await userEvent.click(screen.getByRole("button", { name: "Create and activate revision" }));
 
@@ -588,10 +593,10 @@ test("a conflicting stored value cannot make a preset custom", async () => {
     `/projects?project=${projectFixture.id}&section=ai-config`,
   );
 
-  expect(await screen.findByTestId("rag-profile-state")).toHaveTextContent("standard profile");
+  expect(await screen.findByTestId("rag-profile-state")).toHaveTextContent("Standard profile");
   fireEvent.change(screen.getByLabelText("Top K"), { target: { value: "10" } });
   expect(screen.getByTestId("rag-profile-state")).toHaveTextContent("Custom");
-  await userEvent.selectOptions(screen.getByLabelText("RAG profile"), "standard");
+  await userEvent.click(screen.getByRole("radio", { name: "Standard RAG profile" }));
   await userEvent.type(screen.getByLabelText("Revision reason"), "Restore exact Standard");
   await userEvent.click(screen.getByRole("button", { name: "Create and activate revision" }));
 
@@ -644,9 +649,9 @@ test("reselecting a profile clears all hidden execution overrides", async () => 
     `/projects?project=${projectFixture.id}&section=ai-config`,
   );
 
-  expect(await screen.findByTestId("rag-profile-state")).toHaveTextContent("standard profile");
-  fireEvent.change(screen.getByLabelText("RAG profile"), { target: { value: "standard" } });
-  expect(screen.getByTestId("rag-profile-state")).toHaveTextContent("standard profile");
+  expect(await screen.findByTestId("rag-profile-state")).toHaveTextContent("Standard profile");
+  await userEvent.click(screen.getByRole("radio", { name: "Standard RAG profile" }));
+  expect(screen.getByTestId("rag-profile-state")).toHaveTextContent("Standard profile");
   await userEvent.type(screen.getByLabelText("Revision reason"), "Reset Standard controls");
   await userEvent.click(screen.getByRole("button", { name: "Create and activate revision" }));
 
@@ -670,12 +675,59 @@ test("shows exact generation IDs and keeps candidate profiles selectable", async
     `/projects?project=${projectFixture.id}&section=ai-config`,
   );
 
-  expect(await screen.findByRole("option", { name: /openai-o1-test/ })).toBeInTheDocument();
-  expect(screen.getByRole("option", { name: /standard — candidate/ })).not.toBeDisabled();
+  expect(
+    await screen.findByRole("option", { name: "openai-o1-test — openai/o1-test" }),
+  ).toBeInTheDocument();
+  expect(screen.getByRole("radio", { name: "Standard RAG profile" })).not.toBeDisabled();
   expect(screen.queryByLabelText("Provider")).not.toBeInTheDocument();
 });
 
-test("keeps inherited AI fields enabled and syncs the inherit switch", async () => {
+test("shows one Global model without a redundant dropdown and still allows explicit pinning", async () => {
+  mockProjectShell();
+  const config = effectiveConfig(null);
+  config.allowed_generation_models = [
+    { id: "openai-o1-test", provider: "openai", model: "o1-test" },
+  ];
+  vi.spyOn(operatorApiClient, "getProjectAIConfig").mockResolvedValue(config);
+  vi.spyOn(operatorApiClient, "getProjectAIConfigHistory").mockResolvedValue([]);
+  vi.spyOn(operatorApiClient, "getProviderCapabilities").mockResolvedValue([capability]);
+  const create = vi.spyOn(operatorApiClient, "createProjectAIConfig").mockResolvedValue({
+    id: "22222222-2222-2222-2222-222222222222",
+    project_id: projectFixture.id,
+    revision_number: 1,
+    configuration_hash: "b".repeat(64),
+    configuration: {
+      behavior: { generation_model_id: "openai-o1-test", translation_policy: "inherit" },
+    },
+    schema_version: 2,
+    source: "project_revision",
+    reason: "Pin the approved model",
+    created_by: "test-admin",
+    restored_from_revision_id: null,
+    created_at: "2026-08-16T00:00:00Z",
+  });
+
+  renderOperatorComponent(
+    <OperatorConsoleApp />,
+    `/projects?project=${projectFixture.id}&section=ai-config`,
+  );
+
+  expect(
+    await screen.findByText("Uses Global and follows future deployment changes."),
+  ).toBeVisible();
+  expect(screen.queryByLabelText("Generation model")).not.toBeInTheDocument();
+  await userEvent.click(screen.getByRole("button", { name: "Pin to Project" }));
+  expect(screen.getByText("Pinned to this Project.")).toBeVisible();
+  await userEvent.type(screen.getByLabelText("Revision reason"), "Pin the approved model");
+  await userEvent.click(screen.getByRole("button", { name: "Create and activate revision" }));
+
+  await waitFor(() => expect(create).toHaveBeenCalled());
+  expect(create.mock.calls[0]?.[1].behavior).toEqual({
+    generation_model_id: "openai-o1-test",
+  });
+});
+
+test("keeps Global and explicit behavior selections distinct", async () => {
   mockProjectShell();
   vi.spyOn(operatorApiClient, "getProjectAIConfig").mockResolvedValue({
     ...effectiveConfig(null),
@@ -703,42 +755,28 @@ test("keeps inherited AI fields enabled and syncs the inherit switch", async () 
   expect(screen.queryByRole("dialog", { name: "Project overrides" })).not.toBeInTheDocument();
 
   const model = screen.getByLabelText("Generation model");
-  const inheritModel = screen.getByLabelText("Generation model: inherit global");
-  expect(inheritModel).toBeChecked();
-  expect(model).toHaveValue("openai-o1-test");
+  expect(model).toHaveValue("__global__");
   await userEvent.selectOptions(model, "openai-gpt-4o-mini");
-  expect(inheritModel).not.toBeChecked();
   await userEvent.selectOptions(model, "openai-o1-test");
-  expect(inheritModel).toBeChecked();
-  await userEvent.selectOptions(model, "openai-gpt-4o-mini");
-  expect(inheritModel).not.toBeChecked();
-  await userEvent.selectOptions(model, "");
-  expect(inheritModel).toBeChecked();
-  await userEvent.selectOptions(model, "openai-gpt-4o-mini");
-  await userEvent.click(inheritModel);
-  expect(inheritModel).toBeChecked();
   expect(model).toHaveValue("openai-o1-test");
+  await userEvent.selectOptions(model, "openai-gpt-4o-mini");
+  await userEvent.selectOptions(model, "__global__");
+  expect(model).toHaveValue("__global__");
 
   const responseMode = screen.getByLabelText("Response mode");
-  const inheritResponse = screen.getByLabelText("Response mode: inherit global");
-  expect(inheritResponse).toBeChecked();
-  expect(responseMode).toHaveValue("indexed_only");
+  expect(responseMode).toHaveValue("inherit");
   await userEvent.selectOptions(responseMode, "indexed_then_web");
-  expect(inheritResponse).not.toBeChecked();
   await userEvent.selectOptions(responseMode, "indexed_only");
-  expect(inheritResponse).toBeChecked();
+  expect(responseMode).toHaveValue("indexed_only");
+  await userEvent.selectOptions(responseMode, "inherit");
+  expect(responseMode).toHaveValue("inherit");
 
   const grounding = screen.getByLabelText("Grounding assurance");
-  const inheritGrounding = screen.getByLabelText("Grounding assurance: inherit global");
-  expect(inheritGrounding).toBeChecked();
-  await userEvent.selectOptions(grounding, "balanced");
-  expect(inheritGrounding).not.toBeChecked();
-  await userEvent.selectOptions(grounding, "strict");
-  expect(inheritGrounding).toBeChecked();
-  await userEvent.selectOptions(grounding, "balanced");
-  await userEvent.click(inheritGrounding);
-  expect(inheritGrounding).toBeChecked();
   expect(grounding).toHaveValue("inherit");
+  await userEvent.selectOptions(grounding, "balanced");
+  await userEvent.selectOptions(grounding, "strict");
+  expect(grounding).toHaveValue("strict");
+  await userEvent.selectOptions(grounding, "inherit");
 
   const domain = screen.getByLabelText("Domain instructions");
   const inheritDomain = screen.getByLabelText("Domain instructions: inherit global");
@@ -746,6 +784,8 @@ test("keeps inherited AI fields enabled and syncs the inherit switch", async () 
   await userEvent.type(domain, "Project-specific tax instructions");
   expect(inheritDomain).not.toBeChecked();
   await userEvent.clear(domain);
+  expect(inheritDomain).not.toBeChecked();
+  await userEvent.click(inheritDomain);
   expect(inheritDomain).toBeChecked();
 
   const translation = screen.getByLabelText("Query translation");
@@ -754,7 +794,7 @@ test("keeps inherited AI fields enabled and syncs the inherit switch", async () 
   expect(translation).toHaveValue("enabled");
 });
 
-test("restores deployment values when Inherit is turned back on for an overridden Project", async () => {
+test("restores Global selections for an overridden Project", async () => {
   mockProjectShell();
   const revision: ProjectAIConfigRevision = {
     id: "22222222-2222-2222-2222-222222222222",
@@ -798,34 +838,24 @@ test("restores deployment values when Inherit is turned back on for an overridde
   );
 
   const model = await screen.findByLabelText("Generation model");
-  const inheritModel = screen.getByLabelText("Generation model: inherit global");
   expect(model).toHaveValue("openai-gpt-4o-mini");
-  expect(inheritModel).not.toBeChecked();
   await userEvent.selectOptions(model, "openai-o1-test");
-  expect(inheritModel).toBeChecked();
-  await userEvent.selectOptions(model, "openai-gpt-4o-mini");
-  expect(inheritModel).not.toBeChecked();
-  await userEvent.click(inheritModel);
-  expect(inheritModel).toBeChecked();
   expect(model).toHaveValue("openai-o1-test");
+  await userEvent.selectOptions(model, "openai-gpt-4o-mini");
+  await userEvent.selectOptions(model, "__global__");
+  expect(model).toHaveValue("__global__");
 
   const responseMode = screen.getByLabelText("Response mode");
-  const inheritResponse = screen.getByLabelText("Response mode: inherit global");
   expect(responseMode).toHaveValue("indexed_then_web");
-  expect(inheritResponse).not.toBeChecked();
   await userEvent.selectOptions(responseMode, "indexed_only");
-  expect(inheritResponse).toBeChecked();
-  await userEvent.selectOptions(responseMode, "indexed_then_web");
-  await userEvent.click(inheritResponse);
-  expect(inheritResponse).toBeChecked();
   expect(responseMode).toHaveValue("indexed_only");
+  await userEvent.selectOptions(responseMode, "indexed_then_web");
+  await userEvent.selectOptions(responseMode, "inherit");
+  expect(responseMode).toHaveValue("inherit");
 
   const grounding = screen.getByLabelText("Grounding assurance");
-  const inheritGrounding = screen.getByLabelText("Grounding assurance: inherit global");
   expect(grounding).toHaveValue("balanced");
-  expect(inheritGrounding).not.toBeChecked();
-  await userEvent.click(inheritGrounding);
-  expect(inheritGrounding).toBeChecked();
+  await userEvent.selectOptions(grounding, "inherit");
   expect(grounding).toHaveValue("inherit");
 
   const domain = screen.getByLabelText("Domain instructions");
@@ -837,7 +867,7 @@ test("restores deployment values when Inherit is turned back on for an overridde
   expect(domain).toHaveValue("");
 });
 
-test("restores the deployment response mode in Create Project when Inherit is turned back on", async () => {
+test("offers a source-aware Global response mode during Project creation", async () => {
   mockProjectShell();
 
   renderOperatorComponent(<OperatorConsoleApp />, `/projects?project=${projectFixture.id}`);
@@ -845,13 +875,11 @@ test("restores the deployment response mode in Create Project when Inherit is tu
   await userEvent.click(screen.getByText("Optional AI settings"));
 
   const responseMode = await screen.findByLabelText("Response mode");
-  const inheritMode = screen.getByLabelText("Response mode: inherit global");
-  expect(inheritMode).toBeChecked();
+  expect(responseMode).toHaveValue("inherit");
   await userEvent.selectOptions(responseMode, "indexed_then_web");
-  expect(inheritMode).not.toBeChecked();
-  await userEvent.click(inheritMode);
-  expect(inheritMode).toBeChecked();
-  expect(responseMode).toHaveValue("indexed_only");
+  await userEvent.selectOptions(responseMode, "inherit");
+  expect(responseMode).toHaveValue("inherit");
+  expect(screen.getByRole("option", { name: "Global — Indexed only" })).toBeInTheDocument();
 });
 
 test("uploads a document into an existing source group or a modifying group", async () => {
