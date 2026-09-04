@@ -767,6 +767,7 @@ test("restores deployment values when Inherit is turned back on for an overridde
         response_mode: "indexed_then_web",
         grounding_assurance: "balanced",
         domain_instructions: "Use only this Project's tax notes.",
+        translation_policy: "inherit",
       },
     },
     schema_version: 2,
