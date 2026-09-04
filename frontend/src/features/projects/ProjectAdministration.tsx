@@ -1031,7 +1031,7 @@ function ProjectConfig({ project }: { project: Project }) {
       <form className="panel progressive-form" onSubmit={(event) => void submit(event)}>
         <div className="ai-config-draft">
           <p className="muted-copy">
-            Profiles set retrieval. Behavior follows Global unless you change it.
+            Profiles set retrieval. Open profile values only to make Custom. Behavior is separate.
           </p>
           {unsaved && <span className="section-state section-state--unsaved">Unsaved</span>}
         </div>

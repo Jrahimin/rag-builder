@@ -279,6 +279,13 @@ async function saveRevision(reason = "Focused transition") {
   await userEvent.click(screen.getByRole("button", { name: "Create and activate revision" }));
 }
 
+async function revealProfileValues() {
+  if (screen.queryByLabelText("Top K")) return;
+  await userEvent.click(
+    await screen.findByRole("button", { name: /^Show (profile|custom) values$/ }),
+  );
+}
+
 afterEach(() => vi.restoreAllMocks());
 
 test("uses canonical Project administration and shows locked Organization ownership", async () => {
@@ -300,6 +307,7 @@ test("preset selection updates all mapped core execution values", async () => {
   );
 
   await userEvent.click(await screen.findByRole("radio", { name: "Quality RAG profile" }));
+  await revealProfileValues();
   expect(screen.getByLabelText("Semantic candidates")).toHaveValue(90);
   expect(screen.getByLabelText("Keyword candidates")).toHaveValue(70);
   expect(screen.getByLabelText("Rerank window")).toHaveValue(45);
@@ -318,6 +326,7 @@ test("editing a preset materializes a complete Custom bundle", async () => {
   );
 
   await userEvent.click(await screen.findByRole("radio", { name: "Standard RAG profile" }));
+  await revealProfileValues();
   fireEvent.change(screen.getByLabelText("Top K"), { target: { value: "12" } });
   expect(screen.getByText("Custom · based on Standard · 1 setting changed")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Reset to Standard" })).toBeInTheDocument();
@@ -339,7 +348,10 @@ test("editing Global execution preserves Global lineage", async () => {
     `/projects?project=${projectFixture.id}&section=ai-config`,
   );
 
-  fireEvent.change(await screen.findByLabelText("Top K"), { target: { value: "12" } });
+  expect(await screen.findByRole("radio", { name: "Global RAG profile" })).toBeChecked();
+  expect(screen.queryByLabelText("Top K")).not.toBeInTheDocument();
+  await revealProfileValues();
+  fireEvent.change(screen.getByLabelText("Top K"), { target: { value: "12" } });
   expect(
     screen.getByText("Custom · based on Global (Standard) · 1 setting changed"),
   ).toBeInTheDocument();
@@ -357,6 +369,7 @@ test("reverting Custom execution values restores the previous profile", async ()
     `/projects?project=${projectFixture.id}&section=ai-config`,
   );
 
+  await revealProfileValues();
   fireEvent.change(await screen.findByLabelText("Semantic candidates"), { target: { value: "5" } });
   expect(
     screen.getByText("Custom · based on Global (Standard) · 1 setting changed"),
@@ -375,6 +388,7 @@ test("reverting Custom execution values restores the previous profile", async ()
   expect(screen.queryByText("Unsaved")).not.toBeInTheDocument();
 
   await userEvent.click(screen.getByRole("radio", { name: "Quality RAG profile" }));
+  await revealProfileValues();
   fireEvent.change(screen.getByLabelText("Top K"), { target: { value: "13" } });
   expect(screen.getByText(/Custom · based on Quality · 1 setting changed/)).toBeInTheDocument();
   fireEvent.change(screen.getByLabelText("Top K"), { target: { value: "18" } });
@@ -395,9 +409,11 @@ test("reselecting a preset discards Custom values", async () => {
   );
 
   await userEvent.click(await screen.findByRole("radio", { name: "Quality RAG profile" }));
+  await revealProfileValues();
   fireEvent.change(screen.getByLabelText("Top K"), { target: { value: "13" } });
   expect(screen.getByText(/Custom · based on Quality/)).toBeInTheDocument();
   await userEvent.click(screen.getByRole("radio", { name: "Quality RAG profile" }));
+  await revealProfileValues();
   expect(screen.getByLabelText("Top K")).toHaveValue(18);
   await saveRevision();
 
