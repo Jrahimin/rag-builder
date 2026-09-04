@@ -1,4 +1,4 @@
-import { ChevronRight, Database, FileClock, Plus, Settings2, X } from "lucide-react";
+import { ChevronRight, Database, FileClock, Plus, X } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
@@ -28,15 +28,11 @@ import { formatBytes, formatDate, shortId } from "../../shared/formatters";
 import {
   ProjectAISettingsFields,
   buildSparseProjectConfig,
-  configOverridesFromStored,
   configFormFromEffective,
   configFormFromDeployment,
   emptyProjectConfigForm,
-  inheritedProjectConfig,
   sparseHasOverrides,
   type ProjectConfigForm,
-  type ProjectConfigOverride,
-  type ProjectConfigOverrides,
 } from "./ProjectAISettingsFields";
 import {
   buildSourceUploadMetadata,
@@ -480,12 +476,10 @@ function CreateProject({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const configuration = useActiveConfiguration();
-  const defaults = configuration.data ? configFormFromDeployment() : emptyProjectConfigForm;
+  const defaults = configuration.data
+    ? configFormFromDeployment(configuration.data)
+    : emptyProjectConfigForm;
   const [form, setForm] = useState<ProjectConfigForm>(() => defaults);
-  const [overrides, setOverrides] = useState<ProjectConfigOverrides>(inheritedProjectConfig);
-  const setOverride = (key: ProjectConfigOverride, enabled: boolean) => {
-    setOverrides((current) => ({ ...current, [key]: enabled }));
-  };
   const nameRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
     nameRef.current?.focus();
@@ -502,18 +496,23 @@ function CreateProject({
   }, [onCancel]);
   useEffect(() => {
     if (!configuration.data) return;
-    const next = configFormFromDeployment();
-    setForm((current) => {
-      const merged = {
-        ...current,
-        responseMode: next.responseMode,
-      };
-      setOverrides((flags) => ({
-        ...flags,
-        responseMode: merged.responseMode !== next.responseMode,
-      }));
-      return merged;
-    });
+    const next = configFormFromDeployment(configuration.data);
+    setForm((current) => ({
+      ...current,
+      behavior: {
+        generationModelId:
+          current.behavior.generationModelId.source === "global"
+            ? next.behavior.generationModelId
+            : current.behavior.generationModelId,
+        responseMode:
+          current.behavior.responseMode.source === "global"
+            ? next.behavior.responseMode
+            : current.behavior.responseMode,
+        groundingAssurance: current.behavior.groundingAssurance,
+        translation: current.behavior.translation,
+        domain: current.behavior.domain,
+      },
+    }));
   }, [configuration.data]);
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -521,7 +520,7 @@ function CreateProject({
     setError("");
     try {
       const project = await operatorApiClient.createProject(name, organizationId, description);
-      const sparseConfiguration = buildSparseProjectConfig({}, form, overrides);
+      const sparseConfiguration = buildSparseProjectConfig(form);
       if (!sparseHasOverrides(sparseConfiguration)) {
         onCreated(project);
         return;
@@ -615,15 +614,7 @@ function CreateProject({
               <ProjectAISettingsFields
                 form={form}
                 setForm={setForm}
-                overrides={overrides}
-                setOverride={setOverride}
-                defaults={defaults}
                 globalRagProfileId={configuration.data?.default_rag_profile_id}
-                deploymentGenerationModelLabel={configuration.data?.llm.model}
-                deploymentResponseMode={
-                  configuration.data?.chat_response_mode as
-                    "indexed_only" | "indexed_then_web" | "indexed_and_web" | undefined
-                }
               />
             )}
           </details>
@@ -887,7 +878,6 @@ function ProjectDetails({
 function ProjectConfig({ project }: { project: Project }) {
   const [effective, setEffective] = useState<EffectiveProjectAIConfig | null>(null);
   const [history, setHistory] = useState<ProjectAIConfigRevision[]>([]);
-  const [overrides, setOverrides] = useState<ProjectConfigOverrides>(inheritedProjectConfig);
   const [form, setForm] = useState<ProjectConfigForm>(emptyProjectConfigForm);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -903,7 +893,6 @@ function ProjectConfig({ project }: { project: Project }) {
     const stored = activeRevision?.configuration ?? {};
     setEffective(config);
     setHistory(revisions);
-    setOverrides(configOverridesFromStored(stored));
     setForm(configFormFromEffective(config, stored));
   }, [project.id]);
   useEffect(() => {
@@ -925,8 +914,7 @@ function ProjectConfig({ project }: { project: Project }) {
     setBusy(true);
     setError("");
     try {
-      const stored = activeRevision?.configuration ?? {};
-      const configuration = buildSparseProjectConfig(stored, form, overrides);
+      const configuration = buildSparseProjectConfig(form);
       if (!sparseHasOverrides(configuration) && !effective?.active_revision_id) {
         throw new Error(
           "All fields inherit deployment defaults, so no Project revision was created.",
@@ -993,25 +981,21 @@ function ProjectConfig({ project }: { project: Project }) {
           Custom bundle. Provider, web budget, calibration, citation, and source-governance controls
           are deployment or code owned.
         </p>
-        <fieldset>
-          <legend>
-            <Settings2 size={17} /> Project behavior and canonical execution
-          </legend>
-          <ProjectAISettingsFields
-            form={form}
-            setForm={setForm}
-            overrides={overrides}
-            setOverride={(key, enabled) =>
-              setOverrides((current) => ({ ...current, [key]: enabled }))
-            }
-            effective={effective}
-            deploymentConfiguration={effective?.deployment_configuration}
-            allowedGenerationModels={effective?.allowed_generation_models}
-            ragProfiles={effective?.rag_profiles}
-            globalRagProfileId={effective?.provenance.deployment_default_execution_profile_id}
-          />
-        </fieldset>
+        <ProjectAISettingsFields
+          form={form}
+          setForm={setForm}
+          effective={effective}
+          allowedGenerationModels={effective?.allowed_generation_models}
+          ragProfiles={effective?.rag_profiles}
+          globalRagProfileId={effective?.provenance.deployment_default_execution_profile_id}
+        />
         <div className="progressive-form__commit">
+          <div className="ai-config-section__header ai-config-section__header--revision">
+            <div>
+              <p className="eyebrow">Revision</p>
+              <h3>Activate an immutable configuration</h3>
+            </div>
+          </div>
           <div className="field-control">
             <label htmlFor="project-ai-reason">Revision reason</label>
             <input
@@ -1032,17 +1016,26 @@ function ProjectConfig({ project }: { project: Project }) {
             <button className="button button--primary" disabled={busy}>
               Create and activate revision
             </button>
-            {activeRevision?.schema_version === 2 && (
-              <button
-                className="button button--secondary"
-                type="button"
-                disabled={busy}
-                onClick={() => void normalizeProfile()}
-              >
-                Normalize profile identity
-              </button>
-            )}
           </div>
+          {activeRevision?.schema_version === 2 && (
+            <details className="config-maintenance">
+              <summary>Advanced / maintenance</summary>
+              <div>
+                <p className="muted-copy">
+                  Create a canonical append-only revision when an older V2 execution bundle can be
+                  identified as a known profile.
+                </p>
+                <button
+                  className="button button--secondary"
+                  type="button"
+                  disabled={busy}
+                  onClick={() => void normalizeProfile()}
+                >
+                  Normalize profile identity
+                </button>
+              </div>
+            </details>
+          )}
         </div>
       </form>
       <div className="detail-grid">
