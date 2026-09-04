@@ -56,7 +56,7 @@ const baseExecution = {
   semantic_weight: 1,
   keyword_weight: 1,
   score_threshold: null,
-  rerank_mode: "always",
+  rerank_mode: "always" as const,
   rerank_candidate_window: 25,
   rerank_score_threshold: null,
   min_ocr_confidence: null,
@@ -492,7 +492,7 @@ test("clearing domain instructions back to Global restores Global source", async
 test("an explicit Project value remains distinct when it equals Global", async () => {
   mockProjectShell();
   const stored = revisionFor({
-    behavior: { response_mode: "indexed_only" },
+    behavior: { response_mode: "indexed_only", translation_policy: "inherit" },
     execution: {},
   });
   const create = setupAI(effectiveConfig(stored.id), stored);
@@ -577,7 +577,7 @@ test("sparse payload contains only explicitly overridden behavior", async () => 
 test("origin summary reports Custom execution instead of a leaf override count", async () => {
   mockProjectShell();
   const stored = revisionFor({
-    behavior: { response_mode: "indexed_then_web" },
+    behavior: { response_mode: "indexed_then_web", translation_policy: "inherit" },
     execution: { profile_id: "custom", ...baseExecution, retrieval_top_k: 12 },
   });
   const config = effectiveConfig(stored.id);
