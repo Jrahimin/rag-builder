@@ -188,10 +188,59 @@ function sourceRevisionForm(
   };
 }
 
-function OriginSummary({ origins }: { origins: Record<string, string> }) {
+const BEHAVIOR_ORIGIN_PATHS = new Set([
+  "llm.generation_model_id",
+  "chat.response_mode",
+  "chat.grounding_mode",
+  "retrieval.query_translation_enabled",
+  "domain_instructions",
+]);
+
+function originDisplayName(value: string) {
+  return value.charAt(0).toUpperCase() + value.slice(1).replaceAll("_", " ");
+}
+
+function logicalOriginSummary(
+  origins: Record<string, string>,
+  storedProfileId?: string | null,
+  customExecution = false,
+): string | null {
+  const layers = new Set(Object.values(origins));
+  const behaviorCount = Object.entries(origins).filter(
+    ([path, origin]) => origin === "project" && BEHAVIOR_ORIGIN_PATHS.has(path),
+  ).length;
+  const namedProfile =
+    storedProfileId &&
+    storedProfileId !== "inherit" &&
+    storedProfileId !== "custom" &&
+    layers.has("project_execution_profile")
+      ? storedProfileId
+      : null;
+  const parts: string[] = [];
+  if (customExecution || storedProfileId === "custom" || layers.has("custom_profile")) {
+    parts.push("Custom execution");
+  } else if (namedProfile) {
+    parts.push(`${originDisplayName(namedProfile)} execution`);
+  }
+  if (behaviorCount > 0) {
+    parts.push(`${behaviorCount} behavior override${behaviorCount === 1 ? "" : "s"}`);
+  }
+  return parts.length > 0 ? parts.join(" · ") : null;
+}
+
+function OriginSummary({
+  origins,
+  storedProfileId = null,
+  customExecution = false,
+}: {
+  origins: Record<string, string>;
+  storedProfileId?: string | null;
+  customExecution?: boolean;
+}) {
   const [open, setOpen] = useState(false);
   const overrides = Object.entries(origins).filter(([, origin]) => origin !== "global");
   const groups = groupedOriginOverrides(overrides);
+  const summary = logicalOriginSummary(origins, storedProfileId, customExecution);
   useEffect(() => {
     if (!open) return;
     const onKey = (event: KeyboardEvent) => {
@@ -205,7 +254,7 @@ function OriginSummary({ origins }: { origins: Record<string, string> }) {
       document.body.style.overflow = previous;
     };
   }, [open]);
-  if (overrides.length === 0) {
+  if (!summary) {
     return (
       <p className="origin-summary origin-summary--empty">
         All settings inherit deployment defaults.
@@ -221,8 +270,7 @@ function OriginSummary({ origins }: { origins: Record<string, string> }) {
         aria-expanded={open}
         onClick={() => setOpen(true)}
       >
-        <span className="origin-summary__count">{overrides.length}</span>
-        Project override{overrides.length === 1 ? "" : "s"}
+        {summary}
         <ChevronRight size={15} aria-hidden="true" />
       </button>
       {open && (
@@ -237,11 +285,8 @@ function OriginSummary({ origins }: { origins: Record<string, string> }) {
             <header className="modal-card__header">
               <div>
                 <p className="eyebrow">Active policy</p>
-                <h2 id="project-overrides-title">Project overrides</h2>
-                <p>
-                  {overrides.length} setting{overrides.length === 1 ? "" : "s"} differ from
-                  deployment defaults. Grouped by area for review.
-                </p>
+                <h2 id="project-overrides-title">Setting origins</h2>
+                <p>{summary}. Detailed provenance is grouped by area.</p>
               </div>
               <button
                 className="icon-button"
@@ -605,8 +650,8 @@ function CreateProject({
           <details className="settings-disclosure">
             <summary>Optional AI settings</summary>
             <p className="muted-copy">
-              Leave Inherit global on to use this deployment's approved profile, generation model,
-              and response defaults. No AI revision is created if everything stays inherited.
+              Leave everything on Global to use this deployment's approved profile, generation
+              model, and answer defaults. No AI revision is created if nothing is changed.
             </p>
             {configuration.isPending && !configuration.data ? (
               <p className="muted-copy">Loading deployment defaults…</p>
@@ -879,6 +924,7 @@ function ProjectConfig({ project }: { project: Project }) {
   const [effective, setEffective] = useState<EffectiveProjectAIConfig | null>(null);
   const [history, setHistory] = useState<ProjectAIConfigRevision[]>([]);
   const [form, setForm] = useState<ProjectConfigForm>(emptyProjectConfigForm);
+  const [baseline, setBaseline] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const load = useCallback(async () => {
@@ -891,9 +937,11 @@ function ProjectConfig({ project }: { project: Project }) {
       throw new Error("The active AI configuration revision is unavailable. Reload and try again.");
     }
     const stored = activeRevision?.configuration ?? {};
+    const nextForm = configFormFromEffective(config, stored);
     setEffective(config);
     setHistory(revisions);
-    setForm(configFormFromEffective(config, stored));
+    setForm(nextForm);
+    setBaseline(JSON.stringify(buildSparseProjectConfig(nextForm)));
   }, [project.id]);
   useEffect(() => {
     setError("");
@@ -953,6 +1001,7 @@ function ProjectConfig({ project }: { project: Project }) {
       setBusy(false);
     }
   };
+  const unsaved = Boolean(baseline) && JSON.stringify(buildSparseProjectConfig(form)) !== baseline;
   return (
     <>
       <section className="panel config-summary">
@@ -968,7 +1017,11 @@ function ProjectConfig({ project }: { project: Project }) {
             {" · "}resolution {effective?.resolution_fingerprint?.slice(0, 12) ?? "—"}
           </p>
         </div>
-        <OriginSummary origins={effective?.origins ?? {}} />
+        <OriginSummary
+          origins={effective?.origins ?? {}}
+          storedProfileId={activeRevision?.configuration?.execution?.profile_id}
+          customExecution={Boolean(effective?.custom_execution)}
+        />
       </section>
       {error && (
         <div className="failure-box" role="alert">
@@ -976,11 +1029,12 @@ function ProjectConfig({ project }: { project: Project }) {
         </div>
       )}
       <form className="panel progressive-form" onSubmit={(event) => void submit(event)}>
-        <p className="muted-copy">
-          Project behavior is sparse. RAG execution is an inherit/preset selection or a complete
-          Custom bundle. Provider, web budget, calibration, citation, and source-governance controls
-          are deployment or code owned.
-        </p>
+        <div className="ai-config-draft">
+          <p className="muted-copy">
+            Profiles set retrieval. Behavior follows Global unless you change it.
+          </p>
+          {unsaved && <span className="section-state section-state--unsaved">Unsaved</span>}
+        </div>
         <ProjectAISettingsFields
           form={form}
           setForm={setForm}
@@ -995,6 +1049,7 @@ function ProjectConfig({ project }: { project: Project }) {
               <p className="eyebrow">Revision</p>
               <h3>Activate an immutable configuration</h3>
             </div>
+            {unsaved && <span className="section-state section-state--unsaved">Unsaved</span>}
           </div>
           <div className="field-control">
             <label htmlFor="project-ai-reason">Revision reason</label>

@@ -352,6 +352,7 @@ export function TestLab() {
                 <button
                   key={name}
                   type="button"
+                  title={tabDetails[name].label}
                   aria-current={tab === name ? "page" : undefined}
                   className={tab === name ? "lab-tab lab-tab--active" : "lab-tab"}
                   onClick={() => chooseTab(name)}

@@ -119,16 +119,9 @@ export function configFormFromEffective(
       : profileId === "custom"
         ? { ...resolvedExecution, ...storedExecution }
         : { ...resolvedExecution, ...(profile?.values ?? {}) };
-  const customBaseProfileId =
-    profileId === "custom" &&
-    config.base_profile_id &&
-    config.rag_profiles?.some((item) => item.id === config.base_profile_id)
-      ? config.base_profile_id
-      : null;
-
   return {
     profileId,
-    customBaseProfileId,
+    customBaseProfileId: null,
     execution,
     behavior: {
       generationModelId: {
@@ -336,6 +329,65 @@ const ADVANCED_EXECUTION_FIELDS: ExecutionFieldDefinition[] = [
   { key: "max_relationship_candidates", label: "Relationship candidates", min: 1, max: 20 },
 ];
 
+const EXECUTION_FIELD_KEYS = [...CORE_EXECUTION_FIELDS, ...ADVANCED_EXECUTION_FIELDS].map(
+  (field) => field.key,
+);
+
+function profileExecution(
+  profileId: string,
+  effective?: EffectiveProjectAIConfig | null,
+  ragProfiles: RAGProfileOption[] = [],
+): Record<string, unknown> {
+  if (profileId === "inherit") return deploymentExecution(effective);
+  const profile = ragProfiles.find((item) => item.id === profileId);
+  return { ...effectiveExecution(effective), ...(profile?.values ?? {}) };
+}
+
+function customLineage(currentProfileId: string): string | null {
+  if (currentProfileId === "custom") return null;
+  return currentProfileId;
+}
+
+function customLineageLabel(lineage: string | null, globalProfileId: string): string {
+  if (!lineage) return "Custom";
+  if (lineage === "inherit") return `Custom · based on Global (${displayName(globalProfileId)})`;
+  return `Custom · based on ${displayName(lineage)}`;
+}
+
+function customResetLabel(lineage: string | null): string | null {
+  if (!lineage) return null;
+  if (lineage === "inherit") return "Reset to Global";
+  return `Reset to ${displayName(lineage)}`;
+}
+
+function normalizeExecutionValue(value: unknown): string | number | boolean | null {
+  if (value === undefined || value === "" || value === null) return null;
+  if (typeof value === "boolean" || typeof value === "string") return value;
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  return null;
+}
+
+function changedSettingCount(
+  current: Record<string, unknown>,
+  base: Record<string, unknown> | null,
+): number | null {
+  if (!base) return null;
+  return EXECUTION_FIELD_KEYS.filter(
+    (key) => normalizeExecutionValue(current[key]) !== normalizeExecutionValue(base[key]),
+  ).length;
+}
+
+function executionEqualsBase(
+  current: Record<string, unknown>,
+  base: Record<string, unknown> | null,
+): boolean {
+  return changedSettingCount(current, base) === 0;
+}
+
+function optionLabel(label: string, value: string, globalValue: string) {
+  return value === globalValue ? `${label} (Global)` : label;
+}
+
 function ExecutionField({
   definition,
   value,
@@ -346,7 +398,7 @@ function ExecutionField({
   onChange: (value: unknown) => void;
 }) {
   return (
-    <label className="execution-field">
+    <label className="field-control execution-field">
       <span>{definition.label}</span>
       {definition.kind === "rerank" ? (
         <select
@@ -388,45 +440,46 @@ function BehaviorSetting({
   label,
   hint,
   source,
-  globalDisplay,
-  canOverride = true,
-  onOverride,
+  wide = false,
   onUseGlobal,
   children,
 }: {
   label: string;
   hint: string;
   source: SettingSource;
-  globalDisplay: ReactNode;
-  canOverride?: boolean;
-  onOverride: () => void;
+  wide?: boolean;
   onUseGlobal: () => void;
   children: ReactNode;
 }) {
   return (
-    <div className={`behavior-setting behavior-setting--${source}`}>
+    <div
+      className={[
+        "behavior-setting",
+        `behavior-setting--${source}`,
+        wide ? "behavior-setting--wide" : "",
+      ]
+        .filter(Boolean)
+        .join(" ")}
+    >
       <div className="behavior-setting__header">
         <FieldHint label={label} text={hint} />
         <div className="behavior-setting__source">
           <span className={`source-badge source-badge--${source}`}>
             {source === "global" ? "Global" : "Project"}
           </span>
-          <button
-            type="button"
-            className="source-action"
-            aria-label={`${label}: ${source === "global" ? "Override" : "Use Global"}`}
-            disabled={source === "global" && !canOverride}
-            onClick={source === "global" ? onOverride : onUseGlobal}
-          >
-            {source === "global" ? "Override" : "Use Global"}
-          </button>
+          {source === "project" && (
+            <button
+              type="button"
+              className="source-action"
+              aria-label={`${label}: Use Global`}
+              onClick={onUseGlobal}
+            >
+              Use Global
+            </button>
+          )}
         </div>
       </div>
-      {source === "global" ? (
-        <div className="behavior-setting__effective">{globalDisplay}</div>
-      ) : (
-        children
-      )}
+      {children}
     </div>
   );
 }
@@ -470,42 +523,43 @@ export function ProjectAISettingsFields({
     : undefined;
 
   const selectProfile = (profileId: string) => {
-    const profile = ragProfiles.find((item) => item.id === profileId);
-    setForm((current) => {
-      const nextExecution =
-        profileId === "inherit"
-          ? globalExecution
-          : profileId === "custom"
-            ? current.execution
-            : { ...effectiveExecution(effective), ...(profile?.values ?? {}) };
-      return {
-        ...current,
-        profileId,
-        customBaseProfileId:
-          profileId === "custom"
-            ? current.profileId === "inherit"
-              ? globalProfileId
-              : current.profileId === "custom"
-                ? current.customBaseProfileId
-                : current.profileId
-            : null,
-        execution: { ...nextExecution },
-      };
-    });
+    setForm((current) => ({
+      ...current,
+      profileId,
+      customBaseProfileId:
+        profileId === "custom"
+          ? (customLineage(current.profileId) ?? current.customBaseProfileId)
+          : null,
+      execution:
+        profileId === "custom"
+          ? current.execution
+          : { ...profileExecution(profileId, effective, ragProfiles) },
+    }));
   };
 
   const changeExecution = (key: string, value: unknown) => {
-    setForm((current) => ({
-      ...current,
-      profileId: "custom",
-      customBaseProfileId:
+    setForm((current) => {
+      const nextExecution = { ...current.execution, [key]: value };
+      const lineage =
         current.profileId === "custom"
           ? current.customBaseProfileId
-          : current.profileId === "inherit"
-            ? globalProfileId
-            : current.profileId,
-      execution: { ...current.execution, [key]: value },
-    }));
+          : customLineage(current.profileId);
+      const base = lineage ? profileExecution(lineage, effective, ragProfiles) : null;
+      if (lineage && executionEqualsBase(nextExecution, base)) {
+        return {
+          ...current,
+          profileId: lineage,
+          customBaseProfileId: null,
+          execution: { ...base },
+        };
+      }
+      return {
+        ...current,
+        profileId: "custom",
+        customBaseProfileId: lineage,
+        execution: nextExecution,
+      };
+    });
   };
 
   const setBehaviorSource = <K extends keyof ProjectBehaviorForm>(
@@ -538,6 +592,18 @@ export function ProjectAISettingsFields({
     }));
   };
 
+  const chooseBehavior = <K extends keyof ProjectBehaviorForm>(
+    key: K,
+    value: ProjectBehaviorForm[K]["value"],
+    globalValue: ProjectBehaviorForm[K]["value"],
+  ) => {
+    if (value === globalValue) {
+      setBehaviorSource(key, "global", globalValue);
+      return;
+    }
+    changeBehavior(key, value);
+  };
+
   const globalConfig = effective?.deployment_configuration ?? effective?.configuration;
   const globalModelId =
     globalConfig?.llm.generation_model_id ?? form.behavior.generationModelId.value;
@@ -550,7 +616,21 @@ export function ProjectAISettingsFields({
     : "disabled";
   const globalDomain = globalConfig?.domain_instructions ?? "";
   const oneModel = allowedGenerationModels.length <= 1;
-  const canOverrideModel = allowedGenerationModels.length > 0;
+  const lineageLabel = customLineageLabel(form.customBaseProfileId, globalProfileId);
+  const resetLabel = customResetLabel(form.customBaseProfileId);
+  const baseExecution = customProfile
+    ? form.customBaseProfileId
+      ? profileExecution(form.customBaseProfileId, effective, ragProfiles)
+      : null
+    : null;
+  const changedCount = customProfile ? changedSettingCount(form.execution, baseExecution) : null;
+  const customBannerLabel =
+    changedCount == null
+      ? lineageLabel
+      : `${lineageLabel} · ${changedCount} setting${changedCount === 1 ? "" : "s"} changed`;
+  const projectBehaviorCount = Object.values(form.behavior).filter(
+    (field) => field.source === "project",
+  ).length;
 
   return (
     <div className="ai-config-sections">
@@ -558,13 +638,13 @@ export function ProjectAISettingsFields({
         <header className="ai-config-section__header">
           <div>
             <p className="eyebrow">RAG execution</p>
-            <h3 id="rag-execution-heading">Retrieval and context template</h3>
+            <h3 id="rag-execution-heading">Retrieval profile</h3>
           </div>
           <span className="section-state">
             {form.profileId === "inherit"
               ? `Global · currently ${displayName(globalProfileId)}`
               : customProfile
-                ? `Custom${form.customBaseProfileId ? ` · based on ${displayName(form.customBaseProfileId)}` : ""}`
+                ? "Custom"
                 : displayName(form.profileId)}
           </span>
         </header>
@@ -575,14 +655,22 @@ export function ProjectAISettingsFields({
             role="radio"
             aria-checked={form.profileId === "inherit"}
             aria-label="Global RAG profile"
-            className={
-              form.profileId === "inherit" ? "profile-card profile-card--selected" : "profile-card"
-            }
+            className={[
+              "profile-card",
+              form.profileId === "inherit" ? "profile-card--selected" : "",
+              customProfile && form.customBaseProfileId === "inherit" ? "profile-card--base" : "",
+            ]
+              .filter(Boolean)
+              .join(" ")}
             onClick={() => selectProfile("inherit")}
           >
             <span className="profile-card__title">
               Global
-              <small>Currently {displayName(globalProfileId)}</small>
+              <small>
+                {customProfile && form.customBaseProfileId === "inherit"
+                  ? "Base"
+                  : `Currently ${displayName(globalProfileId)}`}
+              </small>
               {form.profileId === "inherit" && <Check size={15} aria-hidden="true" />}
             </span>
             <span className="profile-card__intent">Follows deployment changes</span>
@@ -596,16 +684,24 @@ export function ProjectAISettingsFields({
               aria-checked={form.profileId === profile.id}
               aria-label={`${displayName(profile.id)} RAG profile`}
               disabled={!profile.selectable && form.profileId !== profile.id}
-              className={
-                form.profileId === profile.id
-                  ? "profile-card profile-card--selected"
-                  : "profile-card"
-              }
+              className={[
+                "profile-card",
+                form.profileId === profile.id ? "profile-card--selected" : "",
+                customProfile && form.customBaseProfileId === profile.id
+                  ? "profile-card--base"
+                  : "",
+              ]
+                .filter(Boolean)
+                .join(" ")}
               onClick={() => selectProfile(profile.id)}
             >
               <span className="profile-card__title">
                 {displayName(profile.id)}
-                {profile.recommended && <small>Recommended</small>}
+                {customProfile && form.customBaseProfileId === profile.id ? (
+                  <small>Base</small>
+                ) : (
+                  profile.recommended && <small>Recommended</small>
+                )}
                 {form.profileId === profile.id && <Check size={15} aria-hidden="true" />}
               </span>
               <span className="profile-card__intent">
@@ -618,42 +714,32 @@ export function ProjectAISettingsFields({
 
         {effective ? (
           <>
-            <div
-              className={
-                customProfile
-                  ? "custom-profile-state custom-profile-state--active"
-                  : "custom-profile-state"
-              }
-            >
-              <div>
-                <strong>
-                  {customProfile
-                    ? `Custom${form.customBaseProfileId ? ` · based on ${displayName(form.customBaseProfileId)}` : ""}`
-                    : "Need different execution values?"}
-                </strong>
-                <span>
-                  {matchingProfile
-                    ? `Matches ${displayName(matchingProfile.id)}; remains explicitly Custom.`
-                    : customProfile
-                      ? "Every execution value is explicit in the revision."
-                      : "Editing any setting below creates a complete Custom bundle."}
-                </span>
+            {customProfile && (
+              <div className="custom-profile-state custom-profile-state--active">
+                <div>
+                  <strong>{customBannerLabel}</strong>
+                  <span>
+                    {matchingProfile
+                      ? `Matches ${displayName(matchingProfile.id)}; remains Custom.`
+                      : "These retrieval settings will be saved for this Project."}
+                  </span>
+                </div>
+                {resetLabel && (
+                  <button
+                    type="button"
+                    className="button button--secondary"
+                    onClick={() => selectProfile(form.customBaseProfileId ?? "inherit")}
+                  >
+                    {resetLabel}
+                  </button>
+                )}
               </div>
-              {!customProfile && (
-                <button
-                  type="button"
-                  className="button button--secondary"
-                  onClick={() => selectProfile("custom")}
-                >
-                  Customize current
-                </button>
-              )}
-            </div>
+            )}
 
             <div className="execution-settings">
               <div className="execution-settings__heading">
                 <h4>Core execution settings</h4>
-                <span>{customProfile ? "Editable Custom bundle" : "Edit to create Custom"}</span>
+                <span>{customProfile ? "Custom values" : "Edit a value to create Custom"}</span>
               </div>
               <div className="execution-grid execution-grid--core">
                 {CORE_EXECUTION_FIELDS.map((definition) => (
@@ -682,7 +768,7 @@ export function ProjectAISettingsFields({
           </>
         ) : (
           <p className="muted-copy">
-            Execution templates can be customized after the Project is created.
+            Retrieval profiles can be customized after the Project is created.
           </p>
         )}
       </section>
@@ -691,48 +777,49 @@ export function ProjectAISettingsFields({
         <header className="ai-config-section__header">
           <div>
             <p className="eyebrow">Project behavior</p>
-            <h3 id="project-behavior-heading">Answer behavior and instructions</h3>
+            <h3 id="project-behavior-heading">Answers and instructions</h3>
           </div>
-          <span className="section-state">Sparse Project overrides</span>
+          <span className="section-state">
+            {projectBehaviorCount === 0
+              ? "Follows Global"
+              : `${projectBehaviorCount} Project setting${projectBehaviorCount === 1 ? "" : "s"}`}
+          </span>
         </header>
         <div className="behavior-grid">
           <BehaviorSetting
             label="Generation model"
             hint={BEHAVIOR_HINTS.generationModel}
             source={form.behavior.generationModelId.source}
-            globalDisplay={
-              <span>
-                <strong>{globalModelId || "Deployment default"}</strong>
-                {globalModel && (
-                  <small>
-                    {globalModel.provider}/{globalModel.model}
-                  </small>
-                )}
-              </span>
-            }
-            canOverride={canOverrideModel}
-            onOverride={() => {
-              const current = form.behavior.generationModelId.value;
-              const next = allowedGenerationModels.some((model) => model.id === current)
-                ? current
-                : (allowedGenerationModels[0]?.id ?? current);
-              changeBehavior("generationModelId", next);
-            }}
             onUseGlobal={() => setBehaviorSource("generationModelId", "global", globalModelId)}
           >
             {oneModel ? (
-              <div className="behavior-setting__effective">
-                <strong>{form.behavior.generationModelId.value}</strong>
+              <div className="behavior-setting__value">
+                <span>
+                  <strong>
+                    {form.behavior.generationModelId.value || globalModelId || "Deployment default"}
+                  </strong>
+                  {globalModel && (
+                    <small>
+                      {globalModel.provider}/{globalModel.model}
+                    </small>
+                  )}
+                </span>
               </div>
             ) : (
               <select
                 aria-label="Generation model"
                 value={form.behavior.generationModelId.value}
-                onChange={(event) => changeBehavior("generationModelId", event.target.value)}
+                onChange={(event) =>
+                  chooseBehavior("generationModelId", event.target.value, globalModelId)
+                }
               >
                 {allowedGenerationModels.map((model) => (
                   <option key={model.id} value={model.id}>
-                    {model.id} — {model.provider}/{model.model}
+                    {optionLabel(
+                      `${model.id} — ${model.provider}/${model.model}`,
+                      model.id,
+                      globalModelId,
+                    )}
                   </option>
                 ))}
               </select>
@@ -743,20 +830,22 @@ export function ProjectAISettingsFields({
             label="Response mode"
             hint={BEHAVIOR_HINTS.responseMode}
             source={form.behavior.responseMode.source}
-            globalDisplay={<strong>{RESPONSE_MODE_LABELS[globalResponse]}</strong>}
-            onOverride={() => setBehaviorSource("responseMode", "project")}
             onUseGlobal={() => setBehaviorSource("responseMode", "global", globalResponse)}
           >
             <select
               aria-label="Response mode"
               value={form.behavior.responseMode.value}
               onChange={(event) =>
-                changeBehavior("responseMode", event.target.value as ResponseModeChoice)
+                chooseBehavior(
+                  "responseMode",
+                  event.target.value as ResponseModeChoice,
+                  globalResponse,
+                )
               }
             >
               {Object.entries(RESPONSE_MODE_LABELS).map(([value, label]) => (
                 <option key={value} value={value}>
-                  {label}
+                  {optionLabel(label, value, globalResponse)}
                 </option>
               ))}
             </select>
@@ -766,19 +855,23 @@ export function ProjectAISettingsFields({
             label="Grounding assurance"
             hint={BEHAVIOR_HINTS.grounding}
             source={form.behavior.groundingAssurance.source}
-            globalDisplay={<strong>{displayName(globalGrounding)}</strong>}
-            onOverride={() => setBehaviorSource("groundingAssurance", "project")}
             onUseGlobal={() => setBehaviorSource("groundingAssurance", "global", globalGrounding)}
           >
             <select
               aria-label="Grounding assurance"
               value={form.behavior.groundingAssurance.value}
               onChange={(event) =>
-                changeBehavior("groundingAssurance", event.target.value as GroundingAssurance)
+                chooseBehavior(
+                  "groundingAssurance",
+                  event.target.value as GroundingAssurance,
+                  globalGrounding,
+                )
               }
             >
-              <option value="strict">Strict</option>
-              <option value="balanced">Balanced</option>
+              <option value="strict">{optionLabel("Strict", "strict", globalGrounding)}</option>
+              <option value="balanced">
+                {optionLabel("Balanced", "balanced", globalGrounding)}
+              </option>
             </select>
           </BehaviorSetting>
 
@@ -786,19 +879,21 @@ export function ProjectAISettingsFields({
             label="Query translation"
             hint={BEHAVIOR_HINTS.translation}
             source={form.behavior.translation.source}
-            globalDisplay={<strong>{globalTranslation === "enabled" ? "On" : "Off"}</strong>}
-            onOverride={() => setBehaviorSource("translation", "project")}
             onUseGlobal={() => setBehaviorSource("translation", "global", globalTranslation)}
           >
             <select
               aria-label="Query translation"
               value={form.behavior.translation.value}
               onChange={(event) =>
-                changeBehavior("translation", event.target.value as TranslationMode)
+                chooseBehavior(
+                  "translation",
+                  event.target.value as TranslationMode,
+                  globalTranslation,
+                )
               }
             >
-              <option value="disabled">Off</option>
-              <option value="enabled">On</option>
+              <option value="disabled">{optionLabel("Off", "disabled", globalTranslation)}</option>
+              <option value="enabled">{optionLabel("On", "enabled", globalTranslation)}</option>
             </select>
           </BehaviorSetting>
 
@@ -806,17 +901,14 @@ export function ProjectAISettingsFields({
             label="Domain instructions"
             hint={BEHAVIOR_HINTS.domain}
             source={form.behavior.domain.source}
-            globalDisplay={
-              <span className="domain-preview">{globalDomain || "No Global instructions"}</span>
-            }
-            onOverride={() => setBehaviorSource("domain", "project")}
+            wide
             onUseGlobal={() => setBehaviorSource("domain", "global", globalDomain)}
           >
             <textarea
               aria-label="Domain instructions"
               rows={4}
               value={form.behavior.domain.value}
-              onChange={(event) => changeBehavior("domain", event.target.value)}
+              onChange={(event) => chooseBehavior("domain", event.target.value, globalDomain)}
             />
           </BehaviorSetting>
         </div>

@@ -319,7 +319,8 @@ test("editing a preset materializes a complete Custom bundle", async () => {
 
   await userEvent.click(await screen.findByRole("radio", { name: "Standard RAG profile" }));
   fireEvent.change(screen.getByLabelText("Top K"), { target: { value: "12" } });
-  expect(screen.getAllByText("Custom · based on Standard")).toHaveLength(2);
+  expect(screen.getByText("Custom · based on Standard · 1 setting changed")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Reset to Standard" })).toBeInTheDocument();
   await saveRevision();
 
   await waitFor(() => expect(create).toHaveBeenCalledTimes(1));
@@ -328,6 +329,61 @@ test("editing a preset materializes a complete Custom bundle", async () => {
     profile_id: "custom",
     retrieval_top_k: 12,
   });
+});
+
+test("editing Global execution preserves Global lineage", async () => {
+  mockProjectShell();
+  setupAI(effectiveConfig(null));
+  renderOperatorComponent(
+    <OperatorConsoleApp />,
+    `/projects?project=${projectFixture.id}&section=ai-config`,
+  );
+
+  fireEvent.change(await screen.findByLabelText("Top K"), { target: { value: "12" } });
+  expect(
+    screen.getByText("Custom · based on Global (Standard) · 1 setting changed"),
+  ).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Reset to Global" })).toBeInTheDocument();
+  expect(
+    screen.queryByText("Custom · based on Standard · 1 setting changed"),
+  ).not.toBeInTheDocument();
+});
+
+test("reverting Custom execution values restores the previous profile", async () => {
+  mockProjectShell();
+  const create = setupAI(effectiveConfig(null));
+  renderOperatorComponent(
+    <OperatorConsoleApp />,
+    `/projects?project=${projectFixture.id}&section=ai-config`,
+  );
+
+  fireEvent.change(await screen.findByLabelText("Semantic candidates"), { target: { value: "5" } });
+  expect(
+    screen.getByText("Custom · based on Global (Standard) · 1 setting changed"),
+  ).toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText("Keyword candidates"), { target: { value: "7" } });
+  expect(
+    screen.getByText("Custom · based on Global (Standard) · 2 settings changed"),
+  ).toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText("Keyword candidates"), { target: { value: "40" } });
+  expect(
+    screen.getByText("Custom · based on Global (Standard) · 1 setting changed"),
+  ).toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText("Semantic candidates"), { target: { value: "50" } });
+  expect(screen.queryByText(/Custom · based on/)).not.toBeInTheDocument();
+  expect(screen.getByRole("radio", { name: "Global RAG profile" })).toBeChecked();
+  expect(screen.queryByText("Unsaved")).not.toBeInTheDocument();
+
+  await userEvent.click(screen.getByRole("radio", { name: "Quality RAG profile" }));
+  fireEvent.change(screen.getByLabelText("Top K"), { target: { value: "13" } });
+  expect(screen.getByText(/Custom · based on Quality · 1 setting changed/)).toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText("Top K"), { target: { value: "18" } });
+  expect(screen.queryByText(/Custom · based on/)).not.toBeInTheDocument();
+  expect(screen.getByRole("radio", { name: "Quality RAG profile" })).toBeChecked();
+  await saveRevision();
+
+  await waitFor(() => expect(create).toHaveBeenCalledTimes(1));
+  expect(create.mock.calls[0]?.[1].execution).toEqual({ profile_id: "quality" });
 });
 
 test("reselecting a preset discards Custom values", async () => {
@@ -340,7 +396,7 @@ test("reselecting a preset discards Custom values", async () => {
 
   await userEvent.click(await screen.findByRole("radio", { name: "Quality RAG profile" }));
   fireEvent.change(screen.getByLabelText("Top K"), { target: { value: "13" } });
-  expect(screen.getAllByText("Custom · based on Quality")).toHaveLength(2);
+  expect(screen.getByText(/Custom · based on Quality/)).toBeInTheDocument();
   await userEvent.click(screen.getByRole("radio", { name: "Quality RAG profile" }));
   expect(screen.getByLabelText("Top K")).toHaveValue(18);
   await saveRevision();
@@ -359,9 +415,9 @@ test("behavior changes do not change the selected RAG profile", async () => {
 
   const standard = await screen.findByRole("radio", { name: "Standard RAG profile" });
   await userEvent.click(standard);
-  await userEvent.click(screen.getByRole("button", { name: "Response mode: Override" }));
   await userEvent.selectOptions(screen.getByLabelText("Response mode"), "indexed_then_web");
   expect(standard).toBeChecked();
+  expect(screen.getByRole("button", { name: "Response mode: Use Global" })).toBeInTheDocument();
   expect(screen.queryByText(/Custom · based on/)).not.toBeInTheDocument();
   await saveRevision();
 
@@ -372,7 +428,7 @@ test("behavior changes do not change the selected RAG profile", async () => {
   });
 });
 
-test("an explicit Project value remains distinct when it equals Global", async () => {
+test("selecting the Global behavior option restores Global source", async () => {
   mockProjectShell();
   const create = setupAI(effectiveConfig(null));
   renderOperatorComponent(
@@ -380,8 +436,56 @@ test("an explicit Project value remains distinct when it equals Global", async (
     `/projects?project=${projectFixture.id}&section=ai-config`,
   );
 
-  await userEvent.click(await screen.findByRole("button", { name: "Response mode: Override" }));
-  expect(screen.getByLabelText("Response mode")).toHaveValue("indexed_only");
+  await userEvent.click(await screen.findByRole("radio", { name: "Standard RAG profile" }));
+  await userEvent.selectOptions(screen.getByLabelText("Response mode"), "indexed_then_web");
+  expect(screen.getByRole("button", { name: "Response mode: Use Global" })).toBeInTheDocument();
+  await userEvent.selectOptions(screen.getByLabelText("Response mode"), "indexed_only");
+  expect(
+    screen.queryByRole("button", { name: "Response mode: Use Global" }),
+  ).not.toBeInTheDocument();
+  await saveRevision();
+
+  await waitFor(() => expect(create).toHaveBeenCalledTimes(1));
+  expect(create.mock.calls[0]?.[1]).toMatchObject({
+    behavior: {},
+    execution: { profile_id: "standard" },
+  });
+});
+
+test("clearing domain instructions back to Global restores Global source", async () => {
+  mockProjectShell();
+  setupAI(effectiveConfig(null));
+  renderOperatorComponent(
+    <OperatorConsoleApp />,
+    `/projects?project=${projectFixture.id}&section=ai-config`,
+  );
+
+  const domain = await screen.findByLabelText("Domain instructions");
+  await userEvent.type(domain, "Tax audit focus");
+  expect(
+    screen.getByRole("button", { name: "Domain instructions: Use Global" }),
+  ).toBeInTheDocument();
+  await userEvent.clear(domain);
+  expect(
+    screen.queryByRole("button", { name: "Domain instructions: Use Global" }),
+  ).not.toBeInTheDocument();
+  expect(screen.getByText("Follows Global")).toBeInTheDocument();
+  expect(screen.queryByText("Unsaved")).not.toBeInTheDocument();
+});
+
+test("an explicit Project value remains distinct when it equals Global", async () => {
+  mockProjectShell();
+  const stored = revisionFor({
+    behavior: { response_mode: "indexed_only" },
+    execution: {},
+  });
+  const create = setupAI(effectiveConfig(stored.id), stored);
+  renderOperatorComponent(
+    <OperatorConsoleApp />,
+    `/projects?project=${projectFixture.id}&section=ai-config`,
+  );
+
+  expect(await screen.findByLabelText("Response mode")).toHaveValue("indexed_only");
   expect(screen.getByRole("button", { name: "Response mode: Use Global" })).toBeInTheDocument();
   await saveRevision();
 
@@ -401,9 +505,12 @@ test("Use Global removes an existing behavior override", async () => {
     `/projects?project=${projectFixture.id}&section=ai-config`,
   );
 
-  await userEvent.click(await screen.findByRole("button", { name: "Response mode: Use Global" }));
-  expect(screen.queryByLabelText("Response mode")).not.toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Response mode: Override" })).toBeInTheDocument();
+  expect(await screen.findByLabelText("Response mode")).toBeInTheDocument();
+  await userEvent.click(screen.getByRole("button", { name: "Response mode: Use Global" }));
+  expect(screen.getByLabelText("Response mode")).toHaveValue("indexed_only");
+  expect(
+    screen.queryByRole("button", { name: "Response mode: Use Global" }),
+  ).not.toBeInTheDocument();
   await saveRevision();
 
   await waitFor(() => expect(create).toHaveBeenCalledTimes(1));
@@ -419,7 +526,7 @@ test("one-model generation UI has no redundant selector", async () => {
   config.allowed_generation_models = [
     { id: "openai-o1-test", provider: "openai", model: "o1-test" },
   ];
-  const create = setupAI(config);
+  setupAI(config);
   renderOperatorComponent(
     <OperatorConsoleApp />,
     `/projects?project=${projectFixture.id}&section=ai-config`,
@@ -427,15 +534,9 @@ test("one-model generation UI has no redundant selector", async () => {
 
   expect(await screen.findByText("openai-o1-test")).toBeInTheDocument();
   expect(screen.queryByLabelText("Generation model")).not.toBeInTheDocument();
-  await userEvent.click(screen.getByRole("button", { name: "Generation model: Override" }));
-  expect(screen.queryByLabelText("Generation model")).not.toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Generation model: Use Global" })).toBeInTheDocument();
-  await saveRevision();
-
-  await waitFor(() => expect(create).toHaveBeenCalledTimes(1));
-  expect(create.mock.calls[0]?.[1].behavior).toEqual({
-    generation_model_id: "openai-o1-test",
-  });
+  expect(
+    screen.queryByRole("button", { name: "Generation model: Use Global" }),
+  ).not.toBeInTheDocument();
 });
 
 test("sparse payload contains only explicitly overridden behavior", async () => {
@@ -446,8 +547,8 @@ test("sparse payload contains only explicitly overridden behavior", async () => 
     `/projects?project=${projectFixture.id}&section=ai-config`,
   );
 
-  await userEvent.click(await screen.findByRole("button", { name: "Query translation: Override" }));
-  await userEvent.selectOptions(screen.getByLabelText("Query translation"), "enabled");
+  await userEvent.selectOptions(await screen.findByLabelText("Query translation"), "enabled");
+  expect(screen.getByRole("button", { name: "Query translation: Use Global" })).toBeInTheDocument();
   await saveRevision();
 
   await waitFor(() => expect(create).toHaveBeenCalledTimes(1));
@@ -455,4 +556,35 @@ test("sparse payload contains only explicitly overridden behavior", async () => 
     behavior: { translation_policy: "enabled" },
     execution: {},
   });
+});
+
+test("origin summary reports Custom execution instead of a leaf override count", async () => {
+  mockProjectShell();
+  const stored = revisionFor({
+    behavior: { response_mode: "indexed_then_web" },
+    execution: { profile_id: "custom", ...baseExecution, retrieval_top_k: 12 },
+  });
+  const config = effectiveConfig(stored.id);
+  config.custom_execution = true;
+  config.origins = {
+    "llm.generation_model_id": "project",
+    "chat.response_mode": "project",
+    "chat.grounding_mode": "project",
+    "retrieval.top_k": "custom_profile",
+    "retrieval.semantic_candidate_top_k": "custom_profile",
+    "retrieval.keyword_candidate_top_k": "custom_profile",
+    "chat.max_context_chunks": "custom_profile",
+    "chat.include_citations": "code_invariant",
+    "retrieval.strategy": "code_invariant",
+  };
+  setupAI(config, stored);
+  renderOperatorComponent(
+    <OperatorConsoleApp />,
+    `/projects?project=${projectFixture.id}&section=ai-config`,
+  );
+
+  expect(
+    await screen.findByRole("button", { name: /Custom execution · 3 behavior overrides/ }),
+  ).toBeInTheDocument();
+  expect(screen.queryByText(/\d+ Project overrides/)).not.toBeInTheDocument();
 });
