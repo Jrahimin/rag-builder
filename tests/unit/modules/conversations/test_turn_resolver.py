@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 
 import pytest
 
+from app.modules.conversations.prompts.turn_resolution import TURN_RESOLUTION_PROMPT_VERSION
 from app.modules.conversations.turn_resolution import (
     TurnOutcome,
     TurnResolutionInput,
@@ -141,6 +142,7 @@ async def test_resolver_accepts_strict_json_and_uses_null_temperature() -> None:
     )
     assert llm.temperature is None
     assert result.attempted is True
+    assert result.diagnostics["prompt_version"] == TURN_RESOLUTION_PROMPT_VERSION
     assert result.resolution.outcome is TurnOutcome.RESOLVED
     assert result.retrieval.query == "What rebate applies to 90,000?"
     assert result.diagnostics["query_changed"] is True
@@ -163,7 +165,8 @@ async def test_resolver_timeout_and_malformed_output_fall_back() -> None:
         max_output_tokens=32,
     ).resolve(_payload())
     assert malformed.resolution.outcome is TurnOutcome.FALLBACK
-    assert malformed.diagnostics["failure_code"] == "malformed_output"
+    assert malformed.diagnostics["failure_code"] == "malformed_json"
+    assert "not-json" not in str(malformed.diagnostics)
 
     failed = await TurnResolver(
         FailingResolverLLM(model="test", provider_version="1"),
@@ -202,6 +205,119 @@ async def test_non_resolution_discards_model_snapshot(outcome: str) -> None:
     assert result.resolution.effective_question == payload.current_message
     assert result.retrieval.as_of is None
     assert result.diagnostics["filter_changed"] is False
+
+
+@pytest.mark.parametrize(
+    ("current_message", "history", "kind", "active_value", "excerpt", "effective_question"),
+    [
+        (
+            "Use that amount.",
+            "What is the rebate on 75,000?",
+            "scenario_parameter",
+            "75,000",
+            "75,000",
+            "What rebate applies to 90,000?",
+        ),
+        (
+            "Use that date.",
+            "What was the rate on 2025-06-01?",
+            "period_date",
+            "2025-06-01",
+            "2025-06-01",
+            "What was the rate on 2025-07-01?",
+        ),
+        (
+            "Use that signed amount.",
+            "The adjustment is -7,500.",
+            "scenario_parameter",
+            "-7,500",
+            "-7,500",
+            "What applies to 7,500?",
+        ),
+        (
+            "Use that duration.",
+            "The window is 10 hours.",
+            "scenario_parameter",
+            "10 hours",
+            "10 hours",
+            "What applies to 10 days?",
+        ),
+        (
+            "Use that amount.",
+            "The budget is BDT 75,000.",
+            "scenario_parameter",
+            "BDT 75,000",
+            "BDT 75,000",
+            "What rebate applies to USD 75,000?",
+        ),
+    ],
+)
+async def test_resolver_falls_back_when_effective_question_mutates_parameters(
+    current_message: str,
+    history: str,
+    kind: str,
+    active_value: str,
+    excerpt: str,
+    effective_question: str,
+) -> None:
+    history_id = uuid.uuid4()
+    current_id = uuid.uuid4()
+    payload = TurnResolutionInput.model_validate(
+        {
+            "current_message_id": str(current_id),
+            "current_message": current_message,
+            "history": [{"id": str(history_id), "role": "user", "content": history}],
+            "reference_time": _REFERENCE.isoformat(),
+        }
+    )
+    temporal_intent: dict[str, object] = {
+        "kind": "none",
+        "anchor_date": None,
+        "requires_snapshot": False,
+        "snapshot_origin": None,
+    }
+    if kind == "period_date":
+        temporal_intent = {
+            "kind": "exact_date",
+            "anchor_date": active_value,
+            "requires_snapshot": True,
+            "snapshot_origin": "user_literal",
+        }
+    result = await TurnResolver(
+        JsonLLM(
+            {
+                "outcome": "resolved",
+                "relation": "follow_up",
+                "effective_question": effective_question,
+                "active_bindings": [
+                    {
+                        "kind": kind,
+                        "active_value": active_value,
+                        "origin": "user_literal",
+                        "references": [
+                            {
+                                "message_id": str(history_id),
+                                "role": "user",
+                                "excerpt": excerpt,
+                            }
+                        ],
+                    }
+                ],
+                "temporal_intent": temporal_intent,
+                "clarification_question": None,
+                "reason": None,
+            }
+        ),
+        timeout_seconds=2,
+        max_output_tokens=256,
+    ).resolve(payload)
+    assert result.resolution.outcome is TurnOutcome.FALLBACK
+    assert result.retrieval.query == current_message
+    assert result.diagnostics["failure_code"] == "mutated_effective_question"
+    assert result.diagnostics["failure_field"] == "effective_question"
+    assert "rejected_output" not in result.diagnostics
+    assert result.diagnostics["query_changed"] is False
+    assert result.retrieval.as_of is None
 
 
 async def test_actual_resolver_snapshot_diagnostics_are_scored_by_journey() -> None:

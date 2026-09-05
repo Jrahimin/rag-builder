@@ -23,4 +23,5 @@ def test_canonical_prompt_is_returned_for_any_version() -> None:
     assert "If knowledge and web evidence conflict" in template.template
     assert "scenario assumptions" in template.template
     assert "Adopted values are scenario inputs" in template.template
+    assert "user's own supplied amount" in template.template
     assert require_prompt_template("v9") is template

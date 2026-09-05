@@ -131,7 +131,7 @@ Case definitions are in `tests/fixtures/journeys/tax_v1/journey.json`.
 | `correction` | Stale-claim cases must state the new facts plus a correction marker; repeating the old tokens is not required |
 | `mode` | `answerable` (default), `scope_isolation`, `no_answer`, or `clarification` |
 | `document_scope` / `as_of` / `metadata_filter` | Production hard scope, effective date, and per-request metadata filter. Omitted filters are not inherited from earlier sequence turns |
-| `expected_resolution` | Optional structured check of outcome, relation, active values/origins, prior-turn references, temporal intent, and effective snapshot. Does not assert rewritten question prose |
+| `expected_resolution` | Optional structured check of outcome, relation, active values/origins, absent binding kinds, prior-turn references, temporal intent, and effective snapshot. Does not assert rewritten question prose |
 
 Failure stages localize where the production path broke: `turn_resolution`,
 `execution`, `retrieval`,

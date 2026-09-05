@@ -532,6 +532,75 @@ async def test_contiguous_uncited_list_block_inherits_neighbor_citations() -> No
     assert result.grounded is True
 
 
+async def test_uncited_calculation_inherits_from_cited_rate() -> None:
+    service = GroundingService(ChatConfig(minimum_claim_token_coverage=0.9))
+    result = await service.map_claims(
+        "The current investment rebate is 10% of eligible investment. [1]\n\n"
+        "Eligible investment: BDT 60,000\n\n"
+        "60,000 \u00d7 10% = BDT 6,000.",
+        [_chunk(content="The current investment rebate is 10% of eligible investment.")],
+    )
+
+    calculation = next(claim for claim in result.claims if "\u00d7" in claim["text"])
+    assert calculation["verification"] == "supported"
+    assert result.grounded is True
+
+
+async def test_rate_first_calculation_is_arithmetically_verified() -> None:
+    service = GroundingService(ChatConfig(minimum_claim_token_coverage=0.9))
+    result = await service.map_claims(
+        "10% of BDT 90,000 = BDT 9,000. [1]",
+        [_chunk(content="The current investment rebate is 10% of eligible investment.")],
+    )
+
+    assert result.claims[0]["verification"] == "supported"
+    assert result.grounded is True
+
+
+async def test_conclusion_uses_setup_base_with_cited_rate() -> None:
+    service = GroundingService(ChatConfig(minimum_claim_token_coverage=0.9))
+    result = await service.map_claims(
+        "The current investment rebate is 10% of eligible investment. [1]\n\n"
+        "Eligible investment: BDT 75,000\n\n"
+        "Therefore, the rebate is BDT 7,500.",
+        [_chunk(content="The current investment rebate is 10% of eligible investment.")],
+    )
+
+    conclusion = next(claim for claim in result.claims if "7,500" in claim["text"])
+    assert conclusion["verification"] == "supported"
+    assert result.grounded is True
+
+
+async def test_using_your_investment_restatement_is_setup() -> None:
+    service = GroundingService(ChatConfig(minimum_claim_token_coverage=0.3))
+    result = await service.map_claims(
+        "Using your eligible investment of BDT 75,000.\n\n75,000 \u00d7 10% = BDT 7,500. [1]",
+        [_chunk(content="The current investment rebate is 10% of eligible investment.")],
+    )
+
+    assert all("Using your eligible investment" not in claim["text"] for claim in result.claims)
+    assert result.grounded is True
+
+
+async def test_cited_labeled_threshold_remains_a_verifiable_factual_claim() -> None:
+    service = GroundingService(ChatConfig(minimum_claim_token_coverage=0.3))
+    threshold_chunk = _chunk(
+        content="From 1 July 2026, the individual tax-free threshold is BDT 400,000."
+    )
+    rate_chunk = _chunk(content="The investment rebate rate is 12% of eligible investment.")
+    result = await service.map_claims(
+        "On 1 August 2027:\n\n"
+        "- **Investment rebate rate:** **12% of eligible investment**. [1]\n"
+        "- **Individual tax-free threshold:** **BDT 400,000**. [2]",
+        [rate_chunk, threshold_chunk],
+    )
+
+    threshold = next(claim for claim in result.claims if "400,000" in claim["text"])
+    assert "Eligible investment" not in threshold["text"]
+    assert threshold["verification"] == "supported"
+    assert threshold["grounded"] is True
+
+
 async def test_currency_prefixed_result_is_arithmetically_verified() -> None:
     service = GroundingService(ChatConfig(minimum_claim_token_coverage=0.9))
     result = await service.map_claims(

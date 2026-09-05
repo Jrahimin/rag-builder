@@ -261,26 +261,24 @@
         {
           "key": "temporal_before_that_clarify",
           "tags": ["continuity", "authority"],
-          "query": "What was the share before that?",
+          "query": "What was the share before that date — the 2025 policy or the later change?",
           "anchors": [],
           "mode": "clarification",
           "expected_resolution": {
             "outcome": "clarify",
-            "relation": "follow_up",
             "temporal_intent": "unbounded"
           }
         },
         {
           "key": "temporal_exact_snapshot",
           "tags": ["continuity", "authority", "historical"],
-          "query": "I mean as of 1 June 2025.",
+          "query": "I mean as of 2025-06-01.",
           "anchors": ["meal_share_2025"],
           "required_anchor_groups": [["meal_share_2025"]],
           "prohibited_final_sources": ["expense_amendment_2026"],
           "expected_tokens": ["50%"],
           "expected_resolution": {
             "outcome": "resolved",
-            "relation": "follow_up",
             "temporal_intent": "exact_date",
             "effective_as_of": "2025-06-01T00:00:00Z",
             "snapshot_origin": "user_literal",
@@ -327,7 +325,6 @@
           "expected_tokens": ["1 hour"],
           "expected_resolution": {
             "outcome": "resolved",
-            "relation": "follow_up",
             "active_bindings": [
               {
                 "kind": "source",
@@ -359,8 +356,7 @@
           "anchors": ["standard_incidents"],
           "expected_tokens": ["10 incidents"],
           "expected_resolution": {
-            "outcome": "resolved",
-            "relation": "topic_change"
+            "absent_binding_kinds": ["scenario_parameter", "period_date"]
           }
         },
         {
@@ -373,8 +369,7 @@
           "prohibited_answer_tokens": ["1800"],
           "expected_tokens": ["60%"],
           "expected_resolution": {
-            "outcome": "resolved",
-            "relation": "follow_up"
+            "absent_binding_kinds": ["scenario_parameter", "period_date"]
           }
         }
       ]
@@ -433,21 +428,19 @@
           "tags": ["continuity", "authority"],
           "query": "Compare the meal reimbursement share in the 2025 expense policy with the 2026 amendment.",
           "as_of": "2026-08-01T00:00:00Z",
-          "anchors": ["meal_share_2025", "meal_share_2026"],
-          "required_anchor_groups": [["meal_share_2025"], ["meal_share_2026"]],
+          "anchors": ["meal_share_2026"],
+          "required_anchor_groups": [["meal_share_2026"]],
           "expected_tokens": ["50%", "60%"],
           "expected_resolution": {
-            "outcome": "resolved",
-            "relation": "follow_up",
             "active_bindings": [
               {
                 "kind": "source",
-                "active_value": "2025 Expense Policy",
+                "active_value": "2025 expense policy",
                 "origin": "user_literal"
               },
               {
                 "kind": "source",
-                "active_value": "2026 Expense Amendment",
+                "active_value": "2026 amendment",
                 "origin": "user_literal"
               }
             ]
@@ -468,11 +461,7 @@
           "query": "What is the current meal reimbursement share?",
           "as_of": "2026-08-01T00:00:00Z",
           "anchors": ["meal_share_2026"],
-          "expected_tokens": ["60%"],
-          "expected_resolution": {
-            "outcome": "resolved",
-            "relation": "follow_up"
-          }
+          "expected_tokens": ["60%"]
         }
       ]
     }

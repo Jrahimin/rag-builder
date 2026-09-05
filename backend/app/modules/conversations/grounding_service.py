@@ -66,15 +66,41 @@ _QUANTITY_SETUP_PATTERN = regex.compile(
     r"^(?:[-*+]\s+)?.+[:：]\s*(?:[A-Za-z]{1,6}\s+)*[\d,.]+\s*"  # noqa: RUF001
     r"(?:[A-Za-z\p{Bengali}]{0,12})?\s*$"
 )
-_CURRENCY_TOKEN = r"(?:[A-Za-z]{1,6}\s+)*"
+_SCENARIO_INPUT_PATTERN = regex.compile(
+    r"^(?:[-*+]\s+)?(?:eligible\s+investment|"
+    r"using\s+(?:your\s+)?(?:eligible\s+)?(?:investment|amount)|"
+    r"you\s+(?:provided|declared|gave|supplied)|"
+    r"your\s+(?:eligible\s+)?investment|"
+    r"\u09af\u09cb\u0997\u09cd\u09af\s+\u09ac\u09bf\u09a8\u09bf\u09af\u09bc?\u09cb\u0997"
+    r")\b.+$",
+    regex.IGNORECASE,
+)
+_CURRENCY_TOKEN = r"(?:[A-Za-z]{1,6}\s+|৳\s*)?"
 _AMOUNT_PATTERN = regex.compile(r"\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?")
 _EVIDENCE_RATE_PATTERN = regex.compile(r"(\d+(?:\.\d+)?)\s*%")
-_CALCULATION_PATTERN = regex.compile(
-    r"(?P<base>\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?)\s*[×x*]\s*"  # noqa: RUF001
-    r"(?P<rate>\d+(?:\.\d+)?)\s*%\s*=\s*"
-    rf"{_CURRENCY_TOKEN}"
-    r"(?P<result>\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?)",
-    regex.IGNORECASE,
+_NUMBER = r"\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?"
+_EQUALS = r"(?:=|\uff1d|equals|is)"
+_CALCULATION_PATTERNS = (
+    regex.compile(
+        rf"{_CURRENCY_TOKEN}(?P<base>{_NUMBER})\s*[\u00d7x*]\s*(?P<rate>{_NUMBER})\s*%\s*"
+        rf"{_EQUALS}\s*{_CURRENCY_TOKEN}(?P<result>{_NUMBER})",
+        regex.IGNORECASE,
+    ),
+    regex.compile(
+        rf"(?P<rate>{_NUMBER})\s*%\s*[\u00d7x*]\s*{_CURRENCY_TOKEN}(?P<base>{_NUMBER})\s*"
+        rf"{_EQUALS}\s*{_CURRENCY_TOKEN}(?P<result>{_NUMBER})",
+        regex.IGNORECASE,
+    ),
+    regex.compile(
+        rf"(?P<rate>{_NUMBER})\s*%\s+(?:of|on)\s+{_CURRENCY_TOKEN}(?P<base>{_NUMBER})\s*"
+        rf"{_EQUALS}\s*{_CURRENCY_TOKEN}(?P<result>{_NUMBER})",
+        regex.IGNORECASE,
+    ),
+    regex.compile(
+        rf"{_CURRENCY_TOKEN}(?P<base>{_NUMBER})\s+at\s+(?P<rate>{_NUMBER})\s*%\s*"
+        rf"{_EQUALS}\s*{_CURRENCY_TOKEN}(?P<result>{_NUMBER})",
+        regex.IGNORECASE,
+    ),
 )
 _CALCULATION_OPERATOR_PATTERN = regex.compile(
     r"[%＝=×]|[x*]\s*\d|\d\s*%",  # noqa: RUF001
@@ -789,6 +815,7 @@ class GroundingService:
             if (
                 not claim_text
                 or _is_structural_segment(claim_text)
+                or _is_quantity_setup_segment(segment)
                 or _is_short_stance_segment(claim_text)
                 or _is_insufficiency_statement(claim_text)
             ):
@@ -830,6 +857,7 @@ class GroundingService:
                     draft.text,
                     evidence_texts,
                     adjacent_texts=adjacent_texts,
+                    extra_bases=_setup_amounts(segments),
                 )
                 if derived is not None:
                     verification = derived
@@ -1407,6 +1435,8 @@ def _inherit_bounded_block_citations(segments: list[str]) -> list[str]:
         if not shared:
             neighbor = _nearest_matching_cited_calculation(segments, index)
             if neighbor is None:
+                neighbor = _nearest_cited_rate_for_derived_result(segments, index)
+            if neighbor is None:
                 continue
             shared = set(_CITATION_PATTERN.findall(segments[neighbor]))
         if shared:
@@ -1464,6 +1494,65 @@ def _nearest_matching_cited_calculation(segments: list[str], index: int) -> int 
     return None
 
 
+def _nearest_cited_rate_for_derived_result(segments: list[str], index: int) -> int | None:
+    """Inherit from a cited rate when this claim is that rate applied to a setup amount."""
+    parsed = _parse_calculation(segments[index])
+    claim_amounts = _money_amounts(segments[index])
+    if parsed is None and not claim_amounts:
+        return None
+    setup_amounts = _setup_amounts(segments)
+    bases = tuple(dict.fromkeys((*claim_amounts, *setup_amounts)))
+    for direction in (-1, 1):
+        if _uncited_factual_in_direction(segments, index, -direction):
+            continue
+        neighbor = _nearest_cited_factual_segment(segments, index, direction=direction)
+        if neighbor is None:
+            continue
+        neighbor_rates = _rates_in_evidence([segments[neighbor]])
+        if not neighbor_rates:
+            continue
+        if parsed is not None:
+            _base, rate, _result = parsed
+            if any(abs(rate - item) <= _amount_tolerance(item) for item in neighbor_rates):
+                return neighbor
+            continue
+        if any(
+            _arithmetic_matches(base, rate, result)
+            for rate in neighbor_rates
+            for base in bases
+            for result in claim_amounts
+            if abs(base - result) > _amount_tolerance(result)
+        ):
+            return neighbor
+    return None
+
+
+def _uncited_factual_in_direction(segments: list[str], index: int, direction: int) -> bool:
+    cursor = index + direction
+    while 0 <= cursor < len(segments):
+        candidate = segments[cursor]
+        if _CITATION_PATTERN.search(candidate):
+            return False
+        if _is_non_factual_segment(candidate) or (
+            _is_markdown_list_item(candidate) and _is_quantity_setup_segment(candidate)
+        ):
+            cursor += direction
+            continue
+        if _is_markdown_list_item(candidate):
+            cursor += direction
+            continue
+        return not _is_non_factual_segment(candidate)
+    return False
+
+
+def _setup_amounts(segments: list[str]) -> tuple[float, ...]:
+    amounts: list[float] = []
+    for segment in segments:
+        if _is_quantity_setup_segment(segment):
+            amounts.extend(sorted(_money_amounts(segment)))
+    return tuple(dict.fromkeys(amounts))
+
+
 def _restates_cited_calculation(
     amounts: set[float],
     base: float,
@@ -1484,7 +1573,8 @@ def _restates_cited_calculation(
 
 def _is_non_factual_segment(text: str) -> bool:
     return (
-        _is_structural_segment(text)
+        _is_structural_segment(_plain_claim_text(text) or text)
+        or _is_quantity_setup_segment(text)
         or _is_short_stance_segment(text)
         or _is_insufficiency_statement(text)
     )
@@ -1503,7 +1593,6 @@ def _is_structural_segment(text: str) -> bool:
         or _MARKDOWN_ORDINAL_PATTERN.fullmatch(stripped)
         or _MARKDOWN_TABLE_DIVIDER_PATTERN.fullmatch(stripped)
         or _LIST_PREAMBLE_PATTERN.fullmatch(stripped)
-        or _is_quantity_setup_segment(stripped)
         or _POLARITY_PATTERN.fullmatch(stripped)
     )
 
@@ -1522,11 +1611,19 @@ def _is_markdown_list_item(text: str) -> bool:
 
 
 def _is_quantity_setup_segment(text: str) -> bool:
-    """Treat labeled amounts as calculation setup, not independent corpus claims."""
+    """Treat uncited labeled calculation inputs as setup, not corpus claims.
+
+    A cited labeled quantity such as a documented threshold remains a verifiable
+    factual claim. Uncited ``Eligible investment: BDT 60,000`` stays setup.
+    """
+    if _CITATION_PATTERN.search(text):
+        return False
     folded = _fold_indic_digits(_plain_claim_text(text))
     if _CALCULATION_OPERATOR_PATTERN.search(folded):
         return False
-    return bool(_QUANTITY_SETUP_PATTERN.fullmatch(folded))
+    return bool(
+        _QUANTITY_SETUP_PATTERN.fullmatch(folded) or _SCENARIO_INPUT_PATTERN.fullmatch(folded)
+    )
 
 
 def _parse_amount(value: str) -> float:
@@ -1547,6 +1644,11 @@ def _amount_set(text: str) -> set[float]:
     return {_parse_amount(match) for match in _AMOUNT_PATTERN.findall(folded)}
 
 
+def _money_amounts(text: str) -> set[float]:
+    """Amounts large enough to be scenario money, not days or bare percents."""
+    return {amount for amount in _amount_set(text) if amount >= 100}
+
+
 def _amounts_include(amounts: set[float], value: float) -> bool:
     tolerance = _amount_tolerance(value)
     return any(abs(value - other) <= tolerance for other in amounts)
@@ -1554,14 +1656,16 @@ def _amounts_include(amounts: set[float], value: float) -> bool:
 
 def _parse_calculation(text: str) -> tuple[float, float, float] | None:
     folded = _fold_indic_digits(_plain_claim_text(text))
-    match = _CALCULATION_PATTERN.search(folded)
-    if match is None:
-        return None
-    return (
-        _parse_amount(match.group("base")),
-        _parse_amount(match.group("rate")),
-        _parse_amount(match.group("result")),
-    )
+    for pattern in _CALCULATION_PATTERNS:
+        match = pattern.search(folded)
+        if match is None:
+            continue
+        return (
+            _parse_amount(match.group("base")),
+            _parse_amount(match.group("rate")),
+            _parse_amount(match.group("result")),
+        )
+    return None
 
 
 def _rate_in_evidence(rate: float, evidence_texts: list[str]) -> bool:
@@ -1582,6 +1686,7 @@ def _derived_calculation_verification(
     evidence_texts: list[str],
     *,
     adjacent_texts: tuple[str, ...] = (),
+    extra_bases: tuple[float, ...] = (),
 ) -> ClaimVerification | None:
     """Verify rate x amount arithmetic against cited evidence.
 
@@ -1597,7 +1702,7 @@ def _derived_calculation_verification(
         if not _rate_in_evidence(rate, evidence_texts):
             return ClaimVerification.UNSUPPORTED
         return ClaimVerification.SUPPORTED
-    pair = _derived_amount_pair_verification(text, evidence_texts)
+    pair = _derived_amount_pair_verification(text, evidence_texts, extra_bases=extra_bases)
     if pair is not None:
         return pair
     return _derived_adjacent_result_verification(text, evidence_texts, adjacent_texts)
@@ -1630,15 +1735,20 @@ def _derived_adjacent_result_verification(
 def _derived_amount_pair_verification(
     text: str,
     evidence_texts: list[str],
+    *,
+    extra_bases: tuple[float, ...] = (),
 ) -> ClaimVerification | None:
-    amounts = sorted(_amount_set(text), reverse=True)
-    if len(amounts) < 2:
+    claim_amounts = _money_amounts(text)
+    if not claim_amounts:
         return None
     rates = _rates_in_evidence(evidence_texts)
     if not rates:
         return None
-    for index, base in enumerate(amounts):
-        for result in amounts[index + 1 :]:
+    bases = tuple(dict.fromkeys((*claim_amounts, *extra_bases)))
+    for base in bases:
+        for result in claim_amounts:
+            if abs(base - result) <= _amount_tolerance(result):
+                continue
             if any(_arithmetic_matches(base, rate, result) for rate in rates):
                 return ClaimVerification.SUPPORTED
     return None

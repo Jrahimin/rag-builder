@@ -45,15 +45,12 @@ export const emptyProjectConfigForm: ProjectConfigForm = {
   reason: "",
 };
 
-function sourcedBehavior<T>(storedValue: T | null | undefined, globalValue: T): SourcedValue<T> {
-  if (storedValue === undefined || storedValue === null || storedValue === globalValue) {
-    return { source: "global", value: globalValue };
-  }
-  return { source: "project", value: storedValue };
+function hasValue(value: object | undefined, key: string) {
+  return value !== undefined && Object.prototype.hasOwnProperty.call(value, key);
 }
 
-function visibleBehaviorSource<T>(value: T, globalValue: T, forceGlobal = false): SettingSource {
-  return forceGlobal || value === globalValue ? "global" : "project";
+function sourceFor(value: object | undefined, key: string): SettingSource {
+  return hasValue(value, key) ? "project" : "global";
 }
 
 function materializeExecutionConfiguration(
@@ -123,7 +120,6 @@ export function configFormFromEffective(
     behavior?.translation_policy && behavior.translation_policy !== "inherit"
       ? behavior.translation_policy
       : undefined;
-  const oneApprovedModel = (config.allowed_generation_models?.length ?? 0) <= 1;
   const profileId = explicitProfileId(stored);
   const profile = config.rag_profiles?.find((item) => item.id === profileId);
   const storedExecution = Object.fromEntries(
@@ -141,13 +137,26 @@ export function configFormFromEffective(
     customBaseProfileId: null,
     execution,
     behavior: {
-      generationModelId: oneApprovedModel
-        ? { source: "global", value: globalModelId }
-        : sourcedBehavior(behavior?.generation_model_id, globalModelId),
-      responseMode: sourcedBehavior(behavior?.response_mode, globalResponse),
-      groundingAssurance: sourcedBehavior(behavior?.grounding_assurance, globalGrounding),
-      translation: sourcedBehavior(storedTranslation, globalTranslation),
-      domain: sourcedBehavior(behavior?.domain_instructions ?? undefined, globalDomain),
+      generationModelId: {
+        source: sourceFor(behavior, "generation_model_id"),
+        value: behavior?.generation_model_id ?? globalModelId,
+      },
+      responseMode: {
+        source: sourceFor(behavior, "response_mode"),
+        value: behavior?.response_mode ?? globalResponse,
+      },
+      groundingAssurance: {
+        source: sourceFor(behavior, "grounding_assurance"),
+        value: behavior?.grounding_assurance ?? globalGrounding,
+      },
+      translation: {
+        source: storedTranslation ? "project" : "global",
+        value: storedTranslation ?? globalTranslation,
+      },
+      domain: {
+        source: sourceFor(behavior, "domain_instructions"),
+        value: behavior?.domain_instructions ?? globalDomain,
+      },
     },
     reason: "",
   };
@@ -606,28 +615,6 @@ export function ProjectAISettingsFields({
     : "disabled";
   const globalDomain = globalConfig?.domain_instructions ?? "";
   const oneModel = allowedGenerationModels.length <= 1;
-  const generationSource = visibleBehaviorSource(
-    form.behavior.generationModelId.value,
-    globalModelId,
-    oneModel,
-  );
-  const responseSource = visibleBehaviorSource(form.behavior.responseMode.value, globalResponse);
-  const groundingSource = visibleBehaviorSource(
-    form.behavior.groundingAssurance.value,
-    globalGrounding,
-  );
-  const translationSource = visibleBehaviorSource(
-    form.behavior.translation.value,
-    globalTranslation,
-  );
-  const domainSource = visibleBehaviorSource(form.behavior.domain.value, globalDomain);
-  const projectBehaviorCount = [
-    generationSource,
-    responseSource,
-    groundingSource,
-    translationSource,
-    domainSource,
-  ].filter((source) => source === "project").length;
   const lineageLabel = customLineageLabel(form.customBaseProfileId, globalProfileId);
   const resetLabel = customResetLabel(form.customBaseProfileId);
   const baseExecution = customProfile
@@ -640,6 +627,9 @@ export function ProjectAISettingsFields({
     changedCount == null
       ? lineageLabel
       : `${lineageLabel} · ${changedCount} setting${changedCount === 1 ? "" : "s"} changed`;
+  const projectBehaviorCount = Object.values(form.behavior).filter(
+    (field) => field.source === "project",
+  ).length;
   const [profileValuesOpen, setProfileValuesOpen] = useState(customProfile);
   useEffect(() => {
     setProfileValuesOpen(form.profileId === "custom");
@@ -876,7 +866,7 @@ export function ProjectAISettingsFields({
           <BehaviorSetting
             label="Generation model"
             hint={BEHAVIOR_HINTS.generationModel}
-            source={generationSource}
+            source={form.behavior.generationModelId.source}
             onUseGlobal={() => setBehaviorSource("generationModelId", "global", globalModelId)}
           >
             {oneModel ? (
@@ -916,7 +906,7 @@ export function ProjectAISettingsFields({
           <BehaviorSetting
             label="Response mode"
             hint={BEHAVIOR_HINTS.responseMode}
-            source={responseSource}
+            source={form.behavior.responseMode.source}
             onUseGlobal={() => setBehaviorSource("responseMode", "global", globalResponse)}
           >
             <select
@@ -941,7 +931,7 @@ export function ProjectAISettingsFields({
           <BehaviorSetting
             label="Grounding assurance"
             hint={BEHAVIOR_HINTS.grounding}
-            source={groundingSource}
+            source={form.behavior.groundingAssurance.source}
             onUseGlobal={() => setBehaviorSource("groundingAssurance", "global", globalGrounding)}
           >
             <select
@@ -965,7 +955,7 @@ export function ProjectAISettingsFields({
           <BehaviorSetting
             label="Query translation"
             hint={BEHAVIOR_HINTS.translation}
-            source={translationSource}
+            source={form.behavior.translation.source}
             onUseGlobal={() => setBehaviorSource("translation", "global", globalTranslation)}
           >
             <select
@@ -987,7 +977,7 @@ export function ProjectAISettingsFields({
           <BehaviorSetting
             label="Domain instructions"
             hint={BEHAVIOR_HINTS.domain}
-            source={domainSource}
+            source={form.behavior.domain.source}
             wide
             onUseGlobal={() => setBehaviorSource("domain", "global", globalDomain)}
           >

@@ -26,7 +26,8 @@ from app.modules.conversations.turn_resolution import (
     TemporalIntentKind,
     TurnOutcome,
     TurnRelation,
-    parameter_values_match,
+    normalize_parameter_value,
+    parameter_bindings_match,
 )
 from app.modules.evaluation.metrics import rank_metrics
 from app.modules.evaluation.schemas.evaluation import EvaluationCase, EvaluationCaseKind
@@ -128,12 +129,20 @@ class ExpectedBinding(BaseModel):
 class ExpectedResolution(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    outcome: TurnOutcome
+    outcome: TurnOutcome | None = None
     relation: TurnRelation | None = None
     active_bindings: list[ExpectedBinding] = Field(default_factory=list)
+    absent_binding_kinds: list[BindingKind] = Field(default_factory=list)
+    no_active_bindings: bool = False
     temporal_intent: TemporalIntentKind | None = None
     effective_as_of: datetime | None = None
     snapshot_origin: SnapshotOrigin | None = None
+
+    @model_validator(mode="after")
+    def validate_binding_absence(self) -> ExpectedResolution:
+        if self.no_active_bindings and self.active_bindings:
+            raise ValueError("no_active_bindings cannot be combined with active_bindings")
+        return self
 
 
 class JourneyCase(BaseModel):
@@ -338,6 +347,22 @@ def normalize_text(value: str) -> str:
             characters.append(char)
     normalized = "".join(characters).replace(",", "")
     return " ".join(re.sub(r"[^\w%]+", " ", normalized, flags=re.UNICODE).split())
+
+
+def _answer_contains_expected_token(answer: str, token: str) -> bool:
+    """Match expected facts, including grouped/Unicode amount equivalents."""
+    if any(char.isdigit() for char in token):
+        normalized_token = normalize_parameter_value(token)
+        if not normalized_token:
+            return False
+        return (
+            re.search(
+                rf"(?<![\d.+%\-]){re.escape(normalized_token)}(?!\d|%|\.\d)",
+                normalize_parameter_value(answer),
+            )
+            is not None
+        )
+    return normalize_text(token) in normalize_text(answer)
 
 
 def _has_scope_excludes_notice(message: object, metadata: dict[str, Any]) -> bool:
@@ -838,7 +863,17 @@ def _resolution_failures(
     if not isinstance(recorded, dict):
         failures.append(_failure("turn_resolution", "Turn did not record resolution diagnostics."))
         return failures
-    if recorded.get("outcome") != expected.outcome.value:
+    if (
+        recorded.get("outcome") == TurnOutcome.FALLBACK.value
+        and expected.outcome is not TurnOutcome.FALLBACK
+    ):
+        failures.append(
+            _failure(
+                "turn_resolution",
+                "Resolver fallback cannot satisfy expected structured interpretation.",
+            )
+        )
+    if expected.outcome is not None and recorded.get("outcome") != expected.outcome.value:
         failures.append(
             _failure(
                 "turn_resolution",
@@ -896,7 +931,7 @@ def _resolution_failures(
         if expected_values and any(
             item.get("kind") == kind.value
             and not any(
-                parameter_values_match(str(item.get("active_value") or ""), value)
+                parameter_bindings_match(str(item.get("active_value") or ""), value)
                 for value in expected_values
             )
             for item in recorded_bindings
@@ -909,7 +944,7 @@ def _resolution_failures(
                 for item in recorded_bindings
                 if item.get("kind") == expected_binding.kind.value
                 and item.get("origin") == expected_binding.origin.value
-                and parameter_values_match(
+                and parameter_bindings_match(
                     str(item.get("active_value") or ""), expected_binding.active_value
                 )
             ),
@@ -941,6 +976,14 @@ def _resolution_failures(
                         f"{expected_binding.active_value!r} does not reference turn {prior}.",
                     )
                 )
+    if expected.no_active_bindings and recorded_bindings:
+        failures.append(_failure("turn_resolution", "Expected no active bindings."))
+    recorded_kinds = {item.get("kind") for item in recorded_bindings}
+    for kind in expected.absent_binding_kinds:
+        if kind.value in recorded_kinds:
+            failures.append(
+                _failure("turn_resolution", f"Stale active {kind.value} binding was retained.")
+            )
     return failures
 
 
@@ -1124,12 +1167,12 @@ def evaluate_case_result(
                 _failure("admission_grounding", "Expected retrieved evidence was not admitted.")
             )
         for token in case.expected_tokens:
-            if normalize_text(token) not in normalized_answer:
+            if not _answer_contains_expected_token(message.content, token):
                 failures.append(
                     _failure("generation_refusal", f"Answer is missing expected fact {token!r}.")
                 )
         for token in case.user_parameter_tokens:
-            if normalize_text(token) not in normalized_answer:
+            if not _answer_contains_expected_token(message.content, token):
                 failures.append(
                     _failure(
                         "generation_refusal",
@@ -1197,7 +1240,7 @@ def evaluate_case_result(
             missing_new = [
                 token
                 for token in case.correction.new_tokens
-                if normalize_text(token) not in normalized_answer
+                if not _answer_contains_expected_token(message.content, token)
             ]
             has_correction_marker = any(
                 _contains_semantic_marker(normalized_answer, marker)
@@ -1284,7 +1327,7 @@ def evaluate_case_result(
                     )
                 )
         for token in case.expected_tokens:
-            if normalize_text(token) not in normalized_answer:
+            if not _answer_contains_expected_token(message.content, token):
                 failures.append(
                     _failure("generation_refusal", f"Answer is missing expected fact {token!r}.")
                 )

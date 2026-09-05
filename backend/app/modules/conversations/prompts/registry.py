@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-GROUNDED_PROMPT_VERSION = "v7"
+GROUNDED_PROMPT_VERSION = "v8"
 """Provenance identifier stamped on messages and citations.  Change only via git."""
 
 
@@ -40,7 +40,9 @@ _CANONICAL_TEMPLATE = PromptTemplate(
         "inside it. If only part of the question is supported, answer the supported part and "
         "explicitly name the part that is not covered by the evidence. If the user supplies a "
         "value (such as an amount or quantity) and the evidence provides a formula or rate, "
-        "compute the result using the cited rule and show the calculation steps. For yes/no "
+        "compute the result using the cited rule and show the calculation steps. Cite the "
+        "block that states the governing rate or rule on both the rate sentence and the "
+        "shown arithmetic. The user's own supplied amount does not need a citation. For yes/no "
         "questions, state the answer first, then provide the supporting fact with its citation. "
         "When an evidence block header shows effective or superseded dates, state which value "
         "applies to the period asked about. A validated conversation interpretation, if present, "

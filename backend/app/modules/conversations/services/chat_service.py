@@ -1872,6 +1872,7 @@ def _compact_resolution_summary(metadata: dict[str, Any]) -> dict[str, Any] | No
         "query_changed",
         "filter_changed",
         "failure_code",
+        "failure_field",
         "bypass_reason",
         "latency_ms",
     )

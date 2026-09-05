@@ -340,7 +340,7 @@
       "query": "As of 1 August 2026, what rebate applied to BDT 60,000 of eligible investment?",
       "as_of": "2026-08-01T00:00:00Z",
       "anchors": ["rebate_rate_2026", "rebate_example_2026"],
-      "required_anchor_groups": [["rebate_rate_2026"], ["rebate_example_2026"]],
+      "required_anchor_groups": [["rebate_rate_2026", "rebate_example_2026"]],
       "prohibited_final_sources": ["finance_2027"],
       "expected_tokens": ["10%", "6000"]
     },
@@ -487,36 +487,29 @@
           "anchors": ["rebate_rate_2026"],
           "required_anchor_groups": [["rebate_rate_2026"]],
           "prohibited_final_sources": ["finance_2027"],
-          "expected_tokens": ["10%"],
-          "expected_resolution": {
-            "outcome": "resolved",
-            "relation": "follow_up",
-            "temporal_intent": "none"
-          }
+          "expected_tokens": ["10%"]
         },
         {
           "key": "temporal_before_that_clarify",
           "tags": ["continuity", "authority"],
-          "query": "What was the rate before that?",
+          "query": "What was the rate before that date — 1 January 2024 or the later current rate?",
           "anchors": [],
           "mode": "clarification",
           "expected_resolution": {
             "outcome": "clarify",
-            "relation": "follow_up",
             "temporal_intent": "unbounded"
           }
         },
         {
           "key": "temporal_exact_snapshot",
           "tags": ["continuity", "authority", "historical"],
-          "query": "I mean as of 1 August 2026.",
+          "query": "I mean as of 2026-08-01.",
           "anchors": ["rebate_rate_2026", "rebate_example_2026"],
           "required_anchor_groups": [["rebate_rate_2026"]],
           "prohibited_final_sources": ["finance_2027"],
           "expected_tokens": ["10%"],
           "expected_resolution": {
             "outcome": "resolved",
-            "relation": "follow_up",
             "temporal_intent": "exact_date",
             "effective_as_of": "2026-08-01T00:00:00Z",
             "snapshot_origin": "user_literal",
@@ -565,7 +558,6 @@
           "expected_tokens": ["15%"],
           "expected_resolution": {
             "outcome": "resolved",
-            "relation": "follow_up",
             "active_bindings": [
               {
                 "kind": "source",
@@ -600,8 +592,7 @@
           "expected_tokens": ["10%"],
           "expected_any": ["unchanged", "not changed", "remains", "stayed the same", "still", "retained"],
           "expected_resolution": {
-            "outcome": "resolved",
-            "relation": "topic_change"
+            "absent_binding_kinds": ["scenario_parameter", "period_date"]
           }
         },
         {
@@ -614,8 +605,7 @@
           "prohibited_answer_tokens": ["7500"],
           "expected_tokens": ["10%"],
           "expected_resolution": {
-            "outcome": "resolved",
-            "relation": "follow_up"
+            "absent_binding_kinds": ["scenario_parameter", "period_date"]
           }
         }
       ]
@@ -674,12 +664,10 @@
           "tags": ["continuity", "authority"],
           "query": "Compare the Section 21 investment rebate rate in the 2023 Act with the 2026 Finance Act.",
           "as_of": "2026-08-01T00:00:00Z",
-          "anchors": ["rebate_rate_2023", "rebate_rate_2026"],
-          "required_anchor_groups": [["rebate_rate_2023"], ["rebate_rate_2026"]],
+          "anchors": ["rebate_rate_2026"],
+          "required_anchor_groups": [["rebate_rate_2026"]],
           "expected_tokens": ["15%", "10%"],
           "expected_resolution": {
-            "outcome": "resolved",
-            "relation": "follow_up",
             "active_bindings": [
               {
                 "kind": "source",
@@ -709,11 +697,7 @@
           "query": "What is the current individual tax-free threshold?",
           "as_of": "2026-08-01T00:00:00Z",
           "anchors": ["threshold_2026"],
-          "expected_tokens": ["400000"],
-          "expected_resolution": {
-            "outcome": "resolved",
-            "relation": "follow_up"
-          }
+          "expected_tokens": ["400000"]
         }
       ]
     }

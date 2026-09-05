@@ -2149,6 +2149,20 @@ async def test_follow_up_retrieves_effective_question_and_keeps_original_prompt(
         _resolved_payload(
             relation="follow_up",
             effective_question="What rebate applies to 75,000?",
+            bindings=[
+                {
+                    "kind": "scenario_parameter",
+                    "active_value": "75,000",
+                    "origin": "user_literal",
+                    "references": [
+                        {
+                            "message_id": str(prior_user.id),
+                            "role": "user",
+                            "excerpt": "75,000",
+                        }
+                    ],
+                }
+            ],
         )
     )
     service = _service(session, conversation_repository, message_repository, llm)
@@ -2473,7 +2487,7 @@ async def test_invalid_resolver_output_falls_back_to_raw_message(
     assert retrieval.calls[0]["query"] == "What is the current rebate rate?"
     recorded = turn.assistant_message.metadata["turn_resolution"]
     assert recorded["outcome"] == "fallback"
-    assert recorded["failure_code"] == "malformed_output"
+    assert recorded["failure_code"] == "malformed_json"
 
 
 async def test_resolver_timeout_falls_back_without_using_interpretation(

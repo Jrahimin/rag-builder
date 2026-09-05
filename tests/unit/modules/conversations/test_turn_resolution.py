@@ -451,12 +451,88 @@ def test_parse_resolver_json_rejects_non_json_and_extra_fields() -> None:
         '{"outcome":"standalone","relation":"standalone","effective_question":"What applies?"}'
     )
     assert parsed.outcome is TurnOutcome.STANDALONE
-    with pytest.raises(TurnResolutionError, match="not valid JSON"):
+    with pytest.raises(TurnResolutionError, match="not valid JSON") as malformed:
         parse_resolver_json("not json")
-    with pytest.raises(TurnResolutionError, match="schema"):
+    assert malformed.value.code == "malformed_json"
+    with pytest.raises(TurnResolutionError, match="schema") as schema:
         parse_resolver_json(
             '{"outcome":"resolved","relation":"follow_up","effective_question":"Q","confidence":0.9}'
         )
+    assert schema.value.code == "schema_mismatch"
+    assert schema.value.field == "confidence"
+
+
+def test_parse_accepts_unbounded_clarify_json_without_retry() -> None:
+    parsed = parse_resolver_json(
+        """
+        {
+          "outcome": "clarify",
+          "relation": "follow_up",
+          "effective_question": "Which date do you mean?",
+          "active_bindings": [],
+          "temporal_intent": "unbounded",
+          "clarification_question": "",
+          "reason": ""
+        }
+        """
+    )
+    assert parsed.outcome is TurnOutcome.CLARIFY
+    assert parsed.temporal_intent.kind is TemporalIntentKind.UNBOUNDED
+    assert parsed.clarification_question == "Which date do you mean?"
+    assert parsed.reason is None
+
+
+def test_parse_empty_anchor_date_is_omitted() -> None:
+    parsed = parse_resolver_json(
+        """
+        {
+          "outcome": "clarify",
+          "relation": "follow_up",
+          "effective_question": "Which date?",
+          "temporal_intent": {
+            "kind": "unbounded",
+            "anchor_date": "",
+            "requires_snapshot": true,
+            "snapshot_origin": ""
+          },
+          "clarification_question": "Which date?"
+        }
+        """
+    )
+    assert parsed.temporal_intent.anchor_date is None
+    assert parsed.temporal_intent.snapshot_origin is None
+    assert parsed.temporal_intent.requires_snapshot is True
+
+
+def test_parse_null_bindings_and_numeric_active_value() -> None:
+    parsed = parse_resolver_json(
+        """
+        {
+          "outcome": "resolved",
+          "relation": "correction",
+          "effective_question": "What rebate applies to 75000?",
+          "active_bindings": [
+            {
+              "kind": "scenario_parameter",
+              "active_value": 75000,
+              "origin": "user_literal",
+              "references": [
+                {
+                  "message_id": "11111111-1111-1111-1111-111111111111",
+                  "role": "user",
+                  "excerpt": "75000"
+                }
+              ]
+            }
+          ],
+          "temporal_intent": null,
+          "clarification_question": null,
+          "reason": null
+        }
+        """
+    )
+    assert parsed.active_bindings[0].active_value == "75000"
+    assert parsed.temporal_intent.kind is TemporalIntentKind.NONE
 
 
 def test_bound_resolution_history_drops_oldest_complete_messages() -> None:

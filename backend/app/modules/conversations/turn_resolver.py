@@ -110,11 +110,12 @@ class TurnResolver:
         model = completion.model or model
         try:
             parsed = parse_resolver_json(completion.content)
-        except TurnResolutionError:
+        except TurnResolutionError as exc:
             return self._fallback(
                 payload,
                 latency_ms=latency_ms,
-                failure_code="malformed_output",
+                failure_code=exc.code,
+                failure_field=exc.field,
                 finish_reason=completion.finish_reason,
                 provider=provider,
                 model=model,
@@ -149,11 +150,12 @@ class TurnResolver:
                 bindings=validated.active_bindings,
                 reference_time=payload.reference_time,
             )
-        except TurnResolutionError:
+        except TurnResolutionError as exc:
             return self._fallback(
                 payload,
                 latency_ms=latency_ms,
-                failure_code="invalid_references",
+                failure_code=exc.code,
+                failure_field=exc.field,
                 finish_reason=completion.finish_reason,
                 provider=provider,
                 model=model,
@@ -203,6 +205,7 @@ class TurnResolver:
         provider: str,
         model: str,
         usage: ChatUsage | None = None,
+        failure_field: str | None = None,
     ) -> ResolvedTurn:
         resolution = fallback_resolution(payload.current_message)
         snapshot = resolve_effective_as_of(
@@ -233,6 +236,7 @@ class TurnResolver:
                 finish_reason=finish_reason,
                 usage=usage,
                 failure_code=failure_code,
+                failure_field=failure_field,
             ),
             usage=usage,
             latency_ms=latency_ms,
@@ -343,6 +347,7 @@ def _diagnostics(
     finish_reason: str | None = None,
     usage: ChatUsage | None = None,
     failure_code: str | None = None,
+    failure_field: str | None = None,
     bypass_reason: str | None = None,
 ) -> dict[str, Any]:
     query_changed = retrieval.query != payload.current_message
@@ -382,6 +387,8 @@ def _diagnostics(
         }
     if failure_code is not None:
         diagnostics["failure_code"] = failure_code
+    if failure_field is not None:
+        diagnostics["failure_field"] = failure_field
     return diagnostics
 
 

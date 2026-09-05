@@ -73,18 +73,52 @@ def parameter_values_match(left: str, right: str) -> bool:
     return normalize_parameter_value(left) == normalize_parameter_value(right)
 
 
-def _literal_value_present(value: str, text: str) -> bool:
-    """Match display values without changing signs, decimals, currencies or units."""
-    normalized = normalize_parameter_value(value)
-    if not normalized:
+def parameter_bindings_match(left: str, right: str) -> bool:
+    """Match binding values, allowing a currency or unit on only one side.
+
+    ``BDT 6,000`` matches ``6000``. Conflicting affixes such as BDT vs USD do not.
+    """
+    if parameter_values_match(left, right):
+        return True
+    left_core, left_affix = _split_quantity_token(left)
+    right_core, right_affix = _split_quantity_token(right)
+    if not parameter_values_match(left_core, right_core):
         return False
-    # Alphabetic context can be translated in the effective question. Bindings
-    # themselves retain source display text. Numeric boundaries prevent 10 from
-    # matching -10, 100, 10.5 or 10%.
-    if not any(c.isdigit() for c in normalized):
-        literal = " ".join(unicodedata.normalize("NFKC", value).casefold().split())
-        content = " ".join(unicodedata.normalize("NFKC", text).casefold().split())
-        return re.search(rf"(?<!\w){re.escape(literal)}(?!\w)", content) is not None
+    if left_affix and right_affix:
+        return parameter_values_match(left_affix, right_affix)
+    return True
+
+
+def _value_has_letter(value: str) -> bool:
+    return _LETTER_RE.search(unicodedata.normalize("NFKC", value)) is not None
+
+
+def _literal_value_present(value: str, text: str) -> bool:
+    """Match display values without changing signs, decimals, currencies or units.
+
+    An amount may keep a conversation currency that the current span omitted
+    (``BDT 90,000`` in ``90,000``). A conflicting currency in the same span is
+    still rejected. Source phrases keep their spaces (``2023 Act``).
+    """
+    if _literal_core_present(value, text):
+        return not _quantity_affix_conflicts(value, text)
+    core, _affix = _split_quantity_token(value)
+    if core != value and _literal_core_present(core, text):
+        return not _quantity_affix_conflicts(value, text)
+    return False
+
+
+def _literal_core_present(value: str, text: str) -> bool:
+    """Match a source phrase, or a numeric core with sign/decimal/percent boundaries."""
+    folded_value = " ".join(unicodedata.normalize("NFKC", value).casefold().split())
+    folded_text = " ".join(unicodedata.normalize("NFKC", text).casefold().split())
+    if folded_value and (
+        _value_has_letter(value) or not any(char.isdigit() for char in folded_value)
+    ):
+        return re.search(rf"(?<!\w){re.escape(folded_value)}(?!\w)", folded_text) is not None
+    normalized = normalize_parameter_value(value)
+    if not normalized or not any(char.isdigit() for char in normalized):
+        return False
     return (
         re.search(
             rf"(?<![\d.+%\-]){re.escape(normalized)}(?!\d|%|\.\d)",
@@ -94,8 +128,246 @@ def _literal_value_present(value: str, text: str) -> bool:
     )
 
 
+def _quantity_affix_conflicts(value: str, text: str) -> bool:
+    """True when the span attaches a different currency or unit to the same amount."""
+    core, affix = _split_quantity_token(value)
+    if not affix or not any(char.isdigit() for char in core):
+        return False
+    for token in _affixed_quantity_tokens(text):
+        token_core, token_affix = _split_quantity_token(token)
+        if not token_affix or not parameter_values_match(token_core, core):
+            continue
+        if not parameter_values_match(token_affix, affix):
+            return True
+    return False
+
+
 class TurnResolutionError(ValueError):
-    """Deterministic rejection of a resolver interpretation."""
+    """Deterministic rejection of a resolver interpretation.
+
+    ``code`` is a stable, Journey-visible subcode. ``field`` is an optional
+    contract path. Neither stores raw rejected model output.
+    """
+
+    def __init__(self, message: str, *, code: str, field: str | None = None) -> None:
+        super().__init__(message)
+        self.code = code
+        self.field = field
+
+
+_CURRENCY_SYMBOLS = frozenset({"$", "€", "£", "¥", "৳"})
+_AMOUNT_GROUPING = frozenset({",", "_", "\u00a0", "\u202f", "\u09f7", "\u066c"})
+_ISO_DATE_RE = re.compile(r"(?<!\d)\d{4}-\d{2}-\d{2}(?!\d)")
+_CURRENCY_TOKEN_RE = re.compile(
+    r"(?<![\w$€£¥৳])(?:bdt|usd|eur|gbp|inr|tk|taka|\u099f\u09be\u0995\u09be)"
+    r"(?![\w$€£¥৳])",
+    re.IGNORECASE,
+)
+_MEASURED_QUANTITY_RE = re.compile(
+    r"(?<![\d.])[+\-]?\d+(?:[,_\u00a0\u202f\u09f7\u066c]\d{2,3})*(?:[.\u066b]\d+)?"
+    r"\s+(?:hours?|days?|weeks?|months?|years?|minutes?|seconds?)\b",
+    re.IGNORECASE,
+)
+_AMOUNT_RE = re.compile(
+    r"(?<![\d.])[+\-]?\d+(?:[,_\u00a0\u202f\u09f7\u066c]\d{2,3})*(?:[.\u066b]\d+)?%?"
+)
+_CURRENCY_OR_UNIT_AFFIX_RE = re.compile(
+    r"(?:bdt|usd|eur|gbp|inr|tk|taka|\u099f\u09be\u0995\u09be|"
+    r"hours?|days?|weeks?|months?|years?|minutes?|seconds?)",
+    re.IGNORECASE,
+)
+_LETTER_RE = re.compile(r"[^\W\d_]", re.UNICODE)
+_ANAPHORA_RE = re.compile(
+    r"(?:"
+    r"\b(?:that|this|those|the same)\s+"
+    r"(?:amount|rebate|investment|figure|value|number|rate|one)\b"
+    r"|\b(?:use|using|not)\s+that\b"
+    r"|\u09b8\u09c7\u0987|\u0990|\u0993\u0987|\u09b8\u09c7\u099f\u09be|\u098f\u099f\u09be"
+    r")",
+    re.IGNORECASE,
+)
+
+
+def _fold_for_extraction(text: str) -> str:
+    """Convert Unicode digits and signs while keeping grouping for span extraction."""
+    characters: list[str] = []
+    for char in unicodedata.normalize("NFKC", text):
+        try:
+            characters.append(str(unicodedata.digit(char)))
+        except (TypeError, ValueError):
+            characters.append({"\u2212": "-", "\u066b": "."}.get(char, char))
+    return "".join(characters)
+
+
+def _amount_span_is_parameter_like(span: str) -> bool:
+    if span[:1] in "+-" or span.endswith("%"):
+        return True
+    if any(separator in span for separator in _AMOUNT_GROUPING):
+        return True
+    if "." in span:
+        return True
+    return len("".join(char for char in span if char.isdigit())) >= 5
+
+
+def _skip_spaces(text: str, index: int, *, direction: int) -> int:
+    cursor = index
+    limit = len(text) if direction > 0 else -1
+    while cursor != limit and text[cursor].isspace():
+        cursor += direction
+    return cursor
+
+
+def _expand_adjacent_currency(folded: str, start: int, end: int) -> tuple[int, int]:
+    """Attach a currency only when it sits next to an amount."""
+    left = _skip_spaces(folded, start - 1, direction=-1)
+    if left >= 0 and folded[left] in _CURRENCY_SYMBOLS:
+        start = left
+    else:
+        prefix = None
+        for match in _CURRENCY_TOKEN_RE.finditer(folded[:start]):
+            prefix = match
+        if prefix is not None and _skip_spaces(folded, prefix.end(), direction=1) == start:
+            start = prefix.start()
+    right = _skip_spaces(folded, end, direction=1)
+    if right < len(folded) and folded[right] in _CURRENCY_SYMBOLS:
+        end = right + 1
+    else:
+        suffix = _CURRENCY_TOKEN_RE.match(folded[right:]) if right < len(folded) else None
+        if suffix is not None:
+            end = right + suffix.end()
+    return start, end
+
+
+def _parameter_like_tokens(text: str) -> tuple[str, ...]:
+    """Extract dates, signed/grouped amounts, percents, and measured quantities.
+
+    Bare temporal words such as ``day``/``month``/``year`` and bare currency
+    labels are not scenario quantities. Units and currencies count only when
+    attached to a number.
+    """
+    folded = _fold_for_extraction(text)
+    occupied = [False] * len(folded)
+    tokens: list[str] = []
+
+    def _take(start: int, end: int) -> None:
+        if start >= end or any(occupied[start:end]):
+            return
+        occupied[start:end] = [True] * (end - start)
+        tokens.append(folded[start:end].strip())
+
+    for match in _ISO_DATE_RE.finditer(folded):
+        _take(match.start(), match.end())
+    for match in _MEASURED_QUANTITY_RE.finditer(folded):
+        _take(match.start(), match.end())
+    for match in _AMOUNT_RE.finditer(folded):
+        if not _amount_span_is_parameter_like(match.group()):
+            continue
+        start, end = _expand_adjacent_currency(folded, match.start(), match.end())
+        _take(start, end)
+    return tuple(tokens)
+
+
+def _split_quantity_token(token: str) -> tuple[str, str | None]:
+    """Return the numeric/date/percent core and an optional currency or unit affix."""
+    stripped = token.strip()
+    if _ISO_DATE_RE.fullmatch(stripped):
+        return stripped, None
+    if stripped.endswith("%"):
+        return stripped, None
+    affix = None
+    core = stripped
+    prefix = _CURRENCY_OR_UNIT_AFFIX_RE.match(stripped)
+    if prefix is not None:
+        affix = prefix.group()
+        core = stripped[prefix.end() :].lstrip(" \t")
+        if core[:1] in _CURRENCY_SYMBOLS:
+            affix = core[0]
+            core = core[1:].lstrip(" \t")
+    else:
+        if stripped[:1] in _CURRENCY_SYMBOLS:
+            affix = stripped[0]
+            core = stripped[1:].lstrip(" \t")
+        suffix = None
+        for match in _CURRENCY_OR_UNIT_AFFIX_RE.finditer(core):
+            suffix = match
+        if suffix is not None and suffix.end() == len(core.rstrip()):
+            trailing = core[suffix.start() :].strip()
+            remainder = core[: suffix.start()].rstrip(" \t")
+            if remainder:
+                affix = trailing if affix is None else f"{affix} {trailing}"
+                core = remainder
+        elif core[-1:] in _CURRENCY_SYMBOLS:
+            affix = core[-1] if affix is None else f"{affix} {core[-1]}"
+            core = core[:-1].rstrip(" \t")
+    return (core or stripped), affix
+
+
+def _affixed_quantity_tokens(text: str) -> tuple[str, ...]:
+    """Amounts with an attached currency or unit, including short 4-digit amounts."""
+    folded = _fold_for_extraction(text)
+    tokens = list(_parameter_like_tokens(text))
+    for match in _AMOUNT_RE.finditer(folded):
+        start, end = _expand_adjacent_currency(folded, match.start(), match.end())
+        span = folded[start:end].strip()
+        _core, affix = _split_quantity_token(span)
+        if affix:
+            tokens.append(span)
+    return tuple(tokens)
+
+
+def _token_justified_by_texts(token: str, texts: Sequence[str]) -> bool:
+    return any(_literal_value_present(token, text) for text in texts if text)
+
+
+def _validate_effective_question_parameters(
+    resolution: TurnResolution,
+    payload: TurnResolutionInput,
+) -> None:
+    """Reject resolved rewrites that invent or swap parameter-like values."""
+    if resolution.outcome is not TurnOutcome.RESOLVED:
+        return
+    allowed_texts = [
+        payload.current_message,
+        *(binding.active_value for binding in resolution.active_bindings),
+    ]
+    history_texts = [item.content for item in payload.history]
+    new_amount_texts = [
+        payload.current_message,
+        *(
+            binding.active_value
+            for binding in resolution.active_bindings
+            if binding.kind is BindingKind.SCENARIO_PARAMETER
+        ),
+    ]
+    correction_mentions_old = resolution.relation is TurnRelation.CORRECTION
+    for token in _parameter_like_tokens(resolution.effective_question):
+        if _token_justified_by_texts(token, allowed_texts):
+            continue
+        core, affix = _split_quantity_token(token)
+        if (
+            core != token
+            and _token_justified_by_texts(core, allowed_texts)
+            and (
+                affix is None or _token_justified_by_texts(affix, (*allowed_texts, *history_texts))
+            )
+        ):
+            continue
+        if (
+            correction_mentions_old
+            and not token.endswith("%")
+            and _token_justified_by_texts(token, history_texts)
+            and any(
+                _literal_value_present(value, resolution.effective_question)
+                for value in new_amount_texts
+                if any(char.isdigit() for char in value)
+            )
+        ):
+            continue
+        raise TurnResolutionError(
+            "Effective question introduces or substitutes a parameter-like value.",
+            code="mutated_effective_question",
+            field="effective_question",
+        )
 
 
 class BindingKind(StrEnum):
@@ -144,6 +416,47 @@ class SnapshotOrigin(StrEnum):
     DAY_BEFORE = "day_before"
 
 
+def _blank_optional_strings(data: Any, keys: tuple[str, ...]) -> Any:
+    """Treat LLM empty strings as omitted optional fields."""
+    if not isinstance(data, dict):
+        return data
+    updated = dict(data)
+    for key in keys:
+        value = updated.get(key)
+        if isinstance(value, str) and not value.strip():
+            updated[key] = None
+    return updated
+
+
+def _coerce_json_bool(value: Any) -> Any:
+    """Accept JSON true/false strings. Does not invent other truthy values."""
+    if isinstance(value, str):
+        folded = value.strip().casefold()
+        if folded in {"true", "false"}:
+            return folded == "true"
+    return value
+
+
+def _stringify_active_value(value: Any) -> Any:
+    """Display bindings are strings; integer JSON amounts are the same span."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    return value
+
+
+def _coerce_binding_payload(item: Any) -> Any:
+    if not isinstance(item, dict):
+        return item
+    updated = dict(item)
+    if "active_value" in updated:
+        updated["active_value"] = _stringify_active_value(updated["active_value"])
+    return updated
+
+
 class BindingReference(BaseModel):
     """A pointer back to supplied history text or citation identity/date fields."""
 
@@ -154,6 +467,11 @@ class BindingReference(BaseModel):
     field: Literal["content", "citation"] = "content"
     citation_field: str | None = None
     excerpt: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def blank_optional_fields(cls, data: Any) -> Any:
+        return _blank_optional_strings(data, ("citation_field", "excerpt"))
 
 
 class CitationIdentity(BaseModel):
@@ -208,6 +526,16 @@ class TemporalIntent(BaseModel):
     requires_snapshot: bool = False
     snapshot_origin: SnapshotOrigin | None = None
 
+    @model_validator(mode="before")
+    @classmethod
+    def coerce_kind_and_blanks(cls, data: Any) -> Any:
+        if isinstance(data, str):
+            data = {"kind": data}
+        payload = _blank_optional_strings(data, ("anchor_date", "snapshot_origin"))
+        if isinstance(payload, dict) and "requires_snapshot" in payload:
+            payload["requires_snapshot"] = _coerce_json_bool(payload["requires_snapshot"])
+        return payload
+
     @model_validator(mode="after")
     def validate_anchor(self) -> TemporalIntent:
         if self.kind is TemporalIntentKind.DAY_BEFORE_IDENTIFIED_DATE and self.anchor_date is None:
@@ -240,6 +568,44 @@ class TurnResolution(BaseModel):
     temporal_intent: TemporalIntent = Field(default_factory=TemporalIntent)
     clarification_question: str | None = None
     reason: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def coerce_optional_json(cls, data: Any) -> Any:
+        """Normalize empty optional fields. Does not call the model again."""
+        if not isinstance(data, dict):
+            return data
+        payload = _blank_optional_strings(
+            dict(data),
+            ("clarification_question", "reason"),
+        )
+        if payload.get("active_bindings") is None:
+            payload["active_bindings"] = []
+        elif isinstance(payload.get("active_bindings"), list):
+            payload["active_bindings"] = [
+                _coerce_binding_payload(item) for item in payload["active_bindings"]
+            ]
+        temporal = payload.get("temporal_intent")
+        if temporal is None or temporal == "":
+            payload.pop("temporal_intent", None)
+        elif isinstance(temporal, str) and temporal.strip():
+            payload["temporal_intent"] = {"kind": temporal.strip()}
+        elif isinstance(temporal, dict):
+            payload["temporal_intent"] = _blank_optional_strings(
+                dict(temporal),
+                ("anchor_date", "snapshot_origin"),
+            )
+            if "requires_snapshot" in payload["temporal_intent"]:
+                payload["temporal_intent"]["requires_snapshot"] = _coerce_json_bool(
+                    payload["temporal_intent"]["requires_snapshot"]
+                )
+        if payload.get("outcome") in {TurnOutcome.CLARIFY, TurnOutcome.CLARIFY.value}:
+            question = payload.get("clarification_question")
+            effective = payload.get("effective_question")
+            has_question = isinstance(question, str) and question.strip()
+            if not has_question and isinstance(effective, str) and effective.strip():
+                payload["clarification_question"] = effective
+        return payload
 
     @model_validator(mode="after")
     def validate_outcome_shape(self) -> TurnResolution:
@@ -290,10 +656,16 @@ def parse_iso_calendar_date(value: str) -> date:
         parsed = date.fromisoformat(text)
     except ValueError as exc:
         raise TurnResolutionError(
-            f"Value {value!r} is not an unambiguous ISO calendar date."
+            f"Value {value!r} is not an unambiguous ISO calendar date.",
+            code="invalid_iso_date",
+            field="active_value",
         ) from exc
     if parsed.isoformat() != text:
-        raise TurnResolutionError(f"Value {value!r} is not an unambiguous ISO calendar date.")
+        raise TurnResolutionError(
+            f"Value {value!r} is not an unambiguous ISO calendar date.",
+            code="invalid_iso_date",
+            field="active_value",
+        )
     return parsed
 
 
@@ -332,21 +704,71 @@ def validate_turn_resolution(
 ) -> TurnResolution:
     """Reject extra semantics that are not allowed to survive into retrieval."""
     if payload.reference_time.tzinfo is None:
-        raise TurnResolutionError("reference_time must be timezone-aware UTC.")
+        raise TurnResolutionError(
+            "reference_time must be timezone-aware UTC.",
+            code="naive_reference_time",
+            field="reference_time",
+        )
     known_messages = _known_messages(payload)
-    for binding in resolution.active_bindings:
-        _validate_binding(binding, payload=payload, known_messages=known_messages)
+    for index, binding in enumerate(resolution.active_bindings):
+        _validate_binding(
+            binding,
+            payload=payload,
+            known_messages=known_messages,
+            field=f"active_bindings[{index}]",
+        )
+    resolution = _drop_unattested_scenario_bindings(resolution, payload)
+    _validate_effective_question_parameters(resolution, payload)
     if resolution.temporal_intent.kind is TemporalIntentKind.UNBOUNDED:
         if resolution.temporal_intent.requires_snapshot:
             if resolution.outcome is not TurnOutcome.CLARIFY:
                 raise TurnResolutionError(
-                    "Unbounded temporal expressions cannot authorize a snapshot; clarify instead."
+                    "Unbounded temporal expressions cannot authorize a snapshot; clarify instead.",
+                    code="unbounded_snapshot",
+                    field="temporal_intent",
                 )
         elif resolution.outcome is TurnOutcome.RESOLVED and resolution.temporal_intent.anchor_date:
             raise TurnResolutionError(
-                "Unbounded temporal expressions cannot carry an exact snapshot date."
+                "Unbounded temporal expressions cannot carry an exact snapshot date.",
+                code="unbounded_snapshot",
+                field="temporal_intent",
             )
     return resolution
+
+
+def _current_message_keeps_prior_scenario(message: str) -> bool:
+    """True when the current turn attests an amount/date or anaphorically keeps one."""
+    return bool(_parameter_like_tokens(message) or _ANAPHORA_RE.search(message))
+
+
+def _drop_unattested_scenario_bindings(
+    resolution: TurnResolution,
+    payload: TurnResolutionInput,
+) -> TurnResolution:
+    """Drop history-only amounts when the current turn does not keep that scenario.
+
+    Provenance is unchanged: values attested in the current message stay.
+    Correction and topic_change replace the operand. A complete question with
+    no amount and no anaphora cannot carry a prior operand into retrieval.
+    """
+    if resolution.outcome is TurnOutcome.CLARIFY:
+        return resolution
+    drop_kinds = {BindingKind.SCENARIO_PARAMETER, BindingKind.PERIOD_DATE}
+    current = payload.current_message
+    if resolution.relation in {TurnRelation.CORRECTION, TurnRelation.TOPIC_CHANGE}:
+        kept = [
+            binding
+            for binding in resolution.active_bindings
+            if binding.kind not in drop_kinds
+            or _literal_value_present(binding.active_value, current)
+        ]
+    elif not _current_message_keeps_prior_scenario(current):
+        kept = [binding for binding in resolution.active_bindings if binding.kind not in drop_kinds]
+    else:
+        return resolution
+    if kept == list(resolution.active_bindings):
+        return resolution
+    return resolution.model_copy(update={"active_bindings": kept})
 
 
 def resolve_effective_as_of(
@@ -358,7 +780,11 @@ def resolve_effective_as_of(
 ) -> EffectiveSnapshot:
     """Convert validated temporal intent into a UTC snapshot without replacing request as_of."""
     if reference_time.tzinfo is None:
-        raise TurnResolutionError("reference_time must be timezone-aware UTC.")
+        raise TurnResolutionError(
+            "reference_time must be timezone-aware UTC.",
+            code="naive_reference_time",
+            field="reference_time",
+        )
     reference_day = reference_time.astimezone(UTC).date()
     derived, origin = _derived_snapshot_date(
         temporal_intent=temporal_intent,
@@ -455,42 +881,63 @@ def _validate_binding(
     *,
     payload: TurnResolutionInput,
     known_messages: dict[uuid.UUID, HistoryMessage | None],
+    field: str,
 ) -> None:
     roles = []
     value_references: list[BindingReference] = []
     for reference in binding.references:
         if reference.message_id not in known_messages:
             raise TurnResolutionError(
-                f"Binding reference {reference.message_id} is not in the supplied history."
+                f"Binding reference {reference.message_id} is not in the supplied history.",
+                code="unknown_message_id",
+                field=f"{field}.references",
             )
         history_item = known_messages[reference.message_id]
         expected_role = "user" if history_item is None else history_item.role
         if reference.role != expected_role:
             raise TurnResolutionError(
                 f"Binding reference {reference.message_id} has role {reference.role}, "
-                f"expected {expected_role}."
+                f"expected {expected_role}.",
+                code="role_mismatch",
+                field=f"{field}.references",
             )
         roles.append(reference.role)
         if reference.field == "citation" and not reference.citation_field:
-            raise TurnResolutionError("Citation references require a citation_field.")
+            raise TurnResolutionError(
+                "Citation references require a citation_field.",
+                code="missing_citation_field",
+                field=f"{field}.references",
+            )
         if (
             reference.excerpt
             and history_item is not None
             and reference.field == "content"
             and reference.excerpt not in history_item.content
         ):
-            raise TurnResolutionError("Binding excerpt is not present in the referenced message.")
+            raise TurnResolutionError(
+                "Binding excerpt is not present in the referenced message.",
+                code="excerpt_not_in_message",
+                field=f"{field}.references",
+            )
         if (
             reference.excerpt
             and history_item is None
             and reference.field == "content"
             and reference.excerpt not in payload.current_message
         ):
-            raise TurnResolutionError("Binding excerpt is not present in the current message.")
+            raise TurnResolutionError(
+                "Binding excerpt is not present in the current message.",
+                code="excerpt_not_in_message",
+                field=f"{field}.references",
+            )
         if reference.field == "citation":
             allowed = set(CitationIdentity.model_fields) - {"message_id"}
             if reference.role != "assistant" or reference.citation_field not in allowed:
-                raise TurnResolutionError("Invalid citation identity/date field.")
+                raise TurnResolutionError(
+                    "Invalid citation identity/date field.",
+                    code="invalid_citation_field",
+                    field=f"{field}.references",
+                )
             values = [
                 str(getattr(item, reference.citation_field))
                 for item in payload.citation_metadata
@@ -500,7 +947,11 @@ def _validate_binding(
             if reference.excerpt is not None:
                 values = [value for value in values if reference.excerpt == value]
             if not values:
-                raise TurnResolutionError("Citation field is not in the supplied metadata.")
+                raise TurnResolutionError(
+                    "Citation field is not in the supplied metadata.",
+                    code="citation_field_not_in_metadata",
+                    field=f"{field}.references",
+                )
         else:
             content = payload.current_message if history_item is None else history_item.content
             values = [reference.excerpt or content]
@@ -509,22 +960,34 @@ def _validate_binding(
     unique_roles = set(roles)
     if binding.origin is BindingOrigin.USER_LITERAL:
         if unique_roles - {"user"}:
-            raise TurnResolutionError("user_literal bindings may only reference user messages.")
+            raise TurnResolutionError(
+                "user_literal bindings may only reference user messages.",
+                code="origin_role_mismatch",
+                field=f"{field}.origin",
+            )
     elif binding.origin is BindingOrigin.ASSISTANT_REFERENCE:
         if unique_roles - {"assistant"}:
             raise TurnResolutionError(
-                "assistant_reference bindings may only identify assistant messages."
+                "assistant_reference bindings may only identify assistant messages.",
+                code="origin_role_mismatch",
+                field=f"{field}.origin",
             )
     elif binding.origin is BindingOrigin.USER_ADOPTED_ASSISTANT:
         if "assistant" not in unique_roles or "user" not in unique_roles:
             raise TurnResolutionError(
                 "user_adopted_assistant bindings require both the assistant value "
-                "and the user adoption instruction."
+                "and the user adoption instruction.",
+                code="adoption_missing_instruction",
+                field=f"{field}.origin",
             )
     elif binding.origin is BindingOrigin.CITATION_REFERENCE and any(
         reference.field != "citation" for reference in binding.references
     ):
-        raise TurnResolutionError("citation_reference bindings may only cite citation fields.")
+        raise TurnResolutionError(
+            "citation_reference bindings may only cite citation fields.",
+            code="origin_role_mismatch",
+            field=f"{field}.origin",
+        )
 
     if binding.origin is BindingOrigin.USER_ADOPTED_ASSISTANT:
         positions = {item.id: index for index, item in enumerate(payload.history)}
@@ -539,10 +1002,16 @@ def _validate_binding(
             for adoption in binding.references
         ):
             raise TurnResolutionError(
-                "Adoption requires a referenced value and later user instruction."
+                "Adoption requires a referenced value and later user instruction.",
+                code="adoption_missing_instruction",
+                field=f"{field}.references",
             )
     elif not value_references:
-        raise TurnResolutionError("Active value is not present in its referenced text or metadata.")
+        raise TurnResolutionError(
+            "Active value is not present in its referenced text or metadata.",
+            code="value_not_in_reference",
+            field=f"{field}.active_value",
+        )
 
 
 def _derived_snapshot_date(
@@ -588,7 +1057,9 @@ def _derived_snapshot_date(
                 return calendar_day_before(temporal_intent.anchor_date), SnapshotOrigin.DAY_BEFORE
             except OverflowError as exc:
                 raise TurnResolutionError(
-                    "Snapshot date is outside the supported calendar."
+                    "Snapshot date is outside the supported calendar.",
+                    code="invalid_iso_date",
+                    field="temporal_intent.anchor_date",
                 ) from exc
         return temporal_intent.anchor_date, origin
     return None, None
@@ -604,13 +1075,25 @@ def parse_resolver_json(text: str) -> TurnResolution:
     try:
         payload = json.loads(text)
     except json.JSONDecodeError as exc:
-        raise TurnResolutionError("Resolver output is not valid JSON.") from exc
+        raise TurnResolutionError(
+            "Resolver output is not valid JSON.",
+            code="malformed_json",
+        ) from exc
     if not isinstance(payload, dict):
-        raise TurnResolutionError("Resolver output must be a JSON object.")
+        raise TurnResolutionError(
+            "Resolver output must be a JSON object.",
+            code="malformed_json",
+        )
     try:
         return TurnResolution.model_validate(payload)
     except ValidationError as exc:
-        raise TurnResolutionError("Resolver output does not match the resolution schema.") from exc
+        loc = exc.errors()[0].get("loc") if exc.errors() else ()
+        field = ".".join(str(part) for part in loc) if loc else None
+        raise TurnResolutionError(
+            "Resolver output does not match the resolution schema.",
+            code="schema_mismatch",
+            field=field,
+        ) from exc
 
 
 def history_char_size(messages: Sequence[HistoryMessage]) -> int:

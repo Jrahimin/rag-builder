@@ -16,7 +16,6 @@
     {
       "key": "temporal_snapshot_clarify",
       "expected_failing_turns": [
-        "temporal_current_followup",
         "temporal_before_that_clarify",
         "temporal_exact_snapshot"
       ]
@@ -44,8 +43,7 @@
     {
       "key": "compare_scope_nonsticky_filters",
       "expected_failing_turns": [
-        "nonsticky_compare_2023_and_2026",
-        "nonsticky_omitted_filter_threshold"
+        "nonsticky_compare_2023_and_2026"
       ]
     }
   ]

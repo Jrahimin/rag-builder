@@ -38,7 +38,7 @@ and attaches the scope notice. Web search remains suppressed for scoped
 requests. Web-fallback sentences are no longer prepended to `content`.
 
 **Prompt.** One canonical grounding template (`GROUNDED_PROMPT_VERSION`, currently
-`v7`). Conversation create/update no longer accept `system_prompt_version`.
+`v8`). Conversation create/update no longer accept `system_prompt_version`.
 Assistant messages and evaluation snapshots stamp that constant. Existing v1–v5
 rows still run the canonical prompt; DB columns remain provenance.
 Web modes no longer depend on a prompt-version string.

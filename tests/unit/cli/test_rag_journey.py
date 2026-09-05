@@ -57,7 +57,11 @@ from app.modules.conversations.schemas.message import (
     InsufficientEvidenceReason,
     SourceProvenance,
 )
-from app.modules.conversations.turn_resolution import TurnOutcome, utc_reference_datetime
+from app.modules.conversations.turn_resolution import (
+    BindingKind,
+    TurnOutcome,
+    utc_reference_datetime,
+)
 from app.platform.jobs.contracts import JobDefinition
 from app.platform.jobs.implementations.inline_queue import InlineJobQueue
 from app.platform.jobs.names import DOCUMENT_PURGE
@@ -123,6 +127,20 @@ def test_tax_v1_manifest_keeps_original_cases_and_adds_focused_authority_coverag
     assert {"multilingual", "authority", "scope", "refusal"}.issubset(
         {tag for case in manifest.cases for tag in case.tags}
     )
+    sequences = {sequence.key: sequence for sequence in manifest.sequences}
+    topic = sequences["topic_reset_drops_amount"].turns
+    assert topic[1].expected_resolution is not None
+    assert topic[1].expected_resolution.absent_binding_kinds == [
+        BindingKind.SCENARIO_PARAMETER,
+        BindingKind.PERIOD_DATE,
+    ]
+    compare = sequences["compare_scope_nonsticky_filters"].turns
+    assert compare[1].anchors == ["rebate_rate_2026"]
+    assert compare[1].required_anchor_groups == [["rebate_rate_2026"]]
+    assert "rebate_rate_2023" not in compare[1].anchors
+    snapshot = sequences["temporal_snapshot_clarify"].turns
+    assert snapshot[2].query.startswith("What was the rate before that date")
+    assert snapshot[3].query == "I mean as of 2026-08-01."
 
 
 def test_business_conversation_v1_covers_required_sequence_intentions() -> None:
@@ -160,15 +178,29 @@ def test_business_conversation_v1_covers_required_sequence_intentions() -> None:
     assert clarify[2].query == "premium"
     topic = sequences["topic_reset_drops_amount"].turns
     assert topic[1].expected_resolution is not None
-    assert topic[1].expected_resolution.relation.value == "topic_change"
+    assert topic[1].expected_resolution.relation is None
+    assert topic[1].expected_resolution.absent_binding_kinds == [
+        BindingKind.SCENARIO_PARAMETER,
+        BindingKind.PERIOD_DATE,
+    ]
+    assert topic[2].expected_resolution is not None
+    assert topic[2].expected_resolution.absent_binding_kinds == [
+        BindingKind.SCENARIO_PARAMETER,
+        BindingKind.PERIOD_DATE,
+    ]
     assert "1800" in topic[2].prohibited_answer_tokens
     language = sequences["language_switch_unicode_correction"].turns
     assert any("\u09e8" <= char <= "\u09ef" for char in language[1].query)
     compare = sequences["compare_scope_nonsticky_filters"].turns
     assert compare[0].document_scope == "expense_policy_2025"
+    assert compare[1].anchors == ["meal_share_2026"]
+    assert compare[1].required_anchor_groups == [["meal_share_2026"]]
+    assert "meal_share_2025" not in compare[1].anchors
     assert compare[2].metadata_filter == {"source": "nonexistent-journey-source"}
     assert compare[3].metadata_filter == {}
     assert compare[3].document_scope is None
+    snapshot = sequences["temporal_snapshot_clarify"].turns
+    assert snapshot[2].query == "I mean as of 2025-06-01."
 
 
 def test_tax_v1_fixture_requires_all_eligible_categories_and_stale_correction() -> None:
@@ -3099,3 +3131,90 @@ def test_resolution_scoring_rejects_stale_active_operand_alongside_correction():
         prior_turn_messages={},
     )
     assert any("Unexpected active" in item["message"] for item in failures)
+
+
+def test_resolution_scoring_rejects_stale_kinds_when_absent_binding_kinds_are_expected():
+    from types import SimpleNamespace
+
+    from app.cli.rag_journey import _resolution_failures
+
+    case = JourneyCase(
+        key="topic_reset",
+        query="Forget the rebate calculation.",
+        tags=[],
+        anchors=[],
+        expected_resolution=ExpectedResolution.model_validate(
+            {"absent_binding_kinds": ["scenario_parameter", "period_date"]}
+        ),
+    )
+    retained = _resolution_failures(
+        case=case,
+        message=SimpleNamespace(finish_reason="stop"),
+        metadata={
+            "turn_resolution": {
+                "outcome": "standalone",
+                "relation": "standalone",
+                "active_bindings": [
+                    {
+                        "kind": "scenario_parameter",
+                        "active_value": "75000",
+                        "origin": "user_literal",
+                    }
+                ],
+            }
+        },
+        prior_turn_messages={},
+    )
+    assert any("Stale active scenario_parameter" in item["message"] for item in retained)
+    dropped = _resolution_failures(
+        case=case,
+        message=SimpleNamespace(finish_reason="stop"),
+        metadata={
+            "turn_resolution": {
+                "outcome": "standalone",
+                "relation": "standalone",
+                "active_bindings": [],
+            }
+        },
+        prior_turn_messages={},
+    )
+    assert dropped == []
+
+
+def test_resolution_scoring_rejects_fallback_as_silent_continuity_success():
+    from types import SimpleNamespace
+
+    from app.cli.rag_journey import _resolution_failures
+
+    case = JourneyCase(
+        key="topic_reset",
+        query="Forget the rebate calculation.",
+        tags=[],
+        anchors=[],
+        expected_resolution=ExpectedResolution.model_validate(
+            {"absent_binding_kinds": ["scenario_parameter", "period_date"]}
+        ),
+    )
+    failures = _resolution_failures(
+        case=case,
+        message=SimpleNamespace(finish_reason="stop"),
+        metadata={
+            "turn_resolution": {
+                "outcome": "fallback",
+                "relation": "standalone",
+                "failure_code": "mutated_effective_question",
+                "active_bindings": [],
+            }
+        },
+        prior_turn_messages={},
+    )
+    assert any("fallback cannot satisfy" in item["message"] for item in failures)
+
+
+def test_journey_amount_equivalence_accepts_grouped_and_unicode_amounts():
+    from app.cli.rag_journey import _answer_contains_expected_token
+
+    assert _answer_contains_expected_token("The rebate is BDT 6,000.", "6000")
+    assert _answer_contains_expected_token("The rebate is 6 000.", "6000")
+    assert _answer_contains_expected_token("রিবেট ৭৫,\u09e6\u09e6\u09e6 টাকা।", "75000")
+    assert not _answer_contains_expected_token("The rebate is BDT 60,000.", "6000")

@@ -14,7 +14,7 @@ immutable, secret-free configuration snapshot. Messages reference the active sna
 deployment or Project changes do not alter prior conversation behavior. `provider`, `model`,
 and `temperature` remain deprecated compatibility fields; strict policy
 rejects them with `request_policy_override_forbidden`. Prompt version is not selectable;
-chat always uses the canonical grounding prompt (`GROUNDED_PROMPT_VERSION`, currently `v7`).
+chat always uses the canonical grounding prompt (`GROUNDED_PROMPT_VERSION`, currently `v8`).
 
 Super Admins can explicitly refresh future messages with
 `POST /api/v1/projects/{project_id}/conversations/{conversation_id}/config`, supplying the expected
