@@ -489,10 +489,14 @@ test("clearing domain instructions back to Global restores Global source", async
   expect(screen.queryByText("Unsaved")).not.toBeInTheDocument();
 });
 
-test("an explicit Project value remains distinct when it equals Global", async () => {
+test("a stored value that matches Global follows Global", async () => {
   mockProjectShell();
   const stored = revisionFor({
-    behavior: { response_mode: "indexed_only", translation_policy: "inherit" },
+    behavior: {
+      response_mode: "indexed_only",
+      grounding_assurance: "strict",
+      translation_policy: "disabled",
+    },
     execution: {},
   });
   const create = setupAI(effectiveConfig(stored.id), stored);
@@ -502,17 +506,28 @@ test("an explicit Project value remains distinct when it equals Global", async (
   );
 
   expect(await screen.findByLabelText("Response mode")).toHaveValue("indexed_only");
-  expect(screen.getByRole("button", { name: "Response mode: Use Global" })).toBeInTheDocument();
+  expect(screen.getByLabelText("Grounding assurance")).toHaveValue("strict");
+  expect(screen.getByLabelText("Query translation")).toHaveValue("disabled");
+  expect(
+    screen.queryByRole("button", { name: "Response mode: Use Global" }),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Grounding assurance: Use Global" }),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "Query translation: Use Global" }),
+  ).not.toBeInTheDocument();
+  expect(screen.getByText("Follows Global")).toBeInTheDocument();
   await saveRevision();
 
   await waitFor(() => expect(create).toHaveBeenCalledTimes(1));
-  expect(create.mock.calls[0]?.[1].behavior).toEqual({ response_mode: "indexed_only" });
+  expect(create.mock.calls[0]?.[1].behavior).toEqual({});
 });
 
 test("Use Global removes an existing behavior override", async () => {
   mockProjectShell();
   const stored = revisionFor({
-    behavior: { response_mode: "indexed_only", translation_policy: "inherit" },
+    behavior: { response_mode: "indexed_then_web", translation_policy: "inherit" },
     execution: { profile_id: "standard" },
   });
   const create = setupAI(effectiveConfig(stored.id), stored);

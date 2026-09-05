@@ -1,4 +1,4 @@
-"""Small production-path RAG journey runner for the synthetic ``tax_v1`` fixture."""
+"""Small production-path RAG journey runner for local synthetic fixture packs."""
 
 from __future__ import annotations
 
@@ -6,17 +6,28 @@ import json
 import math
 import re
 import statistics
+import time
 import unicodedata
 import uuid
-from collections.abc import AsyncIterator, Callable, Mapping, Sequence
+from collections.abc import AsyncIterator, Callable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from datetime import UTC, date, datetime
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 from urllib.parse import urlsplit
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.core.config import ModifiesExpansionMode, ResponseMode, Settings, StorageBackend
+from app.modules.conversations.turn_resolution import (
+    BindingKind,
+    BindingOrigin,
+    SnapshotOrigin,
+    TemporalIntentKind,
+    TurnOutcome,
+    TurnRelation,
+    parameter_values_match,
+)
 from app.modules.evaluation.metrics import rank_metrics
 from app.modules.evaluation.schemas.evaluation import EvaluationCase, EvaluationCaseKind
 from app.platform.config.profiles import execution_profile, execution_values
@@ -24,6 +35,9 @@ from app.platform.config.project_ai import ProjectAIConfig
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_FIXTURE = _REPO_ROOT / "tests" / "fixtures" / "journeys" / "tax_v1" / "journey.json"
+BUSINESS_FIXTURE = (
+    _REPO_ROOT / "tests" / "fixtures" / "journeys" / "business_conversation_v1" / "journey.json"
+)
 DEFAULT_ARTIFACT_ROOT = _REPO_ROOT / "artifacts" / "rag-journey"
 _LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
 _SECRET_KEYS = ("api_key", "password", "secret", "credential", "authorization")
@@ -100,6 +114,28 @@ class CorrectionExpectation(BaseModel):
     markers: list[str] = Field(min_length=1)
 
 
+class ExpectedBinding(BaseModel):
+    """Structured resolution check. Does not assert rewritten question prose."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    kind: BindingKind
+    active_value: str
+    origin: BindingOrigin
+    prior_turns: list[int] = Field(default_factory=list)
+
+
+class ExpectedResolution(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    outcome: TurnOutcome
+    relation: TurnRelation | None = None
+    active_bindings: list[ExpectedBinding] = Field(default_factory=list)
+    temporal_intent: TemporalIntentKind | None = None
+    effective_as_of: datetime | None = None
+    snapshot_origin: SnapshotOrigin | None = None
+
+
 class JourneyCase(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -111,6 +147,7 @@ class JourneyCase(BaseModel):
     prohibited_final_sources: list[str] = Field(default_factory=list)
     prohibited_answer_tokens: list[str] = Field(default_factory=list)
     document_scope: str | None = None
+    metadata_filter: dict[str, str] = Field(default_factory=dict)
     as_of: datetime | None = None
     expected_tokens: list[str] = Field(default_factory=list)
     expected_token_groups: list[list[str]] = Field(default_factory=list)
@@ -118,7 +155,27 @@ class JourneyCase(BaseModel):
     user_parameter_tokens: list[str] = Field(default_factory=list)
     content_match_anchors: list[str] = Field(default_factory=list)
     correction: CorrectionExpectation | None = None
-    mode: Literal["answerable", "scope_isolation", "no_answer"] = "answerable"
+    expected_resolution: ExpectedResolution | None = None
+    mode: Literal["answerable", "scope_isolation", "no_answer", "clarification"] = "answerable"
+
+    @model_validator(mode="after")
+    def validate_prior_turn_indexes(self) -> JourneyCase:
+        if self.expected_resolution is None:
+            return self
+        for binding in self.expected_resolution.active_bindings:
+            if any(turn_index < 1 for turn_index in binding.prior_turns):
+                raise ValueError(
+                    f"Case {self.key!r} expected_resolution prior_turns must be 1-based."
+                )
+        return self
+
+
+class JourneySequence(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    key: str
+    tags: list[str] = Field(default_factory=list)
+    turns: list[JourneyCase] = Field(min_length=2)
 
 
 class JourneyManifest(BaseModel):
@@ -130,6 +187,8 @@ class JourneyManifest(BaseModel):
     sources: list[JourneySource]
     anchors: list[EvidenceAnchor]
     cases: list[JourneyCase]
+    sequences: list[JourneySequence] = Field(default_factory=list)
+    reference_time: datetime | None = None
 
 
 class RuntimeChunk(BaseModel):
@@ -153,6 +212,7 @@ class JourneyOptions(BaseModel):
     allow_nonlocal_database: bool = False
     allow_nonlocal_storage: bool = False
     configured_job_backend: str | None = None
+    replay_raw_retrieval: bool = False
 
 
 def load_manifest(path: Path = DEFAULT_FIXTURE) -> JourneyManifest:
@@ -161,13 +221,37 @@ def load_manifest(path: Path = DEFAULT_FIXTURE) -> JourneyManifest:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise JourneyError(f"Unable to load journey manifest {path}: {exc}") from exc
-    manifest = JourneyManifest.model_validate(payload)
+    try:
+        manifest = JourneyManifest.model_validate(payload)
+    except ValueError as exc:
+        raise JourneyError(f"Journey manifest is invalid: {exc}") from exc
+    if manifest.schema_version < 1:
+        raise JourneyError(f"Unsupported journey schema_version {manifest.schema_version}.")
     source_keys = [source.key for source in manifest.sources]
     anchor_keys = [anchor.key for anchor in manifest.anchors]
     case_keys = [case.key for case in manifest.cases]
-    for label, keys in (("source", source_keys), ("anchor", anchor_keys), ("case", case_keys)):
+    sequence_keys = [sequence.key for sequence in manifest.sequences]
+    sequence_turn_keys = [turn.key for sequence in manifest.sequences for turn in sequence.turns]
+    for label, keys in (
+        ("source", source_keys),
+        ("anchor", anchor_keys),
+        ("case", case_keys),
+        ("sequence", sequence_keys),
+        ("sequence turn", sequence_turn_keys),
+    ):
         if len(keys) != len(set(keys)):
             raise JourneyError(f"Journey manifest has duplicate {label} keys.")
+    overlapping = set(case_keys) & set(sequence_turn_keys)
+    if overlapping:
+        raise JourneyError(
+            f"Journey sequence turns reuse standalone case keys: {sorted(overlapping)}"
+        )
+    if manifest.sequences and manifest.schema_version < 2:
+        raise JourneyError("Sequence packs require schema_version 2.")
+    if manifest.sequences and manifest.reference_time is None:
+        raise JourneyError("Sequence packs require a timezone-aware reference_time.")
+    if manifest.reference_time is not None and manifest.reference_time.tzinfo is None:
+        raise JourneyError("Journey reference_time must be timezone-aware UTC.")
     sources = set(source_keys)
     anchors = set(anchor_keys)
     for source in manifest.sources:
@@ -185,30 +269,63 @@ def load_manifest(path: Path = DEFAULT_FIXTURE) -> JourneyManifest:
                 f"Anchor {anchor.key!r} references unknown source {anchor.source!r}."
             )
     for case in manifest.cases:
-        grouped_anchors = {anchor for group in case.required_anchor_groups for anchor in group}
-        unknown = (set(case.anchors) | grouped_anchors) - anchors
-        if unknown:
-            raise JourneyError(f"Case {case.key!r} references unknown anchors: {sorted(unknown)}")
-        unknown_content_match = set(case.content_match_anchors) - anchors
-        if unknown_content_match:
-            raise JourneyError(
-                f"Case {case.key!r} content_match_anchors reference unknown "
-                f"anchors: {sorted(unknown_content_match)}"
-            )
-        if any(not group for group in case.required_anchor_groups):
-            raise JourneyError(f"Case {case.key!r} contains an empty required anchor group.")
-        if any(not group for group in case.expected_token_groups):
-            raise JourneyError(f"Case {case.key!r} contains an empty expected token group.")
-        unknown_sources = set(case.prohibited_final_sources) - sources
-        if unknown_sources:
-            raise JourneyError(
-                f"Case {case.key!r} prohibits unknown sources: {sorted(unknown_sources)}"
-            )
-        if case.document_scope is not None and case.document_scope not in sources:
-            raise JourneyError(
-                f"Case {case.key!r} references unknown document scope {case.document_scope!r}."
-            )
+        _validate_case_graph(case, sources=sources, anchors=anchors)
+        if case.expected_resolution is not None:
+            _validate_sequence_turn_resolution(case, turn_index=1, turn_count=1)
+    for sequence in manifest.sequences:
+        turn_count = len(sequence.turns)
+        for turn_index, case in enumerate(sequence.turns, start=1):
+            _validate_case_graph(case, sources=sources, anchors=anchors)
+            _validate_sequence_turn_resolution(case, turn_index=turn_index, turn_count=turn_count)
     return manifest
+
+
+def _validate_sequence_turn_resolution(
+    case: JourneyCase,
+    *,
+    turn_index: int,
+    turn_count: int,
+) -> None:
+    expected = case.expected_resolution
+    if expected is None:
+        return
+    for binding in expected.active_bindings:
+        for prior in binding.prior_turns:
+            if prior >= turn_index or prior > turn_count:
+                raise JourneyError(
+                    f"Sequence turn {case.key!r} prior_turn {prior} is not an earlier turn."
+                )
+
+
+def _validate_case_graph(
+    case: JourneyCase,
+    *,
+    sources: set[str],
+    anchors: set[str],
+) -> None:
+    grouped_anchors = {anchor for group in case.required_anchor_groups for anchor in group}
+    unknown = (set(case.anchors) | grouped_anchors) - anchors
+    if unknown:
+        raise JourneyError(f"Case {case.key!r} references unknown anchors: {sorted(unknown)}")
+    unknown_content_match = set(case.content_match_anchors) - anchors
+    if unknown_content_match:
+        raise JourneyError(
+            f"Case {case.key!r} content_match_anchors reference unknown "
+            f"anchors: {sorted(unknown_content_match)}"
+        )
+    if any(not group for group in case.required_anchor_groups):
+        raise JourneyError(f"Case {case.key!r} contains an empty required anchor group.")
+    if any(not group for group in case.expected_token_groups):
+        raise JourneyError(f"Case {case.key!r} contains an empty expected token group.")
+    unknown_sources = set(case.prohibited_final_sources) - sources
+    if unknown_sources:
+        raise JourneyError(
+            f"Case {case.key!r} prohibits unknown sources: {sorted(unknown_sources)}"
+        )
+    if case.document_scope is not None and case.document_scope not in sources:
+        raise JourneyError(
+            f"Case {case.key!r} references unknown document scope {case.document_scope!r}."
+        )
 
 
 def normalize_text(value: str) -> str:
@@ -501,6 +618,56 @@ def _failure(stage: str, message: str) -> dict[str, str]:
     return {"stage": stage, "message": message}
 
 
+class _FrozenDateTime:
+    """Stand-in for a module's ``datetime`` name that freezes ``now()`` only."""
+
+    def __init__(self, frozen: datetime, original: type[datetime]) -> None:
+        object.__setattr__(self, "_frozen", frozen)
+        object.__setattr__(self, "_original", original)
+
+    def now(self, tz: Any | None = None) -> datetime:
+        frozen: datetime = object.__getattribute__(self, "_frozen")
+        if tz is None:
+            return frozen.replace(tzinfo=None) if frozen.tzinfo else frozen
+        return frozen.astimezone(tz)
+
+    def __call__(self, *args: Any, **kwargs: Any) -> datetime:
+        original: type[datetime] = object.__getattribute__(self, "_original")
+        return original(*args, **kwargs)
+
+    def __getattr__(self, name: str) -> Any:
+        original: type[datetime] = object.__getattribute__(self, "_original")
+        return getattr(original, name)
+
+
+@contextmanager
+def journey_reference_clock(reference_time: datetime | None) -> Iterator[datetime | None]:
+    """Freeze only conversational and source-policy default date reads for one turn."""
+    if reference_time is None:
+        yield None
+        return
+    frozen = reference_time.astimezone(UTC)
+    from app.modules.conversations import turn_resolution as turn_resolution_mod
+    from app.modules.knowledge import source_metadata_read as source_metadata_mod
+    from app.modules.retrieval.services import search_service as search_mod
+
+    original_reference = turn_resolution_mod.utc_reference_datetime
+    originals = {
+        turn_resolution_mod: turn_resolution_mod.datetime,
+        search_mod: search_mod.datetime,
+        source_metadata_mod: source_metadata_mod.datetime,
+    }
+    turn_resolution_mod.utc_reference_datetime = lambda: frozen
+    for module, original in originals.items():
+        cast(Any, module).datetime = _FrozenDateTime(frozen, original)
+    try:
+        yield frozen
+    finally:
+        turn_resolution_mod.utc_reference_datetime = original_reference
+        for module, original in originals.items():
+            cast(Any, module).datetime = original
+
+
 _CONTEXT_SELECTION_REASONS = frozenset(
     {
         "authority_context_empty",
@@ -552,6 +719,13 @@ def _optional_ms(value: object) -> int | None:
     return int(value)
 
 
+def _optional_identity(value: object) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
 def _ratio(numerator: object, denominator: object) -> float | None:
     if isinstance(numerator, bool) or isinstance(denominator, bool):
         return None
@@ -560,6 +734,32 @@ def _ratio(numerator: object, denominator: object) -> float | None:
     if denominator <= 0:
         return None
     return float(numerator) / float(denominator)
+
+
+def _format_optional_rate(value: object) -> str:
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return "n/a"
+    return f"{float(value):.0%}"
+
+
+def _format_optional_mean(value: object) -> str:
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return "n/a"
+    return f"{float(value):.1f}"
+
+
+def _replay_metric(case: Mapping[str, Any], key: str) -> float | None:
+    value = (case.get("raw_retrieval_replay") or {}).get(key)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value)
+
+
+def _optional_fmean(values: Iterator[float | None]) -> float | None:
+    present = [value for value in values if value is not None]
+    if not present:
+        return None
+    return statistics.fmean(present)
 
 
 def _has_translated_branch(item: Mapping[str, Any]) -> bool:
@@ -579,6 +779,212 @@ def _first_relevant_rank(retrieved: list[dict[str, Any]], relevant_ids: set[str]
     return None
 
 
+def _clarification_failures(
+    *,
+    message: Any,
+    metadata: Mapping[str, Any],
+    gate: Mapping[str, Any],
+    web: Mapping[str, Any],
+) -> list[dict[str, str]]:
+    failures: list[dict[str, str]] = []
+    recorded_raw = metadata.get("turn_resolution")
+    recorded: dict[str, Any] = recorded_raw if isinstance(recorded_raw, dict) else {}
+    finish_reason = getattr(message, "finish_reason", None)
+    if recorded.get("outcome") != TurnOutcome.CLARIFY.value or finish_reason != "clarification":
+        failures.append(_failure("turn_resolution", "Expected clarification was not returned."))
+    if message.grounded is not None:
+        failures.append(_failure("turn_resolution", "Clarification must leave grounded null."))
+    if getattr(message, "claims", None) or getattr(message, "citations", None):
+        failures.append(
+            _failure("turn_resolution", "Clarification must not carry claims or citations.")
+        )
+    if gate.get("generation_ran") is not False or gate.get("claims_status") != "not_applicable":
+        failures.append(
+            _failure("turn_resolution", "Clarification must not run factual generation.")
+        )
+    if (
+        getattr(message, "insufficient_evidence_reason", None) is not None
+        or getattr(message, "source_provenance", "none") != "none"
+    ):
+        failures.append(_failure("turn_resolution", "Clarification has factual grounding status."))
+    trace = metadata.get("retrieval_trace") or {}
+    if any(trace.get(key) for key in ("candidates", "retrieval_selected", "context_selected")):
+        failures.append(_failure("turn_resolution", "Clarification ran retrieval."))
+    if bool(web.get("fallback_used")) or str(web.get("status") or "not_requested") not in {
+        "not_requested",
+        "suppressed_scoped_request",
+    }:
+        failures.append(_failure("fallback", "Clarification requested or used web search."))
+    return failures
+
+
+def _resolution_failures(
+    *,
+    case: JourneyCase,
+    message: Any,
+    metadata: Mapping[str, Any],
+    prior_turn_messages: Mapping[int, Mapping[str, str]],
+) -> list[dict[str, str]]:
+    failures: list[dict[str, str]] = []
+    finish_reason = getattr(message, "finish_reason", None)
+    if case.mode != "clarification" and finish_reason == "clarification":
+        failures.append(
+            _failure("turn_resolution", "Answerable turn returned an unexpected clarification.")
+        )
+    expected = case.expected_resolution
+    if expected is None:
+        return failures
+    recorded = metadata.get("turn_resolution")
+    if not isinstance(recorded, dict):
+        failures.append(_failure("turn_resolution", "Turn did not record resolution diagnostics."))
+        return failures
+    if recorded.get("outcome") != expected.outcome.value:
+        failures.append(
+            _failure(
+                "turn_resolution",
+                f"Resolution outcome {recorded.get('outcome')!r} != {expected.outcome.value!r}.",
+            )
+        )
+    if expected.relation is not None and recorded.get("relation") != expected.relation.value:
+        failures.append(
+            _failure(
+                "turn_resolution",
+                f"Resolution relation {recorded.get('relation')!r} != {expected.relation.value!r}.",
+            )
+        )
+    if (
+        expected.temporal_intent is not None
+        and _recorded_temporal_intent(recorded) != expected.temporal_intent.value
+    ):
+        failures.append(
+            _failure(
+                "turn_resolution",
+                "Resolution temporal intent "
+                f"{_recorded_temporal_intent(recorded)!r} != {expected.temporal_intent.value!r}.",
+            )
+        )
+    recorded_snapshot = _recorded_effective_as_of(recorded)
+    if (
+        expected.effective_as_of is not None
+        and recorded_snapshot != expected.effective_as_of.astimezone(UTC)
+    ):
+        failures.append(
+            _failure(
+                "turn_resolution",
+                "Effective snapshot "
+                f"{recorded_snapshot} != {expected.effective_as_of.astimezone(UTC)}.",
+            )
+        )
+    if (
+        expected.snapshot_origin is not None
+        and recorded.get("snapshot_origin") != expected.snapshot_origin.value
+        and (recorded.get("snapshot") or recorded.get("effective_snapshot") or {}).get("origin")
+        != expected.snapshot_origin.value
+    ):
+        failures.append(
+            _failure(
+                "turn_resolution",
+                f"Snapshot origin {recorded.get('snapshot_origin')!r} != "
+                f"{expected.snapshot_origin.value!r}.",
+            )
+        )
+    recorded_bindings = _recorded_bindings(recorded)
+    for kind in (BindingKind.SCENARIO_PARAMETER, BindingKind.PERIOD_DATE):
+        expected_values = [
+            item.active_value for item in expected.active_bindings if item.kind is kind
+        ]
+        if expected_values and any(
+            item.get("kind") == kind.value
+            and not any(
+                parameter_values_match(str(item.get("active_value") or ""), value)
+                for value in expected_values
+            )
+            for item in recorded_bindings
+        ):
+            failures.append(_failure("turn_resolution", f"Unexpected active {kind.value} binding."))
+    for expected_binding in expected.active_bindings:
+        match = next(
+            (
+                item
+                for item in recorded_bindings
+                if item.get("kind") == expected_binding.kind.value
+                and item.get("origin") == expected_binding.origin.value
+                and parameter_values_match(
+                    str(item.get("active_value") or ""), expected_binding.active_value
+                )
+            ),
+            None,
+        )
+        if match is None:
+            failures.append(
+                _failure(
+                    "turn_resolution",
+                    "Missing active binding "
+                    f"{expected_binding.kind.value}/{expected_binding.origin.value}/"
+                    f"{expected_binding.active_value!r}.",
+                )
+            )
+            continue
+        referenced = {
+            str(item.get("message_id"))
+            for item in list(match.get("references") or [])
+            if isinstance(item, Mapping) and item.get("message_id")
+        }
+        for prior in expected_binding.prior_turns:
+            identities = prior_turn_messages.get(prior) or {}
+            expected_ids = {value for value in identities.values() if value}
+            if not expected_ids or not (referenced & expected_ids):
+                failures.append(
+                    _failure(
+                        "turn_resolution",
+                        "Binding "
+                        f"{expected_binding.active_value!r} does not reference turn {prior}.",
+                    )
+                )
+    return failures
+
+
+def _recorded_temporal_intent(recorded: Mapping[str, Any]) -> str | None:
+    raw = recorded.get("temporal_intent")
+    if isinstance(raw, Mapping):
+        kind = raw.get("kind")
+        return str(kind) if kind is not None else None
+    if raw is None:
+        return None
+    return str(raw)
+
+
+def _recorded_effective_as_of(recorded: Mapping[str, Any]) -> datetime | None:
+    snapshot = recorded.get("snapshot")
+    raw = snapshot.get("as_of") if isinstance(snapshot, Mapping) else None
+    if raw is None:
+        raw = recorded.get("effective_as_of")
+    if raw is None:
+        raw = (
+            (recorded.get("effective_snapshot") or {}).get("as_of")
+            if isinstance(recorded.get("effective_snapshot"), Mapping)
+            else None
+        )
+    if raw is None:
+        return None
+    if isinstance(raw, datetime):
+        return raw.astimezone(UTC)
+    try:
+        parsed = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
+def _recorded_bindings(recorded: Mapping[str, Any]) -> list[dict[str, Any]]:
+    raw = recorded.get("active_bindings") or []
+    if not isinstance(raw, list):
+        return []
+    return [item for item in raw if isinstance(item, dict)]
+
+
 def evaluate_case_result(
     *,
     case: JourneyCase,
@@ -589,6 +995,7 @@ def evaluate_case_result(
     modifies_expansion_active: bool,
     chunks: Sequence[RuntimeChunk] = (),
     anchors: Sequence[EvidenceAnchor] = (),
+    prior_turn_messages: Mapping[int, Mapping[str, str]] | None = None,
 ) -> dict[str, Any]:
     """Normalize one production message and localize deterministic failures."""
     metadata = dict(message.metadata or {})
@@ -664,6 +1071,14 @@ def evaluate_case_result(
     authority = dict(metadata.get("current_authority") or {})
     scope_current_authority = dict(metadata.get("scope_current_authority") or {})
     failures: list[dict[str, str]] = []
+    failures.extend(
+        _resolution_failures(
+            case=case,
+            message=message,
+            metadata=metadata,
+            prior_turn_messages=prior_turn_messages or {},
+        )
+    )
     all_knowledge_evidence = candidates + retrieved + admitted + citations
     finalized_knowledge_evidence = admitted + citations
     for claim in claims:
@@ -697,6 +1112,10 @@ def evaluate_case_result(
             failures.append(
                 _failure("authority", f"Hard document scope leaked evidence from {sorted(leaked)}.")
             )
+    if case.mode == "clarification":
+        failures.extend(
+            _clarification_failures(message=message, metadata=metadata, gate=gate, web=web)
+        )
     if case.mode == "answerable":
         if not relevant_retrieved:
             failures.append(_failure("retrieval", "No expected evidence anchor was retrieved."))
@@ -912,9 +1331,17 @@ def evaluate_case_result(
     total_ms = _optional_ms(message.total_latency_ms)
     translation_ms = _optional_ms(translation.get("latency_ms"))
     rerank_ms = _optional_ms(rerank.get("latency_ms"))
+    resolution_recorded = sanitize_diagnostics(metadata.get("turn_resolution") or {})
+    resolution_ms = _optional_ms(resolution_recorded.get("latency_ms"))
     residual_ms = None
     if retrieval_ms is not None and generation_ms is not None and total_ms is not None:
-        residual_ms = max(0, total_ms - retrieval_ms - generation_ms)
+        subtracted = retrieval_ms + generation_ms
+        if resolution_ms is not None:
+            subtracted += resolution_ms
+        residual_ms = max(0, total_ms - subtracted)
+    resolver_usage = resolution_recorded.get("usage")
+    if not isinstance(resolver_usage, Mapping):
+        resolver_usage = {}
 
     return {
         "key": case.key,
@@ -924,6 +1351,16 @@ def evaluate_case_result(
         "passed": not failures,
         "failures": failures,
         "answer": message.content,
+        "finish_reason": getattr(message, "finish_reason", None),
+        "turn_resolution": resolution_recorded,
+        "expected_resolution": (
+            sanitize_diagnostics(case.expected_resolution.model_dump(mode="json"))
+            if case.expected_resolution is not None
+            else None
+        ),
+        "index_build_id": _optional_identity(
+            getattr(message, "index_build_id", None) or metadata.get("index_build_id")
+        ),
         "grounded": message.grounded,
         "insufficient_evidence_reason": (
             message.insufficient_evidence_reason.value
@@ -938,6 +1375,7 @@ def evaluate_case_result(
             "reciprocal_rank": reciprocal_rank,
             "ndcg": ndcg,
             "relevant_rank": _first_relevant_rank(retrieved, relevant_ids),
+            "relevant_ids": sorted(relevant_ids),
             "relevant_retrieved_ids": [
                 result_id for result_id in result_ids if result_id in relevant_ids
             ],
@@ -979,18 +1417,26 @@ def evaluate_case_result(
             "lexical": None,
             "rerank": rerank_ms,
             "retrieval": retrieval_ms,
+            "resolution": resolution_ms,
             "grounding_and_context": residual_ms,
             "generation": generation_ms,
             "total": total_ms,
             "translation_share": _ratio(translation_ms, total_ms),
         },
+        "usage": {
+            "turn_input_tokens": _optional_ms(getattr(message, "input_tokens", None)),
+            "turn_output_tokens": _optional_ms(getattr(message, "output_tokens", None)),
+            "resolver_input_tokens": _optional_ms(resolver_usage.get("input_tokens")),
+            "resolver_output_tokens": _optional_ms(resolver_usage.get("output_tokens")),
+        },
     }
 
 
 def aggregate_results(cases: list[dict[str, Any]]) -> dict[str, Any]:
+    scored = [case for case in cases if not case.get("blocked")]
     latencies = [
         float(case["timings_ms"]["total"])
-        for case in cases
+        for case in scored
         if isinstance(case.get("timings_ms", {}).get("total"), (int, float))
     ]
     passed = sum(bool(case["passed"]) for case in cases)
@@ -999,6 +1445,8 @@ def aggregate_results(cases: list[dict[str, Any]]) -> dict[str, Any]:
             failure["stage"] == stage for case in cases for failure in case.get("failures", [])
         )
         for stage in (
+            "turn_resolution",
+            "execution",
             "retrieval",
             "authority",
             "admission_grounding",
@@ -1009,6 +1457,16 @@ def aggregate_results(cases: list[dict[str, Any]]) -> dict[str, Any]:
             "fallback",
         )
     }
+    answerable = [
+        case
+        for case in scored
+        if case.get("mode") == "answerable" and isinstance(case.get("retrieval"), Mapping)
+    ]
+    expected_clarifications = [case for case in scored if case.get("mode") == "clarification"]
+    observed_clarifications = [case for case in scored if _produced_clarification(case)]
+    clarification_true_positives = [
+        case for case in expected_clarifications if _produced_clarification(case)
+    ]
     degradation_reasons: dict[str, int] = {}
     for case in cases:
         degradation = case.get("provider_degradation") or {}
@@ -1021,16 +1479,27 @@ def aggregate_results(cases: list[dict[str, Any]]) -> dict[str, Any]:
         "passed": passed,
         "failed": len(cases) - passed,
         "pass_rate": passed / len(cases) if cases else 0.0,
-        "mean_recall": statistics.fmean(
-            float(case["retrieval"]["recall"]) for case in cases if case["mode"] == "answerable"
-        )
-        if any(case["mode"] == "answerable" for case in cases)
+        "mean_recall": statistics.fmean(float(case["retrieval"]["recall"]) for case in answerable)
+        if answerable
         else 0.0,
         "latency_p50_ms": statistics.median(latencies) if latencies else 0.0,
         "latency_p95_ms": _percentile(latencies, 0.95),
         "latency_mean_ms": statistics.fmean(latencies) if latencies else 0.0,
         "latency_max_ms": max(latencies) if latencies else 0.0,
         "failure_counts": failure_counts,
+        "clarification": {
+            "expected": len(expected_clarifications),
+            "observed": len(observed_clarifications),
+            "true_positives": len(clarification_true_positives),
+            "precision": _ratio(
+                len(clarification_true_positives),
+                len(observed_clarifications),
+            ),
+            "recall": _ratio(
+                len(clarification_true_positives),
+                len(expected_clarifications),
+            ),
+        },
         "correctness": {
             "passed": passed,
             "failed": len(cases) - passed,
@@ -1050,11 +1519,276 @@ def aggregate_results(cases: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def _recorded_resolution(case: Mapping[str, Any]) -> Mapping[str, Any]:
+    recorded = case.get("turn_resolution") or {}
+    return recorded if isinstance(recorded, Mapping) else {}
+
+
+def resolution_measurements(
+    cases: Sequence[Mapping[str, Any]],
+    sequences: Sequence[Mapping[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Aggregate resolver cost/benefit measurements for one Journey variant."""
+    scored = [case for case in cases if not case.get("blocked")]
+    attempted = [case for case in scored if _recorded_resolution(case).get("attempted") is True]
+    bypassed = [
+        case
+        for case in scored
+        if _recorded_resolution(case).get("attempted") is False
+        and _recorded_resolution(case).get("bypass_reason")
+    ]
+    fallbacks = [
+        case for case in attempted if _recorded_resolution(case).get("outcome") == "fallback"
+    ]
+    standalone = [
+        case
+        for case in attempted
+        if _recorded_resolution(case).get("outcome") == "standalone"
+        or _recorded_resolution(case).get("relation") == "topic_change"
+    ]
+    fallback_by_reason: dict[str, int] = {}
+    for case in fallbacks:
+        reason = str(_recorded_resolution(case).get("failure_code") or "unspecified")
+        fallback_by_reason[reason] = fallback_by_reason.get(reason, 0) + 1
+    bypass_by_reason: dict[str, int] = {}
+    for case in bypassed:
+        reason = str(_recorded_resolution(case).get("bypass_reason") or "unspecified")
+        bypass_by_reason[reason] = bypass_by_reason.get(reason, 0) + 1
+    resolver_latencies = [
+        float(recorded["latency_ms"])
+        for case in attempted
+        if isinstance((recorded := _recorded_resolution(case)).get("latency_ms"), (int, float))
+    ]
+    total_latencies = [
+        float(case["timings_ms"]["total"])
+        for case in scored
+        if isinstance((case.get("timings_ms") or {}).get("total"), (int, float))
+    ]
+    resolver_input = [
+        int(tokens)
+        for case in attempted
+        if isinstance((tokens := (case.get("usage") or {}).get("resolver_input_tokens")), int)
+    ]
+    resolver_output = [
+        int(tokens)
+        for case in attempted
+        if isinstance((tokens := (case.get("usage") or {}).get("resolver_output_tokens")), int)
+    ]
+    turn_input = [
+        int(tokens)
+        for case in scored
+        if isinstance((tokens := (case.get("usage") or {}).get("turn_input_tokens")), int)
+    ]
+    turn_output = [
+        int(tokens)
+        for case in scored
+        if isinstance((tokens := (case.get("usage") or {}).get("turn_output_tokens")), int)
+    ]
+    expected_resolution_turns = [
+        case for case in cases if case.get("expected_resolution") is not None
+    ]
+    passed_resolution = [
+        case
+        for case in expected_resolution_turns
+        if _recorded_resolution(case)
+        and not any(
+            failure.get("stage") in {"turn_resolution", "execution"}
+            for failure in case.get("failures") or []
+        )
+    ]
+    compared = [
+        case
+        for case in scored
+        if (case.get("raw_retrieval_replay") or {}).get("status") == "compared"
+    ]
+    non_comparable = [
+        case
+        for case in scored
+        if (case.get("raw_retrieval_replay") or {}).get("status") == "non_comparable"
+    ]
+    sequence_items = list(sequences or [])
+    resolver_complete = len(resolver_input) == len(resolver_output) == len(attempted)
+    turn_complete = len(turn_input) == len(turn_output) == len(scored)
+    resolver_tokens = sum(resolver_input) + sum(resolver_output) if resolver_complete else None
+    turn_tokens = sum(turn_input) + sum(turn_output) if turn_complete else None
+    by_conversation: dict[str, list[Mapping[str, Any]]] = {}
+    for case in scored:
+        key = str(case.get("conversation_id") or case.get("key"))
+        by_conversation.setdefault(key, []).append(case)
+    conversation_usage = {}
+    for key, turns in by_conversation.items():
+        tokens = [
+            (turn.get("usage") or {}).get(field)
+            for turn in turns
+            if _recorded_resolution(turn).get("attempted") is True
+            for field in ("resolver_input_tokens", "resolver_output_tokens")
+        ]
+        conversation_usage[key] = (
+            sum(tokens) if all(isinstance(value, int) for value in tokens) else None
+        )
+    return {
+        "attempted": len(attempted),
+        "bypassed": len(bypassed),
+        "bypass_by_reason": dict(sorted(bypass_by_reason.items())),
+        "fallback_rate": _ratio(len(fallbacks), len(attempted)),
+        "fallback_by_reason": dict(sorted(fallback_by_reason.items())),
+        "standalone_rate": _ratio(len(standalone), len(attempted)),
+        "query_change_rate": _ratio(
+            sum(bool(_recorded_resolution(case).get("query_changed")) for case in attempted),
+            len(attempted),
+        ),
+        "filter_change_rate": _ratio(
+            sum(bool(_recorded_resolution(case).get("filter_changed")) for case in attempted),
+            len(attempted),
+        ),
+        "resolver_latency": {
+            "p50_ms": statistics.median(resolver_latencies) if resolver_latencies else 0.0,
+            "p95_ms": _percentile(resolver_latencies, 0.95),
+            "mean_ms": statistics.fmean(resolver_latencies) if resolver_latencies else 0.0,
+            "count": len(resolver_latencies),
+        },
+        "total_turn_latency": {
+            "p50_ms": statistics.median(total_latencies) if total_latencies else 0.0,
+            "p95_ms": _percentile(total_latencies, 0.95),
+            "mean_ms": statistics.fmean(total_latencies) if total_latencies else 0.0,
+            "count": len(total_latencies),
+        },
+        "usage": {
+            "resolver_input_tokens_per_attempt": (
+                statistics.fmean(resolver_input) if resolver_complete and resolver_input else None
+            ),
+            "resolver_output_tokens_per_attempt": (
+                statistics.fmean(resolver_output) if resolver_complete and resolver_output else None
+            ),
+            "resolver_tokens": resolver_tokens,
+            "turn_tokens": turn_tokens,
+            "resolver_tokens_by_conversation": conversation_usage,
+            "attempts_with_complete_usage": sum(
+                all(
+                    isinstance((case.get("usage") or {}).get(field), int)
+                    for field in ("resolver_input_tokens", "resolver_output_tokens")
+                )
+                for case in attempted
+            ),
+            "resolver_share_of_total_tokens": _ratio(
+                resolver_tokens,
+                turn_tokens,
+            ),
+            "cost": None,
+        },
+        "retrieval_change": {
+            "compared": len(compared),
+            "non_comparable": len(non_comparable),
+            "set_change_rate": _ratio(
+                sum(
+                    bool((case.get("raw_retrieval_replay") or {}).get("set_changed"))
+                    for case in compared
+                ),
+                len(compared),
+            ),
+            "rank_change_rate": _ratio(
+                sum(
+                    bool((case.get("raw_retrieval_replay") or {}).get("rank_changed"))
+                    for case in compared
+                ),
+                len(compared),
+            ),
+            "mean_required_anchor_recall_production": _optional_fmean(
+                _replay_metric(case, "required_anchor_recall_production") for case in compared
+            ),
+            "mean_required_anchor_recall_replay": _optional_fmean(
+                _replay_metric(case, "required_anchor_recall_replay") for case in compared
+            ),
+        },
+        "continuity": {
+            "turns_with_expected_resolution": len(expected_resolution_turns),
+            "turns_passed_resolution": len(passed_resolution),
+            "resolution_accuracy": _ratio(len(passed_resolution), len(expected_resolution_turns)),
+            "complete_sequences": sum(bool(item.get("passed")) for item in sequence_items),
+            "sequence_count": len(sequence_items),
+            "complete_sequence_rate": _ratio(
+                sum(bool(item.get("passed")) for item in sequence_items),
+                len(sequence_items),
+            ),
+        },
+    }
+
+
+def compare_raw_retrieval_replay(
+    *,
+    production_ids: Sequence[str],
+    replay_ids: Sequence[str],
+    relevant_ids: Sequence[str],
+    production_index_build_id: str | None,
+    replay_index_build_id: str | None,
+    expected_index_build_id: str | None,
+    production_configuration_hash: str | None = None,
+    replay_configuration_hash: str | None = None,
+    production_source_generation: int | None = None,
+    replay_source_generation: int | None = None,
+    production_degraded: bool = False,
+    replay_degraded: bool = False,
+    latency_ms: int | None = None,
+    usage: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Compare a Journey-only raw retrieval replay with the production selected set."""
+    comparable = True
+    reason: str | None = None
+    if production_degraded or replay_degraded:
+        comparable = False
+        reason = "provider_degradation"
+    elif not _same_optional_id(production_index_build_id, replay_index_build_id) or (
+        expected_index_build_id is not None
+        and not _same_optional_id(production_index_build_id, expected_index_build_id)
+    ):
+        comparable = False
+        reason = "index_snapshot_mismatch"
+    elif production_configuration_hash != replay_configuration_hash:
+        comparable = False
+        reason = "configuration_snapshot_mismatch"
+    elif production_source_generation != replay_source_generation:
+        comparable = False
+        reason = "source_metadata_snapshot_mismatch"
+    relevant = {item for item in relevant_ids if item}
+    production = [item for item in production_ids if item]
+    replay = [item for item in replay_ids if item]
+    production_recall, _, _, _ = rank_metrics(production, relevant)
+    replay_recall, _, _, _ = rank_metrics(replay, relevant)
+    overlapping = set(production) & set(replay)
+    rank_changed = any(production.index(item) != replay.index(item) for item in overlapping)
+    payload: dict[str, Any] = {
+        "status": "compared" if comparable else "non_comparable",
+        "reason": reason,
+        "latency_ms": latency_ms,
+        "retrieved_ids": list(replay),
+        "cost": None,
+        "usage": dict(usage or {}),
+        "set_changed": set(production) != set(replay) if comparable else None,
+        "rank_changed": rank_changed if comparable else None,
+        "required_anchor_recall_production": production_recall if comparable else None,
+        "required_anchor_recall_replay": replay_recall if comparable else None,
+    }
+    return payload
+
+
+def _same_optional_id(left: object, right: object) -> bool:
+    if left is None or right is None:
+        return left == right
+    return str(left) == str(right)
+
+
 def tag_aggregates(cases: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     return {
         tag: aggregate_results([case for case in cases if tag in case["tags"]])
-        for tag in ("multilingual", "authority", "scope", "refusal")
+        for tag in ("multilingual", "authority", "scope", "refusal", "continuity")
     }
+
+
+def _produced_clarification(case: Mapping[str, Any]) -> bool:
+    recorded = case.get("turn_resolution") or {}
+    if not isinstance(recorded, Mapping):
+        recorded = {}
+    return case.get("finish_reason") == "clarification" or recorded.get("outcome") == "clarify"
 
 
 def _percentile(values: list[float], fraction: float) -> float:
@@ -1164,7 +1898,7 @@ async def _preflight_default_organization(session: Any) -> None:
         )
 
 
-async def _create_project(session: Any, *, run_token: str) -> Any:
+async def _create_project(session: Any, *, run_token: str, pack_key: str) -> Any:
     from app.modules.projects.repositories.project_repository import ProjectRepository
     from app.modules.projects.schemas.project import ProjectCreate
     from app.modules.projects.services.project_service import ProjectService
@@ -1176,7 +1910,7 @@ async def _create_project(session: Any, *, run_token: str) -> Any:
     )
     return await service.create(
         ProjectCreate(
-            name=f"RAG Journey tax_v1 {run_token}",
+            name=f"RAG Journey {pack_key} {run_token}",
             description=f"Temporary local RAG journey project; run_token={run_token}",
         )
     )
@@ -1229,7 +1963,7 @@ async def _ingest_sources(
             lifecycle_status=SourceLifecycleStatus.ACTIVE,
             source_role=SourceRole.PRIMARY,
             relationships=relationships,
-            change_reason=f"tax_v1 fixture source {source.key}",
+            change_reason=f"{manifest.key} fixture source {source.key}",
             activate=True,
         )
         path = fixture_root / "corpus" / source.filename
@@ -1529,7 +2263,7 @@ def _evaluation_case(
     anchor_mapping: Mapping[str, list[uuid.UUID]],
     document_ids: Mapping[str, uuid.UUID],
 ) -> EvaluationCase:
-    if case.mode == "no_answer":
+    if case.mode == "no_answer" or case.mode == "clarification":
         kind = EvaluationCaseKind.NO_ANSWER
     elif "codeswitch" in case.tags:
         kind = EvaluationCaseKind.CODE_SWITCHED
@@ -1553,9 +2287,10 @@ def _evaluation_case(
             chunk_id for anchor in case.anchors for chunk_id in anchor_mapping[anchor]
         ],
         document_id=document_ids.get(case.document_scope or ""),
+        metadata_filter=dict(case.metadata_filter),
         as_of=case.as_of,
         expected_answer_tokens=case.expected_tokens,
-        expected_no_answer=case.mode == "no_answer",
+        expected_no_answer=case.mode in {"no_answer", "clarification"},
         query_language=("bn" if any("\u0980" <= char <= "\u09ff" for char in case.query) else None),
         expected_evidence_language=None,
         query_form=query_form,
@@ -1566,6 +2301,82 @@ def _enable_journey_candidate_traces(chat: Any) -> Any:
     """Keep production chat compact; journey scoring needs retrieval identities."""
     chat._store_candidate_trace = True
     return chat
+
+
+def _empty_timings() -> dict[str, Any]:
+    return {
+        "translation": None,
+        "dense": None,
+        "lexical": None,
+        "rerank": None,
+        "retrieval": None,
+        "resolution": None,
+        "grounding_and_context": None,
+        "generation": None,
+        "total": None,
+        "translation_share": None,
+    }
+
+
+def _blocked_or_execution_result(
+    *,
+    case: JourneyCase,
+    stage: str,
+    message: str,
+    conversation_id: str | None,
+    sequence_key: str,
+    turn_index: int,
+    blocked: bool,
+    upstream_failed_turns: list[str],
+) -> dict[str, Any]:
+    return {
+        "key": case.key,
+        "tags": case.tags,
+        "mode": case.mode,
+        "language_bucket": case_language_bucket(key=case.key, tags=case.tags, query=case.query),
+        "passed": False,
+        "blocked": blocked,
+        "failures": [_failure(stage, message)],
+        "answer": "",
+        "finish_reason": None,
+        "turn_resolution": {},
+        "grounded": None,
+        "insufficient_evidence_reason": None,
+        "source_provenance": None,
+        "retrieval": {"recall": 0.0},
+        "admitted": [],
+        "citations": [],
+        "claims": [],
+        "authority": {},
+        "evidence_gate": {},
+        "fallback": {},
+        "translation": {},
+        "executed_branches": [],
+        "branch_candidate_counts": {},
+        "rerank": {},
+        "provider_degradation": None,
+        "quality": {},
+        "timings_ms": _empty_timings(),
+        "usage": {
+            "turn_input_tokens": None,
+            "turn_output_tokens": None,
+            "resolver_input_tokens": None,
+            "resolver_output_tokens": None,
+        },
+        "expected_resolution": (
+            sanitize_diagnostics(case.expected_resolution.model_dump(mode="json"))
+            if case.expected_resolution is not None
+            else None
+        ),
+        "raw_retrieval_replay": {"status": "skipped", "reason": "blocked"},
+        "conversation_id": conversation_id,
+        "sequence_key": sequence_key,
+        "turn_index": turn_index,
+        "user_message_id": None,
+        "assistant_message_id": None,
+        "upstream_failed_turns": upstream_failed_turns,
+        "expected": sanitize_diagnostics(case.model_dump(mode="json")),
+    }
 
 
 async def _run_variant(
@@ -1580,92 +2391,79 @@ async def _run_variant(
     settings: Settings,
     resolution: Any,
     progress: Progress,
+    replay_raw_retrieval: bool = False,
+    expected_index_build_id: str | None = None,
 ) -> dict[str, Any]:
-    from app.composition.audit import DatabaseAuditRecorder
-    from app.dependencies.conversations import get_chat_service
-    from app.modules.conversations.repositories.conversation_repository import (
-        ConversationRepository,
-    )
-    from app.modules.conversations.repositories.message_repository import MessageRepository
-    from app.modules.conversations.schemas.conversation import ConversationCreate
-    from app.modules.conversations.schemas.message import MessageSendRequest
-    from app.modules.conversations.services.conversation_service import ConversationService
-    from app.modules.projects.repositories.project_ai_config_repository import (
-        ProjectAIConfigRepository,
-    )
     from app.platform.providers.implementations.embedding_factory import (
         create_embedding_provider,
     )
 
     effective = resolution.configuration
     variant_results: list[dict[str, Any]] = []
+    sequence_summaries: list[dict[str, Any]] = []
     embedder = create_embedding_provider(settings)
+    expands = (
+        effective.retrieval.modifies_expansion_mode is ModifiesExpansionMode.EXPAND
+        or effective.retrieval.modifies_expansion_mode.value == "expand"
+    )
     for case in manifest.cases:
-        expected = _evaluation_case(
-            case,
-            anchor_mapping=anchor_mapping,
+        normalized = await _run_standalone_case(
+            session_factory,
+            name=name,
+            case=case,
+            manifest=manifest,
+            project_id=project_id,
             document_ids=document_ids,
+            anchor_mapping=anchor_mapping,
+            chunks=chunks,
+            settings=settings,
+            embedder=embedder,
+            response_mode=effective.chat.response_mode,
+            modifies_expansion_active=expands,
+            progress=progress,
+            replay_raw_retrieval=replay_raw_retrieval,
+            expected_index_build_id=expected_index_build_id,
         )
-        progress(f"{name}: {case.key}")
-        async with session_factory() as session:
-            conversations = ConversationRepository(session, project_id)
-            messages = MessageRepository(session, project_id)
-            revision = await ProjectAIConfigRepository(session, project_id).get_active()
-            service = ConversationService(
-                session=session,
-                project_id=project_id,
-                conversation_repository=conversations,
-                message_repository=messages,
-                llm_config=settings.llm,
-                chat_config=settings.chat,
-                settings=settings,
-                active_revision=_active_record(revision),
-                actor_id="rag-journey",
-                audit=DatabaseAuditRecorder(session, project_id),
-            )
-            conversation = await service.create(ConversationCreate(title=f"{name}: {case.key}"))
-            chat = _enable_journey_candidate_traces(
-                await get_chat_service(
-                    session,
-                    project_id,
-                    conversations,
-                    messages,
-                    conversation.id,
-                    embedder,
-                )
-            )
-            turn = await chat.send_message(
-                conversation.id,
-                MessageSendRequest(
-                    content=case.query,
-                    document_id=expected.document_id,
-                    as_of=case.as_of,
-                ),
-            )
-            normalized = evaluate_case_result(
-                case=case,
-                message=turn.assistant_message,
-                anchor_mapping=anchor_mapping,
-                document_ids=document_ids,
-                response_mode=effective.chat.response_mode,
-                modifies_expansion_active=(
-                    effective.retrieval.modifies_expansion_mode is ModifiesExpansionMode.EXPAND
-                    or effective.retrieval.modifies_expansion_mode.value == "expand"
-                ),
-                chunks=chunks,
-                anchors=manifest.anchors,
-            )
-            normalized["conversation_id"] = str(conversation.id)
-            normalized["expected"] = sanitize_diagnostics(expected.model_dump(mode="json"))
-            variant_results.append(normalized)
-            stages = ",".join(failure["stage"] for failure in normalized["failures"])
-            progress(
-                f"{name}: {case.key} {'PASS' if normalized['passed'] else f'FAIL[{stages}]'} "
-                f"({normalized['timings_ms']['total'] or 0} ms)"
-            )
+        variant_results.append(normalized)
+    standalone_results = list(variant_results)
+    for sequence in manifest.sequences:
+        turn_results = await _run_sequence(
+            session_factory,
+            name=name,
+            sequence=sequence,
+            manifest=manifest,
+            project_id=project_id,
+            document_ids=document_ids,
+            anchor_mapping=anchor_mapping,
+            chunks=chunks,
+            settings=settings,
+            embedder=embedder,
+            response_mode=effective.chat.response_mode,
+            modifies_expansion_active=expands,
+            progress=progress,
+            replay_raw_retrieval=replay_raw_retrieval,
+            expected_index_build_id=expected_index_build_id,
+        )
+        variant_results.extend(turn_results)
+        sequence_summaries.append(
+            {
+                "key": sequence.key,
+                "tags": sequence.tags,
+                "turn_count": len(sequence.turns),
+                "passed": all(item["passed"] for item in turn_results),
+                "blocked": any(item.get("blocked") for item in turn_results),
+                "failed_turns": [item["key"] for item in turn_results if not item["passed"]],
+                "turns": [item["key"] for item in turn_results],
+            }
+        )
     return {
         "name": name,
         "effective_config": resolution.secret_free_snapshot(),
+        "reference_time": (
+            manifest.reference_time.astimezone(UTC).isoformat()
+            if manifest.reference_time is not None
+            else None
+        ),
         "providers": {
             "llm": {
                 "provider": effective.llm.provider.value,
@@ -1690,9 +2488,422 @@ async def _run_variant(
             },
         },
         "cases": variant_results,
-        "aggregate": aggregate_results(variant_results),
-        "tag_aggregates": tag_aggregates(variant_results),
+        "aggregate": aggregate_results(standalone_results),
+        "sequence_aggregate": aggregate_results(
+            [item for item in variant_results if item.get("sequence_key")]
+        ),
+        "sequences": sequence_summaries,
+        "resolution_aggregate": resolution_measurements(variant_results, sequence_summaries),
+        "tag_aggregates": tag_aggregates(standalone_results),
     }
+
+
+async def _run_standalone_case(
+    session_factory: Any,
+    *,
+    name: str,
+    case: JourneyCase,
+    manifest: JourneyManifest,
+    project_id: uuid.UUID,
+    document_ids: Mapping[str, uuid.UUID],
+    anchor_mapping: Mapping[str, list[uuid.UUID]],
+    chunks: Sequence[RuntimeChunk],
+    settings: Settings,
+    embedder: Any,
+    response_mode: ResponseMode,
+    modifies_expansion_active: bool,
+    progress: Progress,
+    replay_raw_retrieval: bool = False,
+    expected_index_build_id: str | None = None,
+) -> dict[str, Any]:
+    expected = _evaluation_case(
+        case,
+        anchor_mapping=anchor_mapping,
+        document_ids=document_ids,
+    )
+    progress(f"{name}: {case.key}")
+    conversation_id, turn = await _send_journey_turn(
+        session_factory,
+        case=case,
+        expected=expected,
+        project_id=project_id,
+        settings=settings,
+        embedder=embedder,
+        conversation_id=None,
+        title=f"{name}: {case.key}",
+        reference_time=manifest.reference_time,
+    )
+    normalized = evaluate_case_result(
+        case=case,
+        message=turn.assistant_message,
+        anchor_mapping=anchor_mapping,
+        document_ids=document_ids,
+        response_mode=response_mode,
+        modifies_expansion_active=modifies_expansion_active,
+        chunks=chunks,
+        anchors=manifest.anchors,
+    )
+    _attach_produced_turn(
+        normalized,
+        conversation_id=conversation_id,
+        turn=turn,
+        expected=expected,
+        sequence_key=None,
+        turn_index=None,
+        upstream_failed_turns=[],
+    )
+    await _attach_raw_retrieval_replay(
+        session_factory,
+        enabled=replay_raw_retrieval,
+        case=case,
+        expected=expected,
+        normalized=normalized,
+        message=turn.assistant_message,
+        project_id=project_id,
+        embedder=embedder,
+        conversation_id=conversation_id,
+        reference_time=manifest.reference_time,
+        expected_index_build_id=expected_index_build_id,
+    )
+    _progress_case(progress, name=name, result=normalized)
+    return normalized
+
+
+async def _run_sequence(
+    session_factory: Any,
+    *,
+    name: str,
+    sequence: JourneySequence,
+    manifest: JourneyManifest,
+    project_id: uuid.UUID,
+    document_ids: Mapping[str, uuid.UUID],
+    anchor_mapping: Mapping[str, list[uuid.UUID]],
+    chunks: Sequence[RuntimeChunk],
+    settings: Settings,
+    embedder: Any,
+    response_mode: ResponseMode,
+    modifies_expansion_active: bool,
+    progress: Progress,
+    replay_raw_retrieval: bool = False,
+    expected_index_build_id: str | None = None,
+) -> list[dict[str, Any]]:
+    conversation_id: uuid.UUID | None = None
+    blocked = False
+    upstream_failed_turns: list[str] = []
+    prior_turn_messages: dict[int, dict[str, str]] = {}
+    results: list[dict[str, Any]] = []
+    for turn_index, case in enumerate(sequence.turns, start=1):
+        progress(f"{name}: {sequence.key}[{turn_index}] {case.key}")
+        if blocked:
+            results.append(
+                _blocked_or_execution_result(
+                    case=case,
+                    stage="execution",
+                    message="Blocked after an upstream execution failure.",
+                    conversation_id=str(conversation_id) if conversation_id else None,
+                    sequence_key=sequence.key,
+                    turn_index=turn_index,
+                    blocked=True,
+                    upstream_failed_turns=list(upstream_failed_turns),
+                )
+            )
+            continue
+        expected = _evaluation_case(
+            case,
+            anchor_mapping=anchor_mapping,
+            document_ids=document_ids,
+        )
+        try:
+            conversation_id, turn = await _send_journey_turn(
+                session_factory,
+                case=case,
+                expected=expected,
+                project_id=project_id,
+                settings=settings,
+                embedder=embedder,
+                conversation_id=conversation_id,
+                title=f"{name}: {sequence.key}",
+                reference_time=manifest.reference_time,
+            )
+        except Exception as exc:
+            blocked = True
+            upstream_failed_turns.append(case.key)
+            results.append(
+                _blocked_or_execution_result(
+                    case=case,
+                    stage="execution",
+                    message=f"{type(exc).__name__}: {exc}",
+                    conversation_id=str(conversation_id) if conversation_id else None,
+                    sequence_key=sequence.key,
+                    turn_index=turn_index,
+                    blocked=False,
+                    upstream_failed_turns=list(upstream_failed_turns),
+                )
+            )
+            _progress_case(progress, name=name, result=results[-1])
+            continue
+        normalized = evaluate_case_result(
+            case=case,
+            message=turn.assistant_message,
+            anchor_mapping=anchor_mapping,
+            document_ids=document_ids,
+            response_mode=response_mode,
+            modifies_expansion_active=modifies_expansion_active,
+            chunks=chunks,
+            anchors=manifest.anchors,
+            prior_turn_messages=prior_turn_messages,
+        )
+        _attach_produced_turn(
+            normalized,
+            conversation_id=conversation_id,
+            turn=turn,
+            expected=expected,
+            sequence_key=sequence.key,
+            turn_index=turn_index,
+            upstream_failed_turns=list(upstream_failed_turns),
+        )
+        await _attach_raw_retrieval_replay(
+            session_factory,
+            enabled=replay_raw_retrieval,
+            case=case,
+            expected=expected,
+            normalized=normalized,
+            message=turn.assistant_message,
+            project_id=project_id,
+            embedder=embedder,
+            conversation_id=conversation_id,
+            reference_time=manifest.reference_time,
+            expected_index_build_id=expected_index_build_id,
+        )
+        prior_turn_messages[turn_index] = {
+            "user": str(turn.user_message.id),
+            "assistant": str(turn.assistant_message.id),
+        }
+        if not normalized["passed"]:
+            upstream_failed_turns.append(case.key)
+        results.append(normalized)
+        _progress_case(progress, name=name, result=normalized)
+    return results
+
+
+def _attach_produced_turn(
+    normalized: dict[str, Any],
+    *,
+    conversation_id: uuid.UUID,
+    turn: Any,
+    expected: EvaluationCase,
+    sequence_key: str | None,
+    turn_index: int | None,
+    upstream_failed_turns: list[str],
+) -> None:
+    normalized["conversation_id"] = str(conversation_id)
+    normalized["user_message_id"] = str(turn.user_message.id)
+    normalized["assistant_message_id"] = str(turn.assistant_message.id)
+    normalized["sequence_key"] = sequence_key
+    normalized["turn_index"] = turn_index
+    normalized["blocked"] = False
+    normalized["upstream_failed_turns"] = upstream_failed_turns
+    normalized["expected"] = sanitize_diagnostics(expected.model_dump(mode="json"))
+
+
+def _progress_case(progress: Progress, *, name: str, result: Mapping[str, Any]) -> None:
+    stages = ",".join(failure["stage"] for failure in result.get("failures") or [])
+    label = "PASS" if result.get("passed") else f"FAIL[{stages or 'execution'}]"
+    if result.get("blocked"):
+        label = "BLOCKED"
+    progress(
+        f"{name}: {result['key']} {label} ({(result.get('timings_ms') or {}).get('total') or 0} ms)"
+    )
+
+
+def _selected_chunk_ids(items: object) -> list[str]:
+    if not isinstance(items, list):
+        return []
+    ids: list[str] = []
+    for item in items:
+        if isinstance(item, Mapping) and item.get("chunk_id"):
+            ids.append(str(item["chunk_id"]))
+    return ids
+
+
+async def _open_journey_chat(
+    session: Any,
+    *,
+    project_id: uuid.UUID,
+    embedder: Any,
+    conversation_id: uuid.UUID,
+) -> Any:
+    from app.dependencies.conversations import get_chat_service
+    from app.modules.conversations.repositories.conversation_repository import (
+        ConversationRepository,
+    )
+    from app.modules.conversations.repositories.message_repository import MessageRepository
+
+    conversations = ConversationRepository(session, project_id)
+    messages = MessageRepository(session, project_id)
+    return _enable_journey_candidate_traces(
+        await get_chat_service(
+            session,
+            project_id,
+            conversations,
+            messages,
+            conversation_id,
+            embedder,
+        )
+    )
+
+
+async def _attach_raw_retrieval_replay(
+    session_factory: Any,
+    *,
+    enabled: bool,
+    case: JourneyCase,
+    expected: EvaluationCase,
+    normalized: dict[str, Any],
+    message: Any,
+    project_id: uuid.UUID,
+    embedder: Any,
+    conversation_id: uuid.UUID,
+    reference_time: datetime | None,
+    expected_index_build_id: str | None,
+) -> None:
+    if not enabled:
+        normalized["raw_retrieval_replay"] = {"status": "skipped", "reason": "replay_disabled"}
+        return
+    if case.mode == "clarification" or normalized.get("finish_reason") == "clarification":
+        normalized["raw_retrieval_replay"] = {
+            "status": "skipped",
+            "reason": "no_production_retrieval",
+        }
+        return
+    production_ids = _selected_chunk_ids((normalized.get("retrieval") or {}).get("selected"))
+    relevant_ids = list((normalized.get("retrieval") or {}).get("relevant_ids") or [])
+    production_index = normalized.get("index_build_id") or _optional_identity(
+        getattr(message, "index_build_id", None)
+    )
+    production_degraded = (
+        normalized.get("provider_degradation") is not None
+        or (normalized.get("translation") or {}).get("status") == "failed"
+    )
+    try:
+        async with session_factory() as session:
+            chat = await _open_journey_chat(
+                session,
+                project_id=project_id,
+                embedder=embedder,
+                conversation_id=conversation_id,
+            )
+            started = time.perf_counter()
+            with journey_reference_clock(reference_time):
+                retrieved = await chat._retrieval.retrieve(
+                    query=case.query,
+                    top_k=chat._retrieval_config.default_top_k,
+                    document_id=expected.document_id,
+                    metadata_filter=dict(case.metadata_filter) or None,
+                    as_of=case.as_of,
+                )
+            latency_ms = int((time.perf_counter() - started) * 1000)
+            await session.rollback()
+        diagnostics = retrieved.diagnostics if isinstance(retrieved.diagnostics, Mapping) else {}
+        replay_ids = [str(chunk.chunk_id) for chunk in retrieved.chunks]
+        replay_degraded = (
+            diagnostics.get("rerank_status") == "unavailable"
+            or diagnostics.get("translation_status") == "failed"
+        )
+        translation_usage = diagnostics.get("translation_usage")
+        normalized["raw_retrieval_replay"] = compare_raw_retrieval_replay(
+            production_ids=production_ids,
+            replay_ids=replay_ids,
+            relevant_ids=relevant_ids,
+            production_index_build_id=production_index,
+            replay_index_build_id=_optional_identity(diagnostics.get("index_build_id")),
+            expected_index_build_id=expected_index_build_id,
+            production_configuration_hash=_optional_identity(
+                message.metadata.get("retrieval_configuration_hash")
+            ),
+            replay_configuration_hash=_optional_identity(diagnostics.get("configuration_hash")),
+            production_source_generation=message.metadata.get("source_metadata_generation"),
+            replay_source_generation=diagnostics.get("source_metadata_generation"),
+            production_degraded=production_degraded,
+            replay_degraded=bool(replay_degraded),
+            latency_ms=latency_ms,
+            usage=translation_usage if isinstance(translation_usage, Mapping) else {},
+        )
+    except Exception as exc:
+        normalized["raw_retrieval_replay"] = {
+            "status": "non_comparable",
+            "reason": f"{type(exc).__name__}: {exc}",
+            "latency_ms": None,
+            "retrieved_ids": [],
+            "cost": None,
+            "usage": {},
+            "set_changed": None,
+            "rank_changed": None,
+            "required_anchor_recall_production": None,
+            "required_anchor_recall_replay": None,
+        }
+
+
+async def _send_journey_turn(
+    session_factory: Any,
+    *,
+    case: JourneyCase,
+    expected: EvaluationCase,
+    project_id: uuid.UUID,
+    settings: Settings,
+    embedder: Any,
+    conversation_id: uuid.UUID | None,
+    title: str,
+    reference_time: datetime | None,
+) -> tuple[uuid.UUID, Any]:
+    from app.composition.audit import DatabaseAuditRecorder
+    from app.modules.conversations.repositories.conversation_repository import (
+        ConversationRepository,
+    )
+    from app.modules.conversations.repositories.message_repository import MessageRepository
+    from app.modules.conversations.schemas.conversation import ConversationCreate
+    from app.modules.conversations.schemas.message import MessageSendRequest
+    from app.modules.conversations.services.conversation_service import ConversationService
+    from app.modules.projects.repositories.project_ai_config_repository import (
+        ProjectAIConfigRepository,
+    )
+
+    async with session_factory() as session:
+        conversations = ConversationRepository(session, project_id)
+        messages = MessageRepository(session, project_id)
+        revision = await ProjectAIConfigRepository(session, project_id).get_active()
+        service = ConversationService(
+            session=session,
+            project_id=project_id,
+            conversation_repository=conversations,
+            message_repository=messages,
+            llm_config=settings.llm,
+            chat_config=settings.chat,
+            settings=settings,
+            active_revision=_active_record(revision),
+            actor_id="rag-journey",
+            audit=DatabaseAuditRecorder(session, project_id),
+        )
+        if conversation_id is None:
+            conversation = await service.create(ConversationCreate(title=title))
+            conversation_id = conversation.id
+        chat = await _open_journey_chat(
+            session,
+            project_id=project_id,
+            embedder=embedder,
+            conversation_id=conversation_id,
+        )
+        with journey_reference_clock(reference_time):
+            turn = await chat.send_message(
+                conversation_id,
+                MessageSendRequest(
+                    content=case.query,
+                    document_id=expected.document_id,
+                    metadata_filter=dict(case.metadata_filter),
+                    as_of=case.as_of,
+                ),
+            )
+        return conversation_id, turn
 
 
 async def _effective_resolution(session: Any, *, project_id: uuid.UUID, settings: Settings) -> Any:
@@ -2238,6 +3449,8 @@ def render_summary(result: Mapping[str, Any]) -> str:
         f"- Status: **{str(result['status']).upper()}**",
         f"- Run ID: `{result['run_id']}`",
         f"- Project ID: `{result.get('project_id') or 'not-created'}`",
+        f"- Simulated reference time: `{result.get('reference_time') or 'host clock'}`",
+        f"- Raw retrieval replay: {'on' if result.get('replay_raw_retrieval') else 'off'}",
         f"- Job transport: inline (configured: {result['job_transport']['configured']})",
         f"- Cleanup: {result['cleanup']['status']}",
         "",
@@ -2281,7 +3494,8 @@ def render_summary(result: Mapping[str, Any]) -> str:
                 "|---|---|---:|---|---:|",
             ]
         )
-        for case in variant["cases"]:
+        standalone_cases = [case for case in variant["cases"] if not case.get("sequence_key")]
+        for case in standalone_cases:
             stages = ", ".join(failure["stage"] for failure in case["failures"]) or "—"
             lines.append(
                 f"| `{case['key']}` | {', '.join(case['tags'])} | "
@@ -2289,6 +3503,128 @@ def render_summary(result: Mapping[str, Any]) -> str:
                 f"{case['timings_ms']['total'] or 0} |"
             )
         lines.append("")
+        sequences = variant.get("sequences") or []
+        if sequences:
+            sequence_aggregate = variant.get("sequence_aggregate") or {}
+            lines.extend(
+                [
+                    "### Sequences",
+                    "",
+                    f"Complete sequences "
+                    f"{sum(bool(item.get('passed')) for item in sequences)}/{len(sequences)}; "
+                    f"turns passed {sequence_aggregate.get('passed', 0)}/"
+                    f"{sequence_aggregate.get('case_count', 0)}.",
+                    "",
+                    "| Sequence | Turns | Result | Failed turns |",
+                    "|---|---:|---|---|",
+                ]
+            )
+            for item in sequences:
+                failed = ", ".join(f"`{key}`" for key in item.get("failed_turns") or []) or "—"
+                lines.append(
+                    f"| `{item['key']}` | {item['turn_count']} | "
+                    f"{'PASS' if item.get('passed') else 'FAIL'} | {failed} |"
+                )
+            lines.append("")
+            lines.extend(
+                [
+                    "| Turn | Sequence | Result | Failure stage(s) | Total ms |",
+                    "|---|---|---:|---|---:|",
+                ]
+            )
+            for case in variant["cases"]:
+                if not case.get("sequence_key"):
+                    continue
+                stages = ", ".join(failure["stage"] for failure in case["failures"]) or "—"
+                result_label = (
+                    "BLOCKED" if case.get("blocked") else ("PASS" if case["passed"] else "FAIL")
+                )
+                lines.append(
+                    f"| `{case['key']}` | `{case['sequence_key']}` | {result_label} | "
+                    f"{stages} | {case['timings_ms']['total'] or 0} |"
+                )
+            lines.append("")
+            clarification = sequence_aggregate.get("clarification") or {}
+            if clarification:
+                precision = clarification.get("precision")
+                recall = clarification.get("recall")
+                lines.extend(
+                    [
+                        "Clarification precision/recall "
+                        f"{'n/a' if precision is None else f'{precision:.0%}'} / "
+                        f"{'n/a' if recall is None else f'{recall:.0%}'} "
+                        f"(expected {clarification.get('expected', 0)}, "
+                        f"observed {clarification.get('observed', 0)}).",
+                        "",
+                    ]
+                )
+        resolution = variant.get("resolution_aggregate") or {}
+        if resolution:
+            resolver_latency = resolution.get("resolver_latency") or {}
+            total_latency = resolution.get("total_turn_latency") or {}
+            usage = resolution.get("usage") or {}
+            retrieval_change = resolution.get("retrieval_change") or {}
+            continuity = resolution.get("continuity") or {}
+            fallback_parts = [
+                f"{reason} {count}"
+                for reason, count in (resolution.get("fallback_by_reason") or {}).items()
+            ]
+            bypass_parts = [
+                f"{reason} {count}"
+                for reason, count in (resolution.get("bypass_by_reason") or {}).items()
+            ]
+            bypass_label = f" ({', '.join(bypass_parts)})" if bypass_parts else ""
+            fallback_label = f" ({', '.join(fallback_parts)})" if fallback_parts else ""
+            lines.extend(
+                [
+                    "### Turn resolution",
+                    "",
+                    f"Attempted {resolution.get('attempted', 0)}; "
+                    f"bypassed {resolution.get('bypassed', 0)}{bypass_label}. "
+                    f"Fallback rate "
+                    f"{_format_optional_rate(resolution.get('fallback_rate'))}"
+                    f"{fallback_label}; "
+                    f"standalone/topic-change rate "
+                    f"{_format_optional_rate(resolution.get('standalone_rate'))}. "
+                    f"Query-change rate "
+                    f"{_format_optional_rate(resolution.get('query_change_rate'))}; "
+                    f"filter-change rate "
+                    f"{_format_optional_rate(resolution.get('filter_change_rate'))}.",
+                    "",
+                    "Resolver latency p50/p95 "
+                    f"{resolver_latency.get('p50_ms', 0):.0f}/"
+                    f"{resolver_latency.get('p95_ms', 0):.0f} ms over "
+                    f"{resolver_latency.get('count', 0)} attempted calls; "
+                    f"total-turn p50/p95 "
+                    f"{total_latency.get('p50_ms', 0):.0f}/"
+                    f"{total_latency.get('p95_ms', 0):.0f} ms.",
+                    "",
+                    "Resolver tokens per attempted call "
+                    f"{_format_optional_mean(usage.get('resolver_input_tokens_per_attempt'))}"
+                    " in / "
+                    f"{_format_optional_mean(usage.get('resolver_output_tokens_per_attempt'))}"
+                    " out; "
+                    f"share of turn tokens "
+                    f"{_format_optional_rate(usage.get('resolver_share_of_total_tokens'))}; "
+                    "cost unknown (no recorded rate card).",
+                    "",
+                    "Retrieval-change pairs "
+                    f"{retrieval_change.get('compared', 0)} compared, "
+                    f"{retrieval_change.get('non_comparable', 0)} non-comparable; "
+                    f"set-change "
+                    f"{_format_optional_rate(retrieval_change.get('set_change_rate'))}, "
+                    f"rank-change "
+                    f"{_format_optional_rate(retrieval_change.get('rank_change_rate'))}.",
+                    "",
+                    "Resolution accuracy "
+                    f"{continuity.get('turns_passed_resolution', 0)}/"
+                    f"{continuity.get('turns_with_expected_resolution', 0)}; "
+                    f"complete sequences "
+                    f"{continuity.get('complete_sequences', 0)}/"
+                    f"{continuity.get('sequence_count', 0)}.",
+                    "",
+                ]
+            )
         correctness = aggregate.get("correctness") or {}
         degradation = aggregate.get("provider_degradation") or {}
         latency = aggregate.get("latency") or {}
@@ -2529,6 +3865,11 @@ async def run_journey(
         "journey": manifest.key,
         "run_id": str(run_uuid),
         "started_at": datetime.now(UTC).isoformat(),
+        "reference_time": (
+            manifest.reference_time.astimezone(UTC).isoformat()
+            if manifest.reference_time is not None
+            else None
+        ),
         "status": "failed",
         "project_id": None,
         "kept_project": options.keep_project,
@@ -2543,6 +3884,7 @@ async def run_journey(
         "variants": [],
         "comparison": None,
         "translation_comparison": None,
+        "replay_raw_retrieval": options.replay_raw_retrieval,
         "cleanup": {"status": "not_started"},
     }
     database = Database(settings)
@@ -2555,7 +3897,7 @@ async def run_journey(
         await storage.check()
         async with database.session_factory() as session:
             await _preflight_default_organization(session)
-            project = await _create_project(session, run_token=run_token)
+            project = await _create_project(session, run_token=run_token, pack_key=manifest.key)
             project_id = project.id
             result["project_id"] = str(project_id)
 
@@ -2568,7 +3910,7 @@ async def run_journey(
                 settings=settings,
                 configuration=baseline_config,
                 expected_revision_id=None,
-                reason="tax_v1 baseline runtime configuration",
+                reason=f"{manifest.key} baseline runtime configuration",
             )
         revision_ids = await _ingest_sources(
             database.session_factory,
@@ -2631,6 +3973,8 @@ async def run_journey(
             settings=settings,
             resolution=baseline_resolution,
             progress=notify,
+            replay_raw_retrieval=options.replay_raw_retrieval,
+            expected_index_build_id=(result["index"] or {}).get("id"),
         )
         result["variants"].append(baseline)
 
@@ -2646,9 +3990,9 @@ async def run_journey(
                     configuration=comparison_config,
                     expected_revision_id=baseline_revision.id,
                     reason=(
-                        "tax_v1 translation on/off comparison"
+                        f"{manifest.key} translation on/off comparison"
                         if options.compare_translation
-                        else f"tax_v1 one-factor comparison: {comparison_key}"
+                        else f"{manifest.key} one-factor comparison: {comparison_key}"
                     ),
                 )
                 comparison_resolution = await _effective_resolution(
@@ -2693,6 +4037,8 @@ async def run_journey(
                 settings=settings,
                 resolution=comparison_resolution,
                 progress=notify,
+                replay_raw_retrieval=options.replay_raw_retrieval,
+                expected_index_build_id=(result["index"] or {}).get("id"),
             )
             result["variants"].append(comparison_variant)
             result["comparison"] = _comparison_summary(

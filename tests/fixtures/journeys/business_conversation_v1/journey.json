@@ -1,0 +1,480 @@
+{
+  "schema_version": 2,
+  "key": "business_conversation_v1",
+  "description": "Synthetic expense-policy and support-plan journey for cross-domain turn-resolution coverage.",
+  "reference_time": "2026-08-01T00:00:00Z",
+  "sources": [
+    {
+      "key": "expense_policy_2025",
+      "filename": "ape_synthetic_expense_policy_2025.md",
+      "title": "APE Synthetic Employee Expense Policy 2025",
+      "revision_label": "2025 Expense Policy",
+      "source_type": "synthetic_policy",
+      "published_date": "2025-01-01",
+      "effective_from": "2025-01-01"
+    },
+    {
+      "key": "expense_amendment_2026",
+      "filename": "ape_synthetic_expense_amendment_2026.md",
+      "title": "APE Synthetic Expense Policy Amendment 2026",
+      "revision_label": "2026 Expense Amendment",
+      "source_type": "synthetic_policy",
+      "published_date": "2026-07-01",
+      "effective_from": "2026-07-01",
+      "modifies": ["expense_policy_2025"],
+      "modified_provisions": {
+        "expense_policy_2025": [
+          "Section 10 — Meal reimbursement share",
+          "Section 11 — Daily meal cap",
+          "Section 12 — Worked meal example"
+        ]
+      }
+    },
+    {
+      "key": "standard_support",
+      "filename": "ape_synthetic_standard_support_plan.md",
+      "title": "APE Synthetic Standard Support Plan",
+      "revision_label": "Standard Support",
+      "source_type": "synthetic_policy",
+      "published_date": "2025-01-01",
+      "effective_from": "2025-01-01"
+    },
+    {
+      "key": "premium_support",
+      "filename": "ape_synthetic_premium_support_plan.md",
+      "title": "APE Synthetic Premium Support Plan",
+      "revision_label": "Premium Support",
+      "source_type": "synthetic_policy",
+      "published_date": "2025-01-01",
+      "effective_from": "2025-01-01"
+    }
+  ],
+  "anchors": [
+    {
+      "key": "meal_share_2025",
+      "source": "expense_policy_2025",
+      "section": "Section 10 — Meal reimbursement share",
+      "phrases": ["APE-EXPENSE-MEAL-SHARE-2025 is 50 percent"],
+      "expected_cardinality": 1
+    },
+    {
+      "key": "meal_example_2025",
+      "source": "expense_policy_2025",
+      "section": "Section 12 — Worked meal example",
+      "phrases": ["APE-EXPENSE-MEAL-EXAMPLE-2025 reimbursement is BDT 1,500"],
+      "expected_cardinality": 1
+    },
+    {
+      "key": "travel_class_2025",
+      "source": "expense_policy_2025",
+      "section": "Section 20 — Allowed travel class",
+      "phrases": ["APE-EXPENSE-TRAVEL-CLASS-2025 is economy class"],
+      "expected_cardinality": 1
+    },
+    {
+      "key": "meal_share_2026",
+      "source": "expense_amendment_2026",
+      "section": "Section 5 — Amendment to meal reimbursement share",
+      "phrases": ["APE-EXPENSE-MEAL-SHARE-2026 is 60 percent"],
+      "expected_cardinality": 1
+    },
+    {
+      "key": "meal_example_2026",
+      "source": "expense_amendment_2026",
+      "section": "Section 7 — Example after amendment",
+      "phrases": ["APE-EXPENSE-MEAL-EXAMPLE-2026 reimbursement is BDT 1,800"],
+      "expected_cardinality": 1
+    },
+    {
+      "key": "travel_class_2026",
+      "source": "expense_amendment_2026",
+      "section": "Section 15 — Allowed travel class",
+      "phrases": ["APE-EXPENSE-TRAVEL-CLASS-2026 remains economy class"],
+      "expected_cardinality": 1
+    },
+    {
+      "key": "standard_response",
+      "source": "standard_support",
+      "section": "Section 10 — Standard response time",
+      "phrases": ["APE-SUPPORT-STANDARD-RESPONSE is 8 hours"],
+      "expected_cardinality": 1
+    },
+    {
+      "key": "standard_incidents",
+      "source": "standard_support",
+      "section": "Section 20 — Included incidents",
+      "phrases": ["APE-SUPPORT-STANDARD-INCIDENTS is 10 incidents per month"],
+      "expected_cardinality": 1
+    },
+    {
+      "key": "premium_response",
+      "source": "premium_support",
+      "section": "Section 10 — Premium response time",
+      "phrases": ["APE-SUPPORT-PREMIUM-RESPONSE is 1 hour"],
+      "expected_cardinality": 1
+    },
+    {
+      "key": "premium_incidents",
+      "source": "premium_support",
+      "section": "Section 20 — Included incidents",
+      "phrases": ["APE-SUPPORT-PREMIUM-INCIDENTS is 40 incidents per month"],
+      "expected_cardinality": 1
+    }
+  ],
+  "cases": [
+    {
+      "key": "current_meal_share",
+      "tags": ["authority", "factual"],
+      "query": "What is the current meal reimbursement share?",
+      "as_of": "2026-08-01T00:00:00Z",
+      "anchors": ["meal_share_2026"],
+      "expected_tokens": ["60%"]
+    },
+    {
+      "key": "historical_meal_share",
+      "tags": ["authority", "historical"],
+      "query": "What meal reimbursement share applied on 1 June 2025?",
+      "as_of": "2025-06-01T00:00:00Z",
+      "anchors": ["meal_share_2025"],
+      "required_anchor_groups": [["meal_share_2025"]],
+      "prohibited_final_sources": ["expense_amendment_2026"],
+      "expected_tokens": ["50%"]
+    },
+    {
+      "key": "current_meal_calculation_3000",
+      "tags": ["authority", "calculation"],
+      "query": "Under the current rule, what meal reimbursement applies to a BDT 3,000 receipt?",
+      "as_of": "2026-08-01T00:00:00Z",
+      "anchors": ["meal_share_2026", "meal_example_2026"],
+      "expected_tokens": ["60%", "1800"]
+    },
+    {
+      "key": "unchanged_travel_class",
+      "tags": ["authority", "unchanged"],
+      "query": "Did the 2026 amendment change the allowed travel class, and what class is allowed?",
+      "as_of": "2026-08-01T00:00:00Z",
+      "anchors": ["travel_class_2026"],
+      "expected_tokens": ["economy"],
+      "expected_any": ["unchanged", "not changed", "remains", "stayed the same", "still", "retained"]
+    },
+    {
+      "key": "standard_support_response",
+      "tags": ["factual"],
+      "query": "What is the Standard Support response time?",
+      "anchors": ["standard_response"],
+      "expected_tokens": ["8 hours"]
+    },
+    {
+      "key": "premium_support_incidents",
+      "tags": ["factual"],
+      "query": "How many incidents per month are included in Premium Support?",
+      "anchors": ["premium_incidents"],
+      "expected_tokens": ["40 incidents"]
+    },
+    {
+      "key": "hard_document_scope_expense_2025",
+      "tags": ["scope", "authority"],
+      "query": "What is the current meal reimbursement share?",
+      "as_of": "2026-08-01T00:00:00Z",
+      "document_scope": "expense_policy_2025",
+      "anchors": ["meal_share_2025"],
+      "expected_tokens": ["50%"],
+      "mode": "scope_isolation"
+    },
+    {
+      "key": "unknown_lunar_expense",
+      "tags": ["refusal"],
+      "query": "What meal reimbursement share applies to a moon-colony lunar cafeteria receipt?",
+      "anchors": [],
+      "mode": "no_answer"
+    }
+  ],
+  "sequences": [
+    {
+      "key": "adopt_then_replace_reimbursement",
+      "tags": ["continuity", "authority", "calculation"],
+      "turns": [
+        {
+          "key": "adopt_reimbursement_base",
+          "tags": ["continuity", "authority", "calculation"],
+          "query": "Under the current rule, what meal reimbursement applies to a BDT 3,000 receipt?",
+          "as_of": "2026-08-01T00:00:00Z",
+          "anchors": ["meal_share_2026", "meal_example_2026"],
+          "expected_tokens": ["60%", "1800"]
+        },
+        {
+          "key": "adopt_reimbursement_as_travel_budget",
+          "tags": ["continuity", "authority"],
+          "query": "Use that reimbursement amount as my next monthly travel budget. What class of travel is allowed?",
+          "as_of": "2026-08-01T00:00:00Z",
+          "anchors": ["travel_class_2026", "travel_class_2025"],
+          "required_anchor_groups": [["travel_class_2026", "travel_class_2025"]],
+          "expected_tokens": ["economy"],
+          "expected_resolution": {
+            "outcome": "resolved",
+            "relation": "follow_up",
+            "active_bindings": [
+              {
+                "kind": "scenario_parameter",
+                "active_value": "1800",
+                "origin": "user_adopted_assistant",
+                "prior_turns": [1]
+              }
+            ]
+          }
+        },
+        {
+          "key": "replace_adopted_travel_budget",
+          "tags": ["continuity", "authority"],
+          "query": "Use 4,500 instead. What class of travel is allowed?",
+          "as_of": "2026-08-01T00:00:00Z",
+          "anchors": ["travel_class_2026", "travel_class_2025"],
+          "required_anchor_groups": [["travel_class_2026", "travel_class_2025"]],
+          "user_parameter_tokens": ["4500"],
+          "expected_tokens": ["economy"],
+          "expected_resolution": {
+            "outcome": "resolved",
+            "relation": "correction",
+            "active_bindings": [
+              {
+                "kind": "scenario_parameter",
+                "active_value": "4500",
+                "origin": "user_literal"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "key": "temporal_snapshot_clarify",
+      "tags": ["continuity", "authority", "historical"],
+      "turns": [
+        {
+          "key": "temporal_current_meal_start",
+          "tags": ["continuity", "authority"],
+          "query": "What is the current meal reimbursement share?",
+          "as_of": "2026-08-01T00:00:00Z",
+          "anchors": ["meal_share_2026"],
+          "expected_tokens": ["60%"]
+        },
+        {
+          "key": "temporal_before_that_clarify",
+          "tags": ["continuity", "authority"],
+          "query": "What was the share before that?",
+          "anchors": [],
+          "mode": "clarification",
+          "expected_resolution": {
+            "outcome": "clarify",
+            "relation": "follow_up",
+            "temporal_intent": "unbounded"
+          }
+        },
+        {
+          "key": "temporal_exact_snapshot",
+          "tags": ["continuity", "authority", "historical"],
+          "query": "I mean as of 1 June 2025.",
+          "anchors": ["meal_share_2025"],
+          "required_anchor_groups": [["meal_share_2025"]],
+          "prohibited_final_sources": ["expense_amendment_2026"],
+          "expected_tokens": ["50%"],
+          "expected_resolution": {
+            "outcome": "resolved",
+            "relation": "follow_up",
+            "temporal_intent": "exact_date",
+            "effective_as_of": "2025-06-01T00:00:00Z",
+            "snapshot_origin": "user_literal",
+            "active_bindings": [
+              {
+                "kind": "period_date",
+                "active_value": "2025-06-01",
+                "origin": "user_literal"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "key": "clarify_then_short_answer",
+      "tags": ["continuity", "authority"],
+      "turns": [
+        {
+          "key": "clarify_compare_support_plans",
+          "tags": ["continuity", "authority"],
+          "query": "Compare the Standard Support and Premium Support response times.",
+          "anchors": ["standard_response", "premium_response"],
+          "required_anchor_groups": [["standard_response"], ["premium_response"]],
+          "expected_tokens": ["8 hours", "1 hour"]
+        },
+        {
+          "key": "clarify_ambiguous_response_time",
+          "tags": ["continuity", "authority"],
+          "query": "What is the response time?",
+          "anchors": [],
+          "mode": "clarification",
+          "expected_resolution": {
+            "outcome": "clarify",
+            "relation": "follow_up"
+          }
+        },
+        {
+          "key": "clarify_short_premium",
+          "tags": ["continuity", "authority"],
+          "query": "premium",
+          "anchors": ["premium_response"],
+          "required_anchor_groups": [["premium_response"]],
+          "expected_tokens": ["1 hour"],
+          "expected_resolution": {
+            "outcome": "resolved",
+            "relation": "follow_up",
+            "active_bindings": [
+              {
+                "kind": "source",
+                "active_value": "Premium Support",
+                "origin": "user_literal"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "key": "topic_reset_drops_amount",
+      "tags": ["continuity", "authority"],
+      "turns": [
+        {
+          "key": "topic_reset_declared_reimbursement",
+          "tags": ["continuity", "authority", "calculation"],
+          "query": "Under the current rule, what meal reimbursement applies to a BDT 3,000 receipt?",
+          "as_of": "2026-08-01T00:00:00Z",
+          "anchors": ["meal_share_2026", "meal_example_2026"],
+          "user_parameter_tokens": ["3000"],
+          "expected_tokens": ["60%", "1800"]
+        },
+        {
+          "key": "topic_reset_standard_incidents",
+          "tags": ["continuity", "authority"],
+          "query": "Forget the expense calculation. How many incidents per month are included in Standard Support?",
+          "anchors": ["standard_incidents"],
+          "expected_tokens": ["10 incidents"],
+          "expected_resolution": {
+            "outcome": "resolved",
+            "relation": "topic_change"
+          }
+        },
+        {
+          "key": "topic_reset_meal_share_without_amount",
+          "tags": ["continuity", "authority"],
+          "query": "What meal reimbursement share applies under the current rule?",
+          "as_of": "2026-08-01T00:00:00Z",
+          "anchors": ["meal_share_2026"],
+          "required_anchor_groups": [["meal_share_2026"]],
+          "prohibited_answer_tokens": ["1800"],
+          "expected_tokens": ["60%"],
+          "expected_resolution": {
+            "outcome": "resolved",
+            "relation": "follow_up"
+          }
+        }
+      ]
+    },
+    {
+      "key": "language_switch_unicode_correction",
+      "tags": ["continuity", "multilingual", "authority"],
+      "turns": [
+        {
+          "key": "language_switch_english_base",
+          "tags": ["continuity", "authority", "calculation"],
+          "query": "Under the current rule, what meal reimbursement applies to a BDT 3,000 receipt?",
+          "as_of": "2026-08-01T00:00:00Z",
+          "anchors": ["meal_share_2026", "meal_example_2026"],
+          "expected_tokens": ["60%", "1800"]
+        },
+        {
+          "key": "language_switch_bangla_4000",
+          "tags": ["continuity", "multilingual", "authority", "calculation"],
+          "query": "এখন ৪,০০০ টাকা ব্যবহার করুন। প্রতিদান কত?",
+          "as_of": "2026-08-01T00:00:00Z",
+          "anchors": ["meal_share_2026"],
+          "required_anchor_groups": [["meal_share_2026"]],
+          "user_parameter_tokens": ["4000"],
+          "expected_tokens": ["60%", "4000", "2400"],
+          "expected_resolution": {
+            "outcome": "resolved",
+            "relation": "correction",
+            "active_bindings": [
+              {
+                "kind": "scenario_parameter",
+                "active_value": "4000",
+                "origin": "user_literal"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "key": "compare_scope_nonsticky_filters",
+      "tags": ["continuity", "scope", "authority"],
+      "turns": [
+        {
+          "key": "nonsticky_hard_scope_2025",
+          "tags": ["continuity", "scope", "authority"],
+          "query": "What is the current meal reimbursement share?",
+          "as_of": "2026-08-01T00:00:00Z",
+          "document_scope": "expense_policy_2025",
+          "anchors": ["meal_share_2025"],
+          "expected_tokens": ["50%"],
+          "mode": "scope_isolation"
+        },
+        {
+          "key": "nonsticky_compare_2025_and_2026",
+          "tags": ["continuity", "authority"],
+          "query": "Compare the meal reimbursement share in the 2025 expense policy with the 2026 amendment.",
+          "as_of": "2026-08-01T00:00:00Z",
+          "anchors": ["meal_share_2025", "meal_share_2026"],
+          "required_anchor_groups": [["meal_share_2025"], ["meal_share_2026"]],
+          "expected_tokens": ["50%", "60%"],
+          "expected_resolution": {
+            "outcome": "resolved",
+            "relation": "follow_up",
+            "active_bindings": [
+              {
+                "kind": "source",
+                "active_value": "2025 Expense Policy",
+                "origin": "user_literal"
+              },
+              {
+                "kind": "source",
+                "active_value": "2026 Expense Amendment",
+                "origin": "user_literal"
+              }
+            ]
+          }
+        },
+        {
+          "key": "nonsticky_metadata_filter_empty",
+          "tags": ["continuity", "scope"],
+          "query": "What is the current meal reimbursement share?",
+          "as_of": "2026-08-01T00:00:00Z",
+          "metadata_filter": {"source": "nonexistent-journey-source"},
+          "anchors": [],
+          "mode": "no_answer"
+        },
+        {
+          "key": "nonsticky_omitted_filter_meal_share",
+          "tags": ["continuity", "authority"],
+          "query": "What is the current meal reimbursement share?",
+          "as_of": "2026-08-01T00:00:00Z",
+          "anchors": ["meal_share_2026"],
+          "expected_tokens": ["60%"],
+          "expected_resolution": {
+            "outcome": "resolved",
+            "relation": "follow_up"
+          }
+        }
+      ]
+    }
+  ]
+}

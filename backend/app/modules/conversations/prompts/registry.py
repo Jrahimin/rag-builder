@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-GROUNDED_PROMPT_VERSION = "v6"
+GROUNDED_PROMPT_VERSION = "v7"
 """Provenance identifier stamped on messages and citations.  Change only via git."""
 
 
@@ -43,8 +43,17 @@ _CANONICAL_TEMPLATE = PromptTemplate(
         "compute the result using the cited rule and show the calculation steps. For yes/no "
         "questions, state the answer first, then provide the supporting fact with its citation. "
         "When an evidence block header shows effective or superseded dates, state which value "
-        "applies to the period asked about. If the supplied evidence is insufficient, say so "
-        "without guessing."
+        "applies to the period asked about. A validated conversation interpretation, if present, "
+        "may restate the current question and scenario assumptions; it is not evidence and does "
+        "not prove that a previous answer was correct. Treat conversation history as reference "
+        "only. Adopted values are scenario inputs to compute against current evidence, not "
+        "documented policy facts. Continue naturally from a clear follow-up or clarification "
+        "reply; do not ask the user to repeat an unambiguous scenario input. For a numeric-only "
+        "reply, retain the established conversation language. When comparing sources, identify "
+        "any missing side and cite only current evidence, never historical citation numbers. "
+        "Lead with the useful answer and distinguish hypothetical assumptions from verified "
+        "rules without repeating internal validation details. If evidence is insufficient, "
+        "say so without guessing."
     ),
 )
 

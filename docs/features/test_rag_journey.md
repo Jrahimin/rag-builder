@@ -1,9 +1,12 @@
 # Test RAG journey
 
-Local production-path regression for factual RAG conversations. The shipped
-fixture pack is `tax_v1`: a temporary Project, six synthetic tax sources, and
-21 chat turns against the same retrieval, authority, grounding, citation,
-scope, refusal, and multilingual path used by the product API.
+Local production-path regression for factual RAG conversations. Shipped fixture
+packs are `tax_v1` (six synthetic tax sources, 21 standalone turns, continuity
+sequences) and `business_conversation_v1` (expense-policy/amendment plus
+standard/premium support, standalone turns, and the same six sequence
+intentions on a second domain). Each run creates a temporary Project and
+exercises the retrieval, authority, grounding, citation, scope, refusal,
+multilingual, and bounded turn-resolution path used by the product API.
 
 It is not an evaluation dataset and does not replace Evidence Quality runs. It
 exists to catch regressions on a known bilingual authority graph. The harness
@@ -14,7 +17,7 @@ report 21/21.
 ## Architecture
 
 ```text
-python -m app.cli rag-journey
+python -m app.cli rag-journey [--fixture PATH] [--replay-raw-retrieval]
         │
         ├── force APE_JOBS__BACKEND=inline and
         │         APE_JOBS__DISPATCHER_ENABLED=false (this process only)
@@ -34,7 +37,11 @@ python -m app.cli rag-journey
 | --------- | ---- |
 | `backend/app/cli/rag_journey_cli.py` | Argument parsing, inline job override, exit codes |
 | `backend/app/cli/rag_journey.py` | Manifest, orchestration, assertions, reports, cleanup |
-| `tests/fixtures/journeys/tax_v1/journey.json` | Sources, phrase anchors, 21 cases |
+| `backend/app/modules/conversations/turn_resolution.py` | Contracts, JSON parsing, history bounding, and deterministic binding/date validation |
+| `backend/app/modules/conversations/turn_resolver.py` | One production resolution call through the conversation LLM |
+| `backend/app/modules/conversations/prompts/turn_resolution.py` | Versioned resolver prompt |
+| `tests/fixtures/journeys/tax_v1/journey.json` | Sources, phrase anchors, 21 standalone cases, continuity sequences, fixed `reference_time` |
+| `tests/fixtures/journeys/business_conversation_v1/journey.json` | Second-domain expense/support corpus and the same six sequence intentions |
 | Knowledge + retrieval workflows | Upload → parse → chunk → embed → index, including per-document language inventory on the build manifest |
 | `ChatService` / `GroundingService` / `ContextBuilder` / `current_authority` | Production message path the cases assert against |
 
@@ -54,9 +61,12 @@ preflight
   → ingest corpus with source metadata / MODIFIES
   → wait for active vector + lexical index
   → map evidence anchors by unique phrases (not chunk UUIDs)
-  → for each case: create conversation → send query → evaluate stages
+  → for each standalone case: create conversation → send query → evaluate stages
+  → for each sequence: one conversation, ordered turns, fresh ChatService per turn
   → optional --compare-translation: one new AI revision (`query_translation_enabled=false`), same index
   → optional --compare: one new AI revision, same index, second variant
+  → optional `--replay-raw-retrieval`: after each production turn, search again
+    with the raw query and original request filters; never generate from replay
   → write results.json + summary.md
   → purge modifiers before targets, then delete the Project
 ```
@@ -119,17 +129,22 @@ Case definitions are in `tests/fixtures/journeys/tax_v1/journey.json`.
 | `prohibited_final_sources` | Rejects listed documents from admitted/cited/claim evidence only |
 | `prohibited_answer_tokens` | User-supplied amounts must not be replaced by fixture examples |
 | `correction` | Stale-claim cases must state the new facts plus a correction marker; repeating the old tokens is not required |
-| `mode` | `answerable` (default), `scope_isolation`, or `no_answer` |
-| `document_scope` / `as_of` | Production hard scope and effective date |
+| `mode` | `answerable` (default), `scope_isolation`, `no_answer`, or `clarification` |
+| `document_scope` / `as_of` / `metadata_filter` | Production hard scope, effective date, and per-request metadata filter. Omitted filters are not inherited from earlier sequence turns |
+| `expected_resolution` | Optional structured check of outcome, relation, active values/origins, prior-turn references, temporal intent, and effective snapshot. Does not assert rewritten question prose |
 
-Failure stages localize where the production path broke: `retrieval`,
+Failure stages localize where the production path broke: `turn_resolution`,
+`execution`, `retrieval`,
 `admission_grounding`, `context_selection`, `citation`, `claim_grounding`,
 `generation_refusal`, `authority`, `fallback`. `admitted_count > 0` with
 `context_selected_count == 0` is `context_selection`
 (`authority_context_empty` or `context_selection_empty`), not
 `admission_grounding`. A generated but ungrounded answerable turn is
 `claim_grounding`; `generation_refusal` is a pre-generation refusal or a
-missing expected fact.
+missing expected fact. Clarification turns do not retrieve, search the web, or
+generate factual answers; they are excluded from answerable recall, refusal,
+citation-coverage, and groundedness denominators. An unexpected clarification
+fails an answerable turn.
 
 Context budgeting follows production `ContextBuilder` rules: admitted
 `EvidenceUnit`s are omitted when they do not fit `context_char_budget`, never
@@ -172,6 +187,85 @@ temporal, user-amount, and mixed-document coverage. Total: **21**.
 | Hard scope + scoped answer with notice | `hard_document_scope_authority` |
 | Unknown / no-answer | `unknown_lunar_rule` |
 | Mixed-language 2025 guidance | `mixed_document_bangla_retrieval`, `mixed_document_code_switched_retrieval` |
+
+Schema v2 adds ordered sequences on the same corpus. Schema v1 packs without
+sequences remain valid. The tax pack uses a fixed `reference_time` of
+`2026-08-01T00:00:00Z` so “current” source-policy dates stay compatible with
+the existing dated 2026 expectations. The harness patches only conversational
+reference-date reads and the default source-policy date reads in `SearchService`
+and `knowledge/source_metadata_read.py` around each turn. It does not freeze
+database timestamps, ingest/index clocks, timeouts, polling, or `perf_counter`,
+and it does not inject `as_of` into requests that omit it.
+
+Each existing standalone case still gets a fresh conversation. Each sequence
+gets one conversation, executes turns in order with a fresh session and
+`ChatService`, and lets production persistence supply history. Assertion
+failures are recorded and later turns still run. An execution failure that
+prevents continuation blocks remaining turns. Variants remain isolated.
+Request filters are never copied from a previous turn.
+
+| Sequence | Intent |
+| -------- | ------ |
+| `adopt_then_replace_rebate` / `adopt_then_replace_reimbursement` | Continue a calculation, adopt its result, then replace the amount |
+| `temporal_snapshot_clarify` | Change period, clarify “before that”, then answer at an exact snapshot |
+| `clarify_then_short_answer` | Ambiguous reference, then a short disambiguating reply |
+| `topic_reset_drops_amount` | Reset topic without carrying the old amount |
+| `language_switch_unicode_correction` | Switch to Bangla and correct a Unicode-digit amount |
+| `compare_scope_nonsticky_filters` | Compare sources, then prove omitted `document_id` / `metadata_filter` are not sticky |
+
+The tax pack uses those keys on the tax corpus. `business_conversation_v1` repeats
+the same intentions on expense-policy and support-plan documents. Request filters
+stay non-sticky in production. Ambiguous adoption and “was that amount correct?”
+verification stay in deterministic resolver unit tests, not extra Journey sequences.
+
+Checked-in expected failing keys live in
+`tests/fixtures/journeys/tax_v1/phase1_sequence_baseline.json`. That artifact is
+the pre-resolver snapshot. Do not relax sequence assertions to match fallback
+behavior. Provider-backed Journey runs are the development gate for sequence
+pass/fail; echo-LLM smoke does not fake-pass `expected_resolution`.
+
+## Development versus held-out scoring
+
+Journey development sequences are not the held-out continuity set.
+
+Before a later release evaluation:
+
+1. Freeze the resolver prompt/version, validation rules, model/settings, and development fixtures.
+2. Have an independent reviewer author unseen scenarios under a predeclared coverage rubric. Keep exact held-out examples outside implementation and tuning sessions until the candidate is frozen.
+3. Include novel entities, amounts, wording, domain context, adoption patterns, corrections, ambiguity, standalone turns, and temporal references — not cosmetic rewrites of development cases.
+4. Lock the dataset hash, scoring rules, and denominators before execution.
+5. Score every applicable turn, including fallbacks and timeouts; report results by category and total sample size.
+
+Target at least 90% structured resolution accuracy on that sample, with
+clarification accuracy reported separately. That is a later release check on the
+sample, not a universal reliability claim. Protocol, scoring rules, and
+denominators: [Held-out turn-resolution evaluation](./turn_resolution_held_out.md).
+If failures lead to tuning, the exposed set becomes development data and a fresh
+held-out set is required.
+
+## Measurements
+
+`summary.md` reports resolver and continuity measurements for each variant:
+
+| Measurement | Definition |
+| ----------- | ---------- |
+| Resolver latency | p50/p95 over attempted calls, including timeouts; total-turn latency is shown beside it |
+| Usage/cost | Resolver tokens per attempted call and share of turn tokens. Cost is null unless a recorded rate card or reported charges exist |
+| Fallback rate | Fallbacks / attempted resolutions, grouped by `failure_code`. Bypasses are separate |
+| Standalone rate | Standalone or topic-change outcomes among attempted resolutions |
+| Input-change rate | `query_changed` and `filter_changed` separately. Filter changes include a validated derived `as_of`; document and metadata scope never change |
+| Retrieval-change rate | Optional `--replay-raw-retrieval` paired differences in retrieved set/rank and required-anchor recall |
+| Continuity | Per-turn resolution correctness and complete-sequence success |
+
+Resolution time is subtracted from residual “grounding and context” timing.
+Replay runs after the production turn, uses the same Journey reference clock,
+never generates, and never writes into conversation history. Snapshot mismatch
+or provider degradation makes a pair non-comparable. Production still retrieves
+once.
+
+Evidence Quality stays a separate retrieval/grounding evaluation system. Its
+`previous_user_query` field does not demonstrate conversation continuity. Do
+not merge Journey sequences into Evidence Quality in this change.
 
 ## Production paths the journey exercises
 
@@ -256,9 +350,9 @@ the existing 21-case journey manifest remains unchanged.
 Unit checks from the repository root:
 
 ```powershell
-backend\.venv\Scripts\python.exe -m pytest tests/unit/cli tests/unit/modules/conversations -q
-backend\.venv\Scripts\python.exe -m ruff check backend/app/cli/rag_journey.py backend/app/modules/conversations/current_authority.py tests/unit/cli/test_rag_journey.py tests/unit/modules/conversations/test_current_authority.py tests/integration/test_rag_journey_smoke.py
-backend\.venv\Scripts\python.exe -m mypy --no-incremental backend/app/cli/rag_journey.py backend/app/modules/conversations/current_authority.py
+backend\.venv\Scripts\python.exe -m pytest tests/unit/cli/test_rag_journey.py tests/unit/modules/conversations/test_turn_resolution.py tests/unit/modules/conversations/test_turn_resolution_safety.py tests/unit/modules/conversations/test_turn_resolver.py tests/unit/modules/conversations/test_chat_service.py tests/unit/modules/conversations/test_prompt_builder.py tests/unit/modules/conversations/test_prompt_registry.py tests/unit/modules/conversations/test_message_repository.py -q
+backend\.venv\Scripts\python.exe -m ruff check backend/app/cli/rag_journey.py backend/app/cli/rag_journey_cli.py backend/app/modules/conversations/turn_resolution.py backend/app/modules/conversations/turn_resolver.py backend/app/modules/conversations/prompts/turn_resolution.py backend/app/modules/conversations/services/chat_service.py backend/app/modules/conversations/prompt_builder.py backend/app/modules/conversations/prompts/registry.py backend/app/modules/conversations/repositories/message_repository.py
+backend\.venv\Scripts\python.exe -m mypy --no-incremental backend/app/cli/rag_journey.py backend/app/modules/conversations/turn_resolution.py backend/app/modules/conversations/turn_resolver.py backend/app/modules/conversations/prompts/turn_resolution.py backend/app/modules/conversations/services/chat_service.py
 ```
 
 PostgreSQL/pgvector smoke from `backend/` (loads `.env`; skipped when `ape_test`
@@ -272,6 +366,8 @@ Full production journey from `backend/`:
 
 ```powershell
 .venv\Scripts\python.exe -m app.cli rag-journey
+.venv\Scripts\python.exe -m app.cli rag-journey --fixture ..\tests\fixtures\journeys\business_conversation_v1\journey.json
+.venv\Scripts\python.exe -m app.cli rag-journey --replay-raw-retrieval
 ```
 
 Equivalent Makefile target from the repository root: `make rag-journey`
@@ -354,11 +450,14 @@ Temporary Projects are tagged `rag-journey:<uuid>` and purged unless
 
 ## Testing strategy
 
-- Unit: `tests/unit/cli/test_rag_journey.py` — manifest shape, 21 cases, historical OR group, 2027 threshold composition, chunking paths (markdown vs semantic mixed guidance), assertion stages, semantic token groups, user-parameter tokens, `content_match_anchors`, provider-degradation reporting, `--set`/`--compare`/`--compare-translation` allowlist, translation A/B verdicts, purge order, Organization preflight
+- Unit: `tests/unit/cli/test_rag_journey.py` — manifest shape, 21 standalone tax cases, business pack sequences, schema v1 compatibility, sequence validation, `reference_time` clock, clarification scoring, resolution measurements, residual timing, raw-retrieval replay comparison, `--replay-raw-retrieval`, historical OR group, 2027 threshold composition, chunking paths (markdown vs semantic mixed guidance), assertion stages, semantic token groups, user-parameter tokens, `content_match_anchors`, provider-degradation reporting, `--set`/`--compare`/`--compare-translation` allowlist, translation A/B verdicts, purge order, Organization preflight
+- Unit: `tests/unit/modules/conversations/test_turn_resolution.py` — adoption provenance, parameter replacement, Unicode normalization, UTC midnight / leap-day / month-boundary dates, conflicting `as_of`, citation-date non-authorization, JSON parse, history bounding
+- Unit: `tests/unit/modules/conversations/test_turn_resolution_safety.py` — verification is not adoption, citation dates cannot authorize snapshots, request filters stay non-sticky
+- Unit: `tests/unit/modules/conversations/test_turn_resolver.py` / `test_chat_service.py` — one-call resolution, fallback, cancellation, clarification `grounded=null`, effective retrieval inputs
 - Unit: `tests/unit/modules/conversations/test_grounding_modes.py` — strict vs balanced monotonic admission, additive high-confidence/passage rescue, authority fallthrough, Bangla query scaffolding
 - Unit: `tests/unit/modules/conversations/test_current_authority.py` — Bangla `ধারা` / `বিধি` provision redaction
-- Integration: `tests/integration/test_rag_journey_smoke.py` — subset of cases on real PostgreSQL/pgvector with a deterministic fixture embedder; asserts diagnostics, hard scope, refusal, and cleanup. Does not call hosted LLMs
-- Full CLI: real providers; optional `--compare` or `--compare-translation`
+- Integration: `tests/integration/test_rag_journey_smoke.py` — tax and business subsets on real PostgreSQL/pgvector with deterministic fixture embedders; sequence harness reuses one conversation without requiring a resolver LLM. Does not call hosted LLMs
+- Full CLI: real providers; optional `--compare`, `--compare-translation`, `--replay-raw-retrieval`, `--fixture`
 
 ## Future improvements
 
@@ -373,6 +472,7 @@ Temporary Projects are tagged `rag-journey:<uuid>` and purged unless
 - [Multilingual support](./multilingual_support.md)
 - [Retrieval](./retrieval_module.md)
 - [Evidence quality](./evidence_quality.md)
+- [Held-out turn-resolution evaluation](./turn_resolution_held_out.md)
 - [Safe corpus/index lifecycle](./safe_corpus_index_lifecycle.md)
 - [ADR-018 multilingual retrieval](../architecture/adr/018-multilingual-retrieval-v1.md)
 - [Conversation RAG journey (learning)](../learning/conversation_rag_journey.md)

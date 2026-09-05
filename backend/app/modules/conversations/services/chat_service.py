@@ -6,7 +6,7 @@ import time
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Any
 
 import structlog
@@ -23,10 +23,15 @@ from app.core.config import (
 from app.core.exceptions import NotFoundError, ServiceUnavailableError
 from app.models.conversation import Conversation
 from app.models.message import Message, MessageRole
+from app.modules.conversations import turn_resolution as turn_resolution_mod
 from app.modules.conversations.citation_snapshots import build_citation_snapshots
 from app.modules.conversations.context_builder import ContextBuilder
 from app.modules.conversations.grounded_context import assess_and_select_knowledge
-from app.modules.conversations.grounding_service import EvidenceDecision, GroundingService
+from app.modules.conversations.grounding_service import (
+    EvidenceDecision,
+    GroundingResult,
+    GroundingService,
+)
 from app.modules.conversations.notices import (
     Notice,
     insufficient_evidence_notice,
@@ -54,6 +59,20 @@ from app.modules.conversations.schemas.message import (
     MessageSendRequest,
     SourceProvenance,
 )
+from app.modules.conversations.turn_resolution import (
+    RESOLUTION_HISTORY_CHAR_BUDGET,
+    RESOLUTION_HISTORY_MESSAGE_CAP,
+    RESOLUTION_MAX_OUTPUT_TOKENS,
+    RESOLUTION_TIMEOUT_SECONDS,
+    CitationIdentity,
+    HistoryMessage,
+    RequestFilters,
+    TurnOutcome,
+    TurnRelation,
+    TurnResolutionInput,
+    bound_resolution_history,
+)
+from app.modules.conversations.turn_resolver import TurnResolver, bypass_resolution
 from app.platform.domain.content_hash import content_hash
 from app.platform.domain.language_detection import detect_language
 from app.platform.domain.lifecycle_service import get_or_raise, require_not_deleted
@@ -130,8 +149,12 @@ class _PreparedTurn:
     web_search_diagnostics: dict[str, Any]
     web_fallback_used: bool = False
     non_knowledge_response: str | None = None
+    clarification_response: str | None = None
     scope_current_authority: dict[str, Any] | None = None
     notices: tuple[Notice, ...] = ()
+    turn_resolution: dict[str, Any] | None = None
+    resolver_usage: ChatUsage | None = None
+    resolver_latency_ms: int = 0
 
 
 class ChatService:
@@ -236,22 +259,52 @@ class ChatService:
                 ),
             )
 
-        if not prepared.selected:
+        if prepared.clarification_response is not None:
+            input_tokens, output_tokens = _combine_token_counts(prepared.resolver_usage, 0, 0)
             assistant_message = await self._persist_assistant_turn(
                 conversation=conversation,
                 prepared=prepared,
-                content=self._insufficient_content(prepared, request.content),
-                finish_reason="insufficient_evidence",
-                input_tokens=0,
-                output_tokens=0,
+                content=prepared.clarification_response,
+                finish_reason="clarification",
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
                 provider=prepared.llm.provider_name,
                 model=prepared.llm.model_name,
                 generation_ms=0,
                 total_ms=int((time.perf_counter() - started) * 1000),
                 user_content_for_title=request.content,
                 streamed=False,
-                input_tokens_logged=0,
-                output_tokens_logged=0,
+                input_tokens_logged=input_tokens,
+                output_tokens_logged=output_tokens,
+                generation_ran=False,
+                clarification_turn=True,
+            )
+            return ChatTurnResponse(
+                user_message=user_message_response,
+                assistant_message=self._to_response(
+                    assistant_message,
+                    conversation_provider=conversation_provider,
+                    conversation_model=conversation_model,
+                ),
+            )
+
+        if not prepared.selected:
+            input_tokens, output_tokens = _combine_token_counts(prepared.resolver_usage, 0, 0)
+            assistant_message = await self._persist_assistant_turn(
+                conversation=conversation,
+                prepared=prepared,
+                content=self._insufficient_content(prepared, request.content),
+                finish_reason="insufficient_evidence",
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                provider=prepared.llm.provider_name,
+                model=prepared.llm.model_name,
+                generation_ms=0,
+                total_ms=int((time.perf_counter() - started) * 1000),
+                user_content_for_title=request.content,
+                streamed=False,
+                input_tokens_logged=input_tokens,
+                output_tokens_logged=output_tokens,
                 insufficient_reason=prepared.evidence.reason,
                 generation_ran=False,
             )
@@ -287,23 +340,28 @@ class ChatService:
 
         generation_ms = int((time.perf_counter() - generation_started) * 1000)
         total_ms = int((time.perf_counter() - started) * 1000)
-
         content = completion.content
+
+        input_tokens, output_tokens = _combine_token_counts(
+            prepared.resolver_usage,
+            completion.usage.input_tokens,
+            completion.usage.output_tokens,
+        )
         assistant_message = await self._persist_assistant_turn(
             conversation=conversation,
             prepared=prepared,
             content=content,
             finish_reason=completion.finish_reason,
-            input_tokens=completion.usage.input_tokens,
-            output_tokens=completion.usage.output_tokens,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
             provider=completion.provider,
             model=completion.model,
             generation_ms=generation_ms,
             total_ms=total_ms,
             user_content_for_title=request.content,
             streamed=False,
-            input_tokens_logged=completion.usage.input_tokens,
-            output_tokens_logged=completion.usage.output_tokens,
+            input_tokens_logged=input_tokens,
+            output_tokens_logged=output_tokens,
             generation_ran=True,
         )
 
@@ -362,24 +420,50 @@ class ChatService:
             yield self._done_event(assistant_message, conversation)
             return
 
-        if not prepared.selected:
-            content = self._insufficient_content(prepared, request.content)
+        if prepared.clarification_response is not None:
+            content = prepared.clarification_response
             yield content
+            input_tokens, output_tokens = _combine_token_counts(prepared.resolver_usage, 0, 0)
             assistant_message = await self._persist_assistant_turn(
                 conversation=conversation,
                 prepared=prepared,
                 content=content,
-                finish_reason="insufficient_evidence",
-                input_tokens=0,
-                output_tokens=0,
+                finish_reason="clarification",
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
                 provider=prepared.llm.provider_name,
                 model=prepared.llm.model_name,
                 generation_ms=0,
                 total_ms=int((time.perf_counter() - started) * 1000),
                 user_content_for_title=request.content,
                 streamed=True,
-                input_tokens_logged=0,
-                output_tokens_logged=0,
+                input_tokens_logged=input_tokens,
+                output_tokens_logged=output_tokens,
+                generation_ran=False,
+                clarification_turn=True,
+            )
+            yield self._done_event(assistant_message, conversation)
+            return
+
+        if not prepared.selected:
+            content = self._insufficient_content(prepared, request.content)
+            yield content
+            input_tokens, output_tokens = _combine_token_counts(prepared.resolver_usage, 0, 0)
+            assistant_message = await self._persist_assistant_turn(
+                conversation=conversation,
+                prepared=prepared,
+                content=content,
+                finish_reason="insufficient_evidence",
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                provider=prepared.llm.provider_name,
+                model=prepared.llm.model_name,
+                generation_ms=0,
+                total_ms=int((time.perf_counter() - started) * 1000),
+                user_content_for_title=request.content,
+                streamed=True,
+                input_tokens_logged=input_tokens,
+                output_tokens_logged=output_tokens,
                 insufficient_reason=prepared.evidence.reason,
                 generation_ran=False,
             )
@@ -426,22 +510,29 @@ class ChatService:
         generation_ms = int((time.perf_counter() - generation_started) * 1000)
         total_ms = int((time.perf_counter() - started) * 1000)
         full_content = "".join(content_parts)
+        generation_input = final_usage.input_tokens if final_usage is not None else None
+        generation_output = final_usage.output_tokens if final_usage is not None else None
+        input_tokens, output_tokens = _combine_token_counts(
+            prepared.resolver_usage,
+            generation_input,
+            generation_output,
+        )
 
         assistant_message = await self._persist_assistant_turn(
             conversation=conversation,
             prepared=prepared,
             content=full_content,
             finish_reason=finish_reason or "stop",
-            input_tokens=final_usage.input_tokens if final_usage is not None else None,
-            output_tokens=final_usage.output_tokens if final_usage is not None else None,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
             provider=prepared.llm.provider_name,
             model=prepared.llm.model_name,
             generation_ms=generation_ms,
             total_ms=total_ms,
             user_content_for_title=request.content,
             streamed=True,
-            input_tokens_logged=final_usage.input_tokens if final_usage is not None else None,
-            output_tokens_logged=final_usage.output_tokens if final_usage is not None else None,
+            input_tokens_logged=input_tokens,
+            output_tokens_logged=output_tokens,
             generation_ran=True,
         )
 
@@ -456,29 +547,102 @@ class ChatService:
         request: MessageSendRequest,
     ) -> _PreparedTurn:
         history_limit = self._chat_config.max_history_messages
-        fetch_limit = history_limit + 1 if history_limit > 0 else 1
-        history = await self._message_repository.list_recent_for_conversation(
-            conversation_id,
-            limit=fetch_limit,
+        if history_limit <= 0:
+            loaded: list[Message] = []
+        else:
+            loaded = await self._message_repository.list_recent_for_conversation(
+                conversation_id,
+                limit=history_limit,
+                before_created_at=user_message.created_at,
+                before_id=user_message.id,
+            )
+        loaded = [message for message in loaded if message.id != user_message.id]
+        # Capture ORM-backed fields before closing the read transaction.
+        generation_history = [
+            PromptHistoryMessage(role=message.role, content=message.content) for message in loaded
+        ]
+        resolver_source = [
+            _history_message_from_orm(message)
+            for message in loaded
+            if _is_resolver_history_row(message)
+        ]
+        current_message_id = user_message.id
+        current_content = request.content
+        non_knowledge_response = _non_knowledge_response(current_content)
+        prompt_version = GROUNDED_PROMPT_VERSION
+        template = require_prompt_template(prompt_version)
+        llm = self._resolve_llm(conversation)
+        temperature = self._effective_temperature(conversation)
+        request_filters = RequestFilters(
+            document_id=request.document_id,
+            metadata_filter=dict(request.metadata_filter or {}),
+            as_of=request.as_of,
         )
-        history = [message for message in history if message.id != user_message.id]
-        history = history[-history_limit:] if history_limit > 0 else []
-        non_knowledge_response = _non_knowledge_response(request.content)
-        retrieval_query = request.content
+        await self._release_read_transaction()
 
+        bounded_history, history_truncated = bound_resolution_history(
+            resolver_source,
+            max_messages=min(history_limit, RESOLUTION_HISTORY_MESSAGE_CAP),
+            max_chars=RESOLUTION_HISTORY_CHAR_BUDGET,
+        )
+        payload = TurnResolutionInput(
+            current_message_id=current_message_id,
+            current_message=current_content,
+            history=bounded_history,
+            citation_metadata=[
+                citation for message in bounded_history for citation in message.citations
+            ],
+            request_filters=request_filters,
+            reference_time=turn_resolution_mod.utc_reference_datetime(),
+        )
+        if non_knowledge_response is not None:
+            resolved = bypass_resolution(payload, reason="casual_turn")
+        elif not bounded_history:
+            resolved = bypass_resolution(payload, reason="no_usable_history")
+        else:
+            resolved = await TurnResolver(
+                llm,
+                timeout_seconds=min(
+                    RESOLUTION_TIMEOUT_SECONDS,
+                    self._llm_config.request_timeout_seconds,
+                ),
+                max_output_tokens=min(
+                    RESOLUTION_MAX_OUTPUT_TOKENS,
+                    self._llm_max_tokens(),
+                ),
+            ).resolve(payload)
+
+        diagnostics = {
+            **resolved.diagnostics,
+            "history_truncated": history_truncated,
+        }
+        clarification_response: str | None = None
+        if non_knowledge_response is None and resolved.resolution.outcome is TurnOutcome.CLARIFY:
+            clarification_response = (
+                resolved.resolution.clarification_question
+                or resolved.resolution.reason
+                or "I need a bit more detail to continue."
+            )
+
+        retrieval_query = resolved.retrieval.query
         retrieval_started = time.perf_counter()
-        if non_knowledge_response is None:
+        if non_knowledge_response is not None or clarification_response is not None:
+            status = (
+                "skipped_non_knowledge_turn"
+                if non_knowledge_response is not None
+                else "skipped_clarification"
+            )
+            retrieval_result = ContextRetrievalResult(
+                chunks=[],
+                diagnostics={"status": status},
+            )
+        else:
             retrieval_result = await self._retrieval.retrieve(
                 query=retrieval_query,
                 top_k=self._retrieval_config.default_top_k,
-                document_id=request.document_id,
-                metadata_filter=request.metadata_filter or None,
-                as_of=request.as_of,
-            )
-        else:
-            retrieval_result = ContextRetrievalResult(
-                chunks=[],
-                diagnostics={"status": "skipped_non_knowledge_turn"},
+                document_id=resolved.retrieval.document_id,
+                metadata_filter=resolved.retrieval.metadata_filter or None,
+                as_of=resolved.retrieval.as_of,
             )
         chunks = retrieval_result.chunks
         retrieval_ms = int((time.perf_counter() - retrieval_started) * 1000)
@@ -506,18 +670,12 @@ class ChatService:
             retrieval_config=self._retrieval_config,
             expansion_records=expansion_records,
         )
-
-        # Capture all ORM-backed prompt inputs before closing the read
-        # transaction. AsyncSession.rollback() expires ORM attributes, so
-        # using ``conversation`` or ``history`` afterward would trigger
-        # implicit IO from synchronous attribute access (MissingGreenlet).
-        prompt_history = [
-            PromptHistoryMessage(role=message.role, content=message.content) for message in history
-        ]
-        prompt_version = GROUNDED_PROMPT_VERSION
-        template = require_prompt_template(prompt_version)
-        llm = self._resolve_llm(conversation)
-        temperature = self._effective_temperature(conversation)
+        prompt_history = _prompt_history_for_generation(
+            outcome=resolved.resolution.outcome,
+            relation=resolved.resolution.relation,
+            bounded=bounded_history,
+            full=generation_history,
+        )
 
         mode = self._chat_config.response_mode
         web_diagnostics: dict[str, Any] = {
@@ -525,17 +683,16 @@ class ChatService:
             "fallback_used": False,
         }
         web_chunks: list[ContextChunk] = []
-        scoped_request = bool(request.document_id or request.metadata_filter or request.as_of)
+        scoped_request = bool(resolved.retrieval.suppress_web)
         web_requested = (
             non_knowledge_response is None
+            and clarification_response is None
             and scope_current_authority is None
             and (
                 mode is ResponseMode.INDEXED_AND_WEB
                 or (mode is ResponseMode.INDEXED_THEN_WEB and grounding.blocks_generation(evidence))
             )
         )
-        # Retrieval/history reads may have opened an implicit transaction. Release it before
-        # any potentially slow external web or LLM I/O.
         await self._release_read_transaction()
         if web_requested and scoped_request:
             web_diagnostics = {
@@ -599,7 +756,7 @@ class ChatService:
                 }
 
         knowledge_usable = not grounding.blocks_generation(evidence)
-        if non_knowledge_response is not None:
+        if non_knowledge_response is not None or clarification_response is not None:
             selected: list[ContextChunk] = []
         elif mode is ResponseMode.INDEXED_ONLY:
             selected = knowledge_selected if knowledge_usable else []
@@ -625,12 +782,12 @@ class ChatService:
             template=template,
             context_chunks=selected,
             history=prompt_history,
-            user_question=request.content,
+            user_question=current_content,
             domain_instructions=self._domain_instructions,
             prompt_profile=self._prompt_profile,
+            interpretation=resolved.interpretation,
         )
-        # Build structured notices (language-neutral; system metadata, not LLM text).
-        question_language = detect_language(request.content).primary_language or "en"
+        question_language = detect_language(current_content).primary_language or "en"
         notices: list[Notice] = []
         if scope_current_authority is not None:
             effective_modifiers = _effective_scope_modifier_records(
@@ -663,8 +820,14 @@ class ChatService:
             web_search_diagnostics=web_diagnostics,
             web_fallback_used=web_fallback_used,
             non_knowledge_response=non_knowledge_response,
+            clarification_response=clarification_response,
             scope_current_authority=scope_current_authority,
             notices=tuple(notices),
+            turn_resolution=diagnostics,
+            resolver_usage=(
+                resolved.usage or ChatUsage(None, None) if resolved.attempted else None
+            ),
+            resolver_latency_ms=resolved.latency_ms,
         )
 
     async def _persist_assistant_turn(
@@ -687,22 +850,31 @@ class ChatService:
         insufficient_reason: object | None = None,
         generation_ran: bool = False,
         non_knowledge_turn: bool = False,
+        clarification_turn: bool = False,
     ) -> Message:
         reason_value = str(insufficient_reason) if insufficient_reason is not None else None
-        grounding = await prepared.grounding.map_claims(content, prepared.selected)
-        if reason_value is not None:
-            grounding = type(grounding)(claims=[], grounded=False, citation_coverage=1.0)
-        elif non_knowledge_turn:
-            grounding = type(grounding)(claims=[], grounded=False, citation_coverage=0.0)
-        # grounded=None is only valid when generation ran on admitted evidence
-        # and all segments were polarity-only / non-factual.  If generation did
-        # not run, keep grounded=False as before.
-        if grounding.grounded is None and not generation_ran:
-            grounding = type(grounding)(
+        if clarification_turn:
+            grounding = GroundingResult(
                 claims=[],
-                grounded=False,
-                citation_coverage=grounding.citation_coverage,
+                grounded=None,
+                citation_coverage=0.0,
+                claims_status="not_applicable",
             )
+        else:
+            grounding = await prepared.grounding.map_claims(content, prepared.selected)
+            if reason_value is not None:
+                grounding = type(grounding)(claims=[], grounded=False, citation_coverage=1.0)
+            elif non_knowledge_turn:
+                grounding = type(grounding)(claims=[], grounded=False, citation_coverage=0.0)
+            # grounded=None is only valid when generation ran on admitted evidence
+            # and all segments were polarity-only / non-factual.  If generation did
+            # not run, keep grounded=False as before.
+            if grounding.grounded is None and not generation_ran:
+                grounding = type(grounding)(
+                    claims=[],
+                    grounded=False,
+                    citation_coverage=grounding.citation_coverage,
+                )
         metadata = self._build_metadata(
             retrieval_ms=prepared.retrieval_ms,
             generation_ms=generation_ms,
@@ -721,7 +893,7 @@ class ChatService:
             evidence_gate["claims_status"] = grounding.claims_status
         citations = (
             []
-            if reason_value is not None or non_knowledge_turn
+            if reason_value is not None or non_knowledge_turn or clarification_turn
             else self._citations_for(
                 prepared.selected,
                 prompt_version=prepared.prompt_version,
@@ -770,13 +942,18 @@ class ChatService:
             generation_ran=generation_ran,
             observe=self._chat_config.evidence_gate_mode is EvidenceGateMode.OBSERVE,
             non_knowledge_turn=non_knowledge_turn,
+            clarification_turn=clarification_turn,
         )
         if not self._store_candidate_trace:
             candidate_diagnostics.pop("assessments", None)
         metadata.update(
             {
                 "response_mode": self._chat_config.response_mode.value,
-                "source_provenance": prepared.source_provenance.value,
+                "source_provenance": (
+                    SourceProvenance.NONE.value
+                    if clarification_turn
+                    else prepared.source_provenance.value
+                ),
                 "web_search": prepared.web_search_diagnostics,
                 "non_knowledge_turn": non_knowledge_turn,
                 "citation_coverage": grounding.citation_coverage,
@@ -802,6 +979,8 @@ class ChatService:
                 ],
             }
         )
+        if prepared.turn_resolution is not None:
+            metadata["turn_resolution"] = prepared.turn_resolution
         assistant_message = await self._commit_assistant_message(
             conversation=conversation,
             content=content,
@@ -880,6 +1059,8 @@ class ChatService:
                 "citation_coverage": 0.0,
             }
         )
+        if prepared.turn_resolution is not None:
+            metadata["turn_resolution"] = prepared.turn_resolution
         failed_funnel = _complete_evidence_funnel(
             prepared.retrieval_diagnostics.get("evidence_funnel"),
             evidence=prepared.evidence,
@@ -939,6 +1120,8 @@ class ChatService:
             "response_mode": self._chat_config.response_mode.value,
             "source_provenance": response.source_provenance.value,
             "web_search": response.metadata.get("web_search", {}),
+            "finish_reason": response.finish_reason,
+            "turn_resolution": _compact_resolution_summary(response.metadata),
         }
 
     def _citations_for(
@@ -1256,6 +1439,7 @@ class ChatService:
             },
             "retrieval_reference_date": retrieval_diagnostics.get("reference_date"),
             "retrieval_as_of": retrieval_diagnostics.get("as_of"),
+            "retrieval_configuration_hash": retrieval_diagnostics.get("configuration_hash"),
         }
 
     def _llm_max_tokens(self) -> int:
@@ -1409,6 +1593,7 @@ def _complete_evidence_funnel(
     generation_ran: bool,
     observe: bool,
     non_knowledge_turn: bool,
+    clarification_turn: bool = False,
 ) -> dict[str, Any]:
     """Complete the compact retrieval funnel with admission and answer stages."""
     funnel = dict(retrieval_funnel) if isinstance(retrieval_funnel, dict) else {}
@@ -1453,7 +1638,9 @@ def _complete_evidence_funnel(
             "would_have_blocked": bool(observe and not evidence.sufficient),
             "observe_context": evidence.observe_context,
             "outcome": (
-                "non_knowledge"
+                "clarification"
+                if clarification_turn
+                else "non_knowledge"
                 if non_knowledge_turn
                 else "refused"
                 if blocked
@@ -1584,6 +1771,141 @@ def _scope_current_authority_status(
 # _scope_limited_current_authority_content removed in Phase 3.
 # Hard-scope + effective-modifier excluded now answers from admitted scoped
 # evidence with a structured notice rather than refusing generation.
+
+
+def _combine_token_counts(
+    resolver: ChatUsage | None,
+    generation_input: int | None,
+    generation_output: int | None,
+) -> tuple[int | None, int | None]:
+    if resolver is None:
+        return generation_input, generation_output
+    return (
+        _sum_known_tokens(resolver.input_tokens, generation_input),
+        _sum_known_tokens(resolver.output_tokens, generation_output),
+    )
+
+
+def _sum_known_tokens(left: int | None, right: int | None) -> int | None:
+    if left is None or right is None:
+        return None
+    return left + right
+
+
+def _is_resolver_history_row(message: Message) -> bool:
+    if message.role is MessageRole.SYSTEM:
+        return False
+    if message.role is MessageRole.ASSISTANT and message.finish_reason == "error":
+        return False
+    return message.role in {MessageRole.USER, MessageRole.ASSISTANT}
+
+
+def _history_message_from_orm(message: Message) -> HistoryMessage:
+    if message.role is MessageRole.USER:
+        return HistoryMessage(
+            id=message.id,
+            role="user",
+            content=message.content,
+            citations=_citation_identities_from_message(message),
+        )
+    return HistoryMessage(
+        id=message.id,
+        role="assistant",
+        content=message.content,
+        citations=_citation_identities_from_message(message),
+    )
+
+
+def _citation_identities_from_message(message: Message) -> list[CitationIdentity]:
+    identities: list[CitationIdentity] = []
+    for item in message.citations or []:
+        if not isinstance(item, dict):
+            continue
+        identities.append(
+            CitationIdentity(
+                message_id=message.id,
+                document_id=_optional_uuid_or_none(item.get("document_id")),
+                filename=_optional_str(item.get("filename")),
+                source_title=_optional_str(item.get("source_title") or item.get("web_title")),
+                source_published_date=_optional_date(item.get("source_published_date")),
+                source_effective_from=_optional_date(item.get("source_effective_from")),
+                source_effective_to=_optional_date(item.get("source_effective_to")),
+            )
+        )
+    return identities
+
+
+def _prompt_history_for_generation(
+    *,
+    outcome: TurnOutcome,
+    relation: TurnRelation,
+    bounded: list[HistoryMessage],
+    full: list[PromptHistoryMessage],
+) -> list[PromptHistoryMessage]:
+    if outcome is TurnOutcome.FALLBACK:
+        return full
+    if (
+        outcome is TurnOutcome.CLARIFY
+        or outcome is TurnOutcome.STANDALONE
+        or relation is TurnRelation.TOPIC_CHANGE
+    ):
+        return []
+    return [
+        PromptHistoryMessage(
+            role=MessageRole.USER if item.role == "user" else MessageRole.ASSISTANT,
+            content=item.content,
+        )
+        for item in bounded
+    ]
+
+
+def _compact_resolution_summary(metadata: dict[str, Any]) -> dict[str, Any] | None:
+    recorded = metadata.get("turn_resolution")
+    if not isinstance(recorded, dict) or not recorded:
+        return None
+    keys = (
+        "version",
+        "outcome",
+        "relation",
+        "reason",
+        "effective_question",
+        "query_changed",
+        "filter_changed",
+        "failure_code",
+        "bypass_reason",
+        "latency_ms",
+    )
+    return {key: recorded[key] for key in keys if key in recorded}
+
+
+def _optional_str(value: object) -> str | None:
+    if isinstance(value, str) and value:
+        return value
+    return None
+
+
+def _optional_uuid_or_none(value: object) -> uuid.UUID | None:
+    if value is None:
+        return None
+    try:
+        return uuid.UUID(str(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def _optional_date(value: object) -> date | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    if isinstance(value, str):
+        try:
+            return date.fromisoformat(value[:10])
+        except ValueError:
+            return None
+    return None
 
 
 def _optional_uuid(value: object) -> uuid.UUID | None:

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
 import uuid
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
@@ -2020,3 +2022,675 @@ def test_scope_notice_keeps_expanded_effective_modifiers() -> None:
     assert status is not None
     assert status["status"] == "effective_modifier_excluded_by_scope"
     assert status["excluded_effective_modifier_count"] == 1
+
+
+class CapturingRetrieval(FakeRetrieval):
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    async def retrieve(self, **kwargs: object) -> ContextRetrievalResult:
+        self.calls.append(kwargs)
+        return await FakeRetrieval.retrieve(self, **kwargs)
+
+
+class ScriptedResolutionLLM(EchoLLMProvider):
+    def __init__(
+        self,
+        resolution: dict[str, object],
+        *,
+        answer: str = "grounded answer [1]",
+    ) -> None:
+        super().__init__(model="test", provider_version="1")
+        self.resolution = resolution
+        self.answer = answer
+        self.generate_calls = 0
+        self.resolver_calls = 0
+        self.generation_prompts: list[list] = []
+
+    @staticmethod
+    def _is_resolver(messages: list) -> bool:
+        return any(
+            "Return one JSON object and nothing else" in message.content for message in messages
+        )
+
+    async def generate(self, messages, *, temperature, max_tokens):
+        self.generate_calls += 1
+        if self._is_resolver(messages):
+            self.resolver_calls += 1
+            assert temperature is None
+            return ChatCompletionResult(
+                content=json.dumps(self.resolution),
+                provider="echo",
+                model="test",
+                finish_reason="stop",
+                usage=ChatUsage(3, 5),
+                provider_version="1",
+            )
+        self.generation_prompts.append(list(messages))
+        return ChatCompletionResult(
+            content=self.answer,
+            provider="echo",
+            model="test",
+            finish_reason="stop",
+            usage=ChatUsage(7, 9),
+            provider_version="1",
+        )
+
+
+def _history_messages(
+    conversation: Conversation,
+    *,
+    user_content: str,
+    assistant_content: str,
+    assistant_finish_reason: str | None = "stop",
+) -> tuple[Message, Message]:
+    user = Message(
+        id=uuid.uuid4(),
+        project_id=conversation.project_id,
+        conversation_id=conversation.id,
+        role=MessageRole.USER,
+        content=user_content,
+        created_at=datetime(2026, 7, 1, tzinfo=UTC),
+        updated_at=datetime(2026, 7, 1, tzinfo=UTC),
+    )
+    assistant = Message(
+        id=uuid.uuid4(),
+        project_id=conversation.project_id,
+        conversation_id=conversation.id,
+        role=MessageRole.ASSISTANT,
+        content=assistant_content,
+        finish_reason=assistant_finish_reason,
+        created_at=datetime(2026, 7, 1, 0, 0, 1, tzinfo=UTC),
+        updated_at=datetime(2026, 7, 1, 0, 0, 1, tzinfo=UTC),
+        citations=[],
+    )
+    return user, assistant
+
+
+def _resolved_payload(
+    *,
+    relation: str,
+    effective_question: str,
+    bindings: list[dict[str, object]] | None = None,
+    outcome: str = "resolved",
+    clarification_question: str | None = None,
+    reason: str | None = None,
+) -> dict[str, object]:
+    return {
+        "outcome": outcome,
+        "relation": relation,
+        "effective_question": effective_question,
+        "active_bindings": bindings or [],
+        "temporal_intent": {
+            "kind": "none",
+            "anchor_date": None,
+            "requires_snapshot": False,
+            "snapshot_origin": None,
+        },
+        "clarification_question": clarification_question,
+        "reason": reason,
+    }
+
+
+async def test_follow_up_retrieves_effective_question_and_keeps_original_prompt(
+    session: AsyncMock,
+    conversation_repository: AsyncMock,
+    message_repository: AsyncMock,
+    conversation: Conversation,
+) -> None:
+    prior_user, prior_assistant = _history_messages(
+        conversation,
+        user_content="What rebate applies to 75,000?",
+        assistant_content="The rebate is 11,250.",
+    )
+    message_repository.list_recent_for_conversation.return_value = [prior_user, prior_assistant]
+    retrieval = CapturingRetrieval()
+    llm = ScriptedResolutionLLM(
+        _resolved_payload(
+            relation="follow_up",
+            effective_question="What rebate applies to 75,000?",
+        )
+    )
+    service = _service(session, conversation_repository, message_repository, llm)
+    service._retrieval = retrieval
+
+    turn = await service.send_message(
+        conversation.id,
+        MessageSendRequest(content="Explain that more simply."),
+    )
+
+    assert retrieval.calls[0]["query"] == "What rebate applies to 75,000?"
+    assert llm.resolver_calls == 1
+    assert turn.assistant_message.metadata["turn_resolution"]["outcome"] == "resolved"
+    assert turn.assistant_message.metadata["turn_resolution"]["query_changed"] is True
+    assert turn.assistant_message.metadata["turn_resolution"]["filter_changed"] is False
+    prompt = llm.generation_prompts[0]
+    assert prompt[-1].content == "Explain that more simply."
+    assert any("Validated conversation interpretation" in message.content for message in prompt)
+
+
+async def test_adopted_value_is_scenario_input_and_filters_stay_authoritative(
+    session: AsyncMock,
+    conversation_repository: AsyncMock,
+    message_repository: AsyncMock,
+    conversation: Conversation,
+) -> None:
+    prior_user, prior_assistant = _history_messages(
+        conversation,
+        user_content="What rebate applies to 75,000?",
+        assistant_content="The calculated rebate is 7,500.",
+    )
+    message_repository.list_recent_for_conversation.return_value = [prior_user, prior_assistant]
+    retrieval = CapturingRetrieval()
+    scoped_document = uuid.uuid4()
+    llm = ScriptedResolutionLLM(
+        _resolved_payload(
+            relation="follow_up",
+            effective_question="What fee applies if my monthly budget is 7,500?",
+            bindings=[
+                {
+                    "kind": "scenario_parameter",
+                    "active_value": "7,500",
+                    "origin": "user_adopted_assistant",
+                    "references": [
+                        {
+                            "message_id": str(prior_assistant.id),
+                            "role": "assistant",
+                            "field": "content",
+                            "excerpt": "7,500",
+                        },
+                        {
+                            "message_id": "CURRENT",
+                            "role": "user",
+                            "field": "content",
+                            "excerpt": "Use that amount",
+                        },
+                    ],
+                }
+            ],
+        )
+    )
+    service = _service(session, conversation_repository, message_repository, llm)
+    service._retrieval = retrieval
+    current = "Use that amount as my next monthly budget. What fee applies?"
+
+    async def send() -> object:
+        # Patch the current-message id into the script after the user row exists.
+        return await service.send_message(
+            conversation.id,
+            MessageSendRequest(content=current, document_id=scoped_document),
+        )
+
+    # Bindings reference the current user message id assigned during persist.
+    original_generate = llm.generate
+
+    async def generate_with_current_id(messages, *, temperature, max_tokens):
+        if llm._is_resolver(messages) and llm.resolution["active_bindings"]:
+            binding = llm.resolution["active_bindings"][0]
+            for reference in binding["references"]:
+                if reference["message_id"] == "CURRENT":
+                    reference["message_id"] = str(
+                        message_repository.add.call_args_list[0].args[0].id
+                    )
+        return await original_generate(messages, temperature=temperature, max_tokens=max_tokens)
+
+    llm.generate = generate_with_current_id  # type: ignore[method-assign]
+    turn = await send()
+
+    assert retrieval.calls[0]["query"] == "What fee applies if my monthly budget is 7,500?"
+    assert retrieval.calls[0]["document_id"] == scoped_document
+    recorded = turn.assistant_message.metadata["turn_resolution"]
+    assert recorded["active_bindings"][0]["origin"] == "user_adopted_assistant"
+    assert recorded["active_bindings"][0]["active_value"] == "7,500"
+    assert recorded["filter_changed"] is False
+
+
+async def test_correction_replaces_active_amount_in_retrieval_query(
+    session: AsyncMock,
+    conversation_repository: AsyncMock,
+    message_repository: AsyncMock,
+    conversation: Conversation,
+) -> None:
+    prior_user, prior_assistant = _history_messages(
+        conversation,
+        user_content="Rebate on 75,000?",
+        assistant_content="The rebate is 11,250.",
+    )
+    message_repository.list_recent_for_conversation.return_value = [prior_user, prior_assistant]
+    retrieval = CapturingRetrieval()
+    llm = ScriptedResolutionLLM(
+        _resolved_payload(
+            relation="correction",
+            effective_question="What rebate applies to 90,000?",
+            bindings=[
+                {
+                    "kind": "scenario_parameter",
+                    "active_value": "90,000",
+                    "origin": "user_literal",
+                    "references": [
+                        {
+                            "message_id": "CURRENT",
+                            "role": "user",
+                            "field": "content",
+                            "excerpt": "90,000",
+                        }
+                    ],
+                }
+            ],
+        )
+    )
+    original_generate = llm.generate
+
+    async def generate_with_current_id(messages, *, temperature, max_tokens):
+        if llm._is_resolver(messages):
+            for binding in llm.resolution["active_bindings"]:
+                for reference in binding["references"]:
+                    if reference["message_id"] == "CURRENT":
+                        reference["message_id"] = str(
+                            message_repository.add.call_args_list[0].args[0].id
+                        )
+        return await original_generate(messages, temperature=temperature, max_tokens=max_tokens)
+
+    llm.generate = generate_with_current_id  # type: ignore[method-assign]
+    service = _service(session, conversation_repository, message_repository, llm)
+    service._retrieval = retrieval
+
+    await service.send_message(
+        conversation.id,
+        MessageSendRequest(content="90,000, not 75,000. What rebate applies?"),
+    )
+
+    assert retrieval.calls[0]["query"] == "What rebate applies to 90,000?"
+    assert "75,000" not in retrieval.calls[0]["query"]
+
+
+async def test_clarification_skips_retrieval_and_keeps_grounded_null(
+    session: AsyncMock,
+    conversation_repository: AsyncMock,
+    message_repository: AsyncMock,
+    conversation: Conversation,
+) -> None:
+    prior_user, prior_assistant = _history_messages(
+        conversation,
+        user_content="Compare standard and premium support.",
+        assistant_content="Standard answers in 8 hours. Premium answers in 1 hour.",
+    )
+    message_repository.list_recent_for_conversation.return_value = [prior_user, prior_assistant]
+    retrieval = CapturingRetrieval()
+    llm = ScriptedResolutionLLM(
+        _resolved_payload(
+            outcome="clarify",
+            relation="follow_up",
+            effective_question="Which plan?",
+            clarification_question="Do you mean the standard plan or the premium plan?",
+            reason="ambiguous_referent",
+        )
+    )
+    service = _service(session, conversation_repository, message_repository, llm)
+    service._retrieval = retrieval
+
+    turn = await service.send_message(
+        conversation.id,
+        MessageSendRequest(content="What is the response time?"),
+    )
+
+    assert retrieval.calls == []
+    assert llm.resolver_calls == 1
+    assert llm.generate_calls == 1
+    assert turn.assistant_message.finish_reason == "clarification"
+    assert turn.assistant_message.grounded is None
+    assert turn.assistant_message.claims == []
+    assert turn.assistant_message.citations == []
+    assert turn.assistant_message.insufficient_evidence_reason is None
+    assert turn.assistant_message.source_provenance == "none"
+    gate = turn.assistant_message.metadata["evidence_gate"]
+    assert gate["claims_status"] == "not_applicable"
+    assert gate["generation_ran"] is False
+    assert turn.assistant_message.metadata["evidence_funnel"]["outcome"] == "clarification"
+    assert "Do you mean the standard plan" in turn.assistant_message.content
+
+
+async def test_clarification_streams_without_evidence_claims(
+    session: AsyncMock,
+    conversation_repository: AsyncMock,
+    message_repository: AsyncMock,
+    conversation: Conversation,
+) -> None:
+    prior_user, prior_assistant = _history_messages(
+        conversation,
+        user_content="Tell me about the two plans.",
+        assistant_content="There is a standard plan and a premium plan.",
+    )
+    message_repository.list_recent_for_conversation.return_value = [prior_user, prior_assistant]
+    llm = ScriptedResolutionLLM(
+        _resolved_payload(
+            outcome="clarify",
+            relation="follow_up",
+            effective_question="Which plan?",
+            clarification_question="Which plan should I use?",
+            reason="ambiguous_referent",
+        )
+    )
+    service = _service(session, conversation_repository, message_repository, llm)
+    events: list[object] = []
+    async for event in service.stream_message(
+        conversation.id,
+        MessageSendRequest(content="How fast is it?"),
+    ):
+        events.append(event)
+    assert events[0] == "Which plan should I use?"
+    done = events[-1]
+    assert isinstance(done, dict)
+    assert done["finish_reason"] == "clarification"
+    assert done["grounded"] is None
+    assert done["claims"] == []
+    assert done["citations"] == []
+    assert done["turn_resolution"]["outcome"] == "clarify"
+
+
+async def test_short_clarification_reply_resolves_and_retrieves(
+    session: AsyncMock,
+    conversation_repository: AsyncMock,
+    message_repository: AsyncMock,
+    conversation: Conversation,
+) -> None:
+    first_user, first_assistant = _history_messages(
+        conversation,
+        user_content="Compare standard and premium support.",
+        assistant_content="Standard is 8 hours. Premium is 1 hour.",
+    )
+    clarify_user = Message(
+        id=uuid.uuid4(),
+        project_id=conversation.project_id,
+        conversation_id=conversation.id,
+        role=MessageRole.USER,
+        content="What is the response time?",
+        created_at=datetime(2026, 7, 1, 0, 0, 2, tzinfo=UTC),
+        updated_at=datetime(2026, 7, 1, 0, 0, 2, tzinfo=UTC),
+    )
+    clarify_assistant = Message(
+        id=uuid.uuid4(),
+        project_id=conversation.project_id,
+        conversation_id=conversation.id,
+        role=MessageRole.ASSISTANT,
+        content="Do you mean the standard plan or the premium plan?",
+        finish_reason="clarification",
+        created_at=datetime(2026, 7, 1, 0, 0, 3, tzinfo=UTC),
+        updated_at=datetime(2026, 7, 1, 0, 0, 3, tzinfo=UTC),
+        citations=[],
+    )
+    message_repository.list_recent_for_conversation.return_value = [
+        first_user,
+        first_assistant,
+        clarify_user,
+        clarify_assistant,
+    ]
+    retrieval = CapturingRetrieval()
+    llm = ScriptedResolutionLLM(
+        _resolved_payload(
+            relation="follow_up",
+            effective_question="What is the premium support response time?",
+        )
+    )
+    service = _service(session, conversation_repository, message_repository, llm)
+    service._retrieval = retrieval
+
+    turn = await service.send_message(
+        conversation.id,
+        MessageSendRequest(content="premium"),
+    )
+
+    assert retrieval.calls[0]["query"] == "What is the premium support response time?"
+    assert turn.assistant_message.metadata["turn_resolution"]["outcome"] == "resolved"
+
+
+async def test_invalid_resolver_output_falls_back_to_raw_message(
+    session: AsyncMock,
+    conversation_repository: AsyncMock,
+    message_repository: AsyncMock,
+    conversation: Conversation,
+) -> None:
+    prior_user, prior_assistant = _history_messages(
+        conversation,
+        user_content="What is the rebate?",
+        assistant_content="15 percent.",
+    )
+    message_repository.list_recent_for_conversation.return_value = [prior_user, prior_assistant]
+    retrieval = CapturingRetrieval()
+    service = _service(
+        session,
+        conversation_repository,
+        message_repository,
+        EchoLLMProvider(model="test", provider_version="1"),
+    )
+    service._retrieval = retrieval
+
+    turn = await service.send_message(
+        conversation.id,
+        MessageSendRequest(content="What is the current rebate rate?"),
+    )
+
+    assert retrieval.calls[0]["query"] == "What is the current rebate rate?"
+    recorded = turn.assistant_message.metadata["turn_resolution"]
+    assert recorded["outcome"] == "fallback"
+    assert recorded["failure_code"] == "malformed_output"
+
+
+async def test_resolver_timeout_falls_back_without_using_interpretation(
+    session: AsyncMock,
+    conversation_repository: AsyncMock,
+    message_repository: AsyncMock,
+    conversation: Conversation,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prior_user, prior_assistant = _history_messages(
+        conversation,
+        user_content="What is the rebate?",
+        assistant_content="15 percent.",
+    )
+    message_repository.list_recent_for_conversation.return_value = [prior_user, prior_assistant]
+    monkeypatch.setattr(
+        "app.modules.conversations.services.chat_service.RESOLUTION_TIMEOUT_SECONDS",
+        0.05,
+    )
+
+    class SlowThenEcho(EchoLLMProvider):
+        resolver_calls = 0
+
+        async def generate(self, messages, *, temperature, max_tokens):
+            if any("Return one JSON object" in message.content for message in messages):
+                self.resolver_calls += 1
+                await asyncio.sleep(1)
+            return await super().generate(messages, temperature=temperature, max_tokens=max_tokens)
+
+    retrieval = CapturingRetrieval()
+    llm = SlowThenEcho(model="test", provider_version="1")
+    service = _service(session, conversation_repository, message_repository, llm)
+    service._retrieval = retrieval
+
+    turn = await service.send_message(
+        conversation.id,
+        MessageSendRequest(content="What is the current rebate rate?"),
+    )
+
+    assert llm.resolver_calls == 1
+    assert retrieval.calls[0]["query"] == "What is the current rebate rate?"
+    assert turn.assistant_message.metadata["turn_resolution"]["failure_code"] == "timeout"
+
+
+async def test_resolver_cancellation_does_not_become_fallback(
+    session: AsyncMock,
+    conversation_repository: AsyncMock,
+    message_repository: AsyncMock,
+    conversation: Conversation,
+) -> None:
+    prior_user, prior_assistant = _history_messages(
+        conversation,
+        user_content="What is the rebate?",
+        assistant_content="15 percent.",
+    )
+    message_repository.list_recent_for_conversation.return_value = [prior_user, prior_assistant]
+    retrieval = CapturingRetrieval()
+
+    class CancellingLLM(EchoLLMProvider):
+        async def generate(self, messages, *, temperature, max_tokens):
+            if any("Return one JSON object" in message.content for message in messages):
+                raise asyncio.CancelledError
+            return await super().generate(messages, temperature=temperature, max_tokens=max_tokens)
+
+    service = _service(
+        session,
+        conversation_repository,
+        message_repository,
+        CancellingLLM(model="test", provider_version="1"),
+    )
+    service._retrieval = retrieval
+
+    with pytest.raises(asyncio.CancelledError):
+        await service.send_message(
+            conversation.id,
+            MessageSendRequest(content="What is the current rebate rate?"),
+        )
+    assert retrieval.calls == []
+
+
+async def test_resolver_runs_only_after_read_transaction_release(
+    session: AsyncMock,
+    conversation_repository: AsyncMock,
+    message_repository: AsyncMock,
+    conversation: Conversation,
+) -> None:
+    prior_user, prior_assistant = _history_messages(
+        conversation,
+        user_content="What is the rebate?",
+        assistant_content="15 percent.",
+    )
+    message_repository.list_recent_for_conversation.return_value = [prior_user, prior_assistant]
+    retrieval = CapturingRetrieval()
+    llm = ScriptedResolutionLLM(
+        _resolved_payload(
+            relation="follow_up",
+            effective_question="What is the current rebate rate?",
+        )
+    )
+    original_generate = llm.generate
+
+    async def generate_and_assert(messages, *, temperature, max_tokens):
+        if llm._is_resolver(messages):
+            assert session.rollback.await_count >= 1
+            assert retrieval.calls == []
+        return await original_generate(messages, temperature=temperature, max_tokens=max_tokens)
+
+    llm.generate = generate_and_assert  # type: ignore[method-assign]
+    service = _service(session, conversation_repository, message_repository, llm)
+    service._retrieval = retrieval
+
+    await service.send_message(
+        conversation.id,
+        MessageSendRequest(content="What is the current rebate rate?"),
+    )
+    assert retrieval.calls
+
+
+@pytest.mark.parametrize("streamed", [False, True])
+@pytest.mark.parametrize("conflict", [False, True])
+async def test_snapshot_scope_and_clarification_have_streaming_parity(
+    session,
+    conversation_repository,
+    message_repository,
+    conversation,
+    streamed,
+    conflict,
+):
+    prior_user, prior_assistant = _history_messages(
+        conversation,
+        user_content="What is the rate?",
+        assistant_content="The rate is 15%.",
+    )
+    message_repository.list_recent_for_conversation.return_value = [prior_user, prior_assistant]
+    llm = ScriptedResolutionLLM(
+        _resolved_payload(
+            relation="follow_up",
+            effective_question="What was the rate on 2025-06-01?",
+        )
+    )
+    llm.resolution["temporal_intent"] = {
+        "kind": "exact_date",
+        "anchor_date": "2025-06-01",
+        "requires_snapshot": True,
+    }
+    original_generate = llm.generate
+
+    async def generate(messages, *, temperature, max_tokens):
+        if llm._is_resolver(messages):
+            payload = json.loads(messages[-1].content)
+            llm.resolution["active_bindings"] = [
+                {
+                    "kind": "period_date",
+                    "active_value": "2025-06-01",
+                    "origin": "user_literal",
+                    "references": [
+                        {
+                            "message_id": payload["current_message_id"],
+                            "role": "user",
+                            "excerpt": "2025-06-01",
+                        }
+                    ],
+                }
+            ]
+        return await original_generate(messages, temperature=temperature, max_tokens=max_tokens)
+
+    llm.generate = generate
+    service = _service(session, conversation_repository, message_repository, llm)
+    retrieval = CapturingRetrieval()
+    service._retrieval = retrieval
+    service._chat_config = service._chat_config.model_copy(
+        update={
+            "response_mode": ResponseMode.INDEXED_AND_WEB,
+        }
+    )
+    document = uuid.uuid4()
+    request = MessageSendRequest(
+        content="Check on 2025-06-01.",
+        document_id=document,
+        metadata_filter={"team": "sales"},
+        as_of=datetime(2026, 6, 1, tzinfo=UTC) if conflict else None,
+    )
+    if streamed:
+        events = [event async for event in service.stream_message(conversation.id, request)]
+        done = events[-1]
+        assert done["turn_resolution"]["outcome"] == ("clarify" if conflict else "resolved")
+        if conflict:
+            assert done["finish_reason"] == "clarification"
+            assert done["grounded"] is None
+            assert done["claims"] == done["citations"] == []
+    else:
+        result = await service.send_message(conversation.id, request)
+        if conflict:
+            assert result.assistant_message.finish_reason == "clarification"
+            assert result.assistant_message.grounded is None
+    if conflict:
+        assert retrieval.calls == []
+        assert llm.generate_calls == 1
+    else:
+        assert len(retrieval.calls) == 1
+        assert retrieval.calls[0]["as_of"] == datetime(2025, 6, 1, tzinfo=UTC)
+        assert retrieval.calls[0]["document_id"] == document
+        assert retrieval.calls[0]["metadata_filter"] == {"team": "sales"}
+    assert request.as_of == (datetime(2026, 6, 1, tzinfo=UTC) if conflict else None)
+
+
+@pytest.mark.parametrize(
+    ("resolver", "generation", "expected"),
+    [
+        (None, (7, 9), (7, 9)),
+        (ChatUsage(3, 5), (7, 9), (10, 14)),
+        (ChatUsage(None, None), (7, 9), (None, None)),
+        (ChatUsage(3, None), (7, 9), (10, None)),
+        (ChatUsage(3, 5), (None, None), (None, None)),
+    ],
+)
+def test_turn_token_totals_distinguish_bypass_from_unknown_usage(resolver, generation, expected):
+    from app.modules.conversations.services.chat_service import _combine_token_counts
+
+    assert _combine_token_counts(resolver, *generation) == expected

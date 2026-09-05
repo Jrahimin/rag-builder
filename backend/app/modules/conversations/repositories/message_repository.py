@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, tuple_
 
 from app.models.message import Message
 from app.platform.persistence.filters import apply_deterministic_order
@@ -48,13 +49,17 @@ class MessageRepository(ProjectScopedRepository[Message]):
         conversation_id: uuid.UUID,
         *,
         limit: int,
+        before_created_at: datetime | None = None,
+        before_id: uuid.UUID | None = None,
     ) -> list[Message]:
-        stmt = (
-            self._scoped()
-            .where(self.model.conversation_id == conversation_id)
-            .order_by(self.model.created_at.desc(), self.model.id.desc())
-            .limit(limit)
-        )
+        if (before_created_at is None) != (before_id is None):
+            raise ValueError("History boundary requires both created_at and id.")
+        stmt = self._scoped().where(self.model.conversation_id == conversation_id)
+        if before_created_at is not None and before_id is not None:
+            stmt = stmt.where(
+                tuple_(self.model.created_at, self.model.id) < (before_created_at, before_id)
+            )
+        stmt = stmt.order_by(self.model.created_at.desc(), self.model.id.desc()).limit(limit)
         result = await self._session.execute(stmt)
         rows = list(result.scalars().all())
         rows.reverse()

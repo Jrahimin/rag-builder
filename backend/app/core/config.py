@@ -805,7 +805,7 @@ class ChatConfig(BaseModel):
     context_char_budget: int = Field(default=12_000, ge=500, le=200_000)
     max_history_messages: int = Field(default=20, ge=0, le=200)
     # Compatibility leaf only. Assistant messages stamp GROUNDED_PROMPT_VERSION.
-    system_prompt_version: str = "v6"
+    system_prompt_version: str = "v7"
     include_citations: bool = True
     citation_excerpt_max_chars: int = Field(default=200, ge=0, le=2000)
     evidence_gate_mode: EvidenceGateMode = EvidenceGateMode.ENFORCE

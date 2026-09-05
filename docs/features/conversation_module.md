@@ -12,6 +12,7 @@ Complete the RAG user journey on top of the retrieval pipeline. Conversations ar
 ```text
 conversations_router ──► ConversationService (CRUD)
                       └──► ChatService ──► RetrievalPort (composition adapter)
+                                        ├──► TurnResolver (one bounded interpretation call)
                                         ├──► ContextBuilder
                                         ├──► GroundingService
                                         ├──► PromptBuilder
@@ -23,7 +24,8 @@ conversations_router ──► ConversationService (CRUD)
 | Component | Role |
 | --------- | ---- |
 | **ConversationService** | Conversation CRUD, list messages |
-| **ChatService** | Tx1 user msg → retrieve → prompt → LLM → Tx2 assistant msg |
+| **ChatService** | Tx1 user msg → bounded turn resolution → retrieve → prompt → LLM → Tx2 assistant msg |
+| **TurnResolver** | At most one interpretation call; fallback keeps the raw message and original filters |
 | **RetrievalPort** | Module-local seam; adapter wraps `SearchService` |
 | **ContextBuilder** | Dedupe + budget trim (preserves retrieval order) |
 | **PromptBuilder** | Versioned system prompt + separated knowledge/web evidence + history |
@@ -37,13 +39,16 @@ conversations_router ──► ConversationService (CRUD)
 POST /messages
   → validate conversation (active, not deleted)
   → Tx1: persist user message + last_message_at → commit
-  → load history + retrieve (read txn rolled back before LLM)
+  → load preceding history (exclusive created_at/id boundary) and capture ORM-safe inputs
+  → release the read transaction, then one bounded turn-resolution call when history exists
+  → clarification persists/streams with grounded=null and no retrieval
+  → otherwise retrieve once with the effective question; original filters unchanged
   → GroundingService rank-ordered candidate assessment → indivisible EvidenceUnit selection
   → enforce: insufficient score skips LLM and persists stable reason
   → observe: same admission and selected units as enforce; veto disabled
     (zero admissions still generate from ranked candidates)
   → response_mode selects indexed-only, conditional web fallback, or combined evidence
-  → sufficient evidence: canonical grounding prompt → LLM generate / stream → map claims
+  → sufficient evidence: canonical grounding prompt + optional interpretation → LLM
   → Tx2: persist assistant (+ claims, citations, notices, metadata, auto-title) → commit
 ```
 
@@ -103,7 +108,8 @@ Authority redaction of superseded provisions runs **before** admission from
 effective MODIFIES record still answers from admitted scoped evidence and attaches
 `scope_excludes_effective_modifier`. There is one canonical grounding prompt; conversation
 create/update no longer select a prompt version. `grounded` may be `null` when generation ran
-on admitted evidence but the answer had no verifiable claims (for example polarity-only `Yes.`).
+on admitted evidence but the answer had no verifiable claims (for example polarity-only `Yes.`),
+or when the turn is a clarification (`finish_reason=clarification`, no retrieval).
 
 Every candidate presented to grounding receives exactly one assessment. Candidates removed
 earlier by policy, hydration, or dedup do not need grounding assessments; those removals stay
@@ -161,8 +167,11 @@ records that decision without blocking. Empty retrieval still refuses.
 
 Web-enabled modes never search for document-, metadata-, or `as_of`-scoped requests. Provider
 timeouts, failures, and empty results do not permit model-memory fallback. Clear social turns are
-handled without an awkward knowledge refusal, while referential follow-ups reuse the prior user
-question for retrieval.
+handled without an awkward knowledge refusal. Referential follow-ups run one
+bounded turn-resolution step first; retrieval uses the effective question while
+the original message stays the generation user turn. Request filters remain
+per-request and non-sticky. Adopted prior results are scenario inputs, not
+proof that the previous answer was correct.
 
 The OpenAI adapter requests both Responses web result objects and consulted source URLs. It treats
 consulted URLs as discovery only and admits text exclusively from a result object conservatively
@@ -174,8 +183,9 @@ URLs, and URL-only results cannot become evidence. Every completed fallback repo
 ## Testing strategy
 
 - Unit: `ChatService` (Tx1/Tx2, refusal, observe/enforce gate, provider resolve, errors, stream cancel,
-  combined MODIFIES → grounding → generation → no-web authority path),
-  `GroundingService`, candidate-wise grounding, strict vs balanced modes, adaptive passage rescue,
+  combined MODIFIES → grounding → generation → no-web authority path, bounded turn resolution,
+  clarification `grounded=null`),
+  `TurnResolver` / `turn_resolution` contracts, `GroundingService`, candidate-wise grounding, strict vs balanced modes, adaptive passage rescue,
   captured EN→BN production fail-closed replay, `ConversationService`, context/prompt builders,
   citation snapshots, retrieval adapter
 - Provider contract: echo LLM + factory overrides
@@ -193,6 +203,7 @@ URLs, and URL-only results cannot become evidence. Every completed fallback repo
 - [ADR-008](../architecture/adr/008-chat-on-semantic-baseline.md)
 - [ADR-014](../architecture/adr/014-evidence-quality-and-grounded-answers.md)
 - [ADR-019](../architecture/adr/019-grounded-response-modes.md)
+- [ADR-020](../architecture/adr/020-authority-notices-canonical-prompt.md)
 - [Implementation plan](../plans/conversation_module_plan.md)
 - [RAG journey (learning)](../learning/conversation_rag_journey.md)
-- [Test RAG journey](./test_rag_journey.md) (`tax_v1` fixture)
+- [Test RAG journey](./test_rag_journey.md) (`tax_v1` and `business_conversation_v1` fixtures)
