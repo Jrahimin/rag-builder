@@ -3,22 +3,28 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import uuid
+from datetime import UTC, datetime
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
 from app.cli.rag_journey import (
+    BUSINESS_FIXTURE,
     DEFAULT_FIXTURE,
     SAFE_CONFIG_KEYS,
     EvidenceAnchor,
+    ExpectedResolution,
     JourneyCase,
     JourneyError,
     JourneyManifest,
     JourneySource,
     RuntimeChunk,
     _await_document_purge,
+    _blocked_or_execution_result,
     _comparison_summary,
     _enable_journey_candidate_traces,
     _ensure_indexed,
@@ -29,11 +35,14 @@ from app.cli.rag_journey import (
     build_translation_comparison,
     case_language_bucket,
     classify_translation_verdict,
+    compare_raw_retrieval_replay,
     evaluate_case_result,
+    journey_reference_clock,
     load_manifest,
     normalize_text,
     parse_config_assignment,
     render_summary,
+    resolution_measurements,
     resolve_evidence_anchors,
     sanitize_diagnostics,
     source_purge_order,
@@ -47,6 +56,11 @@ from app.modules.conversations.schemas.message import (
     ClaimVerification,
     InsufficientEvidenceReason,
     SourceProvenance,
+)
+from app.modules.conversations.turn_resolution import (
+    BindingKind,
+    TurnOutcome,
+    utc_reference_datetime,
 )
 from app.platform.jobs.contracts import JobDefinition
 from app.platform.jobs.implementations.inline_queue import InlineJobQueue
@@ -83,7 +97,17 @@ def test_tax_v1_manifest_keeps_original_cases_and_adds_focused_authority_coverag
     manifest = load_manifest()
 
     assert manifest.key == "tax_v1"
+    assert manifest.schema_version == 2
     assert len(manifest.cases) == 21
+    assert manifest.reference_time == datetime(2026, 8, 1, tzinfo=UTC)
+    assert [sequence.key for sequence in manifest.sequences] == [
+        "adopt_then_replace_rebate",
+        "temporal_snapshot_clarify",
+        "clarify_then_short_answer",
+        "topic_reset_drops_amount",
+        "language_switch_unicode_correction",
+        "compare_scope_nonsticky_filters",
+    ]
     assert {
         "eligible_investments_scoped",
         "current_rebate_calculation",
@@ -103,6 +127,80 @@ def test_tax_v1_manifest_keeps_original_cases_and_adds_focused_authority_coverag
     assert {"multilingual", "authority", "scope", "refusal"}.issubset(
         {tag for case in manifest.cases for tag in case.tags}
     )
+    sequences = {sequence.key: sequence for sequence in manifest.sequences}
+    topic = sequences["topic_reset_drops_amount"].turns
+    assert topic[1].expected_resolution is not None
+    assert topic[1].expected_resolution.absent_binding_kinds == [
+        BindingKind.SCENARIO_PARAMETER,
+        BindingKind.PERIOD_DATE,
+    ]
+    compare = sequences["compare_scope_nonsticky_filters"].turns
+    assert compare[1].anchors == ["rebate_rate_2026"]
+    assert compare[1].required_anchor_groups == [["rebate_rate_2026"]]
+    assert "rebate_rate_2023" not in compare[1].anchors
+    snapshot = sequences["temporal_snapshot_clarify"].turns
+    assert snapshot[2].query.startswith("What was the rate before that date")
+    assert snapshot[3].query == "I mean as of 2026-08-01."
+
+
+def test_business_conversation_v1_covers_required_sequence_intentions() -> None:
+    manifest = load_manifest(BUSINESS_FIXTURE)
+
+    assert manifest.key == "business_conversation_v1"
+    assert manifest.schema_version == 2
+    assert manifest.reference_time == datetime(2026, 8, 1, tzinfo=UTC)
+    assert [source.key for source in manifest.sources] == [
+        "expense_policy_2025",
+        "expense_amendment_2026",
+        "standard_support",
+        "premium_support",
+    ]
+    assert [sequence.key for sequence in manifest.sequences] == [
+        "adopt_then_replace_reimbursement",
+        "temporal_snapshot_clarify",
+        "clarify_then_short_answer",
+        "topic_reset_drops_amount",
+        "language_switch_unicode_correction",
+        "compare_scope_nonsticky_filters",
+    ]
+    sequences = {sequence.key: sequence for sequence in manifest.sequences}
+    adopt = sequences["adopt_then_replace_reimbursement"].turns
+    assert adopt[1].expected_resolution is not None
+    assert adopt[1].expected_resolution.outcome.value == "resolved"
+    assert adopt[2].expected_resolution is not None
+    assert adopt[2].expected_resolution.relation.value == "correction"
+    temporal = sequences["temporal_snapshot_clarify"].turns
+    assert temporal[1].mode == "clarification"
+    assert temporal[2].expected_resolution is not None
+    assert temporal[2].expected_resolution.temporal_intent is not None
+    clarify = sequences["clarify_then_short_answer"].turns
+    assert clarify[1].mode == "clarification"
+    assert clarify[2].query == "premium"
+    topic = sequences["topic_reset_drops_amount"].turns
+    assert topic[1].expected_resolution is not None
+    assert topic[1].expected_resolution.relation is None
+    assert topic[1].expected_resolution.absent_binding_kinds == [
+        BindingKind.SCENARIO_PARAMETER,
+        BindingKind.PERIOD_DATE,
+    ]
+    assert topic[2].expected_resolution is not None
+    assert topic[2].expected_resolution.absent_binding_kinds == [
+        BindingKind.SCENARIO_PARAMETER,
+        BindingKind.PERIOD_DATE,
+    ]
+    assert "1800" in topic[2].prohibited_answer_tokens
+    language = sequences["language_switch_unicode_correction"].turns
+    assert any("\u09e8" <= char <= "\u09ef" for char in language[1].query)
+    compare = sequences["compare_scope_nonsticky_filters"].turns
+    assert compare[0].document_scope == "expense_policy_2025"
+    assert compare[1].anchors == ["meal_share_2026"]
+    assert compare[1].required_anchor_groups == [["meal_share_2026"]]
+    assert "meal_share_2025" not in compare[1].anchors
+    assert compare[2].metadata_filter == {"source": "nonexistent-journey-source"}
+    assert compare[3].metadata_filter == {}
+    assert compare[3].document_scope is None
+    snapshot = sequences["temporal_snapshot_clarify"].turns
+    assert snapshot[2].query == "I mean as of 2025-06-01."
 
 
 def test_tax_v1_fixture_requires_all_eligible_categories_and_stale_correction() -> None:
@@ -625,9 +723,15 @@ def _message(
     *,
     content: str,
     metadata: dict[str, object],
-    grounded: bool = True,
+    grounded: bool | None = True,
     insufficient_evidence_reason: InsufficientEvidenceReason | None = None,
     claims: list[object] | None = None,
+    finish_reason: str | None = None,
+    retrieval_latency_ms: int = 2,
+    provider_latency_ms: int = 3,
+    total_latency_ms: int = 5,
+    input_tokens: int | None = None,
+    output_tokens: int | None = None,
 ) -> object:
     return SimpleNamespace(
         content=content,
@@ -635,11 +739,15 @@ def _message(
         citations=[],
         claims=claims or [],
         grounded=grounded,
+        finish_reason=finish_reason,
         insufficient_evidence_reason=insufficient_evidence_reason,
         source_provenance=SourceProvenance.NONE,
-        retrieval_latency_ms=2,
-        provider_latency_ms=3,
-        total_latency_ms=5,
+        retrieval_latency_ms=retrieval_latency_ms,
+        provider_latency_ms=provider_latency_ms,
+        total_latency_ms=total_latency_ms,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        index_build_id=None,
     )
 
 
@@ -2317,3 +2425,796 @@ async def test_ensure_indexed_fails_clearly_for_unsupported_indexing_status(
             document_ids={"tax_2023": failed_id, "finance_2026": ready_id},
             settings=SimpleNamespace(),
         )
+
+
+def test_schema_v1_manifests_without_sequences_remain_supported(tmp_path: Path) -> None:
+    payload = {
+        "schema_version": 1,
+        "key": "legacy_v1",
+        "description": "v1 pack",
+        "sources": [
+            {
+                "key": "tax_2023",
+                "filename": "act.md",
+                "title": "Act",
+                "revision_label": "2023",
+                "source_type": "synthetic_statute",
+                "published_date": "2023-07-01",
+                "effective_from": "2023-07-01",
+            }
+        ],
+        "anchors": [
+            {
+                "key": "rate",
+                "source": "tax_2023",
+                "phrases": ["10%"],
+            }
+        ],
+        "cases": [
+            {
+                "key": "current_rate",
+                "tags": ["authority"],
+                "query": "What is the rate?",
+                "anchors": ["rate"],
+                "expected_tokens": ["10%"],
+            }
+        ],
+    }
+    path = tmp_path / "journey.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    manifest = load_manifest(path)
+    assert manifest.schema_version == 1
+    assert manifest.sequences == []
+    assert manifest.reference_time is None
+
+
+def test_sequence_packs_require_reference_time_and_schema_v2(tmp_path: Path) -> None:
+    payload = {
+        "schema_version": 1,
+        "key": "legacy_v1",
+        "description": "invalid sequences on v1",
+        "sources": [
+            {
+                "key": "tax_2023",
+                "filename": "act.md",
+                "title": "Act",
+                "revision_label": "2023",
+                "source_type": "synthetic_statute",
+                "published_date": "2023-07-01",
+                "effective_from": "2023-07-01",
+            }
+        ],
+        "anchors": [{"key": "rate", "source": "tax_2023", "phrases": ["10%"]}],
+        "cases": [
+            {
+                "key": "current_rate",
+                "tags": ["authority"],
+                "query": "What is the rate?",
+                "anchors": ["rate"],
+            }
+        ],
+        "sequences": [
+            {
+                "key": "follow_up",
+                "turns": [
+                    {
+                        "key": "turn_one",
+                        "tags": ["continuity"],
+                        "query": "What is the rate?",
+                        "anchors": ["rate"],
+                    },
+                    {
+                        "key": "turn_two",
+                        "tags": ["continuity"],
+                        "query": "And now?",
+                        "anchors": ["rate"],
+                    },
+                ],
+            }
+        ],
+    }
+    path = tmp_path / "journey.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(JourneyError, match="schema_version 2"):
+        load_manifest(path)
+    payload["schema_version"] = 2
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(JourneyError, match="reference_time"):
+        load_manifest(path)
+
+
+def test_tax_v1_sequences_keep_existing_cases_and_expose_phase1_failures() -> None:
+    manifest = load_manifest()
+    assert len(manifest.cases) == 21
+    continuation = [
+        turn
+        for sequence in manifest.sequences
+        for index, turn in enumerate(sequence.turns)
+        if index > 0 and (turn.expected_resolution is not None or turn.mode == "clarification")
+    ]
+    assert continuation
+    failing_keys = {turn.key for turn in continuation}
+    message = _answerable_evidence_message(
+        content="The rebate is 10%.",
+        retrieved=[{"chunk_id": str(uuid.uuid4()), "document_id": str(uuid.uuid4())}],
+        admitted=[{"chunk_id": str(uuid.uuid4()), "document_id": str(uuid.uuid4())}],
+        claim_chunk_id=uuid.uuid4(),
+        claim_document_id=uuid.uuid4(),
+    )
+    observed: list[str] = []
+    for turn in continuation:
+        if turn.mode == "clarification":
+            result = evaluate_case_result(
+                case=turn,
+                message=_message(
+                    content="The current rebate is 10%.",
+                    metadata={
+                        "evidence_gate": {"sufficient": True, "generation_ran": True},
+                        "web_search": {"status": "not_requested", "fallback_used": False},
+                    },
+                    grounded=True,
+                    finish_reason="stop",
+                ),
+                anchor_mapping={},
+                document_ids={},
+                response_mode=ResponseMode.INDEXED_ONLY,
+                modifies_expansion_active=True,
+            )
+        else:
+            result = evaluate_case_result(
+                case=turn,
+                message=message,
+                anchor_mapping={anchor: [uuid.uuid4()] for anchor in turn.anchors},
+                document_ids={
+                    "finance_2026": uuid.uuid4(),
+                    "finance_2027": uuid.uuid4(),
+                    "tax_2023": uuid.uuid4(),
+                    "tax_2023_bn": uuid.uuid4(),
+                },
+                response_mode=ResponseMode.INDEXED_ONLY,
+                modifies_expansion_active=True,
+            )
+        assert any(failure["stage"] == "turn_resolution" for failure in result["failures"])
+        observed.append(turn.key)
+    assert set(observed) == failing_keys
+    baseline = json.loads(
+        (DEFAULT_FIXTURE.parent / "phase1_sequence_baseline.json").read_text(encoding="utf-8")
+    )
+    assert {item["key"] for item in baseline["sequences"]} == {
+        seq.key for seq in manifest.sequences
+    }
+    assert {
+        turn_key for item in baseline["sequences"] for turn_key in item["expected_failing_turns"]
+    } == failing_keys
+
+
+def test_journey_clock_freezes_only_reference_and_source_policy_date_reads() -> None:
+    frozen = datetime(2026, 8, 1, tzinfo=UTC)
+    host_before = datetime.now(UTC)
+    with journey_reference_clock(frozen) as current:
+        from app.modules.knowledge import source_metadata_read
+        from app.modules.retrieval.services import search_service
+
+        assert current == frozen
+        assert utc_reference_datetime() == frozen
+        assert search_service.datetime.now(UTC) == frozen
+        assert source_metadata_read.datetime.now(UTC).date() == frozen.date()
+    assert utc_reference_datetime() >= host_before
+    assert datetime.now(UTC) >= host_before
+
+
+def test_clarification_mode_does_not_score_answerable_retrieval() -> None:
+    case = JourneyCase(
+        key="ask_which_rate",
+        tags=["continuity"],
+        query="What about the other rate?",
+        anchors=[],
+        mode="clarification",
+        expected_resolution=ExpectedResolution(outcome=TurnOutcome.CLARIFY),
+    )
+    result = evaluate_case_result(
+        case=case,
+        message=_message(
+            content="Do you mean the 2023 Act rate or the 2026 Finance Act rate?",
+            metadata={
+                "turn_resolution": {"outcome": "clarify", "relation": "follow_up"},
+                "evidence_gate": {
+                    "sufficient": False,
+                    "generation_ran": False,
+                    "claims_status": "not_applicable",
+                },
+                "web_search": {"status": "not_requested", "fallback_used": False},
+            },
+            grounded=None,
+            finish_reason="clarification",
+        ),
+        anchor_mapping={},
+        document_ids={},
+        response_mode=ResponseMode.INDEXED_ONLY,
+        modifies_expansion_active=True,
+    )
+    assert result["passed"] is True
+    assert result["failures"] == []
+    assert all(failure["stage"] != "retrieval" for failure in result["failures"])
+
+
+def test_unexpected_clarification_fails_an_answerable_turn() -> None:
+    case = JourneyCase(
+        key="current_rebate",
+        tags=["authority"],
+        query="What rebate applies?",
+        anchors=["rebate_rate"],
+        expected_tokens=["10%"],
+    )
+    result = evaluate_case_result(
+        case=case,
+        message=_message(
+            content="Which rebate do you mean?",
+            metadata={"evidence_gate": {"sufficient": False, "generation_ran": False}},
+            grounded=None,
+            finish_reason="clarification",
+        ),
+        anchor_mapping={"rebate_rate": [uuid.uuid4()]},
+        document_ids={},
+        response_mode=ResponseMode.INDEXED_ONLY,
+        modifies_expansion_active=True,
+    )
+    assert result["passed"] is False
+    assert any(
+        failure["stage"] == "turn_resolution" and "unexpected clarification" in failure["message"]
+        for failure in result["failures"]
+    )
+
+
+def test_sequence_execution_failure_blocks_later_turns_but_assertion_failures_continue() -> None:
+    case = JourneyCase(
+        key="later_turn",
+        tags=["continuity"],
+        query="And the threshold?",
+        anchors=["threshold_2026"],
+        expected_tokens=["400000"],
+    )
+    blocked = _blocked_or_execution_result(
+        case=case,
+        stage="execution",
+        message="Blocked after an upstream execution failure.",
+        conversation_id=str(uuid.uuid4()),
+        sequence_key="adopt_then_replace_rebate",
+        turn_index=3,
+        blocked=True,
+        upstream_failed_turns=["adopt_rebate_as_next_investment"],
+    )
+    assert blocked["passed"] is False
+    assert blocked["blocked"] is True
+    assert blocked["failures"][0]["stage"] == "execution"
+    continued = evaluate_case_result(
+        case=case,
+        message=_answerable_evidence_message(
+            content="The threshold is 400000.",
+            retrieved=[],
+            admitted=[],
+            claim_chunk_id=uuid.uuid4(),
+            claim_document_id=uuid.uuid4(),
+        ),
+        anchor_mapping={"threshold_2026": [uuid.uuid4()]},
+        document_ids={},
+        response_mode=ResponseMode.INDEXED_ONLY,
+        modifies_expansion_active=True,
+        prior_turn_messages={1: {"user": str(uuid.uuid4()), "assistant": str(uuid.uuid4())}},
+    )
+    assert continued["passed"] is False
+    assert continued.get("blocked") is not True
+
+
+def test_clarification_turns_are_excluded_from_answerable_recall() -> None:
+    cases = [
+        {
+            "passed": True,
+            "mode": "answerable",
+            "tags": ["authority"],
+            "timings_ms": {"total": 10},
+            "retrieval": {"recall": 1.0},
+            "failures": [],
+        },
+        {
+            "passed": False,
+            "mode": "clarification",
+            "tags": ["continuity"],
+            "timings_ms": {"total": 5},
+            "finish_reason": "stop",
+            "turn_resolution": {},
+            "retrieval": {"recall": 0.0},
+            "failures": [
+                {"stage": "turn_resolution", "message": "Expected clarification was not returned."}
+            ],
+        },
+    ]
+    aggregate = aggregate_results(cases)
+    assert aggregate["mean_recall"] == 1.0
+    assert aggregate["clarification"]["expected"] == 1
+    assert aggregate["clarification"]["observed"] == 0
+    assert aggregate["clarification"]["recall"] == 0.0
+    assert aggregate["failure_counts"]["turn_resolution"] == 1
+
+
+def test_render_summary_keeps_standalone_table_and_adds_sequences() -> None:
+    summary = render_summary(
+        {
+            "journey": "tax_v1",
+            "status": "failed",
+            "run_id": "run",
+            "project_id": None,
+            "reference_time": "2026-08-01T00:00:00+00:00",
+            "job_transport": {"configured": "inline"},
+            "cleanup": {"status": "succeeded"},
+            "variants": [
+                {
+                    "name": "baseline",
+                    "effective_config": {"configuration_hash": "abc"},
+                    "providers": {
+                        "llm": {"provider": "echo", "model": "echo"},
+                        "embedding": {"provider": "hash", "model": "hash"},
+                        "reranker": {"provider": None, "model": None},
+                        "translation": {"provider": None, "model": None},
+                    },
+                    "aggregate": {
+                        "passed": 21,
+                        "case_count": 21,
+                        "pass_rate": 1.0,
+                        "mean_recall": 1.0,
+                        "latency_p50_ms": 1,
+                        "latency_p95_ms": 1,
+                        "failure_counts": {},
+                        "correctness": {"passed": 21, "failure_counts": {}},
+                        "provider_degradation": {
+                            "rerank_unavailable_count": 0,
+                            "by_failure_reason": {},
+                        },
+                        "latency": {"p50_ms": 1, "p95_ms": 1, "mean_ms": 1, "max_ms": 1},
+                    },
+                    "resolution_aggregate": {
+                        "attempted": 1,
+                        "bypassed": 0,
+                        "bypass_by_reason": {},
+                        "fallback_rate": 0.0,
+                        "fallback_by_reason": {},
+                        "standalone_rate": 0.0,
+                        "query_change_rate": 1.0,
+                        "filter_change_rate": 0.0,
+                        "resolver_latency": {
+                            "p50_ms": 12,
+                            "p95_ms": 12,
+                            "mean_ms": 12,
+                            "count": 1,
+                        },
+                        "total_turn_latency": {
+                            "p50_ms": 1,
+                            "p95_ms": 1,
+                            "mean_ms": 1,
+                            "count": 1,
+                        },
+                        "usage": {
+                            "resolver_input_tokens_per_attempt": 10,
+                            "resolver_output_tokens_per_attempt": 4,
+                            "resolver_share_of_total_tokens": 0.2,
+                            "cost": None,
+                        },
+                        "retrieval_change": {
+                            "compared": 0,
+                            "non_comparable": 0,
+                            "set_change_rate": None,
+                            "rank_change_rate": None,
+                        },
+                        "continuity": {
+                            "turns_passed_resolution": 0,
+                            "turns_with_expected_resolution": 1,
+                            "complete_sequences": 0,
+                            "sequence_count": 1,
+                        },
+                    },
+                    "sequence_aggregate": {
+                        "passed": 0,
+                        "case_count": 2,
+                        "clarification": {
+                            "expected": 1,
+                            "observed": 0,
+                            "precision": None,
+                            "recall": 0.0,
+                        },
+                    },
+                    "sequences": [
+                        {
+                            "key": "adopt_then_replace_rebate",
+                            "turn_count": 2,
+                            "passed": False,
+                            "failed_turns": ["adopt_rebate_as_next_investment"],
+                        }
+                    ],
+                    "cases": [
+                        {
+                            "key": "current_rebate_calculation",
+                            "tags": ["authority"],
+                            "passed": True,
+                            "failures": [],
+                            "timings_ms": {"total": 1},
+                        },
+                        {
+                            "key": "adopt_rebate_as_next_investment",
+                            "tags": ["continuity"],
+                            "sequence_key": "adopt_then_replace_rebate",
+                            "passed": False,
+                            "failures": [{"stage": "turn_resolution", "message": "missing"}],
+                            "timings_ms": {"total": 1},
+                        },
+                    ],
+                }
+            ],
+        }
+    )
+    assert "Simulated reference time" in summary
+    assert "`current_rebate_calculation`" in summary
+    assert "### Sequences" in summary
+    assert "`adopt_then_replace_rebate`" in summary
+    assert "turn_resolution" in summary
+    assert "### Turn resolution" in summary
+    assert "Raw retrieval replay: off" in summary
+
+
+def test_resolution_measurements_split_attempted_bypass_and_fallback() -> None:
+    measurements = resolution_measurements(
+        [
+            {
+                "passed": True,
+                "turn_resolution": {
+                    "attempted": False,
+                    "bypass_reason": "no_usable_history",
+                    "outcome": "standalone",
+                    "latency_ms": 0,
+                },
+                "timings_ms": {"total": 20},
+                "usage": {
+                    "turn_input_tokens": 100,
+                    "turn_output_tokens": 50,
+                    "resolver_input_tokens": None,
+                    "resolver_output_tokens": None,
+                },
+                "failures": [],
+            },
+            {
+                "passed": True,
+                "expected_resolution": {"outcome": "resolved"},
+                "turn_resolution": {
+                    "attempted": True,
+                    "outcome": "resolved",
+                    "relation": "follow_up",
+                    "query_changed": True,
+                    "filter_changed": False,
+                    "latency_ms": 40,
+                    "usage": {"input_tokens": 80, "output_tokens": 20},
+                },
+                "timings_ms": {"total": 100},
+                "usage": {
+                    "turn_input_tokens": 180,
+                    "turn_output_tokens": 70,
+                    "resolver_input_tokens": 80,
+                    "resolver_output_tokens": 20,
+                },
+                "failures": [],
+                "raw_retrieval_replay": {
+                    "status": "compared",
+                    "set_changed": True,
+                    "rank_changed": False,
+                    "required_anchor_recall_production": 1.0,
+                    "required_anchor_recall_replay": 0.5,
+                },
+            },
+            {
+                "passed": False,
+                "expected_resolution": {"outcome": "resolved"},
+                "turn_resolution": {
+                    "attempted": True,
+                    "outcome": "fallback",
+                    "failure_code": "timeout",
+                    "query_changed": False,
+                    "filter_changed": False,
+                    "latency_ms": 10000,
+                },
+                "timings_ms": {"total": 11000},
+                "usage": {
+                    "turn_input_tokens": 90,
+                    "turn_output_tokens": 40,
+                    "resolver_input_tokens": 90,
+                    "resolver_output_tokens": 0,
+                },
+                "failures": [{"stage": "turn_resolution", "message": "timeout"}],
+            },
+        ],
+        [{"key": "adopt_then_replace_reimbursement", "passed": True}],
+    )
+    assert measurements["attempted"] == 2
+    assert measurements["bypassed"] == 1
+    assert measurements["bypass_by_reason"] == {"no_usable_history": 1}
+    assert measurements["fallback_rate"] == 0.5
+    assert measurements["fallback_by_reason"] == {"timeout": 1}
+    assert measurements["standalone_rate"] == 0.0
+    assert measurements["query_change_rate"] == 0.5
+    assert measurements["filter_change_rate"] == 0.0
+    assert measurements["resolver_latency"]["p50_ms"] == 5020.0
+    assert measurements["resolver_latency"]["p95_ms"] == 10000
+    assert measurements["usage"]["cost"] is None
+    assert measurements["usage"]["resolver_share_of_total_tokens"] == 190 / 530
+    assert measurements["retrieval_change"]["compared"] == 1
+    assert measurements["retrieval_change"]["set_change_rate"] == 1.0
+    assert measurements["continuity"]["resolution_accuracy"] == 0.5
+    assert measurements["continuity"]["complete_sequence_rate"] == 1.0
+
+
+def test_evaluate_case_result_subtracts_resolution_from_residual_timing() -> None:
+    case = JourneyCase(
+        key="follow_up",
+        tags=["continuity"],
+        query="And the threshold?",
+        anchors=[],
+        mode="no_answer",
+    )
+    message = _message(
+        content="I do not have enough indexed evidence.",
+        grounded=False,
+        insufficient_evidence_reason=InsufficientEvidenceReason.NO_RETRIEVAL_RESULTS,
+        metadata={
+            "retrieval_trace": {"context_selected": []},
+            "evidence_gate": {"sufficient": False, "generation_ran": False},
+            "web_search": {"status": "not_requested", "fallback_used": False},
+            "turn_resolution": {
+                "attempted": True,
+                "outcome": "resolved",
+                "latency_ms": 4,
+                "usage": {"input_tokens": 12, "output_tokens": 6},
+            },
+        },
+        retrieval_latency_ms=5,
+        provider_latency_ms=8,
+        total_latency_ms=20,
+        input_tokens=30,
+        output_tokens=10,
+    )
+    result = evaluate_case_result(
+        case=case,
+        message=message,
+        anchor_mapping={},
+        document_ids={},
+        response_mode=ResponseMode.INDEXED_ONLY,
+        modifies_expansion_active=True,
+    )
+    assert result["timings_ms"]["resolution"] == 4
+    assert result["timings_ms"]["grounding_and_context"] == 3
+    assert result["usage"]["resolver_input_tokens"] == 12
+    assert result["usage"]["turn_input_tokens"] == 30
+
+
+def test_compare_raw_retrieval_replay_marks_set_and_rank_changes() -> None:
+    compared = compare_raw_retrieval_replay(
+        production_ids=["a", "b"],
+        replay_ids=["b", "a"],
+        relevant_ids=["a"],
+        production_index_build_id="idx-1",
+        replay_index_build_id="idx-1",
+        expected_index_build_id="idx-1",
+    )
+    assert compared["status"] == "compared"
+    assert compared["set_changed"] is False
+    assert compared["rank_changed"] is True
+    assert compared["required_anchor_recall_production"] == 1.0
+    assert compared["required_anchor_recall_replay"] == 1.0
+    assert compared["cost"] is None
+
+    mismatched = compare_raw_retrieval_replay(
+        production_ids=["a"],
+        replay_ids=["a"],
+        relevant_ids=["a"],
+        production_index_build_id="idx-1",
+        replay_index_build_id="idx-2",
+        expected_index_build_id="idx-1",
+        production_degraded=False,
+    )
+    assert mismatched["status"] == "non_comparable"
+    assert mismatched["reason"] == "index_snapshot_mismatch"
+    assert mismatched["set_changed"] is None
+
+
+def test_cli_replay_raw_retrieval_flag() -> None:
+    options = _options(
+        _parser().parse_args(["--replay-raw-retrieval"]),
+        configured_job_backend="inline",
+    )
+    assert options.replay_raw_retrieval is True
+
+
+def test_resolution_measurements_do_not_hide_missing_usage_or_execution_failures() -> None:
+    cases = [
+        {
+            "key": "a",
+            "conversation_id": "one",
+            "expected_resolution": {"outcome": "resolved"},
+            "turn_resolution": {"attempted": True, "outcome": "fallback"},
+            "failures": [{"stage": "turn_resolution"}],
+            "usage": {},
+        },
+        {
+            "key": "b",
+            "conversation_id": "one",
+            "expected_resolution": {"outcome": "resolved"},
+            "turn_resolution": {},
+            "failures": [{"stage": "execution"}],
+            "usage": {},
+        },
+        {
+            "key": "c",
+            "blocked": True,
+            "expected_resolution": {"outcome": "resolved"},
+            "turn_resolution": {},
+            "failures": [{"stage": "execution"}],
+        },
+    ]
+    result = resolution_measurements(cases)
+    assert result["continuity"]["turns_with_expected_resolution"] == 3
+    assert result["continuity"]["turns_passed_resolution"] == 0
+    assert result["usage"]["resolver_tokens"] is None
+    assert result["usage"]["turn_tokens"] is None
+    assert result["usage"]["resolver_share_of_total_tokens"] is None
+    assert result["usage"]["resolver_tokens_by_conversation"]["one"] is None
+
+
+@pytest.mark.parametrize(
+    ("extra", "reason"),
+    [
+        (
+            {"production_configuration_hash": "old", "replay_configuration_hash": "new"},
+            "configuration_snapshot_mismatch",
+        ),
+        (
+            {"production_source_generation": 1, "replay_source_generation": 2},
+            "source_metadata_snapshot_mismatch",
+        ),
+    ],
+)
+def test_replay_rejects_changed_configuration_or_source_metadata(extra, reason):
+    result = compare_raw_retrieval_replay(
+        production_ids=["a"],
+        replay_ids=["a"],
+        relevant_ids=["a"],
+        production_index_build_id="same",
+        replay_index_build_id="same",
+        expected_index_build_id="same",
+        **extra,
+    )
+    assert result["status"] == "non_comparable"
+    assert result["reason"] == reason
+    assert result["set_changed"] is None
+
+
+def test_resolution_scoring_rejects_stale_active_operand_alongside_correction():
+    from types import SimpleNamespace
+
+    from app.cli.rag_journey import _resolution_failures
+
+    case = JourneyCase(
+        key="correct",
+        query="90000, not 75000",
+        tags=[],
+        anchors=[],
+        expected_resolution=ExpectedResolution.model_validate(
+            {
+                "outcome": "resolved",
+                "active_bindings": [
+                    {
+                        "kind": "scenario_parameter",
+                        "active_value": "90000",
+                        "origin": "user_literal",
+                    }
+                ],
+            }
+        ),
+    )
+    failures = _resolution_failures(
+        case=case,
+        message=SimpleNamespace(finish_reason="stop"),
+        metadata={
+            "turn_resolution": {
+                "outcome": "resolved",
+                "active_bindings": [
+                    {"kind": "scenario_parameter", "active_value": value, "origin": "user_literal"}
+                    for value in ("90000", "75000")
+                ],
+            }
+        },
+        prior_turn_messages={},
+    )
+    assert any("Unexpected active" in item["message"] for item in failures)
+
+
+def test_resolution_scoring_rejects_stale_kinds_when_absent_binding_kinds_are_expected():
+    from types import SimpleNamespace
+
+    from app.cli.rag_journey import _resolution_failures
+
+    case = JourneyCase(
+        key="topic_reset",
+        query="Forget the rebate calculation.",
+        tags=[],
+        anchors=[],
+        expected_resolution=ExpectedResolution.model_validate(
+            {"absent_binding_kinds": ["scenario_parameter", "period_date"]}
+        ),
+    )
+    retained = _resolution_failures(
+        case=case,
+        message=SimpleNamespace(finish_reason="stop"),
+        metadata={
+            "turn_resolution": {
+                "outcome": "standalone",
+                "relation": "standalone",
+                "active_bindings": [
+                    {
+                        "kind": "scenario_parameter",
+                        "active_value": "75000",
+                        "origin": "user_literal",
+                    }
+                ],
+            }
+        },
+        prior_turn_messages={},
+    )
+    assert any("Stale active scenario_parameter" in item["message"] for item in retained)
+    dropped = _resolution_failures(
+        case=case,
+        message=SimpleNamespace(finish_reason="stop"),
+        metadata={
+            "turn_resolution": {
+                "outcome": "standalone",
+                "relation": "standalone",
+                "active_bindings": [],
+            }
+        },
+        prior_turn_messages={},
+    )
+    assert dropped == []
+
+
+def test_resolution_scoring_rejects_fallback_as_silent_continuity_success():
+    from types import SimpleNamespace
+
+    from app.cli.rag_journey import _resolution_failures
+
+    case = JourneyCase(
+        key="topic_reset",
+        query="Forget the rebate calculation.",
+        tags=[],
+        anchors=[],
+        expected_resolution=ExpectedResolution.model_validate(
+            {"absent_binding_kinds": ["scenario_parameter", "period_date"]}
+        ),
+    )
+    failures = _resolution_failures(
+        case=case,
+        message=SimpleNamespace(finish_reason="stop"),
+        metadata={
+            "turn_resolution": {
+                "outcome": "fallback",
+                "relation": "standalone",
+                "failure_code": "mutated_effective_question",
+                "active_bindings": [],
+            }
+        },
+        prior_turn_messages={},
+    )
+    assert any("fallback cannot satisfy" in item["message"] for item in failures)
+
+
+def test_journey_amount_equivalence_accepts_grouped_and_unicode_amounts():
+    from app.cli.rag_journey import _answer_contains_expected_token
+
+    assert _answer_contains_expected_token("The rebate is BDT 6,000.", "6000")
+    assert _answer_contains_expected_token("The rebate is 6 000.", "6000")
+    assert _answer_contains_expected_token("রিবেট ৭৫,\u09e6\u09e6\u09e6 টাকা।", "75000")
+    assert not _answer_contains_expected_token("The rebate is BDT 60,000.", "6000")

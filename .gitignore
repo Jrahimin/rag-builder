@@ -119,3 +119,7 @@ frontend/coverage/
 .pnpm-store/
 # Local RAG journey reports
 artifacts/rag-journey/
+
+# Held-out turn-resolution examples stay outside the repo until freeze.
+tests/fixtures/journeys/held_out/**
+!tests/fixtures/journeys/held_out/README.md

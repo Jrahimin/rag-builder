@@ -11,7 +11,7 @@ from typing import ClassVar
 import pytest
 from sqlalchemy import func, select
 
-from app.cli.rag_journey import DEFAULT_FIXTURE, JourneyOptions, run_journey
+from app.cli.rag_journey import BUSINESS_FIXTURE, DEFAULT_FIXTURE, JourneyOptions, run_journey
 from app.core.config import Settings, get_settings
 from app.models.document import Document
 from app.models.project import Project
@@ -130,6 +130,97 @@ class FixtureConceptEmbeddingProvider(BaseEmbeddingProvider):
         )
 
 
+class BusinessFixtureConceptEmbeddingProvider(BaseEmbeddingProvider):
+    """Deterministic semantic fixture embedder for the business conversation pack."""
+
+    _CONCEPTS: ClassVar[dict[str, int]] = {
+        "meal": 0,
+        "travel": 1,
+        "standard": 2,
+        "premium": 3,
+        "unknown": 4,
+        "other_document": 5,
+    }
+
+    def __init__(self, dimensions: int) -> None:
+        self._dimensions = dimensions
+
+    @property
+    def provider_name(self) -> str:
+        return "fixture-concept"
+
+    @property
+    def model_name(self) -> str:
+        return "business-conversation-v1-smoke-v1"
+
+    @property
+    def dimensions(self) -> int:
+        return self._dimensions
+
+    @property
+    def provider_version(self) -> str:
+        return "1"
+
+    @classmethod
+    def _concepts(cls, text: str) -> set[str]:
+        value = text.casefold()
+        if "lunar" in value or "moon colony" in value or "moon-colony" in value:
+            return {"unknown"}
+        found: set[str] = set()
+        if (
+            "meal" in value
+            or "reimbursement" in value
+            or "receipt" in value
+            or "প্রতিদান" in value
+            or "ape-expense-meal" in value
+        ):
+            found.add("meal")
+        if "travel" in value or "economy" in value or "ape-expense-travel" in value:
+            found.add("travel")
+        if "standard" in value or "8 hours" in value or "ape-support-standard" in value:
+            found.add("standard")
+        if "premium" in value or "1 hour" in value or "ape-support-premium" in value:
+            found.add("premium")
+        return found or {"unknown"}
+
+    async def embed_texts(
+        self,
+        texts: list[str],
+        *,
+        purpose: EmbeddingPurpose = EmbeddingPurpose.DOCUMENT,
+    ) -> EmbeddingBatchResult:
+        vectors: list[list[float]] = []
+        for text in texts:
+            vector = [0.0] * self._dimensions
+            concepts = self._concepts(text)
+            if purpose is EmbeddingPurpose.DOCUMENT:
+                concepts = {
+                    "other_document" if concept == "unknown" else concept for concept in concepts
+                }
+            for concept in concepts:
+                vector[self._CONCEPTS[concept]] = 1.0
+            vectors.append(vector)
+        return EmbeddingBatchResult(
+            vectors=vectors,
+            provider=self.provider_name,
+            model=self.model_name,
+            dimensions=self.dimensions,
+            provider_version=self.provider_version,
+        )
+
+
+def _install_embedder(monkeypatch: pytest.MonkeyPatch, factory: object) -> None:
+    """Replace only provider construction; services, jobs, and pgvector stay real."""
+    for target in (
+        "app.platform.providers.implementations.embedding_factory.create_embedding_provider",
+        "app.platform.providers.implementations.embedding_factory.create_embedding_provider_for_identity",
+        "app.dependencies.retrieval.create_embedding_provider_for_identity",
+        "app.worker.handlers.document.create_embedding_provider",
+        "app.worker.handlers.corpus.create_embedding_provider",
+    ):
+        monkeypatch.setattr(target, factory)
+
+
 def _fixture_embedder(
     settings: Settings,
     *,
@@ -139,16 +230,21 @@ def _fixture_embedder(
     return FixtureConceptEmbeddingProvider(dimensions or settings.embedding.dimensions)
 
 
+def _business_embedder(
+    settings: Settings,
+    *,
+    dimensions: int | None = None,
+    **_: object,
+) -> BaseEmbeddingProvider:
+    return BusinessFixtureConceptEmbeddingProvider(dimensions or settings.embedding.dimensions)
+
+
 def _install_fixture_embedder(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Replace only provider construction; services, jobs, and pgvector stay real."""
-    for target in (
-        "app.platform.providers.implementations.embedding_factory.create_embedding_provider",
-        "app.platform.providers.implementations.embedding_factory.create_embedding_provider_for_identity",
-        "app.dependencies.retrieval.create_embedding_provider_for_identity",
-        "app.worker.handlers.document.create_embedding_provider",
-        "app.worker.handlers.corpus.create_embedding_provider",
-    ):
-        monkeypatch.setattr(target, _fixture_embedder)
+    _install_embedder(monkeypatch, _fixture_embedder)
+
+
+def _install_business_embedder(monkeypatch: pytest.MonkeyPatch) -> None:
+    _install_embedder(monkeypatch, _business_embedder)
 
 
 async def test_tax_journey_subset_uses_production_diagnostics_and_cleans_up(
@@ -168,6 +264,7 @@ async def test_tax_journey_subset_uses_production_diagnostics_and_cleans_up(
         "unknown_lunar_rule",
     }
     payload["cases"] = [case for case in payload["cases"] if case["key"] in selected]
+    payload["sequences"] = []
     fixture = fixture_root / "journey.json"
     fixture.write_text(json.dumps(payload), encoding="utf-8")
 
@@ -264,7 +361,118 @@ async def test_tax_journey_subset_uses_production_diagnostics_and_cleans_up(
 
     # The runner's relationship-aware purge must leave no aggregate, source,
     # document, or object-prefix artefact for its exact temporary project.
-    project_id = uuid.UUID(result["project_id"])
+    await _assert_project_purged(settings, result["project_id"])
+
+
+async def test_business_journey_subset_ingests_and_cleans_up(
+    require_postgres: None,
+    apply_migrations: None,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    fixture_root = tmp_path / "business_conversation_v1"
+    fixture_root.mkdir()
+    shutil.copytree(BUSINESS_FIXTURE.parent / "corpus", fixture_root / "corpus")
+    payload = json.loads(BUSINESS_FIXTURE.read_text(encoding="utf-8"))
+    selected = {
+        "current_meal_share",
+        "historical_meal_share",
+        "standard_support_response",
+        "unknown_lunar_expense",
+    }
+    payload["cases"] = [case for case in payload["cases"] if case["key"] in selected]
+    payload["sequences"] = []
+    fixture = fixture_root / "journey.json"
+    fixture.write_text(json.dumps(payload), encoding="utf-8")
+
+    monkeypatch.setenv("APE_JOBS__BACKEND", "inline")
+    monkeypatch.setenv("APE_JOBS__DISPATCHER_ENABLED", "false")
+    get_settings.cache_clear()
+    settings = get_settings()
+    _install_business_embedder(monkeypatch)
+    try:
+        result, artifact_dir = await run_journey(
+            settings,
+            JourneyOptions(
+                fixture=fixture,
+                artifact_root=tmp_path / "artifacts",
+                configured_job_backend="inline",
+            ),
+        )
+    finally:
+        get_settings.cache_clear()
+
+    assert "setup_error" not in result
+    assert result["cleanup"]["status"] == "succeeded"
+    assert result["index"]["document_count"] == 4
+    assert result["journey"] == "business_conversation_v1"
+    assert (artifact_dir / "summary.md").is_file()
+    cases = {case["key"]: case for case in result["variants"][0]["cases"]}
+    unknown = cases["unknown_lunar_expense"]
+    assert unknown["evidence_gate"]["sufficient"] is False
+    assert unknown["admitted"] == []
+    assert unknown["evidence_gate"]["generation_ran"] is False
+    assert result["variants"][0]["resolution_aggregate"]["attempted"] >= 0
+    await _assert_project_purged(settings, result["project_id"])
+
+
+async def test_business_sequence_harness_reuses_one_conversation(
+    require_postgres: None,
+    apply_migrations: None,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    fixture_root = tmp_path / "business_sequence_smoke"
+    fixture_root.mkdir()
+    shutil.copytree(BUSINESS_FIXTURE.parent / "corpus", fixture_root / "corpus")
+    payload = json.loads(BUSINESS_FIXTURE.read_text(encoding="utf-8"))
+    payload["cases"] = []
+    first_two = payload["sequences"][3]["turns"][:2]
+    for turn in first_two:
+        turn.pop("expected_resolution", None)
+    payload["sequences"] = [
+        {
+            "key": "topic_reset_smoke",
+            "tags": ["continuity"],
+            "turns": first_two,
+        }
+    ]
+    fixture = fixture_root / "journey.json"
+    fixture.write_text(json.dumps(payload), encoding="utf-8")
+
+    monkeypatch.setenv("APE_JOBS__BACKEND", "inline")
+    monkeypatch.setenv("APE_JOBS__DISPATCHER_ENABLED", "false")
+    get_settings.cache_clear()
+    settings = get_settings()
+    _install_business_embedder(monkeypatch)
+    try:
+        result, _artifact_dir = await run_journey(
+            settings,
+            JourneyOptions(
+                fixture=fixture,
+                artifact_root=tmp_path / "artifacts",
+                configured_job_backend="inline",
+            ),
+        )
+    finally:
+        get_settings.cache_clear()
+
+    assert "setup_error" not in result
+    assert result["cleanup"]["status"] == "succeeded"
+    sequence_cases = result["variants"][0]["cases"]
+    assert [item["key"] for item in sequence_cases] == [
+        "topic_reset_declared_reimbursement",
+        "topic_reset_standard_incidents",
+    ]
+    assert sequence_cases[0]["sequence_key"] == "topic_reset_smoke"
+    assert sequence_cases[1]["sequence_key"] == "topic_reset_smoke"
+    assert sequence_cases[0]["conversation_id"] == sequence_cases[1]["conversation_id"]
+    assert sequence_cases[1]["blocked"] is False
+    await _assert_project_purged(settings, result["project_id"])
+
+
+async def _assert_project_purged(settings: Settings, project_id_value: str) -> None:
+    project_id = uuid.UUID(project_id_value)
     database = Database(settings)
     try:
         async with database.session_factory() as session:

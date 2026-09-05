@@ -1,4 +1,4 @@
-"""CLI adapter for the local ``tax_v1`` RAG journey."""
+"""CLI adapter for local production-path RAG journey packs."""
 
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ from app.platform.providers.implementations.storage_factory import get_storage_p
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m app.cli rag-journey",
-        description="Run the local production-path tax_v1 RAG regression journey.",
+        description="Run a local production-path RAG regression journey (default: tax_v1).",
     )
     parser.add_argument(
         "--set",
@@ -62,12 +62,25 @@ def _parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Explicitly allow the configured non-loopback MinIO endpoint.",
     )
-    parser.add_argument("--fixture", type=Path, default=DEFAULT_FIXTURE, help=argparse.SUPPRESS)
+    parser.add_argument(
+        "--fixture",
+        type=Path,
+        default=DEFAULT_FIXTURE,
+        help="Journey manifest path (default: tests/fixtures/journeys/tax_v1/journey.json).",
+    )
     parser.add_argument(
         "--artifact-root",
         type=Path,
         default=DEFAULT_ARTIFACT_ROOT,
         help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--replay-raw-retrieval",
+        action="store_true",
+        help=(
+            "After each production turn, replay the raw query plus original request "
+            "filters against the same index. Diagnostic only; never used for generation."
+        ),
     )
     return parser
 
@@ -98,6 +111,7 @@ def _options(args: argparse.Namespace, *, configured_job_backend: str) -> Journe
         allow_nonlocal_database=args.allow_nonlocal_database,
         allow_nonlocal_storage=args.allow_nonlocal_storage,
         configured_job_backend=configured_job_backend,
+        replay_raw_retrieval=args.replay_raw_retrieval,
     )
 
 

@@ -38,7 +38,7 @@ and attaches the scope notice. Web search remains suppressed for scoped
 requests. Web-fallback sentences are no longer prepended to `content`.
 
 **Prompt.** One canonical grounding template (`GROUNDED_PROMPT_VERSION`, currently
-`v6`). Conversation create/update no longer accept `system_prompt_version`.
+`v8`). Conversation create/update no longer accept `system_prompt_version`.
 Assistant messages and evaluation snapshots stamp that constant. Existing v1–v5
 rows still run the canonical prompt; DB columns remain provenance.
 Web modes no longer depend on a prompt-version string.
@@ -47,10 +47,13 @@ Web modes no longer depend on a prompt-version string.
 evidence set `grounded=null` and `evidence_gate.claims_status=no_verifiable_claims`.
 Polarity without admitted evidence still refuses before generation.
 
-**Follow-up retrieval.** Phase 1 only added a measurement fixture
-(`multi-turn-follow-up-fragment`). There is no stored evaluation showing a
-material follow-up refusal rate, so the extra query variant is **not**
-implemented. `retrieval_query` remains the raw latest user message.
+**Follow-up retrieval.** Conversations run one bounded turn-resolution step
+before retrieval. The effective query may differ from the raw latest user
+message; `document_id`, `metadata_filter`, and request `as_of` remain the current
+request and are never taken from a previous turn. The original user message
+stays the generation user turn. Evidence Quality still uses `previous_user_query`
+as a single-turn measurement hint only. The extra concatenated follow-up query
+variant is still not implemented.
 
 **Embeddings.** HybridRetriever reuses the original query vector for modifier
 dense branches. Passage rescue still embeds separately. Vectors are not passed
@@ -69,4 +72,7 @@ across chat ↔ retrieval.
 - Keep post-admission reconciliation: rejected; it existed only to paper over
   redaction-after-admit.
 - Generic notice framework: rejected; three purpose-specific kinds are enough.
-- LLM query rewriting for follow-ups: rejected (out of phase; no measured need).
+- LLM query rewriting for follow-ups: rejected as a general rewriter. Bounded
+  turn resolution now produces an effective retrieval query from validated
+  interpretation; it is not concatenated query rewriting and does not change
+  retrieval algorithms.

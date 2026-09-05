@@ -107,6 +107,19 @@ export function configFormFromEffective(
 ): ProjectConfigForm {
   const global = config.deployment_configuration ?? config.configuration;
   const behavior = stored.behavior;
+  const globalModelId =
+    global.llm.generation_model_id ?? config.configuration.llm.generation_model_id ?? "";
+  const globalResponse = global.chat.response_mode;
+  const globalGrounding: GroundingAssurance =
+    global.chat.grounding_mode === "balanced" ? "balanced" : "strict";
+  const globalTranslation: TranslationMode = global.retrieval.query_translation_enabled
+    ? "enabled"
+    : "disabled";
+  const globalDomain = global.domain_instructions ?? "";
+  const storedTranslation =
+    behavior?.translation_policy && behavior.translation_policy !== "inherit"
+      ? behavior.translation_policy
+      : undefined;
   const profileId = explicitProfileId(stored);
   const profile = config.rag_profiles?.find((item) => item.id === profileId);
   const storedExecution = Object.fromEntries(
@@ -126,37 +139,23 @@ export function configFormFromEffective(
     behavior: {
       generationModelId: {
         source: sourceFor(behavior, "generation_model_id"),
-        value:
-          behavior?.generation_model_id ??
-          global.llm.generation_model_id ??
-          config.configuration.llm.generation_model_id ??
-          "",
+        value: behavior?.generation_model_id ?? globalModelId,
       },
       responseMode: {
         source: sourceFor(behavior, "response_mode"),
-        value: behavior?.response_mode ?? global.chat.response_mode,
+        value: behavior?.response_mode ?? globalResponse,
       },
       groundingAssurance: {
         source: sourceFor(behavior, "grounding_assurance"),
-        value:
-          behavior?.grounding_assurance ??
-          (global.chat.grounding_mode === "balanced" ? "balanced" : "strict"),
+        value: behavior?.grounding_assurance ?? globalGrounding,
       },
       translation: {
-        source:
-          behavior?.translation_policy && behavior.translation_policy !== "inherit"
-            ? "project"
-            : "global",
-        value:
-          behavior?.translation_policy && behavior.translation_policy !== "inherit"
-            ? behavior.translation_policy
-            : global.retrieval.query_translation_enabled
-              ? "enabled"
-              : "disabled",
+        source: storedTranslation ? "project" : "global",
+        value: storedTranslation ?? globalTranslation,
       },
       domain: {
         source: sourceFor(behavior, "domain_instructions"),
-        value: behavior?.domain_instructions ?? global.domain_instructions ?? "",
+        value: behavior?.domain_instructions ?? globalDomain,
       },
     },
     reason: "",
@@ -659,171 +658,159 @@ export function ProjectAISettingsFields({
         aria-labelledby="rag-execution-heading"
       >
         <div className="profile-lane">
-        <header className="ai-config-section__header">
-          <div>
-            <p className="eyebrow">Retrieval profile</p>
-            <h3 id="rag-execution-heading">Choose a certified profile</h3>
-            <p className="profile-lane__lede">
-              These cards own retrieval. Leave the packed values unless you need a Custom profile.
-            </p>
-          </div>
-          <span className="section-state">
-            {form.profileId === "inherit"
-              ? `Global · currently ${displayName(globalProfileId)}`
-              : customProfile
-                ? "Custom"
-                : displayName(form.profileId)}
-          </span>
-        </header>
-
-        <div className="profile-selector__cards" role="radiogroup" aria-label="RAG profile">
-          <button
-            type="button"
-            role="radio"
-            aria-checked={form.profileId === "inherit"}
-            aria-label="Global RAG profile"
-            className={[
-              "profile-card",
-              form.profileId === "inherit" ? "profile-card--selected" : "",
-              customProfile && form.customBaseProfileId === "inherit" ? "profile-card--base" : "",
-            ]
-              .filter(Boolean)
-              .join(" ")}
-            onClick={() => selectProfile("inherit")}
-          >
-            <span className="profile-card__title">
-              Global
-              <small>
-                {customProfile && form.customBaseProfileId === "inherit"
-                  ? "Base"
-                  : `Currently ${displayName(globalProfileId)}`}
-              </small>
-              {form.profileId === "inherit" && <Check size={15} aria-hidden="true" />}
+          <header className="ai-config-section__header">
+            <div>
+              <p className="eyebrow">Retrieval profile</p>
+              <h3 id="rag-execution-heading">Choose a certified profile</h3>
+              <p className="profile-lane__lede">
+                These cards own retrieval. Leave the packed values unless you need a Custom profile.
+              </p>
+            </div>
+            <span className="section-state">
+              {form.profileId === "inherit"
+                ? `Global · currently ${displayName(globalProfileId)}`
+                : customProfile
+                  ? "Custom"
+                  : displayName(form.profileId)}
             </span>
-            <span className="profile-card__intent">Follows deployment changes</span>
-            <span className="profile-card__summary">{executionSummary(globalExecution)}</span>
-          </button>
-          {ragProfiles.map((profile) => (
+          </header>
+
+          <div className="profile-selector__cards" role="radiogroup" aria-label="RAG profile">
             <button
-              key={profile.id}
               type="button"
               role="radio"
-              aria-checked={form.profileId === profile.id}
-              aria-label={`${displayName(profile.id)} RAG profile`}
-              disabled={!profile.selectable && form.profileId !== profile.id}
+              aria-checked={form.profileId === "inherit"}
+              aria-label="Global RAG profile"
               className={[
                 "profile-card",
-                form.profileId === profile.id ? "profile-card--selected" : "",
-                customProfile && form.customBaseProfileId === profile.id
-                  ? "profile-card--base"
-                  : "",
+                form.profileId === "inherit" ? "profile-card--selected" : "",
+                customProfile && form.customBaseProfileId === "inherit" ? "profile-card--base" : "",
               ]
                 .filter(Boolean)
                 .join(" ")}
-              onClick={() => selectProfile(profile.id)}
+              onClick={() => selectProfile("inherit")}
             >
               <span className="profile-card__title">
-                {displayName(profile.id)}
-                {customProfile && form.customBaseProfileId === profile.id ? (
-                  <small>Base</small>
-                ) : (
-                  profile.recommended && <small>Recommended</small>
-                )}
-                {form.profileId === profile.id && <Check size={15} aria-hidden="true" />}
-              </span>
-              <span className="profile-card__intent">
-                {PROFILE_INTENTS[profile.id] ?? "Predefined execution template"}
-              </span>
-              <span className="profile-card__summary">{executionSummary(profile.values)}</span>
-            </button>
-          ))}
-        </div>
-
-        {effective ? (
-          <div
-            className={`profile-values${customProfile ? " profile-values--custom" : " profile-values--packed"}`}
-          >
-            <button
-              type="button"
-              className="profile-values__toggle"
-              aria-expanded={profileValuesOpen}
-              aria-controls="profile-values-panel"
-              aria-label={valuesToggleName}
-              onClick={() => setProfileValuesOpen((open) => !open)}
-            >
-              <span className="profile-values__badge">{customProfile ? "Custom" : "Profile"}</span>
-              <span className="profile-values__copy">
-                <strong>
-                  {profileValuesOpen
-                    ? customProfile
-                      ? "Custom values"
-                      : `Values from ${activeProfileName}`
-                    : customProfile
-                      ? "Custom values hidden"
-                      : `Packed with ${activeProfileName}`}
-                </strong>
+                Global
                 <small>
-                  {profileValuesOpen
-                    ? "Editing a value creates or updates Custom."
-                    : packedHint}
+                  {customProfile && form.customBaseProfileId === "inherit"
+                    ? "Base"
+                    : `Currently ${displayName(globalProfileId)}`}
                 </small>
+                {form.profileId === "inherit" && <Check size={15} aria-hidden="true" />}
               </span>
-              <span className="profile-values__action">
-                {profileValuesOpen
-                  ? "Hide values"
-                  : customProfile
-                    ? "Show custom values"
-                    : "Show values to customize"}
-              </span>
-              <ChevronDown size={16} aria-hidden="true" />
+              <span className="profile-card__intent">Follows deployment changes</span>
+              <span className="profile-card__summary">{executionSummary(globalExecution)}</span>
             </button>
-            {profileValuesOpen && (
-              <div className="profile-values__body" id="profile-values-panel">
-                {customProfile ? (
-                  <div className="custom-profile-state custom-profile-state--active">
-                    <div>
-                      <strong>{customBannerLabel}</strong>
-                      <span>
-                        {matchingProfile
-                          ? `Matches ${displayName(matchingProfile.id)}; remains Custom.`
-                          : "These retrieval settings will be saved for this Project."}
-                      </span>
+            {ragProfiles.map((profile) => (
+              <button
+                key={profile.id}
+                type="button"
+                role="radio"
+                aria-checked={form.profileId === profile.id}
+                aria-label={`${displayName(profile.id)} RAG profile`}
+                disabled={!profile.selectable && form.profileId !== profile.id}
+                className={[
+                  "profile-card",
+                  form.profileId === profile.id ? "profile-card--selected" : "",
+                  customProfile && form.customBaseProfileId === profile.id
+                    ? "profile-card--base"
+                    : "",
+                ]
+                  .filter(Boolean)
+                  .join(" ")}
+                onClick={() => selectProfile(profile.id)}
+              >
+                <span className="profile-card__title">
+                  {displayName(profile.id)}
+                  {customProfile && form.customBaseProfileId === profile.id ? (
+                    <small>Base</small>
+                  ) : (
+                    profile.recommended && <small>Recommended</small>
+                  )}
+                  {form.profileId === profile.id && <Check size={15} aria-hidden="true" />}
+                </span>
+                <span className="profile-card__intent">
+                  {PROFILE_INTENTS[profile.id] ?? "Predefined execution template"}
+                </span>
+                <span className="profile-card__summary">{executionSummary(profile.values)}</span>
+              </button>
+            ))}
+          </div>
+
+          {effective ? (
+            <div
+              className={`profile-values${customProfile ? " profile-values--custom" : " profile-values--packed"}`}
+            >
+              <button
+                type="button"
+                className="profile-values__toggle"
+                aria-expanded={profileValuesOpen}
+                aria-controls="profile-values-panel"
+                aria-label={valuesToggleName}
+                onClick={() => setProfileValuesOpen((open) => !open)}
+              >
+                <span className="profile-values__badge">
+                  {customProfile ? "Custom" : "Profile"}
+                </span>
+                <span className="profile-values__copy">
+                  <strong>
+                    {profileValuesOpen
+                      ? customProfile
+                        ? "Custom values"
+                        : `Values from ${activeProfileName}`
+                      : customProfile
+                        ? "Custom values hidden"
+                        : `Packed with ${activeProfileName}`}
+                  </strong>
+                  <small>
+                    {profileValuesOpen ? "Editing a value creates or updates Custom." : packedHint}
+                  </small>
+                </span>
+                <span className="profile-values__action">
+                  {profileValuesOpen
+                    ? "Hide values"
+                    : customProfile
+                      ? "Show custom values"
+                      : "Show values to customize"}
+                </span>
+                <ChevronDown size={16} aria-hidden="true" />
+              </button>
+              {profileValuesOpen && (
+                <div className="profile-values__body" id="profile-values-panel">
+                  {customProfile ? (
+                    <div className="custom-profile-state custom-profile-state--active">
+                      <div>
+                        <strong>{customBannerLabel}</strong>
+                        <span>
+                          {matchingProfile
+                            ? `Matches ${displayName(matchingProfile.id)}; remains Custom.`
+                            : "These retrieval settings will be saved for this Project."}
+                        </span>
+                      </div>
+                      {resetLabel && (
+                        <button
+                          type="button"
+                          className="button button--secondary"
+                          onClick={() => selectProfile(form.customBaseProfileId ?? "inherit")}
+                        >
+                          {resetLabel}
+                        </button>
+                      )}
                     </div>
-                    {resetLabel && (
-                      <button
-                        type="button"
-                        className="button button--secondary"
-                        onClick={() => selectProfile(form.customBaseProfileId ?? "inherit")}
-                      >
-                        {resetLabel}
-                      </button>
-                    )}
-                  </div>
-                ) : (
-                  <p className="profile-values__hint">
-                    These numbers belong to the selected profile. Change one only if this Project
-                    needs a Custom retrieval bundle.
-                  </p>
-                )}
-                <div className="execution-settings">
-                  <div className="execution-settings__heading">
-                    <h4>Core execution settings</h4>
-                    <span>{customProfile ? "Custom values" : "Owned by the profile"}</span>
-                  </div>
-                  <div className="execution-grid execution-grid--core">
-                    {CORE_EXECUTION_FIELDS.map((definition) => (
-                      <ExecutionField
-                        key={definition.key}
-                        definition={definition}
-                        value={form.execution[definition.key]}
-                        onChange={(value) => changeExecution(definition.key, value)}
-                      />
-                    ))}
-                  </div>
-                  <details className="config-advanced execution-advanced">
-                    <summary>Advanced execution settings</summary>
-                    <div className="execution-grid">
-                      {ADVANCED_EXECUTION_FIELDS.map((definition) => (
+                  ) : (
+                    <p className="profile-values__hint">
+                      These numbers belong to the selected profile. Change one only if this Project
+                      needs a Custom retrieval bundle.
+                    </p>
+                  )}
+                  <div className="execution-settings">
+                    <div className="execution-settings__heading">
+                      <h4>Core execution settings</h4>
+                      <span>{customProfile ? "Custom values" : "Owned by the profile"}</span>
+                    </div>
+                    <div className="execution-grid execution-grid--core">
+                      {CORE_EXECUTION_FIELDS.map((definition) => (
                         <ExecutionField
                           key={definition.key}
                           definition={definition}
@@ -832,16 +819,28 @@ export function ProjectAISettingsFields({
                         />
                       ))}
                     </div>
-                  </details>
+                    <details className="config-advanced execution-advanced">
+                      <summary>Advanced execution settings</summary>
+                      <div className="execution-grid">
+                        {ADVANCED_EXECUTION_FIELDS.map((definition) => (
+                          <ExecutionField
+                            key={definition.key}
+                            definition={definition}
+                            value={form.execution[definition.key]}
+                            onChange={(value) => changeExecution(definition.key, value)}
+                          />
+                        ))}
+                      </div>
+                    </details>
+                  </div>
                 </div>
-              </div>
-            )}
-          </div>
-        ) : (
-          <p className="muted-copy">
-            Retrieval profiles can be customized after the Project is created.
-          </p>
-        )}
+              )}
+            </div>
+          ) : (
+            <p className="muted-copy">
+              Retrieval profiles can be customized after the Project is created.
+            </p>
+          )}
         </div>
       </section>
 

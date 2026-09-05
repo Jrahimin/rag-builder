@@ -288,8 +288,11 @@ exists. The undocumented `0.08` corroboration margin is not used for balanced ad
 remains only for selecting strict passage-rescue candidates.
 
 The same Phase 1 fixture includes `multi-turn-follow-up-fragment`. There is no stored hosted
-evaluation showing a material follow-up false-refusal rate, so Phase 3 does **not** add a
-concatenated follow-up query variant. Retrieval still uses the raw latest user message.
+evaluation showing a material follow-up false-refusal rate, so Evidence Quality does **not** add a
+concatenated follow-up query variant. Conversations now run bounded turn resolution before
+retrieval; Evidence Quality cases remain single-turn. `previous_user_query` is a dataset hint for
+measurement only. It does not create conversation history, turn resolution, or continuity proof.
+Ordered RAG Journey sequences remain a separate harness and are not merged into Evidence Quality.
 
 ## Intentional non-goals
 

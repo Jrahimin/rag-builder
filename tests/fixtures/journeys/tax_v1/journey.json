@@ -1,7 +1,8 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "key": "tax_v1",
   "description": "Synthetic current/historical Bangladesh tax journey for local RAG regression checks.",
+  "reference_time": "2026-08-01T00:00:00Z",
   "sources": [
     {
       "key": "tax_2023",
@@ -339,7 +340,7 @@
       "query": "As of 1 August 2026, what rebate applied to BDT 60,000 of eligible investment?",
       "as_of": "2026-08-01T00:00:00Z",
       "anchors": ["rebate_rate_2026", "rebate_example_2026"],
-      "required_anchor_groups": [["rebate_rate_2026"], ["rebate_example_2026"]],
+      "required_anchor_groups": [["rebate_rate_2026", "rebate_example_2026"]],
       "prohibited_final_sources": ["finance_2027"],
       "expected_tokens": ["10%", "6000"]
     },
@@ -406,6 +407,299 @@
       "anchors": ["verification_reference_2025"],
       "required_anchor_groups": [["verification_reference_2025"]],
       "expected_tokens": ["VR-2025-APE"]
+    }
+  ],
+  "sequences": [
+    {
+      "key": "adopt_then_replace_rebate",
+      "tags": ["continuity", "authority", "calculation"],
+      "turns": [
+        {
+          "key": "adopt_rebate_base",
+          "tags": ["continuity", "authority", "calculation"],
+          "query": "Under the current rule, what rebate applies to BDT 60,000 of eligible investment?",
+          "as_of": "2026-08-01T00:00:00Z",
+          "anchors": ["rebate_rate_2026", "rebate_example_2026"],
+          "expected_tokens": ["10%", "6000"]
+        },
+        {
+          "key": "adopt_rebate_as_next_investment",
+          "tags": ["continuity", "authority", "calculation"],
+          "query": "Use that rebate amount as my next eligible investment. What rebate applies under the current rule?",
+          "as_of": "2026-08-01T00:00:00Z",
+          "anchors": ["rebate_rate_2026"],
+          "required_anchor_groups": [["rebate_rate_2026"]],
+          "expected_tokens": ["10%", "600"],
+          "expected_resolution": {
+            "outcome": "resolved",
+            "relation": "follow_up",
+            "active_bindings": [
+              {
+                "kind": "scenario_parameter",
+                "active_value": "6000",
+                "origin": "user_adopted_assistant",
+                "prior_turns": [1]
+              }
+            ]
+          }
+        },
+        {
+          "key": "replace_adopted_rebate_amount",
+          "tags": ["continuity", "authority", "calculation"],
+          "query": "Recalculate using 90,000, not that amount.",
+          "as_of": "2026-08-01T00:00:00Z",
+          "anchors": ["rebate_rate_2026"],
+          "required_anchor_groups": [["rebate_rate_2026"]],
+          "user_parameter_tokens": ["90000"],
+          "expected_tokens": ["10%", "9000"],
+          "expected_resolution": {
+            "outcome": "resolved",
+            "relation": "correction",
+            "active_bindings": [
+              {
+                "kind": "scenario_parameter",
+                "active_value": "90000",
+                "origin": "user_literal"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "key": "temporal_snapshot_clarify",
+      "tags": ["continuity", "authority", "historical"],
+      "turns": [
+        {
+          "key": "temporal_historical_start",
+          "tags": ["continuity", "authority", "historical"],
+          "query": "What investment rebate rate applied on 1 January 2024?",
+          "as_of": "2024-01-01T00:00:00Z",
+          "anchors": ["rebate_rate_2023", "rebate_rate_2023_bn", "historical_rebate_rate_2026", "historical_rebate_rate_2024_bn"],
+          "required_anchor_groups": [["rebate_rate_2023", "rebate_rate_2023_bn", "historical_rebate_rate_2026", "historical_rebate_rate_2024_bn"]],
+          "prohibited_final_sources": ["finance_2027"],
+          "expected_tokens": ["15%"]
+        },
+        {
+          "key": "temporal_current_followup",
+          "tags": ["continuity", "authority"],
+          "query": "What is the current rebate rate?",
+          "anchors": ["rebate_rate_2026"],
+          "required_anchor_groups": [["rebate_rate_2026"]],
+          "prohibited_final_sources": ["finance_2027"],
+          "expected_tokens": ["10%"]
+        },
+        {
+          "key": "temporal_before_that_clarify",
+          "tags": ["continuity", "authority"],
+          "query": "What was the rate before that date — 1 January 2024 or the later current rate?",
+          "anchors": [],
+          "mode": "clarification",
+          "expected_resolution": {
+            "outcome": "clarify",
+            "temporal_intent": "unbounded"
+          }
+        },
+        {
+          "key": "temporal_exact_snapshot",
+          "tags": ["continuity", "authority", "historical"],
+          "query": "I mean as of 2026-08-01.",
+          "anchors": ["rebate_rate_2026", "rebate_example_2026"],
+          "required_anchor_groups": [["rebate_rate_2026"]],
+          "prohibited_final_sources": ["finance_2027"],
+          "expected_tokens": ["10%"],
+          "expected_resolution": {
+            "outcome": "resolved",
+            "temporal_intent": "exact_date",
+            "effective_as_of": "2026-08-01T00:00:00Z",
+            "snapshot_origin": "user_literal",
+            "active_bindings": [
+              {
+                "kind": "period_date",
+                "active_value": "2026-08-01",
+                "origin": "user_literal"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "key": "clarify_then_short_answer",
+      "tags": ["continuity", "authority"],
+      "turns": [
+        {
+          "key": "clarify_base_current_rebate",
+          "tags": ["continuity", "authority", "calculation"],
+          "query": "Under the current rule, what rebate applies to BDT 60,000 of eligible investment?",
+          "as_of": "2026-08-01T00:00:00Z",
+          "anchors": ["rebate_rate_2026", "rebate_example_2026"],
+          "expected_tokens": ["10%", "6000"]
+        },
+        {
+          "key": "clarify_ambiguous_other_rate",
+          "tags": ["continuity", "authority"],
+          "query": "Was that amount correct, and what about the other rate?",
+          "anchors": [],
+          "mode": "clarification",
+          "expected_resolution": {
+            "outcome": "clarify",
+            "relation": "follow_up"
+          }
+        },
+        {
+          "key": "clarify_short_2023_rate",
+          "tags": ["continuity", "authority", "historical"],
+          "query": "The 2023 Act rate.",
+          "as_of": "2024-01-01T00:00:00Z",
+          "anchors": ["rebate_rate_2023", "rebate_rate_2023_bn"],
+          "required_anchor_groups": [["rebate_rate_2023", "rebate_rate_2023_bn"]],
+          "prohibited_final_sources": ["finance_2026", "finance_2027"],
+          "expected_tokens": ["15%"],
+          "expected_resolution": {
+            "outcome": "resolved",
+            "active_bindings": [
+              {
+                "kind": "source",
+                "active_value": "2023 Act",
+                "origin": "user_literal"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "key": "topic_reset_drops_amount",
+      "tags": ["continuity", "authority"],
+      "turns": [
+        {
+          "key": "topic_reset_declared_rebate",
+          "tags": ["continuity", "authority", "calculation"],
+          "query": "২০২৬ সালের বর্তমান নিয়মে আমার eligible investment ৭৫,০০০ টাকা হলে rebate কত? আমার দেওয়া অঙ্কটিই ব্যবহার করুন।",
+          "as_of": "2026-08-01T00:00:00Z",
+          "anchors": ["rebate_rate_2026"],
+          "required_anchor_groups": [["rebate_rate_2026"]],
+          "user_parameter_tokens": ["75000"],
+          "expected_tokens": ["10%", "75000", "7500"]
+        },
+        {
+          "key": "topic_reset_source_tax",
+          "tags": ["continuity", "authority", "unchanged"],
+          "query": "Forget the rebate calculation. Did the 2026 Finance Act change the savings-certificate source-tax rate, and what is the rate?",
+          "as_of": "2026-08-01T00:00:00Z",
+          "anchors": ["source_tax_2026"],
+          "expected_tokens": ["10%"],
+          "expected_any": ["unchanged", "not changed", "remains", "stayed the same", "still", "retained"],
+          "expected_resolution": {
+            "absent_binding_kinds": ["scenario_parameter", "period_date"]
+          }
+        },
+        {
+          "key": "topic_reset_rebate_without_amount",
+          "tags": ["continuity", "authority"],
+          "query": "What rebate applies to eligible investment under the current rule?",
+          "as_of": "2026-08-01T00:00:00Z",
+          "anchors": ["rebate_rate_2026"],
+          "required_anchor_groups": [["rebate_rate_2026"]],
+          "prohibited_answer_tokens": ["7500"],
+          "expected_tokens": ["10%"],
+          "expected_resolution": {
+            "absent_binding_kinds": ["scenario_parameter", "period_date"]
+          }
+        }
+      ]
+    },
+    {
+      "key": "language_switch_unicode_correction",
+      "tags": ["continuity", "multilingual", "authority"],
+      "turns": [
+        {
+          "key": "language_switch_english_base",
+          "tags": ["continuity", "authority", "calculation"],
+          "query": "Under the current rule, what rebate applies to BDT 60,000 of eligible investment?",
+          "as_of": "2026-08-01T00:00:00Z",
+          "anchors": ["rebate_rate_2026", "rebate_example_2026"],
+          "expected_tokens": ["10%", "6000"]
+        },
+        {
+          "key": "language_switch_bangla_75000",
+          "tags": ["continuity", "multilingual", "authority", "calculation"],
+          "query": "এখন ৭৫,০০০ টাকা ব্যবহার করুন। রিবেট কত?",
+          "as_of": "2026-08-01T00:00:00Z",
+          "anchors": ["rebate_rate_2026"],
+          "required_anchor_groups": [["rebate_rate_2026"]],
+          "user_parameter_tokens": ["75000"],
+          "expected_tokens": ["10%", "75000", "7500"],
+          "expected_resolution": {
+            "outcome": "resolved",
+            "relation": "correction",
+            "active_bindings": [
+              {
+                "kind": "scenario_parameter",
+                "active_value": "75000",
+                "origin": "user_literal"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "key": "compare_scope_nonsticky_filters",
+      "tags": ["continuity", "scope", "authority"],
+      "turns": [
+        {
+          "key": "nonsticky_hard_scope_2023",
+          "tags": ["continuity", "scope", "authority"],
+          "query": "What is the current Section 21 investment rebate rate?",
+          "as_of": "2026-08-01T00:00:00Z",
+          "document_scope": "tax_2023",
+          "anchors": ["rebate_rate_2023"],
+          "expected_tokens": ["15%"],
+          "mode": "scope_isolation"
+        },
+        {
+          "key": "nonsticky_compare_2023_and_2026",
+          "tags": ["continuity", "authority"],
+          "query": "Compare the Section 21 investment rebate rate in the 2023 Act with the 2026 Finance Act.",
+          "as_of": "2026-08-01T00:00:00Z",
+          "anchors": ["rebate_rate_2026"],
+          "required_anchor_groups": [["rebate_rate_2026"]],
+          "expected_tokens": ["15%", "10%"],
+          "expected_resolution": {
+            "active_bindings": [
+              {
+                "kind": "source",
+                "active_value": "2023 Act",
+                "origin": "user_literal"
+              },
+              {
+                "kind": "source",
+                "active_value": "2026 Finance Act",
+                "origin": "user_literal"
+              }
+            ]
+          }
+        },
+        {
+          "key": "nonsticky_metadata_filter_empty",
+          "tags": ["continuity", "scope"],
+          "query": "What is the current individual tax-free threshold?",
+          "as_of": "2026-08-01T00:00:00Z",
+          "metadata_filter": {"source": "nonexistent-journey-source"},
+          "anchors": [],
+          "mode": "no_answer"
+        },
+        {
+          "key": "nonsticky_omitted_filter_threshold",
+          "tags": ["continuity", "authority"],
+          "query": "What is the current individual tax-free threshold?",
+          "as_of": "2026-08-01T00:00:00Z",
+          "anchors": ["threshold_2026"],
+          "expected_tokens": ["400000"]
+        }
+      ]
     }
   ]
 }

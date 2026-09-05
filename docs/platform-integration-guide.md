@@ -832,6 +832,13 @@ curl -s -X POST "$APE_BASE_URL/api/v1/projects/$PROJECT_ID/conversations/$CONVER
 
 `metadata_filter` values must be strings. Set `document_id` to scope retrieval to one document.
 Current-authority expansion does not add modifier documents under that public contract.
+`document_id`, `metadata_filter`, and `as_of` apply only to the current request; omitted values
+are not inherited from earlier turns. Follow-ups may resolve an effective retrieval question
+from conversation history, but the original `content` stays the stored user message. An
+assistant-produced number becomes a scenario input only when the user clearly adopts it; it is
+not a documented fact. If the turn needs disambiguation, the assistant returns
+`finish_reason=clarification` with `grounded=null` and no claims or citations. Compact
+`metadata.turn_resolution` and SSE `done.turn_resolution` describe that interpretation.
 
 **Response** `200`
 
@@ -922,7 +929,8 @@ For token-by-token UI, use:
 POST /api/v1/projects/{project_id}/conversations/{conversation_id}/messages/stream
 ```
 
-Events: `token` (partial text), `done` (final id + citations + claims + grounding), `error`.
+Events: `token` (partial text), `done` (final id + citations + claims + grounding +
+`finish_reason` + compact `turn_resolution`), `error`.
 
 <details>
 <summary>Sample SSE events — stream message</summary>
@@ -958,7 +966,13 @@ Same request body as non-streaming `POST .../messages`.
     }
   ],
   "grounded": true,
-  "insufficient_evidence_reason": null
+  "insufficient_evidence_reason": null,
+  "finish_reason": "stop",
+  "turn_resolution": {
+    "outcome": "standalone",
+    "query_changed": false,
+    "filter_changed": false
+  }
 }
 ```
 

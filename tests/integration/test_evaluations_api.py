@@ -9,6 +9,7 @@ from httpx import AsyncClient
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
+from app.modules.conversations.prompts.registry import GROUNDED_PROMPT_VERSION
 from app.platform.jobs.contracts import JobDefinition
 from tests.integration.knowledge_helpers import (
     run_captured_document_jobs,
@@ -76,7 +77,7 @@ async def test_dataset_and_run_capture_reproducible_versions(db_client: AsyncCli
     assert run["job_state"] == "queued"
     assert len(run["configuration_hash"]) == 64
     assert run["versions"]["dataset"]["hash"] == dataset_data["dataset_hash"]
-    assert run["versions"]["prompt_version"] == "v6"
+    assert run["versions"]["prompt_version"] == GROUNDED_PROMPT_VERSION
     assert run["versions"]["chunking"]["chunker_version"] == "3.0.0"
     assert len(run["versions"]["corpus"]["fingerprint"]) == 64
     assert run["versions"]["corpus"]["indexed_chunk_count"] == 0

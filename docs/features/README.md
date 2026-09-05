@@ -24,7 +24,7 @@ Concise, per-feature reference documentation for the AI Platform Engine.
 | Production runtime + operator backend | [production_runtime_and_operator_backend.md](./production_runtime_and_operator_backend.md) | Certified profiles, preflight, readiness, metrics, workers, audit |
 | Retrieval | [retrieval_module.md](./retrieval_module.md) | Embed → index → semantic + hybrid search (`ready`, ADR-007/009) |
 | Conversations | [conversation_module.md](./conversation_module.md) | RAG chat, stateful conversations, SSE streaming (ADR-008) |
-| Test RAG journey | [test_rag_journey.md](./test_rag_journey.md) | Local 21-case production-path `tax_v1` corpus, authority, multilingual, and cleanup regression |
+| Test RAG journey | [test_rag_journey.md](./test_rag_journey.md) | Local production-path `tax_v1` and `business_conversation_v1` packs, sequences, and cleanup regression |
 | Contextual generation | [contextual_generation.md](./contextual_generation.md) | Caller context → versioned prompt/schema → validated LLM output |
 | Multilingual | [multilingual_support.md](./multilingual_support.md) | Unicode tokenization, FTS, OCR notes (ADR-010) |
 

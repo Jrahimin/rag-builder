@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "journey": "tax_v1",
+  "phase": 1,
+  "reference_time": "2026-08-01T00:00:00Z",
+  "note": "Production chat has no turn resolver yet. These continuation turns are the Phase 1 baseline: keep the expectations, do not relax them, and treat current failures as the starting measurement.",
+  "standalone_case_count": 21,
+  "sequences": [
+    {
+      "key": "adopt_then_replace_rebate",
+      "expected_failing_turns": [
+        "adopt_rebate_as_next_investment",
+        "replace_adopted_rebate_amount"
+      ]
+    },
+    {
+      "key": "temporal_snapshot_clarify",
+      "expected_failing_turns": [
+        "temporal_before_that_clarify",
+        "temporal_exact_snapshot"
+      ]
+    },
+    {
+      "key": "clarify_then_short_answer",
+      "expected_failing_turns": [
+        "clarify_ambiguous_other_rate",
+        "clarify_short_2023_rate"
+      ]
+    },
+    {
+      "key": "topic_reset_drops_amount",
+      "expected_failing_turns": [
+        "topic_reset_source_tax",
+        "topic_reset_rebate_without_amount"
+      ]
+    },
+    {
+      "key": "language_switch_unicode_correction",
+      "expected_failing_turns": [
+        "language_switch_bangla_75000"
+      ]
+    },
+    {
+      "key": "compare_scope_nonsticky_filters",
+      "expected_failing_turns": [
+        "nonsticky_compare_2023_and_2026"
+      ]
+    }
+  ]
+}
