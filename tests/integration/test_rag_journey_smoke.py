@@ -209,9 +209,7 @@ class BusinessFixtureConceptEmbeddingProvider(BaseEmbeddingProvider):
         )
 
 
-def _install_embedder(
-    monkeypatch: pytest.MonkeyPatch, factory: object
-) -> None:
+def _install_embedder(monkeypatch: pytest.MonkeyPatch, factory: object) -> None:
     """Replace only provider construction; services, jobs, and pgvector stay real."""
     for target in (
         "app.platform.providers.implementations.embedding_factory.create_embedding_provider",
