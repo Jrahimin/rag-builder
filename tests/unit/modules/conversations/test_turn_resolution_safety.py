@@ -663,6 +663,43 @@ def test_anaphora_keeps_adopted_amount():
     assert [item.active_value for item in validated.active_bindings] == ["BDT 6,000"]
 
 
+def test_meta_followup_keeps_prior_scenario_amount():
+    history_id = uuid.uuid4()
+    payload = _payload(
+        "Explain that more simply.",
+        history=[
+            HistoryMessage(
+                id=history_id,
+                role="user",
+                content="What rebate applies to 75,000?",
+            )
+        ],
+    )
+    validated = validate_turn_resolution(
+        TurnResolution(
+            outcome="resolved",
+            relation="follow_up",
+            effective_question="What rebate applies to 75,000?",
+            active_bindings=[
+                ReferenceBinding(
+                    kind="scenario_parameter",
+                    active_value="75,000",
+                    origin="user_literal",
+                    references=[
+                        BindingReference(
+                            message_id=history_id,
+                            role="user",
+                            excerpt="75,000",
+                        )
+                    ],
+                )
+            ],
+        ),
+        payload,
+    )
+    assert [item.active_value for item in validated.active_bindings] == ["75,000"]
+
+
 def test_correction_drops_replaced_history_amount():
     history_id = uuid.uuid4()
     payload = _payload(

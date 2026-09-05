@@ -186,6 +186,14 @@ _ANAPHORA_RE = re.compile(
     r")",
     re.IGNORECASE,
 )
+_META_FOLLOWUP_RE = re.compile(
+    r"(?:"
+    r"\b(?:explain|describe|clarify|simplify|rephrase|repeat|expand|summarize|shorten)\b"
+    r".*\b(?:that|this|it)\b"
+    r"|\b(?:that|this|it)\b.*\b(?:more\s+simply|in\s+simple(?:r)?\s+terms|again|differently)\b"
+    r")",
+    re.IGNORECASE,
+)
 
 
 def _fold_for_extraction(text: str) -> str:
@@ -738,7 +746,11 @@ def validate_turn_resolution(
 
 def _current_message_keeps_prior_scenario(message: str) -> bool:
     """True when the current turn attests an amount/date or anaphorically keeps one."""
-    return bool(_parameter_like_tokens(message) or _ANAPHORA_RE.search(message))
+    return bool(
+        _parameter_like_tokens(message)
+        or _ANAPHORA_RE.search(message)
+        or _META_FOLLOWUP_RE.search(message)
+    )
 
 
 def _drop_unattested_scenario_bindings(
