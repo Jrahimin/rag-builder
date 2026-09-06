@@ -64,6 +64,8 @@ class CitationSnapshot(BaseModel):
     source_lifecycle_status: str | None = None
     source_role: str | None = None
     source_relationships: list[dict[str, Any]] = Field(default_factory=list)
+    authority_status: str | None = None
+    authority_limitations: list[dict[str, Any]] = Field(default_factory=list)
     relationship_recall_provenance: list[dict[str, Any]] = Field(default_factory=list)
     config_snapshot_id: uuid.UUID | None = None
     configuration_hash: str | None = None
@@ -178,6 +180,9 @@ class ClaimEvidence(BaseModel):
 
 class AnswerClaim(BaseModel):
     """A generated answer segment linked to zero or more evidence locations."""
+
+    evidence_support: ClaimVerification | None = None
+    authority_status: str = "not_assessed"
 
     claim_id: str
     text: str

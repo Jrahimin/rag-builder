@@ -33,6 +33,8 @@ class NoticeKind:
     """No sufficient evidence was found to answer the question; the answer is a
     refusal."""
 
+    UNRESOLVED_AUTHORITY = "unresolved_authority"
+
 
 # ---------------------------------------------------------------------------
 # Notice data model
@@ -62,6 +64,10 @@ class Notice:
 # ---------------------------------------------------------------------------
 
 _EN_TEXTS: dict[str, str] = {
+    NoticeKind.UNRESOLVED_AUTHORITY: (
+        "Some source amendments could not be resolved. The affected source text "
+        "does not establish a currently applicable rule."
+    ),
     NoticeKind.SCOPE_EXCLUDES_EFFECTIVE_MODIFIER: (
         "The answer is drawn from the requested document scope. "
         "A more recent amendment modifies provisions in this document and may "
@@ -76,6 +82,10 @@ _EN_TEXTS: dict[str, str] = {
 }
 
 _BN_TEXTS: dict[str, str] = {
+    NoticeKind.UNRESOLVED_AUTHORITY: (
+        "কিছু উৎসের সংশোধনীর প্রযোজ্যতা নির্ধারণ করা যায়নি। সংশ্লিষ্ট উৎসের পাঠ "
+        "বর্তমানে প্রযোজ্য বিধান নিশ্চিত করে না।"
+    ),
     NoticeKind.SCOPE_EXCLUDES_EFFECTIVE_MODIFIER: (
         "উত্তরটি অনুরোধ করা document scope থেকে নেওয়া হয়েছে। "
         "একটি সাম্প্রতিক সংশোধনী এই document-এর বিধানগুলি সংশোধন করে এবং "
@@ -137,6 +147,15 @@ def web_evidence_used_notice(*, language: str) -> Notice:
         language=language,
         text=_notice_text(NoticeKind.WEB_EVIDENCE_USED, language),
         source={},
+    )
+
+
+def unresolved_authority_notice(*, language: str, chunk_ids: list[str]) -> Notice:
+    return Notice(
+        kind=NoticeKind.UNRESOLVED_AUTHORITY,
+        language=language,
+        text=_notice_text(NoticeKind.UNRESOLVED_AUTHORITY, language),
+        source={"affected_chunk_ids": chunk_ids},
     )
 
 

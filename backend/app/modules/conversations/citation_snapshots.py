@@ -74,6 +74,8 @@ def build_citation_snapshots(
             if is_web
             else chunk.metadata.get("source_lifecycle_status"),
             source_role=None if is_web else chunk.metadata.get("source_role"),
+            authority_status=chunk.metadata.get("authority_status"),
+            authority_limitations=list(chunk.metadata.get("authority_limitations") or []),
             source_relationships=(
                 [] if is_web else list(chunk.metadata.get("source_relationships") or [])
             ),

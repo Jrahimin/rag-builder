@@ -2309,7 +2309,7 @@ function MessageCard({
       className={`message-card message-card--${message.role}${selected ? " message-card--selected" : ""}`}
     >
       <div>
-        <strong>{message.role === "assistant" ? "Grounded response" : "You"}</strong>
+        <strong>{message.role === "assistant" ? "Assistant response" : "You"}</strong>
         <time>{formatDate(message.created_at)}</time>
       </div>
       <p>{message.content}</p>
@@ -2341,7 +2341,7 @@ function MessageCard({
   );
 }
 
-function MessageInspector({
+export function MessageInspector({
   message,
   run,
   activeCitation = 0,
@@ -2370,18 +2370,24 @@ function MessageInspector({
   const refusal = message.insufficient_evidence_reason;
   const citations = message.citations ?? [];
   const focused = citations[activeCitation] ?? citations[0];
+  const groundingPassed = Boolean(refusal || (message.grounded === true && citations.length));
+  const expectedMatches =
+    !run?.expected.trim() ||
+    message.content.toLocaleLowerCase().includes(run.expected.trim().toLocaleLowerCase());
+  const claims = message.claims ?? [];
+  const failedClaims = claims.filter((claim) => claim.verification !== "supported");
   return (
     <aside className="lab-message-inspector" aria-label="Grounding details">
       <div className="lab-message-inspector__heading">
         <div>
           <p className="eyebrow">Sources</p>
-          <h3>{refusal ? "Valid refusal" : "Grounded answer"}</h3>
+          <h3>
+            {refusal ? "Valid refusal" : groundingPassed ? "Grounded answer" : "Answer review"}
+          </h3>
         </div>
         <StatusBadge
           status={
-            refusal || (message.grounded === true && citations.length)
-              ? "passed"
-              : "needs_attention"
+            (isLatestRun && run ? run.passed : groundingPassed) ? "passed" : "needs_attention"
           }
         />
       </div>
@@ -2389,18 +2395,24 @@ function MessageInspector({
         <div
           className={`lab-verification ${run.passed ? "lab-verification--pass" : "lab-verification--warning"}`}
         >
-          <StatusBadge status={run.passed ? "passed" : "needs_attention"} />
           <strong>
             {message.insufficient_evidence_reason
               ? "Valid refusal / insufficient evidence"
               : message.citations?.length
-                ? "Answer with citations"
+                ? groundingPassed
+                  ? "Answer with citations"
+                  : "Cited answer — grounding incomplete"
                 : "Answer is not verifiably grounded"}
           </strong>
           <span>
             {run.elapsedMs} ms round trip
-            {run.expected ? ` · expected words ${run.passed ? "matched" : "did not match"}` : ""}
+            {run.expected.trim()
+              ? ` · expected words ${expectedMatches ? "matched" : "did not match"}`
+              : ""}
           </span>
+          {run.expected.trim() && !expectedMatches && (
+            <p>The answer did not contain the expected words. This is separate from grounding.</p>
+          )}
         </div>
       )}
       <div className="lab-inspector-metrics">
@@ -2425,6 +2437,43 @@ function MessageInspector({
       </div>
       <TranslationDiagnostics metadata={message.metadata} />
       <RerankDiagnostics metadata={message.metadata} />
+      {!refusal && (
+        <section className="notice-card" aria-label="Claim verification">
+          <strong>
+            {claims.length
+              ? `${claims.length - failedClaims.length} of ${claims.length} claims supported`
+              : "No claim verdicts available"}
+          </strong>
+          {!groundingPassed && (
+            <p>
+              {message.grounded == null
+                ? "Grounding was not established for this response."
+                : "The backend did not mark this answer as grounded."}{" "}
+              Citations alone do not establish support. A statement that evidence is missing is not
+              a backend-classified refusal.
+            </p>
+          )}
+          {failedClaims.length > 0 && (
+            <details>
+              <summary>Inspect {failedClaims.length} claims needing review</summary>
+              <ol>
+                {failedClaims.map((claim) => (
+                  <li key={claim.claim_id}>
+                    <strong>{claim.verification}</strong>
+                    <p>{claim.text}</p>
+                    {claim.authority_status === "unresolved" && (
+                      <p>
+                        Source authority is unresolved; text support does not establish
+                        applicability.
+                      </p>
+                    )}
+                  </li>
+                ))}
+              </ol>
+            </details>
+          )}
+        </section>
+      )}
       {refusal ? (
         <div className="notice-card">
           <strong>Insufficient evidence</strong>

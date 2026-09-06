@@ -843,13 +843,26 @@ def _expansion_diagnostics(
         in {ModifierExpansionOutcome.EXPANDED, ModifierExpansionOutcome.ALREADY_IN_RECALL}
     ]
     unscoped = sum(not item.target_provisions for item in authority_applicable)
+    unresolved = any(
+        item.outcome
+        in {
+            ModifierExpansionOutcome.UNGOVERNED_OR_INCOMPLETE_METADATA,
+            ModifierExpansionOutcome.NOT_IN_ACTIVE_INDEX,
+            ModifierExpansionOutcome.SOURCE_CAP_EXCEEDED,
+            ModifierExpansionOutcome.CANDIDATE_CAP_EXCEEDED,
+            ModifierExpansionOutcome.CYCLE,
+        }
+        for item in records
+    )
     return {
         "modifies_expansion_status": status,
         "modifies_expansion_depth": 1,
         "modifies_expansion_records": [item.diagnostic() for item in records],
         "modifies_expansion_exclusion_reasons": exclusions,
         "modifies_authority_scope_status": (
-            "unscoped_relationships"
+            "unresolved_relationships"
+            if unresolved
+            else "unscoped_relationships"
             if unscoped
             else "scoped"
             if authority_applicable

@@ -218,6 +218,16 @@ def test_unscoped_current_authority_relationship_is_explicit_in_diagnostics() ->
     assert scoped["modifies_authority_scope_status"] == "scoped"
 
 
+def test_incomplete_live_authority_is_not_reported_as_not_applicable() -> None:
+    record = _record(
+        base_revision_id=uuid.uuid4(),
+        base_document_id=uuid.uuid4(),
+        outcome=ModifierExpansionOutcome.UNGOVERNED_OR_INCOMPLETE_METADATA,
+    )
+    diagnostics = _expansion_diagnostics(status="no_eligible_modifiers", records=[record])
+    assert diagnostics["modifies_authority_scope_status"] == "unresolved_relationships"
+
+
 class _CountingReranker:
     provider_name = "test"
     model_name = "test-reranker"

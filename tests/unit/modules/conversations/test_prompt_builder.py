@@ -27,6 +27,9 @@ def test_build_includes_system_context_and_user_question() -> None:
         filename="policy.txt",
         chunk_hash="abc",
         metadata={
+            "section_title": "Enterprise only; renewals in 2028",
+            "authority_status": "unresolved",
+            "authority_limitations": [{"reason": "missing_provision_scope"}],
             "source_title": "Refund policy",
             "source_revision_label": "2026 edition",
             "source_lifecycle_status": "active",
@@ -58,6 +61,9 @@ def test_build_includes_system_context_and_user_question() -> None:
     )
     assert messages[0].role is ChatRole.SYSTEM
     assert "policy text" in messages[0].content
+    assert "Enterprise only; renewals in 2028" in messages[0].content
+    assert "authority_status=unresolved" in messages[0].content
+    assert "missing_provision_scope" in messages[0].content
     assert "source=Refund policy" in messages[0].content
     assert "revision=2026 edition" in messages[0].content
     assert "status=active role=primary" in messages[0].content

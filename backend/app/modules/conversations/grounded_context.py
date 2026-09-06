@@ -6,7 +6,10 @@ from dataclasses import replace
 
 from app.core.config import ChatConfig, EvidenceGateMode, RetrievalConfig
 from app.modules.conversations.context_builder import ContextBuilder
-from app.modules.conversations.current_authority import remove_superseded_provisions
+from app.modules.conversations.current_authority import (
+    annotate_authority_limitations,
+    remove_superseded_provisions,
+)
 from app.modules.conversations.grounding_service import (
     EvidenceDecision,
     GroundingService,
@@ -88,7 +91,9 @@ async def assess_and_select_knowledge(
     )
 
     ordered_units = _monotonic_context_order(list(evidence.admitted_units))
-    knowledge_selected = context_builder.select(ordered_units)
+    knowledge_selected = annotate_authority_limitations(
+        context_builder.select(ordered_units), expansion_records or []
+    )
     if knowledge_selected:
         return _align_winner_to_selected(evidence, knowledge_selected), knowledge_selected
     if chat_config.evidence_gate_mode is EvidenceGateMode.OBSERVE:

@@ -311,6 +311,11 @@
       "AnswerClaim": {
         "description": "A generated answer segment linked to zero or more evidence locations.",
         "properties": {
+          "authority_status": {
+            "default": "not_assessed",
+            "title": "Authority Status",
+            "type": "string"
+          },
           "claim_id": {
             "title": "Claim Id",
             "type": "string"
@@ -321,6 +326,16 @@
             },
             "title": "Evidence",
             "type": "array"
+          },
+          "evidence_support": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ClaimVerification"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "grounded": {
             "title": "Grounded",
@@ -3628,6 +3643,25 @@
       "CitationSnapshot": {
         "description": "Durable citation stored on assistant messages.",
         "properties": {
+          "authority_limitations": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Authority Limitations",
+            "type": "array"
+          },
+          "authority_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Authority Status"
+          },
           "char_end": {
             "anyOf": [
               {

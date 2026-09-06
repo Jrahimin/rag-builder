@@ -32,7 +32,8 @@ def remove_superseded_provisions(
 
     Unscoped relationships and headings that cannot be resolved exactly are
     intentionally left untouched.  This is fail-closed for authority metadata:
-    document-level MODIFIES never implies whole-document invalidation.
+    document-level MODIFIES never implies whole-document invalidation. Unresolved
+    relationships are retained as source text with an explicit authority limitation.
     """
     if expansion_records is None:
         expansion_records = _records_from_chunks(chunks)
@@ -84,6 +85,72 @@ def remove_superseded_provisions(
                 },
             )
         )
+    return annotate_authority_limitations(output, expansion_records)
+
+
+def annotate_authority_limitations(
+    chunks: list[ContextChunk], records: list[dict[str, object]]
+) -> list[ContextChunk]:
+    """Do not mistake failure to prove supersession for proof of current authority.
+
+    Run again after budgeting: recall of a modifier does not guarantee that its
+    text survived admission/selection. No tax vocabulary, date guessing or
+    document-wide invalidation is used here.
+    """
+    irrelevant = {
+        "inactive",
+        "outside_as_of",
+        "stale_or_replaced_revision",
+        "cross_project_or_generation",
+    }
+    present = {str(c.metadata.get("source_revision_id") or "") for c in chunks}
+    output: list[ContextChunk] = []
+    for chunk in chunks:
+        revision = str(chunk.metadata.get("source_revision_id") or "")
+        limitations: list[dict[str, object]] = []
+        table_status = chunk.metadata.get("table_context_status")
+        is_table = chunk.metadata.get("element_type") == "table"
+        if table_status == "context_exceeds_budget" or (
+            is_table and table_status != "preserved" and not chunk.metadata.get("section_title")
+        ):
+            limitations.append({"reason": "table_applicability_context_missing"})
+        for record in records:
+            if record.get("relationship_type", "modifies") != "modifies":
+                continue
+            if not revision or str(record.get("base_revision_id") or "") != revision:
+                continue
+            outcome = str(record.get("outcome") or "")
+            if outcome in irrelevant:
+                continue
+            scopes = record.get("target_provisions")
+            redacted = set(chunk.metadata.get("authority_redacted_provisions") or [])
+            if (
+                isinstance(scopes, list)
+                and scopes
+                and all(isinstance(scope, str) for scope in scopes)
+                and set(scopes) <= redacted
+            ):
+                continue
+            if outcome not in _ENFORCEABLE_OUTCOMES | {"duplicate"}:
+                reason = outcome or "unresolved_relationship"
+            elif not scopes:
+                reason = "missing_provision_scope"
+            elif str(record.get("modifier_revision_id") or "") not in present:
+                reason = "modifier_absent_from_context"
+            else:
+                reason = "provision_scope_not_resolved"
+            limitations.append(
+                {
+                    "reason": reason,
+                    "relationship_id": record.get("relationship_id"),
+                    "modifier_revision_id": record.get("modifier_revision_id"),
+                    "target_provisions": scopes or [],
+                }
+            )
+        metadata = dict(chunk.metadata)
+        if limitations:
+            metadata.update(authority_status="unresolved", authority_limitations=limitations)
+        output.append(replace(chunk, metadata=metadata))
     return output
 
 

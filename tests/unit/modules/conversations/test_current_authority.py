@@ -6,7 +6,10 @@ import uuid
 
 import pytest
 
-from app.modules.conversations.current_authority import remove_superseded_provisions
+from app.modules.conversations.current_authority import (
+    annotate_authority_limitations,
+    remove_superseded_provisions,
+)
 from app.modules.conversations.ports import ContextChunk
 
 pytestmark = pytest.mark.unit
@@ -120,3 +123,110 @@ def test_scope_is_not_applied_when_modifier_is_absent_from_recall() -> None:
     ]
     base_chunk = _chunk(revision=base, records=records, content="Section 21\nHistorical text.")
     assert remove_superseded_provisions([base_chunk], records)[0].content == base_chunk.content
+
+
+@pytest.mark.parametrize(
+    "outcome",
+    [
+        "ungoverned_or_incomplete_metadata",
+        "not_in_active_index",
+        "source_cap_exceeded",
+        "candidate_cap_exceeded",
+    ],
+)
+def test_live_shaped_incomplete_edges_do_not_prove_current_authority(outcome: str) -> None:
+    base = uuid.uuid4()
+    chunk = _chunk(revision=base, content="78. General rebate: 15% or 1,000,000.")
+    records = [
+        {
+            "relationship_type": "modifies",
+            "outcome": outcome,
+            "base_revision_id": str(base),
+            "modifier_revision_id": str(uuid.uuid4()),
+            "modifier_effective_from": None,
+            "target_provisions": [],
+        }
+    ]
+    selected = remove_superseded_provisions([chunk], records)
+    assert selected[0].content == chunk.content
+    assert selected[0].metadata["authority_status"] == "unresolved"
+    assert selected[0].metadata["authority_limitations"][0]["reason"] == outcome
+    assert "authority_status" not in chunk.metadata
+
+
+@pytest.mark.parametrize("outcome", ["outside_as_of", "inactive", "stale_or_replaced_revision"])
+def test_nonapplicable_amendment_does_not_taint_historical_evidence(outcome: str) -> None:
+    base = uuid.uuid4()
+    chunk = _chunk(revision=base, content="The contractual fee is 15%.")
+    selected = remove_superseded_provisions(
+        [chunk],
+        [
+            {
+                "base_revision_id": str(base),
+                "outcome": outcome,
+                "target_provisions": [],
+            }
+        ],
+    )
+    assert "authority_status" not in selected[0].metadata
+
+
+def test_modifier_recalled_then_budgeted_out_cannot_establish_authority() -> None:
+    base = uuid.uuid4()
+    chunk = _chunk(revision=base, content="78. Rebate: 15%.")
+    selected = annotate_authority_limitations(
+        [chunk],
+        [
+            {
+                "base_revision_id": str(base),
+                "modifier_revision_id": str(uuid.uuid4()),
+                "outcome": "already_in_recall",
+                "target_provisions": ["Section 78"],
+            }
+        ],
+    )
+    assert selected[0].metadata["authority_limitations"][0]["reason"] == (
+        "modifier_absent_from_context"
+    )
+
+
+@pytest.mark.asyncio
+async def test_exact_text_and_arithmetic_cannot_greenlight_unresolved_authority() -> None:
+    from app.core.config import ChatConfig
+    from app.modules.conversations.grounding_service import GroundingService
+
+    base = uuid.uuid4()
+    original = _chunk(revision=base, content="The investment rebate is 15%.")
+    selected = remove_superseded_provisions(
+        [original],
+        [
+            {
+                "base_revision_id": str(base),
+                "outcome": "ungoverned_or_incomplete_metadata",
+                "target_provisions": [],
+            }
+        ],
+    )
+    grounding = GroundingService(ChatConfig())
+    answer = "The investment rebate is 15%. [1]\n\n60,000 × 15% = 9,000. [1]"  # noqa: RUF001
+    before = await grounding.map_claims(answer, [original])
+    after = await grounding.map_claims(answer, selected)
+    assert before.grounded is True
+    assert after.grounded is False
+    assert all(claim["verification"] == "unverified" for claim in after.claims)
+    assert all(claim["evidence_support"] == "supported" for claim in after.claims)
+    assert all(claim["authority_status"] == "unresolved" for claim in after.claims)
+
+
+def test_legacy_orphan_table_is_flagged_without_erasing_source_text() -> None:
+    from dataclasses import replace
+
+    chunk = replace(
+        _chunk(revision=uuid.uuid4(), content="Income | Rate\n450000 | 0%"),
+        metadata={"element_type": "table"},
+    )
+    selected = remove_superseded_provisions([chunk], [])
+    assert selected[0].content == chunk.content
+    assert selected[0].metadata["authority_limitations"] == [
+        {"reason": "table_applicability_context_missing"}
+    ]

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from app.core.config import ChunkingConfig, ChunkingStrategy
@@ -26,6 +28,100 @@ from app.platform.providers.contracts.document_parser import (
 )
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "scope,first_row",
+    [
+        ("১.২ স্বাভাবিক ব্যক্তি: ২০২৮-২০২৯ এবং ২০২৯-২০৩০ করবর্ষের জন্য করহার", "৪,৫০,০০০ | শূন্য"),  # noqa: RUF001
+        ("Enterprise subscriptions renewed in 2028 only", "First 450000 units | zero"),
+    ],
+)
+async def test_table_preserves_preceding_scope_across_page_and_row_splits(
+    scope: str, first_row: str
+) -> None:
+    table = _table_parsed(
+        caption="Rates are below:",
+        header="Band | Rate",
+        rows=[first_row, *[f"Next {i} units | 10 percent" for i in range(30)]],
+        page_start=16,
+        page_end=16,
+    )
+    paragraph = ParsedElement(
+        text=scope,
+        element_type=ParsedElementType.PARAGRAPH,
+        page_start=15,
+        page_end=15,
+        char_start=0,
+        char_end=len(scope),
+    )
+    parsed = replace(
+        table,
+        text=scope + "\n\n" + table.text,
+        elements=(
+            paragraph,
+            ParsedElement(text="", element_type=ParsedElementType.PAGE_BREAK),
+            *table.elements,
+        ),
+    )
+    config = ChunkingConfig(
+        strategy=ChunkingStrategy.STRUCTURE, target_tokens=80, max_tokens=100, min_tokens=1
+    )
+    chunks, _ = await ChunkingService(config=config).split_document(parsed)
+    groups = [c for c in chunks if c.chunk_metadata.get("table_row_group")]
+    assert len(groups) > 1
+    for chunk in groups:
+        assert scope in chunk.content
+        assert "Band | Rate" in chunk.content
+        assert chunk.chunk_metadata["table_context_status"] == "preserved"
+        assert chunk.page_start == 15
+        assert chunk.page_end == 16
+        assert chunk.token_count <= 100
+
+
+@pytest.mark.asyncio
+async def test_table_does_not_inherit_context_from_another_table() -> None:
+    table = _table_parsed(
+        caption="Rates", header="Band | Rate", rows=["400000 | 0%"], page_start=1, page_end=1
+    )
+    second = replace(table.elements[0], text="Band | Rate\n450000 | 0%")
+    parsed = replace(table, elements=(*table.elements, second))
+    config = ChunkingConfig(strategy=ChunkingStrategy.STRUCTURE, min_tokens=1)
+    chunks, _ = await ChunkingService(config=config).split_document(parsed)
+    assert len(chunks) == 2
+    assert "400000" not in chunks[1].content
+    assert chunks[1].chunk_metadata["table_context_status"] == "not_available"
+
+
+@pytest.mark.asyncio
+async def test_table_retains_parent_period_and_child_category() -> None:
+    table = _table_parsed(
+        caption="Rates", header="Band | Rate", rows=["450000 | 0%"], page_start=3, page_end=3
+    )
+    parent = ParsedElement(
+        text="2028 renewals",
+        element_type=ParsedElementType.HEADING,
+        heading_level=1,
+        char_start=0,
+        page_start=1,
+    )
+    child = ParsedElement(
+        text="Enterprise customers",
+        element_type=ParsedElementType.HEADING,
+        heading_level=2,
+        char_start=50,
+        page_start=2,
+    )
+    parsed = replace(table, elements=(parent, child, *table.elements))
+    chunks, _ = await ChunkingService(
+        config=ChunkingConfig(strategy=ChunkingStrategy.STRUCTURE)
+    ).split_document(parsed)
+    table_chunk = next(c for c in chunks if c.chunk_metadata.get("element_type") == "table")
+    assert "2028 renewals" in table_chunk.content
+    assert "Enterprise customers" in table_chunk.content
+    assert table_chunk.char_start == 0
+    assert table_chunk.page_start == 1
 
 
 def _markdown_parsed() -> ParsedDocument:

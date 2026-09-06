@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from app.modules.knowledge.services.chunking.models import ChunkingContext, DraftChunk
 from app.modules.knowledge.services.chunking.token_counting_service import TokenCountingService
 from app.platform.providers.contracts.document_parser import ParsedElement, ParsedElementType
@@ -50,6 +52,7 @@ def pack_elements(
     chunks: list[DraftChunk] = []
     current_section_title: str | None = None
     buffer: DraftChunk | None = None
+    preceding: ParsedElement | None = None
 
     for element in elements:
         if element.element_type is ParsedElementType.PAGE_BREAK:
@@ -65,6 +68,47 @@ def pack_elements(
             if buffer is not None:
                 chunks.append(buffer)
                 buffer = None
+            # A caption extracted from the last line (e.g. "rates are below")
+            # is not the scope of a table. Carry the preceding source paragraph
+            # and heading into indexed content, so retrieval and generation see
+            # the same context. Never synthesize applicability from a filename.
+            context_parts = list(
+                dict.fromkeys(
+                    part
+                    for part in (
+                        *(element.metadata.get("heading_path") or [current_section_title]),
+                        preceding.text.strip() if preceding is not None else None,
+                    )
+                    if part and part not in draft.content
+                )
+            )
+            table_context = "\n\n".join(context_parts)
+            if (
+                table_context
+                and token_counter.count(table_context) <= context.config.max_tokens // 2
+            ):
+                draft.metadata["table_context"] = table_context
+                draft.metadata["table_context_status"] = "preserved"
+                draft.content = f"{table_context}\n\n{draft.content}"
+                draft.char_start = preceding.char_start if preceding else draft.char_start
+                draft.page_start = preceding.page_start if preceding else draft.page_start
+                for key, attribute in (
+                    ("heading_context_char_start", "char_start"),
+                    ("heading_context_page_start", "page_start"),
+                ):
+                    origin = element.metadata.get(key)
+                    current = getattr(draft, attribute)
+                    if isinstance(origin, int):
+                        setattr(
+                            draft,
+                            attribute,
+                            min(origin, current) if current is not None else origin,
+                        )
+            else:
+                draft.metadata["table_context_status"] = (
+                    "context_exceeds_budget" if table_context else "not_available"
+                )
+            token_count = token_counter.count(draft.content)
             if token_count > context.config.max_tokens:
                 chunks.extend(
                     _split_table_rows(
@@ -76,7 +120,10 @@ def pack_elements(
                 )
             else:
                 chunks.append(draft)
+            preceding = None
             continue
+
+        preceding = element
 
         if buffer is None:
             if token_count > context.config.max_tokens:
@@ -143,7 +190,9 @@ def _split_table_rows(
             heading_level=draft.heading_level,
         )
     prefix = "\n".join(
-        value.strip() for value in (caption, header) if isinstance(value, str) and value.strip()
+        value.strip()
+        for value in (draft.metadata.get("table_context"), caption, header)
+        if isinstance(value, str) and value.strip()
     )
     groups: list[list[str]] = []
     current: list[str] = []
@@ -169,6 +218,9 @@ def _split_table_rows(
             "table_row_group": True,
         }
         if token_counter.count(content) > context.config.max_tokens:
+            # This row cannot fit with its scope. Preserve the failure marker
+            # through fallback splits; those fragments cannot prove applicability.
+            metadata["table_context_status"] = "context_exceeds_budget"
             chunks.extend(
                 fallback.split_text(
                     content,
@@ -204,7 +256,31 @@ def chunk_by_sections(
     fallback: RecursiveFallbackChunkStrategy,
     strategy_name: str,
 ) -> list[DraftChunk]:
-    sections = group_sections(list(context.parsed.elements))
+    # A subsection heading does not replace its parent's period/category scope.
+    elements: list[ParsedElement] = []
+    heading_path: list[tuple[int, ParsedElement]] = []
+    for element in context.parsed.elements:
+        if element.element_type is ParsedElementType.HEADING:
+            level = element.heading_level or 1
+            while heading_path and heading_path[-1][0] >= level:
+                heading_path.pop()
+            heading_path.append((level, element))
+        elements.append(
+            replace(
+                element,
+                metadata={
+                    **element.metadata,
+                    "heading_path": [heading.text.strip() for _, heading in heading_path],
+                    "heading_context_char_start": heading_path[0][1].char_start
+                    if heading_path
+                    else None,
+                    "heading_context_page_start": heading_path[0][1].page_start
+                    if heading_path
+                    else None,
+                },
+            )
+        )
+    sections = group_sections(elements)
     chunks: list[DraftChunk] = []
     for section in sections:
         section_tokens = sum(token_counter.count(element.text) for element in section)

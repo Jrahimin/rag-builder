@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Sequence
 from dataclasses import dataclass
 
@@ -110,5 +111,22 @@ class PromptBuilder:
                     for item in relationships
                 )
                 header = f"{header} relationships={relation_text}"
+            # Source structure is evidence, never a trusted instruction. JSON keeps
+            # embedded newlines from impersonating another evidence header.
+            for key in (
+                "section_title",
+                "heading_path",
+                "table_context_status",
+                "authority_status",
+                "authority_limitations",
+            ):
+                if chunk.metadata.get(key):
+                    value = chunk.metadata[key]
+                    encoded = (
+                        value
+                        if key == "authority_status" and value == "unresolved"
+                        else (json.dumps(value, ensure_ascii=False))
+                    )
+                    header += f" {key}={encoded}"
             lines.append(f"{header}\n{chunk.content}")
         return "\n\n".join(lines)

@@ -880,12 +880,23 @@ class GroundingService:
                         else None
                     )
                     verification = _combine_claim_verification(lexical, semantic)
+            # Lexical/semantic similarity and correct arithmetic do not resolve
+            # amendment scope. Do not give these claims a false green status.
+            evidence_support = verification
+            authority_unresolved = any(
+                chunk.metadata.get("authority_status") == "unresolved"
+                for _, chunk in draft.evidence_chunks
+            )
+            if verification is ClaimVerification.SUPPORTED and authority_unresolved:
+                verification = ClaimVerification.UNVERIFIED
             claim_grounded = verification is ClaimVerification.SUPPORTED
             supported += int(claim_grounded)
             unverified += int(verification is ClaimVerification.UNVERIFIED)
             cited += int(draft.has_valid_citation)
             claims.append(
                 AnswerClaim(
+                    evidence_support=evidence_support,
+                    authority_status="unresolved" if authority_unresolved else "not_assessed",
                     claim_id=f"claim-{draft.index}",
                     text=draft.text,
                     grounded=claim_grounded,
@@ -1072,6 +1083,20 @@ def _select_evidence_span(
     max_chars: int,
 ) -> _SelectedSpan | None:
     """Choose a scored passage, complete chunk, or deterministic match-local span."""
+    if chunk.metadata.get("element_type") == "table":
+        # A numeric passage can score highly while excluding the table's scope.
+        # Admit the whole table unit or omit it; do not transfer a passage score
+        # to a larger span that was never scored.
+        if len(chunk.content) > max_chars:
+            return None
+        return _SelectedSpan(
+            text=chunk.content,
+            char_start=0,
+            char_end=len(chunk.content),
+            derivation="complete_chunk",
+            semantic_score=chunk.semantic_score,
+            semantic_span_aligned=True,
+        )
     passage_start = chunk.passage_char_start
     passage_end = chunk.passage_char_end
     if (
@@ -1223,12 +1248,18 @@ def _evidence_unit(
     unit_id = content_hash(
         f"evidence-unit:v1:{chunk.chunk_id}:{span.char_start}:{span.char_end}:{span_hash}"
     )
-    document_start = (
+    document_start: int | None = (
         chunk.char_start + span.char_start if chunk.char_start is not None else span.char_start
     )
-    document_end = (
+    document_end: int | None = (
         chunk.char_start + span.char_end if chunk.char_start is not None else span.char_end
     )
+    if chunk.metadata.get("table_context") or chunk.metadata.get("table_row_group"):
+        # Repeated table headings/row prefixes are not a contiguous slice of the
+        # parsed document. Report its source envelope; local evidence offsets and
+        # hashes still identify exactly the text shown to generation.
+        document_start = chunk.char_start
+        document_end = chunk.char_end
     metadata = {
         **chunk.metadata,
         "evidence_unit_id": unit_id,

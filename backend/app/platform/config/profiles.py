@@ -33,7 +33,7 @@ from app.core.generation_models import GENERATION_MODEL_REGISTRY
 from app.core.runtime_validation import ProductionConfigurationError
 from app.platform.domain.language_detection import LANGUAGE_METADATA_SCHEMA_VERSION
 
-PROFILE_REGISTRY_VERSION = "2026-09-03"
+PROFILE_REGISTRY_VERSION = "2026-09-06"
 
 
 class CertificationStatus(StrEnum):
@@ -160,7 +160,7 @@ _COMMON_CHUNKING = _frozen_mapping(
         "structure_score_threshold": 0.55,
         "long_block_token_threshold": 600,
         "similarity_drop_threshold": 0.35,
-        "chunker_version": "3.0.0",
+        "chunker_version": "3.1.0",
         "token_count_method": "unicode_property_v1",
         "ocr_confidence_threshold": 0.5,
     }

@@ -36,6 +36,7 @@ from app.modules.conversations.notices import (
     Notice,
     insufficient_evidence_notice,
     scope_excludes_effective_modifier_notice,
+    unresolved_authority_notice,
     web_evidence_used_notice,
 )
 from app.modules.conversations.ports import (
@@ -789,6 +790,15 @@ class ChatService:
         )
         question_language = detect_language(current_content).primary_language or "en"
         notices: list[Notice] = []
+        unresolved_chunks = [
+            str(chunk.chunk_id)
+            for chunk in selected
+            if chunk.metadata.get("authority_status") == "unresolved"
+        ]
+        if unresolved_chunks:
+            notices.append(
+                unresolved_authority_notice(language=question_language, chunk_ids=unresolved_chunks)
+            )
         if scope_current_authority is not None:
             effective_modifiers = _effective_scope_modifier_records(
                 retrieval_result.diagnostics.get("modifies_expansion_records") or []

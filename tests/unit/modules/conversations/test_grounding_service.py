@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from dataclasses import replace
 
 import pytest
 
@@ -18,6 +19,29 @@ from app.platform.providers.contracts.embedding import (
 )
 
 pytestmark = pytest.mark.unit
+
+
+def test_table_passage_cannot_detach_rates_from_their_period() -> None:
+    content = "Renewals in 2028 only.\nBand | Rate\nFirst 450000 | 0%\nNext 300000 | 10%"
+    chunk = replace(
+        _chunk(
+            content=content,
+            semantic_score=0.9,
+            passage_semantic_score=0.99,
+            passage_char_start=content.index("Band"),
+            passage_char_end=len(content),
+        ),
+        metadata={"element_type": "table", "table_context": "Renewals in 2028 only."},
+        char_start=100,
+        char_end=500,
+    )
+    evidence = GroundingService(ChatConfig()).assess("renewal rates", [chunk])
+    assert evidence.admitted_units
+    unit = evidence.admitted_units[0]
+    assert unit.content == content
+    assert unit.char_start == 100
+    assert unit.char_end == 500
+    assert unit.evidence_span_hash == unit.chunk_hash
 
 
 def _chunk(

@@ -55,6 +55,13 @@ class ChunkValidationService:
             if len(merged) == 1:
                 break
             chunk = merged[index]
+            # Table context/row headers form an atomic evidence boundary. A
+            # minimum-size heuristic must not join tables from different periods
+            # or attach an unrelated paragraph under a table's applicability.
+            neighbors = merged[max(0, index - 1) : index + 2]
+            if any(item.metadata.get("element_type") == "table" for item in neighbors):
+                index += 1
+                continue
             if self._token_counter.count(chunk.content) >= config.min_tokens:
                 index += 1
                 continue
@@ -105,7 +112,11 @@ class ChunkValidationService:
             is_heading_only = (
                 chunk.heading_level is not None and self._token_counter.count(chunk.content) <= 12
             )
-            if is_heading_only and index + 1 < len(chunks):
+            if (
+                is_heading_only
+                and index + 1 < len(chunks)
+                and chunks[index + 1].metadata.get("element_type") != "table"
+            ):
                 merged = self._merge_adjacent(chunk, chunks[index + 1])
                 result.append(merged)
                 index += 2

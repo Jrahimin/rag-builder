@@ -1642,10 +1642,16 @@ export interface components {
          * @description A generated answer segment linked to zero or more evidence locations.
          */
         AnswerClaim: {
+            /**
+             * Authority Status
+             * @default not_assessed
+             */
+            authority_status: string;
             /** Claim Id */
             claim_id: string;
             /** Evidence */
             evidence?: components["schemas"]["ClaimEvidence"][];
+            evidence_support?: components["schemas"]["ClaimVerification"] | null;
             /** Grounded */
             grounded: boolean;
             /** Text */
@@ -2668,6 +2674,12 @@ export interface components {
          * @description Durable citation stored on assistant messages.
          */
         CitationSnapshot: {
+            /** Authority Limitations */
+            authority_limitations?: {
+                [key: string]: unknown;
+            }[];
+            /** Authority Status */
+            authority_status?: string | null;
             /** Char End */
             char_end?: number | null;
             /** Char Start */
