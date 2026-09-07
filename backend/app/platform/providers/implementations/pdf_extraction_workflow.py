@@ -231,7 +231,7 @@ class PdfExtractionWorkflow(BaseDocumentParserProvider):
 
         if summary.partial_extraction:
             warnings.append(
-                f"Partial extraction: {summary.failed_page_count + summary.empty_page_count} "
+                f"Partial extraction: {summary.total_page_count - summary.accepted_page_count} "
                 f"of {summary.total_page_count} pages were not indexed."
             )
 

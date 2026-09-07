@@ -131,6 +131,7 @@ class KnowledgeSourceMetadataReader:
             return []
         modifier = aliased(SourceMetadataRevision, name="modifier_revision")
         base = aliased(SourceMetadataRevision, name="base_revision")
+        declared_base = aliased(SourceMetadataRevision, name="declared_base_revision")
         edge_rows = (
             await self._session.execute(
                 select(
@@ -138,7 +139,7 @@ class KnowledgeSourceMetadataReader:
                     SourceRevisionRelationship.target_provisions.label("target_provisions"),
                     SourceRevisionRelationship.project_id.label("relationship_project_id"),
                     SourceRevisionRelationship.source_revision_id.label("modifier_revision_id"),
-                    SourceRevisionRelationship.target_revision_id.label("base_revision_id"),
+                    base.id.label("base_revision_id"),
                     modifier.project_id.label("modifier_project_id"),
                     modifier.document_id.label("modifier_document_id"),
                     modifier.source_group_id.label("modifier_source_group_id"),
@@ -155,10 +156,23 @@ class KnowledgeSourceMetadataReader:
                     base.effective_to.label("base_effective_to"),
                 )
                 .join(modifier, modifier.id == SourceRevisionRelationship.source_revision_id)
-                .join(base, base.id == SourceRevisionRelationship.target_revision_id)
+                .join(
+                    declared_base, declared_base.id == SourceRevisionRelationship.target_revision_id
+                )
+                # A metadata-only correction must not disconnect incoming amendments.
+                # Do not transfer edges to a different document, source group or content.
+                .join(
+                    base,
+                    and_(
+                        base.document_id == declared_base.document_id,
+                        base.project_id == declared_base.project_id,
+                        base.source_group_id == declared_base.source_group_id,
+                        base.content_hash == declared_base.content_hash,
+                    ),
+                )
                 .where(
                     SourceRevisionRelationship.relationship_type == SourceRelationshipType.MODIFIES,
-                    SourceRevisionRelationship.target_revision_id.in_(base_revision_ids),
+                    base.id.in_(base_revision_ids),
                 )
             )
         ).all()
@@ -285,6 +299,10 @@ def _modifier_outcome(
         and row.base_project_id == project_id
     ):
         return "cross_project_or_generation"
+    # Old revisions may have incomplete metadata precisely because a correction
+    # fixed it. They must not poison the currently selected modifier's authority.
+    if selected_revision is not None and selected_revision != row.modifier_revision_id:
+        return "stale_or_replaced_revision"
     required_metadata = (
         row.modifier_document_id,
         row.modifier_source_group_id,
@@ -359,6 +377,7 @@ def _canonical_source_scope(
             SourceMetadataRevision.source_group_id,
             SourceMetadataRevision.title,
             SourceMetadataRevision.source_type,
+            SourceMetadataRevision.content_hash,
             SourceMetadataRevision.revision_number,
             SourceMetadataRevision.revision_label,
             SourceMetadataRevision.published_date,
@@ -412,6 +431,7 @@ def _canonical_source_scope(
             ranked_activations.c.source_group_id,
             ranked_activations.c.title,
             ranked_activations.c.source_type,
+            ranked_activations.c.content_hash,
             ranked_activations.c.revision_number,
             ranked_activations.c.revision_label,
             ranked_activations.c.published_date,
@@ -448,14 +468,28 @@ def _canonical_source_scope(
         or_(state.c.effective_from.is_(None), state.c.effective_from <= reference_date),
         or_(state.c.effective_to.is_(None), state.c.effective_to >= reference_date),
     )
+    replaced_revision = aliased(SourceMetadataRevision)
+    replacing_document = aliased(Document)
     applicable_replacements = (
-        select(SourceRevisionRelationship.target_revision_id)
+        select(
+            replaced_revision.document_id.label("target_document_id"),
+            replaced_revision.source_group_id.label("target_group_id"),
+            replaced_revision.content_hash.label("target_content_hash"),
+            state.c.document_id.label("replacing_document_id"),
+        )
+        .select_from(SourceRevisionRelationship)
         .join(
             state,
             state.c.source_revision_id == SourceRevisionRelationship.source_revision_id,
         )
+        .join(
+            replaced_revision, replaced_revision.id == SourceRevisionRelationship.target_revision_id
+        )
+        .join(replacing_document, replacing_document.id == state.c.document_id)
         .where(
             SourceRevisionRelationship.project_id == project_id,
+            replaced_revision.project_id == project_id,
+            replacing_document.deleted_at.is_(None),
             SourceRevisionRelationship.relationship_type == SourceRelationshipType.REPLACES,
             state.c.lifecycle_status == SourceLifecycleStatus.ACTIVE,
             interval_applies,
@@ -464,7 +498,12 @@ def _canonical_source_scope(
     )
     has_replacement = exists(
         select(literal(1)).where(
-            applicable_replacements.c.target_revision_id == state.c.source_revision_id
+            applicable_replacements.c.target_document_id == state.c.document_id,
+            applicable_replacements.c.target_group_id == state.c.source_group_id,
+            applicable_replacements.c.target_content_hash == state.c.content_hash,
+            # A metadata revision replacing an earlier revision of the same file
+            # must not suppress its own current content.
+            applicable_replacements.c.replacing_document_id != state.c.document_id,
         )
     )
 
@@ -510,6 +549,10 @@ def _canonical_source_scope(
             literal(False),
         )
 
+    # Complete replacements govern even when the old file was left active.
+    # Otherwise relevance ranking could choose the obsolete edition. The same
+    # date-scoped rule applies to an explicit historical assessment date.
+    applicable = and_(applicable, ~has_replacement)
     exclusion_reason = case(
         (applicable, None),
         (state.c.lifecycle_status == SourceLifecycleStatus.DRAFT, "draft"),
@@ -522,6 +565,7 @@ def _canonical_source_scope(
             ),
             "retired_replaced",
         ),
+        (has_replacement, "source_replaced"),
         else_="not_applicable",
     )
     return (

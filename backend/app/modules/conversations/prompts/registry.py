@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-GROUNDED_PROMPT_VERSION = "v9"
+GROUNDED_PROMPT_VERSION = "v11"
 """Provenance identifier stamped on messages and citations.  Change only via git."""
 
 
@@ -43,7 +43,9 @@ _CANONICAL_TEMPLATE = PromptTemplate(
         "or rate, "
         "compute the result using the cited rule and show the calculation steps. Cite the "
         "block that states the governing rate or rule on both the rate sentence and the "
-        "shown arithmetic. The user's own supplied amount does not need a citation. For yes/no "
+        "shown arithmetic. The user's own supplied amount does not need a citation. "
+        "Table data rows and numbered calculation steps each need their own supporting "
+        "citation; a citation in another paragraph does not cover an uncited table. For yes/no "
         "questions, state the answer first, then provide the supporting fact with its citation. "
         "When an evidence block header shows effective or superseded dates, state which value "
         "applies to the period asked about. A validated conversation interpretation, if present, "
@@ -67,8 +69,11 @@ _CANONICAL_TEMPLATE = PromptTemplate(
         "adjustment does not mean the adjustment is zero. Do not assume away missing rules, "
         "eligibility or conflicting periods to complete a calculation. If a necessary rule "
         "or applicability condition is unresolved, explain the supported steps and the "
-        "missing dependency, without presenting a final payable amount. Ask for a period "
-        "when different evidenced periods would change the answer and none was supplied. "
+        "missing dependency, without presenting a final payable amount. Honor an explicit "
+        "user period first. Otherwise use the trusted Project's default period policy and "
+        "retrieval reference date, and state the resulting period assumption. When no Project "
+        "default resolves the period, ask if different evidenced periods change the answer. "
+        "Never substitute an older period merely because its rules are easier to retrieve. "
         "Evidence marked authority_status=unresolved may be described only as what that "
         "source says; it cannot establish a currently applicable rule or a final calculation. "
         "Do not infer amendment scope or effective dates from publication order."

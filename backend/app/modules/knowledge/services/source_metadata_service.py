@@ -45,6 +45,20 @@ _REVISION_NOT_FOUND = {
 }
 
 
+def _has_modification_cycle(adjacency: dict[uuid.UUID, set[uuid.UUID]], start: uuid.UUID) -> bool:
+    """Iterative traversal avoids recursion limits for long source histories."""
+    pending = list(adjacency.get(start, set()))
+    visited: set[uuid.UUID] = set()
+    while pending:
+        target = pending.pop()
+        if target == start:
+            return True
+        if target not in visited:
+            visited.add(target)
+            pending.extend(adjacency.get(target, set()))
+    return False
+
+
 class SourceMetadataService:
     """Validates, persists, activates, and resolves source metadata revisions."""
 
@@ -192,7 +206,7 @@ class SourceMetadataService:
                 message="generation must be between 0 and the current Project generation.",
                 code="source_generation_invalid",
             )
-        rows = await self._repository.state_at(resolved)
+        rows = await self._repository.state_at(resolved, include_deleted=generation is not None)
         revisions = [revision for _, revision in rows]
         relationships, overlaps = await self._response_context(revisions)
         return SourceStateResponse(
@@ -266,6 +280,7 @@ class SourceMetadataService:
         self._repository.add(revision)
         await self._repository.flush()
 
+        target_groups: set[uuid.UUID] = set()
         for relation in data.relationships:
             target = await self._repository.get_revision(relation.target_revision_id)
             if target is None:
@@ -277,6 +292,25 @@ class SourceMetadataService:
                 raise BadRequestError(
                     message="A source revision cannot relate to itself.",
                     code="source_relationship_self_reference",
+                )
+            if (
+                relation.relationship_type == SourceRelationshipType.MODIFIES
+                and target.document_id == document.id
+            ):
+                raise BadRequestError(
+                    message="A document cannot modify an earlier metadata revision of itself.",
+                    code="source_relationship_self_reference",
+                )
+            if target.source_group_id in target_groups:
+                raise BadRequestError(
+                    message="Select only one target revision per source history.",
+                    code="source_relationship_duplicate_history",
+                )
+            target_groups.add(target.source_group_id)
+            if await self._repository.get_document(target.document_id) is None:
+                raise BadRequestError(
+                    message="A target document has been deleted. Remove or update the link.",
+                    code="source_relationship_target_deleted",
                 )
             if (
                 relation.relationship_type == SourceRelationshipType.REPLACES
@@ -329,6 +363,7 @@ class SourceMetadataService:
                 message="Source revision and Project scope do not match.",
                 code="source_project_scope_mismatch",
             )
+        await self._validate_modification_graph(project, revision)
         project.source_metadata_generation += 1
         activation = SourceActivationEvent(
             id=uuid.uuid4(),
@@ -352,6 +387,64 @@ class SourceMetadataService:
         await self._repository.flush()
         return activation
 
+    async def _validate_modification_graph(
+        self, project: Project, revision: SourceMetadataRevision
+    ) -> None:
+        """Check the prospective active graph, including restoration of an old revision.
+
+        Revision IDs alone cannot detect A -> B -> A across metadata corrections.
+        Stable source histories are the vertices. Only selected metadata participates;
+        obsolete declarations cannot prevent correcting the current graph.
+        """
+        rows = await self._repository.state_at(
+            project.source_metadata_generation, include_deleted=False
+        )
+        revisions = [item for _, item in rows if item.document_id != revision.document_id]
+        revisions.append(revision)
+        relationships = await self._repository.relationships_for([item.id for item in revisions])
+        targets = await self._repository.get_revisions(
+            {edge.target_revision_id for edges in relationships.values() for edge in edges}
+        )
+        current_by_document = {item.document_id: item for item in revisions}
+        replaced_documents: set[uuid.UUID] = set()
+        for source in revisions:
+            for edge in relationships.get(source.id, []):
+                if edge.relationship_type != SourceRelationshipType.REPLACES:
+                    continue
+                target = targets.get(edge.target_revision_id)
+                selected = current_by_document.get(target.document_id) if target else None
+                if (
+                    target
+                    and selected
+                    and source.document_id != target.document_id
+                    and selected.source_group_id == target.source_group_id
+                    and selected.content_hash == target.content_hash
+                ):
+                    replaced_documents.add(target.document_id)
+        # A replaced file still has an activation pointer for historical retrieval.
+        # Its old outgoing declarations must not survive the current edition's edits.
+        current_by_group: dict[uuid.UUID, SourceMetadataRevision] = {}
+        for item in revisions:
+            if item.document_id in replaced_documents:
+                continue
+            selected = current_by_group.get(item.source_group_id)
+            if selected is None or item.revision_number > selected.revision_number:
+                current_by_group[item.source_group_id] = item
+        revisions = list(current_by_group.values())
+        adjacency: dict[uuid.UUID, set[uuid.UUID]] = {}
+        for source in revisions:
+            for edge in relationships.get(source.id, []):
+                if edge.relationship_type != SourceRelationshipType.MODIFIES:
+                    continue
+                target = targets.get(edge.target_revision_id)
+                if target is not None:
+                    adjacency.setdefault(source.source_group_id, set()).add(target.source_group_id)
+        if _has_modification_cycle(adjacency, revision.source_group_id):
+            raise BadRequestError(
+                message="Circular source history: remove the reverse modification link first.",
+                code="source_relationship_cycle",
+            )
+
     async def _response_context(
         self,
         revisions: list[SourceMetadataRevision],
@@ -373,10 +466,20 @@ class SourceMetadataService:
             relationships = await self._repository.relationships_for([revision.id])
         revision_relationships = relationships.get(revision.id, [])
         warnings: list[str] = []
-        if revision.lifecycle_status == SourceLifecycleStatus.ACTIVE and (
-            revision.effective_from is None or revision.effective_to is None
+        if (
+            revision.lifecycle_status == SourceLifecycleStatus.ACTIVE
+            and revision.effective_from is None
         ):
             warnings.append("missing_effective_dates")
+        modifiers = [
+            edge
+            for edge in revision_relationships
+            if edge.relationship_type == SourceRelationshipType.MODIFIES
+        ]
+        if modifiers and revision.effective_from is None:
+            warnings.append("modifies_requires_effective_from_for_retrieval")
+        if any(not edge.target_provisions for edge in modifiers):
+            warnings.append("modifies_scope_unresolved_requires_current_rule_evidence")
         has_overlap = (
             revision.id in overlaps
             if overlaps is not None

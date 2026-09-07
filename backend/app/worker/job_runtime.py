@@ -170,7 +170,11 @@ async def run_durable_job(
                         job_id=str(job_uuid),
                     )
                     return
-                if not will_retry and failed_run.document_id is not None:
+                if (
+                    not will_retry
+                    and failed_run.document_id is not None
+                    and failure.code != "index_build_corpus_changed"
+                ):
                     documents = DocumentRepository(session, project_uuid)
                     document = await documents.get_by_id(
                         failed_run.document_id,

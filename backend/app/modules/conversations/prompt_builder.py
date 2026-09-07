@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import date
 
 from app.models.message import MessageRole
 from app.modules.conversations.ports import ContextChunk
@@ -33,9 +34,12 @@ class PromptBuilder:
         domain_instructions: str = "",
         prompt_profile: str = "default",
         interpretation: str | None = None,
+        reference_date: date | None = None,
     ) -> list[ChatMessage]:
         context_block = self._format_context(context_chunks)
         policy_parts: list[str] = []
+        if reference_date is not None:
+            policy_parts.append(f"Trusted retrieval reference date: {reference_date.isoformat()}")
         if prompt_profile != "default":
             policy_parts.append(f"Trusted Project prompt profile: {prompt_profile}")
         if domain_instructions.strip():

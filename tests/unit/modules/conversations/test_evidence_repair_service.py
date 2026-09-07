@@ -45,6 +45,8 @@ async def run_repair(
     coverage=None,
     verification_finish="stop",
     verification_error=None,
+    calls=None,
+    selected_context=None,
 ):
     config = config or ChatConfig()
     queries = (
@@ -109,7 +111,7 @@ async def run_repair(
                 "modifies_expansion_records": initial_records or [],
             },
         ),
-        selected=[],
+        selected=selected_context or [],
         retrieval=retrieval,
         llm=llm,
         grounding=GroundingService(config),
@@ -117,7 +119,47 @@ async def run_repair(
         retrieval_config=RetrievalConfig(),
         max_output_tokens=1024,
     )
+    if calls is not None:
+        calls.extend(llm.generate.call_args_list)
     return result, retrieval, inputs
+
+
+async def test_four_dependencies_preserve_source_authority_in_coverage_input():
+    calls = []
+    sources = [
+        replace(
+            chunk(
+                f"Governing rule for dependency {i}.",
+                source_role="supporting",
+                source_type="official_guidance",
+                source_effective_from="2026-07-01",
+            ),
+            page_number=20,
+        )
+        for i in range(4)
+    ]
+    result, retrieval, _ = await run_repair(
+        [([source], {}) for source in sources],
+        queries=[f"dependency {i}" for i in range(4)],
+        calls=calls,
+        selected_context=[
+            chunk("Obsolete proposed forty-percent exemption", source_role="reference")
+        ],
+    )
+    assert result.diagnostics["status"] == "recovered"
+    assert retrieval.retrieve.await_count == 4
+    planning_input = json.loads(calls[0].args[0][1].content)
+    assert "Obsolete proposed forty-percent exemption" not in json.dumps(planning_input)
+    assert planning_input["source_hints"][0]["source"]["source_role"] == "reference"
+    coverage_input = json.loads(calls[1].args[0][1].content)
+    assert all(
+        item["source"]["source_role"] == "supporting"
+        and item["source"]["source_type"] == "official_guidance"
+        and item["source"]["source_effective_from"] == "2026-07-01"
+        and item["page_number"] == 20
+        and item["chunk_index"] == 1
+        for item in coverage_input["context"]
+    )
 
 
 async def test_recovers_separate_salary_band_and_rebate_dependencies_with_original_scope():
@@ -230,7 +272,7 @@ async def test_final_budget_must_retain_every_dependency():
     assert not result.selected
 
 
-@pytest.mark.parametrize("queries", [[], [" "], ["q"] * 4, ["q" * 501]])
+@pytest.mark.parametrize("queries", [[], [" "], ["q"] * 5, ["q" * 501]])
 async def test_invalid_plans_never_search_or_authorize_generation(queries):
     result, retrieval, _ = await run_repair([], queries=queries)
     assert result.decision is None
@@ -315,6 +357,99 @@ async def test_truncated_positive_verdict_cannot_enable_generation():
     )
     assert result.diagnostics["status"] == "coverage_incomplete"
     assert result.decision is None and not result.selected
+
+
+async def test_final_admitted_evidence_can_support_another_search_dependency():
+    terms = chunk("Refunds require a receipt and are limited to 45 days.")
+    receipt = chunk("Receipt records identify the purchase.")
+    verdict = {
+        "complete": True,
+        "missing": [],
+        "checks": [
+            {
+                "query_index": i,
+                "supported": True,
+                "evidence": [{"chunk_id": str(terms.chunk_id), "quote": terms.content}],
+            }
+            for i in range(2)
+        ],
+    }
+    result, _, _ = await run_repair(
+        [([terms], {}), ([receipt], {})],
+        queries=["refund time limit", "required receipt"],
+        coverage=verdict,
+    )
+    assert result.diagnostics["status"] == "recovered"
+
+
+async def test_rule_below_four_relevant_candidates_survives_for_completeness_review():
+    sources = [chunk(f"Refund policy background item {i}.") for i in range(4)]
+    rule = chunk("The governing refund period is 45 days.")
+    verdict = {
+        "complete": True,
+        "missing": [],
+        "checks": [
+            {
+                "query_index": 0,
+                "supported": True,
+                "evidence": [{"chunk_id": str(rule.chunk_id), "quote": rule.content}],
+            }
+        ],
+    }
+    result, _, _ = await run_repair(
+        [([*sources, rule], {})],
+        queries=["refund period"],
+        coverage=verdict,
+    )
+    assert result.diagnostics["status"] == "recovered"
+    assert rule.chunk_id in {c.chunk_id for c in result.selected}
+
+
+@pytest.mark.parametrize("label", ["E1", "E99"])
+async def test_short_passage_labels_bind_only_to_the_final_context(label):
+    source = chunk("Refunds are available for 45 days.")
+    coverage = {
+        "complete": True,
+        "missing": [],
+        "checks": [
+            {
+                "query_index": 0,
+                "supported": True,
+                "evidence": [{"chunk_id": label, "quote": source.content}],
+            }
+        ],
+    }
+    result, _, _ = await run_repair([([source], {})], queries=["refunds"], coverage=coverage)
+    assert (result.diagnostics["status"] == "recovered") is (label == "E1")
+    if label == "E1":
+        assert result.diagnostics["coverage"]["checks"][0]["chunk_ids"] == [str(source.chunk_id)]
+
+
+@pytest.mark.parametrize(
+    ("quote", "accepted"),
+    [
+        ("দফা (৩৬)-তে আয় বাদ। Rate: 10%.", True),
+        ("দফা (৩৬)-তে আয় বাদ। Rate: 15%.", False),
+        ("দফা (৩৬)-তে আয় বাদ নয়। Rate: 10%.", False),
+        ("দফা (৩৬)-তে আয় বাদ। Rate: 1 0%.", False),
+        ("দফা (৩৬)-তে আয় বাদ। Rate: 10.", False),
+    ],
+)
+async def test_ocr_quote_spacing_preserves_all_words_numbers_and_punctuation(quote, accepted):
+    source = chunk("দফা ( ৩৬ ) -তে\n\nআয় বাদ । Rate : 10 % .")
+    coverage = {
+        "complete": True,
+        "missing": [],
+        "checks": [
+            {
+                "query_index": 0,
+                "supported": True,
+                "evidence": [{"chunk_id": str(source.chunk_id), "quote": quote}],
+            }
+        ],
+    }
+    result, _, _ = await run_repair([([source], {})], queries=["Rate"], coverage=coverage)
+    assert (result.diagnostics["status"] == "recovered") is accepted
 
 
 @pytest.mark.parametrize(

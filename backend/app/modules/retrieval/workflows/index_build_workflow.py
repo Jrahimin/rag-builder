@@ -33,7 +33,7 @@ from app.platform.domain.language_detection import (
     normalize_routing_language,
 )
 from app.platform.jobs.contracts import JobProgressCallback
-from app.platform.jobs.errors import PermanentJobError
+from app.platform.jobs.errors import JobError, PermanentJobError
 from app.platform.providers.contracts.embedding import BaseEmbeddingProvider, EmbeddingPurpose
 
 
@@ -312,9 +312,10 @@ class IndexBuildWorkflow:
                 )
             )
             if actual != expected:
-                raise PermanentJobError(
+                raise JobError(
                     "Corpus changed while the isolated build was running.",
                     code="index_build_corpus_changed",
+                    retryable=True,
                     context={
                         "document_id": str(document_id),
                         "expected": expected,

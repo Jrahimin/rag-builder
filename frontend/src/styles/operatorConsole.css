@@ -4906,3 +4906,34 @@ code {
     min-height: 0;
   }
 }
+.source-modifications {
+  grid-column: 1 / -1;
+  min-width: 0;
+  border: 1px solid var(--border, #d8e0e8);
+  border-radius: 8px;
+  padding: 14px;
+}
+.source-modifications__options {
+  max-height: 220px;
+  overflow-y: auto;
+  margin: 12px 0;
+}
+.source-modifications__option {
+  display: flex;
+  align-items: start;
+  gap: 8px;
+  padding: 6px 0;
+}
+.source-modifications__option input {
+  flex: 0 0 auto;
+  width: auto;
+  margin-top: 3px;
+}
+.source-modifications__selected {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0;
+  overflow-wrap: anywhere;
+}

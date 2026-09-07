@@ -80,6 +80,7 @@ def test_pdf_extraction_workflow_accepts_partial_success_when_ocr_disabled() -> 
     assert "Readable budget allocation" in result.text
     assert result.structure_hints["partial_extraction"] is True
     assert result.structure_hints["success_ratio"] == 0.5
+    assert "Partial extraction: 1 of 2 pages were not indexed." in result.warnings
 
 
 def test_pdf_extraction_workflow_fails_when_all_pages_unrecoverable() -> None:

@@ -33,7 +33,7 @@ from app.core.generation_models import GENERATION_MODEL_REGISTRY
 from app.core.runtime_validation import ProductionConfigurationError
 from app.platform.domain.language_detection import LANGUAGE_METADATA_SCHEMA_VERSION
 
-PROFILE_REGISTRY_VERSION = "2026-09-06"
+PROFILE_REGISTRY_VERSION = "2026-09-07"
 
 
 class CertificationStatus(StrEnum):
@@ -160,7 +160,7 @@ _COMMON_CHUNKING = _frozen_mapping(
         "structure_score_threshold": 0.55,
         "long_block_token_threshold": 600,
         "similarity_drop_threshold": 0.35,
-        "chunker_version": "3.1.0",
+        "chunker_version": "3.2.0",
         "token_count_method": "unicode_property_v1",
         "ocr_confidence_threshold": 0.5,
     }
@@ -562,13 +562,18 @@ def compatibility_errors(settings: Settings) -> list[str]:
             "google_max_attempts",
         },
     )
+    # The OCR page ceiling is a deployment resource limit, not a provider/model
+    # compatibility requirement. Keep it in job snapshots for reproducible jobs.
+    actual_ocr.pop("max_ocr_pages_per_document", None)
+    expected_ocr = dict(_json_value(index.ocr))
+    expected_ocr.pop("max_ocr_pages_per_document", None)
     actual_chunking = settings.chunking.model_dump(
         mode="json",
         exclude={"semantic_batch_size"},
     )
     for name, actual, expected in (
         ("parsing", actual_parsing, _json_value(index.parsing)),
-        ("OCR", actual_ocr, _json_value(index.ocr)),
+        ("OCR", actual_ocr, expected_ocr),
         ("chunking", actual_chunking, _json_value(index.chunking)),
     ):
         if actual != expected:

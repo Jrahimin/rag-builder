@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import time
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
@@ -597,6 +598,7 @@ class ChatService:
             ],
             request_filters=request_filters,
             reference_time=turn_resolution_mod.utc_reference_datetime(),
+            domain_instructions=self._domain_instructions,
         )
         if non_knowledge_response is not None:
             resolved = bypass_resolution(payload, reason="casual_turn")
@@ -674,10 +676,21 @@ class ChatService:
             expansion_records=expansion_records,
         )
         repair_usage: ChatUsage | None = None
+        calculation_review = evidence.sufficient and _requires_calculation_coverage(
+            retrieval_query, chunks
+        )
         if (
-            evidence.reason is InsufficientEvidenceReason.UNRESOLVED_AUTHORITY
-            and scope_current_authority is None
-        ):
+            evidence.reason is InsufficientEvidenceReason.UNRESOLVED_AUTHORITY or calculation_review
+        ) and scope_current_authority is None:
+            # Similarity to a worked example does not prove that its category,
+            # period or complete rule schedule applies to a new calculation.
+            # An unsuccessful review must not fall back to those original hits.
+            if calculation_review:
+                evidence = replace(
+                    evidence,
+                    sufficient=False,
+                    reason=InsufficientEvidenceReason.UNRESOLVED_AUTHORITY,
+                )
             await self._release_read_transaction()
             repaired = await repair_knowledge_evidence(
                 inputs=resolved.retrieval,
@@ -690,9 +703,13 @@ class ChatService:
                 retrieval_config=self._retrieval_config,
                 max_output_tokens=self._llm_max_tokens(),
                 release_read_transaction=self._release_read_transaction,
+                domain_instructions=self._domain_instructions,
             )
             repair_usage = repaired.usage
             repair_diagnostics = dict(repaired.diagnostics)
+            repair_diagnostics["trigger"] = (
+                "calculation_completeness" if calculation_review else "unresolved_authority"
+            )
             if not self._store_candidate_trace:
                 repair_diagnostics["branches"] = [
                     {key: value for key, value in branch.items() if key != "retrieval"}
@@ -827,6 +844,7 @@ class ChatService:
             domain_instructions=self._domain_instructions,
             prompt_profile=self._prompt_profile,
             interpretation=resolved.interpretation,
+            reference_date=(resolved.retrieval.as_of or payload.reference_time).date(),
         )
         question_language = detect_language(current_content).primary_language or "en"
         notices: list[Notice] = []
@@ -2003,3 +2021,19 @@ def _optional_int(value: object) -> int | None:
     if isinstance(value, bool) or not isinstance(value, (int, str)):
         raise TypeError("Execution measurements must be integer-compatible values")
     return int(value)
+
+
+def _requires_calculation_coverage(question: str, chunks: list[ContextChunk]) -> bool:
+    governed = any(
+        c.metadata.get("source_role") in {"primary", "supporting"}
+        and c.metadata.get("source_lifecycle_status") in {"active", "retired"}
+        for c in chunks
+    )
+    return governed and bool(
+        re.search(
+            r"\b(?:calculat(?:e|ed|ing|ion|ions)|recalculat(?:e|ion)|"
+            r"comput(?:e|ing|ation)|breakdown)\b|\bhow much\b|হিসাব|হিসেব|গণনা|পরিগণনা",
+            question,
+            re.IGNORECASE,
+        )
+    )

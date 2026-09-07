@@ -274,7 +274,10 @@ def test_explicit_deployment_profile_rejects_incompatible_provider_wiring() -> N
         validate_profile_compatibility(settings)
 
 
-def test_explicit_hosted_profile_accepts_exact_index_and_calibration_wiring() -> None:
+@pytest.mark.parametrize("ocr_page_limit", [300, 400])
+def test_explicit_hosted_profile_accepts_exact_index_and_calibration_wiring(
+    ocr_page_limit: int,
+) -> None:
     settings = Settings(
         runtime={"capability_profile_id": "hosted-managed"},
         llm={"backend": "openai", "model": "gpt-5.6-luna"},
@@ -284,11 +287,14 @@ def test_explicit_hosted_profile_accepts_exact_index_and_calibration_wiring() ->
             "enabled": True,
             "backend": "google_vision",
             "bangla_backend": "google_vision",
-            "max_ocr_pages_per_document": 300,
+            "max_ocr_pages_per_document": ocr_page_limit,
         },
     )
 
     validate_profile_compatibility(settings)
+    settings.ocr.enabled = False
+    with pytest.raises(ValueError, match="OCR settings drift"):
+        validate_profile_compatibility(settings)
 
 
 def test_explicit_deployment_profile_rejects_index_profile_drift() -> None:

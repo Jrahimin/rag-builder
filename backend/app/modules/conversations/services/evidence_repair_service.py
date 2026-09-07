@@ -24,17 +24,32 @@ from app.modules.conversations.prompts.evidence_repair import (
     EVIDENCE_REPAIR_PROMPT,
     EVIDENCE_REPAIR_VERSION,
 )
-from app.modules.conversations.services.evidence_coverage import CoverageVerdict
+from app.modules.conversations.services.evidence_coverage import (
+    MAX_REPAIR_DEPENDENCIES,
+    CoverageVerdict,
+)
 from app.modules.conversations.turn_resolution import EffectiveRetrievalInputs
 from app.platform.providers.contracts.llm import BaseLLMProvider, ChatMessage, ChatRole, ChatUsage
 from app.platform.providers.errors import ProviderError
 
-REPAIR_TIMEOUT_SECONDS = 60
+REPAIR_TIMEOUT_SECONDS = 120
+REPAIR_CHUNKS_PER_DEPENDENCY = 8
+_SOURCE_CONTEXT_KEYS = (
+    "source_title",
+    "source_type",
+    "source_role",
+    "source_revision_id",
+    "source_effective_from",
+    "source_effective_to",
+    "source_lifecycle_status",
+    "authority_status",
+    "authority_limitations",
+)
 
 
 class _SearchPlan(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    queries: list[str] = Field(max_length=3)
+    queries: list[str] = Field(max_length=MAX_REPAIR_DEPENDENCIES)
 
 
 @dataclass
@@ -57,6 +72,7 @@ async def repair_knowledge_evidence(
     retrieval_config: RetrievalConfig,
     max_output_tokens: int,
     release_read_transaction: Callable[[], Awaitable[None]] | None = None,
+    domain_instructions: str = "",
 ) -> EvidenceRepairResult:
     """Never mix active snapshots, relax filters, or promote unknown authority.
 
@@ -67,6 +83,16 @@ async def repair_knowledge_evidence(
     """
     diagnostics: dict[str, Any] = {"version": EVIDENCE_REPAIR_VERSION, "status": "not_attempted"}
     result = EvidenceRepairResult([], None, diagnostics)
+    reference_date = (
+        inputs.as_of.date().isoformat()
+        if inputs.as_of
+        else initial.diagnostics.get("reference_date")
+    )
+    trusted_context = ""
+    if reference_date:
+        trusted_context += f"Trusted retrieval reference date: {reference_date}\n"
+    if domain_instructions.strip():
+        trusted_context += f"Trusted Project domain instructions:\n{domain_instructions.strip()}\n"
     snapshot = tuple(
         initial.diagnostics.get(k) for k in ("index_build_id", "source_metadata_generation")
     )
@@ -80,17 +106,25 @@ async def repair_knowledge_evidence(
             result.usage = ChatUsage(None, None)
             completion = await llm.generate(
                 [
-                    ChatMessage(role=ChatRole.SYSTEM, content=EVIDENCE_REPAIR_PROMPT),
+                    ChatMessage(
+                        role=ChatRole.SYSTEM, content=trusted_context + EVIDENCE_REPAIR_PROMPT
+                    ),
                     ChatMessage(
                         role=ChatRole.USER,
                         content=json.dumps(
                             {
                                 "question": inputs.query,
-                                "evidence": [
+                                # Unresolved excerpts can contain obsolete/proposed
+                                # numbers. Plan dependencies from the question, not
+                                # those numbers; source identity only guides discovery.
+                                "source_hints": [
                                     {
                                         "title": c.filename,
-                                        "excerpt": c.content[:1200],
-                                        "limitations": c.metadata.get("authority_limitations", []),
+                                        "source": {
+                                            k: c.metadata[k]
+                                            for k in _SOURCE_CONTEXT_KEYS
+                                            if k in c.metadata and k != "authority_limitations"
+                                        },
                                     }
                                     for c in selected[:4]
                                 ],
@@ -142,7 +176,9 @@ async def repair_knowledge_evidence(
                 decision, units = await assess_and_select_knowledge(
                     grounding=grounding,
                     context_builder=ContextBuilder(
-                        chat_config.model_copy(update={"max_context_chunks": 2})
+                        chat_config.model_copy(
+                            update={"max_context_chunks": REPAIR_CHUNKS_PER_DEPENDENCY}
+                        )
                     ),
                     chat_config=chat_config,
                     question=query,
@@ -175,7 +211,12 @@ async def repair_knowledge_evidence(
                 groups.append(units)
                 decisions.append(decision)
             # Give every dependency a first unit before adding any second units.
-            ordered = [group[i] for i in range(2) for group in groups if len(group) > i]
+            ordered = [
+                group[i]
+                for i in range(REPAIR_CHUNKS_PER_DEPENDENCY)
+                for group in groups
+                if len(group) > i
+            ]
             # A later branch can discover authority limitations on an earlier
             # dependency. Reconcile all relationships, including after budgeting.
             reconciled = remove_superseded_provisions(ordered, records)
@@ -199,9 +240,14 @@ async def repair_knowledge_evidence(
                 await release_read_transaction()
             planning_usage = result.usage
             result.usage = ChatUsage(None, None)
+            # Short passage labels prevent the model from confusing long UUIDs
+            # belonging to different excerpts of the same document. The map is
+            # local to this final context; persisted provenance keeps real IDs.
+            labels = {str(c.chunk_id): f"E{i}" for i, c in enumerate(budgeted, start=1)}
+            source_ids = {label: source_id for source_id, label in labels.items()}
             verification = await llm.generate(
                 [
-                    ChatMessage(role=ChatRole.SYSTEM, content=COVERAGE_PROMPT),
+                    ChatMessage(role=ChatRole.SYSTEM, content=trusted_context + COVERAGE_PROMPT),
                     ChatMessage(
                         role=ChatRole.USER,
                         content=json.dumps(
@@ -211,17 +257,28 @@ async def repair_knowledge_evidence(
                                 "queries": [
                                     {
                                         "query": query,
-                                        "candidate_ids": [str(c.chunk_id) for c in group],
+                                        "candidate_ids": [
+                                            labels[str(c.chunk_id)]
+                                            for c in group
+                                            if str(c.chunk_id) in labels
+                                        ],
                                     }
                                     for query, group in zip(queries, groups, strict=True)
                                 ],
                                 "authority_limitations": records,
                                 "context": [
                                     {
-                                        "chunk_id": str(c.chunk_id),
+                                        "chunk_id": labels[str(c.chunk_id)],
+                                        "chunk_index": c.chunk_index,
+                                        "page_number": c.page_number,
                                         "title": c.filename,
                                         "content": c.content,
                                         "source_revision_id": c.metadata.get("source_revision_id"),
+                                        "source": {
+                                            k: c.metadata[k]
+                                            for k in _SOURCE_CONTEXT_KEYS
+                                            if k in c.metadata
+                                        },
                                     }
                                     for c in budgeted
                                 ],
@@ -258,6 +315,9 @@ async def repair_knowledge_evidence(
                 diagnostics["status"] = "coverage_incomplete"
                 return result
             verdict = CoverageVerdict.model_validate_json(verification.content)
+            for check in verdict.checks:
+                for quote in check.evidence:
+                    quote.chunk_id = source_ids.get(quote.chunk_id, quote.chunk_id)
             # Keep quotes internal: candidate trace opt-out must not leak source
             # text through the verifier's diagnostic payload.
             diagnostics["coverage"] = {
@@ -290,6 +350,21 @@ async def repair_knowledge_evidence(
             )
             diagnostics["status"] = "recovered"
             return result
-    except (ProviderError, TimeoutError, ValidationError):
+    except (ProviderError, TimeoutError, ValidationError) as exc:
         diagnostics["status"] = "repair_unavailable"
+        diagnostics["failure_reason"] = (
+            "timeout"
+            if isinstance(exc, TimeoutError)
+            else "invalid_model_response"
+            if isinstance(exc, ValidationError)
+            else "provider_error"
+        )
+        if isinstance(exc, ProviderError):
+            diagnostics["provider"] = exc.provider_name
+            diagnostics["error_code"] = exc.code
+        elif isinstance(exc, ValidationError):
+            diagnostics["validation_errors"] = [
+                {"type": error["type"], "loc": list(error["loc"])}
+                for error in exc.errors(include_input=False, include_url=False)
+            ]
         return result

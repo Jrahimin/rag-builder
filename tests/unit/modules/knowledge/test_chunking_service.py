@@ -61,6 +61,18 @@ async def test_table_preserves_preceding_scope_across_page_and_row_splits(
         text=scope + "\n\n" + table.text,
         elements=(
             paragraph,
+            ParsedElement(
+                text="Rates continue on the following page.",
+                element_type=ParsedElementType.PARAGRAPH,
+                page_start=15,
+                page_end=15,
+            ),
+            ParsedElement(
+                text="15",
+                element_type=ParsedElementType.PARAGRAPH,
+                page_start=15,
+                page_end=15,
+            ),
             ParsedElement(text="", element_type=ParsedElementType.PAGE_BREAK),
             *table.elements,
         ),

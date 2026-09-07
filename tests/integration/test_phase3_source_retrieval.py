@@ -6,8 +6,13 @@ import uuid
 
 import pytest
 from httpx import AsyncClient
-from sqlalchemy.ext.asyncio import AsyncConnection
+from sqlalchemy import delete, select
+from sqlalchemy.exc import DBAPIError
+from sqlalchemy.ext.asyncio import AsyncConnection, async_sessionmaker
 
+from app.models.organization import Organization
+from app.models.project import Project
+from app.modules.knowledge.repositories.source_metadata_repository import SourceMetadataRepository
 from app.platform.jobs.contracts import JobDefinition
 from tests.integration.knowledge_helpers import (
     run_captured_document_jobs,
@@ -21,6 +26,42 @@ pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 _CSRF = {"X-CSRF-Token": "phase3-test"}
 _COOKIES = {"ape_admin_csrf": "phase3-test"}
 _QUERY = "phase three governed policy comet identifier"
+
+
+@pytest.mark.usefixtures("db_client")
+async def test_metadata_lock_allows_foreign_key_checks_but_serializes_updates(
+    integration_connection: AsyncConnection,
+) -> None:
+    sessions = async_sessionmaker(integration_connection.engine, expire_on_commit=False)
+    project_id = uuid.uuid4()
+    organization_id = uuid.uuid4()
+    async with sessions() as setup:
+        setup.add(Organization(id=organization_id, name=f"Source lock {organization_id}"))
+        await setup.flush()
+        setup.add(
+            Project(
+                id=project_id, organization_id=organization_id, name=f"Source lock {project_id}"
+            )
+        )
+        await setup.commit()
+    try:
+        async with sessions() as writer, sessions() as reader, sessions() as competitor:
+            assert await SourceMetadataRepository(writer, project_id).lock_project()
+            # PostgreSQL uses KEY SHARE for references to an existing parent.
+            check = select(Project.id).where(Project.id == project_id)
+            assert await reader.scalar(
+                check.with_for_update(read=True, key_share=True, nowait=True)
+            )
+            await reader.rollback()
+            with pytest.raises(DBAPIError):
+                await competitor.execute(check.with_for_update(key_share=True, nowait=True))
+            await competitor.rollback()
+            await writer.rollback()
+    finally:
+        async with sessions() as cleanup:
+            await cleanup.execute(delete(Project).where(Project.id == project_id))
+            await cleanup.execute(delete(Organization).where(Organization.id == organization_id))
+            await cleanup.commit()
 
 
 async def _project(client: AsyncClient) -> str:
@@ -597,3 +638,30 @@ async def test_depth_one_modifier_expansion_is_current_scoped_and_incoming_only(
     outgoing_data = outgoing_only.json()["data"]
     assert base_document not in {str(item["document_id"]) for item in outgoing_data["results"]}
     assert outgoing_data["diagnostics"]["modifies_expansion_status"] == "suppressed_document_scope"
+
+    corrected = await _revision(
+        db_client,
+        project_id,
+        base_document,
+        {
+            "title": "Base authority corrected title",
+            "revision_label": "Metadata correction only",
+            "published_date": "2025-01-01",
+            "effective_from": "2025-01-01",
+            "lifecycle_status": "active",
+            "source_role": "primary",
+            "change_reason": "Correct metadata without changing the source content",
+        },
+    )
+    after_correction = await db_client.post(
+        f"/api/v1/projects/{project_id}/search",
+        json={"query": "base authority only", "top_k": 5, "document_id": base_document},
+    )
+    assert after_correction.status_code == 200, after_correction.text
+    records = after_correction.json()["data"]["diagnostics"]["modifies_expansion_records"]
+    assert any(
+        record["modifier_revision_id"] == modifier_revision["id"]
+        and record["base_revision_id"] == corrected["id"]
+        and record["outcome"] == "expanded"
+        for record in records
+    )

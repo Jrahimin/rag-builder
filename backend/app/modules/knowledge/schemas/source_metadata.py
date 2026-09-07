@@ -77,6 +77,16 @@ class SourceRevisionCreate(BaseModel):
         edges = {(item.relationship_type, item.target_revision_id) for item in self.relationships}
         if len(edges) != len(self.relationships):
             raise ValueError("relationships must not contain duplicate edges")
+        if len({item.target_revision_id for item in self.relationships}) != len(self.relationships):
+            raise ValueError("a target cannot be both replaced and modified")
+        if (
+            sum(
+                item.relationship_type is SourceRelationshipType.REPLACES
+                for item in self.relationships
+            )
+            > 1
+        ):
+            raise ValueError("a revision can replace only one previous source revision")
         return self
 
 

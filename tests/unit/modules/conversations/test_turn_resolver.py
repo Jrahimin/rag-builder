@@ -9,7 +9,10 @@ from datetime import UTC, datetime
 
 import pytest
 
-from app.modules.conversations.prompts.turn_resolution import TURN_RESOLUTION_PROMPT_VERSION
+from app.modules.conversations.prompts.turn_resolution import (
+    TURN_RESOLUTION_PROMPT_VERSION,
+    build_turn_resolution_messages,
+)
 from app.modules.conversations.turn_resolution import (
     TurnOutcome,
     TurnResolutionInput,
@@ -26,6 +29,18 @@ from app.platform.providers.implementations.echo_chat import EchoLLMProvider
 pytestmark = pytest.mark.unit
 
 _REFERENCE = datetime(2026, 8, 1, tzinfo=UTC)
+
+
+def test_project_default_is_trusted_without_becoming_a_user_period_binding():
+    payload = _payload().model_copy(
+        update={"domain_instructions": "Use the current assessment year when omitted."}
+    )
+    messages = build_turn_resolution_messages(payload)
+    assert payload.domain_instructions in messages[0].content
+    body = json.loads(messages[1].content)
+    assert "domain_instructions" not in body
+    assert body["current_message"] == payload.current_message
+    assert body["request_filters"]["as_of"] is None
 
 
 def _payload(history_content: str = "What is the rebate?") -> TurnResolutionInput:

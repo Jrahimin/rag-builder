@@ -52,13 +52,14 @@ def pack_elements(
     chunks: list[DraftChunk] = []
     current_section_title: str | None = None
     buffer: DraftChunk | None = None
-    preceding: ParsedElement | None = None
+    preceding: list[ParsedElement] = []
 
     for element in elements:
         if element.element_type is ParsedElementType.PAGE_BREAK:
             continue
         if element.element_type is ParsedElementType.HEADING:
             current_section_title = element.text.strip()
+            preceding = []
 
         draft = element_to_draft(element, section_title=current_section_title)
         draft.metadata["strategy_used"] = strategy_name
@@ -77,7 +78,7 @@ def pack_elements(
                     part
                     for part in (
                         *(element.metadata.get("heading_path") or [current_section_title]),
-                        preceding.text.strip() if preceding is not None else None,
+                        *(item.text.strip() for item in preceding),
                     )
                     if part and part not in draft.content
                 )
@@ -90,8 +91,8 @@ def pack_elements(
                 draft.metadata["table_context"] = table_context
                 draft.metadata["table_context_status"] = "preserved"
                 draft.content = f"{table_context}\n\n{draft.content}"
-                draft.char_start = preceding.char_start if preceding else draft.char_start
-                draft.page_start = preceding.page_start if preceding else draft.page_start
+                draft.char_start = preceding[0].char_start if preceding else draft.char_start
+                draft.page_start = preceding[0].page_start if preceding else draft.page_start
                 for key, attribute in (
                     ("heading_context_char_start", "char_start"),
                     ("heading_context_page_start", "page_start"),
@@ -120,10 +121,18 @@ def pack_elements(
                 )
             else:
                 chunks.append(draft)
-            preceding = None
+            preceding = []
             continue
 
-        preceding = element
+        # OCR layout paragraphs are often single lines. Retain a bounded run,
+        # including across page breaks, so a footer cannot replace legal scope.
+        preceding.append(element)
+        while len(preceding) > 1 and (
+            len(preceding) > 32
+            or token_counter.count("\n\n".join(item.text for item in preceding))
+            > context.config.max_tokens // 2
+        ):
+            preceding.pop(0)
 
         if buffer is None:
             if token_count > context.config.max_tokens:

@@ -11,7 +11,7 @@ from app.modules.conversations.turn_resolution import (
 )
 from app.platform.providers.contracts.llm import ChatMessage, ChatRole
 
-TURN_RESOLUTION_PROMPT_VERSION = "v5"
+TURN_RESOLUTION_PROMPT_VERSION = "v6"
 
 TURN_RESOLUTION_TEMPLATE = """\
 You interpret the current user message against bounded preceding conversation history.
@@ -55,6 +55,10 @@ Rules:
   missing. Put the user-facing question in clarification_question. If two dates or
   sources are named as alternatives, do not pick one; clarify.
 - fallback: you cannot safely interpret the turn.
+- A trusted Project default-period policy can govern an omitted period. Do not
+  clarify solely for that omission. Leave the period implicit in the effective
+  question for downstream policy resolution; never fabricate a user binding or
+  historical snapshot from the Project policy. Explicit user periods still win.
 - follow_up continues the same topic. correction replaces a prior active parameter.
   topic_change drops old topic-specific amounts and dates.
 - Emit only bindings needed for the current turn. Do not restate dropped amounts.
@@ -160,7 +164,17 @@ def build_turn_resolution_messages(payload: TurnResolutionInput) -> list[ChatMes
         "reference_time": payload.reference_time.isoformat(),
     }
     return [
-        ChatMessage(role=ChatRole.SYSTEM, content=TURN_RESOLUTION_TEMPLATE),
+        ChatMessage(
+            role=ChatRole.SYSTEM,
+            content=(
+                TURN_RESOLUTION_TEMPLATE
+                + (
+                    f"\nTrusted Project domain instructions:\n{payload.domain_instructions}"
+                    if payload.domain_instructions
+                    else ""
+                )
+            ),
+        ),
         ChatMessage(role=ChatRole.USER, content=json.dumps(body, ensure_ascii=False)),
     ]
 

@@ -21,6 +21,15 @@ from app.platform.providers.contracts.embedding import (
 pytestmark = pytest.mark.unit
 
 
+async def test_numbered_markdown_heading_does_not_become_a_factual_claim() -> None:
+    result = await GroundingService(ChatConfig()).map_claims(
+        "### 1. Tax breakdown\n\nThe rebate rate is 10%. [1]",
+        [_chunk(content="The rebate rate is 10%.")],
+    )
+    assert len(result.claims) == 1
+    assert result.claims[0]["text"] == "The rebate rate is 10%."
+
+
 def test_table_passage_cannot_detach_rates_from_their_period() -> None:
     content = "Renewals in 2028 only.\nBand | Rate\nFirst 450000 | 0%\nNext 300000 | 10%"
     chunk = replace(

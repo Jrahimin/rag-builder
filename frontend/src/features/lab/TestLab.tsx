@@ -1,3 +1,4 @@
+import { SourceModificationPicker } from "../sources/SourceModificationPicker";
 import {
   Activity,
   Check,
@@ -59,6 +60,8 @@ import { formatBytes, formatDate, formatDuration, shortId } from "../../shared/f
 import { CorpusLifecycleActions } from "../projects/CorpusLifecycleActions";
 import {
   buildSourceUploadMetadata,
+  sourceModifications,
+  type SourceModification,
   buildSourceMetadataCorrection,
   hasInvalidEffectiveInterval,
   sourceMetadataDraftFromRevision,
@@ -713,10 +716,12 @@ function DocumentsTab({
   const [sourceChangeReason, setSourceChangeReason] = useState("");
   const [uploadMode, setUploadMode] = useState<SourceUploadMode>("independent");
   const [uploadTarget, setUploadTarget] = useState("");
+  const [uploadModifications, setUploadModifications] = useState<SourceModification[]>([]);
   const [metadataError, setMetadataError] = useState("");
   const [correctionOpen, setCorrectionOpen] = useState(false);
   const [correctionTreatment, setCorrectionTreatment] = useState<SourceCorrectionTreatment>("keep");
   const [correctionTarget, setCorrectionTarget] = useState("");
+  const [correctionModifications, setCorrectionModifications] = useState<SourceModification[]>([]);
   const [correctionDraft, setCorrectionDraft] = useState<SourceMetadataDraft | null>(null);
   const [correctionError, setCorrectionError] = useState("");
   const [savingCorrection, setSavingCorrection] = useState(false);
@@ -728,7 +733,7 @@ function DocumentsTab({
   const selected = pickLabDocument(documents, selectedId);
   const selectedSource = selected ? sourceForDocument(sourceState.data, selected.id) : undefined;
   const correctionTargets = sourceState.data?.items.filter(
-    (item) => item.revision.id !== selectedSource?.revision.id,
+    (item) => item.document_id !== selected?.id,
   );
   const relatedJobs = jobs
     .filter((job) => job.document_id === selected?.id || job.id === selected?.job_id)
@@ -745,7 +750,10 @@ function DocumentsTab({
     if (!file) return;
     setMetadataError("");
     const target = sourceState.data?.items.find((item) => item.revision.id === uploadTarget);
-    if (uploadMode !== "independent" && !target) {
+    if (
+      (uploadMode === "revision" && !target) ||
+      (uploadMode === "modifies" && !uploadModifications.length)
+    ) {
       setMetadataError("Select the existing source revision this upload relates to.");
       return;
     }
@@ -768,6 +776,7 @@ function DocumentsTab({
         filename: file.name,
         mode: uploadMode,
         target: target?.revision,
+        modifications: uploadModifications,
         draft,
         defaultReason: "Governed Test Lab upload",
       });
@@ -786,6 +795,7 @@ function DocumentsTab({
       setSourceChangeReason("");
       setUploadMode("independent");
       setUploadTarget("");
+      setUploadModifications([]);
       setSourceRole("primary");
       onSelect(document.id);
       if (document.job_id) onJob(document.job_id);
@@ -848,6 +858,7 @@ function DocumentsTab({
     setCorrectionDraft(sourceMetadataDraftFromRevision(selectedSource.revision));
     setCorrectionTreatment("keep");
     setCorrectionTarget("");
+    setCorrectionModifications(sourceModifications(selectedSource?.revision));
     setCorrectionError("");
     setCorrectionOpen(true);
   };
@@ -859,7 +870,10 @@ function DocumentsTab({
     const target = correctionTargets?.find(
       (item) => item.revision.id === correctionTarget,
     )?.revision;
-    if ((correctionTreatment === "revision" || correctionTreatment === "modifies") && !target) {
+    if (
+      (correctionTreatment === "revision" && !target) ||
+      (correctionTreatment === "modifies" && !correctionModifications.length)
+    ) {
       setCorrectionError("Select the existing source this correction relates to.");
       return;
     }
@@ -871,6 +885,7 @@ function DocumentsTab({
       current: selectedSource.revision,
       treatment: correctionTreatment,
       target,
+      modifications: correctionModifications,
       draft: correctionDraft,
     });
     if (!revision) return;
@@ -943,21 +958,31 @@ function DocumentsTab({
                 onChange={(event) => {
                   setUploadMode(event.target.value as SourceUploadMode);
                   setUploadTarget("");
+                  setUploadModifications([]);
                 }}
               >
                 <option value="independent">New independent source</option>
                 <option value="revision">Latest revision of an existing source</option>
-                <option value="modifies">Modifies an existing source</option>
+                <option value="modifies">Modifies one or more sources</option>
               </select>
             </label>
-            {uploadMode !== "independent" && (
+            {uploadMode === "revision" && (
               <label className="field-control">
                 <span>Existing source</span>
                 <select
                   aria-label="Existing source"
                   required
                   value={uploadTarget}
-                  onChange={(event) => setUploadTarget(event.target.value)}
+                  onChange={(event) => {
+                    setUploadTarget(event.target.value);
+                    setUploadModifications(
+                      sourceModifications(
+                        sourceState.data?.items.find(
+                          (item) => item.revision.id === event.target.value,
+                        )?.revision,
+                      ),
+                    );
+                  }}
                 >
                   <option value="">Select current source</option>
                   {(sourceState.data?.items ?? []).map((item) => (
@@ -968,6 +993,16 @@ function DocumentsTab({
                   ))}
                 </select>
               </label>
+            )}
+            {uploadMode !== "independent" && (
+              <SourceModificationPicker
+                projectId={projectId}
+                sources={(sourceState.data?.items ?? [])
+                  .map((item) => item.revision)
+                  .filter((revision) => revision.id !== uploadTarget)}
+                value={uploadModifications}
+                onChange={setUploadModifications}
+              />
             )}
             <label className="field-control">
               <span>Source role</span>
@@ -1084,7 +1119,10 @@ function DocumentsTab({
             className="button button--primary"
             type="button"
             disabled={
-              !selectedFile || upload.isPending || (uploadMode !== "independent" && !uploadTarget)
+              !selectedFile ||
+              upload.isPending ||
+              (uploadMode === "revision" && !uploadTarget) ||
+              (uploadMode === "modifies" && !uploadModifications.length)
             }
             onClick={() => void uploadFile(selectedFile ?? undefined)}
           >
@@ -1271,23 +1309,34 @@ function DocumentsTab({
                           onChange={(event) => {
                             setCorrectionTreatment(event.target.value as SourceCorrectionTreatment);
                             setCorrectionTarget("");
+                            setCorrectionModifications(
+                              sourceModifications(selectedSource?.revision),
+                            );
                           }}
                         >
                           <option value="keep">Keep this source's current treatment</option>
                           <option value="independent">New independent source</option>
                           <option value="revision">Latest revision of an existing source</option>
-                          <option value="modifies">Modifies an existing source</option>
+                          <option value="modifies">Modifies one or more sources</option>
                         </select>
                       </label>
-                      {(correctionTreatment === "revision" ||
-                        correctionTreatment === "modifies") && (
+                      {correctionTreatment === "revision" && (
                         <label className="field-control">
                           <span>Existing source</span>
                           <select
                             aria-label="Correction target source"
                             required
                             value={correctionTarget}
-                            onChange={(event) => setCorrectionTarget(event.target.value)}
+                            onChange={(event) => {
+                              setCorrectionTarget(event.target.value);
+                              setCorrectionModifications(
+                                sourceModifications(
+                                  correctionTargets?.find(
+                                    (item) => item.revision.id === event.target.value,
+                                  )?.revision,
+                                ),
+                              );
+                            }}
                           >
                             <option value="">Select source</option>
                             {correctionTargets?.map((item) => (
@@ -1297,6 +1346,16 @@ function DocumentsTab({
                             ))}
                           </select>
                         </label>
+                      )}
+                      {correctionTreatment !== "independent" && (
+                        <SourceModificationPicker
+                          projectId={projectId}
+                          sources={(correctionTargets ?? [])
+                            .map((item) => item.revision)
+                            .filter((revision) => revision.id !== correctionTarget)}
+                          value={correctionModifications}
+                          onChange={setCorrectionModifications}
+                        />
                       )}
                       <label className="field-control">
                         <span>Source title</span>
@@ -2005,6 +2064,7 @@ function MessagesTab({
     setActiveCitation(citationIndex);
   };
   const newConversation = async () => {
+    if (create.isPending || send.isPending || stream.isPending) return;
     try {
       const conversation = await create.mutateAsync(`Test Lab ${new Date().toLocaleString()}`);
       onConversation(conversation.id);
@@ -2029,6 +2089,7 @@ function MessagesTab({
   };
   const submit = async (event: FormEvent) => {
     event.preventDefault();
+    if (create.isPending || send.isPending || stream.isPending || !hasActiveCorpus) return;
     const submittedContent = content;
     const started = performance.now();
     try {
@@ -2110,7 +2171,7 @@ function MessagesTab({
             className="button button--secondary button--compact"
             type="button"
             onClick={() => void newConversation()}
-            disabled={create.isPending}
+            disabled={create.isPending || send.isPending || stream.isPending}
           >
             <Plus size={14} aria-hidden="true" />
             New test conversation
@@ -2149,7 +2210,7 @@ function MessagesTab({
             className="button button--primary"
             type="button"
             onClick={() => void newConversation()}
-            disabled={create.isPending}
+            disabled={create.isPending || send.isPending || stream.isPending}
           >
             New test conversation
           </button>
@@ -2228,6 +2289,7 @@ function MessagesTab({
                     required
                     rows={2}
                     value={content}
+                    disabled={create.isPending}
                     onChange={(event) => setContent(event.target.value)}
                     onKeyDown={(event) => {
                       if (event.key === "Enter" && !event.shiftKey) {
@@ -2264,7 +2326,9 @@ function MessagesTab({
                       className="lab-composer__send"
                       type="submit"
                       aria-label="Send message"
-                      disabled={send.isPending || stream.isPending || !hasActiveCorpus}
+                      disabled={
+                        create.isPending || send.isPending || stream.isPending || !hasActiveCorpus
+                      }
                     >
                       <Send size={16} aria-hidden="true" />
                       <span>{send.isPending || stream.isPending ? "Sending" : "Send"}</span>

@@ -1417,6 +1417,11 @@ def _answer_segments(answer: str) -> list[str]:
     """
     segments: list[str] = []
     for paragraph in regex.split(r"\n\s*\n", answer):
+        if _MARKDOWN_HEADING_PATTERN.fullmatch(paragraph.strip()):
+            # Do not split a numbered heading at "1." and turn its remaining
+            # title into an unsupported factual sentence.
+            segments.append(paragraph.strip())
+            continue
         paragraph_segments: list[str] = []
         for raw_segment in _SEGMENT_PATTERN.split(paragraph):
             segment = raw_segment.strip()

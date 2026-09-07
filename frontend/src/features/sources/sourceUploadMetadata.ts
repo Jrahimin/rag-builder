@@ -2,6 +2,27 @@ import type { SourceRevision, SourceRevisionCreate } from "../../api/operatorApi
 
 export type SourceUploadMode = "independent" | "revision" | "modifies";
 export type SourceCorrectionTreatment = "keep" | SourceUploadMode;
+export type SourceModification = {
+  target_revision_id: string;
+  target_provisions: string[];
+};
+
+export function sourceModifications(revision?: SourceRevision): SourceModification[] {
+  return (revision?.relationships ?? [])
+    .filter((edge) => edge.relationship_type === "modifies")
+    .map((edge) => ({
+      target_revision_id: edge.target_revision_id,
+      target_provisions: [...(edge.target_provisions ?? [])],
+    }));
+}
+
+function modificationEdges(items: SourceModification[]) {
+  return items.map((item) => ({
+    relationship_type: "modifies" as const,
+    target_revision_id: item.target_revision_id,
+    target_provisions: [...item.target_provisions],
+  }));
+}
 
 export type SourceMetadataDraft = {
   title: string;
@@ -18,6 +39,7 @@ type SourceUploadMetadataOptions = {
   filename: string;
   mode: SourceUploadMode;
   target?: SourceRevision;
+  modifications?: SourceModification[];
   draft: SourceMetadataDraft;
   defaultReason: string;
 };
@@ -46,6 +68,7 @@ export function buildSourceUploadMetadata({
   filename,
   mode,
   target,
+  modifications,
   draft,
   defaultReason,
 }: SourceUploadMetadataOptions): SourceRevisionCreate | undefined {
@@ -61,7 +84,11 @@ export function buildSourceUploadMetadata({
     draft.lifecycle !== "active" ||
     draft.role !== "primary";
 
-  if (!configured || (mode !== "independent" && !target)) return undefined;
+  const changes = modifications ?? (mode === "revision" ? sourceModifications(target) : []);
+  if (!configured) return undefined;
+  if (mode === "revision" && !target) throw new Error("Select the source being replaced.");
+  if (mode === "modifies" && !changes.length)
+    throw new Error("Select at least one source to modify.");
 
   return {
     activate: true,
@@ -78,13 +105,13 @@ export function buildSourceUploadMetadata({
     effective_from: draft.effectiveFrom || null,
     effective_to: draft.effectiveTo || null,
     relationships:
-      mode === "independent" || !target
+      mode === "independent"
         ? []
         : [
-            {
-              relationship_type: mode === "revision" ? "replaces" : "modifies",
-              target_revision_id: target.id,
-            },
+            ...(mode === "revision" && target
+              ? [{ relationship_type: "replaces" as const, target_revision_id: target.id }]
+              : []),
+            ...modificationEdges(changes),
           ],
   };
 }
@@ -93,6 +120,7 @@ type SourceMetadataCorrectionOptions = {
   current: SourceRevision;
   treatment: SourceCorrectionTreatment;
   target?: SourceRevision;
+  modifications?: SourceModification[];
   draft: SourceMetadataDraft;
 };
 
@@ -104,15 +132,25 @@ export function buildSourceMetadataCorrection({
   current,
   treatment,
   target,
+  modifications,
   draft,
 }: SourceMetadataCorrectionOptions): SourceRevisionCreate | undefined {
-  if ((treatment === "revision" || treatment === "modifies") && !target) return undefined;
+  if (treatment === "revision" && !target) return undefined;
+  const changes =
+    modifications ??
+    (treatment === "revision" ? sourceModifications(target) : sourceModifications(current));
+  if (treatment === "modifies" && !changes.length) return undefined;
 
   const title = draft.title.trim();
   const sourceType = draft.sourceType.trim();
   const changeReason = draft.changeReason.trim();
   const joinsExistingGroup = treatment === "revision" && target;
-  const createsSeparateGroup = treatment === "independent" || treatment === "modifies";
+  // Editing targets on an existing amendment must not change its stable identity.
+  // Detach only when explicitly independent or correcting a replacement into an amendment.
+  const createsSeparateGroup =
+    treatment === "independent" ||
+    (treatment === "modifies" &&
+      (current.relationships ?? []).some((edge) => edge.relationship_type === "replaces"));
   const baseRevisionNumber = createsSeparateGroup
     ? 0
     : joinsExistingGroup
@@ -134,15 +172,23 @@ export function buildSourceMetadataCorrection({
     effective_to: draft.effectiveTo || null,
     relationships:
       treatment === "revision" && target
-        ? [{ relationship_type: "replaces", target_revision_id: target.id }]
-        : treatment === "modifies" && target
-          ? [{ relationship_type: "modifies", target_revision_id: target.id }]
+        ? [
+            { relationship_type: "replaces", target_revision_id: target.id },
+            ...modificationEdges(changes),
+          ]
+        : treatment === "modifies"
+          ? modificationEdges(changes)
           : treatment === "keep"
-            ? (current.relationships ?? []).map((relationship) => ({
-                relationship_type: relationship.relationship_type,
-                target_revision_id: relationship.target_revision_id,
-                target_provisions: [...(relationship.target_provisions ?? [])],
-              }))
+            ? [
+                ...(current.relationships ?? [])
+                  .filter((edge) => edge.relationship_type !== "modifies")
+                  .map((relationship) => ({
+                    relationship_type: relationship.relationship_type,
+                    target_revision_id: relationship.target_revision_id,
+                    target_provisions: [...(relationship.target_provisions ?? [])],
+                  })),
+                ...modificationEdges(changes),
+              ]
             : [],
   };
 }

@@ -355,6 +355,45 @@ test("allows grounded chat when an active build exists even if documents are sti
   });
 });
 
+test("cannot send into the previous conversation while a new one is being created", async () => {
+  mockLabBase();
+  const conversation = {
+    id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+    project_id: projectFixture.id,
+    title: "First test",
+  };
+  let finishCreate!: (value: never) => void;
+  vi.spyOn(operatorApiClient, "createConversation")
+    .mockResolvedValueOnce(conversation as never)
+    .mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishCreate = resolve;
+        }),
+    );
+  vi.spyOn(operatorApiClient, "getMessages").mockResolvedValue({
+    items: [],
+    total: 0,
+    limit: 200,
+    offset: 0,
+  });
+  const send = vi.spyOn(operatorApiClient, "sendMessage");
+  renderOperatorComponent(<OperatorConsoleApp />, `/lab?project=${projectFixture.id}&tab=messages`);
+  await userEvent.click(
+    (await screen.findAllByRole("button", { name: "New test conversation" })).at(-1)!,
+  );
+  const composer = await screen.findByLabelText("Message");
+  await userEvent.type(composer, "Calculate my tax");
+  await userEvent.click(screen.getByRole("button", { name: "New test conversation" }));
+  expect(composer).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
+  fireEvent.submit(composer.closest("form")!);
+  expect(send).not.toHaveBeenCalled();
+  finishCreate({ ...conversation, id: "dddddddd-dddd-dddd-dddd-dddddddddddd" } as never);
+  await waitFor(() => expect(screen.getByLabelText("Message")).toBeEnabled());
+  expect(send).not.toHaveBeenCalled();
+});
+
 test("renders an explicit valid refusal when retrieval evidence is insufficient", async () => {
   mockLabBase();
   const conversationId = "dddddddd-dddd-dddd-dddd-dddddddddddd";

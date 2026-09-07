@@ -1,3 +1,4 @@
+import { SourceModificationPicker } from "../sources/SourceModificationPicker";
 import { ChevronRight, Database, FileClock, Plus, X } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -36,6 +37,8 @@ import {
 } from "./ProjectAISettingsFields";
 import {
   buildSourceUploadMetadata,
+  sourceModifications,
+  type SourceModification,
   buildSourceMetadataCorrection,
   hasInvalidEffectiveInterval,
   type SourceMetadataDraft,
@@ -156,6 +159,7 @@ type SourceRevisionForm = {
   reason: string;
   treatment: SourceCorrectionTreatment;
   target: string;
+  modifications: SourceModification[];
 };
 
 function dateInputValue(value: string | null | undefined) {
@@ -185,6 +189,7 @@ function sourceRevisionForm(
     reason: "",
     treatment: "keep",
     target: "",
+    modifications: sourceModifications(revision),
   };
 }
 
@@ -1173,6 +1178,7 @@ function ProjectSources({ project }: { project: Project }) {
   const [uploadTitle, setUploadTitle] = useState("");
   const [uploadMode, setUploadMode] = useState<SourceUploadMode>("independent");
   const [uploadTarget, setUploadTarget] = useState("");
+  const [uploadModifications, setUploadModifications] = useState<SourceModification[]>([]);
   const [uploadSourceType, setUploadSourceType] = useState("");
   const [uploadLifecycle, setUploadLifecycle] =
     useState<SourceMetadataDraft["lifecycle"]>("active");
@@ -1183,7 +1189,7 @@ function ProjectSources({ project }: { project: Project }) {
   const [uploadChangeReason, setUploadChangeReason] = useState("");
   const [form, setForm] = useState<SourceRevisionForm>(() => sourceRevisionForm(undefined, ""));
   const relationshipTargets = sourceState.data?.items.filter(
-    (item) => item.revision.id !== current?.revision.id,
+    (item) => item.document_id !== selectedDocument?.id,
   );
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -1210,7 +1216,10 @@ function ProjectSources({ project }: { project: Project }) {
     setError("");
     try {
       const target = sourceState.data?.items.find((item) => item.revision.id === uploadTarget);
-      if (uploadMode !== "independent" && !target) {
+      if (
+        (uploadMode === "revision" && !target) ||
+        (uploadMode === "modifies" && !uploadModifications.length)
+      ) {
         setError("Select the existing source revision this upload relates to.");
         return;
       }
@@ -1232,6 +1241,7 @@ function ProjectSources({ project }: { project: Project }) {
         filename: file.name,
         mode: uploadMode,
         target: target?.revision,
+        modifications: uploadModifications,
         draft,
         defaultReason: "Governed Operator upload",
       });
@@ -1240,6 +1250,7 @@ function ProjectSources({ project }: { project: Project }) {
       setUploadTitle("");
       setUploadMode("independent");
       setUploadTarget("");
+      setUploadModifications([]);
       setUploadSourceType("");
       setUploadLifecycle("active");
       setUploadSourceRole("primary");
@@ -1272,7 +1283,10 @@ function ProjectSources({ project }: { project: Project }) {
     const target = sourceState.data?.items.find(
       (item) => item.revision.id === form.target,
     )?.revision;
-    if ((form.treatment === "revision" || form.treatment === "modifies") && !target) {
+    if (
+      (form.treatment === "revision" && !target) ||
+      (form.treatment === "modifies" && !form.modifications.length)
+    ) {
       setError("Select the existing source this correction relates to.");
       return;
     }
@@ -1281,6 +1295,7 @@ function ProjectSources({ project }: { project: Project }) {
       current: current.revision,
       treatment: form.treatment,
       target,
+      modifications: form.modifications,
       draft: {
         title,
         sourceType,
@@ -1363,20 +1378,30 @@ function ProjectSources({ project }: { project: Project }) {
               onChange={(event) => {
                 setUploadMode(event.target.value as SourceUploadMode);
                 setUploadTarget("");
+                setUploadModifications([]);
               }}
             >
               <option value="independent">New independent source</option>
               <option value="revision">New revision of an existing source</option>
-              <option value="modifies">New source that modifies an existing source</option>
+              <option value="modifies">New source that modifies one or more sources</option>
             </select>
           </label>
-          {uploadMode !== "independent" && (
+          {uploadMode === "revision" && (
             <label className="field-control">
               <span>Existing source revision</span>
               <select
                 required
                 value={uploadTarget}
-                onChange={(event) => setUploadTarget(event.target.value)}
+                onChange={(event) => {
+                  setUploadTarget(event.target.value);
+                  setUploadModifications(
+                    sourceModifications(
+                      sourceState.data?.items.find(
+                        (item) => item.revision.id === event.target.value,
+                      )?.revision,
+                    ),
+                  );
+                }}
               >
                 <option value="">Select source</option>
                 {sourceState.data?.items.map((item) => (
@@ -1386,6 +1411,16 @@ function ProjectSources({ project }: { project: Project }) {
                 ))}
               </select>
             </label>
+          )}
+          {uploadMode !== "independent" && (
+            <SourceModificationPicker
+              projectId={project.id}
+              sources={(sourceState.data?.items ?? [])
+                .map((item) => item.revision)
+                .filter((revision) => revision.id !== uploadTarget)}
+              value={uploadModifications}
+              onChange={setUploadModifications}
+            />
           )}
           <label className="field-control">
             <span>Source role</span>
@@ -1465,7 +1500,10 @@ function ProjectSources({ project }: { project: Project }) {
             <button
               className="button button--primary"
               disabled={
-                !file || upload.isPending || (uploadMode !== "independent" && !uploadTarget)
+                !file ||
+                upload.isPending ||
+                (uploadMode === "revision" && !uploadTarget) ||
+                (uploadMode === "modifies" && !uploadModifications.length)
               }
             >
               Upload
@@ -1507,6 +1545,7 @@ function ProjectSources({ project }: { project: Project }) {
                         {document.filename} · processing v{document.version} ·{" "}
                         {formatBytes(document.size_bytes)}
                       </small>
+                      <small>Processing: {document.status}</small>
                     </span>
                     <span>
                       <StatusBadge status={source?.revision.lifecycle_status ?? "unspecified"} />
@@ -1554,6 +1593,21 @@ function ProjectSources({ project }: { project: Project }) {
                   </span>
                   <span>
                     Effective to <strong>{formatSourceDate(current.revision.effective_to)}</strong>
+                  </span>
+                  <span>
+                    Saved relationships{" "}
+                    <strong>
+                      {(current.revision.relationships ?? []).length === 0
+                        ? "Independent source"
+                        : (current.revision.relationships ?? [])
+                            .map((edge) => {
+                              const target = sourceState.data?.items.find(
+                                (item) => item.revision.id === edge.target_revision_id,
+                              );
+                              return `${edge.relationship_type === "modifies" ? "Modifies" : "Replaces"} ${target?.revision.title ?? edge.target_revision_id}`;
+                            })
+                            .join("; ")}
+                    </strong>
                   </span>
                 </div>
               )}
@@ -1687,9 +1741,9 @@ function ProjectSources({ project }: { project: Project }) {
                             ...form,
                             treatment: event.target.value as SourceCorrectionTreatment,
                             target: "",
+                            modifications: sourceModifications(current?.revision),
                             label:
-                              event.target.value === "independent" ||
-                              event.target.value === "modifies"
+                              event.target.value === "independent"
                                 ? "Revision 1"
                                 : event.target.value === "keep"
                                   ? `Revision ${(current?.revision.revision_number ?? 0) + 1}`
@@ -1700,10 +1754,10 @@ function ProjectSources({ project }: { project: Project }) {
                         <option value="keep">Keep this source's current treatment</option>
                         <option value="independent">New independent source</option>
                         <option value="revision">Latest revision of an existing source</option>
-                        <option value="modifies">Modifies an existing source</option>
+                        <option value="modifies">Modifies one or more sources</option>
                       </select>
                     </label>
-                    {(form.treatment === "revision" || form.treatment === "modifies") && (
+                    {form.treatment === "revision" && (
                       <label className="field-control">
                         <span>Existing source</span>
                         <select
@@ -1717,6 +1771,7 @@ function ProjectSources({ project }: { project: Project }) {
                             setForm({
                               ...form,
                               target: event.target.value,
+                              modifications: sourceModifications(target),
                               label:
                                 form.treatment === "revision" && target
                                   ? `Revision ${target.revision_number + 1}`
@@ -1734,6 +1789,16 @@ function ProjectSources({ project }: { project: Project }) {
                       </label>
                     )}
                   </div>
+                  {form.treatment !== "independent" && (
+                    <SourceModificationPicker
+                      projectId={project.id}
+                      sources={(relationshipTargets ?? [])
+                        .map((item) => item.revision)
+                        .filter((revision) => revision.id !== form.target)}
+                      value={form.modifications}
+                      onChange={(modifications) => setForm({ ...form, modifications })}
+                    />
+                  )}
                   <p className="muted-copy">
                     “Latest revision” joins the selected source’s history and replaces it.
                     “Modifies” stays a separate source and records the link. “Independent” removes

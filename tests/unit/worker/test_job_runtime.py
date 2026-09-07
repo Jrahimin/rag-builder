@@ -11,6 +11,7 @@ import pytest
 
 from app.core.config import Settings
 from app.models.job_run import JobType
+from app.platform.jobs.errors import JobError
 from app.platform.providers.errors import ProviderAuthenticationError
 from app.worker import job_runtime
 
@@ -33,8 +34,10 @@ class _RunThatExpiresOnRollback:
         return self._id
 
 
-async def test_provider_failure_is_recorded_without_reading_expired_run(
+@pytest.mark.parametrize("corpus_changed", [False, True])
+async def test_failure_is_recorded_without_reading_expired_run_or_invalidating_valid_source(
     monkeypatch: pytest.MonkeyPatch,
+    corpus_changed: bool,
 ) -> None:
     project_id = uuid.uuid4()
     run_id = uuid.uuid4()
@@ -55,7 +58,9 @@ async def test_provider_failure_is_recorded_without_reading_expired_run(
     database.session_factory.side_effect = session_scope
     database.dispose = AsyncMock()
 
-    failed_run = SimpleNamespace(document_id=None, payload={})
+    failed_run = SimpleNamespace(document_id=uuid.uuid4() if corpus_changed else None, payload={})
+    documents = MagicMock()
+    monkeypatch.setattr(job_runtime, "DocumentRepository", documents)
     service = MagicMock()
     service.acquire = AsyncMock(return_value=run)
     service.get_detail = AsyncMock(
@@ -78,6 +83,12 @@ async def test_provider_failure_is_recorded_without_reading_expired_run(
     monkeypatch.setattr(job_runtime.logger, "exception", logged)
 
     async def provider_failure(*_args: object, **_kwargs: object) -> None:
+        if corpus_changed:
+            raise JobError(
+                "Corpus changed while the isolated build was running.",
+                code="index_build_corpus_changed",
+                retryable=True,
+            )
         raise ProviderAuthenticationError(
             "Google Vision OCR rejected the configured credentials.",
             provider_name="google_vision",
@@ -93,15 +104,20 @@ async def test_provider_failure_is_recorded_without_reading_expired_run(
     failure = service.stage_failure.await_args.kwargs["failure"]
     session.expunge.assert_called_once_with(run)
     assert service.stage_failure.await_args.args[0] == run_id
-    assert failure.code == "provider_authentication_error"
-    assert failure.message == "Google Vision OCR rejected the configured credentials."
-    assert failure.details == {"provider": "google_vision"}
+    if corpus_changed:
+        assert failure.code == "index_build_corpus_changed"
+        assert failure.retryable is True
+        documents.assert_not_called()  # Even after the retry budget is exhausted.
+    else:
+        assert failure.code == "provider_authentication_error"
+        assert failure.message == "Google Vision OCR rejected the configured credentials."
+        assert failure.details == {"provider": "google_vision"}
     session.commit.assert_awaited_once()
     logged.assert_called_once_with(
         "durable_job_failed",
         project_id=str(project_id),
         job_id=str(run_id),
-        failure_code="provider_authentication_error",
+        failure_code=failure.code,
         retry_scheduled=False,
     )
 

@@ -28,7 +28,9 @@ class SourceMetadataRepository:
         result = await self._session.execute(
             select(Project)
             .where(Project.id == self.project_id, Project.deleted_at.is_(None))
-            .with_for_update()
+            # Serialize generation updates without blocking foreign-key checks
+            # from conversations/chunks while a source revision awaits its document.
+            .with_for_update(key_share=True)
         )
         return result.scalar_one_or_none()
 
@@ -69,6 +71,19 @@ class SourceMetadataRepository:
         )
         return int(value or 0) + 1
 
+    async def get_revisions(
+        self, revision_ids: set[uuid.UUID]
+    ) -> dict[uuid.UUID, SourceMetadataRevision]:
+        if not revision_ids:
+            return {}
+        result = await self._session.scalars(
+            select(SourceMetadataRevision).where(
+                SourceMetadataRevision.project_id == self.project_id,
+                SourceMetadataRevision.id.in_(revision_ids),
+            )
+        )
+        return {revision.id: revision for revision in result.all()}
+
     async def latest_for_document(
         self,
         document_id: uuid.UUID,
@@ -102,7 +117,7 @@ class SourceMetadataRepository:
         return (row[0], row[1]) if row is not None else None
 
     async def state_at(
-        self, generation: int
+        self, generation: int, *, include_deleted: bool = True
     ) -> list[tuple[SourceActivationEvent, SourceMetadataRevision]]:
         ranked = (
             select(
@@ -123,7 +138,7 @@ class SourceMetadataRepository:
             )
             .subquery()
         )
-        result = await self._session.execute(
+        statement = (
             select(SourceActivationEvent, SourceMetadataRevision)
             .join(ranked, ranked.c.activation_id == SourceActivationEvent.id)
             .join(
@@ -133,6 +148,11 @@ class SourceMetadataRepository:
             .where(ranked.c.position == 1)
             .order_by(SourceMetadataRevision.title, SourceMetadataRevision.document_id)
         )
+        if not include_deleted:
+            statement = statement.join(
+                Document, Document.id == SourceMetadataRevision.document_id
+            ).where(Document.deleted_at.is_(None))
+        result = await self._session.execute(statement)
         return [(row[0], row[1]) for row in result.all()]
 
     async def list_document_revisions(

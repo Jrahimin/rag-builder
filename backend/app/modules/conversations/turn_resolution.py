@@ -564,6 +564,7 @@ class TurnResolutionInput(BaseModel):
     citation_metadata: list[CitationIdentity] = Field(default_factory=list)
     request_filters: RequestFilters = Field(default_factory=RequestFilters)
     reference_time: datetime
+    domain_instructions: str = ""
 
 
 class TurnResolution(BaseModel):

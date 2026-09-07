@@ -2,6 +2,8 @@ import { describe, expect, test } from "vitest";
 import type { SourceRevision } from "../../api/operatorApiClient";
 import {
   buildSourceMetadataCorrection,
+  buildSourceUploadMetadata,
+  sourceModifications,
   sourceMetadataDraftFromRevision,
 } from "./sourceUploadMetadata";
 
@@ -105,13 +107,107 @@ describe("buildSourceMetadataCorrection", () => {
       current,
       target,
       treatment: "modifies",
+      modifications: [{ target_revision_id: target.id, target_provisions: [] }],
       draft: sourceMetadataDraftFromRevision(current),
     });
 
     expect(result).toMatchObject({
-      create_new_group: true,
-      relationships: [{ relationship_type: "modifies", target_revision_id: target.id }],
+      create_new_group: false,
+      relationships: [
+        { relationship_type: "modifies", target_revision_id: target.id, target_provisions: [] },
+      ],
     });
     expect(result).not.toHaveProperty("source_group_id");
   });
+});
+
+const modifications = [target.id, "third-source"].map((id) => ({
+  target_revision_id: id,
+  target_provisions: ["section 78"],
+}));
+
+test("uploads one amendment for multiple source representations", () => {
+  const result = buildSourceUploadMetadata({
+    filename: "Finance.pdf",
+    mode: "modifies",
+    modifications,
+    draft: sourceMetadataDraftFromRevision(current),
+    defaultReason: "Upload",
+  });
+  expect(result?.create_new_group).toBe(true);
+  expect(result?.relationships).toEqual(
+    modifications.map((item) => ({ ...item, relationship_type: "modifies" })),
+  );
+});
+
+test("a new edition of an amendment replaces its predecessor and inherits both scoped links", () => {
+  const amendment: SourceRevision = {
+    ...current,
+    relationships: modifications.map((item) => ({
+      ...item,
+      id: `edge-${item.target_revision_id}`,
+      created_at: current.created_at,
+      relationship_type: "modifies",
+    })),
+  };
+  const result = buildSourceUploadMetadata({
+    filename: "Corrected-finance.pdf",
+    mode: "revision",
+    target: amendment,
+    draft: sourceMetadataDraftFromRevision(current),
+    defaultReason: "Upload",
+  });
+  expect(result?.relationships).toEqual([
+    { relationship_type: "replaces", target_revision_id: current.id },
+    ...modifications.map((item) => ({ ...item, relationship_type: "modifies" })),
+  ]);
+  expect(sourceModifications(amendment)[0]?.target_provisions).not.toBe(
+    modifications[0]?.target_provisions,
+  );
+});
+
+test("editing an amendment target list keeps source identity and removes only the deselected edge", () => {
+  const result = buildSourceMetadataCorrection({
+    current,
+    treatment: "modifies",
+    modifications: modifications.slice(1),
+    draft: sourceMetadataDraftFromRevision(current),
+  });
+  expect(result?.create_new_group).toBe(false);
+  expect(result?.relationships).toEqual([{ ...modifications[1], relationship_type: "modifies" }]);
+});
+
+test("keeping history permits removing modifications without dropping a replacement link", () => {
+  const currentEdition: SourceRevision = {
+    ...current,
+    relationships: [
+      {
+        id: "replacement",
+        target_revision_id: target.id,
+        relationship_type: "replaces",
+        created_at: current.created_at,
+      },
+    ],
+  };
+  const result = buildSourceMetadataCorrection({
+    current: currentEdition,
+    treatment: "keep",
+    modifications: [],
+    draft: sourceMetadataDraftFromRevision(current),
+  });
+  expect(result?.relationships).toEqual([
+    { relationship_type: "replaces", target_revision_id: target.id, target_provisions: [] },
+  ]);
+});
+
+test("an empty amendment selection cannot silently become an independent upload", () => {
+  expect(() =>
+    buildSourceUploadMetadata({
+      filename: "Finance.pdf",
+      mode: "modifies",
+      modifications: [],
+      draft: sourceMetadataDraftFromRevision(current),
+      defaultReason: "Upload",
+    }),
+  ).toThrow("at least one");
 });

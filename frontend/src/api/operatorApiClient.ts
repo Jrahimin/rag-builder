@@ -511,6 +511,8 @@ export const operatorApiClient = {
   },
   getSourceState: (projectId: string, generation?: number) =>
     request<SourceState>(`${apiRoot}/projects/${projectId}/sources${query({ generation })}`),
+  getSourceRevision: (projectId: string, revisionId: string) =>
+    request<SourceRevision>(`${apiRoot}/projects/${projectId}/sources/revisions/${revisionId}`),
   getSourceRevisions: (projectId: string, documentId: string) =>
     request<SourceRevision[]>(
       `${apiRoot}/projects/${projectId}/sources/documents/${documentId}/revisions`,

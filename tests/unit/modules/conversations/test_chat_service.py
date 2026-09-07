@@ -1349,6 +1349,7 @@ async def test_unresolved_rules_never_reach_generation_when_no_recovery_is_allow
 
 @pytest.mark.parametrize("store_trace", [False, True])
 @pytest.mark.parametrize("coverage_complete", [True, False])
+@pytest.mark.parametrize("governed_calculation", [False, True])
 async def test_repaired_evidence_reaches_generation_without_old_rule_or_web(
     session,
     conversation_repository,
@@ -1356,8 +1357,23 @@ async def test_repaired_evidence_reaches_generation_without_old_rule_or_web(
     conversation,
     store_trace,
     coverage_complete,
+    governed_calculation,
 ) -> None:
     initial = await UnresolvedRuleRetrieval().retrieve()
+    if governed_calculation:
+        relevant = await FakeRetrieval().retrieve()
+        initial = ContextRetrievalResult(
+            chunks=[
+                replace(
+                    relevant.chunks[0],
+                    metadata={
+                        "source_role": "supporting",
+                        "source_lifecycle_status": "active",
+                    },
+                )
+            ],
+            diagnostics=relevant.diagnostics,
+        )
     initial.diagnostics["source_metadata_generation"] = 24
     current = replace(
         initial.chunks[0],
@@ -1425,7 +1441,14 @@ async def test_repaired_evidence_reaches_generation_without_old_rule_or_web(
     web = FakeWebSearch()
     service._web_search = web
     turn = await service.send_message(
-        conversation.id, MessageSendRequest(content="What is the current refund guidance?")
+        conversation.id,
+        MessageSendRequest(
+            content=(
+                "Calculate the refund for 100."
+                if governed_calculation
+                else "What is the current refund guidance?"
+            )
+        ),
     )
     assert not web.calls
     if not coverage_complete:

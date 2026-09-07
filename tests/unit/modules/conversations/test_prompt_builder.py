@@ -134,3 +134,20 @@ def test_interpretation_stays_outside_evidence_and_original_question_is_last() -
     assert interpretation_at > evidence_end
     assert "not evidence" in system
     assert messages[-1].content == "Use that rate."
+
+
+def test_trusted_reference_date_is_separate_from_untrusted_evidence():
+    from datetime import date
+
+    messages = PromptBuilder().build(
+        template=require_prompt_template("current"),
+        context_chunks=[],
+        history=[],
+        user_question="Calculate this year.",
+        reference_date=date(2026, 9, 7),
+        domain_instructions="Default to the current assessment year.",
+    )
+    system = messages[0].content
+    assert "Trusted retrieval reference date: 2026-09-07" in system
+    assert "Default to the current assessment year." in system
+    assert "Honor an explicit user period first." in system
