@@ -714,7 +714,10 @@ class GroundingService:
         Empty retrieval always blocks. Observe mode still records the score
         decision but does not treat cosine failure as a generation veto.
         """
-        if decision.reason is InsufficientEvidenceReason.NO_RETRIEVAL_RESULTS:
+        if decision.reason in {
+            InsufficientEvidenceReason.NO_RETRIEVAL_RESULTS,
+            InsufficientEvidenceReason.UNRESOLVED_AUTHORITY,
+        }:
             return True
         if self._config.evidence_gate_mode is EvidenceGateMode.OBSERVE:
             return False

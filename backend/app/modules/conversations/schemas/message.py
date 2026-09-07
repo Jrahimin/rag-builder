@@ -111,6 +111,7 @@ class InsufficientEvidenceReason(StrEnum):
     # happens before admission so a redacted chunk is simply absent from
     # candidates; CONTEXT_SELECTION_EMPTY covers any remaining empty-after-admit case.
     CONTEXT_SELECTION_EMPTY = "context_selection_empty"
+    UNRESOLVED_AUTHORITY = "unresolved_authority"
 
 
 class ClaimVerification(StrEnum):

@@ -56,10 +56,12 @@ from app.modules.conversations.repositories.message_repository import MessageRep
 from app.modules.conversations.schemas.message import (
     ChatTurnResponse,
     CitationSourceKind,
+    InsufficientEvidenceReason,
     MessageResponse,
     MessageSendRequest,
     SourceProvenance,
 )
+from app.modules.conversations.services.evidence_repair_service import repair_knowledge_evidence
 from app.modules.conversations.turn_resolution import (
     RESOLUTION_HISTORY_CHAR_BUDGET,
     RESOLUTION_HISTORY_MESSAGE_CAP,
@@ -671,6 +673,43 @@ class ChatService:
             retrieval_config=self._retrieval_config,
             expansion_records=expansion_records,
         )
+        repair_usage: ChatUsage | None = None
+        if (
+            evidence.reason is InsufficientEvidenceReason.UNRESOLVED_AUTHORITY
+            and scope_current_authority is None
+        ):
+            await self._release_read_transaction()
+            repaired = await repair_knowledge_evidence(
+                inputs=resolved.retrieval,
+                initial=retrieval_result,
+                selected=knowledge_selected,
+                retrieval=self._retrieval,
+                llm=llm,
+                grounding=grounding,
+                chat_config=self._chat_config,
+                retrieval_config=self._retrieval_config,
+                max_output_tokens=self._llm_max_tokens(),
+            )
+            repair_usage = repaired.usage
+            repair_diagnostics = dict(repaired.diagnostics)
+            if not self._store_candidate_trace:
+                repair_diagnostics["branches"] = [
+                    {key: value for key, value in branch.items() if key != "retrieval"}
+                    for branch in repair_diagnostics.get("branches", [])
+                ]
+            retrieval_result.diagnostics["knowledge_repair"] = repair_diagnostics
+            if repaired.decision is not None:
+                evidence = repaired.decision
+                knowledge_selected = repaired.selected
+                chunks = [
+                    *chunks,
+                    *[
+                        c
+                        for c in repaired.selected
+                        if c.chunk_id not in {x.chunk_id for x in chunks}
+                    ],
+                ]
+        retrieval_ms = int((time.perf_counter() - retrieval_started) * 1000)
         prompt_history = _prompt_history_for_generation(
             outcome=resolved.resolution.outcome,
             relation=resolved.resolution.relation,
@@ -792,7 +831,7 @@ class ChatService:
         notices: list[Notice] = []
         unresolved_chunks = [
             str(chunk.chunk_id)
-            for chunk in selected
+            for chunk in knowledge_selected
             if chunk.metadata.get("authority_status") == "unresolved"
         ]
         if unresolved_chunks:
@@ -834,8 +873,9 @@ class ChatService:
             scope_current_authority=scope_current_authority,
             notices=tuple(notices),
             turn_resolution=diagnostics,
-            resolver_usage=(
-                resolved.usage or ChatUsage(None, None) if resolved.attempted else None
+            resolver_usage=_combined_auxiliary_usage(
+                resolved.usage or ChatUsage(None, None) if resolved.attempted else None,
+                repair_usage,
             ),
             resolver_latency_ms=resolved.latency_ms,
         )
@@ -1154,6 +1194,19 @@ class ChatService:
     def _insufficient_content(self, prepared: _PreparedTurn, question: str) -> str:
         status = str(prepared.web_search_diagnostics.get("status") or "")
         bangla = detect_language(question).primary_language == "bn"
+        if prepared.evidence.reason is InsufficientEvidenceReason.UNRESOLVED_AUTHORITY:
+            if bangla:
+                return (
+                    "প্রাসঙ্গিক সূত্র পাওয়া গেছে, কিন্তু নিয়মগুলোর প্রযোজ্য সময়কাল, শর্ত বা "
+                    "সংশোধনের প্রভাব নিশ্চিত করা যায়নি। তাই এগুলো দিয়ে চূড়ান্ত হিসাব করা "
+                    "নির্ভরযোগ্য হবে না। প্রযোজ্য বিধান ও সংশোধনের নির্দিষ্ট প্রমাণ দরকার।"
+                )
+            return (
+                "Relevant sources were found, but their applicable period, conditions or "
+                "amendment effect could not be established. A final calculation using those "
+                "rules would be unreliable. The applicable provisions and amendment evidence "
+                "are still needed."
+            )
         if status in {"failed", "provider_unavailable"}:
             if bangla:
                 return "উপলভ্য knowledge base-এ যথেষ্ট তথ্য পাইনি, এবং web search এখন সাময়িকভাবে অনুপলভ্য।"
@@ -1405,6 +1458,9 @@ class ChatService:
                 "set_version": retrieval_diagnostics.get("embedding_set_version"),
             },
             "source_metadata_generation": retrieval_diagnostics.get("source_metadata_generation"),
+            "knowledge_repair": retrieval_diagnostics.get(
+                "knowledge_repair", {"status": "not_needed"}
+            ),
             "source_policy": {
                 "configured_mode": retrieval_diagnostics.get("source_policy_configured_mode"),
                 "effective_mode": retrieval_diagnostics.get("source_policy_effective_mode"),
@@ -1781,6 +1837,23 @@ def _scope_current_authority_status(
 # _scope_limited_current_authority_content removed in Phase 3.
 # Hard-scope + effective-modifier excluded now answers from admitted scoped
 # evidence with a structured notice rather than refusing generation.
+
+
+def _combined_auxiliary_usage(
+    first: ChatUsage | None, second: ChatUsage | None
+) -> ChatUsage | None:
+    if second is None:
+        return first
+    if first is None:
+        return second
+    return ChatUsage(
+        input_tokens=None
+        if first.input_tokens is None or second.input_tokens is None
+        else first.input_tokens + second.input_tokens,
+        output_tokens=None
+        if first.output_tokens is None or second.output_tokens is None
+        else first.output_tokens + second.output_tokens,
+    )
 
 
 def _combine_token_counts(

@@ -38,9 +38,9 @@ async def assess_and_select_knowledge(
 
     Authority redaction is applied *before* admission using ``expansion_records``
     from the top-level retrieval diagnostics.  A chunk whose superseded provision
-    spans the entire content is simply absent from the candidate set; there is no
-    post-admission reconciliation step.  If the modifier revision is not present
-    among the retrieved chunks, redaction is skipped (``not_applicable``).
+    spans the entire content is simply absent from the candidate set. After
+    budgeting, authority is checked again against the retained context: dropping
+    a required modifier must not make the surviving base rule usable.
 
     After the first assessment, high-confidence reranker candidates that only
     narrowly miss corroboration may receive bounded passage scoring and a
@@ -49,8 +49,8 @@ async def assess_and_select_knowledge(
     later pass cannot drop a candidate that already satisfied the strict path.
 
     Observe uses the same selected admitted units as enforce. When nothing is
-    admitted, observe still generates from ranked candidates and records
-    would-have-blocked rather than substituting a different winner path.
+    admitted, observe can use ranked candidates for relevance misses. Known
+    unresolved authority blocks both modes and permits recovery instead.
     """
     # --- Phase 3: redact superseded provisions before admission ---
     authority_safe_chunks = remove_superseded_provisions(chunks, expansion_records)
@@ -95,7 +95,17 @@ async def assess_and_select_knowledge(
         context_builder.select(ordered_units), expansion_records or []
     )
     if knowledge_selected:
-        return _align_winner_to_selected(evidence, knowledge_selected), knowledge_selected
+        aligned = _align_winner_to_selected(evidence, knowledge_selected)
+        # Relevance admission does not establish current applicability. A known
+        # unresolved rule must trigger recovery/refusal before generation, not
+        # merely turn the answer's badge yellow after an unsafe calculation.
+        if any(
+            chunk.metadata.get("authority_status") == "unresolved" for chunk in knowledge_selected
+        ):
+            return replace(
+                aligned, sufficient=False, reason=InsufficientEvidenceReason.UNRESOLVED_AUTHORITY
+            ), knowledge_selected
+        return aligned, knowledge_selected
     if chat_config.evidence_gate_mode is EvidenceGateMode.OBSERVE:
         ranked_selected = context_builder.select(rescued_chunks)
         evidence = replace(evidence, observe_context="ranked_candidates")
@@ -105,6 +115,14 @@ async def assess_and_select_knowledge(
                 ranked_selected,
                 admitted=False,
             )
+            if any(
+                chunk.metadata.get("authority_status") == "unresolved" for chunk in ranked_selected
+            ):
+                evidence = replace(
+                    evidence,
+                    sufficient=False,
+                    reason=InsufficientEvidenceReason.UNRESOLVED_AUTHORITY,
+                )
         return evidence, ranked_selected
     if evidence.admitted_units and not knowledge_selected:
         evidence = replace(

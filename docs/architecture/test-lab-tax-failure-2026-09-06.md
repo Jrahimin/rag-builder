@@ -132,3 +132,72 @@ prompt compliance is not a deterministic semantic applicability proof. A complet
 answer may still require focused retrieval when the initial recall omits a rule.
 Automatic dependency retrieval and generalized semantic applicability verification
 are deferred rather than added as a large architecture change in this fix.
+
+## Live rollout follow-up, 7 September 2026
+
+The user confirmed deployment. The live document job snapshot independently
+confirmed chunker 3.1.0 and profile registry 2026-09-06. Through Test Lab, the
+English Act, Finance Act, Nirdeshika and Paripatra were reprocessed successfully.
+Processing versions are respectively 3, 2, 2 and 2. Automatic embedding/index
+jobs activated build `19dd2ec8` containing all 10 project documents and matching
+counts of 1,929 chunks, vectors and keyword records. A redundant manual rebuild
+was not requested. The original 10-document build `fbb1df48` remains retained.
+
+Fresh conversation `344bf4cf-8bb4-45da-afe5-5be4eaa9239c` did not pass acceptance.
+The original English question produced a conditional BDT 88,500 estimate using
+the older rebate and unresolved 450,000 table, additionally applying the 15%
+band beyond its stated width. The updated inspector showed 7 of 27 claims
+supported and 20 needing review. Refreshed table chunk `cd16e207` (page 16,
+chunk 31) still had unresolved applicability. Reprocessing and warning display
+are therefore verified, but correct tax generation is not.
+
+No legal metadata was invented or changed. The source correction UI exposes
+document dates and treatment, but not amendment target provisions. Document-wide
+dates and a MODIFIES label cannot substitute for provision-level legal effect.
+Metadata generation remains 24; source-backed amendment curation remains open.
+
+## Runtime recovery fix after the refreshed-corpus failure
+
+The remaining executable defect was the gap between relevance admission and
+authority usability. `assess_and_select_knowledge` returned sufficient evidence
+despite selected chunks being marked `authority_status=unresolved`.
+`INDEXED_THEN_WEB` consequently never invoked recovery. Generation could ignore
+the warning, and post-generation claim checks only exposed the problem after
+the answer had already been produced. This explains continued use of the older
+rebate even after successful reprocessing.
+
+Known unresolved authority now makes the selected evidence insufficient before
+generation, in enforce and observe modes. One bounded recovery pass can plan up
+to three focused searches for distinct dependencies. Every search retains the
+original document, metadata and historical filters; differing index builds or
+source generations abort recovery. Initial incomplete amendment relationships
+remain in force across searches, preventing an older rule from regaining trust
+when a branch omits that relationship. Each dependency must retain admitted,
+authority-usable evidence within the final context budget. Query planning never
+supplies answer evidence. The pass has a 30-second limit, accounts for LLM usage,
+and records `knowledge_repair` diagnostics while honoring candidate-trace settings.
+
+Failed recovery uses the existing allowed web fallback or a structured
+`unresolved_authority` response; unsafe indexed rules do not reach generation.
+This is a narrow addition to the existing retrieval pipeline, with no tax
+constants in runtime code, no new environment variables and no data migration.
+It requires an API deployment, but no further reprocessing or reindexing.
+
+Validation: the backend unit/architecture/evaluation run passed 958 tests with
+two optional OCR tests skipped. Two subsequently added service integration cases
+also pass, checking recovery-to-generation, exclusion of the old rule, absence
+of unnecessary web calls, combined token accounting and trace privacy. Backend
+mypy and frontend type checking pass; generated API contracts include the new
+insufficient-evidence reason. The final focused conversation suite passes 320
+tests, including a later search discovering an unresolved amendment to an
+earlier dependency.
+
+The new runtime patch has not been deployed or verified live. The verified live
+result remains the failed conversation above. Post-deployment acceptance must
+use a fresh Test Lab conversation, inspect `knowledge_repair` and source spans,
+and rerun the original and explicit-assessment-year questions. A refusal is safer
+than the old estimate but does not meet the complete-calculation acceptance test.
+Dependency planning and relevance admission still do not constitute general
+semantic completeness or legal applicability proof; source-backed amendment
+curation and potentially better recall remain necessary if recovery cannot find
+the applicable provisions.

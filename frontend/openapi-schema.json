@@ -7139,7 +7139,8 @@
         "enum": [
           "no_retrieval_results",
           "below_relevance_threshold",
-          "context_selection_empty"
+          "context_selection_empty",
+          "unresolved_authority"
         ],
         "title": "InsufficientEvidenceReason",
         "type": "string"

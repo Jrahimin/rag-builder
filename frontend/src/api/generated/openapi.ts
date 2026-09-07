@@ -3863,7 +3863,7 @@ export interface components {
          * @description Stable reasons for a correct no-answer outcome.
          * @enum {string}
          */
-        InsufficientEvidenceReason: "no_retrieval_results" | "below_relevance_threshold" | "context_selection_empty";
+        InsufficientEvidenceReason: "no_retrieval_results" | "below_relevance_threshold" | "context_selection_empty" | "unresolved_authority";
         /** InvariantState */
         InvariantState: {
             /** Content Hash Deduplication */

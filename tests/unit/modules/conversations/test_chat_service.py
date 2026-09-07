@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
+from dataclasses import replace
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 
@@ -76,6 +77,30 @@ class EmptyRetrieval:
     async def retrieve(self, **kwargs: object) -> ContextRetrievalResult:
         del kwargs
         return ContextRetrievalResult(chunks=[], diagnostics={})
+
+
+class UnresolvedRuleRetrieval(FakeRetrieval):
+    """Strong relevance plus a real-corpus-shaped, incomplete MODIFIES edge."""
+
+    async def retrieve(self, **kwargs: object) -> ContextRetrievalResult:
+        result = await super().retrieve(**kwargs)
+        revision = str(uuid.uuid4())
+        return ContextRetrievalResult(
+            chunks=[replace(result.chunks[0], metadata={"source_revision_id": revision})],
+            diagnostics={
+                **result.diagnostics,
+                "modifies_expansion_records": [
+                    {
+                        "base_revision_id": revision,
+                        "modifier_revision_id": str(uuid.uuid4()),
+                        "relationship_type": "modifies",
+                        "outcome": "ungoverned_or_incomplete_metadata",
+                        "modifier_effective_from": None,
+                        "target_provisions": [],
+                    }
+                ],
+            },
+        )
 
 
 class NearMissRetrieval:
@@ -1268,6 +1293,120 @@ async def test_indexed_then_web_uses_web_only_after_knowledge_gate_fails(
     assert trace["web_url"] == "https://example.test/refunds"
     assert "chunk_id" not in trace
     assert "document_id" not in trace
+
+
+@pytest.mark.parametrize("mode", [EvidenceGateMode.ENFORCE, EvidenceGateMode.OBSERVE])
+async def test_unresolved_current_rule_triggers_web_recovery_despite_strong_relevance(
+    session, conversation_repository, message_repository, conversation, mode
+) -> None:
+    web = FakeWebSearch()
+    service = _service(
+        session,
+        conversation_repository,
+        message_repository,
+        CitedLLM("Current web guidance allows refunds within 30 days [1]."),
+        chat_config=ChatConfig(
+            response_mode=ResponseMode.INDEXED_THEN_WEB, evidence_gate_mode=mode
+        ),
+    )
+    service._retrieval = UnresolvedRuleRetrieval()
+    service._web_search = web
+    turn = await service.send_message(
+        conversation.id, MessageSendRequest(content="What is the current refund guidance?")
+    )
+    assert len(web.calls) == 1
+    assert turn.assistant_message.source_provenance == "web"
+    assert turn.assistant_message.metadata["evidence_gate"]["reason"] == "unresolved_authority"
+    assert all(citation.source_kind == "web" for citation in turn.assistant_message.citations)
+    assert any(notice.kind == "unresolved_authority" for notice in turn.assistant_message.notices)
+
+
+@pytest.mark.parametrize("streamed", [False, True])
+async def test_unresolved_rules_never_reach_generation_when_no_recovery_is_allowed(
+    session, conversation_repository, message_repository, conversation, streamed
+) -> None:
+    service = _service(
+        session,
+        conversation_repository,
+        message_repository,
+        FailingLLM(model="test", provider_version="1"),
+    )
+    service._retrieval = UnresolvedRuleRetrieval()
+    request = MessageSendRequest(content="What is the current refund guidance?")
+    if streamed:
+        events = [event async for event in service.stream_message(conversation.id, request)]
+        assert events
+        # The persisted message is the canonical outcome for both delivery paths.
+        saved = message_repository.add.call_args_list[-1].args[0]
+        assert saved.insufficient_evidence_reason == "unresolved_authority"
+    else:
+        turn = await service.send_message(conversation.id, request)
+        assert turn.assistant_message.insufficient_evidence_reason == "unresolved_authority"
+        assert turn.assistant_message.finish_reason == "insufficient_evidence"
+        assert "Relevant sources were found" in turn.assistant_message.content
+        assert not turn.assistant_message.citations
+
+
+@pytest.mark.parametrize("store_trace", [False, True])
+async def test_repaired_evidence_reaches_generation_without_old_rule_or_web(
+    session, conversation_repository, message_repository, conversation, store_trace
+) -> None:
+    initial = await UnresolvedRuleRetrieval().retrieve()
+    initial.diagnostics["source_metadata_generation"] = 24
+    current = replace(
+        initial.chunks[0],
+        chunk_id=uuid.uuid4(),
+        content="Current refund entitlement is 45 days for eligible purchases.",
+        metadata={},
+        chunk_hash="current-policy",
+    )
+    retrieval = AsyncMock()
+    retrieval.query_embedder = None
+    retrieval.retrieve.side_effect = [
+        initial,
+        ContextRetrievalResult(
+            chunks=[current],
+            diagnostics={
+                "index_build_id": initial.diagnostics["index_build_id"],
+                "source_metadata_generation": 24,
+                "candidate_trace": [{"content": "candidate payload"}],
+            },
+        ),
+    ]
+    llm = CitedLLM("Current refund entitlement is 45 days for eligible purchases [1].")
+    generate = llm.generate
+    answer = await generate([], temperature=None, max_tokens=100)
+    llm.generate = AsyncMock(
+        side_effect=[
+            replace(answer, content='{"queries":["current refund entitlement eligibility"]}'),
+            answer,
+        ]
+    )
+    service = _service(
+        session,
+        conversation_repository,
+        message_repository,
+        llm,
+        chat_config=ChatConfig(response_mode=ResponseMode.INDEXED_THEN_WEB),
+        store_candidate_trace=store_trace,
+    )
+    service._retrieval = retrieval
+    web = FakeWebSearch()
+    service._web_search = web
+    turn = await service.send_message(
+        conversation.id, MessageSendRequest(content="What is the current refund guidance?")
+    )
+    assert not web.calls
+    assert turn.assistant_message.citations[0].chunk_id == current.chunk_id
+    assert turn.assistant_message.input_tokens == 20
+    assert turn.assistant_message.output_tokens == 10
+    repair = turn.assistant_message.metadata["knowledge_repair"]
+    assert repair["status"] == "recovered"
+    assert ("retrieval" in repair["branches"][0]) is store_trace
+    messages = llm.generate.call_args_list[1].args[0]
+    prompt = "\n".join(message.content for message in messages)
+    assert current.content in prompt
+    assert initial.chunks[0].content not in prompt
 
 
 async def test_web_fallback_rejects_uncited_or_irrelevant_evidence(
