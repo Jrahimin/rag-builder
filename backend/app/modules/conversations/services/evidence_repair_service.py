@@ -96,6 +96,7 @@ async def repair_knowledge_evidence(
                                 ],
                             },
                             ensure_ascii=False,
+                            default=str,
                         ),
                     ),
                 ],
@@ -226,6 +227,10 @@ async def repair_knowledge_evidence(
                                 ],
                             },
                             ensure_ascii=False,
+                            # Retrieval diagnostics originate from persistence and may
+                            # retain UUIDs for revision identities. They are context
+                            # identifiers, not Python objects the LLM provider can use.
+                            default=str,
                         ),
                     ),
                 ],

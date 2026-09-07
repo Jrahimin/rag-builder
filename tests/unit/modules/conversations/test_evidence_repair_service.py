@@ -138,6 +138,24 @@ async def test_recovers_separate_salary_band_and_rebate_dependencies_with_origin
         assert call.kwargs["as_of"] == inputs.as_of
 
 
+async def test_coverage_review_serializes_uuid_authority_diagnostics_for_the_llm():
+    authority_record = {
+        "base_revision_id": uuid.uuid4(),
+        "modifier_revision_id": uuid.uuid4(),
+        "outcome": "ungoverned_or_incomplete_metadata",
+        "target_provisions": [],
+    }
+    result, retrieval, _ = await run_repair(
+        [([chunk("Refunds are available within 45 days.")], {})],
+        queries=["refund terms"],
+        initial_records=[authority_record],
+    )
+    assert result.diagnostics["status"] == "recovered"
+    # The service would have raised before invoking the review provider if UUIDs
+    # were not converted to JSON-safe identity strings.
+    assert retrieval.retrieve.await_count == 1
+
+
 @pytest.mark.parametrize(
     "change", [{"index_build_id": "build-b"}, {"source_metadata_generation": 25}]
 )
