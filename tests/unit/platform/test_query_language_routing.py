@@ -37,10 +37,19 @@ def test_mixed_query_does_not_hide_behind_english() -> None:
     assert profile.exact_primary is None
 
 
-def test_latin_query_does_not_translate_to_bangla_when_both_exist() -> None:
+def test_latin_query_can_reach_bangla_without_claiming_it_is_english() -> None:
     profile = detect_query_language_profile("source tax deduction areas")
     target = select_translation_target(profile, {"bn": 12, "en": 80, "mixed": 1})
-    assert target is None
+    assert target == "bn"
+    assert profile.exact_primary is None
+
+
+def test_live_salary_query_routes_to_bangla_corpus_rules() -> None:
+    profile = detect_query_language_profile(
+        "Suppose my yearly salary is BDT 1,200,000. Rebateable investment BDT 60,000. "
+        "I am male, from Chittagong, below 40. Calculate my tax and explain the rules."
+    )
+    assert select_translation_target(profile, {"bn": 1200, "en": 700}) == "bn"
 
 
 def test_bangla_query_translates_to_english_when_english_exists() -> None:

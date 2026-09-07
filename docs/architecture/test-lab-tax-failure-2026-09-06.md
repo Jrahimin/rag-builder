@@ -201,3 +201,43 @@ Dependency planning and relevance admission still do not constitute general
 semantic completeness or legal applicability proof; source-backed amendment
 curation and potentially better recall remain necessary if recovery cannot find
 the applicable provisions.
+
+## Post-deployment investigation, 7 September 2026
+
+Fresh live conversation `27547cef-27fb-49f2-a2cd-a0443ce80534` reproduced the
+older 15% / BDT 1,000,000 rebate in 15,517 ms, while withholding the final tax.
+Search confirmed active build `19dd2ec8-45fc-4193-ba61-d067dc0d4ce3`; the English
+Act's page-70 chunk `37cdcbba` ranked first. This was not a stale processing build.
+
+Two additional issues were found:
+
+1. `HybridRetriever` carries request-level amendment records only on its first
+   candidate. `SearchService` previously extracted them from the first surviving
+   result after policy, hydration and duplicate suppression. Loss or reordering
+   of the carrier therefore discarded the records. Search now captures the
+   records before those stages. A regression covers a surviving result without
+   its original carrier. This code defect is independently reproduced; the UI
+   did not expose enough raw message metadata to prove it is the sole cause of
+   this particular live response.
+2. Query translation was disabled. After enabling it through the live UI in
+   project revision `439711c5`, conversation
+   `063dfb98-65ff-44e5-b214-12d15238a7e2` still used the old rebate. Its explicit
+   AY2026–27 follow-up showed translation `skipped · latin_ambiguous` with only
+   `original_dense, original_lexical`. The router intentionally skipped all
+   ordinary Latin queries. It now allows one translation into another supported
+   corpus language while preserving original branches and all existing guards.
+   The original language is not relabeled as English, and English-only
+   inventories still skip an ordinary Latin query rewrite.
+
+A focused Bangla search, without supplying any expected rates, retrieved
+Paripatra page 73, chunk 92 (`c74bed6d`), as rank 1 at 0.9755. It explicitly
+describes section 78's reduction from 15% to 10% and from 10 lakh to 7.50 lakh.
+This confirms that the current rebate evidence is already indexed and readable.
+No documents, legal metadata, processing versions or index builds were changed
+in this follow-up. Query translation is now On for new conversations.
+
+Test Lab gains an expandable authority/recovery diagnostic view, including an
+explicit `not_reported` status when the backend omitted recovery telemetry.
+The latest code passes 964 backend tests (two optional OCR skips), 18 Test Lab
+tests and type checks. These code changes still require deployment; the live
+tests above must not be represented as successful post-patch tax acceptance.

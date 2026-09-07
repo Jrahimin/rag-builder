@@ -204,10 +204,10 @@ def select_translation_target(
 ) -> str | None:
     """Pick at most one exact corpus language to translate into.
 
-    Translation is used only when it can materially improve retrieval:
-    Bangla → English, or a bounded Banglish/code-switched rewrite to English.
-    Ordinary Latin-script queries, mixed-script queries, and same-language
-    inventories skip the rewrite. Original dense + lexical always remain.
+    Latin script is not proof of English, but that uncertainty must not disable
+    access to a non-Latin corpus language. Choose an alternate supported corpus
+    language without relabeling the original query as English. Mixed-script and
+    same-language inventories skip the rewrite. Original branches always remain.
     """
     exact_inventory = {
         language: count
@@ -221,6 +221,8 @@ def select_translation_target(
         return None
     elif profile.is_romanized_or_codeswitched:
         candidates = [language for language in candidates if language == "en"]
+    elif profile.is_latin_ambiguous:
+        candidates = [language for language in candidates if language != "en"]
     else:
         return None
     if not candidates:

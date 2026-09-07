@@ -57,6 +57,24 @@ function inspect(answer: Message, expected = "", passed = false) {
 }
 
 describe("message grounding explanation", () => {
+  test("distinguishes missing recovery telemetry from an attempted repair", () => {
+    inspect(message);
+    expect(screen.getByText("Authority and evidence recovery")).toBeInTheDocument();
+    expect(screen.getByText(/"status": "not_reported"/)).toBeInTheDocument();
+  });
+
+  test("exposes the backend recovery and authority decisions for diagnosis", () => {
+    inspect({
+      ...message,
+      metadata: {
+        knowledge_repair: { status: "dependency_unresolved", version: "v1" },
+        current_authority: { records: [{ outcome: "ungoverned_or_incomplete_metadata" }] },
+      },
+    });
+    expect(screen.getByText(/"status": "dependency_unresolved"/)).toBeInTheDocument();
+    expect(screen.getByText(/ungoverned_or_incomplete_metadata/)).toBeInTheDocument();
+  });
+
   test("explains cited partial answers without promoting prose into a valid refusal", () => {
     inspect(message, "reliable estimate");
     expect(screen.getByRole("heading", { name: "Answer review" })).toBeInTheDocument();

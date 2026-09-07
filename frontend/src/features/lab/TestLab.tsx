@@ -2437,6 +2437,25 @@ export function MessageInspector({
       </div>
       <TranslationDiagnostics metadata={message.metadata} />
       <RerankDiagnostics metadata={message.metadata} />
+      <details>
+        <summary>Authority and evidence recovery</summary>
+        <p>
+          Recovery status is separate from citation support. Missing diagnostics do not confirm that
+          recovery ran.
+        </p>
+        <pre className="json-view">
+          {JSON.stringify(
+            {
+              knowledge_repair: message.metadata?.knowledge_repair ?? { status: "not_reported" },
+              current_authority: message.metadata?.current_authority ?? null,
+              evidence_gate: message.metadata?.evidence_gate ?? null,
+              source_metadata_generation: message.metadata?.source_metadata_generation ?? null,
+            },
+            null,
+            2,
+          )}
+        </pre>
+      </details>
       {!refusal && (
         <section className="notice-card" aria-label="Claim verification">
           <strong>

@@ -236,6 +236,17 @@ class SearchService:
 
         retriever = self._build_retriever(strategy, query_embedder)
         reranked_candidates = await retriever.retrieve(context)
+        # Hybrid retrieval carries request-level expansion records on its first
+        # candidate. Capture them before policy, hydration or deduplication can
+        # remove that carrier or choose a different first result.
+        expansion_records = next(
+            (
+                _dict_list(candidate.metadata["modifies_expansion_records"])
+                for candidate in reranked_candidates
+                if "modifies_expansion_records" in candidate.metadata
+            ),
+            [],
+        )
         reranked_candidate_count = len(reranked_candidates)
         policy = apply_source_policy(reranked_candidates, mode=source_scope.effective_mode)
         candidates = add_retrieval_provenance(
@@ -457,9 +468,7 @@ class SearchService:
                     )
                 ),
                 modifies_expansion_depth=1,
-                modifies_expansion_records=_dict_list(
-                    rerank_metadata.get("modifies_expansion_records")
-                ),
+                modifies_expansion_records=expansion_records,
                 modifies_expansion_exclusion_reasons=_int_dict(
                     rerank_metadata.get("modifies_expansion_exclusion_reasons")
                 ),

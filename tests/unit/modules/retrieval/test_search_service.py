@@ -129,6 +129,37 @@ async def test_search_service_rejects_request_strategy_override() -> None:
         await service.search(SearchRequest(query="test", strategy=RetrievalStrategy.HYBRID))
 
 
+@pytest.mark.parametrize("has_results", [True, False])
+async def test_authority_records_survive_loss_of_first_candidate(has_results: bool) -> None:
+    service = _search_service()
+    retriever = _ready_search(service)
+    records = [
+        {
+            "base_revision_id": str(uuid.uuid4()),
+            "modifier_revision_id": str(uuid.uuid4()),
+            "outcome": "ungoverned_or_incomplete_metadata",
+            "modifier_effective_from": None,
+            "target_provisions": [],
+        }
+    ]
+    # Real HybridRetriever puts the request records only on its first hit.
+    # Hydration can omit this carrier; the surviving old rule must still be
+    # accompanied by the amendment uncertainty in the public search contract.
+    retriever.retrieve.return_value = [
+        CandidateHit(
+            uuid.uuid4(),
+            0.95,
+            CandidateSource.SEMANTIC,
+            metadata={"modifies_expansion_records": records},
+        ),
+        CandidateHit(uuid.uuid4(), 0.90, CandidateSource.SEMANTIC),
+    ]
+    if not has_results:
+        service._hydrator.hydrate.return_value = []
+    response = await service.search(SearchRequest(query="current investment rebate"))
+    assert response.diagnostics.modifies_expansion_records == records
+
+
 async def test_source_policy_read_failure_fails_closed_only_in_enforce_mode() -> None:
     source_metadata = MagicMock()
     source_metadata.capture = AsyncMock(side_effect=SQLAlchemyError("unavailable"))

@@ -126,9 +126,11 @@ candidate. The Bangla route instead OCRs every page and does not compete with na
 Hybrid search always runs original dense and original lexical branches with no language filter.
 When translation is enabled and the active immutable build has language inventory, at most one
 target-language rewrite is added (`gpt-5-nano` by default). Translation runs only when it can
-materially improve retrieval: Bangla → English, or a bounded Banglish/code-switched rewrite to
-English. Ordinary Latin-script queries do not auto-translate to Bangla merely because Bangla
-exists in the corpus. Mixed-script queries keep both scripts in the original branches and skip
+materially improve retrieval: Bangla → English, a bounded Banglish/code-switched rewrite to
+English, or a Latin-script query into another supported corpus language such as Bangla.
+Latin queries remain classified as ambiguous rather than being asserted to be English.
+An English-only inventory does not cause an ordinary Latin query to be rewritten.
+Mixed-script queries keep both scripts in the original branches and skip
 the rewrite. Hard-scoped retrieval uses per-document language counts from the index-build
 manifest so a same-language document does not spend a translation call. Translated branches
 include `target OR mixed OR unknown` rows. Original chunks remain the only evidence and

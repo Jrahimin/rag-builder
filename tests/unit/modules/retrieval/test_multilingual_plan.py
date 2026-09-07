@@ -180,7 +180,7 @@ async def test_disabled_translation_still_records_cross_language_target() -> Non
     assert plan.cross_language_target == "en"
 
 
-async def test_english_query_skips_bangla_rewrite_when_bangla_exists() -> None:
+async def test_latin_query_adds_bangla_search_without_losing_original_branches() -> None:
     plan = await resolve_multilingual_plan(
         "what are the source tax deduction areas?",
         manifest={
@@ -188,14 +188,15 @@ async def test_english_query_skips_bangla_rewrite_when_bangla_exists() -> None:
             "chunk_language_counts": {"bn": 8, "en": 1},
         },
         translation_config=QueryTranslationConfig(enabled=True),
-        translator=_FakeTranslator("should not be used"),
+        translator=_FakeTranslator("উৎসে কর কর্তনের খাতগুলো কী কী?"),
     )
-    assert plan.translation_status == "skipped"
-    assert plan.target_language is None
-    assert plan.diagnostics["skipped_reason"] == "no_translation_target"
+    assert plan.translation_status == "applied"
+    assert plan.target_language == "bn"
     assert {branch.family for branch in plan.branches} == {
         BRANCH_ORIGINAL_DENSE,
         BRANCH_ORIGINAL_LEXICAL,
+        "translated_dense",
+        "translated_lexical",
     }
 
 
