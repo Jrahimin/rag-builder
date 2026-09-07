@@ -1,3 +1,5 @@
+import { SourceDateInput } from "../sources/SourceDateInput";
+import { verifySavedSourceDates } from "../sources/sourceUploadMetadata";
 import { SourceModificationPicker } from "../sources/SourceModificationPicker";
 import { ChevronRight, Database, FileClock, Plus, X } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -1317,6 +1319,7 @@ function ProjectSources({ project }: { project: Project }) {
         revision,
       );
       setForm(sourceRevisionForm(created.revision, selectedDocument.filename));
+      verifySavedSourceDates(revision, created.revision);
       setNotice(
         `Revision ${created.revision.revision_number} is active. Its validity dates are saved with this immutable revision.`,
       );
@@ -1459,7 +1462,7 @@ function ProjectSources({ project }: { project: Project }) {
           </label>
           <label className="field-control">
             <span>Published</span>
-            <input
+            <SourceDateInput
               type="date"
               value={uploadPublished}
               onChange={(event) => setUploadPublished(event.target.value)}
@@ -1467,7 +1470,7 @@ function ProjectSources({ project }: { project: Project }) {
           </label>
           <label className="field-control">
             <span>Effective from</span>
-            <input
+            <SourceDateInput
               type="date"
               value={uploadEffectiveFrom}
               max={uploadEffectiveTo || undefined}
@@ -1476,7 +1479,7 @@ function ProjectSources({ project }: { project: Project }) {
           </label>
           <label className="field-control">
             <span>Effective to</span>
-            <input
+            <SourceDateInput
               type="date"
               value={uploadEffectiveTo}
               min={uploadEffectiveFrom || undefined}
@@ -1694,7 +1697,7 @@ function ProjectSources({ project }: { project: Project }) {
                   <div className="form-grid source-revision-form__dates">
                     <label className="field-control">
                       <span>Published</span>
-                      <input
+                      <SourceDateInput
                         type="date"
                         value={form.published}
                         onChange={(event) => setForm({ ...form, published: event.target.value })}
@@ -1702,7 +1705,7 @@ function ProjectSources({ project }: { project: Project }) {
                     </label>
                     <label className="field-control">
                       <span>Effective from</span>
-                      <input
+                      <SourceDateInput
                         type="date"
                         value={form.from}
                         max={form.to || undefined}
@@ -1711,7 +1714,7 @@ function ProjectSources({ project }: { project: Project }) {
                     </label>
                     <label className="field-control">
                       <span>Effective to</span>
-                      <input
+                      <SourceDateInput
                         type="date"
                         value={form.to}
                         min={form.from || undefined}

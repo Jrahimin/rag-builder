@@ -123,6 +123,8 @@ def annotate_authority_limitations(
             if outcome in irrelevant:
                 continue
             scopes = record.get("target_provisions")
+            if _explicitly_disjoint_provisions(chunk.content, scopes):
+                continue
             redacted = set(chunk.metadata.get("authority_redacted_provisions") or [])
             if (
                 isinstance(scopes, list)
@@ -193,3 +195,44 @@ def _redact_exact_provisions(content: str, scopes: set[str]) -> tuple[str, set[s
 
 def _normalize_heading(value: str) -> str:
     return " ".join(value.casefold().strip().split())
+
+
+def _explicitly_disjoint_provisions(content: str, scopes: object) -> bool:
+    """Only complete headed passages can prove a scoped amendment unrelated.
+
+    Unheaded continuations, unknown scope labels and document-wide links still
+    require evidence review. Subsections share the parent provision identity.
+    """
+    if not isinstance(scopes, list) or not scopes:
+        return False
+    pattern = regex.compile(
+        r"^(section|article|rule|regulation|§|ধারা|বিধি)\s+(\p{Number}+[A-Za-z]?)\b",
+        regex.IGNORECASE,
+    )
+
+    def key(text: str) -> tuple[str, str] | None:
+        # A range/list is not a single provision. Do not narrow its meaning.
+        if regex.search(
+            r"\p{Number}\s*[-\u2013/,]\s*\p{Number}|\b(?:and|to|through)\s+\p{Number}",
+            text,
+            regex.IGNORECASE,
+        ):
+            return None
+        match = pattern.match(text.strip())
+        if not match:
+            return None
+        kind, number = match.groups()
+        kind = {"§": "section", "ধারা": "section", "বিধি": "rule"}.get(kind, kind.casefold())
+        number = "".join(str(int(c)) if c.isdecimal() else c.casefold() for c in number)
+        return kind, number
+
+    lines = content.strip().splitlines()
+    if not lines or not _PROVISION_HEADING.fullmatch(lines[0].strip()):
+        return False
+    if any(regex.match(r"^\s*\p{Number}+[.)]\s", line) for line in lines[1:]):
+        return False
+    targets = [key(scope) if isinstance(scope, str) else None for scope in scopes]
+    if None in targets:
+        return False
+    headings = [key(line) for line in lines if _PROVISION_HEADING.fullmatch(line.strip())]
+    return bool(headings) and None not in headings and set(headings).isdisjoint(targets)

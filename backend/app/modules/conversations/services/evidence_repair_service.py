@@ -79,9 +79,14 @@ async def repair_knowledge_evidence(
     All planned facets must retain an admitted unit after the final budget. Model
     queries only retrieve candidates; they never become answer evidence. A failed
     repair leaves the original authority failure available to the caller's normal
-    web recovery/refusal policy. No retries or unbounded agent loop.
+    refusal policy. Unvalidated web snippets cannot bypass it. No retries or
+    unbounded agent loop.
     """
     diagnostics: dict[str, Any] = {"version": EVIDENCE_REPAIR_VERSION, "status": "not_attempted"}
+    diagnostics["context_budget"] = {
+        "max_chunks": chat_config.max_context_chunks,
+        "max_characters": chat_config.context_char_budget,
+    }
     result = EvidenceRepairResult([], None, diagnostics)
     reference_date = (
         inputs.as_of.date().isoformat()
@@ -199,6 +204,8 @@ async def repair_knowledge_evidence(
                                 "translation_finish_reason",
                                 "translation_target_language",
                                 "translation_usage",
+                                "executed_branches",
+                                "branch_candidate_counts",
                             )
                         },
                         "retrieval": branch.diagnostics,

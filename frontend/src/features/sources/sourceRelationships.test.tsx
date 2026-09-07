@@ -134,6 +134,9 @@ function setup() {
       const item = state.items.find((item) => item.document_id === document)!;
       item.revision = {
         ...item.revision,
+        published_date: data.published_date ?? null,
+        effective_from: data.effective_from ?? null,
+        effective_to: data.effective_to ?? null,
         id: "finance-corrected",
         revision_number: 2,
         relationships: (data.relationships ?? []).map((edge, i) => ({
@@ -205,9 +208,26 @@ test.each(["projects", "lab"])(
     ).not.toBeInTheDocument();
     await userEvent.click(within(choices).getByRole("checkbox", { name: /Act Bangla/ }));
     await userEvent.click(within(choices).getByRole("checkbox", { name: /Act English/ }));
+    const form = screen.getByLabelText("Correct treatment").closest("form")!;
+    const dates = form.querySelectorAll('input[type="date"]');
+    fireEvent.input(dates[0]!, { target: { value: "2026-06-30" } });
+    fireEvent.input(dates[1]!, { target: { value: "2026-07-01" } });
+    fireEvent.input(dates[2]!, { target: { value: "2027-06-30" } });
+    fireEvent.change(within(choices).getByLabelText("Provisions modified in Act English"), {
+      target: { value: "Section 78\n\nSection 78\nSection 79" },
+    });
     await userEvent.click(screen.getByRole("button", { name: "Save metadata correction" }));
     await waitFor(() => expect(save).toHaveBeenCalledOnce());
+    expect(save.mock.calls[0]?.[2]).toMatchObject({
+      published_date: "2026-06-30",
+      effective_from: "2026-07-01",
+      effective_to: "2027-06-30",
+    });
     expect(save.mock.calls[0]?.[2].relationships).toHaveLength(2);
+    expect(save.mock.calls[0]?.[2].relationships?.[1]?.target_provisions).toEqual([
+      "Section 78",
+      "Section 79",
+    ]);
     if (surface === "lab")
       await userEvent.click(await screen.findByRole("button", { name: "Correct metadata" }));
     await waitFor(() => expect(screen.getByRole("checkbox", { name: /Act Bangla/ })).toBeChecked());

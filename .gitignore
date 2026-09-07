@@ -113,6 +113,7 @@ docs/_build/
 
 # Frontend dependencies and build output
 frontend/node_modules/
+frontend/node_modules.pre-validation/
 frontend/.vite/
 frontend/dist/
 frontend/coverage/

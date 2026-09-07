@@ -91,9 +91,23 @@ export function SourceModificationPicker({
             >
               Remove
             </button>
-            {item.target_provisions.length > 0 && (
-              <small>Saved provision scope: {item.target_provisions.join("; ")}</small>
-            )}
+            <label className="field-control">
+              <span>Provisions modified in {source?.title ?? item.target_revision_id}</span>
+              <textarea
+                rows={2}
+                value={item.target_provisions.join("\n")}
+                placeholder="Optional: one exact provision heading per line"
+                onChange={(event) =>
+                  onChange(
+                    value.map((candidate) =>
+                      candidate === item
+                        ? { ...candidate, target_provisions: event.target.value.split("\n") }
+                        : candidate,
+                    ),
+                  )
+                }
+              />
+            </label>
           </div>
         );
       })}

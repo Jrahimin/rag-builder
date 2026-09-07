@@ -757,6 +757,14 @@ class ChatService:
                 "status": "suppressed_scoped_request",
                 "fallback_used": False,
             }
+        elif web_requested and evidence.reason is InsufficientEvidenceReason.UNRESOLVED_AUTHORITY:
+            # Web snippet relevance cannot establish commencement, amendment
+            # precedence or all dependencies of a governed calculation. Until
+            # web evidence supports that contract, never bypass a failed review.
+            web_diagnostics = {
+                "status": "suppressed_unresolved_authority",
+                "fallback_used": False,
+            }
         elif web_requested and self._web_search is None:
             web_diagnostics = {
                 "status": "provider_unavailable",

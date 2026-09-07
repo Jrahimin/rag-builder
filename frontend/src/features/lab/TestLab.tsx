@@ -1,3 +1,5 @@
+import { SourceDateInput } from "../sources/SourceDateInput";
+import { verifySavedSourceDates } from "../sources/sourceUploadMetadata";
 import { SourceModificationPicker } from "../sources/SourceModificationPicker";
 import {
   Activity,
@@ -897,6 +899,7 @@ function DocumentsTab({
         revision,
       );
       await sourceState.refetch();
+      verifySavedSourceDates(revision, created.revision);
       setCorrectionOpen(false);
       onActivity({
         name: `Correct source metadata for ${selected.filename}`,
@@ -1054,7 +1057,7 @@ function DocumentsTab({
             </label>
             <label className="field-control">
               <span>Published</span>
-              <input
+              <SourceDateInput
                 aria-label="Published"
                 type="date"
                 value={sourcePublished}
@@ -1063,7 +1066,7 @@ function DocumentsTab({
             </label>
             <label className="field-control">
               <span>Effective from</span>
-              <input
+              <SourceDateInput
                 aria-label="Effective from"
                 type="date"
                 value={sourceEffectiveFrom}
@@ -1073,7 +1076,7 @@ function DocumentsTab({
             </label>
             <label className="field-control">
               <span>Effective to</span>
-              <input
+              <SourceDateInput
                 aria-label="Effective to"
                 type="date"
                 value={sourceEffectiveTo}
@@ -1295,6 +1298,15 @@ function DocumentsTab({
                     </button>
                   )}
                 </div>
+                {selectedSource.revision.warnings?.includes(
+                  "modifies_requires_effective_from_for_retrieval",
+                ) && (
+                  <p role="status">
+                    This amendment has no effective-from date. Its effect on current rules cannot be
+                    established. Verify commencement from the document; publication alone is not
+                    enough.
+                  </p>
+                )}
                 {correctionOpen && correctionDraft && (
                   <form
                     className="stack-form source-revision-form"
@@ -1417,7 +1429,7 @@ function DocumentsTab({
                       </label>
                       <label className="field-control">
                         <span>Published</span>
-                        <input
+                        <SourceDateInput
                           type="date"
                           value={correctionDraft.publishedDate}
                           onChange={(event) =>
@@ -1430,7 +1442,7 @@ function DocumentsTab({
                       </label>
                       <label className="field-control">
                         <span>Effective from</span>
-                        <input
+                        <SourceDateInput
                           type="date"
                           value={correctionDraft.effectiveFrom}
                           max={correctionDraft.effectiveTo || undefined}
@@ -1444,7 +1456,7 @@ function DocumentsTab({
                       </label>
                       <label className="field-control">
                         <span>Effective to</span>
-                        <input
+                        <SourceDateInput
                           type="date"
                           value={correctionDraft.effectiveTo}
                           min={correctionDraft.effectiveFrom || undefined}

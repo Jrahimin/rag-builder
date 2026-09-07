@@ -15,6 +15,32 @@ from app.modules.conversations.ports import ContextChunk
 pytestmark = pytest.mark.unit
 
 
+@pytest.mark.parametrize(
+    "content,unresolved",
+    [
+        ("Section 78 — Rebate\nCurrent rebate rule.", False),
+        ("Section 106 — Administration\nAdministrative rule.", True),
+        ("Section 106(1) — Administration\nAdministrative rule.", True),
+        ("Continuation without a heading.", True),
+        ("Unheaded continuation.\nSection 78 — Rebate\nRebate rule.", True),
+        ("Section 78 — Rebate\nRule.\nSection 106 — Administration\nRule.", True),
+    ],
+)
+def test_scoped_incomplete_amendment_only_blocks_potentially_affected_passages(content, unresolved):
+    base = uuid.uuid4()
+    selected = annotate_authority_limitations(
+        [_chunk(revision=base, content=content)],
+        [
+            {
+                "base_revision_id": str(base),
+                "outcome": "ungoverned_or_incomplete_metadata",
+                "target_provisions": ["Section 106", "Section 166"],
+            }
+        ],
+    )
+    assert (selected[0].metadata.get("authority_status") == "unresolved") is unresolved
+
+
 def _chunk(*, revision: uuid.UUID, content: str, records: list[dict] | None = None) -> ContextChunk:
     return ContextChunk(
         chunk_id=uuid.uuid4(),

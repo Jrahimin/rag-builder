@@ -20,7 +20,9 @@ function modificationEdges(items: SourceModification[]) {
   return items.map((item) => ({
     relationship_type: "modifies" as const,
     target_revision_id: item.target_revision_id,
-    target_provisions: [...item.target_provisions],
+    target_provisions: [
+      ...new Set(item.target_provisions.map((text) => text.trim()).filter(Boolean)),
+    ],
   }));
 }
 
@@ -48,6 +50,16 @@ export function hasInvalidEffectiveInterval(draft: SourceMetadataDraft) {
   return Boolean(
     draft.effectiveFrom && draft.effectiveTo && draft.effectiveTo < draft.effectiveFrom,
   );
+}
+
+export function verifySavedSourceDates(request: SourceRevisionCreate, saved: SourceRevision) {
+  for (const key of ["published_date", "effective_from", "effective_to"] as const) {
+    if ((request[key] || null) !== (saved[key]?.slice(0, 10) || null)) {
+      throw new Error(
+        "The server returned different source dates. Reopen the active revision and verify the dates before continuing.",
+      );
+    }
+  }
 }
 
 export function sourceMetadataDraftFromRevision(revision: SourceRevision): SourceMetadataDraft {

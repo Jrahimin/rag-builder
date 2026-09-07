@@ -1296,7 +1296,7 @@ async def test_indexed_then_web_uses_web_only_after_knowledge_gate_fails(
 
 
 @pytest.mark.parametrize("mode", [EvidenceGateMode.ENFORCE, EvidenceGateMode.OBSERVE])
-async def test_unresolved_current_rule_triggers_web_recovery_despite_strong_relevance(
+async def test_unresolved_current_rule_cannot_escape_authority_review_through_web(
     session, conversation_repository, message_repository, conversation, mode
 ) -> None:
     web = FakeWebSearch()
@@ -1314,10 +1314,13 @@ async def test_unresolved_current_rule_triggers_web_recovery_despite_strong_rele
     turn = await service.send_message(
         conversation.id, MessageSendRequest(content="What is the current refund guidance?")
     )
-    assert len(web.calls) == 1
-    assert turn.assistant_message.source_provenance == "web"
+    assert not web.calls
+    assert turn.assistant_message.finish_reason == "insufficient_evidence"
     assert turn.assistant_message.metadata["evidence_gate"]["reason"] == "unresolved_authority"
-    assert all(citation.source_kind == "web" for citation in turn.assistant_message.citations)
+    assert not turn.assistant_message.citations
+    assert (
+        turn.assistant_message.metadata["web_search"]["status"] == "suppressed_unresolved_authority"
+    )
     assert any(notice.kind == "unresolved_authority" for notice in turn.assistant_message.notices)
 
 

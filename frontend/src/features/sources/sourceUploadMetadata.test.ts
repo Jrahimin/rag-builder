@@ -5,6 +5,7 @@ import {
   buildSourceUploadMetadata,
   sourceModifications,
   sourceMetadataDraftFromRevision,
+  verifySavedSourceDates,
 } from "./sourceUploadMetadata";
 
 const current: SourceRevision = {
@@ -37,6 +38,21 @@ const target: SourceRevision = {
   revision_number: 4,
   title: "Target source",
 };
+
+test("a successful response cannot silently acknowledge different saved dates", () => {
+  const request = buildSourceMetadataCorrection({
+    current,
+    treatment: "keep",
+    draft: {
+      ...sourceMetadataDraftFromRevision(current),
+      effectiveFrom: "2026-07-01",
+    },
+  })!;
+  expect(() => verifySavedSourceDates(request, current)).toThrow("different source dates");
+  expect(() =>
+    verifySavedSourceDates(request, { ...current, effective_from: "2026-07-01" }),
+  ).not.toThrow();
+});
 
 describe("buildSourceMetadataCorrection", () => {
   test("correcting an effective date preserves all amendment targets and provision scopes", () => {
