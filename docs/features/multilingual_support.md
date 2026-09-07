@@ -134,9 +134,11 @@ Mixed-script queries keep both scripts in the original branches and skip
 the rewrite. Hard-scoped retrieval uses per-document language counts from the index-build
 manifest so a same-language document does not spend a translation call. Translated branches
 include `target OR mixed OR unknown` rows. Original chunks remain the only evidence and
-citations. The default minimum translation output budget is 256 tokens, still capped at 2048
+citations. The default minimum translation output budget is 1024 tokens, still capped at 2048
 and overridable through `APE_QUERY_TRANSLATION__MIN_OUTPUT_TOKENS` /
-`APE_QUERY_TRANSLATION__MAX_OUTPUT_TOKENS`. Query translation stays off by default;
+`APE_QUERY_TRANSLATION__MAX_OUTPUT_TOKENS`. Length-limited output, including nonempty
+prefixes, is rejected; a bounded retry increases the budget up to the existing ceiling.
+Query translation stays off by default;
 Projects can inherit that or override On / Off. `hosted_managed` enables Cohere
 rerank by default; local and pytest stacks keep rerank off. Cut over an existing OpenAI embedding
 set with rebuild → validate → activate. See [ADR-018](../architecture/adr/018-multilingual-retrieval-v1.md).

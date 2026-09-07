@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
 from typing import Any
 
@@ -18,15 +19,17 @@ from app.modules.conversations.current_authority import (
 from app.modules.conversations.grounded_context import assess_and_select_knowledge
 from app.modules.conversations.grounding_service import EvidenceDecision, GroundingService
 from app.modules.conversations.ports import ContextChunk, ContextRetrievalResult, RetrievalPort
+from app.modules.conversations.prompts.evidence_coverage import COVERAGE_PROMPT
 from app.modules.conversations.prompts.evidence_repair import (
     EVIDENCE_REPAIR_PROMPT,
     EVIDENCE_REPAIR_VERSION,
 )
+from app.modules.conversations.services.evidence_coverage import CoverageVerdict
 from app.modules.conversations.turn_resolution import EffectiveRetrievalInputs
 from app.platform.providers.contracts.llm import BaseLLMProvider, ChatMessage, ChatRole, ChatUsage
 from app.platform.providers.errors import ProviderError
 
-REPAIR_TIMEOUT_SECONDS = 30
+REPAIR_TIMEOUT_SECONDS = 60
 
 
 class _SearchPlan(BaseModel):
@@ -53,6 +56,7 @@ async def repair_knowledge_evidence(
     chat_config: ChatConfig,
     retrieval_config: RetrievalConfig,
     max_output_tokens: int,
+    release_read_transaction: Callable[[], Awaitable[None]] | None = None,
 ) -> EvidenceRepairResult:
     """Never mix active snapshots, relax filters, or promote unknown authority.
 
@@ -149,6 +153,17 @@ async def repair_knowledge_evidence(
                 diagnostics["branches"].append(
                     {
                         "query": query,
+                        "translation": {
+                            key: branch.diagnostics.get(key)
+                            for key in (
+                                "translation_status",
+                                "translation_failure_reason",
+                                "translation_attempts",
+                                "translation_finish_reason",
+                                "translation_target_language",
+                                "translation_usage",
+                            )
+                        },
                         "retrieval": branch.diagnostics,
                         "selected_chunk_ids": [str(c.chunk_id) for c in units],
                     }
@@ -178,6 +193,83 @@ async def repair_knowledge_evidence(
             retained = {c.chunk_id for c in budgeted}
             if any(not any(c.chunk_id in retained for c in group) for group in groups):
                 diagnostics["status"] = "dependency_exceeds_budget"
+                return result
+            if release_read_transaction is not None:
+                await release_read_transaction()
+            planning_usage = result.usage
+            result.usage = ChatUsage(None, None)
+            verification = await llm.generate(
+                [
+                    ChatMessage(role=ChatRole.SYSTEM, content=COVERAGE_PROMPT),
+                    ChatMessage(
+                        role=ChatRole.USER,
+                        content=json.dumps(
+                            {
+                                "original_question": inputs.query,
+                                "as_of": inputs.as_of.isoformat() if inputs.as_of else None,
+                                "queries": [
+                                    {
+                                        "query": query,
+                                        "candidate_ids": [str(c.chunk_id) for c in group],
+                                    }
+                                    for query, group in zip(queries, groups, strict=True)
+                                ],
+                                "authority_limitations": records,
+                                "context": [
+                                    {
+                                        "chunk_id": str(c.chunk_id),
+                                        "title": c.filename,
+                                        "content": c.content,
+                                        "source_revision_id": c.metadata.get("source_revision_id"),
+                                    }
+                                    for c in budgeted
+                                ],
+                            },
+                            ensure_ascii=False,
+                        ),
+                    ),
+                ],
+                temperature=None,
+                max_tokens=min(4096, max_output_tokens),
+            )
+            verification_usage = verification.usage or ChatUsage(None, None)
+            result.usage = ChatUsage(
+                input_tokens=(
+                    planning_usage.input_tokens + verification_usage.input_tokens
+                    if planning_usage
+                    and planning_usage.input_tokens is not None
+                    and verification_usage.input_tokens is not None
+                    else None
+                ),
+                output_tokens=(
+                    planning_usage.output_tokens + verification_usage.output_tokens
+                    if planning_usage
+                    and planning_usage.output_tokens is not None
+                    and verification_usage.output_tokens is not None
+                    else None
+                ),
+            )
+            if verification.finish_reason not in {None, "stop", "completed", "end_turn"}:
+                diagnostics["status"] = "coverage_incomplete"
+                return result
+            verdict = CoverageVerdict.model_validate_json(verification.content)
+            # Keep quotes internal: candidate trace opt-out must not leak source
+            # text through the verifier's diagnostic payload.
+            diagnostics["coverage"] = {
+                "complete": verdict.complete,
+                "missing": verdict.missing,
+                "checks": [
+                    {
+                        "query_index": check.query_index,
+                        "supported": check.supported,
+                        "chunk_ids": [item.chunk_id for item in check.evidence],
+                    }
+                    for check in verdict.checks
+                ],
+                "quotes_validated": verdict.validates(groups, budgeted),
+            }
+            if not verdict.validates(groups, budgeted):
+                diagnostics["status"] = "coverage_incomplete"
                 return result
             result.selected = budgeted
             assessments = {a.chunk_id: a for d in decisions for a in d.candidate_assessments}

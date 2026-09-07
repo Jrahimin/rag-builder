@@ -21,7 +21,7 @@ from app.platform.providers.prompts.retrieval_translation import (
 
 # Page-length query + buffer. Rejects rambling, not a book-page translation.
 _MAX_TRANSLATION_CHARS = 24_000
-_DEFAULT_MIN_TRANSLATION_OUTPUT_TOKENS = 256
+_DEFAULT_MIN_TRANSLATION_OUTPUT_TOKENS = 1024
 _MAX_TRANSLATION_OUTPUT_TOKENS = 2048
 _SHORT_QUERY_CLEAN_CHARS = 400
 _ABSOLUTE_MIN_TRANSLATION_OUTPUT_TOKENS = 16
@@ -65,7 +65,8 @@ class LLMQueryTranslationProvider(BaseQueryTranslationProvider):
 
     def _max_tokens(self, request: QueryTranslationRequest) -> int:
         # Bangla can approach ~1 token per 1-2 chars; English is cheaper.
-        # A short-query floor is a starvation hypothesis, not a proven root cause.
+        # Reasoning models share the output budget with hidden reasoning, even
+        # for a short query. Reserve headroom and grow length-limited retries.
         configured_min = max(_ABSOLUTE_MIN_TRANSLATION_OUTPUT_TOKENS, self._min_output_tokens)
         ceiling = min(
             request.max_output_tokens,
@@ -93,13 +94,17 @@ class LLMQueryTranslationProvider(BaseQueryTranslationProvider):
         error: str | None = "empty"
         validation_reasons: list[str] = []
         attempt_count = 0
+        token_budget = self._max_tokens(request)
+        token_ceiling = min(
+            request.max_output_tokens, self._max_output_tokens, _MAX_TRANSLATION_OUTPUT_TOKENS
+        )
         for _ in range(attempts):
             attempt_count += 1
             try:
                 completion = await self._llm.generate(
                     messages,
                     temperature=self._temperature,
-                    max_tokens=self._max_tokens(request),
+                    max_tokens=token_budget,
                 )
             except ProviderError as exc:
                 context = dict(exc.context) if isinstance(exc.context, dict) else {}
@@ -120,6 +125,11 @@ class LLMQueryTranslationProvider(BaseQueryTranslationProvider):
                 ) from exc
             translated = _clean_translation(completion.content)
             error = _validation_error(request.query, translated)
+            if completion.finish_reason == "length":
+                # A nonempty prefix can preserve literals yet omit a material
+                # condition. Never admit an incomplete translation.
+                error = "truncated" if translated else "empty"
+                token_budget = min(token_ceiling, token_budget * 4)
             if error is None:
                 break
             validation_reasons.append(error)

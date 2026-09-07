@@ -689,6 +689,7 @@ class ChatService:
                 chat_config=self._chat_config,
                 retrieval_config=self._retrieval_config,
                 max_output_tokens=self._llm_max_tokens(),
+                release_read_transaction=self._release_read_transaction,
             )
             repair_usage = repaired.usage
             repair_diagnostics = dict(repaired.diagnostics)

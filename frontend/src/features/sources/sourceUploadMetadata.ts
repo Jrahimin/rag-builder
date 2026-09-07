@@ -137,6 +137,12 @@ export function buildSourceMetadataCorrection({
         ? [{ relationship_type: "replaces", target_revision_id: target.id }]
         : treatment === "modifies" && target
           ? [{ relationship_type: "modifies", target_revision_id: target.id }]
-          : [],
+          : treatment === "keep"
+            ? (current.relationships ?? []).map((relationship) => ({
+                relationship_type: relationship.relationship_type,
+                target_revision_id: relationship.target_revision_id,
+                target_provisions: [...(relationship.target_provisions ?? [])],
+              }))
+            : [],
   };
 }

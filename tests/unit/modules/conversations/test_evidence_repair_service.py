@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from dataclasses import replace
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock
 
@@ -16,6 +17,7 @@ from app.modules.conversations.services.evidence_repair_service import repair_kn
 from app.modules.conversations.turn_resolution import EffectiveRetrievalInputs
 from app.platform.domain.content_hash import content_hash
 from app.platform.providers.contracts.llm import ChatCompletionResult, ChatUsage
+from app.platform.providers.errors import ProviderError
 
 pytestmark = pytest.mark.unit
 
@@ -34,7 +36,16 @@ def chunk(text: str, **metadata: object) -> ContextChunk:
     )
 
 
-async def run_repair(branches, *, queries=None, config=None, initial_records=None):
+async def run_repair(
+    branches,
+    *,
+    queries=None,
+    config=None,
+    initial_records=None,
+    coverage=None,
+    verification_finish="stop",
+    verification_error=None,
+):
     config = config or ChatConfig()
     queries = (
         queries
@@ -42,7 +53,7 @@ async def run_repair(branches, *, queries=None, config=None, initial_records=Non
         else ["gross salary exemption", "general rate bands", "current investment rebate"]
     )
     llm = AsyncMock()
-    llm.generate.return_value = ChatCompletionResult(
+    plan = ChatCompletionResult(
         content=json.dumps({"queries": queries}),
         provider="fake",
         model="test",
@@ -50,6 +61,32 @@ async def run_repair(branches, *, queries=None, config=None, initial_records=Non
         usage=ChatUsage(12, 8),
         provider_version="1",
     )
+    verdict = (
+        coverage
+        if coverage is not None
+        else {
+            "complete": True,
+            "missing": [],
+            "checks": [
+                {
+                    "query_index": i,
+                    "supported": True,
+                    "evidence": [{"chunk_id": str(items[0].chunk_id), "quote": items[0].content}],
+                }
+                for i, (items, _) in enumerate(branches)
+                if items
+            ],
+        }
+    )
+    llm.generate.side_effect = [
+        plan,
+        verification_error
+        or replace(
+            plan,
+            content=json.dumps(verdict),
+            finish_reason=verification_finish,
+        ),
+    ]
     retrieval = AsyncMock()
     snapshot = {"index_build_id": "build-a", "source_metadata_generation": 24}
     retrieval.retrieve.side_effect = [
@@ -94,7 +131,7 @@ async def test_recovers_separate_salary_band_and_rebate_dependencies_with_origin
     assert result.diagnostics["status"] == "recovered"
     assert [item.content for item in result.selected] == texts
     assert result.decision is not None and result.decision.sufficient
-    assert result.usage == ChatUsage(12, 8)
+    assert result.usage == ChatUsage(24, 16)
     for call in retrieval.retrieve.call_args_list:
         assert call.kwargs["document_id"] == inputs.document_id
         assert call.kwargs["metadata_filter"] == inputs.metadata_filter
@@ -188,3 +225,89 @@ async def test_non_tax_policy_recovery_uses_the_same_path():
         queries=["Enterprise renewal eligibility and charges"],
     )
     assert result.diagnostics["status"] == "recovered"
+
+
+async def test_relevant_definitions_and_unlinked_old_translation_do_not_prove_coverage():
+    branches = [
+        ([chunk("Employment income means salary and benefits.")], {}),
+        ([chunk("File returns with the applicable city corporation office.")], {}),
+        (
+            [
+                chunk(
+                    "Section 78: fifteen percent of investment, capped at one million.",
+                    source_revision_id="english-act",
+                )
+            ],
+            {},
+        ),
+    ]
+    result, _, _ = await run_repair(
+        branches,
+        initial_records=[
+            {
+                "base_revision_id": "bangla-act",
+                "modifier_revision_id": "new",
+                "outcome": "ungoverned_or_incomplete_metadata",
+                "target_provisions": [],
+            }
+        ],
+        coverage={
+            "complete": False,
+            "missing": ["Applicable period, exemption and amended rebate"],
+            "checks": [{"query_index": i, "supported": False, "evidence": []} for i in range(3)],
+        },
+    )
+    assert result.diagnostics["status"] == "coverage_incomplete"
+    assert result.decision is None and not result.selected
+    assert result.usage == ChatUsage(24, 16)
+
+
+@pytest.mark.parametrize("fault", ["invented_quote", "foreign_id", "missing_check", "missing_rule"])
+async def test_verifier_cannot_authorize_unbound_or_incomplete_evidence(fault):
+    source = chunk("Eligible refunds must be requested within 45 days.")
+    verdict = {
+        "complete": True,
+        "missing": [],
+        "checks": [
+            {
+                "query_index": 0,
+                "supported": True,
+                "evidence": [{"chunk_id": str(source.chunk_id), "quote": source.content}],
+            }
+        ],
+    }
+    if fault == "invented_quote":
+        verdict["checks"][0]["evidence"][0]["quote"] = "Refunds are unlimited."
+    elif fault == "foreign_id":
+        verdict["checks"][0]["evidence"][0]["chunk_id"] = str(uuid.uuid4())
+    elif fault == "missing_check":
+        verdict["checks"] = []
+    else:
+        verdict["missing"] = ["Customer eligibility"]
+    result, _, _ = await run_repair([([source], {})], queries=["refund terms"], coverage=verdict)
+    assert result.diagnostics["status"] == "coverage_incomplete"
+    assert result.decision is None and not result.selected
+
+
+async def test_truncated_positive_verdict_cannot_enable_generation():
+    result, _, _ = await run_repair(
+        [([chunk("Refunds are available within 45 days.")], {})],
+        queries=["refund terms"],
+        verification_finish="length",
+    )
+    assert result.diagnostics["status"] == "coverage_incomplete"
+    assert result.decision is None and not result.selected
+
+
+@pytest.mark.parametrize(
+    "error", [TimeoutError(), ProviderError("unavailable", provider_name="fake")]
+)
+async def test_verification_failure_preserves_failure_and_unknown_usage(error):
+    result, _, _ = await run_repair(
+        [([chunk("Refunds are available within 45 days.")], {})],
+        queries=["refund terms"],
+        verification_error=error,
+    )
+    assert result.diagnostics["status"] == "repair_unavailable"
+    assert result.decision is None and not result.selected
+    assert result.usage == ChatUsage(None, None)

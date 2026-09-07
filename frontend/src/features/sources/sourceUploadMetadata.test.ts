@@ -37,6 +37,35 @@ const target: SourceRevision = {
 };
 
 describe("buildSourceMetadataCorrection", () => {
+  test("correcting an effective date preserves all amendment targets and provision scopes", () => {
+    const linked: SourceRevision = {
+      ...current,
+      relationships: [target.id, "33333333-3333-3333-3333-333333333333"].map((id) => ({
+        id: `edge-${id}`,
+        created_at: current.created_at,
+        relationship_type: "modifies",
+        target_revision_id: id,
+        target_provisions: ["section 78"],
+      })),
+    };
+    const result = buildSourceMetadataCorrection({
+      current: linked,
+      treatment: "keep",
+      draft: { ...sourceMetadataDraftFromRevision(linked), effectiveFrom: "2026-07-01" },
+    });
+    expect(result?.effective_from).toBe("2026-07-01");
+    expect(result?.relationships).toEqual(
+      (linked.relationships ?? []).map((edge) => ({
+        relationship_type: edge.relationship_type,
+        target_revision_id: edge.target_revision_id,
+        target_provisions: ["section 78"],
+      })),
+    );
+    expect(result?.relationships?.[0]?.target_provisions).not.toBe(
+      linked.relationships?.[0]?.target_provisions,
+    );
+  });
+
   test("keeps a metadata-only correction in the current group", () => {
     const result = buildSourceMetadataCorrection({
       current,

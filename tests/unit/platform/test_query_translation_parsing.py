@@ -132,7 +132,7 @@ async def test_translation_caps_output_tokens_and_retries_empty() -> None:
     )
     assert result.translated_query == "উৎসে কর সংগ্রহ"
     assert result.attempts == 2
-    assert llm.max_tokens == [256, 256]
+    assert llm.max_tokens == [1024, 1024]
 
 
 async def test_page_length_query_gets_a_page_sized_output_budget() -> None:
@@ -150,6 +150,36 @@ async def test_page_length_query_gets_a_page_sized_output_budget() -> None:
     )
     expected = min(2048, (len(page) // 2) + 96)
     assert llm.max_tokens == [expected]
+
+
+async def test_reasoning_only_length_retry_increases_budget_with_existing_low_floor() -> None:
+    llm = _RecordingLLM(["", "উৎসে কর সংগ্রহ"])
+    translator = LLMQueryTranslationProvider(llm, min_output_tokens=256, max_output_tokens=2048)
+    await translator.translate(
+        QueryTranslationRequest(
+            query="source tax deduction",
+            source_profile="en",
+            target_language="bn",
+            prompt_version="retrieval-translation-v2",
+            max_output_tokens=2048,
+        )
+    )
+    assert llm.max_tokens == [256, 1024]
+
+
+async def test_nonempty_truncated_translation_is_never_admitted() -> None:
+    class TruncatedLLM(_RecordingLLM):
+        async def generate(self, *args: object, **kwargs: object) -> object:
+            result = await super().generate(*args, **kwargs)
+            result.finish_reason = "length"
+            return result
+
+    llm = TruncatedLLM(["উৎসে কর", "উৎসে কর"])
+    translator = LLMQueryTranslationProvider(llm)
+    with pytest.raises(ProviderError) as caught:
+        await translator.translate(_request())
+    assert caught.value.context["reason"] == "truncated"
+    assert llm.max_tokens == [64, 64]
 
 
 async def test_configured_min_output_tokens_is_the_short_query_floor() -> None:
@@ -185,7 +215,7 @@ async def test_empty_translation_records_finish_reason_and_token_usage() -> None
     assert caught.value.context["output_tokens"] == 0
     assert caught.value.context["reasoning_tokens"] == 48
     assert caught.value.context["attempts"] == 2
-    assert llm.max_tokens == [256, 256]
+    assert llm.max_tokens == [1024, 1024]
 
 
 async def test_non_empty_validation_failure_retries_and_retains_diagnostics() -> None:

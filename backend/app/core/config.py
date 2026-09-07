@@ -678,7 +678,7 @@ class QueryTranslationConfig(BaseModel):
     backend: LLMBackend = LLMBackend.OPENAI
     model: str = "gpt-5-nano"
     prompt_version: str = "retrieval-translation-v2"
-    min_output_tokens: int = Field(default=256, ge=16, le=2048)
+    min_output_tokens: int = Field(default=1024, ge=16, le=2048)
     max_output_tokens: int = Field(default=4096, ge=16, le=8192)
     request_timeout_seconds: float = Field(default=45.0, ge=1.0, le=180.0)
     retry_max_attempts: int = Field(default=1, ge=0, le=3)

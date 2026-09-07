@@ -1348,8 +1348,14 @@ async def test_unresolved_rules_never_reach_generation_when_no_recovery_is_allow
 
 
 @pytest.mark.parametrize("store_trace", [False, True])
+@pytest.mark.parametrize("coverage_complete", [True, False])
 async def test_repaired_evidence_reaches_generation_without_old_rule_or_web(
-    session, conversation_repository, message_repository, conversation, store_trace
+    session,
+    conversation_repository,
+    message_repository,
+    conversation,
+    store_trace,
+    coverage_complete,
 ) -> None:
     initial = await UnresolvedRuleRetrieval().retrieve()
     initial.diagnostics["source_metadata_generation"] = 24
@@ -1379,6 +1385,27 @@ async def test_repaired_evidence_reaches_generation_without_old_rule_or_web(
     llm.generate = AsyncMock(
         side_effect=[
             replace(answer, content='{"queries":["current refund entitlement eligibility"]}'),
+            replace(
+                answer,
+                content=json.dumps(
+                    {
+                        "complete": coverage_complete,
+                        "missing": [],
+                        "checks": [
+                            {
+                                "query_index": 0,
+                                "supported": True,
+                                "evidence": [
+                                    {
+                                        "chunk_id": str(current.chunk_id),
+                                        "quote": current.content,
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                ),
+            ),
             answer,
         ]
     )
@@ -1387,7 +1414,11 @@ async def test_repaired_evidence_reaches_generation_without_old_rule_or_web(
         conversation_repository,
         message_repository,
         llm,
-        chat_config=ChatConfig(response_mode=ResponseMode.INDEXED_THEN_WEB),
+        chat_config=ChatConfig(
+            response_mode=(
+                ResponseMode.INDEXED_THEN_WEB if coverage_complete else ResponseMode.INDEXED_ONLY
+            )
+        ),
         store_candidate_trace=store_trace,
     )
     service._retrieval = retrieval
@@ -1397,13 +1428,23 @@ async def test_repaired_evidence_reaches_generation_without_old_rule_or_web(
         conversation.id, MessageSendRequest(content="What is the current refund guidance?")
     )
     assert not web.calls
+    if not coverage_complete:
+        assert turn.assistant_message.finish_reason == "insufficient_evidence"
+        assert not turn.assistant_message.citations
+        assert (
+            turn.assistant_message.metadata["knowledge_repair"]["status"] == "coverage_incomplete"
+        )
+        assert llm.generate.await_count == 2
+        return
     assert turn.assistant_message.citations[0].chunk_id == current.chunk_id
-    assert turn.assistant_message.input_tokens == 20
-    assert turn.assistant_message.output_tokens == 10
+    assert turn.assistant_message.input_tokens == 30
+    assert turn.assistant_message.output_tokens == 15
     repair = turn.assistant_message.metadata["knowledge_repair"]
     assert repair["status"] == "recovered"
     assert ("retrieval" in repair["branches"][0]) is store_trace
-    messages = llm.generate.call_args_list[1].args[0]
+    assert repair["coverage"]["quotes_validated"] is True
+    assert "quote" not in repair["coverage"]["checks"][0]
+    messages = llm.generate.call_args_list[2].args[0]
     prompt = "\n".join(message.content for message in messages)
     assert current.content in prompt
     assert initial.chunks[0].content not in prompt

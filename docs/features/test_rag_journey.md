@@ -275,7 +275,7 @@ These are product behaviors the cases observe. The harness does not reimplement 
 | ---- | ----------------------- |
 | Hybrid retrieval | Original dense + original lexical always run. Optional one translated pair is additive and never cited |
 | Query translation routing | With translation enabled, Bangla → English and Banglish/code-switched → English when English exists in inventory. Latin-script queries can translate into another supported corpus language such as Bangla without being classified as English. Original branches remain. Mixed-script queries skip the rewrite. Hard-scoped same-language documents skip with `same_language_scope`; otherwise unused rewrites skip with `no_translation_target` |
-| Translation budget | Default minimum output is 256 tokens (`APE_QUERY_TRANSLATION__MIN_OUTPUT_TOKENS`), hard-capped at 2048. Empty/failed rewrites record `finish_reason`, output tokens, reasoning tokens, attempts, and validation reasons on retrieval diagnostics |
+| Translation budget | Default minimum output is 1024 tokens (`APE_QUERY_TRANSLATION__MIN_OUTPUT_TOKENS`), hard-capped at 2048. Length-limited retries grow within that ceiling; truncated prefixes are rejected. Empty/failed rewrites record `finish_reason`, output tokens, reasoning tokens, attempts, and validation reasons on retrieval diagnostics |
 | Cross-language evidence | Dedicated `chat.cross_language_semantic_evidence_score_threshold` (default `0.30`). Must not exceed the semantic bar. Not lowered to pass this fixture |
 | Candidate-wise grounding | Internal code behavior. It remains outside the journey allowlist and is not a universal invariant or Project switch |
 | Grounding mode | V2 Project behavior `behavior.grounding_assurance` is `strict` or `balanced`; this is not a tax-specific switch |
@@ -325,7 +325,7 @@ defaults**; hosted example files override several:
 | Setting | Code default | Role |
 | ------- | ------------ | ---- |
 | `APE_QUERY_TRANSLATION__ENABLED` | `false` | Global default for V2 `behavior.translation_policy`; Projects override Inherit / On / Off |
-| `APE_QUERY_TRANSLATION__MIN_OUTPUT_TOKENS` | `256` | Floor for retrieval-translation output |
+| `APE_QUERY_TRANSLATION__MIN_OUTPUT_TOKENS` | `1024` | Floor for retrieval-translation output |
 | `APE_CHAT__CROSS_LANGUAGE_SEMANTIC_EVIDENCE_SCORE_THRESHOLD` | `0.30` | Cross-language semantic admit bar |
 | `APE_CHAT__GROUNDING_MODE` | `strict` | Deployment grounding default; V2 can choose strict or balanced assurance |
 | `APE_CHAT__HIGH_CONFIDENCE_RERANKER_EVIDENCE_SCORE` | `0.70` | High reranker bar for measurement-gated balanced admission and passage rescue; must exceed the medium reranker bar |
