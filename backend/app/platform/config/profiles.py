@@ -136,7 +136,7 @@ _COMMON_OCR = _frozen_mapping(
         "lang": "en",
         "use_gpu": False,
         "bangla_min_ratio": 0.10,
-        "max_ocr_pages_per_document": 300,
+        "max_ocr_pages_per_document": 500,
         "min_text_chars": 20,
         "min_image_area_ratio": 0.08,
         "dpi": 200,

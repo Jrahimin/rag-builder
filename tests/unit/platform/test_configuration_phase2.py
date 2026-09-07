@@ -7,7 +7,7 @@ import uuid
 import pytest
 
 import app.platform.config.profiles as profile_registry
-from app.core.config import Settings
+from app.core.config import OcrConfig, Settings
 from app.modules.evaluation.profile_certification import (
     HOSTED_RAG_CERTIFICATION_MANIFEST,
     EvaluationSuiteRequirement,
@@ -274,7 +274,7 @@ def test_explicit_deployment_profile_rejects_incompatible_provider_wiring() -> N
         validate_profile_compatibility(settings)
 
 
-@pytest.mark.parametrize("ocr_page_limit", [300, 400])
+@pytest.mark.parametrize("ocr_page_limit", [300, 400, 500])
 def test_explicit_hosted_profile_accepts_exact_index_and_calibration_wiring(
     ocr_page_limit: int,
 ) -> None:
@@ -292,6 +292,7 @@ def test_explicit_hosted_profile_accepts_exact_index_and_calibration_wiring(
     )
 
     validate_profile_compatibility(settings)
+    assert build_index_artifact_config(settings).ocr["max_ocr_pages_per_document"] == ocr_page_limit
     settings.ocr.enabled = False
     with pytest.raises(ValueError, match="OCR settings drift"):
         validate_profile_compatibility(settings)
@@ -425,3 +426,11 @@ def test_each_seed_profile_family_has_a_passing_certification_path(
     )
 
     assert result.passed is True
+
+
+def test_ocr_default_and_index_profiles_share_500_page_limit() -> None:
+    assert OcrConfig().max_ocr_pages_per_document == 500
+    assert all(
+        profile.ocr["max_ocr_pages_per_document"] == 500
+        for profile in profile_registry.INDEX_PROFILES.values()
+    )

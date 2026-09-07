@@ -54,7 +54,7 @@ Create new test conversations after changing policy; existing conversations reta
 
 ## Reprocess and activate
 
-The reviewed active build `19dd2ec8` contains ten documents and 1,929 chunks, built at 01:29 Dhaka on 7 September. Its processing history records chunker 3.1.0. Restart API and workers on the deployed code and verify new job snapshots say **3.2.0**. Ensure the operational OCR ceiling accommodates the 316-page Bangla Act (for example 400); do not lower extraction-quality checks.
+The reviewed active build `19dd2ec8` contains ten documents and 1,929 chunks, built at 01:29 Dhaka on 7 September. Its processing history records chunker 3.1.0. Restart API and workers on the deployed code and verify new job snapshots say **3.2.0**. The OCR default and index profiles now use **500 pages**. Set `APE_OCR__MAX_OCR_PAGES_PER_DOCUMENT=500`, or remove the old override from the effective runtime environment to use the default. Restart both API and workers, then verify a new job snapshot records 500. Existing snapshots remain immutable. The page ceiling is a resource limit excluded from provider compatibility checks; OCR provider/behavior checks remain enforced. Do not lower extraction-quality checks.
 
 Reprocess documents whose stored chunks predate 3.2.0, particularly Finance, both base Acts, Nirdeshika and Paripatra. Process serially when automatic builds are enabled, waiting for each complete job/build, to avoid competing active-corpus snapshots. Rebuilding vectors from existing chunks alone will not apply the new table context. Verify the final manifest includes all ten READY document versions and matching chunk/vector/keyword counts. Keep the previous build and its embedding credentials for rollback.
 
