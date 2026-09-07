@@ -51,6 +51,26 @@ from app.platform.providers.errors import ProviderError, sanitized_provider_fail
 logger = structlog.get_logger(__name__)
 
 
+def _fair_modifier_candidates(candidates: list[CandidateHit], limit: int) -> list[CandidateHit]:
+    """Reserve one ranked candidate per modifier, then fill by original score.
+
+    This is discovery fairness only: relevance and authority admission still run.
+    When the cap is smaller than the source count, higher ranked sources win.
+    """
+    chosen: set[uuid.UUID] = set()
+    seen_documents: set[uuid.UUID] = set()
+    for candidate in candidates:
+        document_id = _uuid_value(candidate.metadata.get("source_document_id"))
+        if document_id is not None and document_id not in seen_documents and len(chosen) < limit:
+            chosen.add(candidate.chunk_id)
+            seen_documents.add(document_id)
+    for candidate in candidates:
+        if len(chosen) >= limit:
+            break
+        chosen.add(candidate.chunk_id)
+    return [candidate for candidate in candidates if candidate.chunk_id in chosen]
+
+
 class HybridRetriever(BaseRetriever):
     """Run semantic + keyword retrieval, fuse with RRF, optionally rerank."""
 
@@ -413,7 +433,10 @@ class HybridRetriever(BaseRetriever):
         related_fused = reciprocal_rank_fusion(
             related_lists,
             rrf_k=context.rrf_k,
-            top_k=context.max_relationship_candidates,
+            top_k=len({hit.chunk_id for ranked in related_lists for hit in ranked.hits}),
+        )
+        related_fused = _fair_modifier_candidates(
+            related_fused, context.max_relationship_candidates
         )
         retained_ids = {candidate.chunk_id for candidate in related_fused}
         retained_ids_by_document: dict[uuid.UUID, set[uuid.UUID]] = {}

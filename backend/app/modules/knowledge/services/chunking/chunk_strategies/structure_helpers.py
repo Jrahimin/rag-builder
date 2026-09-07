@@ -314,7 +314,11 @@ def chunk_by_sections(
                     heading_level=first.heading_level
                     if first.element_type is ParsedElementType.HEADING
                     else None,
-                    metadata={"strategy_used": strategy_name, "section_chunk": True},
+                    metadata={
+                        **first.metadata,
+                        "strategy_used": strategy_name,
+                        "section_chunk": True,
+                    },
                 )
             )
             continue
@@ -327,6 +331,33 @@ def chunk_by_sections(
                 strategy_name=strategy_name,
             )
         )
+    for draft in chunks:
+        # A continuation paragraph needs its preceding governing headings just as
+        # a table does. Use parser source text only; never infer periods from titles.
+        headings = draft.metadata.get("heading_path") or []
+        prefix = "\n\n".join(
+            dict.fromkeys(
+                text
+                for text in headings
+                if isinstance(text, str) and text and text not in draft.content
+            )
+        )
+        if not prefix:
+            continue
+        content = f"{prefix}\n\n{draft.content}"
+        if token_counter.count(content) > context.config.max_tokens:
+            draft.metadata["heading_context_status"] = "context_exceeds_budget"
+            continue
+        draft.content = content
+        draft.metadata["heading_context_status"] = "preserved"
+        for key, attribute in (
+            ("heading_context_char_start", "char_start"),
+            ("heading_context_page_start", "page_start"),
+        ):
+            origin = draft.metadata.get(key)
+            current = getattr(draft, attribute)
+            if isinstance(origin, int):
+                setattr(draft, attribute, min(origin, current) if current is not None else origin)
     return chunks
 
 

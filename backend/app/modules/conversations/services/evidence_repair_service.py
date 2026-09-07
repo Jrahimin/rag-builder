@@ -29,7 +29,13 @@ from app.modules.conversations.services.evidence_coverage import (
     CoverageVerdict,
 )
 from app.modules.conversations.turn_resolution import EffectiveRetrievalInputs
-from app.platform.providers.contracts.llm import BaseLLMProvider, ChatMessage, ChatRole, ChatUsage
+from app.platform.providers.contracts.llm import (
+    BaseLLMProvider,
+    ChatCompletionResult,
+    ChatMessage,
+    ChatRole,
+    ChatUsage,
+)
 from app.platform.providers.errors import ProviderError
 
 REPAIR_TIMEOUT_SECONDS = 120
@@ -44,6 +50,8 @@ _SOURCE_CONTEXT_KEYS = (
     "source_lifecycle_status",
     "authority_status",
     "authority_limitations",
+    "heading_path",
+    "section_title",
 )
 
 
@@ -58,6 +66,63 @@ class EvidenceRepairResult:
     decision: EvidenceDecision | None
     diagnostics: dict[str, Any]
     usage: ChatUsage | None = None
+
+
+def _add_usage(left: ChatUsage | None, right: ChatUsage | None) -> ChatUsage:
+    return ChatUsage(
+        input_tokens=left.input_tokens + right.input_tokens
+        if left and right and left.input_tokens is not None and right.input_tokens is not None
+        else None,
+        output_tokens=left.output_tokens + right.output_tokens
+        if left and right and left.output_tokens is not None and right.output_tokens is not None
+        else None,
+    )
+
+
+async def _validated_completion(
+    llm: BaseLLMProvider,
+    messages: list[ChatMessage],
+    *,
+    schema: type[BaseModel],
+    temperature: float | None = None,
+    max_tokens: int,
+) -> ChatCompletionResult:
+    """Validate provider-neutral JSON, allowing one format-only retry.
+
+    Do not salvage partial objects or truncated output. A single enclosing Markdown
+    fence is presentation only; schema and later exact-quote validation still apply.
+    """
+    usage = ChatUsage(0, 0)
+    for attempt in range(2):
+        completion = await llm.generate(messages, temperature=temperature, max_tokens=max_tokens)
+        usage = _add_usage(usage, completion.usage)
+        if completion.finish_reason not in {None, "stop", "completed", "end_turn"}:
+            return replace(completion, usage=usage)
+        content = completion.content.strip()
+        lines = content.splitlines()
+        if (
+            len(lines) >= 3
+            and lines[0].strip() in {"```json", "```"}
+            and lines[-1].strip() == "```"
+        ):
+            content = "\n".join(lines[1:-1])
+        try:
+            schema.model_validate_json(content)
+            return replace(completion, content=content, usage=usage)
+        except ValidationError:
+            if attempt:
+                raise
+            messages = [
+                *messages,
+                ChatMessage(
+                    role=ChatRole.SYSTEM,
+                    content="Return a complete JSON object only, matching this schema. Do not add "
+                    "Markdown or commentary. Re-evaluate the original supplied evidence; "
+                    "do not invent missing facts. Schema: "
+                    + json.dumps(schema.model_json_schema()),
+                ),
+            ]
+    raise AssertionError("bounded validation loop exhausted")
 
 
 async def repair_knowledge_evidence(
@@ -79,8 +144,8 @@ async def repair_knowledge_evidence(
     All planned facets must retain an admitted unit after the final budget. Model
     queries only retrieve candidates; they never become answer evidence. A failed
     repair leaves the original authority failure available to the caller's normal
-    refusal policy. Unvalidated web snippets cannot bypass it. No retries or
-    unbounded agent loop.
+    refusal policy. Unvalidated web snippets cannot bypass it. One focused follow-up
+    is allowed inside the same timeout; there is no unbounded agent loop.
     """
     diagnostics: dict[str, Any] = {"version": EVIDENCE_REPAIR_VERSION, "status": "not_attempted"}
     diagnostics["context_budget"] = {
@@ -109,7 +174,8 @@ async def repair_knowledge_evidence(
             # An attempted call with missing usage (including a timeout) is
             # unknown cost, not a free operation in the combined turn usage.
             result.usage = ChatUsage(None, None)
-            completion = await llm.generate(
+            completion = await _validated_completion(
+                llm,
                 [
                     ChatMessage(
                         role=ChatRole.SYSTEM, content=trusted_context + EVIDENCE_REPAIR_PROMPT
@@ -141,6 +207,7 @@ async def repair_knowledge_evidence(
                 ],
                 temperature=None,
                 max_tokens=min(1024, max_output_tokens),
+                schema=_SearchPlan,
             )
             result.usage = completion.usage or ChatUsage(None, None)
             if completion.finish_reason not in {None, "stop", "completed", "end_turn"}:
@@ -156,193 +223,250 @@ async def repair_knowledge_evidence(
             groups: list[list[ContextChunk]] = []
             decisions: list[EvidenceDecision] = []
             records = list(initial.diagnostics.get("modifies_expansion_records") or [])
-            for query in queries:
-                # Sequential: the adapter may share one SQLAlchemy session.
-                branch = await retrieval.retrieve(
-                    query=query,
-                    top_k=retrieval_config.default_top_k,
-                    document_id=inputs.document_id,
-                    metadata_filter=inputs.metadata_filter or None,
-                    as_of=inputs.as_of,
-                )
-                branch_snapshot = tuple(
-                    branch.diagnostics.get(k)
-                    for k in ("index_build_id", "source_metadata_generation")
-                )
-                if branch_snapshot != snapshot:
-                    diagnostics["status"] = "snapshot_changed"
-                    return result
-                records.extend(branch.diagnostics.get("modifies_expansion_records") or [])
-                safe = [
-                    c
-                    for c in remove_superseded_provisions(branch.chunks, records)
-                    if c.metadata.get("authority_status") != "unresolved"
-                ]
-                decision, units = await assess_and_select_knowledge(
-                    grounding=grounding,
-                    context_builder=ContextBuilder(
-                        chat_config.model_copy(
-                            update={"max_context_chunks": REPAIR_CHUNKS_PER_DEPENDENCY}
-                        )
-                    ),
-                    chat_config=chat_config,
-                    question=query,
-                    chunks=safe,
-                    rerank_status=branch.diagnostics.get("rerank_status"),
-                    retrieval_config=retrieval_config,
-                    expansion_records=records,
-                )
-                diagnostics["branches"].append(
-                    {
-                        "query": query,
-                        "translation": {
-                            key: branch.diagnostics.get(key)
-                            for key in (
-                                "translation_status",
-                                "translation_failure_reason",
-                                "translation_attempts",
-                                "translation_finish_reason",
-                                "translation_target_language",
-                                "translation_usage",
-                                "executed_branches",
-                                "branch_candidate_counts",
+            pending_queries = list(queries)
+            for round_index in range(2):
+                for query in pending_queries:
+                    # Sequential: the adapter may share one SQLAlchemy session.
+                    branch = await retrieval.retrieve(
+                        query=query,
+                        top_k=retrieval_config.default_top_k,
+                        document_id=inputs.document_id,
+                        metadata_filter=inputs.metadata_filter or None,
+                        as_of=inputs.as_of,
+                    )
+                    branch_snapshot = tuple(
+                        branch.diagnostics.get(k)
+                        for k in ("index_build_id", "source_metadata_generation")
+                    )
+                    if branch_snapshot != snapshot:
+                        diagnostics["status"] = "snapshot_changed"
+                        return result
+                    records.extend(branch.diagnostics.get("modifies_expansion_records") or [])
+                    safe = [
+                        c
+                        for c in remove_superseded_provisions(branch.chunks, records)
+                        if c.metadata.get("authority_status") != "unresolved"
+                    ]
+                    decision, units = await assess_and_select_knowledge(
+                        grounding=grounding,
+                        context_builder=ContextBuilder(
+                            chat_config.model_copy(
+                                update={"max_context_chunks": REPAIR_CHUNKS_PER_DEPENDENCY}
                             )
-                        },
-                        "retrieval": branch.diagnostics,
-                        "selected_chunk_ids": [str(c.chunk_id) for c in units],
-                    }
-                )
-                if grounding.blocks_generation(decision) or not units:
+                        ),
+                        chat_config=chat_config,
+                        question=query,
+                        chunks=safe,
+                        rerank_status=branch.diagnostics.get("rerank_status"),
+                        retrieval_config=retrieval_config,
+                        expansion_records=records,
+                    )
+                    diagnostics["branches"].append(
+                        {
+                            "query": query,
+                            "translation": {
+                                key: branch.diagnostics.get(key)
+                                for key in (
+                                    "translation_status",
+                                    "translation_failure_reason",
+                                    "translation_attempts",
+                                    "translation_finish_reason",
+                                    "translation_target_language",
+                                    "translation_usage",
+                                    "executed_branches",
+                                    "branch_candidate_counts",
+                                )
+                            },
+                            "retrieval": branch.diagnostics,
+                            "selected_chunk_ids": [str(c.chunk_id) for c in units],
+                        }
+                    )
+                    if grounding.blocks_generation(decision) or not units:
+                        diagnostics["status"] = "dependency_unresolved"
+                        return result
+                    groups.append(units)
+                    decisions.append(decision)
+                # Give every dependency a first unit before adding any second units.
+                ordered = [
+                    group[i]
+                    for i in range(REPAIR_CHUNKS_PER_DEPENDENCY)
+                    for group in (
+                        groups[-len(pending_queries) :] + groups[: -len(pending_queries)]
+                        if round_index
+                        else groups
+                    )
+                    if len(group) > i
+                ]
+                # A later branch can discover authority limitations on an earlier
+                # dependency. Reconcile all relationships, including after budgeting.
+                reconciled = remove_superseded_provisions(ordered, records)
+                original_content = {c.chunk_id: c.content for c in ordered}
+                if any(c.content != original_content[c.chunk_id] for c in reconciled):
+                    # Changed spans need fresh admission; never carry the earlier
+                    # similarity decision over to different evidence text.
                     diagnostics["status"] = "dependency_unresolved"
                     return result
-                groups.append(units)
-                decisions.append(decision)
-            # Give every dependency a first unit before adding any second units.
-            ordered = [
-                group[i]
-                for i in range(REPAIR_CHUNKS_PER_DEPENDENCY)
-                for group in groups
-                if len(group) > i
-            ]
-            # A later branch can discover authority limitations on an earlier
-            # dependency. Reconcile all relationships, including after budgeting.
-            reconciled = remove_superseded_provisions(ordered, records)
-            original_content = {c.chunk_id: c.content for c in ordered}
-            if any(c.content != original_content[c.chunk_id] for c in reconciled):
-                # Changed spans need fresh admission; never carry the earlier
-                # similarity decision over to different evidence text.
-                diagnostics["status"] = "dependency_unresolved"
-                return result
-            budgeted = annotate_authority_limitations(
-                ContextBuilder(chat_config).select(reconciled), records
-            )
-            if any(c.metadata.get("authority_status") == "unresolved" for c in budgeted):
-                diagnostics["status"] = "dependency_unresolved"
-                return result
-            retained = {c.chunk_id for c in budgeted}
-            if any(not any(c.chunk_id in retained for c in group) for group in groups):
-                diagnostics["status"] = "dependency_exceeds_budget"
-                return result
-            if release_read_transaction is not None:
-                await release_read_transaction()
-            planning_usage = result.usage
-            result.usage = ChatUsage(None, None)
-            # Short passage labels prevent the model from confusing long UUIDs
-            # belonging to different excerpts of the same document. The map is
-            # local to this final context; persisted provenance keeps real IDs.
-            labels = {str(c.chunk_id): f"E{i}" for i, c in enumerate(budgeted, start=1)}
-            source_ids = {label: source_id for source_id, label in labels.items()}
-            verification = await llm.generate(
-                [
-                    ChatMessage(role=ChatRole.SYSTEM, content=trusted_context + COVERAGE_PROMPT),
-                    ChatMessage(
-                        role=ChatRole.USER,
-                        content=json.dumps(
-                            {
-                                "original_question": inputs.query,
-                                "as_of": inputs.as_of.isoformat() if inputs.as_of else None,
-                                "queries": [
-                                    {
-                                        "query": query,
-                                        "candidate_ids": [
-                                            labels[str(c.chunk_id)]
-                                            for c in group
-                                            if str(c.chunk_id) in labels
-                                        ],
-                                    }
-                                    for query, group in zip(queries, groups, strict=True)
-                                ],
-                                "authority_limitations": records,
-                                "context": [
-                                    {
-                                        "chunk_id": labels[str(c.chunk_id)],
-                                        "chunk_index": c.chunk_index,
-                                        "page_number": c.page_number,
-                                        "title": c.filename,
-                                        "content": c.content,
-                                        "source_revision_id": c.metadata.get("source_revision_id"),
-                                        "source": {
-                                            k: c.metadata[k]
-                                            for k in _SOURCE_CONTEXT_KEYS
-                                            if k in c.metadata
-                                        },
-                                    }
-                                    for c in budgeted
-                                ],
-                            },
-                            ensure_ascii=False,
-                            # Retrieval diagnostics originate from persistence and may
-                            # retain UUIDs for revision identities. They are context
-                            # identifiers, not Python objects the LLM provider can use.
-                            default=str,
+                budgeted = annotate_authority_limitations(
+                    ContextBuilder(chat_config).select(reconciled), records
+                )
+                if any(c.metadata.get("authority_status") == "unresolved" for c in budgeted):
+                    diagnostics["status"] = "dependency_unresolved"
+                    return result
+                retained = {c.chunk_id for c in budgeted}
+                if any(not any(c.chunk_id in retained for c in group) for group in groups):
+                    diagnostics["status"] = "dependency_exceeds_budget"
+                    return result
+                if release_read_transaction is not None:
+                    await release_read_transaction()
+                planning_usage = result.usage
+                result.usage = ChatUsage(None, None)
+                # Short passage labels prevent the model from confusing long UUIDs
+                # belonging to different excerpts of the same document. The map is
+                # local to this final context; persisted provenance keeps real IDs.
+                labels = {str(c.chunk_id): f"E{i}" for i, c in enumerate(budgeted, start=1)}
+                source_ids = {label: source_id for source_id, label in labels.items()}
+                verification = await _validated_completion(
+                    llm,
+                    [
+                        ChatMessage(
+                            role=ChatRole.SYSTEM, content=trusted_context + COVERAGE_PROMPT
                         ),
+                        ChatMessage(
+                            role=ChatRole.USER,
+                            content=json.dumps(
+                                {
+                                    "original_question": inputs.query,
+                                    "as_of": inputs.as_of.isoformat() if inputs.as_of else None,
+                                    "queries": [
+                                        {
+                                            "query": query,
+                                            "candidate_ids": [
+                                                labels[str(c.chunk_id)]
+                                                for c in group
+                                                if str(c.chunk_id) in labels
+                                            ],
+                                        }
+                                        for query, group in zip(queries, groups, strict=True)
+                                    ],
+                                    "authority_limitations": records,
+                                    "context": [
+                                        {
+                                            "chunk_id": labels[str(c.chunk_id)],
+                                            "chunk_index": c.chunk_index,
+                                            "page_number": c.page_number,
+                                            "title": c.filename,
+                                            "content": c.content,
+                                            "source_revision_id": c.metadata.get(
+                                                "source_revision_id"
+                                            ),
+                                            "source": {
+                                                k: c.metadata[k]
+                                                for k in _SOURCE_CONTEXT_KEYS
+                                                if k in c.metadata
+                                            },
+                                        }
+                                        for c in budgeted
+                                    ],
+                                },
+                                ensure_ascii=False,
+                                # Retrieval diagnostics originate from persistence and may
+                                # retain UUIDs for revision identities. They are context
+                                # identifiers, not Python objects the LLM provider can use.
+                                default=str,
+                            ),
+                        ),
+                    ],
+                    temperature=None,
+                    max_tokens=min(4096, max_output_tokens),
+                    schema=CoverageVerdict,
+                )
+                verification_usage = verification.usage or ChatUsage(None, None)
+                result.usage = ChatUsage(
+                    input_tokens=(
+                        planning_usage.input_tokens + verification_usage.input_tokens
+                        if planning_usage
+                        and planning_usage.input_tokens is not None
+                        and verification_usage.input_tokens is not None
+                        else None
                     ),
-                ],
-                temperature=None,
-                max_tokens=min(4096, max_output_tokens),
-            )
-            verification_usage = verification.usage or ChatUsage(None, None)
-            result.usage = ChatUsage(
-                input_tokens=(
-                    planning_usage.input_tokens + verification_usage.input_tokens
-                    if planning_usage
-                    and planning_usage.input_tokens is not None
-                    and verification_usage.input_tokens is not None
-                    else None
-                ),
-                output_tokens=(
-                    planning_usage.output_tokens + verification_usage.output_tokens
-                    if planning_usage
-                    and planning_usage.output_tokens is not None
-                    and verification_usage.output_tokens is not None
-                    else None
-                ),
-            )
-            if verification.finish_reason not in {None, "stop", "completed", "end_turn"}:
+                    output_tokens=(
+                        planning_usage.output_tokens + verification_usage.output_tokens
+                        if planning_usage
+                        and planning_usage.output_tokens is not None
+                        and verification_usage.output_tokens is not None
+                        else None
+                    ),
+                )
+                if verification.finish_reason not in {None, "stop", "completed", "end_turn"}:
+                    diagnostics["status"] = "coverage_incomplete"
+                    return result
+                verdict = CoverageVerdict.model_validate_json(verification.content)
+                for check in verdict.checks:
+                    for quote in check.evidence:
+                        quote.chunk_id = source_ids.get(quote.chunk_id, quote.chunk_id)
+                # Keep quotes internal: candidate trace opt-out must not leak source
+                # text through the verifier's diagnostic payload.
+                diagnostics["coverage"] = {
+                    "complete": verdict.complete,
+                    "missing": verdict.missing,
+                    "checks": [
+                        {
+                            "query_index": check.query_index,
+                            "supported": check.supported,
+                            "chunk_ids": [item.chunk_id for item in check.evidence],
+                        }
+                        for check in verdict.checks
+                    ],
+                    "quotes_validated": verdict.validates(groups, budgeted),
+                }
+                if verdict.validates(groups, budgeted):
+                    break
                 diagnostics["status"] = "coverage_incomplete"
-                return result
-            verdict = CoverageVerdict.model_validate_json(verification.content)
-            for check in verdict.checks:
-                for quote in check.evidence:
-                    quote.chunk_id = source_ids.get(quote.chunk_id, quote.chunk_id)
-            # Keep quotes internal: candidate trace opt-out must not leak source
-            # text through the verifier's diagnostic payload.
-            diagnostics["coverage"] = {
-                "complete": verdict.complete,
-                "missing": verdict.missing,
-                "checks": [
-                    {
-                        "query_index": check.query_index,
-                        "supported": check.supported,
-                        "chunk_ids": [item.chunk_id for item in check.evidence],
-                    }
-                    for check in verdict.checks
-                ],
-                "quotes_validated": verdict.validates(groups, budgeted),
-            }
-            if not verdict.validates(groups, budgeted):
-                diagnostics["status"] = "coverage_incomplete"
-                return result
+                if round_index or verdict.complete or not verdict.missing:
+                    return result
+                diagnostics["initial_coverage"] = diagnostics["coverage"]
+                if release_read_transaction is not None:
+                    await release_read_transaction()
+                previous_usage = result.usage
+                result.usage = ChatUsage(None, None)
+                followup = await _validated_completion(
+                    llm,
+                    [
+                        ChatMessage(
+                            role=ChatRole.SYSTEM, content=trusted_context + EVIDENCE_REPAIR_PROMPT
+                        ),
+                        ChatMessage(
+                            role=ChatRole.USER,
+                            content=json.dumps(
+                                {
+                                    "question": inputs.query,
+                                    "missing_requirements": verdict.missing,
+                                    "previous_queries": queries,
+                                    "task": "Search only the missing requirements. "
+                                    "Use at most two concise source-language queries. "
+                                    "For period gaps retrieve the governing heading. "
+                                    "Do not invent numbers or provisions.",
+                                    "source_hints": list(
+                                        dict.fromkeys(c.filename for c in budgeted)
+                                    ),
+                                },
+                                ensure_ascii=False,
+                            ),
+                        ),
+                    ],
+                    temperature=None,
+                    max_tokens=min(1024, max_output_tokens),
+                    schema=_SearchPlan,
+                )
+                result.usage = _add_usage(previous_usage, followup.usage)
+                if followup.finish_reason not in {None, "stop", "completed", "end_turn"}:
+                    return result
+                followup_plan = _SearchPlan.model_validate_json(followup.content)
+                pending_queries = list(dict.fromkeys(q.strip() for q in followup_plan.queries))[:2]
+                if not pending_queries or any(not q or len(q) > 500 for q in pending_queries):
+                    return result
+                queries.extend(pending_queries)
+                diagnostics["focused_queries"] = pending_queries
             result.selected = budgeted
             assessments = {a.chunk_id: a for d in decisions for a in d.candidate_assessments}
             units_by_id = {u.chunk_id: u for d in decisions for u in d.admitted_units}

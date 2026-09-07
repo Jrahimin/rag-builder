@@ -44,7 +44,7 @@ class CoverageVerdict(BaseModel):
     model_config = ConfigDict(extra="forbid")
     complete: bool
     missing: list[str] = Field(max_length=12)
-    checks: list[_Check] = Field(max_length=MAX_REPAIR_DEPENDENCIES)
+    checks: list[_Check] = Field(max_length=MAX_REPAIR_DEPENDENCIES + 2)
 
     def validates(self, groups: list[list[ContextChunk]], context: list[ContextChunk]) -> bool:
         if not self.complete or self.missing or len(self.checks) != len(groups):

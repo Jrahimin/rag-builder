@@ -17,6 +17,7 @@ from app.modules.retrieval.retrievers.hybrid_retriever import (
     HybridRetriever,
     _bound_modifier_records,
     _expansion_diagnostics,
+    _fair_modifier_candidates,
 )
 from app.modules.retrieval.retrievers.models import (
     CandidateHit,
@@ -497,3 +498,21 @@ async def test_document_id_scope_does_not_retrieve_modifier_documents() -> None:
     assert retriever._semantic.retrieve_batch.await_count == 1
     assert results[0].metadata["modifies_expansion_status"] == "suppressed_document_scope"
     assert results[0].metadata["modifies_expansion_records"][0]["outcome"] == "expanded"
+
+
+def test_modifier_cap_reserves_candidate_for_each_source():
+    documents = [uuid.uuid4(), uuid.uuid4()]
+    candidates = [
+        CandidateHit(
+            chunk_id=uuid.uuid4(),
+            score=1.0 / (i + 1),
+            source=CandidateSource.SEMANTIC,
+            metadata={"source_document_id": str(documents[0] if i < 20 else documents[1])},
+        )
+        for i in range(21)
+    ]
+    selected = _fair_modifier_candidates(candidates, 5)
+    assert len(selected) == 5
+    assert selected == candidates[:4] + candidates[20:]
+    assert _fair_modifier_candidates(candidates, 0) == []
+    assert _fair_modifier_candidates(candidates, 1) == candidates[:1]

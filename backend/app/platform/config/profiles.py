@@ -160,7 +160,7 @@ _COMMON_CHUNKING = _frozen_mapping(
         "structure_score_threshold": 0.55,
         "long_block_token_threshold": 600,
         "similarity_drop_threshold": 0.35,
-        "chunker_version": "3.2.0",
+        "chunker_version": "3.3.0",
         "token_count_method": "unicode_property_v1",
         "ocr_confidence_threshold": 0.5,
     }

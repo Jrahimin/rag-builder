@@ -7,6 +7,9 @@ from dataclasses import replace
 import pytest
 
 from app.core.config import ChunkingConfig, ChunkingStrategy
+from app.modules.knowledge.services.chunking.chunk_strategies.recursive_fallback_chunk_strategy import (  # noqa: E501
+    RecursiveFallbackChunkStrategy,
+)
 from app.modules.knowledge.services.chunking.chunk_strategy_selector_service import (
     ChunkStrategySelectorService,
 )
@@ -394,3 +397,57 @@ def _settings_with_strategy(strategy: ChunkingStrategy):
     from app.core.config import Settings
 
     return Settings(chunking=ChunkingConfig(strategy=strategy))
+
+
+async def test_paragraph_continuations_keep_preceding_period_and_not_future_heading():
+    from app.modules.knowledge.services.chunking.chunk_strategies.structure_helpers import (
+        chunk_by_sections,
+    )
+    from app.modules.knowledge.services.chunking.models import (
+        ChunkingContext,
+        StructureAnalysis,
+        StructureSignals,
+    )
+    from app.modules.knowledge.services.chunking.token_counting_service import TokenCountingService
+
+    current = "Assessment year 2026-2027"
+    future = "Assessment year 2028-2029"
+    elements = [
+        ParsedElement(text=current, element_type=ParsedElementType.HEADING, heading_level=1),
+        *[
+            ParsedElement(
+                text=("Resident individual governing rule. " * 15) + str(i),
+                element_type=ParsedElementType.PARAGRAPH,
+            )
+            for i in range(12)
+        ],
+        ParsedElement(text=future, element_type=ParsedElementType.HEADING, heading_level=1),
+        ParsedElement(
+            text="Future minimum tax provision.", element_type=ParsedElementType.PARAGRAPH
+        ),
+    ]
+    parsed = replace(
+        _table_parsed(caption="", header="", rows=["x"], page_start=1, page_end=1),
+        text="\n\n".join(e.text for e in elements),
+        elements=tuple(elements),
+    )
+    config = ChunkingConfig(target_tokens=128, max_tokens=256)
+    counter = TokenCountingService()
+    context = ChunkingContext(
+        parsed=parsed,
+        config=config,
+        analysis=StructureAnalysis(1.0, StructureSignals(has_headings=True)),
+        strategy=ChunkingStrategy.STRUCTURE,
+    )
+    drafts = chunk_by_sections(
+        context,
+        token_counter=counter,
+        fallback=RecursiveFallbackChunkStrategy(token_counter=counter),
+        strategy_name="structure",
+    )
+    drafts = ChunkValidationService().validate(drafts, config=config)
+    current_drafts = [d for d in drafts if "Resident individual" in d.content]
+    assert len(current_drafts) > 1
+    assert all(current in d.content and future not in d.content for d in current_drafts)
+    assert all(current not in d.content for d in drafts if "Future minimum" in d.content)
+    assert all(counter.count(d.content) <= config.max_tokens for d in drafts)

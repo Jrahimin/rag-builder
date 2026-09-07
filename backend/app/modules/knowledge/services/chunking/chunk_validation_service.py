@@ -59,7 +59,9 @@ class ChunkValidationService:
             # minimum-size heuristic must not join tables from different periods
             # or attach an unrelated paragraph under a table's applicability.
             neighbors = merged[max(0, index - 1) : index + 2]
-            if any(item.metadata.get("element_type") == "table" for item in neighbors):
+            if any(item.metadata.get("element_type") == "table" for item in neighbors) or any(
+                _different_scope(chunk, item) for item in neighbors
+            ):
                 index += 1
                 continue
             if self._token_counter.count(chunk.content) >= config.min_tokens:
@@ -116,6 +118,7 @@ class ChunkValidationService:
                 is_heading_only
                 and index + 1 < len(chunks)
                 and chunks[index + 1].metadata.get("element_type") != "table"
+                and not _different_scope(chunk, chunks[index + 1])
             ):
                 merged = self._merge_adjacent(chunk, chunks[index + 1])
                 result.append(merged)
@@ -171,3 +174,9 @@ class ChunkValidationService:
         for index, chunk in enumerate(chunks):
             chunk.chunk_order = index
         return chunks
+
+
+def _different_scope(left: DraftChunk, right: DraftChunk) -> bool:
+    left_scope = left.metadata.get("heading_path") or left.section_title
+    right_scope = right.metadata.get("heading_path") or right.section_title
+    return bool(left_scope and right_scope and left_scope != right_scope)

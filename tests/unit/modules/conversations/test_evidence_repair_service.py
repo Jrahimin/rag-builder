@@ -47,6 +47,8 @@ async def run_repair(
     verification_error=None,
     calls=None,
     selected_context=None,
+    followup_queries=None,
+    final_coverage=None,
 ):
     config = config or ChatConfig()
     queries = (
@@ -88,6 +90,13 @@ async def run_repair(
             content=json.dumps(verdict),
             finish_reason=verification_finish,
         ),
+    ]
+    llm.generate.side_effect = [
+        *llm.generate.side_effect,
+        replace(
+            plan, content=json.dumps({"queries": followup_queries or []}), usage=ChatUsage(0, 0)
+        ),
+        replace(plan, content=json.dumps(final_coverage or verdict)),
     ]
     retrieval = AsyncMock()
     snapshot = {"index_build_id": "build-a", "source_metadata_generation": 24}
@@ -464,3 +473,80 @@ async def test_verification_failure_preserves_failure_and_unknown_usage(error):
     assert result.diagnostics["status"] == "repair_unavailable"
     assert result.decision is None and not result.selected
     assert result.usage == ChatUsage(None, None)
+
+
+@pytest.mark.parametrize(
+    "missing", ["Employment income exclusion", "Applicable minimum tax period"]
+)
+async def test_focused_followup_recovers_missing_rule_without_discarding_initial_evidence(missing):
+    first = chunk("Current rate bands apply to resident individuals.")
+    focused = chunk("Current governing exclusion and minimum-tax conditions.")
+
+    def check(i, source):
+        return {
+            "query_index": i,
+            "supported": True,
+            "evidence": [{"chunk_id": str(source.chunk_id), "quote": source.content}],
+        }
+
+    calls = []
+    result, retrieval, inputs = await run_repair(
+        [([first], {}), ([focused], {})],
+        queries=["current rates"],
+        coverage={"complete": False, "missing": [missing], "checks": [check(0, first)]},
+        followup_queries=["focused governing rule"],
+        final_coverage={
+            "complete": True,
+            "missing": [],
+            "checks": [check(0, first), check(1, focused)],
+        },
+        calls=calls,
+    )
+    assert result.diagnostics["status"] == "recovered"
+    assert {c.chunk_id for c in result.selected} == {first.chunk_id, focused.chunk_id}
+    assert json.loads(calls[2].args[0][1].content)["missing_requirements"] == [missing]
+    assert result.diagnostics["initial_coverage"]["complete"] is False
+    assert retrieval.retrieve.await_count == 2
+    assert retrieval.retrieve.call_args.kwargs["as_of"] == inputs.as_of
+    assert result.usage == ChatUsage(36, 24)
+
+
+async def test_focused_followup_rejects_snapshot_change():
+    first = chunk("Current governing rates.")
+    result, _, _ = await run_repair(
+        [([first], {}), ([chunk("Exclusion rule")], {"index_build_id": "different"})],
+        queries=["rates"],
+        followup_queries=["exclusion"],
+        coverage={"complete": False, "missing": ["exclusion"], "checks": []},
+    )
+    assert result.diagnostics["status"] == "snapshot_changed"
+    assert not result.selected
+
+
+async def test_focused_followup_stops_after_one_pass():
+    result, retrieval, _ = await run_repair(
+        [([chunk("Current rates")], {}), ([chunk("Related definitions")], {})],
+        queries=["rates"],
+        followup_queries=["exclusion"],
+        coverage={"complete": False, "missing": ["exclusion"], "checks": []},
+    )
+    assert result.diagnostics["status"] == "coverage_incomplete"
+    assert retrieval.retrieve.await_count == 2
+    assert not result.selected
+
+
+@pytest.mark.parametrize("first_response", ['```json\n{"queries":["rule"]}\n```', "not JSON"])
+async def test_json_format_recovery_remains_schema_validated(first_response):
+    from app.modules.conversations.services.evidence_repair_service import (
+        _SearchPlan,
+        _validated_completion,
+    )
+
+    base = ChatCompletionResult(first_response, "fake", "test", "stop", ChatUsage(2, 3), "1")
+    llm = AsyncMock()
+    llm.generate.side_effect = [base, replace(base, content='{"queries":["rule"]}')]
+    response = await _validated_completion(llm, [], schema=_SearchPlan, max_tokens=1024)
+    assert _SearchPlan.model_validate_json(response.content).queries == ["rule"]
+    expected_calls = 1 if first_response.startswith("```") else 2
+    assert llm.generate.await_count == expected_calls
+    assert response.usage == ChatUsage(2 * expected_calls, 3 * expected_calls)

@@ -382,7 +382,7 @@ class ChunkingConfig(BaseModel):
     long_block_token_threshold: int = Field(default=600, ge=100, le=8192)
     similarity_drop_threshold: float = Field(default=0.35, ge=0.0, le=1.0)
     semantic_batch_size: int = Field(default=32, ge=1, le=256)
-    chunker_version: str = "3.2.0"
+    chunker_version: str = "3.3.0"
     token_count_method: str = "unicode_property_v1"
     ocr_confidence_threshold: float = Field(default=0.5, ge=0.0, le=1.0)
 

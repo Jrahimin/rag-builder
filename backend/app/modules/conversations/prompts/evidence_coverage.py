@@ -14,7 +14,13 @@ for every input transformation, exemption, rate band, limit and applicable condi
 Do not reinterpret gross amounts as taxable/net amounts. Check the whole original
 question too: the planner can omit dependencies or introduce an unstated period.
 Treat explicit user inputs (including an amount described as eligible) as scenario inputs,
-not facts the corpus must independently prove. A trusted Project policy may authorize a
+not facts the corpus must independently prove. An explicitly already-taxable amount
+needs no salary exemption or gross-to-net transformation. Do not introduce such a
+requirement merely because it appeared in a search query. Mark an unnecessary query
+supported using exact evidence for the governing rule that actually applies to the input.
+A location does not imply a location-specific rule exists: an evidenced nationwide rule
+can govern that location. Verify the current rule's scope instead of demanding an older
+location-dependent framework. A trusted Project policy may authorize a
 clearly conditional scenario for unspecified categories; verify its rules, not the user's
 membership. Missing payment credits do not block a calculation before those credits.
 The missing list contains only gaps that prevent even a policy-authorized conditional
