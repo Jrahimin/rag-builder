@@ -26,6 +26,11 @@ parser.add_argument("--project", default="2ee2756f-ad27-44df-a9d3-1316b10ccbb1")
 parser.add_argument("--label", default="optimized")
 parser.add_argument("--repeat", type=int, default=3)
 parser.add_argument(
+    "--domain-instructions-file",
+    type=Path,
+    help="Replay a reviewed policy through an immutable revision; restore the original afterward",
+)
+parser.add_argument(
     "--context-ceilings",
     nargs="+",
     type=int,
@@ -65,6 +70,14 @@ from app.platform.db.session import Database
 from app.platform.providers.implementations.embedding_factory import get_embedding_provider
 
 QUESTIONS = {
+    "gross_with_interest": (
+        "Suppose My yearly salary 1200000 BDT. Rebateable investment 60000 BDT. "
+        "I am a male from chittagong. Age below 40.\n"
+        "I got 24000 as interest from Sanchaypatra in the financial year. from bank interest, "
+        "got 2200. consider all latest financial year.\n"
+        "based on these info can you calculate tax and also provide a breakdown which rules "
+        "applied etc. to know how it is calculated."
+    ),
     "film_direct": "Who directed the fictional film Lantern Harbor?",
     "film_conflict": (
         "Compare the premiere year for Lantern Harbor in the Film Catalogue and Festival Record. "
@@ -105,8 +118,13 @@ async def main() -> None:
     original_revision = None
     owned_revision_id = None
     active_ceiling = None
-    if args.context_ceilings:
-        if any(not 1 <= value <= 50 for value in args.context_ceilings):
+    policy_text = (
+        args.domain_instructions_file.read_text(encoding="utf-8")
+        if args.domain_instructions_file
+        else None
+    )
+    if args.context_ceilings or policy_text is not None:
+        if any(not 1 <= value <= 50 for value in args.context_ceilings or []):
             raise ValueError("Context ceilings must be between 1 and 50")
         async with db.session_factory() as session:
             original_revision = await ProjectAIConfigRepository(session, project).get_active()
@@ -114,12 +132,14 @@ async def main() -> None:
                 raise ValueError("Context sweep requires an existing V2 Project revision")
             owned_revision_id = original_revision.id
 
-    async def change_policy(ceiling: int | None) -> None:
+    async def change_policy(ceiling: int | None, *, restore: bool = False) -> None:
         nonlocal owned_revision_id
         assert original_revision is not None
         configuration = json.loads(json.dumps(original_revision.configuration))
         if ceiling is not None:
             configuration["execution"].update(profile_id="custom", max_context_chunks=ceiling)
+        if policy_text is not None and not restore:
+            configuration["behavior"]["domain_instructions"] = policy_text
         async with db.session_factory() as session:
             administration = ProjectAdministrationService(
                 session=session,
@@ -132,14 +152,16 @@ async def main() -> None:
             revision = await administration.create_revision(
                 ProjectAIConfig.model_validate(configuration),
                 expected_active_revision_id=owned_revision_id,
-                restored_from_revision_id=original_revision.id if ceiling is None else None,
-                reason=f"RAG context evaluation ceiling {ceiling}"
-                if ceiling
+                restored_from_revision_id=original_revision.id if restore else None,
+                reason=f"RAG evaluation: ceiling {ceiling}, policy replay {policy_text is not None}"
+                if not restore
                 else "Restore original policy after context evaluation",
             )
             owned_revision_id = revision.id
 
     try:
+        if policy_text is not None:
+            await change_policy(None)
         for ceiling, repetition, case in itertools.product(
             args.context_ceilings or [None], range(args.repeat), args.cases
         ):
@@ -216,7 +238,7 @@ async def main() -> None:
     finally:
         try:
             if original_revision is not None and owned_revision_id != original_revision.id:
-                await change_policy(None)
+                await change_policy(None, restore=True)
         finally:
             await db.dispose()
 

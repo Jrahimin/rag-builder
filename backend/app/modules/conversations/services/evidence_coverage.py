@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import unicodedata
+from typing import Literal
 
 import regex
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, model_validator
@@ -76,10 +77,18 @@ class CoverageVerdict(BaseModel):
     model_config = ConfigDict(extra="forbid")
     complete: bool
     missing: list[str] = Field(max_length=12)
+    # A source can establish a conditional rule without establishing the user's
+    # personal circumstances. Keep those questions out of corpus recovery.
+    missing_inputs: list[str] = Field(default_factory=list, max_length=12)
     checks: list[_Check] = Field(max_length=MAX_REPAIR_DEPENDENCIES + 2 * MAX_REPAIR_FOLLOWUPS)
 
     @model_validator(mode="after")
     def require_consistent_completion(self) -> CoverageVerdict:
+        if self.missing_inputs:
+            raise ValueError(
+                "List unresolved gaps in missing and mark complete false. "
+                "Only the caller's separate input review may classify missing_inputs."
+            )
         if self.complete and (
             self.missing
             or not self.checks
@@ -139,3 +148,22 @@ class CoverageVerdict(BaseModel):
                 ):
                     return False
         return True
+
+
+class _GapClassification(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    gap_index: int = Field(ge=0, le=11)
+    kind: Literal["source_rule", "scenario_input"]
+
+
+class InputGapReview(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    gaps: list[_GapClassification] = Field(min_length=1, max_length=12)
+
+    def only_inputs_for(self, count: int) -> bool:
+        return (
+            count > 0
+            and len(self.gaps) == count
+            and {gap.gap_index for gap in self.gaps} == set(range(count))
+            and all(gap.kind == "scenario_input" for gap in self.gaps)
+        )

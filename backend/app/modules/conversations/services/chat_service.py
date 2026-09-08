@@ -711,6 +711,7 @@ class ChatService:
         chunks = retrieval_result.chunks
         retrieval_ms = int((time.perf_counter() - retrieval_started) * 1000)
         self._work.timings["initial_retrieval"] += retrieval_ms
+        missing_inputs: tuple[str, ...] = ()
         coverage_started = time.perf_counter()
         scope_current_authority = _scope_current_authority_status(
             request,
@@ -808,6 +809,7 @@ class ChatService:
                 ]
             retrieval_result.diagnostics["knowledge_repair"] = repair_diagnostics
             if repaired.decision is not None:
+                missing_inputs = repaired.missing_inputs
                 evidence = repaired.decision
                 knowledge_selected = repaired.selected
                 chunks = [
@@ -961,6 +963,7 @@ class ChatService:
             prompt_profile=self._prompt_profile,
             interpretation=resolved.interpretation,
             reference_date=(resolved.retrieval.as_of or payload.reference_time).date(),
+            missing_inputs=missing_inputs if knowledge_usable else (),
         )
         budget = prompt_budget(
             messages,
@@ -1251,6 +1254,13 @@ class ChatService:
             if grounding.grounded is False
             else "not_applicable",
             "input_provenance": {
+                "unresolved_inputs": (
+                    (prepared.retrieval_diagnostics.get("knowledge_repair") or {})
+                    .get("coverage", {})
+                    .get("missing_inputs", [])
+                )
+                if validated_coverage
+                else [],
                 "supplied_values": "current_user_message_and_validated_conversation_context",
                 "authorized_assumptions": "saved_project_domain_policy",
                 "config_snapshot_id": str(self._config_snapshot_id)

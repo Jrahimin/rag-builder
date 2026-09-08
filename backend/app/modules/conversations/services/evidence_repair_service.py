@@ -23,6 +23,7 @@ from app.modules.conversations.ports import ContextChunk, ContextRetrievalResult
 from app.modules.conversations.prompts.authoritative_compatibility import (
     AUTHORITATIVE_COVERAGE_PROMPT,
     AUTHORITATIVE_FOCUSED_PROMPT,
+    AUTHORITATIVE_INPUT_GAP_PROMPT,
     AUTHORITATIVE_PLANNING_PROMPT,
 )
 from app.modules.conversations.prompts.evidence_coverage import COVERAGE_PROMPT
@@ -35,6 +36,7 @@ from app.modules.conversations.services.evidence_coverage import (
     MAX_REPAIR_DEPENDENCIES,
     MAX_REPAIR_FOLLOWUPS,
     CoverageVerdict,
+    InputGapReview,
     _contains_quote,
     _quote_tokens,
     numbered_source_lines,
@@ -206,6 +208,7 @@ class EvidenceRepairResult:
     decision: EvidenceDecision | None
     diagnostics: dict[str, Any]
     usage: ChatUsage | None = None
+    missing_inputs: tuple[str, ...] = ()
 
 
 def _add_usage(left: ChatUsage | None, right: ChatUsage | None) -> ChatUsage:
@@ -228,6 +231,7 @@ async def _validated_completion(
     max_tokens: int,
     proof_context: list[ContextChunk] | None = None,
     source_ids: dict[str, str] | None = None,
+    truncation_retry_tokens: int | None = None,
 ) -> ChatCompletionResult:
     """Validate provider-neutral JSON, allowing one format-only retry.
 
@@ -239,6 +243,19 @@ async def _validated_completion(
         completion = await llm.generate(messages, temperature=temperature, max_tokens=max_tokens)
         usage = _add_usage(usage, completion.usage)
         if completion.finish_reason not in {None, "stop", "completed", "end_turn"}:
+            if (
+                not attempt
+                and completion.finish_reason == "length"
+                and truncation_retry_tokens is not None
+                and truncation_retry_tokens > max_tokens
+            ):
+                # Reasoning tokens share the output allowance on some providers.
+                # Restart the bounded JSON request; never salvage partial output.
+                max_tokens = truncation_retry_tokens
+                work = getattr(llm, "work", None)
+                if isinstance(work, RequestWork):
+                    work.counts["structured_truncation_retries"] += 1
+                continue
             return replace(completion, usage=usage)
         content = completion.content.strip()
         lines = content.splitlines()
@@ -337,7 +354,7 @@ async def repair_knowledge_evidence(
         AUTHORITATIVE_FOCUSED_PROMPT if authoritative_compatibility else FOCUSED_REPAIR_PROMPT
     )
     diagnostics: dict[str, Any] = {
-        "version": "v15-authoritative-compat"
+        "version": "v16-authoritative-conditional"
         if authoritative_compatibility
         else EVIDENCE_REPAIR_VERSION,
         "coverage_protocol": "authoritative_compatibility"
@@ -443,6 +460,9 @@ async def repair_knowledge_evidence(
                 ],
                 temperature=None,
                 max_tokens=min(1024 if authoritative_compatibility else 4096, max_output_tokens),
+                truncation_retry_tokens=min(2048, max_output_tokens)
+                if authoritative_compatibility
+                else None,
                 proof_context=selected if review_initial else None,
                 source_ids=initial_source_ids,
                 schema=_SearchPlan,
@@ -492,6 +512,7 @@ async def repair_knowledge_evidence(
                     queries=[],
                     coverage=_coverage_diagnostics(plan.coverage, True),
                 )
+                result.missing_inputs = tuple(plan.coverage.missing_inputs)
                 return result
             if requirement_ids and plan.coverage is not None:
                 # Carry proven dependencies, not every initial hit. This reserves
@@ -798,11 +819,76 @@ async def repair_knowledge_evidence(
                     for quote in check.evidence:
                         quote.chunk_id = source_ids.get(quote.chunk_id, quote.chunk_id)
                 ranges_valid = verdict.resolve_source_ranges(budgeted)
+                # Preserve the established successful review/generation payloads.
+                # Only an otherwise incomplete verdict with *every* source check
+                # proven can ask whether the remaining gaps are personal inputs.
+                candidate = verdict.model_copy(update={"complete": True, "missing": []})
+                if (
+                    authoritative_compatibility
+                    and not verdict.complete
+                    and verdict.missing
+                    and ranges_valid
+                    and candidate.validates(groups, budgeted, requirement_ids)
+                ):
+                    previous_usage = result.usage
+                    result.usage = ChatUsage(None, None)
+                    input_review = await _validated_completion(
+                        llm,
+                        [
+                            ChatMessage(
+                                role=ChatRole.SYSTEM,
+                                content=trusted_context + AUTHORITATIVE_INPUT_GAP_PROMPT,
+                            ),
+                            ChatMessage(
+                                role=ChatRole.USER,
+                                content=json.dumps(
+                                    {
+                                        "original_question": inputs.query,
+                                        "gaps": [
+                                            {"gap_index": i, "description": gap}
+                                            for i, gap in enumerate(verdict.missing)
+                                        ],
+                                        "quoted_evidence": [
+                                            {"chunk_id": chunk_id, "quote": quote}
+                                            for chunk_id, quote in dict.fromkeys(
+                                                (q.chunk_id, q.quote)
+                                                for check in verdict.checks
+                                                for q in check.evidence
+                                            )
+                                        ],
+                                    },
+                                    ensure_ascii=False,
+                                ),
+                            ),
+                        ],
+                        schema=InputGapReview,
+                        max_tokens=min(1024, max_output_tokens),
+                        truncation_retry_tokens=min(2048, max_output_tokens),
+                    )
+                    result.usage = _add_usage(previous_usage, input_review.usage)
+                    if input_review.finish_reason not in {None, "stop", "completed", "end_turn"}:
+                        diagnostics["status"] = "input_review_incomplete"
+                        return result
+                    classification = InputGapReview.model_validate_json(input_review.content)
+                    only_inputs = classification.only_inputs_for(len(verdict.missing))
+                    diagnostics.setdefault("input_gap_reviews", []).append(
+                        {
+                            "round": round_index,
+                            "original_missing": verdict.missing,
+                            "gaps": classification.model_dump()["gaps"],
+                            "only_inputs": only_inputs,
+                        }
+                    )
+                    if only_inputs:
+                        verdict = candidate.model_copy(
+                            update={"missing_inputs": [*verdict.missing_inputs, *verdict.missing]}
+                        )
                 # Keep quotes internal: candidate trace opt-out must not leak source
                 # text through the verifier's diagnostic payload.
                 diagnostics["coverage"] = {
                     "complete": verdict.complete,
                     "missing": verdict.missing,
+                    "missing_inputs": verdict.missing_inputs,
                     "checks": [
                         {
                             "query_index": check.query_index,
@@ -962,6 +1048,7 @@ async def repair_knowledge_evidence(
                 candidate_assessments=tuple(assessments.values()),
             )
             diagnostics["status"] = "recovered"
+            result.missing_inputs = tuple(verdict.missing_inputs)
             return result
     except (ProviderError, TimeoutError, ValidationError) as exc:
         diagnostics["status"] = "repair_unavailable"
@@ -992,6 +1079,7 @@ def _coverage_diagnostics(verdict: CoverageVerdict, validated: bool) -> dict[str
     return {
         "complete": verdict.complete,
         "missing": verdict.missing,
+        "missing_inputs": verdict.missing_inputs,
         "quotes_validated": validated,
         "source_ranges_validated": validated,
         "checks": [

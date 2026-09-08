@@ -30,6 +30,42 @@ from app.platform.providers.errors import ProviderError
 pytestmark = pytest.mark.unit
 
 
+@pytest.mark.parametrize("final_finish", ["stop", "length"])
+async def test_truncated_structured_request_restarts_once_with_bounded_budget(final_finish):
+    from app.platform.providers.contracts.llm import ChatMessage, ChatRole
+
+    truncated = ChatCompletionResult(
+        content='{"complete":tru',
+        provider="fake",
+        model="test",
+        provider_version="1",
+        finish_reason="length",
+        usage=ChatUsage(10, 1024),
+    )
+    retried = replace(
+        truncated,
+        content='{"complete":false,"missing":["rule"],"checks":[]}',
+        finish_reason=final_finish,
+        usage=ChatUsage(10, 1500),
+    )
+    llm = AsyncMock()
+    llm.generate.side_effect = [truncated, retried]
+    messages = [ChatMessage(ChatRole.USER, "Review the evidence")]
+    result = await _validated_completion(
+        llm,
+        messages,
+        schema=CoverageVerdict,
+        max_tokens=1024,
+        truncation_retry_tokens=2048,
+    )
+    assert llm.generate.await_count == 2
+    assert [call.kwargs["max_tokens"] for call in llm.generate.call_args_list] == [1024, 2048]
+    assert all(call.args[0] == messages for call in llm.generate.call_args_list)
+    assert result.content == retried.content
+    assert result.finish_reason == final_finish
+    assert result.usage == ChatUsage(20, 2524)
+
+
 def test_structured_source_selectors_preserve_original_line_positions():
     assert _source_line_records("Title\n\nEvidence\n\nThe year is 1998.") == [
         {"start_line": 1, "end_line": 1, "text": "Title"},
@@ -227,6 +263,8 @@ async def run_repair(
     second_final_coverage=None,
     adjacent=False,
     requirements=None,
+    input_gap_kinds=None,
+    input_gap_error=None,
 ):
     config = config or ChatConfig()
     queries = (
@@ -283,6 +321,34 @@ async def run_repair(
         retrieval.supports_adjacent_retrieval = True
         completions = list(llm.generate.side_effect)
         llm.generate.side_effect = [*completions[:2], *completions[3:]]
+    scripted_responses = iter(llm.generate.side_effect)
+
+    async def respond(messages, **kwargs):
+        if "Classify unresolved requirements" in messages[0].content:
+            if input_gap_error is not None:
+                raise input_gap_error
+            payload = json.loads(messages[1].content)
+            return replace(
+                plan,
+                usage=ChatUsage(0, 0),
+                content=json.dumps(
+                    {
+                        "gaps": [
+                            {
+                                "gap_index": gap["gap_index"],
+                                "kind": input_gap_kinds[i] if input_gap_kinds else "source_rule",
+                            }
+                            for i, gap in enumerate(payload["gaps"])
+                        ]
+                    }
+                ),
+            )
+        response = next(scripted_responses)
+        if isinstance(response, Exception):
+            raise response
+        return response
+
+    llm.generate.side_effect = respond
     snapshot = {"index_build_id": "build-a", "source_metadata_generation": 24}
     retrieval.retrieve.side_effect = [
         ContextRetrievalResult(chunks=items, diagnostics={**snapshot, **diagnostics})
@@ -353,6 +419,28 @@ async def test_four_dependencies_preserve_source_authority_in_coverage_input():
         and item["chunk_index"] == 1
         for item in coverage_input["context"]
     )
+
+
+async def test_coverage_cannot_self_classify_a_source_gap_as_personal():
+    source = chunk("The ordinary rate is ten percent.")
+    result, _, _ = await run_repair(
+        [([source], {})],
+        queries=["ordinary rate"],
+        coverage={
+            "complete": True,
+            "missing": [],
+            "missing_inputs": ["The amended exemption rule is not established."],
+            "checks": [
+                {
+                    "query_index": 0,
+                    "supported": True,
+                    "evidence": [{"chunk_id": str(source.chunk_id), "quote": source.content}],
+                }
+            ],
+        },
+    )
+    assert result.decision is None
+    assert result.missing_inputs == ()
 
 
 async def test_recovers_separate_salary_band_and_rebate_dependencies_with_original_scope():
@@ -515,12 +603,14 @@ async def test_relevant_definitions_and_unlinked_old_translation_do_not_prove_co
     assert result.usage == ChatUsage(24, 16)
 
 
+@pytest.mark.parametrize("missing_inputs", [[], ["Date of purchase"]])
 @pytest.mark.parametrize("fault", ["invented_quote", "foreign_id", "missing_check", "missing_rule"])
-async def test_verifier_cannot_authorize_unbound_or_incomplete_evidence(fault):
+async def test_verifier_cannot_authorize_unbound_or_incomplete_evidence(fault, missing_inputs):
     source = chunk("Eligible refunds must be requested within 45 days.")
     verdict = {
         "complete": True,
         "missing": [],
+        "missing_inputs": missing_inputs,
         "checks": [
             {
                 "query_index": 0,
@@ -540,10 +630,124 @@ async def test_verifier_cannot_authorize_unbound_or_incomplete_evidence(fault):
     result, _, _ = await run_repair([([source], {})], queries=["refund terms"], coverage=verdict)
     assert result.diagnostics["status"] == (
         "repair_unavailable"
-        if fault in {"missing_check", "missing_rule"}
+        if missing_inputs or fault in {"missing_check", "missing_rule"}
         else "coverage_incomplete"
     )
     assert result.decision is None and not result.selected
+    assert not result.missing_inputs
+
+
+async def test_proven_conditional_rules_do_not_search_for_missing_personal_facts():
+    source = chunk("A refund is available if the purchase was within 45 days.")
+    verdict = {
+        "complete": False,
+        "missing": ["Date of purchase"],
+        "checks": [
+            {
+                "query_index": 0,
+                "supported": True,
+                "evidence": [{"chunk_id": str(source.chunk_id), "start_line": 1, "end_line": 1}],
+            }
+        ],
+    }
+    calls = []
+    result, retrieval, _ = await run_repair(
+        [([source], {})],
+        queries=["refund eligibility"],
+        coverage=verdict,
+        calls=calls,
+        input_gap_kinds=["scenario_input"],
+    )
+    assert result.decision.sufficient
+    assert result.missing_inputs == ("Date of purchase",)
+    assert result.diagnostics["coverage"]["missing_inputs"] == ["Date of purchase"]
+    assert result.diagnostics["coverage"]["quotes_validated"] is True
+    assert len(calls) == 3  # Plan, coverage, input classification; no extra corpus searches.
+    assert retrieval.retrieve.await_count == 1
+
+
+async def test_failed_input_gap_review_cannot_authorize_answer_or_claim_known_usage():
+    source = chunk("A refund is available within 45 days of purchase.")
+    result, _, _ = await run_repair(
+        [([source], {})],
+        queries=["refund eligibility"],
+        coverage={
+            "complete": False,
+            "missing": ["Date of purchase"],
+            "checks": [
+                {
+                    "query_index": 0,
+                    "supported": True,
+                    "evidence": [{"chunk_id": str(source.chunk_id), "quote": source.content}],
+                }
+            ],
+        },
+        input_gap_error=ProviderError("unavailable", provider_name="fake"),
+    )
+    assert result.decision is None
+    assert result.missing_inputs == ()
+    assert result.usage == ChatUsage(None, None)
+
+
+@pytest.mark.parametrize(
+    "kinds",
+    [
+        ["source_rule", "scenario_input"],
+        ["scenario_input", "source_rule"],
+    ],
+)
+async def test_positive_checks_do_not_hide_a_rule_gap_in_the_original_question(kinds):
+    source = chunk("Refunds are available within 45 days.")
+    result, _, _ = await run_repair(
+        [([source], {})],
+        queries=["refund eligibility"],
+        coverage={
+            "complete": False,
+            "missing": ["Unresolved condition", "Unresolved amount"],
+            "checks": [
+                {
+                    "query_index": 0,
+                    "supported": True,
+                    "evidence": [{"chunk_id": str(source.chunk_id), "quote": source.content}],
+                }
+            ],
+        },
+        input_gap_kinds=kinds,
+    )
+    assert result.decision is None
+    assert result.missing_inputs == ()
+    assert result.diagnostics["input_gap_reviews"][0]["only_inputs"] is False
+
+
+@pytest.mark.parametrize("indices", [[0], [0, 0], [0, 2], [0, 1, 2]])
+def test_input_classification_cannot_drop_duplicate_or_add_gaps(indices):
+    from app.modules.conversations.services.evidence_coverage import InputGapReview
+
+    review = InputGapReview.model_validate(
+        {
+            "gaps": [{"gap_index": i, "kind": "scenario_input"} for i in indices],
+        }
+    )
+    assert not review.only_inputs_for(2)
+
+
+async def test_missing_rule_and_personal_fact_still_block_generation():
+    source = chunk("A refund may depend on the purchase date.")
+    result, _, _ = await run_repair(
+        [([source], {})],
+        queries=["refund eligibility"],
+        coverage={
+            "complete": False,
+            "missing": ["Governing refund time limit", "Date of purchase"],
+            "checks": [{"query_index": 0, "supported": False, "evidence": []}],
+        },
+    )
+    assert result.decision is None
+    assert result.missing_inputs == ()
+    assert result.diagnostics["coverage"]["missing"] == [
+        "Governing refund time limit",
+        "Date of purchase",
+    ]
 
 
 async def test_truncated_positive_verdict_cannot_enable_generation():
@@ -696,7 +900,10 @@ async def test_focused_followup_recovers_missing_rule_without_discarding_initial
     )
     assert result.diagnostics["status"] == "recovered"
     assert {c.chunk_id for c in result.selected} == {first.chunk_id, focused.chunk_id}
-    assert json.loads(calls[2].args[0][1].content)["missing_requirements"] == [missing]
+    focused_call = next(
+        call for call in calls if "Find governing evidence missed" in call.args[0][0].content
+    )
+    assert json.loads(focused_call.args[0][1].content)["missing_requirements"] == [missing]
     assert result.diagnostics["initial_coverage"]["complete"] is False
     assert retrieval.retrieve.await_count == 2
     assert retrieval.retrieve.call_args.kwargs["as_of"] == inputs.as_of

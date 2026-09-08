@@ -124,6 +124,7 @@ artifacts/tax-investigation/
 artifacts/rag-enhancements/
 artifacts/rag-enhancement-baseline/
 artifacts/rag-enhancement-baseline.zip
+artifacts/interest-before-fix/
 artifacts/enhancement-*.log
 
 # Held-out turn-resolution examples stay outside the repo until freeze.

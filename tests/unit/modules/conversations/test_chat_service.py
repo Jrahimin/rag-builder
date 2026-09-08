@@ -1368,6 +1368,7 @@ async def test_unresolved_rules_never_reach_generation_when_no_recovery_is_allow
 @pytest.mark.parametrize("store_trace", [False, True])
 @pytest.mark.parametrize("coverage_complete", [True, False])
 @pytest.mark.parametrize("initial_kind", ["authority", "calculation", "relevance", "current_rule"])
+@pytest.mark.parametrize("missing_inputs", [[], ["Date of purchase"]])
 async def test_repaired_evidence_reaches_generation_without_old_rule_or_web(
     session,
     conversation_repository,
@@ -1376,6 +1377,7 @@ async def test_repaired_evidence_reaches_generation_without_old_rule_or_web(
     store_trace,
     coverage_complete,
     initial_kind,
+    missing_inputs,
 ) -> None:
     initial = await UnresolvedRuleRetrieval().retrieve()
     if initial_kind in {"calculation", "current_rule"}:
@@ -1437,8 +1439,8 @@ async def test_repaired_evidence_reaches_generation_without_old_rule_or_web(
                 answer,
                 content=json.dumps(
                     {
-                        "complete": coverage_complete,
-                        "missing": [],
+                        "complete": coverage_complete and not missing_inputs,
+                        "missing": missing_inputs if coverage_complete else [],
                         "checks": [
                             {
                                 "query_index": 0,
@@ -1453,6 +1455,17 @@ async def test_repaired_evidence_reaches_generation_without_old_rule_or_web(
                         ],
                     }
                 ),
+            ),
+            *(
+                [
+                    replace(
+                        answer,
+                        content='{"gaps":[{"gap_index":0,"kind":"scenario_input"}]}',
+                        usage=ChatUsage(0, 0),
+                    )
+                ]
+                if coverage_complete and missing_inputs
+                else []
             ),
             answer,
         ]
@@ -1503,10 +1516,15 @@ async def test_repaired_evidence_reaches_generation_without_old_rule_or_web(
     assert ("retrieval" in repair["branches"][0]) is store_trace
     assert repair["coverage"]["quotes_validated"] is True
     assert "quote" not in repair["coverage"]["checks"][0]
-    messages = llm.generate.call_args_list[2].args[0]
+    messages = llm.generate.call_args_list[-1].args[0]
     prompt = "\n".join(message.content for message in messages)
     assert current.content in prompt
     assert initial.chunks[0].content not in prompt
+    assert ("Unresolved scenario inputs" in prompt) == bool(missing_inputs)
+    assert (
+        turn.assistant_message.metadata["evidence_summary"]["input_provenance"]["unresolved_inputs"]
+        == missing_inputs
+    )
 
 
 async def test_web_fallback_rejects_uncited_or_irrelevant_evidence(
