@@ -25,6 +25,7 @@ Authoritative technical reference for **how** the AI Platform Engine (APE) is bu
 | Field-level config map (env keys, options, impact) | [../configuration-map.md](../configuration-map.md) |
 | Background jobs | [background-processing.md](./background-processing.md) |
 | Runtime RAG flows | [rag-runtime-flows.md](./rag-runtime-flows.md) |
+| Evidence approaches, work reuse and local rollout | [RAG enhancements](./rag-enhancements-2026-09-08.md) |
 | Deployment topology | [deployment-architecture.md](./deployment-architecture.md) |
 | Long-term decisions | [adr/](./adr/README.md) |
 

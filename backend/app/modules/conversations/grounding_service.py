@@ -867,8 +867,44 @@ class GroundingService:
                     adjacent_texts=adjacent_texts,
                     extra_bases=_setup_amounts(segments),
                 )
-                if derived is not None:
+                unsupported_composite = "=" in draft.text and regex.search(
+                    r"\d\s*[+\u2212-]\s*\d|\b(?:min|max|sum)\s*\(",
+                    draft.text,
+                    regex.IGNORECASE,
+                )
+                contested_generalization = regex.search(
+                    r"\b(?:consensus|majority|unanimous)\b|"
+                    r"\b(?:all|most)\s+(?:of\s+the\s+)?(?:reviewed\s+)?"
+                    r"(?:works|accounts|sources|authors|historians)\b|"
+                    r"সংখ্যাগরিষ্ঠ|সর্বসম্মত",
+                    draft.text,
+                    regex.IGNORECASE,
+                )
+                if unsupported_composite or contested_generalization:
+                    # Similarity does not prove a consensus or a count across works.
+                    verification = ClaimVerification.UNVERIFIED
+                elif derived is not None:
                     verification = derived
+                elif regex.search(r"\d[^\n]*(?:[\u00d7\u00f7=]|\s[x*]\s)[^\n]*\d", draft.text):
+                    # Similarity cannot certify calculation syntax the arithmetic verifier
+                    # does not understand (e.g. a sum, nested formula or a contested total).
+                    verification = ClaimVerification.UNVERIFIED
+                elif regex.search(
+                    r"\b(longer|shorter|difference|increase|decrease|more|less)\b|পার্থক্য|বেশি|কম",
+                    draft.text,
+                    regex.IGNORECASE,
+                ) and (_amount_set(draft.text) - _amount_set(" ".join(evidence_texts))):
+                    # A newly calculated quantity is not proven by topic similarity.
+                    verification = ClaimVerification.UNVERIFIED
+                elif regex.search(
+                    r"\b(total|payable|liability|net|remaining|after|calculated|result)\b|মোট|প্রদেয়",
+                    draft.text,
+                    regex.IGNORECASE,
+                ) and any(
+                    not _amounts_include(_money_amounts(" ".join(evidence_texts)), amount)
+                    for amount in _money_amounts(draft.text)
+                ):
+                    verification = ClaimVerification.UNVERIFIED
                 else:
                     uses_lexical = _uses_lexical_verification(draft.text, evidence_texts)
                     lexical = (
@@ -1692,7 +1728,8 @@ def _parse_amount(value: str) -> float:
 
 
 def _amount_tolerance(value: float) -> float:
-    return max(0.5, abs(value) * 0.005)
+    # Allow rounding to a whole currency unit, not a percentage-sized arithmetic error.
+    return 0.5
 
 
 def _arithmetic_matches(base: float, rate: float, result: float) -> bool:

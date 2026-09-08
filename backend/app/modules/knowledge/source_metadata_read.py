@@ -10,6 +10,7 @@ from typing import Any
 from sqlalchemy import and_, case, exists, func, literal, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
+from sqlalchemy.sql.elements import ColumnElement
 from sqlalchemy.sql.selectable import FromClause
 
 from app.core.exceptions import BadRequestError, NotFoundError
@@ -377,6 +378,7 @@ def _canonical_source_scope(
             SourceMetadataRevision.source_group_id,
             SourceMetadataRevision.title,
             SourceMetadataRevision.source_type,
+            SourceMetadataRevision.work_key,
             SourceMetadataRevision.content_hash,
             SourceMetadataRevision.revision_number,
             SourceMetadataRevision.revision_label,
@@ -431,6 +433,7 @@ def _canonical_source_scope(
             ranked_activations.c.source_group_id,
             ranked_activations.c.title,
             ranked_activations.c.source_type,
+            ranked_activations.c.work_key,
             ranked_activations.c.content_hash,
             ranked_activations.c.revision_number,
             ranked_activations.c.revision_label,
@@ -521,6 +524,7 @@ def _canonical_source_scope(
         ),
     )
     not_draft = state.c.lifecycle_status != SourceLifecycleStatus.DRAFT
+    applicable: ColumnElement[bool]
     if historical:
         applicable = func.coalesce(
             or_(
@@ -575,6 +579,8 @@ def _canonical_source_scope(
             state.c.source_group_id,
             state.c.title.label("source_title"),
             state.c.source_type.label("source_type"),
+            state.c.work_key.label("source_work_key"),
+            state.c.content_hash.label("source_content_hash"),
             state.c.revision_number.label("source_revision_number"),
             state.c.revision_label.label("source_revision_label"),
             state.c.published_date.label("source_published_date"),

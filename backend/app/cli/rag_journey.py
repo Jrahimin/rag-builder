@@ -51,6 +51,7 @@ RUNTIME_COMPARISON_CONFIG_KEYS = frozenset(
         "behavior.response_mode",
         "behavior.grounding_assurance",
         "behavior.domain_instructions",
+        "behavior.evidence_approach",
         "behavior.translation_policy",
         "behavior.generation_model_id",
         "execution.profile_id",
@@ -88,6 +89,7 @@ class JourneySource(BaseModel):
     title: str
     revision_label: str
     source_type: str
+    work_key: str | None = None
     published_date: date
     effective_from: date
     effective_to: date | None = None
@@ -222,6 +224,7 @@ class JourneyOptions(BaseModel):
     allow_nonlocal_storage: bool = False
     configured_job_backend: str | None = None
     replay_raw_retrieval: bool = False
+    repeat: int = Field(default=1, ge=1, le=10)
 
 
 def load_manifest(path: Path = DEFAULT_FIXTURE) -> JourneyManifest:
@@ -1466,6 +1469,12 @@ def evaluate_case_result(
             "total": total_ms,
             "translation_share": _ratio(translation_ms, total_ms),
         },
+        "lifecycle": dict(message.metadata.get("lifecycle") or {}),
+        "context_tokens": dict(message.metadata.get("prompt_budget") or {}),
+        "evidence_summary": dict(message.metadata.get("evidence_summary") or {}),
+        "requirement_coverage": dict(
+            (message.metadata.get("knowledge_repair") or {}).get("coverage") or {}
+        ),
         "usage": {
             "turn_input_tokens": _optional_ms(getattr(message, "input_tokens", None)),
             "turn_output_tokens": _optional_ms(getattr(message, "output_tokens", None)),
@@ -2000,6 +2009,7 @@ async def _ingest_sources(
             revision_label=source.revision_label,
             title=source.title,
             source_type=source.source_type,
+            work_key=source.work_key,
             published_date=source.published_date,
             effective_from=source.effective_from,
             effective_to=source.effective_to,
@@ -3894,6 +3904,21 @@ async def run_journey(
             "Use the registered CLI command, which applies that transport override."
         )
     manifest = load_manifest(options.fixture)
+    if options.repeat > 1:
+        manifest = manifest.model_copy(
+            update={
+                "cases": [
+                    case.model_copy(update={"key": f"{case.key}__repeat_{repeat + 1}"})
+                    for repeat in range(options.repeat)
+                    for case in manifest.cases
+                ],
+                "sequences": [
+                    sequence.model_copy(update={"key": f"{sequence.key}__repeat_{repeat + 1}"})
+                    for repeat in range(options.repeat)
+                    for sequence in manifest.sequences
+                ],
+            }
+        )
     validate_safe_targets(
         settings,
         allow_nonlocal_database=options.allow_nonlocal_database,
@@ -3952,7 +3977,7 @@ async def run_journey(
                 project_id=project_id,
                 settings=settings,
                 configuration=baseline_config,
-                expected_revision_id=None,
+                expected_revision_id=project.active_ai_config_revision_id,
                 reason=f"{manifest.key} baseline runtime configuration",
             )
         revision_ids = await _ingest_sources(

@@ -16,6 +16,32 @@ from app.platform.providers.contracts.llm import ChatRole
 pytestmark = pytest.mark.unit
 
 
+@pytest.mark.parametrize("approach", ["authoritative", "factual", "multi_perspective"])
+def test_work_count_instructions_only_enter_comparative_generation_payloads(approach):
+    source = ContextChunk(
+        chunk_id=uuid.uuid4(),
+        document_id=uuid.uuid4(),
+        chunk_index=0,
+        content="A source fact.",
+        score=0.9,
+        filename="record.txt",
+        chunk_hash="record",
+        metadata={"source_work_key": "record"},
+    )
+    system = (
+        PromptBuilder()
+        .build(
+            template=require_prompt_template("current", evidence_approach=approach),
+            context_chunks=[source],
+            history=[],
+            user_question="What does the record say?",
+        )[0]
+        .content
+    )
+    assert ("Reviewed work count in supplied evidence" in system) == (approach != "authoritative")
+    assert ("work_identity=" in system) == (approach != "authoritative")
+
+
 def test_build_includes_system_context_and_user_question() -> None:
     template = require_prompt_template("v1")
     chunk = ContextChunk(

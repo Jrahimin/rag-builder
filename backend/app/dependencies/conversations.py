@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+import asyncio
+import time
 import uuid
+from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import Depends, Path
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.composition.audit import DatabaseAuditRecorder
 from app.composition.source_metadata import KnowledgeRetrievalSourceMetadataAdapter
@@ -38,6 +43,7 @@ from app.platform.config.project_ai import (
     config_revision_record,
     resolve_project_ai_config,
 )
+from app.platform.infra.recovery_capacity import recovery_slot
 from app.platform.providers.contracts.embedding import BaseEmbeddingProvider
 from app.platform.providers.contracts.llm import BaseLLMProvider
 from app.platform.providers.contracts.web_search import BaseWebSearchProvider
@@ -53,15 +59,75 @@ from app.platform.providers.implementations.reranker_factory import create_reran
 from app.platform.providers.implementations.web_search_factory import (
     create_web_search_provider,
 )
+from app.platform.providers.request_work import RequestWork
 
 
 class SearchServiceRetrievalAdapter:
     """Maps retrieval SearchService to the conversations RetrievalPort."""
 
     supports_adjacent_retrieval = True
+    supports_batch_retrieval = True
 
-    def __init__(self, search_service: SearchService) -> None:
+    def __init__(
+        self,
+        search_service: SearchService,
+        *,
+        branch_factory: Callable[[AsyncSession, dict[str, Any]], SearchService] | None = None,
+        session_factory: async_sessionmaker[AsyncSession] | None = None,
+        redis_dsn: str | None = None,
+    ) -> None:
         self._search_service = search_service
+        self._branch_factory = branch_factory
+        self._session_factory = session_factory
+        self._redis_dsn = redis_dsn
+
+    async def retrieve_batch(
+        self, requests: list[dict[str, Any]], *, snapshot: dict[str, Any]
+    ) -> list[ContextRetrievalResult]:
+        if self._branch_factory is None or self._session_factory is None:
+            return [await self.retrieve(**request) for request in requests]
+        branch_factory, session_factory = self._branch_factory, self._session_factory
+        limiter = asyncio.Semaphore(3)
+
+        async def branch(request: dict[str, Any]) -> ContextRetrievalResult:
+            async with limiter, _RECOVERY_LIMIT, self._deployment_slot():  # noqa: SIM117
+                async with session_factory() as session:
+                    adapter = SearchServiceRetrievalAdapter(branch_factory(session, snapshot))
+                    result = await adapter.retrieve(**request)
+                    for key in (
+                        "index_build_id",
+                        "source_metadata_generation",
+                        "configuration_hash",
+                        "reference_date",
+                    ):
+                        if (
+                            snapshot.get(key) is not None
+                            and result.diagnostics.get(key) != snapshot[key]
+                        ):
+                            raise ProviderError(
+                                "Recovery snapshot changed",
+                                provider_name="retrieval",
+                                context={"reason": f"snapshot_mismatch_{key}"},
+                            )
+                    return result
+
+        tasks = [asyncio.create_task(branch(request)) for request in requests]
+        try:
+            # gather preserves planned order. Failure cancels siblings; no lost dependency.
+            return list(await asyncio.gather(*tasks))
+        finally:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+    @asynccontextmanager
+    async def _deployment_slot(self) -> AsyncIterator[None]:
+        if self._redis_dsn is None:
+            yield
+        else:
+            async with recovery_slot(self._redis_dsn):
+                yield
 
     @property
     def query_embedder(self) -> BaseEmbeddingProvider | None:
@@ -153,6 +219,8 @@ async def get_chat_service(
     conversation_id: Annotated[uuid.UUID, Path()],
     embedder: Annotated[BaseEmbeddingProvider, Depends(get_embedding_provider)],
 ) -> ChatService:
+    work = RequestWork(project_id)
+    snapshot_started = time.perf_counter()
     settings = get_settings()
     conversation = await conversation_repository.get_by_id(conversation_id, include_deleted=True)
     snapshot = (
@@ -204,23 +272,43 @@ async def get_chat_service(
             translator = create_query_translation_provider(effective_settings)
         except ProviderError:
             translator = None
-    retrieval = SearchServiceRetrievalAdapter(
-        SearchService(
-            session=session,
+
+    def build_search(
+        db_session: AsyncSession, pinned: dict[str, Any] | None = None
+    ) -> SearchService:
+        return SearchService(
+            session=db_session,
             project_id=project_id,
             embedder=embedder,
             reranker=reranker,
             retrieval_config=effective_settings.retrieval,
             ai_policy=settings.ai_policy,
-            source_metadata=KnowledgeRetrievalSourceMetadataAdapter(session),
+            source_metadata=KnowledgeRetrievalSourceMetadataAdapter(db_session),
             configured_source_policy_mode=(resolution.provenance.configured_source_policy_mode),
             configuration_hash=resolution.configuration_hash,
             config_provenance=resolution.provenance.model_dump(mode="json"),
-            query_translator=translator,
-            query_translation_config=effective_settings.query_translation,
+            query_translator=translator if pinned is None else None,
+            query_translation_config=(
+                effective_settings.query_translation
+                if pinned is None
+                else effective_settings.query_translation.model_copy(update={"enabled": False})
+            ),
             query_embedder_factory=query_embedder_factory_for(settings),
+            pinned_index_build_id=uuid.UUID(pinned["index_build_id"]) if pinned else None,
+            pinned_source_metadata_generation=pinned["source_metadata_generation"]
+            if pinned
+            else None,
+            pinned_reference_date=pinned.get("reference_date") if pinned else None,
+            work=work,
         )
+
+    retrieval = SearchServiceRetrievalAdapter(
+        build_search(session),
+        branch_factory=build_search,
+        session_factory=async_sessionmaker(bind=session.bind, expire_on_commit=False),
+        redis_dsn=settings.redis.dsn,
     )
+    work.timings["snapshot_loading"] = round((time.perf_counter() - snapshot_started) * 1000)
 
     def resolve_llm(conversation: Conversation) -> BaseLLMProvider:
         return create_llm_provider_for_conversation(
@@ -243,6 +331,9 @@ async def get_chat_service(
         config_provenance=resolution.provenance.model_dump(mode="json"),
         domain_instructions=resolution.configuration.domain_instructions,
         prompt_profile=resolution.configuration.prompt_profile,
+        evidence_approach=resolution.configuration.evidence_approach,
+        translation_enabled=effective_settings.query_translation.enabled,
+        work=work,
         embedder=embedder,
         web_search=web_search,
         web_search_config=effective_settings.web_search,
@@ -251,3 +342,6 @@ async def get_chat_service(
 
 ConversationServiceDep = Annotated[ConversationService, Depends(get_conversation_service)]
 ChatServiceDep = Annotated[ChatService, Depends(get_chat_service)]
+
+# Worker-process wide bound in addition to the per-turn concurrency of three.
+_RECOVERY_LIMIT = asyncio.Semaphore(12)

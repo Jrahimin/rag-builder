@@ -44,6 +44,7 @@ def session() -> AsyncMock:
     mock.commit = AsyncMock()
     mock.rollback = AsyncMock()
     mock.refresh = AsyncMock()
+    mock.add = MagicMock()
     return mock
 
 
@@ -70,7 +71,10 @@ async def test_create_persists_and_commits(
     assert result.name == "Alpha"
     assert result.is_active is True
     repository.add.assert_called_once()
-    repository.flush.assert_awaited_once()
+    assert repository.flush.await_count == 2
+    revision = session.add.call_args.args[0]
+    assert revision.configuration["behavior"]["evidence_approach"] == "factual"
+    assert result.active_ai_config_revision_id == revision.id
     session.commit.assert_awaited_once()
 
 

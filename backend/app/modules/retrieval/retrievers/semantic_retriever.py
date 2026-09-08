@@ -15,6 +15,7 @@ from app.modules.retrieval.retrievers.base_retriever import BaseRetriever
 from app.modules.retrieval.retrievers.models import CandidateHit, RetrievalContext
 from app.platform.providers.contracts.embedding import BaseEmbeddingProvider, EmbeddingPurpose
 from app.platform.providers.errors import ProviderError
+from app.platform.providers.request_work import RequestWork
 
 logger = structlog.get_logger(__name__)
 
@@ -43,6 +44,7 @@ class SemanticRetriever(BaseRetriever):
         self._project_id = project_id
         self._embedder = embedder
         self._repository = repository or ChunkEmbeddingRepository(session, project_id)
+        self._work = getattr(embedder, "work", None)
 
     async def retrieve(self, context: RetrievalContext) -> list[CandidateHit]:
         return (await self.retrieve_batch(context)).hits
@@ -83,6 +85,7 @@ class SemanticRetriever(BaseRetriever):
                 query_vector = embedded.vectors[0]
                 provider = embedded.provider
                 model = embedded.model
+            database_started = time.perf_counter()
             candidates = await self._repository.search_cosine(
                 query_vector=query_vector,
                 top_k=effective_top_k,
@@ -99,6 +102,10 @@ class SemanticRetriever(BaseRetriever):
                 source_scope=context.source_scope,
                 language_scope=scope,  # type: ignore[arg-type]
             )
+            if isinstance(self._work, RequestWork):
+                self._work.timings["database_vector_retrieval"] += round(
+                    (time.perf_counter() - database_started) * 1000
+                )
         except ProviderError:
             raise
 

@@ -1,4 +1,6 @@
 import { SourceDateInput } from "../sources/SourceDateInput";
+import { ConversationSettings } from "./ConversationSettings";
+import { EvidenceSummary } from "./EvidenceSummary";
 import { verifySavedSourceDates } from "../sources/sourceUploadMetadata";
 import { SourceModificationPicker } from "../sources/SourceModificationPicker";
 import {
@@ -709,6 +711,7 @@ function DocumentsTab({
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [sourceTitle, setSourceTitle] = useState("");
   const [sourceType, setSourceType] = useState("");
+  const [sourceWorkKey, setSourceWorkKey] = useState("");
   const [sourceLifecycle, setSourceLifecycle] =
     useState<SourceMetadataDraft["lifecycle"]>("active");
   const [sourceRole, setSourceRole] = useState<SourceMetadataDraft["role"]>("primary");
@@ -762,6 +765,7 @@ function DocumentsTab({
     const draft: SourceMetadataDraft = {
       title: sourceTitle,
       sourceType,
+      workKey: sourceWorkKey,
       lifecycle: sourceLifecycle,
       role: sourceRole,
       publishedDate: sourcePublished,
@@ -964,8 +968,8 @@ function DocumentsTab({
                   setUploadModifications([]);
                 }}
               >
-                <option value="independent">New independent source</option>
-                <option value="revision">Latest revision of an existing source</option>
+                <option value="independent">Independent account or new source</option>
+                <option value="revision">Newer edition replacing an existing source</option>
                 <option value="modifies">Modifies one or more sources</option>
               </select>
             </label>
@@ -1016,7 +1020,7 @@ function DocumentsTab({
                   setSourceRole(event.target.value as SourceMetadataDraft["role"])
                 }
               >
-                <option value="primary">Primary (authoritative / latest)</option>
+                <option value="primary">Primary source</option>
                 <option value="supporting">Supporting</option>
                 <option value="reference">Reference</option>
                 <option value="unspecified">Unspecified</option>
@@ -1054,6 +1058,18 @@ function DocumentsTab({
                 placeholder="e.g. Act, regulation, guidance"
                 onChange={(event) => setSourceType(event.target.value)}
               />
+            </label>
+            <label className="field-control">
+              <span>Work identity (optional)</span>
+              <input
+                aria-label="Work identity"
+                value={sourceWorkKey}
+                onChange={(event) => setSourceWorkKey(event.target.value)}
+              />
+              <small>
+                Use the same key for translations or reprints of one work. This does not replace
+                another source.
+              </small>
             </label>
             <label className="field-control">
               <span>Published</span>
@@ -1327,8 +1343,10 @@ function DocumentsTab({
                           }}
                         >
                           <option value="keep">Keep this source's current treatment</option>
-                          <option value="independent">New independent source</option>
-                          <option value="revision">Latest revision of an existing source</option>
+                          <option value="independent">Independent account or new source</option>
+                          <option value="revision">
+                            Newer edition replacing an existing source
+                          </option>
                           <option value="modifies">Modifies one or more sources</option>
                         </select>
                       </label>
@@ -1388,6 +1406,16 @@ function DocumentsTab({
                               ...correctionDraft,
                               sourceType: event.target.value,
                             })
+                          }
+                        />
+                      </label>
+                      <label className="field-control">
+                        <span>Work identity (optional)</span>
+                        <input
+                          aria-label="Correction work identity"
+                          value={correctionDraft.workKey ?? ""}
+                          onChange={(event) =>
+                            setCorrectionDraft({ ...correctionDraft, workKey: event.target.value })
                           }
                         />
                       </label>
@@ -1502,7 +1530,7 @@ function DocumentsTab({
                       </button>
                     </div>
                     <p className="lab-help">
-                      “Latest revision” joins the selected source’s history and replaces it.
+                      “Newer edition” joins the selected source’s history and replaces it.
                       “Modifies” stays separate and records the link. The file and index are
                       unchanged.
                     </p>
@@ -2067,6 +2095,7 @@ function MessagesTab({
   const [expected, setExpected] = useState("");
   const [delivery, setDelivery] = useState<"regular" | "stream">("regular");
   const [streamedContent, setStreamedContent] = useState("");
+  const [progressMessage, setProgressMessage] = useState("Searching sources");
   const historyRef = useRef<HTMLDivElement>(null);
   const [lastRun, setLastRun] = useState<MessageRun | null>(null);
   const [selectedAssistantId, setSelectedAssistantId] = useState("");
@@ -2111,6 +2140,7 @@ function MessagesTab({
           ? await stream.mutateAsync({
               content: submittedContent,
               onDelta: (delta) => setStreamedContent((current) => current + delta),
+              onProgress: setProgressMessage,
             })
           : await send.mutateAsync({ content: submittedContent });
       const assistant = turn.assistant_message;
@@ -2280,7 +2310,7 @@ function MessagesTab({
                       <strong>Grounded response</strong>
                       <span className="lab-streaming-status">Streaming</span>
                     </div>
-                    <p>{streamedContent || "Preparing grounded response…"}</p>
+                    <p role="status">{streamedContent || `${progressMessage}…`}</p>
                     {!streamedContent && (
                       <span className="lab-typing" aria-hidden="true">
                         <i />
@@ -2508,10 +2538,35 @@ export function MessageInspector({
         </span>
         <span>
           <Quote size={13} aria-hidden="true" />
-          {citations.length} sources
+          {citations.length} evidence passages
         </span>
       </div>
       <TranslationDiagnostics metadata={message.metadata} />
+      {message.metadata?.effective_behavior != null && (
+        <ConversationSettings
+          projectId={message.project_id}
+          snapshot={message.metadata.effective_behavior as Record<string, unknown>}
+        />
+      )}
+      {message.metadata?.evidence_summary != null && (
+        <EvidenceSummary summary={message.metadata.evidence_summary as Record<string, unknown>} />
+      )}
+      {message.metadata?.lifecycle != null && (
+        <details>
+          <summary>Processing time and provider work</summary>
+          <pre className="json-view">{JSON.stringify(message.metadata.lifecycle, null, 2)}</pre>
+        </details>
+      )}
+      {message.metadata?.prompt_budget != null && (
+        <details>
+          <summary>Prompt tokens and capacity</summary>
+          <p>
+            Provider usage is measured after generation. Preflight counts use the model tokenizer
+            when known, or a conservative UTF-8 byte bound, plus framing and output reserves.
+          </p>
+          <pre className="json-view">{JSON.stringify(message.metadata.prompt_budget, null, 2)}</pre>
+        </details>
+      )}
       <RerankDiagnostics metadata={message.metadata} />
       <details>
         <summary>Authority and evidence recovery</summary>

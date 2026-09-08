@@ -71,6 +71,7 @@ def _entry(
 
 
 for _path in (
+    "project.v2.behavior.evidence_approach",
     "project.v2.behavior.response_mode",
     "project.v2.behavior.grounding_assurance",
     "project.v2.behavior.domain_instructions",

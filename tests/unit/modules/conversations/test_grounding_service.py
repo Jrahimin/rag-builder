@@ -764,6 +764,24 @@ async def test_incorrect_arithmetic_is_unsupported_even_when_cited() -> None:
     assert result.grounded is False
 
 
+async def test_small_arithmetic_error_is_not_accepted_as_percentage_tolerance() -> None:
+    service = GroundingService(ChatConfig(minimum_claim_token_coverage=0.3))
+    result = await service.map_claims(
+        "60,000 \u00d7 10% = BDT 6,025. [1]",
+        [_chunk(content="The investment rebate rate is 10%.")],
+    )
+    assert result.claims[0]["verification"] == "unsupported"
+
+
+async def test_partial_rate_match_cannot_certify_unsupported_composite_arithmetic() -> None:
+    service = GroundingService(ChatConfig(minimum_claim_token_coverage=0.3))
+    result = await service.map_claims(
+        "60,000 \u00d7 10% = 6,000 + 500 = 6,501. [1]",
+        [_chunk(content="The investment rebate rate is 10%.")],
+    )
+    assert result.claims[0]["verification"] == "unverified"
+
+
 async def test_short_meta_stance_does_not_make_a_grounded_correction_fail() -> None:
     service = GroundingService(ChatConfig(minimum_claim_token_coverage=0.3))
     result = await service.map_claims(
@@ -1226,3 +1244,24 @@ async def test_english_paraphrase_of_cited_english_evidence_is_supported() -> No
     assert result.claims[0]["verification"] == "supported"
     assert result.grounded is True
     assert result.citation_coverage == 1.0
+
+
+async def test_semantic_similarity_cannot_certify_consensus_across_accounts() -> None:
+    evidence = "Vale attributes the harbor closure to a storm. Marsh attributes it to a strike."
+    claim = "All reviewed accounts agree that a storm caused the harbor closure."
+    service = GroundingService(
+        ChatConfig(), embedder=_cluster_embedder({claim: "closure", evidence: "closure"})
+    )
+    result = await service.map_claims(f"{claim} [1]", [_chunk(content=evidence)])
+    assert result.claims[0]["verification"] == "unverified"
+    assert not result.grounded
+
+
+async def test_similarity_cannot_verify_an_uncomputed_runtime_difference() -> None:
+    evidence = "Lantern Harbor runs 96 minutes. Winter Letters runs 112 minutes."
+    claim = "Winter Letters is 18 minutes longer than Lantern Harbor."
+    service = GroundingService(
+        ChatConfig(), embedder=_cluster_embedder({claim: "runtime", evidence: "runtime"})
+    )
+    result = await service.map_claims(f"{claim} [1]", [_chunk(content=evidence)])
+    assert result.claims[0]["verification"] == "unverified"

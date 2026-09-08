@@ -133,7 +133,7 @@ class TurnResolver:
                     model=model,
                     usage=usage,
                 )
-            if validated.outcome is TurnOutcome.STANDALONE:
+            if validated.outcome is TurnOutcome.STANDALONE and payload.history:
                 validated = TurnResolution(
                     outcome=TurnOutcome.STANDALONE,
                     relation=TurnRelation.STANDALONE,
@@ -145,6 +145,7 @@ class TurnResolver:
                 temporal_intent=(
                     validated.temporal_intent
                     if validated.outcome is TurnOutcome.RESOLVED
+                    or (validated.outcome is TurnOutcome.STANDALONE and not payload.history)
                     else TemporalIntent()
                 ),
                 bindings=validated.active_bindings,

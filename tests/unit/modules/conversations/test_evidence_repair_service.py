@@ -18,6 +18,8 @@ from app.modules.conversations.services.evidence_repair_service import (
     _discovery_excerpts,
     _search_language_instruction,
     _source_hints,
+    _source_line_records,
+    _validated_completion,
     repair_knowledge_evidence,
 )
 from app.modules.conversations.turn_resolution import EffectiveRetrievalInputs
@@ -26,6 +28,128 @@ from app.platform.providers.contracts.llm import ChatCompletionResult, ChatUsage
 from app.platform.providers.errors import ProviderError
 
 pytestmark = pytest.mark.unit
+
+
+def test_structured_source_selectors_preserve_original_line_positions():
+    assert _source_line_records("Title\n\nEvidence\n\nThe year is 1998.") == [
+        {"start_line": 1, "end_line": 1, "text": "Title"},
+        {"start_line": 3, "end_line": 3, "text": "Evidence"},
+        {"start_line": 5, "end_line": 5, "text": "The year is 1998."},
+    ]
+
+
+async def test_blank_source_selector_gets_one_structural_correction_without_acceptance():
+    from app.platform.providers.contracts.llm import ChatMessage, ChatRole
+
+    source = chunk("Catalogue\n\nThe premiere year is 1998.")
+
+    def completion(line):
+        return ChatCompletionResult(
+            content=json.dumps(
+                {
+                    "complete": True,
+                    "missing": [],
+                    "checks": [
+                        {
+                            "requirement_id": "year",
+                            "supported": True,
+                            "evidence": [{"chunk_id": "E1", "start_line": line, "end_line": line}],
+                        }
+                    ],
+                }
+            ),
+            provider="fake",
+            model="test",
+            finish_reason="stop",
+            usage=ChatUsage(1, 1),
+            provider_version="1",
+        )
+
+    llm = AsyncMock()
+    llm.generate.side_effect = [completion(2), completion(3)]
+    result = await _validated_completion(
+        llm,
+        [ChatMessage(ChatRole.USER, "Select the evidence line")],
+        schema=CoverageVerdict,
+        max_tokens=1024,
+        proof_context=[source],
+        source_ids={"E1": str(source.chunk_id)},
+    )
+    assert llm.generate.await_count == 2
+    assert json.loads(result.content)["checks"][0]["evidence"][0]["start_line"] == 3
+    assert "missing or blank" in llm.generate.call_args_list[1].args[0][-1].content
+
+
+@pytest.mark.parametrize("compact_labels", [False, True])
+async def test_complete_initial_requirement_proof_skips_all_retrieval(compact_labels):
+    config = ChatConfig()
+    source = chunk("The film premiered in 1998.")
+    grounding = GroundingService(config)
+    decision = grounding.assess("When did the film premiere?", [source], rerank_status="off")
+    selected = list(decision.admitted_units) or [source]
+    proof = {
+        "queries": [],
+        "requirements": [{"requirement_id": "premiere", "description": "Premiere year"}],
+        "coverage": {
+            "complete": True,
+            "missing": [],
+            "checks": [
+                {
+                    "requirement_id": "premiere",
+                    "supported": True,
+                    "evidence": [
+                        {
+                            "chunk_id": "E1" if compact_labels else str(selected[0].chunk_id),
+                            "start_line": 1,
+                            "end_line": 1,
+                        }
+                    ],
+                }
+            ],
+        },
+    }
+    llm, retrieval = AsyncMock(), AsyncMock()
+    llm.generate.return_value = ChatCompletionResult(
+        content=json.dumps(proof),
+        provider="fake",
+        model="test",
+        provider_version="1",
+        finish_reason="stop",
+        usage=ChatUsage(1, 1),
+    )
+    result = await repair_knowledge_evidence(
+        inputs=EffectiveRetrievalInputs(query="When did the film premiere?"),
+        initial=ContextRetrievalResult(
+            [source], {"index_build_id": "build", "source_metadata_generation": 1}
+        ),
+        selected=selected,
+        initial_decision=decision,
+        retrieval=retrieval,
+        llm=llm,
+        grounding=grounding,
+        chat_config=config,
+        retrieval_config=RetrievalConfig(),
+        max_output_tokens=4096,
+        evidence_approach="factual",
+    )
+    assert result.diagnostics["status"] == "initial_evidence_complete"
+    assert result.decision.sufficient
+    assert len(result.selected) == 1
+    retrieval.retrieve.assert_not_awaited()
+    retrieval.retrieve_batch.assert_not_awaited()
+    assert llm.generate.await_count == 1
+
+
+def test_authoritative_discovery_preserves_source_payload_without_work_group_noise():
+    source = chunk(
+        "source", source_role="primary", source_work_key="reprint", source_group_id="group"
+    )
+    legacy = _source_hints([source])[0]["source"]
+    comparative = _source_hints([source], include_work_metadata=True)[0]["source"]
+    assert legacy["source_role"] == "primary"
+    assert "source_work_key" not in legacy and "source_group_id" not in legacy
+    assert comparative["source_work_key"] == "reprint"
+    assert comparative["source_group_id"] == "group"
 
 
 def test_source_hints_retain_languages_after_repeated_top_source():
@@ -102,6 +226,7 @@ async def run_repair(
     second_followup_queries=None,
     second_final_coverage=None,
     adjacent=False,
+    requirements=None,
 ):
     config = config or ChatConfig()
     queries = (
@@ -111,7 +236,7 @@ async def run_repair(
     )
     llm = AsyncMock()
     plan = ChatCompletionResult(
-        content=json.dumps({"queries": queries}),
+        content=json.dumps({"queries": queries, "requirements": requirements or []}),
         provider="fake",
         model="test",
         finish_reason="stop",
@@ -890,3 +1015,43 @@ async def test_followup_carries_confirmed_proof_without_old_search_noise():
         "L1: " + known.content,
         "L1: " + exclusion.content,
     }
+
+
+async def test_semantic_confirmed_proof_has_priority_over_new_search_noise():
+    known = chunk("The governing rate is 10%.")
+    missing = chunk("The governing exclusion applies to ordinary employees.")
+    noise = chunk("Unrelated administrative procedure.")
+    check = {
+        "requirement_id": "rate",
+        "supported": True,
+        "evidence": [{"chunk_id": str(known.chunk_id), "quote": known.content}],
+    }
+    result, _, _ = await run_repair(
+        [([known], {}), ([missing, noise], {})],
+        queries=["rate"],
+        requirements=[
+            {"requirement_id": "rate", "description": "Rate"},
+            {"requirement_id": "exclusion", "description": "Exclusion"},
+        ],
+        config=ChatConfig(max_context_chunks=2),
+        coverage={
+            "complete": False,
+            "missing": ["exclusion"],
+            "checks": [check, {"requirement_id": "exclusion", "supported": False, "evidence": []}],
+        },
+        followup_queries=["employment exclusion"],
+        final_coverage={
+            "complete": True,
+            "missing": [],
+            "checks": [
+                check,
+                {
+                    "requirement_id": "exclusion",
+                    "supported": True,
+                    "evidence": [{"chunk_id": str(missing.chunk_id), "quote": missing.content}],
+                },
+            ],
+        },
+    )
+    assert result.diagnostics["status"] == "recovered"
+    assert {c.chunk_id for c in result.selected} == {known.chunk_id, missing.chunk_id}

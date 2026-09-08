@@ -5,7 +5,7 @@ from __future__ import annotations
 import unicodedata
 
 import regex
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, model_validator
 
 from app.modules.conversations.ports import ContextChunk
 
@@ -35,6 +35,14 @@ class _Quote(BaseModel):
     quote: str = Field(default="", max_length=6000)
     start_line: int | None = Field(default=None, ge=1)
     end_line: int | None = Field(default=None, ge=1)
+    _resolved_range: tuple[int, int] | None = PrivateAttr(default=None)
+
+    def source_range(self) -> dict[str, str | int | None]:
+        return {
+            "chunk_id": self.chunk_id,
+            "start_line": self._resolved_range[0] if self._resolved_range else self.start_line,
+            "end_line": self._resolved_range[1] if self._resolved_range else self.end_line,
+        }
 
     @model_validator(mode="after")
     def require_quote_or_range(self) -> _Quote:
@@ -56,7 +64,9 @@ def numbered_source_lines(content: str) -> str:
 
 class _Check(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    query_index: int
+    query_index: int = -1  # Legacy wire compatibility only; never a new requirement identity.
+    requirement_id: str | None = Field(default=None, min_length=1, max_length=80)
+    description: str = Field(default="", max_length=1000)
     supported: bool
     needs_adjacent_context: bool = False
     evidence: list[_Quote] = Field(max_length=8)
@@ -95,15 +105,27 @@ class CoverageVerdict(BaseModel):
                 quote = "".join(lines[item.start_line - 1 : item.end_line])
                 if not quote.strip():
                     return False
+                item._resolved_range = (item.start_line, item.end_line)
                 item.quote = quote
                 item.start_line = None
                 item.end_line = None
         return True
 
-    def validates(self, groups: list[list[ContextChunk]], context: list[ContextChunk]) -> bool:
-        if not self.complete or self.missing or len(self.checks) != len(groups):
+    def validates(
+        self,
+        groups: list[list[ContextChunk]],
+        context: list[ContextChunk],
+        requirement_ids: set[str] | None = None,
+    ) -> bool:
+        if not self.complete or self.missing or not self.checks:
             return False
-        if {c.query_index for c in self.checks} != set(range(len(groups))):
+        if requirement_ids:
+            ids = [c.requirement_id for c in self.checks]
+            if None in ids or len(ids) != len(set(ids)) or not requirement_ids.issubset(set(ids)):
+                return False
+        elif len(self.checks) != len(groups) or {c.query_index for c in self.checks} != set(
+            range(len(groups))
+        ):
             return False
         sources = {str(c.chunk_id): _quote_tokens(c.content) for c in context}
         for check in self.checks:

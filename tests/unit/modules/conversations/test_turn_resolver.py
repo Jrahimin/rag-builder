@@ -335,17 +335,20 @@ async def test_resolver_falls_back_when_effective_question_mutates_parameters(
     assert result.retrieval.as_of is None
 
 
-async def test_actual_resolver_snapshot_diagnostics_are_scored_by_journey() -> None:
+@pytest.mark.parametrize("first_turn", [False, True])
+async def test_actual_resolver_snapshot_diagnostics_are_scored_by_journey(first_turn: bool) -> None:
     from types import SimpleNamespace
 
     from app.cli.rag_journey import ExpectedResolution, JourneyCase, _resolution_failures
 
     payload = _payload().model_copy(update={"current_message": "Check on 2025-06-01."})
+    if first_turn:
+        payload = payload.model_copy(update={"history": []})
     result = await TurnResolver(
         JsonLLM(
             {
-                "outcome": "resolved",
-                "relation": "follow_up",
+                "relation": "standalone" if first_turn else "follow_up",
+                "outcome": "standalone" if first_turn else "resolved",
                 "effective_question": "Rate on 2025-06-01?",
                 "active_bindings": [
                     {
@@ -381,7 +384,7 @@ async def test_actual_resolver_snapshot_diagnostics_are_scored_by_journey() -> N
             query=payload.current_message,
             anchors=[],
             expected_resolution=ExpectedResolution(
-                outcome="resolved",
+                outcome="standalone" if first_turn else "resolved",
                 effective_as_of=result.retrieval.as_of,
                 snapshot_origin="user_literal",
             ),

@@ -129,6 +129,8 @@ class _ResolvedProjectPolicy(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    evidence_approach: Literal["factual", "authoritative", "multi_perspective"] | None = None
+
     llm: ProjectLLMPolicy = Field(default_factory=ProjectLLMPolicy)
     retrieval: ProjectRetrievalPolicy = Field(default_factory=ProjectRetrievalPolicy)
     chat: ProjectChatPolicy = Field(default_factory=ProjectChatPolicy)
@@ -154,6 +156,8 @@ class ProjectBehaviorV2(BaseModel):
     """Normal Project-owned behavior; provider and safety controls are intentionally absent."""
 
     model_config = ConfigDict(extra="forbid")
+
+    evidence_approach: Literal["factual", "authoritative", "multi_perspective"] | None = None
 
     response_mode: ResponseMode | None = None
     grounding_assurance: GroundingMode | None = None
@@ -293,6 +297,8 @@ class EffectiveWebSearchPolicy(BaseModel):
 
 
 class EffectiveProjectAIConfig(BaseModel):
+    # Missing fields in existing immutable snapshots retain the tax-safe behavior.
+    evidence_approach: Literal["factual", "authoritative", "multi_perspective"] = "authoritative"
     llm: EffectiveLLMPolicy
     retrieval: EffectiveRetrievalPolicy
     chat: EffectiveChatPolicy
@@ -495,6 +501,7 @@ def _v2_as_legacy_policy(
     }[behavior.translation_policy]
     return (
         _ResolvedProjectPolicy(
+            evidence_approach=behavior.evidence_approach,
             retrieval=ProjectRetrievalPolicy(
                 top_k=execution.retrieval_top_k,
                 semantic_candidate_top_k=execution.semantic_candidate_top_k,
@@ -873,6 +880,9 @@ def resolve_project_ai_config(
                 project.web_search.request_timeout_seconds,
                 settings.web_search.request_timeout_seconds,
             ),
+        ),
+        evidence_approach=inherited(
+            "evidence_approach", project.evidence_approach, "authoritative"
         ),
         domain_instructions=inherited("domain_instructions", project.domain_instructions, ""),
         prompt_profile=inherited("prompt_profile", project.prompt_profile, "default"),
@@ -1374,6 +1384,7 @@ def _build_structured_origins(
 ) -> dict[str, StructuredOrigin]:
     structured: dict[str, StructuredOrigin] = {}
     v2_paths = {
+        "evidence_approach": "project.v2.behavior.evidence_approach",
         "chat.response_mode": "project.v2.behavior.response_mode",
         "chat.grounding_mode": "project.v2.behavior.grounding_assurance",
         "domain_instructions": "project.v2.behavior.domain_instructions",

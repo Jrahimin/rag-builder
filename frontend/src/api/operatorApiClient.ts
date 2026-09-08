@@ -618,6 +618,7 @@ export const operatorApiClient = {
     content: string,
     onDelta: (delta: string) => void,
     documentId?: string,
+    onProgress?: (message: string) => void,
   ): Promise<StreamMessageResult> => {
     const send = () =>
       fetch(`${apiRoot}/projects/${projectId}/conversations/${conversationId}/messages/stream`, {
@@ -677,6 +678,7 @@ export const operatorApiClient = {
         streamed += event.delta;
         onDelta(event.delta);
       }
+      if (event.event === "progress" && event.message) onProgress?.(event.message);
     };
     while (true) {
       const { done, value } = await reader.read();

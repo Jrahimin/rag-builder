@@ -29,6 +29,7 @@ function modificationEdges(items: SourceModification[]) {
 export type SourceMetadataDraft = {
   title: string;
   sourceType: string;
+  workKey?: string;
   lifecycle: "unspecified" | "draft" | "active" | "retired";
   role: "unspecified" | "primary" | "supporting" | "reference";
   publishedDate: string;
@@ -66,6 +67,7 @@ export function sourceMetadataDraftFromRevision(revision: SourceRevision): Sourc
   return {
     title: revision.title,
     sourceType: revision.source_type ?? "",
+    workKey: revision.work_key ?? "",
     lifecycle: revision.lifecycle_status,
     role: revision.source_role,
     publishedDate: revision.published_date?.slice(0, 10) ?? "",
@@ -90,7 +92,12 @@ export function buildSourceUploadMetadata({
   const configured =
     mode !== "independent" ||
     Boolean(
-      title || sourceType || draft.publishedDate || draft.effectiveFrom || draft.effectiveTo,
+      title ||
+      sourceType ||
+      draft.workKey?.trim() ||
+      draft.publishedDate ||
+      draft.effectiveFrom ||
+      draft.effectiveTo,
     ) ||
     Boolean(changeReason) ||
     draft.lifecycle !== "active" ||
@@ -112,6 +119,7 @@ export function buildSourceUploadMetadata({
       mode === "revision" && target ? `Revision ${target.revision_number + 1}` : "Initial",
     source_role: draft.role,
     source_type: sourceType || null,
+    work_key: draft.workKey?.trim() || (mode === "revision" ? target?.work_key : null) || null,
     title: title || filename,
     published_date: draft.publishedDate || null,
     effective_from: draft.effectiveFrom || null,
@@ -178,6 +186,7 @@ export function buildSourceMetadataCorrection({
     revision_label: `Revision ${baseRevisionNumber + 1}`,
     source_role: draft.role,
     source_type: sourceType || null,
+    work_key: draft.workKey?.trim() || null,
     title: title || current.title,
     published_date: draft.publishedDate || null,
     effective_from: draft.effectiveFrom || null,

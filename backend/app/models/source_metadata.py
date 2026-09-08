@@ -99,6 +99,7 @@ class SourceMetadataRevision(Base, UUIDPrimaryKeyMixin, ProjectScopedMixin):
     revision_label: Mapped[str] = mapped_column(String(128), nullable=False)
     title: Mapped[str] = mapped_column(String(512), nullable=False)
     source_type: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    work_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
     published_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     effective_from: Mapped[date | None] = mapped_column(Date, nullable=True)
     effective_to: Mapped[date | None] = mapped_column(Date, nullable=True)

@@ -39,6 +39,17 @@ const target: SourceRevision = {
   title: "Target source",
 };
 
+test("a new edition retains the selected work identity unless a new key is supplied", () => {
+  const result = buildSourceUploadMetadata({
+    filename: "new-edition.pdf",
+    mode: "revision",
+    target: { ...target, work_key: "shared-work" },
+    defaultReason: "New edition",
+    draft: { ...sourceMetadataDraftFromRevision(current), workKey: "" },
+  });
+  expect(result?.work_key).toBe("shared-work");
+});
+
 test("a successful response cannot silently acknowledge different saved dates", () => {
   const request = buildSourceMetadataCorrection({
     current,

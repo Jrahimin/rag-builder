@@ -153,6 +153,7 @@ type SourceRevisionForm = {
   title: string;
   label: string;
   sourceType: string;
+  workKey: string;
   lifecycle: "unspecified" | "draft" | "active" | "retired";
   role: "unspecified" | "primary" | "supporting" | "reference";
   published: string;
@@ -183,6 +184,7 @@ function sourceRevisionForm(
     title: revision?.title ?? fallbackTitle,
     label: revision ? `Revision ${revision.revision_number + 1}` : "Revision 1",
     sourceType: revision?.source_type ?? "",
+    workKey: revision?.work_key ?? "",
     lifecycle: revision?.lifecycle_status ?? "active",
     role: revision?.source_role ?? "primary",
     published: dateInputValue(revision?.published_date),
@@ -531,7 +533,10 @@ function CreateProject({
   const defaults = configuration.data
     ? configFormFromDeployment(configuration.data)
     : emptyProjectConfigForm;
-  const [form, setForm] = useState<ProjectConfigForm>(() => defaults);
+  const [form, setForm] = useState<ProjectConfigForm>(() => ({
+    ...defaults,
+    behavior: { ...defaults.behavior, evidenceApproach: { source: "project", value: "factual" } },
+  }));
   const nameRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
     nameRef.current?.focus();
@@ -552,6 +557,7 @@ function CreateProject({
     setForm((current) => ({
       ...current,
       behavior: {
+        evidenceApproach: current.behavior.evidenceApproach,
         generationModelId:
           current.behavior.generationModelId.source === "global"
             ? next.behavior.generationModelId
@@ -581,7 +587,7 @@ function CreateProject({
         await operatorApiClient.createProjectAIConfig(
           project.id,
           sparseConfiguration,
-          null,
+          project.active_ai_config_revision_id ?? null,
           "Initial Project AI settings",
         );
         onCreated(project);
@@ -657,8 +663,8 @@ function CreateProject({
           <details className="settings-disclosure">
             <summary>Optional AI settings</summary>
             <p className="muted-copy">
-              Leave everything on Global to use this deployment's approved profile, generation
-              model, and answer defaults. No AI revision is created if nothing is changed.
+              New Projects use Factual evidence. Other settings inherit this deployment's approved
+              defaults until you change them.
             </p>
             {configuration.isPending && !configuration.data ? (
               <p className="muted-copy">Loading deployment defaults…</p>
@@ -1178,6 +1184,7 @@ function ProjectSources({ project }: { project: Project }) {
   const current = sourceState.data?.items.find((item) => item.document_id === selectedDocument?.id);
   const [file, setFile] = useState<File | null>(null);
   const [uploadTitle, setUploadTitle] = useState("");
+  const [uploadWorkKey, setUploadWorkKey] = useState("");
   const [uploadMode, setUploadMode] = useState<SourceUploadMode>("independent");
   const [uploadTarget, setUploadTarget] = useState("");
   const [uploadModifications, setUploadModifications] = useState<SourceModification[]>([]);
@@ -1227,6 +1234,7 @@ function ProjectSources({ project }: { project: Project }) {
       }
       const draft: SourceMetadataDraft = {
         title: uploadTitle,
+        workKey: uploadWorkKey,
         sourceType: uploadSourceType,
         lifecycle: uploadLifecycle,
         role: uploadSourceRole,
@@ -1251,6 +1259,7 @@ function ProjectSources({ project }: { project: Project }) {
       setFile(null);
       setUploadTitle("");
       setUploadMode("independent");
+      setUploadWorkKey("");
       setUploadTarget("");
       setUploadModifications([]);
       setUploadSourceType("");
@@ -1301,6 +1310,7 @@ function ProjectSources({ project }: { project: Project }) {
       draft: {
         title,
         sourceType,
+        workKey: form.workKey,
         lifecycle: form.lifecycle,
         role: form.role,
         publishedDate: form.published,
@@ -1375,6 +1385,17 @@ function ProjectSources({ project }: { project: Project }) {
             <input value={uploadTitle} onChange={(event) => setUploadTitle(event.target.value)} />
           </label>
           <label className="field-control">
+            <span>Work identity (optional)</span>
+            <input
+              maxLength={255}
+              value={uploadWorkKey}
+              onChange={(event) => setUploadWorkKey(event.target.value)}
+            />
+            <small>
+              Use the same key for translations and reprints. This does not replace another source.
+            </small>
+          </label>
+          <label className="field-control">
             <span>Source treatment</span>
             <select
               value={uploadMode}
@@ -1384,9 +1405,9 @@ function ProjectSources({ project }: { project: Project }) {
                 setUploadModifications([]);
               }}
             >
-              <option value="independent">New independent source</option>
-              <option value="revision">New revision of an existing source</option>
-              <option value="modifies">New source that modifies one or more sources</option>
+              <option value="independent">Independent account or new source</option>
+              <option value="revision">Newer edition replacing an existing source</option>
+              <option value="modifies">Amendment to one or more sources</option>
             </select>
           </label>
           {uploadMode === "revision" && (
@@ -1651,6 +1672,18 @@ function ProjectSources({ project }: { project: Project }) {
                       />
                     </label>
                     <label className="field-control">
+                      <span>Work identity (optional)</span>
+                      <input
+                        aria-label="Source work identity"
+                        value={form.workKey}
+                        onChange={(event) => setForm({ ...form, workKey: event.target.value })}
+                      />
+                      <small>
+                        Translations and reprints share a work identity. Independent accounts remain
+                        separate.
+                      </small>
+                    </label>
+                    <label className="field-control">
                       <span>Lifecycle</span>
                       <select
                         value={form.lifecycle}
@@ -1755,8 +1788,8 @@ function ProjectSources({ project }: { project: Project }) {
                         }
                       >
                         <option value="keep">Keep this source's current treatment</option>
-                        <option value="independent">New independent source</option>
-                        <option value="revision">Latest revision of an existing source</option>
+                        <option value="independent">Independent account or new source</option>
+                        <option value="revision">Newer edition replacing an existing source</option>
                         <option value="modifies">Modifies one or more sources</option>
                       </select>
                     </label>
@@ -1803,9 +1836,9 @@ function ProjectSources({ project }: { project: Project }) {
                     />
                   )}
                   <p className="muted-copy">
-                    “Latest revision” joins the selected source’s history and replaces it.
-                    “Modifies” stays a separate source and records the link. “Independent” removes
-                    any active relationship from this document.
+                    “Newer edition” joins the selected source’s history and replaces it. “Modifies”
+                    stays a separate source and records the link. “Independent” removes any active
+                    relationship from this document.
                   </p>
                 </div>
                 <label className="field-control">

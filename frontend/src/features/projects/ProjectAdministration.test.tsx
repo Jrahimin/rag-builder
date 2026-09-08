@@ -274,6 +274,22 @@ function setupAI(config: EffectiveProjectAIConfig, stored?: ProjectAIConfigRevis
   return vi.spyOn(operatorApiClient, "createProjectAIConfig").mockResolvedValue(revisionFor({}));
 }
 
+test("Project creation applies selected settings against the initial factual revision", async () => {
+  mockProjectShell();
+  const created = { ...projectFixture, active_ai_config_revision_id: "initial-factual-revision" };
+  vi.spyOn(operatorApiClient, "createProject").mockResolvedValue(created);
+  const save = setupAI(effectiveConfig("initial-factual-revision"));
+  renderOperatorComponent(<OperatorConsoleApp />, "/projects");
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Create Project" }, { timeout: 5000 }),
+  );
+  await userEvent.type(await screen.findByLabelText("Project name"), "Factual collection");
+  await userEvent.click(screen.getByRole("button", { name: "Create" }));
+  await waitFor(() => expect(save).toHaveBeenCalled());
+  expect(save.mock.calls[0]?.[2]).toBe("initial-factual-revision");
+  expect(save.mock.calls[0]?.[1].behavior?.evidence_approach).toBe("factual");
+});
+
 async function saveRevision(reason = "Focused transition") {
   await userEvent.type(await screen.findByLabelText("Revision reason"), reason);
   await userEvent.click(screen.getByRole("button", { name: "Create and activate revision" }));

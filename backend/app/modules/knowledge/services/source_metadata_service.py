@@ -268,6 +268,14 @@ class SourceMetadataService:
             revision_label=data.revision_label,
             title=data.title or document.filename,
             source_type=data.source_type,
+            work_key=(
+                active[1].work_key
+                if active is not None
+                and "work_key" not in data.model_fields_set
+                and not data.create_new_group
+                and active[1].source_group_id == group.id
+                else data.work_key
+            ),
             published_date=data.published_date,
             effective_from=data.effective_from,
             effective_to=data.effective_to,
@@ -501,6 +509,7 @@ class SourceMetadataService:
             revision_label=revision.revision_label,
             title=revision.title,
             source_type=revision.source_type,
+            work_key=revision.work_key,
             published_date=revision.published_date,
             effective_from=revision.effective_from,
             effective_to=revision.effective_to,

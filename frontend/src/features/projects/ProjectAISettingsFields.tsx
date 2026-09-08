@@ -16,6 +16,7 @@ export type ResponseModeChoice = "indexed_only" | "indexed_then_web" | "indexed_
 export type GroundingAssurance = "strict" | "balanced";
 
 type ProjectBehaviorForm = {
+  evidenceApproach: SourcedValue<"factual" | "authoritative" | "multi_perspective">;
   generationModelId: SourcedValue<string>;
   responseMode: SourcedValue<ResponseModeChoice>;
   groundingAssurance: SourcedValue<GroundingAssurance>;
@@ -36,6 +37,7 @@ export const emptyProjectConfigForm: ProjectConfigForm = {
   customBaseProfileId: null,
   execution: {},
   behavior: {
+    evidenceApproach: { source: "global", value: "authoritative" },
     generationModelId: { source: "global", value: "" },
     responseMode: { source: "global", value: "indexed_only" },
     groundingAssurance: { source: "global", value: "strict" },
@@ -137,6 +139,10 @@ export function configFormFromEffective(
     customBaseProfileId: null,
     execution,
     behavior: {
+      evidenceApproach: {
+        source: sourceFor(behavior, "evidence_approach"),
+        value: behavior?.evidence_approach ?? "authoritative",
+      },
       generationModelId: {
         source: sourceFor(behavior, "generation_model_id"),
         value: behavior?.generation_model_id ?? globalModelId,
@@ -184,6 +190,9 @@ export function inheritedFormFromEffective(
 
 export function buildSparseProjectConfig(form: ProjectConfigForm): ProjectAIConfig {
   const behavior: Record<string, unknown> = {};
+  if (form.behavior.evidenceApproach.source === "project") {
+    behavior.evidence_approach = form.behavior.evidenceApproach.value;
+  }
   if (form.behavior.generationModelId.source === "project") {
     behavior.generation_model_id = form.behavior.generationModelId.value;
   }
@@ -863,6 +872,27 @@ export function ProjectAISettingsFields({
           </span>
         </header>
         <div className="behavior-grid">
+          <BehaviorSetting
+            label="Evidence approach"
+            hint="Factual answers supported facts directly. Authoritative checks applicable rules and calculations. Multi-perspective attributes agreement and disagreement across reviewed works."
+            source={form.behavior.evidenceApproach.source}
+            onUseGlobal={() => setBehaviorSource("evidenceApproach", "global", "authoritative")}
+          >
+            <select
+              aria-label="Evidence approach"
+              value={form.behavior.evidenceApproach.value}
+              onChange={(event) =>
+                changeBehavior(
+                  "evidenceApproach",
+                  event.target.value as ProjectBehaviorForm["evidenceApproach"]["value"],
+                )
+              }
+            >
+              <option value="factual">Factual</option>
+              <option value="authoritative">Authoritative</option>
+              <option value="multi_perspective">Multi-perspective</option>
+            </select>
+          </BehaviorSetting>
           <BehaviorSetting
             label="Generation model"
             hint={BEHAVIOR_HINTS.generationModel}

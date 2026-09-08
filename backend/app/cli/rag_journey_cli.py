@@ -48,6 +48,12 @@ def _parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--repeat",
+        type=int,
+        default=1,
+        help="Repeat each scenario with a fresh conversation against the same index (1-10).",
+    )
+    parser.add_argument(
         "--keep-project",
         action="store_true",
         help="Retain the generated Project for inspection instead of purging it.",
@@ -112,6 +118,7 @@ def _options(args: argparse.Namespace, *, configured_job_backend: str) -> Journe
         allow_nonlocal_storage=args.allow_nonlocal_storage,
         configured_job_backend=configured_job_backend,
         replay_raw_retrieval=args.replay_raw_retrieval,
+        repeat=args.repeat,
     )
 
 

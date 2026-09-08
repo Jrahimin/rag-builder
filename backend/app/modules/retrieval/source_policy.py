@@ -19,6 +19,8 @@ SOURCE_METADATA_COLUMNS = (
     "source_group_id",
     "source_title",
     "source_type",
+    "source_work_key",
+    "source_content_hash",
     "source_revision_number",
     "source_revision_label",
     "source_published_date",

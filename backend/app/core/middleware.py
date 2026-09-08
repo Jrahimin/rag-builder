@@ -10,10 +10,12 @@ from __future__ import annotations
 
 import time
 import uuid
+from collections.abc import AsyncIterator
+from typing import cast
 
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
-from starlette.responses import Response
+from starlette.responses import Response, StreamingResponse
 
 from app.core.logging import bind_request_context, clear_request_context, get_logger
 
@@ -64,7 +66,7 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
         else:
             duration_ms = round((time.perf_counter() - start) * 1000, 2)
             log.info(
-                "request_completed",
+                "request_headers_ready",
                 method=request.method,
                 path=request.url.path,
                 status_code=response.status_code,
@@ -72,6 +74,28 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
             )
             response.headers[REQUEST_ID_HEADER] = request_id
             response.headers[TRACE_ID_HEADER] = trace_id
+            streamed_response = cast(StreamingResponse, response)
+            body = streamed_response.body_iterator
+
+            async def measured_body() -> AsyncIterator[str | bytes | memoryview]:
+                completed = False
+                try:
+                    async for chunk in body:
+                        yield chunk
+                    completed = True
+                finally:
+                    log.info(
+                        "request_completed" if completed else "request_body_interrupted",
+                        request_id=request_id,
+                        trace_id=trace_id,
+                        method=request.method,
+                        path=request.url.path,
+                        status_code=response.status_code,
+                        duration_ms=round((time.perf_counter() - start) * 1000, 2),
+                        telemetry_version="http.v2",
+                    )
+
+            streamed_response.body_iterator = measured_body()
             return response
         finally:
             clear_request_context()

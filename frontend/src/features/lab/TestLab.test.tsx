@@ -565,7 +565,7 @@ test("uploads a file as the latest revision of an existing source", async () => 
   await userEvent.click(await screen.findByText("Source versioning"));
   await userEvent.selectOptions(
     screen.getByLabelText("Source treatment"),
-    "Latest revision of an existing source",
+    "Newer edition replacing an existing source",
   );
   await userEvent.selectOptions(screen.getByLabelText("Existing source"), revisionId);
   await userEvent.selectOptions(screen.getByLabelText("Source role"), "supporting");

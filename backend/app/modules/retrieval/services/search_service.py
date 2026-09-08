@@ -61,6 +61,7 @@ from app.platform.providers.contracts.embedding import BaseEmbeddingProvider
 from app.platform.providers.contracts.query_translation import BaseQueryTranslationProvider
 from app.platform.providers.contracts.reranker import BaseRerankerProvider
 from app.platform.providers.errors import ProviderError
+from app.platform.providers.request_work import RequestWork, observe_stage
 
 logger = structlog.get_logger(__name__)
 
@@ -86,8 +87,12 @@ class SearchService:
         query_translation_config: QueryTranslationConfig | None = None,
         persist_translation_text: bool = False,
         query_embedder_factory: QueryEmbedderFactory | None = None,
+        work: RequestWork | None = None,
+        pinned_reference_date: str | None = None,
     ) -> None:
         self._session = session
+        self._work = work
+        self._pinned_reference_date = pinned_reference_date
         self._project_id = project_id
         self._embedder = embedder
         self._query_embedder_factory = query_embedder_factory
@@ -109,6 +114,7 @@ class SearchService:
         self._duplicate_suppression = DuplicateSuppressionService(retrieval_config)
         self.resolved_query_embedder: BaseEmbeddingProvider | None = None
 
+    @observe_stage("retrieval")
     async def search(
         self,
         request: SearchRequest,
@@ -177,6 +183,8 @@ class SearchService:
             )
 
         identity, query_embedder = await self._resolve_query_embedder(active_build)
+        if self._work is not None:
+            query_embedder = self._work.wrap(query_embedder)
         self.resolved_query_embedder = query_embedder
         adjacent_ids = (
             await RetrievalChunkRepository(self._session, self._project_id).adjacent_ids(
@@ -194,6 +202,7 @@ class SearchService:
             # from the same logical source.
             candidate_top_k = 100
         multilingual_plan = None
+        translation_started = time.perf_counter()
         if strategy is RetrievalStrategy.HYBRID:
             multilingual_plan = await resolve_multilingual_plan(
                 request.query,
@@ -202,6 +211,10 @@ class SearchService:
                 translator=self._query_translator,
                 persist_translation_text=self._persist_translation_text,
                 document_id=request.document_id,
+            )
+        if self._work is not None:
+            self._work.timings["translation"] += round(
+                (time.perf_counter() - translation_started) * 1000
             )
         context = RetrievalContext(
             project_id=self._project_id,
@@ -311,6 +324,20 @@ class SearchService:
             )
         )
         plan_diagnostics = dict(multilingual_plan.diagnostics) if multilingual_plan else {}
+        if self._work is not None and plan_diagnostics.get("translation_attempts"):
+            self._work.counts["translation_calls"] += int(plan_diagnostics["translation_attempts"])
+            self._work.calls.append(
+                {
+                    "kind": "translation",
+                    "provider": plan_diagnostics.get("translation_provider"),
+                    "model": plan_diagnostics.get("translation_model"),
+                    "attempts": plan_diagnostics["translation_attempts"],
+                    "status": plan_diagnostics.get("translation_status"),
+                    "duration_ms": plan_diagnostics.get("translation_latency_ms"),
+                    "usage": plan_diagnostics.get("translation_usage"),
+                    "provider_internal_retries": None,
+                }
+            )
         translation_meta = {**plan_diagnostics, **rerank_metadata}
         rerank_status = str(
             rerank_metadata.get(
@@ -539,6 +566,18 @@ class SearchService:
         self,
         as_of: datetime | None,
     ) -> tuple[SourceMetadataScope, str]:
+        if (
+            as_of is None
+            and self._pinned_reference_date is not None
+            and datetime.now(UTC).date().isoformat() != self._pinned_reference_date
+        ):
+            # Do not turn implicit-current selection into historical activation semantics.
+            # A midnight-crossing repair must restart instead of mixing reference dates.
+            raise ProviderError(
+                "Retrieval reference date changed",
+                provider_name="retrieval",
+                context={"reason": "reference_date_changed"},
+            )
         deployment_cap = self._ai_policy.source_policy_deployment_cap
         effective_mode = cap_source_policy_mode(
             self._configured_source_policy_mode,

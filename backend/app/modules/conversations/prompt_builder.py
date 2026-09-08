@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import date
 
 from app.models.message import MessageRole
+from app.modules.conversations.context_builder import reviewed_work_count, reviewed_work_identities
 from app.modules.conversations.ports import ContextChunk
 from app.modules.conversations.prompts.registry import PromptTemplate
 from app.platform.providers.contracts.llm import ChatMessage, ChatRole
@@ -36,8 +37,16 @@ class PromptBuilder:
         interpretation: str | None = None,
         reference_date: date | None = None,
     ) -> list[ChatMessage]:
-        context_block = self._format_context(context_chunks)
+        include_work_metadata = template.evidence_approach != "authoritative"
+        context_block = self._format_context(
+            context_chunks, include_work_metadata=include_work_metadata
+        )
         policy_parts: list[str] = []
+        if include_work_metadata:
+            policy_parts.append(
+                f"Reviewed work count in supplied evidence: {reviewed_work_count(context_chunks)}. "
+                "Counts concern reviewed works only, not the whole corpus or independent authors."
+            )
         if reference_date is not None:
             policy_parts.append(f"Trusted retrieval reference date: {reference_date.isoformat()}")
         if prompt_profile != "default":
@@ -81,14 +90,21 @@ class PromptBuilder:
         messages.append(ChatMessage(role=ChatRole.USER, content=user_question))
         return messages
 
-    def _format_context(self, chunks: list[ContextChunk]) -> str:
+    def _format_context(
+        self, chunks: list[ContextChunk], *, include_work_metadata: bool = False
+    ) -> str:
         if not chunks:
             return ""
         lines: list[str] = []
+        identities = reviewed_work_identities(chunks)
         for index, chunk in enumerate(chunks, start=1):
             source_kind = str(chunk.metadata.get("source_kind") or "knowledge").upper()
             source_title = chunk.metadata.get("source_title") or chunk.filename
             header = f"[{index}] kind={source_kind} source={source_title} file={chunk.filename}"
+            if include_work_metadata:
+                header += (
+                    f" work_identity={json.dumps(identities[chunk.chunk_id], ensure_ascii=False)}"
+                )
             evidence_unit_id = chunk.metadata.get("evidence_unit_id")
             evidence_span_hash = chunk.metadata.get("evidence_span_hash")
             if evidence_unit_id and evidence_span_hash:

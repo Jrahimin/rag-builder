@@ -47,6 +47,7 @@ from app.platform.providers.contracts.reranker import (
 )
 from app.platform.providers.embedding_similarity import score_best_passages
 from app.platform.providers.errors import ProviderError, sanitized_provider_failure_reason
+from app.platform.providers.request_work import RequestWork, observe_stage
 
 logger = structlog.get_logger(__name__)
 
@@ -84,8 +85,12 @@ class HybridRetriever(BaseRetriever):
         fts_regconfig: str = "simple",
     ) -> None:
         self._semantic = SemanticRetriever(session, project_id, embedder)
-        self._keyword = KeywordRetriever(session, project_id, fts_regconfig=fts_regconfig)
-        self._content_loader = CandidateContentLoader(session, project_id)
+        self._keyword = KeywordRetriever(
+            session, project_id, fts_regconfig=fts_regconfig, work=getattr(embedder, "work", None)
+        )
+        self._content_loader = CandidateContentLoader(
+            session, project_id, work=getattr(embedder, "work", None)
+        )
         self._reranker = reranker
         self._embedder = embedder
 
@@ -231,13 +236,6 @@ class HybridRetriever(BaseRetriever):
                 model=original_model,
             )
 
-        if context.passage_scoring_enabled and fused and original_query_vector is not None:
-            fused = await self._score_passage_evidence(
-                context,
-                fused,
-                query_vector=original_query_vector,
-            )
-
         final_candidates = fused
         if rerank_active and fused:
             skip_reason = _rerank_skip_reason(context)
@@ -261,6 +259,19 @@ class HybridRetriever(BaseRetriever):
                 )
             else:
                 final_candidates = await self._rerank_candidates(context, fused)
+
+        # Reranking uses whole-chunk text, so only score surviving passages.
+        # Passthrough/failure retains the same bounded fallback candidate set.
+        if (
+            context.passage_scoring_enabled
+            and final_candidates
+            and original_query_vector is not None
+        ):
+            final_candidates = await self._score_passage_evidence(
+                context,
+                final_candidates,
+                query_vector=original_query_vector,
+            )
 
         # Strip the expansion record list from per-hit metadata; records belong
         # to the request-level diagnostics, not to individual candidates.  The
@@ -312,6 +323,7 @@ class HybridRetriever(BaseRetriever):
         # cut. Preserve the whole bounded rerank window for those stages.
         return final_candidates[: context.top_k]
 
+    @observe_stage("relationship_expansion")
     async def _retrieve_modifier_branches(
         self,
         context: RetrievalContext,
@@ -599,6 +611,7 @@ class HybridRetriever(BaseRetriever):
             for candidate in fused
         ]
 
+    @observe_stage("passage_scoring")
     async def _score_passage_evidence(
         self,
         context: RetrievalContext,
@@ -647,6 +660,7 @@ class HybridRetriever(BaseRetriever):
             output.append(replace(candidate, metadata=metadata))
         return output
 
+    @observe_stage("reranking")
     async def _rerank_candidates(
         self,
         context: RetrievalContext,
@@ -675,8 +689,21 @@ class HybridRetriever(BaseRetriever):
         if not request.candidates:
             return fused
 
+        work = getattr(getattr(self, "_embedder", None), "work", None)
+        call = {
+            "kind": "rerank",
+            "provider": self._reranker.provider_name,
+            "model": self._reranker.model_name,
+            "candidates": len(request.candidates),
+            "status": "failed",
+            "provider_internal_retries": None,
+        }
+        started = time.perf_counter()
+        if isinstance(work, RequestWork):
+            work.counts["rerank_calls"] += 1
         try:
             response = await self._reranker.rerank(request)
+            call.update(status="completed", usage=response.usage)
         except ProviderError as exc:
             failure_reason = sanitized_provider_failure_reason(exc)
             logger.warning(
@@ -692,6 +719,10 @@ class HybridRetriever(BaseRetriever):
                 reranker_provider=exc.provider_name,
                 reranked_candidate_count=len(request.candidates),
             )
+        finally:
+            call["duration_ms"] = round((time.perf_counter() - started) * 1000)
+            if isinstance(work, RequestWork):
+                work.calls.append(call)
 
         reranked: list[CandidateHit] = []
         source_by_id = {candidate.chunk_id: candidate for candidate in rerank_window}

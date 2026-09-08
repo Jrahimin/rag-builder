@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import re
 import time
 import uuid
@@ -26,7 +27,12 @@ from app.models.conversation import Conversation
 from app.models.message import Message, MessageRole
 from app.modules.conversations import turn_resolution as turn_resolution_mod
 from app.modules.conversations.citation_snapshots import build_citation_snapshots
-from app.modules.conversations.context_builder import ContextBuilder
+from app.modules.conversations.context_builder import (
+    ContextBuilder,
+    comparison_requested,
+    historical_scope_requested,
+    reviewed_work_count,
+)
 from app.modules.conversations.grounded_context import assess_and_select_knowledge
 from app.modules.conversations.grounding_service import (
     EvidenceDecision,
@@ -93,6 +99,8 @@ from app.platform.providers.contracts.web_search import (
     WebSearchEvidence,
 )
 from app.platform.providers.errors import ProviderError
+from app.platform.providers.prompt_budget import prompt_budget
+from app.platform.providers.request_work import ObservedLLM, RequestWork
 
 logger = structlog.get_logger(__name__)
 
@@ -188,8 +196,14 @@ class ChatService:
         web_search: BaseWebSearchProvider | None = None,
         web_search_config: WebSearchConfig | None = None,
         store_candidate_trace: bool | None = None,
+        evidence_approach: str = "authoritative",
+        translation_enabled: bool | None = None,
+        work: RequestWork | None = None,
     ) -> None:
         self._session = session
+        self._work = work or RequestWork(project_id)
+        self._evidence_approach = evidence_approach
+        self._translation_enabled = translation_enabled
         self._project_id = project_id
         self._conversation_repository = conversation_repository
         self._message_repository = message_repository
@@ -209,11 +223,11 @@ class ChatService:
             if store_candidate_trace is not None
             else chat_config.store_candidate_trace
         )
-        self._context_builder = ContextBuilder(chat_config)
+        self._context_builder = ContextBuilder(chat_config, evidence_approach=evidence_approach)
         self._prompt_builder = PromptBuilder()
         self._grounding = GroundingService(
             chat_config,
-            embedder=embedder,
+            embedder=self._work.wrap(embedder) if embedder is not None else None,
         )
 
     async def send_message(
@@ -394,12 +408,34 @@ class ChatService:
         started = time.perf_counter()
 
         user_message = await self._commit_user_message(conversation, request.content)
-        prepared = await self._prepare_turn(
-            conversation=conversation,
-            conversation_id=conversation_id,
-            user_message=user_message,
-            request=request,
+        yield {"event": "progress", "stage": "searching_sources", "message": "Searching sources"}
+        preparation = asyncio.create_task(
+            self._prepare_turn(
+                conversation=conversation,
+                conversation_id=conversation_id,
+                user_message=user_message,
+                request=request,
+            )
         )
+        progress_stage = "searching_sources"
+        try:
+            while not preparation.done():
+                await asyncio.wait({preparation}, timeout=1)
+                if should_cancel is not None and await should_cancel():
+                    return
+                if self._work.counts.get("llm_calls", 0) and progress_stage != "checking_evidence":
+                    progress_stage = "checking_evidence"
+                    yield {
+                        "event": "progress",
+                        "stage": progress_stage,
+                        "message": "Checking evidence",
+                    }
+            prepared = await preparation
+        finally:
+            if not preparation.done():
+                preparation.cancel()
+            await asyncio.gather(preparation, return_exceptions=True)
+        yield {"event": "progress", "stage": "generating_answer", "message": "Preparing answer"}
 
         if should_cancel is not None and await should_cancel():
             return
@@ -554,6 +590,7 @@ class ChatService:
         user_message: Message,
         request: MessageSendRequest,
     ) -> _PreparedTurn:
+        preparation_started = time.perf_counter()
         history_limit = self._chat_config.max_history_messages
         if history_limit <= 0:
             loaded: list[Message] = []
@@ -578,8 +615,17 @@ class ChatService:
         current_content = request.content
         non_knowledge_response = _non_knowledge_response(current_content)
         prompt_version = GROUNDED_PROMPT_VERSION
-        template = require_prompt_template(prompt_version)
-        llm = self._resolve_llm(conversation)
+        template = require_prompt_template(
+            prompt_version, evidence_approach=self._evidence_approach
+        )
+        provider = self._resolve_llm(conversation)
+        llm = ObservedLLM(
+            provider,
+            self._work,
+            capacity=self._llm_config.model_context_windows.get(
+                provider.model_name, self._llm_config.context_window_tokens
+            ),
+        )
         temperature = self._effective_temperature(conversation)
         request_filters = RequestFilters(
             document_id=request.document_id,
@@ -587,6 +633,11 @@ class ChatService:
             as_of=request.as_of,
         )
         await self._release_read_transaction()
+
+        self._work.timings["history_loading"] += round(
+            (time.perf_counter() - preparation_started) * 1000
+        )
+        resolution_started = time.perf_counter()
 
         bounded_history, history_truncated = bound_resolution_history(
             resolver_source,
@@ -606,7 +657,10 @@ class ChatService:
         )
         if non_knowledge_response is not None:
             resolved = bypass_resolution(payload, reason="casual_turn")
-        elif not bounded_history:
+        elif not bounded_history and not (
+            request.as_of is None
+            and historical_scope_requested(current_content, self._evidence_approach)
+        ):
             resolved = bypass_resolution(payload, reason="no_usable_history")
         else:
             resolved = await TurnResolver(
@@ -621,6 +675,7 @@ class ChatService:
                 ),
             ).resolve(payload)
 
+        self._work.timings["resolution"] += round((time.perf_counter() - resolution_started) * 1000)
         diagnostics = {
             **resolved.diagnostics,
             "history_truncated": history_truncated,
@@ -655,6 +710,8 @@ class ChatService:
             )
         chunks = retrieval_result.chunks
         retrieval_ms = int((time.perf_counter() - retrieval_started) * 1000)
+        self._work.timings["initial_retrieval"] += retrieval_ms
+        coverage_started = time.perf_counter()
         scope_current_authority = _scope_current_authority_status(
             request,
             retrieval_result.diagnostics,
@@ -671,7 +728,11 @@ class ChatService:
         )
         evidence, knowledge_selected = await assess_and_select_knowledge(
             grounding=grounding,
-            context_builder=self._context_builder,
+            context_builder=ContextBuilder(
+                self._chat_config,
+                evidence_approach=self._evidence_approach,
+                question=retrieval_query,
+            ),
             chat_config=self._chat_config,
             question=retrieval_query,
             chunks=chunks,
@@ -680,11 +741,14 @@ class ChatService:
             expansion_records=expansion_records,
         )
         repair_usage: ChatUsage | None = None
+        comparison_review = evidence.sufficient and comparison_requested(retrieval_query)
         calculation_review = evidence.sufficient and _requires_calculation_coverage(
             retrieval_query, chunks
         )
-        applicability_review = evidence.sufficient and _requires_current_rule_coverage(
-            retrieval_query, chunks
+        applicability_review = (
+            self._evidence_approach == "authoritative"
+            and evidence.sufficient
+            and _requires_current_rule_coverage(retrieval_query, chunks)
         )
         relevance_repair = (
             evidence.reason is InsufficientEvidenceReason.BELOW_RELEVANCE_THRESHOLD
@@ -697,11 +761,12 @@ class ChatService:
             or calculation_review
             or applicability_review
             or relevance_repair
+            or comparison_review
         ) and scope_current_authority is None:
             # Similarity to a worked example does not prove that its category,
             # period or complete rule schedule applies to a new calculation.
             # An unsuccessful review must not fall back to those original hits.
-            if calculation_review or applicability_review:
+            if calculation_review or applicability_review or comparison_review:
                 evidence = replace(
                     evidence,
                     sufficient=False,
@@ -720,12 +785,16 @@ class ChatService:
                 max_output_tokens=self._llm_max_tokens(),
                 release_read_transaction=self._release_read_transaction,
                 domain_instructions=self._domain_instructions,
+                initial_decision=evidence,
+                evidence_approach=self._evidence_approach,
             )
             repair_usage = repaired.usage
             repair_diagnostics = dict(repaired.diagnostics)
             repair_diagnostics["trigger"] = (
                 "calculation_completeness"
                 if calculation_review
+                else "comparison_coverage"
+                if comparison_review
                 else "current_rule_applicability"
                 if applicability_review
                 else "relevance_recovery"
@@ -750,6 +819,9 @@ class ChatService:
                     ],
                 ]
         retrieval_ms = int((time.perf_counter() - retrieval_started) * 1000)
+        self._work.timings["coverage_and_recovery"] += round(
+            (time.perf_counter() - coverage_started) * 1000
+        )
         prompt_history = _prompt_history_for_generation(
             outcome=resolved.resolution.outcome,
             relation=resolved.resolution.relation,
@@ -890,6 +962,23 @@ class ChatService:
             interpretation=resolved.interpretation,
             reference_date=(resolved.retrieval.as_of or payload.reference_time).date(),
         )
+        budget = prompt_budget(
+            messages,
+            model=llm.model_name,
+            capacity=self._llm_config.model_context_windows.get(
+                llm.model_name, self._llm_config.context_window_tokens
+            ),
+            reserved_output=self._llm_max_tokens(),
+            evidence_text=self._prompt_builder._format_context(selected),
+        )
+        if not budget["within_budget"]:
+            # Preserve the exact admitted proof. Silently truncating it could drop a tax dependency.
+            evidence = replace(
+                evidence,
+                sufficient=False,
+                reason=InsufficientEvidenceReason.CONTEXT_SELECTION_EMPTY,
+            )
+        retrieval_result.diagnostics["prompt_budget"] = budget
         question_language = detect_language(current_content).primary_language or "en"
         notices: list[Notice] = []
         unresolved_chunks = [
@@ -914,6 +1003,9 @@ class ChatService:
         if web_fallback_used:
             notices.append(web_evidence_used_notice(language=question_language))
 
+        self._work.timings["preparation"] = round(
+            (time.perf_counter() - preparation_started) * 1000
+        )
         return _PreparedTurn(
             prompt_version=prompt_version,
             template=template,
@@ -965,6 +1057,7 @@ class ChatService:
         non_knowledge_turn: bool = False,
         clarification_turn: bool = False,
     ) -> Message:
+        verification_started = time.perf_counter()
         reason_value = str(insufficient_reason) if insufficient_reason is not None else None
         if clarification_turn:
             grounding = GroundingResult(
@@ -988,6 +1081,10 @@ class ChatService:
                     grounded=False,
                     citation_coverage=grounding.citation_coverage,
                 )
+        verification_ms = round((time.perf_counter() - verification_started) * 1000)
+        self._work.timings["claim_verification"] += verification_ms
+        self._work.timings["generation"] = generation_ms
+        total_ms += verification_ms
         metadata = self._build_metadata(
             retrieval_ms=prepared.retrieval_ms,
             generation_ms=generation_ms,
@@ -1094,6 +1191,76 @@ class ChatService:
         )
         if prepared.turn_resolution is not None:
             metadata["turn_resolution"] = prepared.turn_resolution
+        metadata["lifecycle"] = self._work.snapshot()
+        metadata["prompt_budget"] = {
+            **prepared.retrieval_diagnostics.get("prompt_budget", {}),
+            "provider_input_tokens": next(
+                (c.get("input_tokens") for c in reversed(self._work.calls) if c["kind"] == "llm"),
+                None,
+            )
+            if generation_ran
+            else None,
+            "provider_output_tokens": next(
+                (c.get("output_tokens") for c in reversed(self._work.calls) if c["kind"] == "llm"),
+                None,
+            )
+            if generation_ran
+            else None,
+        }
+        metadata["effective_behavior"] = {
+            "evidence_approach": self._evidence_approach,
+            "translation_enabled": self._translation_enabled,
+            "config_snapshot_id": str(self._config_snapshot_id)
+            if self._config_snapshot_id
+            else None,
+            "project_revision": self._config_provenance.get("project_config_revision_number"),
+        }
+        used_markers = {int(m) for m in re.findall(r"\[(\d+)\]", content)}
+        validated_coverage = bool(
+            (prepared.retrieval_diagnostics.get("knowledge_repair") or {})
+            .get("coverage", {})
+            .get("quotes_validated")
+        )
+        metadata["evidence_summary"] = {
+            "candidates": prepared.retrieval_diagnostics.get("retrieved_candidate_count")
+            or len(prepared.chunks),
+            "candidate_count_scope": "initial_search_before_reranking",
+            "admitted_passages": sum(a.passed for a in prepared.evidence.candidate_assessments)
+            if prepared.evidence.candidate_assessments
+            else len(prepared.evidence.admitted_units),
+            "context_passages": len(prepared.selected),
+            "cited_documents": len(
+                {c.document_id for i, c in enumerate(prepared.selected, 1) if i in used_markers}
+            ),
+            "reviewed_works": reviewed_work_count(prepared.selected),
+            "coverage": "incomplete"
+            if not prepared.evidence.sufficient
+            else "complete"
+            if validated_coverage
+            else "not_assessed",
+            "coverage_method": (
+                "validated_authoritative_dependencies"
+                if self._evidence_approach == "authoritative"
+                else "validated_requirements"
+            )
+            if validated_coverage
+            else "ordinary_admission",
+            "claim_verification": "verified"
+            if grounding.grounded
+            else "unverified"
+            if grounding.grounded is False
+            else "not_applicable",
+            "input_provenance": {
+                "supplied_values": "current_user_message_and_validated_conversation_context",
+                "authorized_assumptions": "saved_project_domain_policy",
+                "config_snapshot_id": str(self._config_snapshot_id)
+                if self._config_snapshot_id
+                else None,
+                "verification_scope": "Source coverage does not prove personal scenario inputs "
+                "or assumed membership.",
+            },
+        }
+        persistence_started = time.perf_counter()
         assistant_message = await self._commit_assistant_message(
             conversation=conversation,
             content=content,
@@ -1110,7 +1277,11 @@ class ChatService:
             insufficient_evidence_reason=reason_value,
             user_content_for_title=user_content_for_title,
         )
+        self._work.timings["persistence"] += round(
+            (time.perf_counter() - persistence_started) * 1000
+        )
         log_kwargs: dict[str, Any] = {
+            "lifecycle": self._work.snapshot(),
             "project_id": str(self._project_id),
             "conversation_id": str(conversation.id),
             "total_time_ms": total_ms,
@@ -1258,6 +1429,16 @@ class ChatService:
         status = str(prepared.web_search_diagnostics.get("status") or "")
         bangla = detect_language(question).primary_language == "bn"
         if prepared.evidence.reason is InsufficientEvidenceReason.UNRESOLVED_AUTHORITY:
+            if self._evidence_approach != "authoritative" and not _requires_calculation_coverage(
+                question, prepared.chunks
+            ):
+                return (
+                    "প্রাসঙ্গিক সূত্র পাওয়া গেছে, কিন্তু এই প্রশ্নের উত্তর দেওয়ার জন্য "
+                    "প্রয়োজনীয় তথ্য পুরোপুরি যাচাই করা যায়নি। আরও প্রাসঙ্গিক সূত্র দরকার।"
+                    if bangla
+                    else "I found related sources, but couldn't verify enough evidence to answer "
+                    "this question reliably. More relevant source evidence is needed."
+                )
             if bangla:
                 return (
                     "প্রাসঙ্গিক সূত্র পাওয়া গেছে, কিন্তু নিয়মগুলোর প্রযোজ্য সময়কাল, শর্ত বা "

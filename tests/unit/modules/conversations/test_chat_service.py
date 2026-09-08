@@ -1067,7 +1067,8 @@ async def test_stream_message_yields_done_event(
     ):
         events.append(item)
     assert any(isinstance(item, str) for item in events)
-    done = next(item for item in events if isinstance(item, dict))
+    done = next(item for item in events if isinstance(item, dict) and item["event"] == "done")
+    assert events[0]["event"] == "progress"
     assert done["event"] == "done"
     assert done["assistant_message_id"]
     assistant = message_repository.add.call_args_list[-1].args[0]
@@ -1104,7 +1105,7 @@ async def test_stream_cancel_skips_assistant_persist(
             cancel_after_first = True
         events.append(item)
     assert session.commit.await_count == 1
-    assert not any(isinstance(item, dict) for item in events)
+    assert not any(isinstance(item, dict) and item["event"] == "done" for item in events)
 
 
 async def test_applied_rerank_without_corroboration_blocks_unrelated_query(
@@ -2413,6 +2414,51 @@ def _resolved_payload(
     }
 
 
+async def test_simple_factual_turn_uses_only_answer_generation(
+    session,
+    conversation_repository,
+    message_repository,
+    conversation,
+):
+    message_repository.list_recent_for_conversation.return_value = []
+    llm = ScriptedResolutionLLM({}, answer="Refunds are available within 30 days. [1]")
+    service = _service(session, conversation_repository, message_repository, llm)
+    service._evidence_approach = "factual"
+    turn = await service.send_message(
+        conversation.id, MessageSendRequest(content="What is the current refund period?")
+    )
+    assert llm.generate_calls == 1 and llm.resolver_calls == 0
+    assert turn.assistant_message.insufficient_evidence_reason is None
+    assert turn.assistant_message.metadata["knowledge_repair"]["status"] == "not_needed"
+    assert turn.assistant_message.metadata["evidence_summary"]["coverage"] == "not_assessed"
+
+
+async def test_first_historical_turn_can_clarify_cutoff_without_searching_current_sources(
+    session,
+    conversation_repository,
+    message_repository,
+    conversation,
+):
+    message_repository.list_recent_for_conversation.return_value = []
+    llm = ScriptedResolutionLLM(
+        _resolved_payload(
+            relation="standalone",
+            outcome="clarify",
+            effective_question="What rules applied in 2024?",
+            clarification_question="Which date in 2024 should I use?",
+        )
+    )
+    service = _service(session, conversation_repository, message_repository, llm)
+    retrieval = CapturingRetrieval()
+    service._retrieval = retrieval
+    turn = await service.send_message(
+        conversation.id, MessageSendRequest(content="What rules applied in historical 2024?")
+    )
+    assert llm.resolver_calls == 1 and llm.generate_calls == 1
+    assert not retrieval.calls
+    assert turn.assistant_message.content == "Which date in 2024 should I use?"
+
+
 async def test_follow_up_retrieves_effective_question_and_keeps_original_prompt(
     session: AsyncMock,
     conversation_repository: AsyncMock,
@@ -2673,7 +2719,7 @@ async def test_clarification_streams_without_evidence_claims(
         MessageSendRequest(content="How fast is it?"),
     ):
         events.append(event)
-    assert events[0] == "Which plan should I use?"
+    assert next(item for item in events if isinstance(item, str)) == "Which plan should I use?"
     done = events[-1]
     assert isinstance(done, dict)
     assert done["finish_reason"] == "clarification"

@@ -3204,6 +3204,12 @@ export interface components {
             chat: components["schemas"]["EffectiveChatPolicy"];
             /** Domain Instructions */
             domain_instructions: string;
+            /**
+             * Evidence Approach
+             * @default authoritative
+             * @enum {string}
+             */
+            evidence_approach: "factual" | "authoritative" | "multi_perspective";
             llm: components["schemas"]["EffectiveLLMPolicy"];
             /** Prompt Profile */
             prompt_profile: string;
@@ -4542,6 +4548,8 @@ export interface components {
         ProjectBehaviorV2: {
             /** Domain Instructions */
             domain_instructions?: string | null;
+            /** Evidence Approach */
+            evidence_approach?: ("factual" | "authoritative" | "multi_perspective") | null;
             /** Generation Model Id */
             generation_model_id?: string | null;
             grounding_assurance?: components["schemas"]["GroundingMode"] | null;
@@ -5384,6 +5392,8 @@ export interface components {
             source_type?: string | null;
             /** Title */
             title?: string | null;
+            /** Work Key */
+            work_key?: string | null;
         };
         /** SourceRevisionCreateResponse */
         SourceRevisionCreateResponse: {
@@ -5443,6 +5453,8 @@ export interface components {
             title: string;
             /** Warnings */
             warnings?: string[];
+            /** Work Key */
+            work_key?: string | null;
         };
         /**
          * SourceRole

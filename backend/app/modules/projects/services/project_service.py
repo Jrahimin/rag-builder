@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.exceptions import BadRequestError, ConflictError, ForbiddenError, NotFoundError
 from app.models.organization import Organization
 from app.models.project import Project
+from app.models.project_ai_config_revision import ProjectAIConfigRevision
 from app.modules.projects.repositories.project_repository import ProjectRepository
 from app.modules.projects.schemas.project import (
     ProjectCreate,
@@ -24,6 +25,7 @@ from app.platform.audit.contracts import (
     AuditOutcome,
     AuditRecorder,
 )
+from app.platform.config.project_ai import stable_hash
 from app.platform.domain.auth_context import DEFAULT_ORGANIZATION_ID
 from app.platform.domain.lifecycle_service import require_not_deleted
 from app.platform.domain.transactions import flush_commit_refresh
@@ -105,6 +107,28 @@ class ProjectService:
             ownership_locked=True,
         )
         self._repository.add(project)
+        # New projects explicitly choose Factual. Legacy projects without a revision
+        # keep the authoritative compatibility default; never rewrite old snapshots.
+        try:
+            await self._repository.flush()
+        except IntegrityError:
+            await self._session.rollback()
+            raise _name_conflict() from None
+        configuration = {"behavior": {"evidence_approach": "factual"}, "execution": {}}
+        revision = ProjectAIConfigRevision(
+            id=uuid.uuid4(),
+            project_id=project.id,
+            revision_number=1,
+            schema_version=2,
+            configuration=configuration,
+            configuration_hash=stable_hash(configuration),
+            created_by=self._actor_id,
+            source="project_creation",
+            reason="Initial factual evidence approach",
+        )
+        self._session.add(revision)
+        await self._session.flush()
+        project.active_ai_config_revision_id = revision.id
         if self._audit is not None:
             try:
                 await self._repository.flush()

@@ -19,6 +19,7 @@ from app.modules.retrieval.repositories.keyword_term_stats_repository import (
 )
 from app.modules.retrieval.retrievers.base_retriever import BaseRetriever
 from app.modules.retrieval.retrievers.models import CandidateHit, CandidateSource, RetrievalContext
+from app.platform.providers.request_work import RequestWork, observe_stage
 
 logger = structlog.get_logger(__name__)
 
@@ -32,7 +33,9 @@ class KeywordRetriever(BaseRetriever):
         project_id: uuid.UUID,
         *,
         fts_regconfig: str = "simple",
+        work: RequestWork | None = None,
     ) -> None:
+        self._work = work
         self._keyword_repository = ChunkKeywordIndexRepository(
             session,
             project_id,
@@ -41,6 +44,7 @@ class KeywordRetriever(BaseRetriever):
         self._term_stats_repository = KeywordTermStatsRepository(session, project_id)
         self._collection_stats_repository = KeywordCollectionStatsRepository(session, project_id)
 
+    @observe_stage("database_keyword_retrieval_and_scoring")
     async def retrieve(
         self,
         context: RetrievalContext,

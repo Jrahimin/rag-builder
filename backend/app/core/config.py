@@ -620,6 +620,14 @@ class LLMConfig(BaseModel):
     model: str = "gpt-4o-mini"
     temperature: float | None = Field(default=None, ge=0.0, le=2.0)
     max_tokens: int = Field(default=4096, ge=1, le=128_000)
+    # Deployment safety budget; override per actual model capability when smaller.
+    context_window_tokens: int = Field(default=128_000, ge=1024)
+    # Official model capacity, verified 2026-09-08:
+    # https://developers.openai.com/api/docs/models/gpt-5.6-luna
+    # Explicit deployment mappings can replace this default for restricted endpoints.
+    model_context_windows: dict[str, Annotated[int, Field(ge=1024)]] = Field(
+        default_factory=lambda: {"gpt-5.6-luna": 1_050_000}
+    )
     request_timeout_seconds: float = Field(default=120.0, ge=1.0, le=600.0)
     ollama_base_url: str = "http://localhost:11434"
     openai_api_key: str | None = None

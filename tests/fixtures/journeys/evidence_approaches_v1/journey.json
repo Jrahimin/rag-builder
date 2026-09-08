@@ -1,0 +1,207 @@
+{
+  "schema_version": 2,
+  "key": "evidence_approaches_v1",
+  "description": "Fictional film records and competing historical accounts, with a same-work reprint. Run under factual and multi_perspective behavior.",
+  "reference_time": "2026-09-08T00:00:00Z",
+  "sources": [
+    {
+      "key": "film_catalog",
+      "filename": "ape_synthetic_film_catalog.md",
+      "title": "Synthetic Film Catalogue",
+      "revision_label": "Evaluation edition",
+      "source_type": "synthetic_reference",
+      "published_date": "2025-01-01",
+      "effective_from": "2025-01-01",
+      "work_key": "film_catalog"
+    },
+    {
+      "key": "festival_record",
+      "filename": "ape_synthetic_festival_record.md",
+      "title": "Synthetic Festival Record",
+      "revision_label": "Evaluation edition",
+      "source_type": "synthetic_reference",
+      "published_date": "2025-01-01",
+      "effective_from": "2025-01-01",
+      "work_key": "festival_record"
+    },
+    {
+      "key": "vale_account",
+      "filename": "ape_synthetic_vale_account.md",
+      "title": "Vale Account",
+      "revision_label": "Evaluation edition",
+      "source_type": "synthetic_reference",
+      "published_date": "2025-01-01",
+      "effective_from": "2025-01-01",
+      "work_key": "vale"
+    },
+    {
+      "key": "vale_reprint",
+      "filename": "ape_synthetic_vale_reprint.md",
+      "title": "Vale Reprint",
+      "revision_label": "Evaluation edition",
+      "source_type": "synthetic_reference",
+      "published_date": "2025-01-01",
+      "effective_from": "2025-01-01",
+      "work_key": "vale"
+    },
+    {
+      "key": "marsh_account",
+      "filename": "ape_synthetic_marsh_account.md",
+      "title": "Marsh Account",
+      "revision_label": "Evaluation edition",
+      "source_type": "synthetic_reference",
+      "published_date": "2025-01-01",
+      "effective_from": "2025-01-01",
+      "work_key": "marsh_account"
+    }
+  ],
+  "anchors": [
+    {
+      "key": "film_catalog",
+      "source": "film_catalog",
+      "phrases": [
+        "premiered in 1998"
+      ],
+      "expected_cardinality": 1
+    },
+    {
+      "key": "festival_record",
+      "source": "festival_record",
+      "phrases": [
+        "premiering in 1999"
+      ],
+      "expected_cardinality": 1
+    },
+    {
+      "key": "vale_account",
+      "source": "vale_account",
+      "phrases": [
+        "closure to a storm"
+      ],
+      "expected_cardinality": 1
+    },
+    {
+      "key": "vale_reprint",
+      "source": "vale_reprint",
+      "phrases": [
+        "closure to a storm"
+      ],
+      "expected_cardinality": 1
+    },
+    {
+      "key": "marsh_account",
+      "source": "marsh_account",
+      "phrases": [
+        "closure to a strike"
+      ],
+      "expected_cardinality": 1
+    }
+  ],
+  "cases": [
+    {
+      "key": "film_direct",
+      "tags": [
+        "factual",
+        "direct"
+      ],
+      "query": "Who directed the fictional film Lantern Harbor?",
+      "anchors": [
+        "film_catalog"
+      ],
+      "expected_tokens": [
+        "Mira Vale"
+      ]
+    },
+    {
+      "key": "film_comparison",
+      "tags": [
+        "factual",
+        "comparison"
+      ],
+      "query": "Compare the runtimes of Lantern Harbor and Winter Letters.",
+      "anchors": [
+        "film_catalog"
+      ],
+      "expected_tokens": [
+        "96",
+        "112"
+      ]
+    },
+    {
+      "key": "conflicting_dates",
+      "tags": [
+        "factual",
+        "conflict"
+      ],
+      "query": "Compare the premiere year for Lantern Harbor in the Film Catalogue and Festival Record. Attribute each date.",
+      "anchors": [
+        "film_catalog",
+        "festival_record"
+      ],
+      "required_anchor_groups": [
+        [
+          "film_catalog"
+        ],
+        [
+          "festival_record"
+        ]
+      ],
+      "expected_tokens": [
+        "1998",
+        "1999"
+      ]
+    },
+    {
+      "key": "absent_fact",
+      "tags": [
+        "factual",
+        "absent"
+      ],
+      "query": "What was the box-office revenue of Lantern Harbor?",
+      "anchors": [],
+      "mode": "no_answer"
+    },
+    {
+      "key": "competing_accounts",
+      "tags": [
+        "multi_perspective",
+        "minority",
+        "reprint"
+      ],
+      "query": "Compare the Vale Account and Marsh Account explanations of the harbor closure. Does the Vale reprint count as another work?",
+      "anchors": [
+        "vale_account",
+        "marsh_account"
+      ],
+      "required_anchor_groups": [
+        [
+          "vale_account",
+          "vale_reprint"
+        ],
+        [
+          "marsh_account"
+        ]
+      ],
+      "expected_tokens": [
+        "storm",
+        "strike"
+      ]
+    },
+    {
+      "key": "one_perspective",
+      "tags": [
+        "multi_perspective",
+        "scope"
+      ],
+      "query": "What explanation does the Marsh Account give for the harbor closure? State the limits of this source.",
+      "document_scope": "marsh_account",
+      "anchors": [
+        "marsh_account"
+      ],
+      "expected_tokens": [
+        "strike"
+      ],
+      "mode": "scope_isolation"
+    }
+  ]
+}

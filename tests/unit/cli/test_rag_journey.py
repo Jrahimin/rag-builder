@@ -69,6 +69,18 @@ from app.platform.jobs.names import DOCUMENT_PURGE
 pytestmark = pytest.mark.unit
 
 
+def test_evidence_approach_fixture_and_repeat_cli_contract() -> None:
+    fixture = DEFAULT_FIXTURE.parent.parent / "evidence_approaches_v1" / "journey.json"
+    manifest = load_manifest(fixture)
+    assert len(manifest.cases) == 6
+    works = {source.key: source.work_key for source in manifest.sources}
+    assert works["vale_account"] == works["vale_reprint"]
+    options = _options(_parser().parse_args(["--repeat", "3"]), configured_job_backend="redis")
+    assert options.repeat == 3
+    with pytest.raises(ValueError):
+        _options(_parser().parse_args(["--repeat", "0"]), configured_job_backend="redis")
+
+
 class _OrganizationSession:
     def __init__(self, organization: object | None) -> None:
         self.organization = organization

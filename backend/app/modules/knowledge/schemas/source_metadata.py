@@ -49,6 +49,7 @@ class SourceRevisionCreate(BaseModel):
     revision_label: str = Field(default="Revision", min_length=1, max_length=128)
     title: str | None = Field(default=None, min_length=1, max_length=512)
     source_type: str | None = Field(default=None, max_length=128)
+    work_key: str | None = Field(default=None, min_length=1, max_length=255)
     published_date: date | None = None
     effective_from: date | None = None
     effective_to: date | None = None
@@ -58,7 +59,7 @@ class SourceRevisionCreate(BaseModel):
     change_reason: str | None = Field(default=None, max_length=2000)
     activate: bool = False
 
-    @field_validator("revision_label", "title", "source_type", "change_reason")
+    @field_validator("revision_label", "title", "source_type", "change_reason", "work_key")
     @classmethod
     def strip_text(cls, value: str | None) -> str | None:
         if value is None:
@@ -111,6 +112,7 @@ class SourceRevisionResponse(BaseModel):
     revision_label: str
     title: str
     source_type: str | None
+    work_key: str | None = None
     published_date: date | None
     effective_from: date | None
     effective_to: date | None

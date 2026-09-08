@@ -5389,6 +5389,16 @@
             "title": "Domain Instructions",
             "type": "string"
           },
+          "evidence_approach": {
+            "default": "authoritative",
+            "enum": [
+              "factual",
+              "authoritative",
+              "multi_perspective"
+            ],
+            "title": "Evidence Approach",
+            "type": "string"
+          },
           "llm": {
             "$ref": "#/components/schemas/EffectiveLLMPolicy"
           },
@@ -9019,6 +9029,22 @@
             ],
             "title": "Domain Instructions"
           },
+          "evidence_approach": {
+            "anyOf": [
+              {
+                "enum": [
+                  "factual",
+                  "authoritative",
+                  "multi_perspective"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence Approach"
+          },
           "generation_model_id": {
             "anyOf": [
               {
@@ -11348,6 +11374,19 @@
               }
             ],
             "title": "Title"
+          },
+          "work_key": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Work Key"
           }
         },
         "title": "SourceRevisionCreate",
@@ -11492,6 +11531,17 @@
             },
             "title": "Warnings",
             "type": "array"
+          },
+          "work_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Work Key"
           }
         },
         "required": [
