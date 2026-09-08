@@ -119,6 +119,7 @@ class ChunkKeywordIndexRepository(ProjectScopedRepository[ChunkKeywordIndex]):
         top_k: int,
         document_id: uuid.UUID | None = None,
         document_ids: tuple[uuid.UUID, ...] = (),
+        chunk_ids: tuple[uuid.UUID, ...] | None = None,
         metadata_filter: dict[str, str] | None = None,
         source_scope: SourceMetadataScope | None = None,
         language_scope: LanguageScope | None = None,
@@ -163,6 +164,8 @@ class ChunkKeywordIndexRepository(ProjectScopedRepository[ChunkKeywordIndex]):
             stmt = stmt.where(self.model.document_id == document_id)
         if document_ids:
             stmt = stmt.where(self.model.document_id.in_(document_ids))
+        if chunk_ids is not None:
+            stmt = stmt.where(self.model.chunk_id.in_(chunk_ids))
         if metadata_filter:
             for key, value in metadata_filter.items():
                 stmt = stmt.where(self.model.metadata_snapshot[key].astext == value)

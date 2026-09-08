@@ -188,4 +188,5 @@ class RetrievalPort(Protocol):
         document_id: uuid.UUID | None = None,
         metadata_filter: dict[str, str] | None = None,
         as_of: datetime | None = None,
+        adjacent_to: list[uuid.UUID] | None = None,
     ) -> ContextRetrievalResult: ...

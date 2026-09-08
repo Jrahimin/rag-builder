@@ -89,6 +89,7 @@ class SemanticRetriever(BaseRetriever):
                 index_build_id=context.index_build_id,
                 document_id=context.filters.document_id,
                 document_ids=context.filters.document_ids,
+                chunk_ids=context.filters.chunk_ids,
                 embedding_set_version=context.embedding_set_version,
                 provider=provider,
                 model=model,

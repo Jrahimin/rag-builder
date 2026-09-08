@@ -89,6 +89,7 @@ class ChunkEmbeddingRepository(ProjectScopedRepository[ChunkEmbedding]):
         model: str,
         document_id: uuid.UUID | None = None,
         document_ids: tuple[uuid.UUID, ...] = (),
+        chunk_ids: tuple[uuid.UUID, ...] | None = None,
         metadata_filter: dict[str, str] | None = None,
         score_threshold: float | None = None,
         hnsw_ef_search: int = 100,
@@ -139,6 +140,8 @@ class ChunkEmbeddingRepository(ProjectScopedRepository[ChunkEmbedding]):
             stmt = stmt.where(self.model.document_id == document_id)
         if document_ids:
             stmt = stmt.where(self.model.document_id.in_(document_ids))
+        if chunk_ids is not None:
+            stmt = stmt.where(self.model.chunk_id.in_(chunk_ids))
         for key, value in (metadata_filter or {}).items():
             stmt = stmt.where(ChunkKeywordIndex.metadata_snapshot[key].astext == value)
         language_predicate = language_scope_predicate(

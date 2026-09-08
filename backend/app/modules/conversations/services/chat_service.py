@@ -63,6 +63,10 @@ from app.modules.conversations.schemas.message import (
     SourceProvenance,
 )
 from app.modules.conversations.services.evidence_repair_service import repair_knowledge_evidence
+from app.modules.conversations.services.web_evidence_review import (
+    review_web_evidence,
+    scoped_web_query,
+)
 from app.modules.conversations.turn_resolution import (
     RESOLUTION_HISTORY_CHAR_BUDGET,
     RESOLUTION_HISTORY_MESSAGE_CAP,
@@ -679,13 +683,25 @@ class ChatService:
         calculation_review = evidence.sufficient and _requires_calculation_coverage(
             retrieval_query, chunks
         )
+        applicability_review = evidence.sufficient and _requires_current_rule_coverage(
+            retrieval_query, chunks
+        )
+        relevance_repair = (
+            evidence.reason is InsufficientEvidenceReason.BELOW_RELEVANCE_THRESHOLD
+            and evidence.best_score is not None
+            and evidence.best_score >= self._chat_config.minimum_reranker_evidence_score
+            and rerank_status == "applied"
+        )
         if (
-            evidence.reason is InsufficientEvidenceReason.UNRESOLVED_AUTHORITY or calculation_review
+            evidence.reason is InsufficientEvidenceReason.UNRESOLVED_AUTHORITY
+            or calculation_review
+            or applicability_review
+            or relevance_repair
         ) and scope_current_authority is None:
             # Similarity to a worked example does not prove that its category,
             # period or complete rule schedule applies to a new calculation.
             # An unsuccessful review must not fall back to those original hits.
-            if calculation_review:
+            if calculation_review or applicability_review:
                 evidence = replace(
                     evidence,
                     sufficient=False,
@@ -708,7 +724,13 @@ class ChatService:
             repair_usage = repaired.usage
             repair_diagnostics = dict(repaired.diagnostics)
             repair_diagnostics["trigger"] = (
-                "calculation_completeness" if calculation_review else "unresolved_authority"
+                "calculation_completeness"
+                if calculation_review
+                else "current_rule_applicability"
+                if applicability_review
+                else "relevance_recovery"
+                if relevance_repair
+                else "unresolved_authority"
             )
             if not self._store_candidate_trace:
                 repair_diagnostics["branches"] = [
@@ -741,6 +763,7 @@ class ChatService:
             "fallback_used": False,
         }
         web_chunks: list[ContextChunk] = []
+        web_review_usage: ChatUsage | None = None
         scoped_request = bool(resolved.retrieval.suppress_web)
         web_requested = (
             non_knowledge_response is None
@@ -779,13 +802,25 @@ class ChatService:
                         "Web search provider is unavailable",
                         provider_name="web_search",
                     )
-                web_result = await web_search.search(
+                web_query = scoped_web_query(
                     retrieval_query,
+                    self._domain_instructions,
+                    (resolved.retrieval.as_of or payload.reference_time).date(),
+                )
+                web_result = await web_search.search(
+                    web_query,
                     max_results=self._web_search_config.max_results,
                 )
                 accepted_evidence, acceptance = _accepted_web_evidence(
                     retrieval_query,
                     web_result.evidence,
+                )
+                accepted_evidence, scope_review, web_review_usage = await review_web_evidence(
+                    llm=llm,
+                    query=retrieval_query,
+                    evidence=accepted_evidence,
+                    domain_instructions=self._domain_instructions,
+                    reference_date=(resolved.retrieval.as_of or payload.reference_time).date(),
                 )
                 web_chunks = _web_context_chunks(accepted_evidence, web_result.provider)
                 discovered_source_count = (
@@ -810,6 +845,7 @@ class ChatService:
                     "discovered_source_count": discovered_source_count,
                     "extractable_evidence_count": len(web_result.evidence),
                     "acceptance": acceptance,
+                    "scope_review": scope_review,
                     "fallback_used": (mode is ResponseMode.INDEXED_THEN_WEB and bool(web_chunks)),
                 }
             except ProviderError as exc:
@@ -902,7 +938,7 @@ class ChatService:
             turn_resolution=diagnostics,
             resolver_usage=_combined_auxiliary_usage(
                 resolved.usage or ChatUsage(None, None) if resolved.attempted else None,
-                repair_usage,
+                _combined_auxiliary_usage(repair_usage, web_review_usage),
             ),
             resolver_latency_ms=resolved.latency_ms,
         )
@@ -2044,4 +2080,21 @@ def _requires_calculation_coverage(question: str, chunks: list[ContextChunk]) ->
             question,
             re.IGNORECASE,
         )
+    )
+
+
+def _requires_current_rule_coverage(question: str, chunks: list[ContextChunk]) -> bool:
+    """Current governed facts need scope proof even when similarity admission passes.
+
+    Include reference sources: a highly similar proposal/company rule must not
+    bypass applicability review merely because no governing source was selected.
+    This also runs when conversation interpretation falls back to the raw question.
+    """
+    governed = any(
+        c.metadata.get("source_role") in {"primary", "supporting", "reference"}
+        and c.metadata.get("source_lifecycle_status") in {"active", "retired"}
+        for c in chunks
+    )
+    return governed and bool(
+        re.search(r"\b(?:current|currently|latest|today|now)\b|বর্তমান|সর্বশেষ|এখন", question, re.I)
     )

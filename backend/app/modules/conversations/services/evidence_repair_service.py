@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
 from typing import Any
@@ -27,9 +28,14 @@ from app.modules.conversations.prompts.evidence_repair import (
 )
 from app.modules.conversations.services.evidence_coverage import (
     MAX_REPAIR_DEPENDENCIES,
+    MAX_REPAIR_FOLLOWUPS,
     CoverageVerdict,
+    _contains_quote,
+    _quote_tokens,
+    numbered_source_lines,
 )
 from app.modules.conversations.turn_resolution import EffectiveRetrievalInputs
+from app.platform.domain.language_detection import DEFAULT_SUPPORTED_TARGET_LANGUAGES
 from app.platform.providers.contracts.llm import (
     BaseLLMProvider,
     ChatCompletionResult,
@@ -45,6 +51,7 @@ _SOURCE_CONTEXT_KEYS = (
     "source_title",
     "source_type",
     "source_role",
+    "language",
     "source_revision_id",
     "source_effective_from",
     "source_effective_to",
@@ -59,6 +66,84 @@ _SOURCE_CONTEXT_KEYS = (
 class _SearchPlan(BaseModel):
     model_config = ConfigDict(extra="forbid")
     queries: list[str] = Field(max_length=MAX_REPAIR_DEPENDENCIES)
+
+
+def _source_hints(chunks: list[ContextChunk]) -> list[dict[str, Any]]:
+    """A repeated high-ranking source must not hide the other corpus languages."""
+    seen: set[object] = set()
+    hints: list[dict[str, Any]] = []
+    for chunk in chunks:
+        if chunk.document_id in seen:
+            continue
+        seen.add(chunk.document_id)
+        hints.append(
+            {
+                "title": chunk.filename,
+                "source": {
+                    key: chunk.metadata[key]
+                    for key in _SOURCE_CONTEXT_KEYS
+                    if key in chunk.metadata and key != "authority_limitations"
+                },
+            }
+        )
+        if len(hints) == 6:
+            break
+    return hints
+
+
+def _search_language_instruction(hints: list[dict[str, Any]]) -> str:
+    # Source-language concept planning is part of the existing repair call,
+    # independent of the optional query-translation retrieval branches.
+    for role in ("primary", "supporting"):
+        for hint in sorted(
+            hints,
+            key=lambda item: str(item["source"].get("source_effective_from") or ""),
+            reverse=True,
+        ):
+            source = hint["source"]
+            language = source.get("language")
+            if source.get("source_role") == role and language in DEFAULT_SUPPORTED_TARGET_LANGUAGES:
+                return (
+                    f"\nCurrent governing sources use language code {language}. "
+                    "If this differs from the user's language, include separate short queries "
+                    "in each language for every necessary concept, within the eight-query limit. "
+                    "Omit document titles; source identity and period are checked separately.\n"
+                )
+    return ""
+
+
+def _discovery_excerpts(
+    verdict: CoverageVerdict,
+    groups: list[list[ContextChunk]],
+    context: list[ContextChunk],
+) -> list[dict[str, str]]:
+    """Prioritize reviewer-located gaps, then interleave missing search routes.
+
+    These are vocabulary hints only. A worked example can name a missing rule,
+    but must still be replaced by governing evidence at the next coverage check.
+    """
+    by_id = {str(chunk.chunk_id): chunk for chunk in context}
+    missing_groups = []
+    for check in verdict.checks:
+        if check.supported or not 0 <= check.query_index < len(groups):
+            continue
+        pointed = [by_id[q.chunk_id] for q in check.evidence if q.chunk_id in by_id]
+        missing_groups.append([*pointed, *groups[check.query_index]])
+    selected: list[dict[str, str]] = []
+    contents: list[str] = []
+    for rank in range(max((len(group) for group in missing_groups), default=0)):
+        for group in missing_groups:
+            if rank >= len(group):
+                continue
+            chunk = group[rank]
+            content = chunk.content[:2200]
+            if any(content in old or old in content for old in contents):
+                continue
+            contents.append(content)
+            selected.append({"title": chunk.filename, "content": content})
+            if len(selected) == 8:
+                return selected
+    return selected
 
 
 @dataclass
@@ -110,7 +195,7 @@ async def _validated_completion(
         try:
             schema.model_validate_json(content)
             return replace(completion, content=content, usage=usage)
-        except ValidationError:
+        except ValidationError as exc:
             if attempt:
                 raise
             messages = [
@@ -120,7 +205,9 @@ async def _validated_completion(
                     content="Return a complete JSON object only, matching this schema. Do not add "
                     "Markdown or commentary. Re-evaluate the original supplied evidence; "
                     "do not invent missing facts. Schema: "
-                    + json.dumps(schema.model_json_schema()),
+                    + json.dumps(schema.model_json_schema())
+                    + " Validation issues: "
+                    + json.dumps([error["msg"] for error in exc.errors(include_input=False)]),
                 ),
             ]
     raise AssertionError("bounded validation loop exhausted")
@@ -142,11 +229,11 @@ async def repair_knowledge_evidence(
 ) -> EvidenceRepairResult:
     """Never mix active snapshots, relax filters, or promote unknown authority.
 
-    All planned facets must retain an admitted unit after the final budget. Model
+    All nonempty discovery branches must retain an admitted unit after the final budget. Model
     queries only retrieve candidates; they never become answer evidence. A failed
     repair leaves the original authority failure available to the caller's normal
-    refusal policy. Unvalidated web snippets cannot bypass it. One focused follow-up
-    is allowed inside the same timeout; there is no unbounded agent loop.
+    refusal policy. Unvalidated web snippets cannot bypass it. Two focused follow-ups
+    are allowed inside the same timeout; there is no unbounded agent loop.
     """
     diagnostics: dict[str, Any] = {"version": EVIDENCE_REPAIR_VERSION, "status": "not_attempted"}
     diagnostics["context_budget"] = {
@@ -175,11 +262,15 @@ async def repair_knowledge_evidence(
             # An attempted call with missing usage (including a timeout) is
             # unknown cost, not a free operation in the combined turn usage.
             result.usage = ChatUsage(None, None)
+            hints = _source_hints([*selected, *initial.chunks])
             completion = await _validated_completion(
                 llm,
                 [
                     ChatMessage(
-                        role=ChatRole.SYSTEM, content=trusted_context + EVIDENCE_REPAIR_PROMPT
+                        role=ChatRole.SYSTEM,
+                        content=trusted_context
+                        + EVIDENCE_REPAIR_PROMPT
+                        + _search_language_instruction(hints),
                     ),
                     ChatMessage(
                         role=ChatRole.USER,
@@ -189,17 +280,7 @@ async def repair_knowledge_evidence(
                                 # Unresolved excerpts can contain obsolete/proposed
                                 # numbers. Plan dependencies from the question, not
                                 # those numbers; source identity only guides discovery.
-                                "source_hints": [
-                                    {
-                                        "title": c.filename,
-                                        "source": {
-                                            k: c.metadata[k]
-                                            for k in _SOURCE_CONTEXT_KEYS
-                                            if k in c.metadata and k != "authority_limitations"
-                                        },
-                                    }
-                                    for c in selected[:4]
-                                ],
+                                "source_hints": hints,
                             },
                             ensure_ascii=False,
                             default=str,
@@ -222,10 +303,12 @@ async def repair_knowledge_evidence(
             diagnostics["queries"] = queries
             diagnostics["branches"] = []
             groups: list[list[ContextChunk]] = []
+            raw_groups: list[list[ContextChunk]] = []
             decisions: list[EvidenceDecision] = []
             records = list(initial.diagnostics.get("modifies_expansion_records") or [])
             pending_queries = list(queries)
-            for round_index in range(2):
+            adjacent_requests: dict[str, list[uuid.UUID]] = {}
+            for round_index in range(1 + MAX_REPAIR_FOLLOWUPS):
                 for query in pending_queries:
                     # Sequential: the adapter may share one SQLAlchemy session.
                     branch = await retrieval.retrieve(
@@ -234,6 +317,11 @@ async def repair_knowledge_evidence(
                         document_id=inputs.document_id,
                         metadata_filter=inputs.metadata_filter or None,
                         as_of=inputs.as_of,
+                        **(
+                            {"adjacent_to": adjacent_requests[query]}
+                            if query in adjacent_requests
+                            else {}
+                        ),
                     )
                     branch_snapshot = tuple(
                         branch.diagnostics.get(k)
@@ -243,6 +331,7 @@ async def repair_knowledge_evidence(
                         diagnostics["status"] = "snapshot_changed"
                         return result
                     records.extend(branch.diagnostics.get("modifies_expansion_records") or [])
+                    raw_groups.append(branch.chunks)
                     safe = [
                         c
                         for c in remove_superseded_provisions(branch.chunks, records)
@@ -265,6 +354,9 @@ async def repair_knowledge_evidence(
                     diagnostics["branches"].append(
                         {
                             "query": query,
+                            "discovery_route": "adjacent"
+                            if query in adjacent_requests
+                            else "search",
                             "translation": {
                                 key: branch.diagnostics.get(key)
                                 for key in (
@@ -279,13 +371,17 @@ async def repair_knowledge_evidence(
                                 )
                             },
                             "retrieval": branch.diagnostics,
+                            "admission": grounding.diagnostics(
+                                decision,
+                                blocked_generation=grounding.blocks_generation(decision),
+                                generation_ran=False,
+                            ),
                             "selected_chunk_ids": [str(c.chunk_id) for c in units],
                         }
                     )
-                    if grounding.blocks_generation(decision) or not units:
-                        diagnostics["status"] = "dependency_unresolved"
-                        return result
-                    groups.append(units)
+                    # A search is a discovery route, not a required source. An
+                    # empty/blocked route must not abort the other dependencies.
+                    groups.append([] if grounding.blocks_generation(decision) else units)
                     decisions.append(decision)
                 # Give every dependency a first unit before adding any second units.
                 ordered = [
@@ -314,7 +410,9 @@ async def repair_knowledge_evidence(
                     diagnostics["status"] = "dependency_unresolved"
                     return result
                 retained = {c.chunk_id for c in budgeted}
-                if any(not any(c.chunk_id in retained for c in group) for group in groups):
+                if any(
+                    group and not any(c.chunk_id in retained for c in group) for group in groups
+                ):
                     diagnostics["status"] = "dependency_exceeds_budget"
                     return result
                 if release_read_transaction is not None:
@@ -338,16 +436,16 @@ async def repair_knowledge_evidence(
                                 {
                                     "original_question": inputs.query,
                                     "as_of": inputs.as_of.isoformat() if inputs.as_of else None,
-                                    "queries": [
+                                    "discovery_routes": [
                                         {
-                                            "query": query,
+                                            "query_index": i,
                                             "candidate_ids": [
                                                 labels[str(c.chunk_id)]
                                                 for c in group
                                                 if str(c.chunk_id) in labels
                                             ],
                                         }
-                                        for query, group in zip(queries, groups, strict=True)
+                                        for i, group in enumerate(groups)
                                     ],
                                     "authority_limitations": records,
                                     "context": [
@@ -356,7 +454,7 @@ async def repair_knowledge_evidence(
                                             "chunk_index": c.chunk_index,
                                             "page_number": c.page_number,
                                             "title": c.filename,
-                                            "content": c.content,
+                                            "content": numbered_source_lines(c.content),
                                             "source_revision_id": c.metadata.get(
                                                 "source_revision_id"
                                             ),
@@ -405,6 +503,7 @@ async def repair_knowledge_evidence(
                 for check in verdict.checks:
                     for quote in check.evidence:
                         quote.chunk_id = source_ids.get(quote.chunk_id, quote.chunk_id)
+                ranges_valid = verdict.resolve_source_ranges(budgeted)
                 # Keep quotes internal: candidate trace opt-out must not leak source
                 # text through the verifier's diagnostic payload.
                 diagnostics["coverage"] = {
@@ -418,14 +517,83 @@ async def repair_knowledge_evidence(
                         }
                         for check in verdict.checks
                     ],
-                    "quotes_validated": verdict.validates(groups, budgeted),
+                    "quotes_validated": ranges_valid and verdict.validates(groups, budgeted),
+                    "source_ranges_validated": ranges_valid,
                 }
-                if verdict.validates(groups, budgeted):
+                if ranges_valid and verdict.validates(groups, budgeted):
                     break
                 diagnostics["status"] = "coverage_incomplete"
-                if round_index or verdict.complete or not verdict.missing:
+                if round_index == MAX_REPAIR_FOLLOWUPS or verdict.complete or not verdict.missing:
                     return result
-                diagnostics["initial_coverage"] = diagnostics["coverage"]
+                if not round_index:
+                    diagnostics["initial_coverage"] = diagnostics["coverage"]
+                diagnostics.setdefault("coverage_rounds", []).append(diagnostics["coverage"])
+                # Carry only exactly cited, confirmed evidence into the next
+                # round. Repeatedly carrying every earlier search hit crowds out
+                # newly found governing passages and makes resolved gaps recur.
+                sources = {str(c.chunk_id): _quote_tokens(c.content) for c in budgeted}
+                confirmed = {
+                    q.chunk_id
+                    for check in verdict.checks
+                    if check.supported
+                    and check.evidence
+                    and all(
+                        item.chunk_id in sources
+                        and _contains_quote(sources[item.chunk_id], item.quote)
+                        for item in check.evidence
+                    )
+                    for q in check.evidence
+                }
+                groups = [[c for c in group if str(c.chunk_id) in confirmed] for group in groups]
+                # Read a missing rule's immediate source neighbourhood before
+                # asking for another wording. Neighbours undergo the same search,
+                # source policy, reranking and admission; they inherit no scores.
+                adjacent_requests = {}
+                if (
+                    not round_index
+                    and getattr(retrieval, "supports_adjacent_retrieval", False) is True
+                ):
+                    for check in verdict.checks:
+                        i = check.query_index
+                        if (
+                            check.supported
+                            or not check.needs_adjacent_context
+                            or not check.evidence
+                            or not ranges_valid
+                            or not 0 <= i < len(raw_groups)
+                        ):
+                            continue
+                        originals = {
+                            str(c.chunk_id): c.chunk_id for group in raw_groups for c in group
+                        }
+                        anchors = list(
+                            dict.fromkeys(
+                                [
+                                    *(
+                                        originals[q.chunk_id]
+                                        for q in check.evidence
+                                        if q.chunk_id in originals
+                                    ),
+                                ]
+                            )
+                        )[:4]
+                        if anchors:
+                            # The reviewer may cite a passage found by another
+                            # route. Search the actual missing topic, rather than
+                            # inheriting an unrelated route's wording or year.
+                            query = verdict.missing[
+                                min(len(adjacent_requests), len(verdict.missing) - 1)
+                            ][:500]
+                            adjacent_requests[query] = list(
+                                dict.fromkeys([*adjacent_requests.get(query, []), *anchors])
+                            )[:4]
+                        if len(adjacent_requests) == 2:
+                            break
+                if adjacent_requests:
+                    pending_queries = list(adjacent_requests)
+                    queries.extend(pending_queries)
+                    diagnostics["adjacent_queries"] = pending_queries
+                    continue
                 if release_read_transaction is not None:
                     await release_read_transaction()
                 previous_usage = result.usage
@@ -443,15 +611,9 @@ async def repair_knowledge_evidence(
                                     "question": inputs.query,
                                     "missing_requirements": verdict.missing,
                                     "previous_queries": queries,
-                                    "discovery_excerpts": [
-                                        {"title": c.filename, "content": c.content[:1500]}
-                                        for i, group in enumerate(groups)
-                                        if any(
-                                            check.query_index == i and not check.supported
-                                            for check in verdict.checks
-                                        )
-                                        for c in group[:4]
-                                    ][:8],
+                                    "discovery_excerpts": _discovery_excerpts(
+                                        verdict, raw_groups, budgeted
+                                    ),
                                     "source_hints": list(
                                         dict.fromkeys(c.filename for c in budgeted)
                                     ),
@@ -468,11 +630,15 @@ async def repair_knowledge_evidence(
                 if followup.finish_reason not in {None, "stop", "completed", "end_turn"}:
                     return result
                 followup_plan = _SearchPlan.model_validate_json(followup.content)
-                pending_queries = list(dict.fromkeys(q.strip() for q in followup_plan.queries))[:2]
+                pending_queries = [
+                    q
+                    for q in dict.fromkeys(q.strip() for q in followup_plan.queries)
+                    if q.casefold() not in {previous.casefold() for previous in queries}
+                ][:2]
                 if not pending_queries or any(not q or len(q) > 500 for q in pending_queries):
                     return result
                 queries.extend(pending_queries)
-                diagnostics["focused_queries"] = pending_queries
+                diagnostics.setdefault("focused_queries", []).extend(pending_queries)
             # Discovery context can contain old/future tables and unrelated examples.
             # Hand generation the passages actually used by the validated proof,
             # instead of every superficially relevant search hit.

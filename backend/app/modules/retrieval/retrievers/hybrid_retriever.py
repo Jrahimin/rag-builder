@@ -375,6 +375,7 @@ class HybridRetriever(BaseRetriever):
                 context.filters,
                 document_id=None,
                 document_ids=selected_documents,
+                chunk_ids=None,
             ),
             modifies_expansion_mode=ModifiesExpansionMode.OFF,
         )

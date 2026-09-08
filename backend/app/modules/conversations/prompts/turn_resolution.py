@@ -11,7 +11,7 @@ from app.modules.conversations.turn_resolution import (
 )
 from app.platform.providers.contracts.llm import ChatMessage, ChatRole
 
-TURN_RESOLUTION_PROMPT_VERSION = "v6"
+TURN_RESOLUTION_PROMPT_VERSION = "v7"
 
 TURN_RESOLUTION_TEMPLATE = """\
 You interpret the current user message against bounded preceding conversation history.
@@ -62,6 +62,13 @@ Rules:
 - follow_up continues the same topic. correction replaces a prior active parameter.
   topic_change drops old topic-specific amounts and dates.
 - Emit only bindings needed for the current turn. Do not restate dropped amounts.
+- Jurisdiction and subject category can remain necessary when an amount is dropped.
+  A follow-up asking for a current rule must retain the user's country, location or
+  currency context needed to distinguish that rule from similarly named foreign rules.
+  Bind the literal location/currency as topic_entity when relevant; do not carry the
+  previous salary or investment amount into a rate-only question. A Project jurisdiction
+  policy also scopes retrieval; express that scope in the effective question without
+  fabricating a user binding for a value provided only by the Project policy.
 - user_literal active_value must be a verbatim span of a referenced user message.
   Copy that span into excerpt. Do not add a currency, unit, or catalog title that
   the user did not write in that span.

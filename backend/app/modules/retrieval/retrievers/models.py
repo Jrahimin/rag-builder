@@ -26,6 +26,7 @@ class RetrievalFilters:
 
     document_id: uuid.UUID | None = None
     document_ids: tuple[uuid.UUID, ...] = ()
+    chunk_ids: tuple[uuid.UUID, ...] | None = None
     metadata: dict[str, str] = field(default_factory=dict)
 
 

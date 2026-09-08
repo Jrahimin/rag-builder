@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-GROUNDED_PROMPT_VERSION = "v12"
+GROUNDED_PROMPT_VERSION = "v13"
 """Provenance identifier stamped on messages and citations.  Change only via git."""
 
 
@@ -37,7 +37,14 @@ _CANONICAL_TEMPLATE = PromptTemplate(
         "is unspecified, state the evidenced alternatives and whether they change the result. "
         "Check each table cell belongs in its column: an allocated base is not a computed "
         "charge. Cite every rule, calculation row and derived total individually. State the "
-        "correct type of period and show the final comparison with applicable floors/caps."
+        "correct type of period and show the final comparison with applicable floors/caps. "
+        "Do not equate a rule's commencement date with the period when income was earned. "
+        "Use the evidenced period label; add a calendar date range only when the sources "
+        "establish that mapping. For each floor/cap, check the whole cited paragraph: "
+        "report category exceptions (including new entrants) even if the computed result "
+        "exceeds both alternatives."
+        " For a rule/rate-only question, answer the rule and its limits; do not calculate "
+        "using amounts from an earlier turn unless the current question requests that application."
     ),
     template=(
         "Answer only facts requested by the user that are supported by the supplied evidence "

@@ -34,6 +34,7 @@ from app.modules.retrieval.repositories.chunk_embedding_repository import (
     ChunkEmbeddingRepository,
 )
 from app.modules.retrieval.repositories.index_build_repository import IndexBuildRepository
+from app.modules.retrieval.repositories.retrieval_chunk_repository import RetrievalChunkRepository
 from app.modules.retrieval.retrievers.base_retriever import BaseRetriever
 from app.modules.retrieval.retrievers.hybrid_retriever import HybridRetriever
 from app.modules.retrieval.retrievers.models import RetrievalContext, RetrievalFilters
@@ -113,6 +114,7 @@ class SearchService:
         request: SearchRequest,
         *,
         for_public_response: bool = False,
+        adjacent_to: list[uuid.UUID] | None = None,
     ) -> SearchResponse:
         started = time.perf_counter()
         top_k = min(
@@ -176,6 +178,13 @@ class SearchService:
 
         identity, query_embedder = await self._resolve_query_embedder(active_build)
         self.resolved_query_embedder = query_embedder
+        adjacent_ids = (
+            await RetrievalChunkRepository(self._session, self._project_id).adjacent_ids(
+                adjacent_to, index_build_id=active_build.id
+            )
+            if adjacent_to is not None
+            else None
+        )
 
         candidate_top_k = min(max(top_k * 2, top_k + 5), 100)
         if source_scope.effective_mode is SourcePolicyMode.ENFORCE:
@@ -202,6 +211,7 @@ class SearchService:
             filters=RetrievalFilters(
                 document_id=request.document_id,
                 metadata=dict(request.metadata_filter),
+                chunk_ids=adjacent_ids,
             ),
             top_k=candidate_top_k,
             strategy=strategy,

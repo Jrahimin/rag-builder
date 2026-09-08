@@ -161,9 +161,23 @@ class CitedLLM(EchoLLMProvider):
         self.content = content
 
     async def generate(self, messages, *, temperature, max_tokens):
+        content = self.content
+        if (
+            messages
+            and "Review web source relevance before answer generation" in messages[0].content
+        ):
+            sources = json.loads(messages[1].content)["sources"]
+            content = json.dumps(
+                {
+                    "accepted": [
+                        {"source_index": item["source_index"], "quote": item["content"]}
+                        for item in sources
+                    ]
+                }
+            )
         del messages, temperature, max_tokens
         return ChatCompletionResult(
-            content=self.content,
+            content=content,
             provider="echo",
             model="test",
             finish_reason="stop",
@@ -1352,7 +1366,7 @@ async def test_unresolved_rules_never_reach_generation_when_no_recovery_is_allow
 
 @pytest.mark.parametrize("store_trace", [False, True])
 @pytest.mark.parametrize("coverage_complete", [True, False])
-@pytest.mark.parametrize("governed_calculation", [False, True])
+@pytest.mark.parametrize("initial_kind", ["authority", "calculation", "relevance", "current_rule"])
 async def test_repaired_evidence_reaches_generation_without_old_rule_or_web(
     session,
     conversation_repository,
@@ -1360,29 +1374,43 @@ async def test_repaired_evidence_reaches_generation_without_old_rule_or_web(
     conversation,
     store_trace,
     coverage_complete,
-    governed_calculation,
+    initial_kind,
 ) -> None:
     initial = await UnresolvedRuleRetrieval().retrieve()
-    if governed_calculation:
+    if initial_kind in {"calculation", "current_rule"}:
         relevant = await FakeRetrieval().retrieve()
         initial = ContextRetrievalResult(
             chunks=[
                 replace(
                     relevant.chunks[0],
                     metadata={
-                        "source_role": "supporting",
+                        "source_role": "reference"
+                        if initial_kind == "current_rule"
+                        else "supporting",
                         "source_lifecycle_status": "active",
                     },
                 )
             ],
             diagnostics=relevant.diagnostics,
         )
+    elif initial_kind == "relevance":
+        initial = await NearMissRetrieval().retrieve()
+        initial.chunks[0] = replace(
+            initial.chunks[0],
+            score=0.9,
+            rerank_relevance_score=0.9,
+            evidence_relevance_score=0.9,
+            evidence_calibration_id=RERANKER_RELEVANCE_CALIBRATION_ID,
+        )
+        initial.diagnostics.update(index_build_id=str(uuid.uuid4()), rerank_status="applied")
     initial.diagnostics["source_metadata_generation"] = 24
     current = replace(
         initial.chunks[0],
         chunk_id=uuid.uuid4(),
         content="Current refund entitlement is 45 days for eligible purchases.",
         metadata={},
+        score=0.95,
+        semantic_score=0.95,
         chunk_hash="current-policy",
     )
     retrieval = AsyncMock()
@@ -1448,7 +1476,7 @@ async def test_repaired_evidence_reaches_generation_without_old_rule_or_web(
         MessageSendRequest(
             content=(
                 "Calculate the refund for 100."
-                if governed_calculation
+                if initial_kind == "calculation"
                 else "What is the current refund guidance?"
             )
         ),
@@ -1467,6 +1495,10 @@ async def test_repaired_evidence_reaches_generation_without_old_rule_or_web(
     assert turn.assistant_message.output_tokens == 15
     repair = turn.assistant_message.metadata["knowledge_repair"]
     assert repair["status"] == "recovered"
+    if initial_kind == "relevance":
+        assert repair["trigger"] == "relevance_recovery"
+    elif initial_kind == "current_rule":
+        assert repair["trigger"] == "current_rule_applicability"
     assert ("retrieval" in repair["branches"][0]) is store_trace
     assert repair["coverage"]["quotes_validated"] is True
     assert "quote" not in repair["coverage"]["checks"][0]
@@ -1531,6 +1563,49 @@ async def test_web_fallback_rejects_uncited_or_irrelevant_evidence(
     assert turn.assistant_message.metadata["web_search"]["status"] == (
         "evidence_extracted_irrelevant"
     )
+
+
+async def test_foreign_web_rule_cannot_reach_generation_despite_shared_tax_words(
+    session,
+    conversation_repository,
+    message_repository,
+    conversation,
+) -> None:
+    llm = CitedLLM("must not reach answer generation")
+    review = await llm.generate([], temperature=None, max_tokens=100)
+    llm.generate = AsyncMock(return_value=replace(review, content='{"accepted":[]}'))
+    web = FakeWebSearch(
+        [
+            WebSearchEvidence(
+                evidence_id="foreign-tax",
+                title="United States investment tax rebate",
+                url="https://example.test/us-tax",
+                content="The current United States investment tax rebate rate is 20%.",
+                retrieved_at=datetime.now(UTC),
+                citation_verified=True,
+            )
+        ]
+    )
+    service = _service(
+        session,
+        conversation_repository,
+        message_repository,
+        llm,
+        chat_config=ChatConfig(response_mode=ResponseMode.INDEXED_THEN_WEB),
+    )
+    service._retrieval = EmptyRetrieval()
+    service._web_search = web
+    service._domain_instructions = "This project concerns Bangladesh individual income tax."
+    result = await service.send_message(
+        conversation.id,
+        MessageSendRequest(content="What is the current rebate rate?"),
+    )
+    assert "Bangladesh" in web.calls[0]
+    assert llm.generate.await_count == 1  # scope review only
+    answer = result.assistant_message
+    assert answer.finish_reason == "insufficient_evidence"
+    assert not answer.citations
+    assert answer.metadata["web_search"]["scope_review"]["rejected_scope_count"] == 1
 
 
 async def test_web_search_releases_read_transaction_before_network_io(

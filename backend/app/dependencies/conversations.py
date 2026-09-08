@@ -58,6 +58,8 @@ from app.platform.providers.implementations.web_search_factory import (
 class SearchServiceRetrievalAdapter:
     """Maps retrieval SearchService to the conversations RetrievalPort."""
 
+    supports_adjacent_retrieval = True
+
     def __init__(self, search_service: SearchService) -> None:
         self._search_service = search_service
 
@@ -73,6 +75,7 @@ class SearchServiceRetrievalAdapter:
         document_id: uuid.UUID | None = None,
         metadata_filter: dict[str, str] | None = None,
         as_of: datetime | None = None,
+        adjacent_to: list[uuid.UUID] | None = None,
     ) -> ContextRetrievalResult:
         response = await self._search_service.search(
             SearchRequest(
@@ -81,7 +84,8 @@ class SearchServiceRetrievalAdapter:
                 document_id=document_id,
                 metadata_filter=metadata_filter or {},
                 as_of=as_of,
-            )
+            ),
+            adjacent_to=adjacent_to,
         )
         return ContextRetrievalResult(
             chunks=[ContextChunk.from_retrieval_result(result) for result in response.results],

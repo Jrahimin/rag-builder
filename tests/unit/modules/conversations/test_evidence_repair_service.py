@@ -13,13 +13,63 @@ import pytest
 from app.core.config import ChatConfig, RetrievalConfig
 from app.modules.conversations.grounding_service import GroundingService
 from app.modules.conversations.ports import ContextChunk, ContextRetrievalResult
-from app.modules.conversations.services.evidence_repair_service import repair_knowledge_evidence
+from app.modules.conversations.services.evidence_coverage import CoverageVerdict
+from app.modules.conversations.services.evidence_repair_service import (
+    _discovery_excerpts,
+    _search_language_instruction,
+    _source_hints,
+    repair_knowledge_evidence,
+)
 from app.modules.conversations.turn_resolution import EffectiveRetrievalInputs
 from app.platform.domain.content_hash import content_hash
 from app.platform.providers.contracts.llm import ChatCompletionResult, ChatUsage
 from app.platform.providers.errors import ProviderError
 
 pytestmark = pytest.mark.unit
+
+
+def test_source_hints_retain_languages_after_repeated_top_source():
+    first = chunk("first", language="en")
+    other = chunk("other", language="bn")
+    hints = _source_hints([first] * 12 + [other])
+    assert [hint["source"]["language"] for hint in hints] == ["en", "bn"]
+
+
+def test_concept_language_prefers_current_governing_source_over_old_edition():
+    hints = _source_hints(
+        [
+            chunk("old", language="en", source_role="primary", source_effective_from="2023-01-01"),
+            chunk(
+                "current", language="bn", source_role="primary", source_effective_from="2026-07-01"
+            ),
+        ]
+    )
+    assert "language code bn" in _search_language_instruction(hints)
+
+
+def test_discovery_prioritizes_reviewed_gaps_without_starving_other_topics():
+    noise = [chunk(f"Unrelated procedural passage {i}.") for i in range(8)]
+    example = chunk("Example referring to the governing employment exclusion.")
+    rebate = chunk("Investment eligibility requirements.")
+    verdict = CoverageVerdict.model_validate(
+        {
+            "complete": False,
+            "missing": ["employment exclusion", "investment eligibility"],
+            "checks": [
+                {
+                    "query_index": 0,
+                    "supported": False,
+                    "evidence": [{"chunk_id": str(example.chunk_id), "quote": example.content}],
+                },
+                {"query_index": 1, "supported": False, "evidence": []},
+            ],
+        }
+    )
+    excerpts = _discovery_excerpts(
+        verdict, [[*noise, example], [rebate]], [*noise, example, rebate]
+    )
+    assert [item["content"] for item in excerpts[:2]] == [example.content, rebate.content]
+    assert len(excerpts) == 8
 
 
 def chunk(text: str, **metadata: object) -> ContextChunk:
@@ -49,6 +99,9 @@ async def run_repair(
     selected_context=None,
     followup_queries=None,
     final_coverage=None,
+    second_followup_queries=None,
+    second_final_coverage=None,
+    adjacent=False,
 ):
     config = config or ChatConfig()
     queries = (
@@ -97,8 +150,14 @@ async def run_repair(
             plan, content=json.dumps({"queries": followup_queries or []}), usage=ChatUsage(0, 0)
         ),
         replace(plan, content=json.dumps(final_coverage or verdict)),
+        replace(plan, content=json.dumps({"queries": second_followup_queries or []})),
+        replace(plan, content=json.dumps(second_final_coverage or final_coverage or verdict)),
     ]
     retrieval = AsyncMock()
+    if adjacent:
+        retrieval.supports_adjacent_retrieval = True
+        completions = list(llm.generate.side_effect)
+        llm.generate.side_effect = [*completions[:2], *completions[3:]]
     snapshot = {"index_build_id": "build-a", "source_metadata_generation": 24}
     retrieval.retrieve.side_effect = [
         ContextRetrievalResult(chunks=items, diagnostics={**snapshot, **diagnostics})
@@ -230,14 +289,14 @@ async def test_old_rule_cannot_become_trusted_when_a_branch_omits_its_relationsh
             }
         ],
     )
-    assert result.diagnostics["status"] == "dependency_unresolved"
+    assert result.diagnostics["status"] == "coverage_incomplete"
     assert not result.selected
 
 
 async def test_orphan_table_never_repairs_a_dependency_despite_high_similarity():
     table = chunk("Rate bands: first 450000 nil", element_type="table")
     result, _, _ = await run_repair([([table], {})], queries=["general rate bands"])
-    assert result.diagnostics["status"] == "dependency_unresolved"
+    assert result.diagnostics["status"] == "coverage_incomplete"
 
 
 async def test_later_branch_cannot_leave_an_earlier_unknown_rule_in_final_context():
@@ -281,7 +340,7 @@ async def test_final_budget_must_retain_every_dependency():
     assert not result.selected
 
 
-@pytest.mark.parametrize("queries", [[], [" "], ["q"] * 5, ["q" * 501]])
+@pytest.mark.parametrize("queries", [[], [" "], ["q"] * 9, ["q" * 501]])
 async def test_invalid_plans_never_search_or_authorize_generation(queries):
     result, retrieval, _ = await run_repair([], queries=queries)
     assert result.decision is None
@@ -354,7 +413,11 @@ async def test_verifier_cannot_authorize_unbound_or_incomplete_evidence(fault):
     else:
         verdict["missing"] = ["Customer eligibility"]
     result, _, _ = await run_repair([([source], {})], queries=["refund terms"], coverage=verdict)
-    assert result.diagnostics["status"] == "coverage_incomplete"
+    assert result.diagnostics["status"] == (
+        "repair_unavailable"
+        if fault in {"missing_check", "missing_rule"}
+        else "coverage_incomplete"
+    )
     assert result.decision is None and not result.selected
 
 
@@ -527,7 +590,7 @@ async def test_focused_followup_rejects_snapshot_change():
     assert not result.selected
 
 
-async def test_focused_followup_stops_after_one_pass():
+async def test_focused_followup_stops_when_no_new_alternative_is_available():
     result, retrieval, _ = await run_repair(
         [([chunk("Current rates")], {}), ([chunk("Related definitions")], {})],
         queries=["rates"],
@@ -589,3 +652,241 @@ async def test_json_format_recovery_remains_schema_validated(first_response):
     expected_calls = 1 if first_response.startswith("```") else 2
     assert llm.generate.await_count == expected_calls
     assert response.usage == ChatUsage(2 * expected_calls, 3 * expected_calls)
+
+
+async def test_empty_search_route_can_be_proved_by_another_route():
+    rule = chunk("The governing employment exclusion applies to ordinary employees.")
+    verdict = {
+        "complete": True,
+        "missing": [],
+        "checks": [
+            {
+                "query_index": i,
+                "supported": True,
+                "evidence": [{"chunk_id": str(rule.chunk_id), "start_line": 1, "end_line": 1}],
+            }
+            for i in range(2)
+        ],
+    }
+    result, retrieval, _ = await run_repair(
+        [([], {}), ([rule], {})],
+        queries=["unsuccessful wording", "governing wording"],
+        coverage=verdict,
+    )
+    assert result.diagnostics["status"] == "recovered"
+    assert retrieval.retrieve.await_count == 2
+    assert [c.chunk_id for c in result.selected] == [rule.chunk_id]
+
+
+async def test_second_focused_pass_is_bounded_and_can_resolve_remaining_gap():
+    example = chunk("Worked example")
+    rule = chunk("Complete governing rule")
+    incomplete = {"complete": False, "missing": ["governing rule"], "checks": []}
+    result, retrieval, _ = await run_repair(
+        [([example], {}), ([], {}), ([rule], {})],
+        queries=["initial search"],
+        coverage=incomplete,
+        followup_queries=["first alternative"],
+        final_coverage=incomplete,
+        second_followup_queries=["second alternative"],
+        second_final_coverage={
+            "complete": True,
+            "missing": [],
+            "checks": [
+                {
+                    "query_index": i,
+                    "supported": True,
+                    "evidence": [{"chunk_id": str(rule.chunk_id), "start_line": 1, "end_line": 1}],
+                }
+                for i in range(3)
+            ],
+        },
+    )
+    assert result.diagnostics["status"] == "recovered"
+    assert retrieval.retrieve.await_count == 3
+    assert result.diagnostics["focused_queries"] == ["first alternative", "second alternative"]
+
+
+@pytest.mark.parametrize("start,end", [(0, 1), (2, 1), (1, 99)])
+async def test_invalid_source_ranges_cannot_authorize_answer(start, end):
+    rule = chunk("A rule with punctuation: no invented dash.\nThe rate is 10%.")
+    result, _, _ = await run_repair(
+        [([rule], {})],
+        queries=["rate"],
+        coverage={
+            "complete": True,
+            "missing": [],
+            "checks": [
+                {
+                    "query_index": 0,
+                    "supported": True,
+                    "evidence": [
+                        {"chunk_id": str(rule.chunk_id), "start_line": start, "end_line": end}
+                    ],
+                }
+            ],
+        },
+    )
+    assert not result.selected
+
+
+async def test_source_range_materialization_preserves_punctuation_and_numbers():
+    rule = chunk("Scope: ordinary employees.\n\nThe rate is 10%, not 15%.")
+    calls = []
+    result, _, _ = await run_repair(
+        [([rule], {})],
+        queries=["rate"],
+        calls=calls,
+        coverage={
+            "complete": True,
+            "missing": [],
+            "checks": [
+                {
+                    "query_index": 0,
+                    "supported": True,
+                    "evidence": [{"chunk_id": str(rule.chunk_id), "start_line": 1, "end_line": 3}],
+                }
+            ],
+        },
+    )
+    assert result.diagnostics["status"] == "recovered"
+    assert result.selected[0].content == rule.content
+    assert json.loads(calls[1].args[0][1].content)["context"][0]["content"].startswith("L1: Scope:")
+
+
+async def test_adjacent_recovery_keeps_scope_and_rechecks_original_requirements():
+    continuation = chunk("Continuation without governing heading.")
+    governing = chunk("The applicable rate is 10% for the current period.")
+    calls = []
+    result, retrieval, inputs = await run_repair(
+        [([continuation], {}), ([governing], {})],
+        queries=["Discovery wording mentioning unrelated future years"],
+        coverage={
+            "complete": False,
+            "missing": ["governing heading"],
+            "checks": [
+                {
+                    "query_index": 0,
+                    "supported": False,
+                    "needs_adjacent_context": True,
+                    "evidence": [
+                        {"chunk_id": str(continuation.chunk_id), "start_line": 1, "end_line": 1}
+                    ],
+                },
+            ],
+        },
+        final_coverage={
+            "complete": True,
+            "missing": [],
+            "checks": [
+                {
+                    "query_index": i,
+                    "supported": True,
+                    "evidence": [
+                        {"chunk_id": str(governing.chunk_id), "start_line": 1, "end_line": 1}
+                    ],
+                }
+                for i in range(2)
+            ],
+        },
+        adjacent=True,
+        calls=calls,
+    )
+    assert result.diagnostics["status"] == "recovered"
+    assert len(calls) == 3  # no extra planning call for deterministic neighbours
+    request = retrieval.retrieve.call_args_list[1].kwargs
+    assert request["adjacent_to"] == [continuation.chunk_id]
+    assert request["document_id"] == inputs.document_id
+    assert request["metadata_filter"] == inputs.metadata_filter
+    assert request["as_of"] == inputs.as_of
+    review = json.loads(calls[1].args[0][1].content)
+    assert "unrelated future years" not in json.dumps(review)
+    assert review["original_question"] == inputs.query
+
+
+async def test_contradictory_complete_verdict_gets_one_format_retry():
+    from app.modules.conversations.services.evidence_repair_service import _validated_completion
+
+    contradictory = {
+        "complete": True,
+        "missing": [],
+        "checks": [{"query_index": 0, "supported": False, "evidence": []}],
+    }
+    corrected = {
+        "complete": True,
+        "missing": [],
+        "checks": [
+            {
+                "query_index": 0,
+                "supported": True,
+                "evidence": [{"chunk_id": "E1", "start_line": 1, "end_line": 2}],
+            }
+        ],
+    }
+    llm = AsyncMock()
+    llm.generate.side_effect = [
+        ChatCompletionResult(
+            content=json.dumps(value),
+            provider="fake",
+            provider_version="1",
+            model="test",
+            finish_reason="stop",
+            usage=ChatUsage(1, 1),
+        )
+        for value in (contradictory, corrected)
+    ]
+    result = await _validated_completion(llm, [], schema=CoverageVerdict, max_tokens=1024)
+    assert json.loads(result.content) == corrected
+    assert llm.generate.await_count == 2
+    assert "every check" in llm.generate.call_args.args[0][-1].content
+    # The correction still needs exact source validation; JSON consistency alone
+    # cannot authorize generation from invented line ranges.
+    assert not CoverageVerdict.model_validate_json(result.content).resolve_source_ranges([])
+
+
+async def test_followup_carries_confirmed_proof_without_old_search_noise():
+    known = chunk("The governing rate is 10%.")
+    example = chunk("An illustrative example, not the missing governing exclusion.")
+    noise = chunk("Unrelated administrative procedure.")
+    exclusion = chunk("The governing exclusion applies to ordinary employees.")
+    calls = []
+    initial_check = {
+        "query_index": 0,
+        "supported": True,
+        "evidence": [{"chunk_id": str(known.chunk_id), "quote": known.content}],
+    }
+    result, _, _ = await run_repair(
+        [([known, noise], {}), ([example], {}), ([exclusion], {})],
+        queries=["rate", "employment exclusion"],
+        config=ChatConfig(max_context_chunks=3),
+        coverage={
+            "complete": False,
+            "missing": ["governing exclusion"],
+            "checks": [initial_check, {"query_index": 1, "supported": False, "evidence": []}],
+        },
+        followup_queries=["alternative exclusion search"],
+        calls=calls,
+        final_coverage={
+            "complete": True,
+            "missing": [],
+            "checks": [
+                initial_check,
+                *[
+                    {
+                        "query_index": i,
+                        "supported": True,
+                        "evidence": [
+                            {"chunk_id": str(exclusion.chunk_id), "quote": exclusion.content}
+                        ],
+                    }
+                    for i in (1, 2)
+                ],
+            ],
+        },
+    )
+    assert result.diagnostics["status"] == "recovered"
+    context = json.loads(calls[3].args[0][1].content)["context"]
+    assert {item["content"] for item in context} == {
+        "L1: " + known.content,
+        "L1: " + exclusion.content,
+    }
