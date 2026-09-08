@@ -79,6 +79,11 @@ _CURRENCY_TOKEN = r"(?:[A-Za-z]{1,6}\s+|৳\s*)?"
 _AMOUNT_PATTERN = regex.compile(r"\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?")
 _EVIDENCE_RATE_PATTERN = regex.compile(r"(\d+(?:\.\d+)?)\s*%")
 _NUMBER = r"\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?"
+_BAND_WIDTH_PATTERN = regex.compile(
+    r"(?:\bnext|পরবর্তী)\s+(?:[A-Z]{3}\s+)?(?P<width>\d[\d,]*(?:\.\d+)?)"
+    r"[^|\n%]{0,40}\|\s*(?P<rate>\d+(?:\.\d+)?)\s*%",
+    regex.IGNORECASE,
+)
 _EQUALS = r"(?:=|\uff1d|equals|is)"
 _CALCULATION_PATTERNS = (
     regex.compile(
@@ -1257,8 +1262,12 @@ def _evidence_unit(
     document_end: int | None = (
         chunk.char_start + span.char_end if chunk.char_start is not None else span.char_end
     )
-    if chunk.metadata.get("table_context") or chunk.metadata.get("table_row_group"):
-        # Repeated table headings/row prefixes are not a contiguous slice of the
+    if (
+        chunk.metadata.get("table_context")
+        or chunk.metadata.get("table_row_group")
+        or chunk.metadata.get("heading_context_status") == "preserved"
+    ):
+        # Repeated headings/row prefixes are not a contiguous slice of the
         # parsed document. Report its source envelope; local evidence offsets and
         # hashes still identify exactly the text shown to generation.
         document_start = chunk.char_start
@@ -1422,6 +1431,19 @@ def _answer_segments(answer: str) -> list[str]:
             # title into an unsupported factual sentence.
             segments.append(paragraph.strip())
             continue
+        lines = paragraph.splitlines()
+        # A Markdown header immediately above its divider names table columns;
+        # data rows below it still require independent claim verification.
+        paragraph = "\n".join(
+            line
+            for index, line in enumerate(lines)
+            if not (
+                "|" in line
+                and index + 1 < len(lines)
+                and "|" in lines[index + 1]
+                and _MARKDOWN_TABLE_DIVIDER_PATTERN.fullmatch(lines[index + 1].strip())
+            )
+        )
         paragraph_segments: list[str] = []
         for raw_segment in _SEGMENT_PATTERN.split(paragraph):
             segment = raw_segment.strip()
@@ -1720,6 +1742,21 @@ def _rates_in_evidence(evidence_texts: list[str]) -> tuple[float, ...]:
     return tuple(dict.fromkeys(found))
 
 
+def _exceeds_explicit_band(base: float, rate: float, evidence_texts: list[str]) -> bool:
+    """Reject a per-band calculation exceeding an explicit tabular 'next' width.
+
+    This is a narrow contradiction check, not a tax parser or applicability proof.
+    Unknown table syntax remains subject to the normal evidence checks.
+    """
+    widths = [
+        _parse_amount(match.group("width"))
+        for source in evidence_texts
+        for match in _BAND_WIDTH_PATTERN.finditer(_fold_indic_digits(source))
+        if abs(_parse_amount(match.group("rate")) - rate) < 1e-9
+    ]
+    return bool(widths) and base > max(widths) + 1e-9
+
+
 def _derived_calculation_verification(
     text: str,
     evidence_texts: list[str],
@@ -1733,13 +1770,20 @@ def _derived_calculation_verification(
     rate must, and the arithmetic must evaluate. A conclusion that restates
     the result of an adjacent cited calculation is verified the same way.
     """
-    parsed = _parse_calculation(text)
-    if parsed is not None:
-        base, rate, result = parsed
-        if not _arithmetic_matches(base, rate, result):
-            return ClaimVerification.UNSUPPORTED
-        if not _rate_in_evidence(rate, evidence_texts):
-            return ClaimVerification.UNSUPPORTED
+    # Check every equation, not just the first correct equation in a sentence.
+    calculations = [
+        tuple(_parse_amount(match.group(key)) for key in ("base", "rate", "result"))
+        for pattern in _CALCULATION_PATTERNS
+        for match in pattern.finditer(_fold_indic_digits(_plain_claim_text(text)))
+    ]
+    if calculations:
+        for base, rate, result in calculations:
+            if (
+                not _arithmetic_matches(base, rate, result)
+                or not _rate_in_evidence(rate, evidence_texts)
+                or _exceeds_explicit_band(base, rate, evidence_texts)
+            ):
+                return ClaimVerification.UNSUPPORTED
         return ClaimVerification.SUPPORTED
     pair = _derived_amount_pair_verification(text, evidence_texts, extra_bases=extra_bases)
     if pair is not None:
@@ -1764,7 +1808,9 @@ def _derived_adjacent_result_verification(
         if not _restates_cited_calculation(amounts, base, rate, result):
             continue
         matched = True
-        if _rate_in_evidence(rate, evidence_texts):
+        if _rate_in_evidence(rate, evidence_texts) and not _exceeds_explicit_band(
+            base, rate, evidence_texts
+        ):
             return ClaimVerification.SUPPORTED
     if matched:
         return ClaimVerification.UNSUPPORTED
@@ -1788,8 +1834,11 @@ def _derived_amount_pair_verification(
         for result in claim_amounts:
             if abs(base - result) <= _amount_tolerance(result):
                 continue
-            if any(_arithmetic_matches(base, rate, result) for rate in rates):
-                return ClaimVerification.SUPPORTED
+            for rate in rates:
+                if _arithmetic_matches(base, rate, result):
+                    if _exceeds_explicit_band(base, rate, evidence_texts):
+                        return ClaimVerification.UNSUPPORTED
+                    return ClaimVerification.SUPPORTED
     return None
 
 

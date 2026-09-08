@@ -389,6 +389,8 @@ async def test_final_admitted_evidence_can_support_another_search_dependency():
         coverage=verdict,
     )
     assert result.diagnostics["status"] == "recovered"
+    assert [c.chunk_id for c in result.selected] == [terms.chunk_id]
+    assert result.diagnostics["proof_chunk_ids"] == [str(terms.chunk_id)]
 
 
 async def test_rule_below_four_relevant_candidates_survives_for_completeness_review():
@@ -412,6 +414,8 @@ async def test_rule_below_four_relevant_candidates_survives_for_completeness_rev
     )
     assert result.diagnostics["status"] == "recovered"
     assert rule.chunk_id in {c.chunk_id for c in result.selected}
+    assert len(result.selected) == 1
+    assert {unit.chunk_id for unit in result.decision.admitted_units} == {rule.chunk_id}
 
 
 @pytest.mark.parametrize("label", ["E1", "E99"])
@@ -533,6 +537,41 @@ async def test_focused_followup_stops_after_one_pass():
     assert result.diagnostics["status"] == "coverage_incomplete"
     assert retrieval.retrieve.await_count == 2
     assert not result.selected
+
+
+async def test_focused_discovery_uses_missing_branch_excerpts_without_promoting_them():
+    example = chunk("Worked example applies a one-third exclusion; see Schedule Six.")
+    rule = chunk("The governing exclusion is one third, subject to the stated cap.")
+    calls = []
+    result, _, _ = await run_repair(
+        [([example], {}), ([rule], {})],
+        queries=["verbose unsuccessful employment search"],
+        coverage={
+            "complete": False,
+            "missing": ["Governing exclusion"],
+            "checks": [{"query_index": 0, "supported": False, "evidence": []}],
+        },
+        followup_queries=["employment exclusion schedule"],
+        final_coverage={
+            "complete": True,
+            "missing": [],
+            "checks": [
+                {
+                    "query_index": i,
+                    "supported": True,
+                    "evidence": [{"chunk_id": str(rule.chunk_id), "quote": rule.content}],
+                }
+                for i in range(2)
+            ],
+        },
+        calls=calls,
+    )
+    followup = json.loads(calls[2].args[0][1].content)
+    assert followup["discovery_excerpts"] == [
+        {"title": example.filename, "content": example.content}
+    ]
+    assert [c.chunk_id for c in result.selected] == [rule.chunk_id]
+    assert "Worked example" not in json.dumps(result.diagnostics)
 
 
 @pytest.mark.parametrize("first_response", ['```json\n{"queries":["rule"]}\n```', "not JSON"])

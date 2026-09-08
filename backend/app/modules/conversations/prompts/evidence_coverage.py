@@ -32,6 +32,10 @@ reference proposals cannot contradict or override enacted rules/current official
 Metadata alone still cannot establish a rate or resolve conflicting governing provisions.
 Mark complete only if all needed rules and applicability are established, with
 nonempty exact quotations supporting every check. Otherwise list what is missing.
+Include quotations from EVERY passage needed to establish scope and conditions as well
+as values. Only passages cited by this proof will be handed to answer generation. For
+progressive rates, quote the complete governing band widths and rates, not a worked
+example's partial allocations. Explicitly check the band after the last fully used band.
 A query's year/category is not a user fact. An explicit user period takes precedence;
 otherwise apply a trusted Project default period policy using the trusted reference date.
 If neither resolves a necessary period and different rules could apply, mark incomplete.

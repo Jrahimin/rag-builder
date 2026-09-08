@@ -67,6 +67,9 @@ class PromptBuilder:
                 "Factual claims must still come from current evidence blocks."
             )
 
+        if template.final_instructions:
+            system_content = f"{system_content}\n\n{template.final_instructions}"
+
         messages: list[ChatMessage] = [ChatMessage(role=ChatRole.SYSTEM, content=system_content)]
 
         for message in history:

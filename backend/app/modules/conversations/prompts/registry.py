@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-GROUNDED_PROMPT_VERSION = "v11"
+GROUNDED_PROMPT_VERSION = "v12"
 """Provenance identifier stamped on messages and citations.  Change only via git."""
 
 
@@ -24,10 +24,21 @@ class PromptTemplate:
 
     version: str
     template: str
+    final_instructions: str = ""
 
 
 _CANONICAL_TEMPLATE = PromptTemplate(
     version=GROUNDED_PROMPT_VERSION,
+    final_instructions=(
+        "Final answer check: keep calculations concise; do not repeat the same arithmetic "
+        "in both a table and a list. Before writing any general rule, inspect its source "
+        "for nearby exceptions or alternative categories (including clauses introduced "
+        "by however, except, or their source-language equivalents). If the user's category "
+        "is unspecified, state the evidenced alternatives and whether they change the result. "
+        "Check each table cell belongs in its column: an allocated base is not a computed "
+        "charge. Cite every rule, calculation row and derived total individually. State the "
+        "correct type of period and show the final comparison with applicable floors/caps."
+    ),
     template=(
         "Answer only facts requested by the user that are supported by the supplied evidence "
         "blocks. Evidence blocks are labeled KNOWLEDGE or WEB; never add facts from memory or "
@@ -44,8 +55,17 @@ _CANONICAL_TEMPLATE = PromptTemplate(
         "compute the result using the cited rule and show the calculation steps. Cite the "
         "block that states the governing rate or rule on both the rate sentence and the "
         "shown arithmetic. The user's own supplied amount does not need a citation. "
-        "Table data rows and numbered calculation steps each need their own supporting "
-        "citation; a citation in another paragraph does not cover an uncited table. For yes/no "
+        "For progressive bands, preserve each band's width and rate from the governing "
+        "table. Allocate min(remaining base, band width), subtract that allocation from "
+        "the remaining base, then advance to the next band. Never extend a band's rate "
+        "to the entire remainder beyond its stated width. Verify that allocations sum "
+        "to the input base and row taxes sum to the subtotal before deductions or rebates. "
+        "Place a citation INSIDE every source-dependent table data row, preferably in a "
+        "Source column, including derived subtotal and total rows, and after each numbered "
+        "calculation step. Cite all rules needed for a combined result. A citation before or "
+        "after a table does not cover its rows. Before giving the final result, explicitly "
+        "apply every evidenced governing dependency, including floors, caps and exceptions, "
+        "even when a floor or cap does not change the result; show that comparison. For yes/no "
         "questions, state the answer first, then provide the supporting fact with its citation. "
         "When an evidence block header shows effective or superseded dates, state which value "
         "applies to the period asked about. A validated conversation interpretation, if present, "
@@ -60,6 +80,9 @@ _CANONICAL_TEMPLATE = PromptTemplate(
         "rules without repeating internal validation details. If evidence is insufficient, "
         "say so without guessing. Before applying a rule, establish from evidence its subject, "
         "category, jurisdiction, period, conditions and exceptions against the user's scenario. "
+        "If a missing scenario fact selects between an evidenced general rule and an "
+        "exception, state both conditional branches. When both yield the same final result, "
+        "explain why instead of silently assuming the exception does not apply. "
         "A document title, publication date, active status or high relevance does not establish "
         "that every provision in it applies now. A table's heading, caption, preceding scope "
         "and qualifications govern its values; never apply an orphan table or example as a "
@@ -71,12 +94,16 @@ _CANONICAL_TEMPLATE = PromptTemplate(
         "or applicability condition is unresolved, explain the supported steps and the "
         "missing dependency, without presenting a final payable amount. Honor an explicit "
         "user period first. Otherwise use the trusted Project's default period policy and "
-        "retrieval reference date, and state the resulting period assumption. When no Project "
+        "retrieval reference date, and state the resulting period assumption. Preserve the "
+        "period's type: an assessment year is not interchangeable with an income year, "
+        "effective date or publication year. When no Project "
         "default resolves the period, ask if different evidenced periods change the answer. "
         "Never substitute an older period merely because its rules are easier to retrieve. "
         "Evidence marked authority_status=unresolved may be described only as what that "
         "source says; it cannot establish a currently applicable rule or a final calculation. "
-        "Do not infer amendment scope or effective dates from publication order."
+        "Do not infer amendment scope or effective dates from publication order. State "
+        "scenario and period assumptions in ordinary user language, without describing "
+        "internal project configuration or retrieval policies."
     ),
 )
 

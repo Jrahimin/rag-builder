@@ -30,6 +30,50 @@ async def test_numbered_markdown_heading_does_not_become_a_factual_claim() -> No
     assert result.claims[0]["text"] == "The rebate rate is 10%."
 
 
+async def test_table_header_is_structural_but_data_rows_are_still_checked() -> None:
+    result = await GroundingService(ChatConfig()).map_claims(
+        "| Income portion | Rate | Tax |\n|---:|---:|---:|\n| BDT 500,000 | 15% | BDT 75,000 | [1]",
+        [_chunk(content="Next 400,000 | 15%")],
+    )
+    assert len(result.claims) == 1
+    assert "500,000" in result.claims[0]["text"]
+    assert result.claims[0]["verification"] == "unsupported"
+
+
+@pytest.mark.parametrize(
+    "source",
+    ["Next 400,000 | 15%", "পরবর্তী ৪,০০,০০০ টাকা পর্যন্ত | ১৫ %"],  # noqa: RUF001
+)
+async def test_correct_arithmetic_cannot_overrun_a_cited_progressive_band(source) -> None:
+    result = await GroundingService(ChatConfig()).map_claims(
+        "BDT 500,000 \u00d7 15% = BDT 75,000. [1]", [_chunk(content=source)]
+    )
+    assert result.claims[0]["verification"] == "unsupported"
+    valid = await GroundingService(ChatConfig()).map_claims(
+        "BDT 400,000 \u00d7 15% = BDT 60,000. [1]", [_chunk(content=source)]
+    )
+    assert valid.claims[0]["verification"] == "supported"
+
+
+async def test_second_equation_in_one_claim_cannot_hide_behind_first_correct_equation() -> None:
+    result = await GroundingService(ChatConfig()).map_claims(
+        "300,000 \u00d7 10% = 30,000 and 500,000 \u00d7 15% = 75,000. [1]",
+        [_chunk(content="Next 300,000 | 10%\nNext 400,000 | 15%")],
+    )
+    assert result.claims[0]["verification"] == "unsupported"
+
+
+def test_repeated_paragraph_heading_retains_source_envelope() -> None:
+    chunk = replace(
+        _chunk(content="Current period\nEmployment exclusion applies."),
+        metadata={"heading_context_status": "preserved"},
+        char_start=100,
+        char_end=500,
+    )
+    unit = GroundingService(ChatConfig()).assess("employment exclusion", [chunk]).admitted_units[0]
+    assert (unit.char_start, unit.char_end) == (100, 500)
+
+
 def test_table_passage_cannot_detach_rates_from_their_period() -> None:
     content = "Renewals in 2028 only.\nBand | Rate\nFirst 450000 | 0%\nNext 300000 | 10%"
     chunk = replace(
@@ -649,7 +693,7 @@ async def test_bangla_conclusion_inherits_from_adjacent_cited_calculation() -> N
     service = GroundingService(ChatConfig(minimum_claim_token_coverage=0.9))
     result = await service.map_claims(
         "বর্তমান নিয়মে ৬০,০০০ টাকা যোগ্য বিনিয়োগের রিবেট **৬,০০০ টাকা**।\n\n"  # noqa: RUF001
-        "হিসাব: ৬০,০০০ × ১০% = **৬,০০০ টাকা**। [1]",  # noqa: RUF001
+        "হিসাব: ৬০,০০০ \u00d7 ১০% = **৬,০০০ টাকা**। [1]",  # noqa: RUF001
         [_chunk(content="The current investment rebate is 10% of eligible investment.")],
     )
 
@@ -673,7 +717,7 @@ async def test_one_shared_amount_does_not_inherit_from_adjacent_calculation() ->
 async def test_result_only_conclusion_inherits_from_adjacent_cited_calculation() -> None:
     service = GroundingService(ChatConfig(minimum_claim_token_coverage=0.9))
     result = await service.map_claims(
-        "- Rebate: ৭৫,০০০ × ১০% = **৭,৫০০ টাকা** [1]\n\n"  # noqa: RUF001
+        "- Rebate: ৭৫,০০০ \u00d7 ১০% = **৭,৫০০ টাকা** [1]\n\n"  # noqa: RUF001
         "অতএব, আপনার rebate হবে **৭,৫০০ টাকা**।",  # noqa: RUF001
         [_chunk(content="The current investment rebate is 10% of eligible investment.")],
     )
@@ -701,7 +745,7 @@ async def test_rate_only_lead_does_not_inherit_from_adjacent_calculation() -> No
 async def test_bangla_digit_calculation_is_supported_against_english_rate() -> None:
     service = GroundingService(ChatConfig(minimum_claim_token_coverage=0.9))
     result = await service.map_claims(
-        "গণনা: **৭৫,০০০ × ১০% = ৭,৫০০ টাকা** [1]",  # noqa: RUF001
+        "গণনা: **৭৫,০০০ \u00d7 ১০% = ৭,৫০০ টাকা** [1]",  # noqa: RUF001
         [_chunk(content="The current investment rebate is 10% of eligible investment.")],
     )
 

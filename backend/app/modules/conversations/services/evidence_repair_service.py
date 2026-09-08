@@ -23,6 +23,7 @@ from app.modules.conversations.prompts.evidence_coverage import COVERAGE_PROMPT
 from app.modules.conversations.prompts.evidence_repair import (
     EVIDENCE_REPAIR_PROMPT,
     EVIDENCE_REPAIR_VERSION,
+    FOCUSED_REPAIR_PROMPT,
 )
 from app.modules.conversations.services.evidence_coverage import (
     MAX_REPAIR_DEPENDENCIES,
@@ -433,7 +434,7 @@ async def repair_knowledge_evidence(
                     llm,
                     [
                         ChatMessage(
-                            role=ChatRole.SYSTEM, content=trusted_context + EVIDENCE_REPAIR_PROMPT
+                            role=ChatRole.SYSTEM, content=trusted_context + FOCUSED_REPAIR_PROMPT
                         ),
                         ChatMessage(
                             role=ChatRole.USER,
@@ -442,10 +443,15 @@ async def repair_knowledge_evidence(
                                     "question": inputs.query,
                                     "missing_requirements": verdict.missing,
                                     "previous_queries": queries,
-                                    "task": "Search only the missing requirements. "
-                                    "Use at most two concise source-language queries. "
-                                    "For period gaps retrieve the governing heading. "
-                                    "Do not invent numbers or provisions.",
+                                    "discovery_excerpts": [
+                                        {"title": c.filename, "content": c.content[:1500]}
+                                        for i, group in enumerate(groups)
+                                        if any(
+                                            check.query_index == i and not check.supported
+                                            for check in verdict.checks
+                                        )
+                                        for c in group[:4]
+                                    ][:8],
                                     "source_hints": list(
                                         dict.fromkeys(c.filename for c in budgeted)
                                     ),
@@ -467,6 +473,15 @@ async def repair_knowledge_evidence(
                     return result
                 queries.extend(pending_queries)
                 diagnostics["focused_queries"] = pending_queries
+            # Discovery context can contain old/future tables and unrelated examples.
+            # Hand generation the passages actually used by the validated proof,
+            # instead of every superficially relevant search hit.
+            proof_ids = {item.chunk_id for check in verdict.checks for item in check.evidence}
+            budgeted = [c for c in budgeted if str(c.chunk_id) in proof_ids]
+            if not verdict.validates(groups, budgeted):
+                diagnostics["status"] = "coverage_incomplete"
+                return result
+            diagnostics["proof_chunk_ids"] = [str(c.chunk_id) for c in budgeted]
             result.selected = budgeted
             assessments = {a.chunk_id: a for d in decisions for a in d.candidate_assessments}
             units_by_id = {u.chunk_id: u for d in decisions for u in d.admitted_units}
