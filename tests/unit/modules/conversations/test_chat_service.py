@@ -47,7 +47,7 @@ from app.platform.providers.contracts.web_search import (
     WebSearchEvidence,
     WebSearchResult,
 )
-from app.platform.providers.errors import ProviderError, ProviderTimeoutError
+from app.platform.providers.errors import ProviderError, ProviderQuotaError, ProviderTimeoutError
 from app.platform.providers.implementations.echo_chat import EchoLLMProvider
 
 pytestmark = pytest.mark.unit
@@ -679,6 +679,48 @@ async def test_send_message_llm_failure_persists_failed_execution(
     assert assistant.message_metadata["execution_status"] == "failed"
     assert assistant.message_metadata["execution_error_code"] == "provider_error"
     assert assistant.message_metadata["evidence_funnel"]["outcome"] == "failed"
+
+
+@pytest.mark.parametrize("streamed", [False, True])
+@pytest.mark.parametrize("quota", [False, True])
+async def test_recovery_provider_failure_is_not_a_successful_evidence_refusal(
+    session, conversation_repository, message_repository, streamed, quota
+):
+    error_class = ProviderQuotaError if quota else ProviderError
+    error = error_class("Internal provider failure", provider_name="echo")
+    llm = EchoLLMProvider(model="test", provider_version="1")
+    llm.generate = AsyncMock(side_effect=error)
+    service = _service(session, conversation_repository, message_repository, llm)
+    initial = await UnresolvedRuleRetrieval().retrieve()
+    initial.diagnostics.update(index_build_id=str(uuid.uuid4()), source_metadata_generation=24)
+    retrieval = AsyncMock()
+    retrieval.query_embedder = None
+    retrieval.retrieve.return_value = initial
+    service._retrieval = retrieval
+    identifier = conversation_repository.get_by_id.return_value.id
+    events = []
+    with pytest.raises(ServiceUnavailableError) as failure:
+        if streamed:
+            async for event in service.stream_message(
+                identifier, MessageSendRequest(content="Calculate the current refund for 100.")
+            ):
+                events.append(event)
+        else:
+            await service.send_message(
+                identifier, MessageSendRequest(content="Calculate the current refund for 100.")
+            )
+    assert failure.value.code == (
+        "llm_provider_quota_exhausted" if quota else "llm_provider_unavailable"
+    )
+    saved = message_repository.add.call_args_list[-1].args[0]
+    assert saved.finish_reason == "error"
+    assert saved.insufficient_evidence_reason is None
+    assert saved.message_metadata["execution_error_code"] == error.code
+    assert saved.message_metadata["evidence_funnel"]["outcome"] == "failed"
+    assert saved.input_tokens is None and saved.output_tokens is None
+    assert "applicable period" not in saved.content
+    assert llm.generate.await_count == 1
+    assert not any(event.get("stage") == "generating_answer" for event in events)
 
 
 async def test_stream_failure_persists_partial_failed_execution(

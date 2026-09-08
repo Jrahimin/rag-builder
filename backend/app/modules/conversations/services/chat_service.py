@@ -98,7 +98,7 @@ from app.platform.providers.contracts.web_search import (
     BaseWebSearchProvider,
     WebSearchEvidence,
 )
-from app.platform.providers.errors import ProviderError
+from app.platform.providers.errors import ProviderError, ProviderQuotaError
 from app.platform.providers.prompt_budget import prompt_budget
 from app.platform.providers.request_work import ObservedLLM, RequestWork
 
@@ -171,6 +171,7 @@ class _PreparedTurn:
     turn_resolution: dict[str, Any] | None = None
     resolver_usage: ChatUsage | None = None
     resolver_latency_ms: int = 0
+    preparation_error: ProviderError | None = None
 
 
 class ChatService:
@@ -251,6 +252,9 @@ class ChatService:
             conversation_id=conversation_id,
             user_message=user_message,
             request=request,
+        )
+        await self._raise_preparation_failure(
+            conversation, prepared, request.content, started=started, streamed=False
         )
 
         if prepared.non_knowledge_response is not None:
@@ -435,6 +439,9 @@ class ChatService:
             if not preparation.done():
                 preparation.cancel()
             await asyncio.gather(preparation, return_exceptions=True)
+        await self._raise_preparation_failure(
+            conversation, prepared, request.content, started=started, streamed=True
+        )
         yield {"event": "progress", "stage": "generating_answer", "message": "Preparing answer"}
 
         if should_cancel is not None and await should_cancel():
@@ -712,6 +719,7 @@ class ChatService:
         retrieval_ms = int((time.perf_counter() - retrieval_started) * 1000)
         self._work.timings["initial_retrieval"] += retrieval_ms
         missing_inputs: tuple[str, ...] = ()
+        preparation_error: ProviderError | None = None
         coverage_started = time.perf_counter()
         scope_current_authority = _scope_current_authority_status(
             request,
@@ -790,6 +798,7 @@ class ChatService:
                 evidence_approach=self._evidence_approach,
             )
             repair_usage = repaired.usage
+            preparation_error = repaired.failure
             repair_diagnostics = dict(repaired.diagnostics)
             repair_diagnostics["trigger"] = (
                 "calculation_completeness"
@@ -840,7 +849,8 @@ class ChatService:
         web_review_usage: ChatUsage | None = None
         scoped_request = bool(resolved.retrieval.suppress_web)
         web_requested = (
-            non_knowledge_response is None
+            preparation_error is None
+            and non_knowledge_response is None
             and clarification_response is None
             and scope_current_authority is None
             and (
@@ -1036,6 +1046,7 @@ class ChatService:
                 _combined_auxiliary_usage(repair_usage, web_review_usage),
             ),
             resolver_latency_ms=resolved.latency_ms,
+            preparation_error=preparation_error,
         )
 
     async def _persist_assistant_turn(
@@ -1319,6 +1330,32 @@ class ChatService:
         logger.info("chat_complete", **log_kwargs)
         return assistant_message
 
+    async def _raise_preparation_failure(
+        self,
+        conversation: Conversation,
+        prepared: _PreparedTurn,
+        user_content: str,
+        *,
+        started: float,
+        streamed: bool,
+    ) -> None:
+        if prepared.preparation_error is None:
+            return
+        error = prepared.preparation_error
+        public_error = self._provider_unavailable(error)
+        await self._record_failed_execution(
+            conversation=conversation,
+            prepared=prepared,
+            exc=error,
+            content=public_error.message,
+            generation_ms=0,
+            total_ms=int((time.perf_counter() - started) * 1000),
+            user_content_for_title=user_content,
+            streamed=streamed,
+        )
+        self._log_provider_failure(conversation.id, error)
+        raise public_error from error
+
     async def _record_failed_execution(
         self,
         *,
@@ -1500,6 +1537,13 @@ class ChatService:
         return self._llm_config.temperature
 
     def _provider_unavailable(self, exc: ProviderError) -> ServiceUnavailableError:
+        if isinstance(exc, ProviderQuotaError):
+            return ServiceUnavailableError(
+                message="The language model provider has no API credits available. "
+                "Contact the project administrator to restore provider billing.",
+                code="llm_provider_quota_exhausted",
+                context={"provider": exc.provider_name, "retryable": False},
+            )
         return ServiceUnavailableError(
             message="The language model provider is temporarily unavailable.",
             code="llm_provider_unavailable",

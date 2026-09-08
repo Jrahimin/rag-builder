@@ -70,6 +70,14 @@ from app.platform.db.session import Database
 from app.platform.providers.implementations.embedding_factory import get_embedding_provider
 
 QUESTIONS = {
+    "interest_unknown_tds": (
+        "My annual salary is BDT 1200000, rebateable investment BDT 60000. I am a male "
+        "below 40 in Chittagong. I also received BDT 20000 Sanchaypatra interest. "
+        "I do not know the TDS rate or amount and have not checked whether that interest "
+        "figure is gross or net. Please estimate my income tax for the latest assessment "
+        "year using reasonable stated assumptions, give a breakdown, and tell me what "
+        "information would improve it."
+    ),
     "gross_with_interest": (
         "Suppose My yearly salary 1200000 BDT. Rebateable investment 60000 BDT. "
         "I am a male from chittagong. Age below 40.\n"
@@ -218,6 +226,7 @@ async def main() -> None:
                         "case": case,
                         "repeat": repetition + 1,
                         "error_type": type(exc).__name__,
+                        "error_code": getattr(exc, "code", None),
                         "error": str(exc),
                     }
                 records.append(record)
@@ -235,6 +244,9 @@ async def main() -> None:
                     or "answered",
                     flush=True,
                 )
+                if record.get("error_code") == "llm_provider_quota_exhausted":
+                    print("Stopping evaluation: provider billing must be restored.", flush=True)
+                    break
     finally:
         try:
             if original_revision is not None and owned_revision_id != original_revision.id:

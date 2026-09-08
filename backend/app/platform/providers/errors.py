@@ -40,6 +40,12 @@ class ProviderAuthenticationError(ProviderError):
     code = "provider_authentication_error"
 
 
+class ProviderQuotaError(ProviderError):
+    """Account credits or billing quota are exhausted; retrying cannot restore them."""
+
+    code = "provider_quota_exhausted"
+
+
 class ProviderTimeoutError(ProviderError):
     """Request exceeded the configured timeout."""
 

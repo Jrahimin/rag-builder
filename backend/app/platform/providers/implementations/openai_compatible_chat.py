@@ -21,7 +21,7 @@ from app.platform.providers.contracts.llm import (
     ChatRole,
     ChatUsage,
 )
-from app.platform.providers.errors import ProviderError
+from app.platform.providers.errors import ProviderError, ProviderQuotaError
 
 log = get_logger(__name__)
 
@@ -139,7 +139,13 @@ class OpenAICompatibleChatProvider(BaseLLMProvider):
             operation=operation,
             **context,
         )
-        return ProviderError(
+        error_class = (
+            ProviderQuotaError
+            if context.get("error_code") in {"credit_balance_exhausted", "insufficient_quota"}
+            or context.get("error_type") == "insufficient_quota"
+            else ProviderError
+        )
+        return error_class(
             f"{self.provider_name} {operation} failed (HTTP {response.status_code})",
             provider_name=self.provider_name,
             context=context,

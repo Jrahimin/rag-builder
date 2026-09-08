@@ -7,7 +7,7 @@ import pytest
 
 from app.core.config import LLMBackend, LLMConfig, Settings
 from app.platform.providers.contracts.llm import ChatMessage, ChatRole
-from app.platform.providers.errors import ProviderError
+from app.platform.providers.errors import ProviderError, ProviderQuotaError
 from app.platform.providers.implementations.echo_chat import EchoLLMProvider
 from app.platform.providers.implementations.gemini_chat import _gemini_stream_chunk
 from app.platform.providers.implementations.llm_factory import create_llm_provider
@@ -18,6 +18,27 @@ from app.platform.providers.implementations.openai_compatible_chat import (
 )
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.mark.parametrize(
+    ("code", "kind", "quota"),
+    [
+        ("credit_balance_exhausted", "insufficient_quota", True),
+        ("insufficient_quota", None, True),
+        (None, "insufficient_quota", True),
+        ("rate_limit_exceeded", "tokens", False),
+    ],
+)
+async def test_billing_quota_is_distinct_from_transient_rate_limit(code, kind, quota):
+    provider = OpenAIChatProvider(api_key="test-key", model="test", provider_version="1")
+    error = await provider._http_error(
+        httpx.Response(429, json={"error": {"code": code, "type": kind}}),
+        operation="chat request",
+    )
+    assert isinstance(error, ProviderQuotaError) is quota
+    if quota:
+        assert error.code == "provider_quota_exhausted"
+        assert error.retryable is False
 
 
 async def test_echo_generate_prefixes_user_message() -> None:

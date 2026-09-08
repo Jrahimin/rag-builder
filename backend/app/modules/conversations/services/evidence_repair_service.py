@@ -50,7 +50,7 @@ from app.platform.providers.contracts.llm import (
     ChatRole,
     ChatUsage,
 )
-from app.platform.providers.errors import ProviderError
+from app.platform.providers.errors import ProviderError, ProviderTimeoutError
 from app.platform.providers.request_work import RequestWork
 
 REPAIR_TIMEOUT_SECONDS = 120
@@ -209,6 +209,7 @@ class EvidenceRepairResult:
     diagnostics: dict[str, Any]
     usage: ChatUsage | None = None
     missing_inputs: tuple[str, ...] = ()
+    failure: ProviderError | None = None
 
 
 def _add_usage(left: ChatUsage | None, right: ChatUsage | None) -> ChatUsage:
@@ -1051,6 +1052,12 @@ async def repair_knowledge_evidence(
             result.missing_inputs = tuple(verdict.missing_inputs)
             return result
     except (ProviderError, TimeoutError, ValidationError) as exc:
+        if isinstance(exc, ProviderError):
+            result.failure = exc
+        elif isinstance(exc, TimeoutError):
+            result.failure = ProviderTimeoutError(
+                "Evidence review exceeded its time limit.", provider_name=llm.provider_name
+            )
         diagnostics["status"] = "repair_unavailable"
         diagnostics["failure_reason"] = (
             "timeout"
