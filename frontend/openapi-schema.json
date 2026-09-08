@@ -311,6 +311,16 @@
       "AnswerClaim": {
         "description": "A generated answer segment linked to zero or more evidence locations.",
         "properties": {
+          "arithmetic_verification": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ClaimVerification"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "authority_status": {
             "default": "not_assessed",
             "title": "Authority Status",
@@ -318,6 +328,11 @@
           },
           "claim_id": {
             "title": "Claim Id",
+            "type": "string"
+          },
+          "claim_kind": {
+            "default": "source_assertion",
+            "title": "Claim Kind",
             "type": "string"
           },
           "evidence": {

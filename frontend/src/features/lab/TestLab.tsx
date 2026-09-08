@@ -616,7 +616,7 @@ function JourneyTab({
       title: "Chat",
       detail: messageRun
         ? messageRun.turn.assistant_message.insufficient_evidence_reason
-          ? `Valid refusal: ${messageRun.turn.assistant_message.insufficient_evidence_reason.replaceAll("_", " ")}.`
+          ? `Answer withheld: ${messageRun.turn.assistant_message.insufficient_evidence_reason.replaceAll("_", " ")}.`
           : `${messageRun.turn.assistant_message.citations?.length ?? 0} durable citations returned.`
         : "Send a grounded message and inspect citation snapshots.",
       state: chatState,
@@ -2149,7 +2149,14 @@ function MessagesTab({
       const expectedMatches =
         !expected.trim() ||
         assistant.content.toLocaleLowerCase().includes(expected.trim().toLocaleLowerCase());
-      const passed = expectedMatches && (refusal || (assistant.grounded === true && hasCitations));
+      const passed =
+        expectedMatches &&
+        !refusal &&
+        assistant.grounded === true &&
+        hasCitations &&
+        !assistant.metadata?.partial_answer &&
+        !(assistant.metadata?.knowledge_repair as Record<string, unknown> | undefined)
+          ?.partial_answer;
       const next = { turn, expected, passed, elapsedMs: Math.round(performance.now() - started) };
       setLastRun(next);
       setSelectedAssistantId(turn.assistant_message.id);
@@ -2163,7 +2170,7 @@ function MessagesTab({
         projectId,
         conversationId,
         detail: refusal
-          ? `Valid refusal: ${assistant.insufficient_evidence_reason}`
+          ? `Answer withheld: ${assistant.insufficient_evidence_reason}`
           : `${assistant.citations?.length ?? 0} citations; ${next.elapsedMs} ms.`,
         tab: "messages",
       });
@@ -2476,10 +2483,16 @@ export function MessageInspector({
   const refusal = message.insufficient_evidence_reason;
   const citations = message.citations ?? [];
   const focused = citations[activeCitation] ?? citations[0];
-  const groundingPassed = Boolean(refusal || (message.grounded === true && citations.length));
+  const groundingPassed = Boolean(!refusal && message.grounded === true && citations.length);
   const expectedMatches =
     !run?.expected.trim() ||
     message.content.toLocaleLowerCase().includes(run.expected.trim().toLocaleLowerCase());
+  const repair = message.metadata?.knowledge_repair as Record<string, unknown> | undefined;
+  const partial = repair?.partial_answer as Record<string, unknown> | undefined;
+  const coverage = repair?.coverage as Record<string, unknown> | undefined;
+  const missing = Array.isArray(coverage?.missing)
+    ? coverage.missing.filter((item): item is string => typeof item === "string")
+    : [];
   const claims = message.claims ?? [];
   const failedClaims = claims.filter((claim) => claim.verification !== "supported");
   return (
@@ -2488,22 +2501,30 @@ export function MessageInspector({
         <div>
           <p className="eyebrow">Sources</p>
           <h3>
-            {refusal ? "Valid refusal" : groundingPassed ? "Grounded answer" : "Answer review"}
+            {refusal
+              ? "Answer withheld"
+              : partial
+                ? "Partial answer"
+                : groundingPassed
+                  ? "Grounded answer"
+                  : "Answer review"}
           </h3>
         </div>
         <StatusBadge
           status={
-            (isLatestRun && run ? run.passed : groundingPassed) ? "passed" : "needs_attention"
+            !refusal && !partial && (isLatestRun && run ? run.passed : groundingPassed)
+              ? "passed"
+              : "needs_attention"
           }
         />
       </div>
       {isLatestRun && run && (
         <div
-          className={`lab-verification ${run.passed ? "lab-verification--pass" : "lab-verification--warning"}`}
+          className={`lab-verification ${run.passed && !refusal && !partial ? "lab-verification--pass" : "lab-verification--warning"}`}
         >
           <strong>
             {message.insufficient_evidence_reason
-              ? "Valid refusal / insufficient evidence"
+              ? "Task unanswered / insufficient evidence"
               : message.citations?.length
                 ? groundingPassed
                   ? "Answer with citations"
@@ -2609,7 +2630,15 @@ export function MessageInspector({
               <ol>
                 {failedClaims.map((claim) => (
                   <li key={claim.claim_id}>
-                    <strong>{claim.verification}</strong>
+                    <strong>
+                      {claim.verification} · {claim.claim_kind ?? "source_assertion"}
+                    </strong>
+                    {claim.arithmetic_verification && (
+                      <p>
+                        Arithmetic: {claim.arithmetic_verification}. This does not establish the
+                        governing rule.
+                      </p>
+                    )}
                     <p>{claim.text}</p>
                     {claim.authority_status === "unresolved" && (
                       <p>
@@ -2626,8 +2655,20 @@ export function MessageInspector({
       )}
       {refusal ? (
         <div className="notice-card">
-          <strong>Insufficient evidence</strong>
-          <p>{refusal.replaceAll("_", " ")}</p>
+          <strong>Task remains unanswered</strong>
+          <p>
+            The answer was withheld because evidence was insufficient. This is not successful task
+            completion.
+          </p>
+          {missing.length ? (
+            <ul>
+              {missing.map((gap, index) => (
+                <li key={index}>{gap}</li>
+              ))}
+            </ul>
+          ) : (
+            <p>{refusal.replaceAll("_", " ")}</p>
+          )}
         </div>
       ) : citations.length ? (
         <ol className="citation-list" aria-label={`${citations.length} citations`}>

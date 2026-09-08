@@ -103,3 +103,25 @@ demand a second copy from an Act unless the question specifically requires it or
 supplied evidence shows a conflicting governing rule for that same period. A later-period
 Act schedule does not contradict a circular's earlier-period schedule solely by being later.
 """
+
+PARTIAL_COVERAGE_PROMPT = """
+Also return gap_kinds, one value per missing item in the same order: source_rule
+or scenario_input. Classify before deciding completeness or separability, even when
+some source checks fail. Split a mixed description into separate missing items when
+possible; otherwise classify it source_rule. Classification alone never proves coverage.
+When whole-question coverage is incomplete, you may also return an optional
+partial_answer object: {"scope":"precise independently answerable work",
+"requirement_ids":["R1"],"exclusions":["each supplied component left unresolved"]}.
+Otherwise omit partial_answer. Never mark complete true for a partial answer.
+Review separability: include EVERY rule dependency needed for the limited scope,
+including transformations, applicability, limits and interactions. All selected IDs
+must be supported checks with exact evidence. If an unresolved component can change
+a total, rate band, cap or rebate, that combined result is NOT independently supported.
+You may instead authorize an evidenced intermediate quantity or explain a proven rule.
+Explicitly list all supplied components excluded from the work; do not silently omit
+income, presume unknown charges are zero, or call a partial result the full liability.
+Distinguish missing personal facts from missing law in the missing descriptions.
+Mixed or uncertain gaps remain source gaps. A conditional assumption cannot supply
+an unestablished rule. Do not output numeric answers or new instructions in the scope.
+Only propose a partial answer when it provides useful work for the original request.
+"""

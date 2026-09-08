@@ -184,6 +184,8 @@ class AnswerClaim(BaseModel):
 
     evidence_support: ClaimVerification | None = None
     authority_status: str = "not_assessed"
+    claim_kind: str = "source_assertion"
+    arithmetic_verification: ClaimVerification | None = None
 
     claim_id: str
     text: str

@@ -719,6 +719,7 @@ class ChatService:
         retrieval_ms = int((time.perf_counter() - retrieval_started) * 1000)
         self._work.timings["initial_retrieval"] += retrieval_ms
         missing_inputs: tuple[str, ...] = ()
+        partial_answer: dict[str, Any] | None = None
         preparation_error: ProviderError | None = None
         coverage_started = time.perf_counter()
         scope_current_authority = _scope_current_authority_status(
@@ -819,6 +820,7 @@ class ChatService:
             retrieval_result.diagnostics["knowledge_repair"] = repair_diagnostics
             if repaired.decision is not None:
                 missing_inputs = repaired.missing_inputs
+                partial_answer = repaired.partial_answer
                 evidence = repaired.decision
                 knowledge_selected = repaired.selected
                 chunks = [
@@ -974,6 +976,7 @@ class ChatService:
             interpretation=resolved.interpretation,
             reference_date=(resolved.retrieval.as_of or payload.reference_time).date(),
             missing_inputs=missing_inputs if knowledge_usable else (),
+            partial_answer=partial_answer if knowledge_usable else None,
         )
         budget = prompt_budget(
             messages,
@@ -1081,7 +1084,9 @@ class ChatService:
                 claims_status="not_applicable",
             )
         else:
-            grounding = await prepared.grounding.map_claims(content, prepared.selected)
+            grounding = await prepared.grounding.map_claims(
+                content, prepared.selected, user_input=user_content_for_title
+            )
             if reason_value is not None:
                 grounding = type(grounding)(claims=[], grounded=False, citation_coverage=1.0)
             elif non_knowledge_turn:
@@ -1247,7 +1252,9 @@ class ChatService:
                 {c.document_id for i, c in enumerate(prepared.selected, 1) if i in used_markers}
             ),
             "reviewed_works": reviewed_work_count(prepared.selected),
-            "coverage": "incomplete"
+            "coverage": "partial"
+            if (prepared.retrieval_diagnostics.get("knowledge_repair") or {}).get("partial_answer")
+            else "incomplete"
             if not prepared.evidence.sufficient
             else "complete"
             if validated_coverage

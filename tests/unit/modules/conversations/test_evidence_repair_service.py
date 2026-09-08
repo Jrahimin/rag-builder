@@ -30,6 +30,53 @@ from app.platform.providers.errors import ProviderError
 pytestmark = pytest.mark.unit
 
 
+@pytest.mark.parametrize("scope_ids", [["salary"], ["interest"], ["absent"], ["salary", "salary"]])
+async def test_partial_scope_requires_every_selected_rule_and_retains_incomplete_coverage(
+    scope_ids,
+):
+    source = chunk("The salary exclusion is one third, subject to the stated cap.")
+    verdict = {
+        "complete": False,
+        "missing": ["Interest inclusion and final tax treatment"],
+        "checks": [
+            {
+                "requirement_id": "salary",
+                "description": "Salary exclusion",
+                "supported": True,
+                "evidence": [{"chunk_id": str(source.chunk_id), "quote": source.content}],
+            },
+            {"requirement_id": "interest", "supported": False, "evidence": []},
+        ],
+        "partial_answer": {
+            "scope": "Explain salary exclusion and an unproved rebate formula",
+            "requirement_ids": scope_ids,
+            "exclusions": ["Supplied interest and combined tax liability"],
+        },
+    }
+    result, retrieval, _ = await run_repair(
+        [([source], {})],
+        queries=["salary exclusion"],
+        coverage=verdict,
+        requirements=[
+            {"requirement_id": key, "description": key} for key in ("salary", "interest")
+        ],
+    )
+    if scope_ids == ["salary"]:
+        assert result.decision.sufficient
+        assert result.diagnostics["status"] == "partial_answer"
+        assert result.diagnostics["coverage"]["complete"] is False
+        assert result.diagnostics["coverage"]["quotes_validated"] is False
+        assert result.partial_answer["pending"] == verdict["missing"]
+        assert result.partial_answer["scope"] == [
+            {"requirement_id": "salary", "description": "Salary exclusion"}
+        ]
+        assert [item.chunk_id for item in result.selected] == [source.chunk_id]
+    else:
+        assert result.decision is None
+        assert result.partial_answer is None
+    assert retrieval.retrieve.await_count == 1
+
+
 @pytest.mark.parametrize("final_finish", ["stop", "length"])
 async def test_truncated_structured_request_restarts_once_with_bounded_budget(final_finish):
     from app.platform.providers.contracts.llm import ChatMessage, ChatRole

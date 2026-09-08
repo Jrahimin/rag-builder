@@ -37,6 +37,7 @@ const message: Message = {
       grounded: false,
       verification: "unverified",
       authority_status: "not_assessed",
+      claim_kind: "arithmetic",
       evidence: [],
     },
   ],
@@ -57,6 +58,35 @@ function inspect(answer: Message, expected = "", passed = false) {
 }
 
 describe("message grounding explanation", () => {
+  test("shows the unresolved component and does not promote a legacy refusal pass", () => {
+    inspect(
+      {
+        ...message,
+        insufficient_evidence_reason: "unresolved_authority",
+        metadata: { knowledge_repair: { coverage: { missing: ["Interest inclusion rule"] } } },
+      },
+      "",
+      true,
+    );
+    expect(screen.getByText("Interest inclusion rule")).toBeInTheDocument();
+    expect(screen.getByText("Task remains unanswered")).toBeInTheDocument();
+    expect(screen.queryByText("passed")).not.toBeInTheDocument();
+  });
+
+  test("a supported partial answer still needs attention for the whole task", () => {
+    inspect(
+      {
+        ...message,
+        grounded: true,
+        metadata: { knowledge_repair: { partial_answer: { scope: "Salary exclusion" } } },
+      },
+      "",
+      true,
+    );
+    expect(screen.getByRole("heading", { name: "Partial answer" })).toBeInTheDocument();
+    expect(screen.getByText("needs attention")).toBeInTheDocument();
+  });
+
   test("distinguishes missing recovery telemetry from an attempted repair", () => {
     inspect(message);
     expect(screen.getByText("Authority and evidence recovery")).toBeInTheDocument();
@@ -83,7 +113,7 @@ describe("message grounding explanation", () => {
     expect(screen.getByText(/expected words matched/)).toBeInTheDocument();
     expect(screen.getByText("0 of 1 claims supported")).toBeInTheDocument();
     expect(screen.getByText("Conditional rebate: 9,000.")).toBeInTheDocument();
-    expect(screen.queryByText("Valid refusal")).not.toBeInTheDocument();
+    expect(screen.queryByText("Answer withheld")).not.toBeInTheDocument();
   });
 
   test("separates expected-word failure from successful grounding", () => {
@@ -100,7 +130,7 @@ describe("message grounding explanation", () => {
     expect(screen.getByText(/Grounding was not established/)).toBeInTheDocument();
   });
 
-  test("shows a backend refusal as passed even with no citations", () => {
+  test("shows a backend refusal as unanswered even with a legacy passed run", () => {
     inspect(
       {
         ...message,
@@ -111,8 +141,8 @@ describe("message grounding explanation", () => {
       "",
       true,
     );
-    expect(screen.getByRole("heading", { name: "Valid refusal" })).toBeInTheDocument();
-    expect(screen.getByText("passed")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Answer withheld" })).toBeInTheDocument();
+    expect(screen.getByText("needs attention")).toBeInTheDocument();
     expect(screen.queryByLabelText("Claim verification")).not.toBeInTheDocument();
   });
 });

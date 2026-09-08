@@ -1642,6 +1642,7 @@ export interface components {
          * @description A generated answer segment linked to zero or more evidence locations.
          */
         AnswerClaim: {
+            arithmetic_verification?: components["schemas"]["ClaimVerification"] | null;
             /**
              * Authority Status
              * @default not_assessed
@@ -1649,6 +1650,11 @@ export interface components {
             authority_status: string;
             /** Claim Id */
             claim_id: string;
+            /**
+             * Claim Kind
+             * @default source_assertion
+             */
+            claim_kind: string;
             /** Evidence */
             evidence?: components["schemas"]["ClaimEvidence"][];
             evidence_support?: components["schemas"]["ClaimVerification"] | null;

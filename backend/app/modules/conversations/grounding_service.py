@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, replace
+from decimal import Decimal
 from typing import Any
 
 import regex
@@ -810,6 +811,7 @@ class GroundingService:
         chunks: list[ContextChunk],
         *,
         require_citations: bool = True,
+        user_input: str = "",
     ) -> GroundingResult:
         drafts: list[_ClaimDraft] = []
         semantic_pairs: list[tuple[str, str]] = []
@@ -927,6 +929,9 @@ class GroundingService:
             # Lexical/semantic similarity and correct arithmetic do not resolve
             # amendment scope. Do not give these claims a false green status.
             evidence_support = verification
+            arithmetic = _arithmetic_consistency(draft.text)
+            if arithmetic is ClaimVerification.UNSUPPORTED:
+                verification = ClaimVerification.UNSUPPORTED
             authority_unresolved = any(
                 chunk.metadata.get("authority_status") == "unresolved"
                 for _, chunk in draft.evidence_chunks
@@ -941,6 +946,8 @@ class GroundingService:
                 AnswerClaim(
                     evidence_support=evidence_support,
                     authority_status="unresolved" if authority_unresolved else "not_assessed",
+                    claim_kind=_claim_kind(draft.text, user_input),
+                    arithmetic_verification=arithmetic,
                     claim_id=f"claim-{draft.index}",
                     text=draft.text,
                     grounded=claim_grounded,
@@ -1721,6 +1728,66 @@ def _is_quantity_setup_segment(text: str) -> bool:
     return bool(
         _QUANTITY_SETUP_PATTERN.fullmatch(folded) or _SCENARIO_INPUT_PATTERN.fullmatch(folded)
     )
+
+
+def _claim_kind(text: str, user_input: str) -> str:
+    """Inspection categories do not exempt any assertion from source verification."""
+    plain = _plain_claim_text(text).casefold()
+    if _CALCULATION_OPERATOR_PATTERN.search(plain):
+        return "arithmetic"
+    normalized = " ".join(plain.split()).strip(" .")
+    if normalized and normalized in " ".join(user_input.casefold().split()):
+        return "scenario_input"
+    table_cells = [cell.strip() for cell in plain.strip("|").split("|")]
+    if (
+        len(table_cells) == 2
+        and regex.search(r"\b(?:supplied|provided|declared|your)\b", table_cells[0])
+        and regex.fullmatch(rf"{_CURRENCY_TOKEN}(?:{_NUMBER})", table_cells[1])
+        and _amount_set(table_cells[1]).issubset(_amount_set(user_input))
+    ):
+        return "scenario_input"
+    if regex.search(r"\b(?:assum(?:e|ed|ing|ption)|suppos(?:e|ing))\b|ধরে|অনুমান", plain):
+        return "assumption"
+    if regex.search(r"\b(?:please provide|if you (?:provide|share)|to refine)\b", plain):
+        return "refinement"
+    return "source_assertion"
+
+
+def _arithmetic_consistency(text: str) -> ClaimVerification | None:
+    """Check explicit simple equations only; correctness never proves a legal rule."""
+    plain = _fold_indic_digits(_plain_claim_text(text))
+    if "=" not in plain and "equals" not in plain:
+        return None
+    results: list[bool] = []
+    for pattern in _CALCULATION_PATTERNS:
+        for match in pattern.finditer(plain):
+            base, rate, result = (
+                Decimal(match.group(key).replace(",", "")) for key in ("base", "rate", "result")
+            )
+            results.append(abs(base * rate / 100 - result) <= Decimal("0.5"))
+    binary = regex.compile(
+        rf"(?<![\d,.])(?P<left>{_NUMBER})\s*(?P<op>[+\u2212-])\s*"
+        rf"{_CURRENCY_TOKEN}(?P<right>{_NUMBER})\s*=\s*"
+        rf"{_CURRENCY_TOKEN}(?P<result>{_NUMBER})(?!\d|[,.]\d)"
+    )
+    for match in binary.finditer(plain):
+        # Do not certify a suffix of a longer or parenthesized expression.
+        prefix = plain[: match.start()].rstrip()
+        if prefix and prefix[-1] in "+-\u2212*/(":
+            continue
+        left, right, result = (
+            Decimal(match.group(key).replace(",", "")) for key in ("left", "right", "result")
+        )
+        expected = left + right if match.group("op") == "+" else left - right
+        results.append(abs(expected - result) <= Decimal("0.5"))
+    if not results:
+        return ClaimVerification.UNVERIFIED
+    if not all(results):
+        return ClaimVerification.UNSUPPORTED
+    # Multiple equal signs require every equation to be recognized.
+    if len(results) < plain.count("="):
+        return ClaimVerification.UNVERIFIED
+    return ClaimVerification.SUPPORTED
 
 
 def _parse_amount(value: str) -> float:

@@ -26,7 +26,10 @@ from app.modules.conversations.prompts.authoritative_compatibility import (
     AUTHORITATIVE_INPUT_GAP_PROMPT,
     AUTHORITATIVE_PLANNING_PROMPT,
 )
-from app.modules.conversations.prompts.evidence_coverage import COVERAGE_PROMPT
+from app.modules.conversations.prompts.evidence_coverage import (
+    COVERAGE_PROMPT,
+    PARTIAL_COVERAGE_PROMPT,
+)
 from app.modules.conversations.prompts.evidence_repair import (
     EVIDENCE_REPAIR_PROMPT,
     EVIDENCE_REPAIR_VERSION,
@@ -209,6 +212,7 @@ class EvidenceRepairResult:
     diagnostics: dict[str, Any]
     usage: ChatUsage | None = None
     missing_inputs: tuple[str, ...] = ()
+    partial_answer: dict[str, Any] | None = None
     failure: ProviderError | None = None
 
 
@@ -355,7 +359,7 @@ async def repair_knowledge_evidence(
         AUTHORITATIVE_FOCUSED_PROMPT if authoritative_compatibility else FOCUSED_REPAIR_PROMPT
     )
     diagnostics: dict[str, Any] = {
-        "version": "v16-authoritative-conditional"
+        "version": "v17-authoritative-partial"
         if authoritative_compatibility
         else EVIDENCE_REPAIR_VERSION,
         "coverage_protocol": "authoritative_compatibility"
@@ -460,7 +464,7 @@ async def repair_knowledge_evidence(
                     ),
                 ],
                 temperature=None,
-                max_tokens=min(1024 if authoritative_compatibility else 4096, max_output_tokens),
+                max_tokens=min(2048 if authoritative_compatibility else 4096, max_output_tokens),
                 truncation_retry_tokens=min(2048, max_output_tokens)
                 if authoritative_compatibility
                 else None,
@@ -707,7 +711,8 @@ async def repair_knowledge_evidence(
                     llm,
                     [
                         ChatMessage(
-                            role=ChatRole.SYSTEM, content=trusted_context + coverage_prompt
+                            role=ChatRole.SYSTEM,
+                            content=trusted_context + coverage_prompt + PARTIAL_COVERAGE_PROMPT,
                         ),
                         ChatMessage(
                             role=ChatRole.USER,
@@ -823,7 +828,9 @@ async def repair_knowledge_evidence(
                 # Preserve the established successful review/generation payloads.
                 # Only an otherwise incomplete verdict with *every* source check
                 # proven can ask whether the remaining gaps are personal inputs.
-                candidate = verdict.model_copy(update={"complete": True, "missing": []})
+                candidate = verdict.model_copy(
+                    update={"complete": True, "missing": [], "gap_kinds": []}
+                )
                 if (
                     authoritative_compatibility
                     and not verdict.complete
@@ -889,6 +896,7 @@ async def repair_knowledge_evidence(
                 diagnostics["coverage"] = {
                     "complete": verdict.complete,
                     "missing": verdict.missing,
+                    "gap_kinds": verdict.gap_kinds or ["source_rule"] * len(verdict.missing),
                     "missing_inputs": verdict.missing_inputs,
                     "checks": [
                         {
@@ -910,6 +918,24 @@ async def repair_knowledge_evidence(
                         requirement_id=check.requirement_id, description=check.description
                     )
                 if ranges_valid and verdict.validates(groups, budgeted, requirement_ids):
+                    break
+                if ranges_valid and verdict.partial_validates(budgeted, requirement_ids):
+                    # The reviewer proved a useful independent scope. Preserve the
+                    # original incomplete verdict; do not claim full recovery.
+                    assert verdict.partial_answer is not None
+                    diagnostics["partial_answer"] = verdict.partial_answer.model_dump()
+                    # Model-authored scope prose can mention an unchecked rule.
+                    # Generation receives only the identities/descriptions of the
+                    # checks whose source proof actually passed.
+                    diagnostics["partial_answer"]["scope"] = [
+                        {"requirement_id": check.requirement_id, "description": check.description}
+                        for check in verdict.checks
+                        if check.requirement_id in verdict.partial_answer.requirement_ids
+                    ]
+                    diagnostics["partial_answer"]["pending"] = verdict.missing
+                    diagnostics["partial_answer"]["gap_kinds"] = diagnostics["coverage"][
+                        "gap_kinds"
+                    ]
                     break
                 diagnostics["status"] = "coverage_incomplete"
                 if round_index == MAX_REPAIR_FOLLOWUPS or verdict.complete or not verdict.missing:
@@ -1030,9 +1056,19 @@ async def repair_knowledge_evidence(
             # Discovery context can contain old/future tables and unrelated examples.
             # Hand generation the passages actually used by the validated proof,
             # instead of every superficially relevant search hit.
-            proof_ids = {item.chunk_id for check in verdict.checks for item in check.evidence}
+            partial = diagnostics.get("partial_answer")
+            proof_ids = {
+                item.chunk_id
+                for check in verdict.checks
+                if not partial or check.requirement_id in partial["requirement_ids"]
+                for item in check.evidence
+            }
             budgeted = [c for c in budgeted if str(c.chunk_id) in proof_ids]
-            if not verdict.validates(groups, budgeted, requirement_ids):
+            if not (
+                verdict.partial_validates(budgeted, requirement_ids)
+                if partial
+                else verdict.validates(groups, budgeted, requirement_ids)
+            ):
                 diagnostics["status"] = "coverage_incomplete"
                 return result
             diagnostics["proof_chunk_ids"] = [str(c.chunk_id) for c in budgeted]
@@ -1048,7 +1084,8 @@ async def repair_knowledge_evidence(
                 ),
                 candidate_assessments=tuple(assessments.values()),
             )
-            diagnostics["status"] = "recovered"
+            diagnostics["status"] = "partial_answer" if partial else "recovered"
+            result.partial_answer = partial
             result.missing_inputs = tuple(verdict.missing_inputs)
             return result
     except (ProviderError, TimeoutError, ValidationError) as exc:

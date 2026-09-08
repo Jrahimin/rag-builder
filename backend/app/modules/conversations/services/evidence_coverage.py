@@ -73,17 +73,32 @@ class _Check(BaseModel):
     evidence: list[_Quote] = Field(max_length=8)
 
 
+class PartialAnswerScope(BaseModel):
+    """A reviewed, independently answerable part; never whole-question coverage."""
+
+    model_config = ConfigDict(extra="forbid")
+    scope: str = Field(min_length=1, max_length=2000)
+    requirement_ids: list[str] = Field(min_length=1, max_length=12)
+    exclusions: list[str] = Field(min_length=1, max_length=12)
+
+
 class CoverageVerdict(BaseModel):
     model_config = ConfigDict(extra="forbid")
     complete: bool
     missing: list[str] = Field(max_length=12)
+    gap_kinds: list[Literal["source_rule", "scenario_input"]] = Field(
+        default_factory=list, max_length=12
+    )
     # A source can establish a conditional rule without establishing the user's
     # personal circumstances. Keep those questions out of corpus recovery.
     missing_inputs: list[str] = Field(default_factory=list, max_length=12)
+    partial_answer: PartialAnswerScope | None = None
     checks: list[_Check] = Field(max_length=MAX_REPAIR_DEPENDENCIES + 2 * MAX_REPAIR_FOLLOWUPS)
 
     @model_validator(mode="after")
     def require_consistent_completion(self) -> CoverageVerdict:
+        if self.gap_kinds and len(self.gap_kinds) != len(self.missing):
+            raise ValueError("gap_kinds must classify every missing item in the same order")
         if self.missing_inputs:
             raise ValueError(
                 "List unresolved gaps in missing and mark complete false. "
@@ -119,6 +134,23 @@ class CoverageVerdict(BaseModel):
                 item.start_line = None
                 item.end_line = None
         return True
+
+    def partial_validates(self, context: list[ContextChunk], requirement_ids: set[str]) -> bool:
+        """Require exact proof for every dependency of the explicitly limited scope."""
+        partial = self.partial_answer
+        if self.complete or not self.missing or partial is None or not requirement_ids:
+            return False
+        ids = partial.requirement_ids
+        checks = [check for check in self.checks if check.requirement_id in ids]
+        if len(ids) != len(set(ids)) or not set(ids).issubset(requirement_ids):
+            return False
+        # Also reject missing/duplicated original checks: a scoped review cannot
+        # hide a dependency by dropping its check from the original question.
+        all_ids = [check.requirement_id for check in self.checks]
+        if len(all_ids) != len(set(all_ids)) or not requirement_ids.issubset(set(all_ids)):
+            return False
+        proof = self.model_copy(update={"complete": True, "missing": [], "checks": checks})
+        return proof.validates([], context, set(ids))
 
     def validates(
         self,

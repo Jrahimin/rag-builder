@@ -459,7 +459,7 @@ test("renders an explicit valid refusal when retrieval evidence is insufficient"
   );
   await userEvent.type(await screen.findByLabelText("Message"), "What is not in the corpus?");
   await userEvent.click(screen.getByRole("button", { name: "Send message" }));
-  expect(await screen.findByText("Valid refusal / insufficient evidence")).toBeInTheDocument();
+  expect(await screen.findByText("Task unanswered / insufficient evidence")).toBeInTheDocument();
   expect(screen.getByText("no retrieval results")).toBeInTheDocument();
 });
 
