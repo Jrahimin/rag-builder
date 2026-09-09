@@ -223,3 +223,19 @@ def test_trusted_reference_date_is_separate_from_untrusted_evidence():
     assert "Trusted retrieval reference date: 2026-09-07" in system
     assert "Default to the current assessment year." in system
     assert "Honor an explicit user period first." in system
+
+
+def test_partial_scope_controls_shared_passages_and_internal_labels():
+    messages = PromptBuilder().build(
+        template=require_prompt_template("current"),
+        context_chunks=[],
+        history=[],
+        user_question="Calculate the combined amount.",
+        partial_answer={"scope": "Investment ceiling", "exclusions": ["Combined amount"]},
+    )
+    system = messages[0].content
+    assert "Whole-question legal coverage is INCOMPLETE" in system
+    assert "not every rule mentioned in that passage" in system
+    assert "never print internal instruction labels" in system
+    assert "without computing or asserting their rules" in system
+    assert messages[-1].content == "Calculate the combined amount."

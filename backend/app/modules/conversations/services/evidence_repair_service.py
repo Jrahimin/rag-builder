@@ -101,6 +101,42 @@ def _source_line_records(content: str) -> list[dict[str, Any]]:
     ]
 
 
+def _review_evidence_key(
+    chunks: list[ContextChunk], records: list[dict[str, Any]], requirements: list[dict[str, Any]]
+) -> str:
+    """Compare exact proof inputs, never similarity, rank, or just chunk IDs."""
+
+    def canonical(value: Any) -> str:
+        return json.dumps(value, sort_keys=True, ensure_ascii=False, default=str)
+
+    return canonical(
+        {
+            "requirements": requirements,
+            "authority": sorted({canonical(record) for record in records}),
+            "passages": sorted(
+                {
+                    canonical(
+                        {
+                            "id": chunk.chunk_id,
+                            "document": chunk.document_id,
+                            "index": chunk.chunk_index,
+                            "page": chunk.page_number,
+                            "title": chunk.filename,
+                            "content": chunk.content,
+                            "source": {
+                                key: chunk.metadata[key]
+                                for key in _SOURCE_CONTEXT_KEYS
+                                if key in chunk.metadata
+                            },
+                        }
+                    )
+                    for chunk in chunks
+                }
+            ),
+        }
+    )
+
+
 def _source_hints(
     chunks: list[ContextChunk], *, include_work_metadata: bool = False
 ) -> list[dict[str, Any]]:
@@ -551,6 +587,7 @@ async def repair_knowledge_evidence(
             records = list(initial.diagnostics.get("modifies_expansion_records") or [])
             pending_queries = list(queries)
             adjacent_requests: dict[str, list[uuid.UUID]] = {}
+            reviewed_evidence: set[str] = set()
             for round_index in range(1 + MAX_REPAIR_FOLLOWUPS):
                 batch_retrieve = getattr(retrieval, "retrieve_batch", None)
                 requests: list[dict[str, Any]] = [
@@ -698,6 +735,19 @@ async def repair_knowledge_evidence(
                 ):
                     diagnostics["status"] = "dependency_exceeds_budget"
                     return result
+                if requirement_ids:
+                    review_key = _review_evidence_key(
+                        budgeted, records, diagnostics["requirements"]
+                    )
+                    if review_key in reviewed_evidence:
+                        # A new wording/rank does not supply new legal proof.
+                        # The prior review established neither completeness nor
+                        # a valid partial scope, so keep that failure closed.
+                        diagnostics["status"] = "coverage_incomplete"
+                        diagnostics["stop_reason"] = "unchanged_review_evidence"
+                        diagnostics["coverage_reviews_skipped"] = 1
+                        return result
+                    reviewed_evidence.add(review_key)
                 if release_read_transaction is not None:
                     await release_read_transaction()
                 planning_usage = result.usage
@@ -947,8 +997,8 @@ async def repair_knowledge_evidence(
                 # round. Repeatedly carrying every earlier search hit crowds out
                 # newly found governing passages and makes resolved gaps recur.
                 sources = {str(c.chunk_id): _quote_tokens(c.content) for c in budgeted}
-                confirmed = {
-                    q.chunk_id
+                confirmed_checks = [
+                    check
                     for check in verdict.checks
                     if check.supported
                     and check.evidence
@@ -957,8 +1007,8 @@ async def repair_knowledge_evidence(
                         and _contains_quote(sources[item.chunk_id], item.quote)
                         for item in check.evidence
                     )
-                    for q in check.evidence
-                }
+                ]
+                confirmed = {q.chunk_id for check in confirmed_checks for q in check.evidence}
                 groups = [[c for c in group if str(c.chunk_id) in confirmed] for group in groups]
                 selected = [c for c in budgeted if str(c.chunk_id) in confirmed]
                 # Read a missing rule's immediate source neighbourhood before
@@ -1024,6 +1074,14 @@ async def repair_knowledge_evidence(
                                 {
                                     "question": inputs.query,
                                     "missing_requirements": verdict.missing,
+                                    "supported_requirements": [
+                                        {
+                                            "requirement_id": check.requirement_id,
+                                            "description": check.description,
+                                        }
+                                        for check in confirmed_checks
+                                        if check.requirement_id
+                                    ],
                                     "previous_queries": queries,
                                     "discovery_excerpts": _discovery_excerpts(
                                         verdict, raw_groups, budgeted
@@ -1044,11 +1102,18 @@ async def repair_knowledge_evidence(
                 if followup.finish_reason not in {None, "stop", "completed", "end_turn"}:
                     return result
                 followup_plan = _SearchPlan.model_validate_json(followup.content)
-                pending_queries = [
-                    q
-                    for q in dict.fromkeys(q.strip() for q in followup_plan.queries)
-                    if q.casefold() not in {previous.casefold() for previous in queries}
-                ][:2]
+                seen_queries = {" ".join(q.split()).casefold() for q in queries}
+                pending_queries = []
+                for query in followup_plan.queries:
+                    key = " ".join(query.split()).casefold()
+                    if key in seen_queries:
+                        diagnostics["duplicate_focused_queries_skipped"] = (
+                            diagnostics.get("duplicate_focused_queries_skipped", 0) + 1
+                        )
+                        continue
+                    seen_queries.add(key)
+                    pending_queries.append(query.strip())
+                pending_queries = pending_queries[:2]
                 if not pending_queries or any(not q or len(q) > 500 for q in pending_queries):
                     return result
                 queries.extend(pending_queries)

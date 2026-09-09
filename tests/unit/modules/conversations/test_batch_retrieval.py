@@ -1,14 +1,77 @@
 """Parallel repair has independent sessions, deterministic order, and fail-closed snapshots."""
 
 import asyncio
+import uuid
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
 from app.dependencies.conversations import SearchServiceRetrievalAdapter
 from app.modules.conversations.ports import ContextRetrievalResult
+from app.platform.providers.contracts.embedding import EmbeddingPurpose
 from app.platform.providers.errors import ProviderError
+from app.platform.providers.implementations.hash_embedding import HashEmbeddingProvider
+from app.platform.providers.request_work import RequestWork
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "strategy,expected_calls", [("hybrid", 1), ("semantic", 1), ("keyword", 2)]
+)
+async def test_recovery_batches_exact_queries_without_skipping_search(
+    monkeypatch, strategy, expected_calls
+):
+    provider = HashEmbeddingProvider(dimensions=8, model="hash", provider_version="1")
+    provider.embed_texts = AsyncMock(wraps=provider.embed_texts)
+    work = RequestWork(uuid.uuid4())
+    cached = work.wrap(provider)
+    service = SimpleNamespace(resolved_query_embedder=cached)
+    snapshot = {"strategy": strategy, "index_build_id": "build"}
+    searches = []
+
+    @asynccontextmanager
+    async def sessions():
+        yield object()
+
+    async def retrieve(adapter, **request):
+        searches.append(request)
+        await cached.embed_texts([request["query"]], purpose=EmbeddingPurpose.QUERY)
+        return ContextRetrievalResult([], snapshot)
+
+    monkeypatch.setattr(SearchServiceRetrievalAdapter, "retrieve", retrieve)
+    adapter = SearchServiceRetrievalAdapter(
+        service, session_factory=sessions, branch_factory=lambda session, pinned: service
+    )
+    requests = [{"query": "salary"}, {"query": "interest"}, {"query": "salary"}]
+    await adapter.retrieve_batch(requests, snapshot=snapshot)
+    assert searches == requests
+    assert provider.embed_texts.await_count == expected_calls
+    assert all(
+        call.kwargs["purpose"] is EmbeddingPurpose.QUERY
+        for call in provider.embed_texts.call_args_list
+    )
+    assert work.counts["recovery_query_embedding_batches"] == (strategy != "keyword")
+
+
+@pytest.mark.asyncio
+async def test_failed_embedding_warmup_never_starts_branches_or_caches_vectors():
+    provider = HashEmbeddingProvider(dimensions=8, model="hash", provider_version="1")
+    provider.embed_texts = AsyncMock(side_effect=ProviderError("Unavailable"))
+    work = RequestWork(uuid.uuid4())
+    cached = work.wrap(provider)
+    factory = AsyncMock()
+    adapter = SearchServiceRetrievalAdapter(
+        SimpleNamespace(resolved_query_embedder=cached),
+        session_factory=factory,
+        branch_factory=lambda session, pinned: object(),
+    )
+    with pytest.raises(ProviderError):
+        await adapter.retrieve_batch([{"query": "salary"}], snapshot={"strategy": "hybrid"})
+    factory.assert_not_called()
+    assert not work.vectors
+    assert work.counts["recovery_query_embedding_batches"] == 0
 
 
 @pytest.mark.asyncio

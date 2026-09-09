@@ -16,6 +16,7 @@ from app.modules.conversations.ports import ContextChunk, ContextRetrievalResult
 from app.modules.conversations.services.evidence_coverage import CoverageVerdict
 from app.modules.conversations.services.evidence_repair_service import (
     _discovery_excerpts,
+    _review_evidence_key,
     _search_language_instruction,
     _source_hints,
     _source_line_records,
@@ -28,6 +29,43 @@ from app.platform.providers.contracts.llm import ChatCompletionResult, ChatUsage
 from app.platform.providers.errors import ProviderError
 
 pytestmark = pytest.mark.unit
+
+
+def test_review_identity_preserves_text_authority_and_requirements_but_not_rank():
+    source = chunk("Exact rule", source_revision_id="revision-1")
+    requirements = [{"requirement_id": "rule", "description": "Applicable rule"}]
+    records = [{"outcome": "expanded", "target_provisions": ["62"]}]
+    key = _review_evidence_key([source], records, requirements)
+    assert key == _review_evidence_key([replace(source, score=0.1)], records * 2, requirements)
+    for changed in (
+        replace(source, content="Changed rule"),
+        replace(source, metadata={**source.metadata, "source_revision_id": "revision-2"}),
+        replace(source, metadata={**source.metadata, "source_effective_from": "2027-07-01"}),
+    ):
+        assert key != _review_evidence_key([changed], records, requirements)
+    assert key != _review_evidence_key([source], [{"outcome": "unresolved"}], requirements)
+    assert key != _review_evidence_key(
+        [source], records, [*requirements, {"requirement_id": "other"}]
+    )
+
+
+@pytest.mark.parametrize("changed", [False, True])
+async def test_unchanged_followup_evidence_stops_without_retrying_coverage(changed):
+    source = chunk("Governing salary rule.")
+    next_source = replace(source, content="Different governing salary rule.") if changed else source
+    calls = []
+    result, retrieval, _ = await run_repair(
+        [([source], {}), ([next_source], {})],
+        queries=["salary"],
+        requirements=[{"requirement_id": "salary", "description": "Salary rule"}],
+        coverage={"complete": False, "missing": ["Applicability"], "checks": []},
+        followup_queries=["employment"],
+        calls=calls,
+    )
+    assert result.decision is None and result.partial_answer is None
+    assert retrieval.retrieve.await_count == 2
+    assert result.diagnostics.get("coverage_reviews_skipped", 0) == (not changed)
+    assert len(calls) == (5 if changed else 3)
 
 
 @pytest.mark.parametrize("scope_ids", [["salary"], ["interest"], ["absent"], ["salary", "salary"]])
@@ -1272,17 +1310,20 @@ async def test_followup_carries_confirmed_proof_without_old_search_noise():
 
 
 async def test_semantic_confirmed_proof_has_priority_over_new_search_noise():
+    calls = []
     known = chunk("The governing rate is 10%.")
     missing = chunk("The governing exclusion applies to ordinary employees.")
     noise = chunk("Unrelated administrative procedure.")
     check = {
         "requirement_id": "rate",
+        "description": "Applicable rate",
         "supported": True,
         "evidence": [{"chunk_id": str(known.chunk_id), "quote": known.content}],
     }
     result, _, _ = await run_repair(
         [([known], {}), ([missing, noise], {})],
         queries=["rate"],
+        calls=calls,
         requirements=[
             {"requirement_id": "rate", "description": "Rate"},
             {"requirement_id": "exclusion", "description": "Exclusion"},
@@ -1309,3 +1350,23 @@ async def test_semantic_confirmed_proof_has_priority_over_new_search_noise():
     )
     assert result.diagnostics["status"] == "recovered"
     assert {c.chunk_id for c in result.selected} == {known.chunk_id, missing.chunk_id}
+    assert json.loads(calls[2].args[0][1].content)["supported_requirements"] == [
+        {"requirement_id": "rate", "description": "Applicable rate"}
+    ]
+
+
+@pytest.mark.parametrize("followups", [["  CURRENT   RATE  "], ["current\trate"]])
+async def test_cosmetic_focused_duplicate_stops_before_search_and_review(followups):
+    source = chunk("An incomplete governing provision.")
+    calls = []
+    result, retrieval, _ = await run_repair(
+        [([source], {})],
+        queries=["current rate"],
+        coverage={"complete": False, "missing": ["Applicability"], "checks": []},
+        followup_queries=followups,
+        calls=calls,
+    )
+    assert retrieval.retrieve.await_count == 1
+    assert len(calls) == 3
+    assert result.decision is None and result.partial_answer is None
+    assert result.diagnostics["duplicate_focused_queries_skipped"] == 1

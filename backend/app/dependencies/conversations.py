@@ -44,7 +44,7 @@ from app.platform.config.project_ai import (
     resolve_project_ai_config,
 )
 from app.platform.infra.recovery_capacity import recovery_slot
-from app.platform.providers.contracts.embedding import BaseEmbeddingProvider
+from app.platform.providers.contracts.embedding import BaseEmbeddingProvider, EmbeddingPurpose
 from app.platform.providers.contracts.llm import BaseLLMProvider
 from app.platform.providers.contracts.web_search import BaseWebSearchProvider
 from app.platform.providers.errors import ProviderError
@@ -59,7 +59,7 @@ from app.platform.providers.implementations.reranker_factory import create_reran
 from app.platform.providers.implementations.web_search_factory import (
     create_web_search_provider,
 )
-from app.platform.providers.request_work import RequestWork
+from app.platform.providers.request_work import CachedEmbeddingProvider, RequestWork
 
 
 class SearchServiceRetrievalAdapter:
@@ -86,6 +86,18 @@ class SearchServiceRetrievalAdapter:
     ) -> list[ContextRetrievalResult]:
         if self._branch_factory is None or self._session_factory is None:
             return [await self.retrieve(**request) for request in requests]
+        # The initial search resolved the active build's embedding identity. Warm
+        # only that turn-local cache; branches still resolve and verify their own
+        # pinned snapshots and execute all retrieval/admission checks as before.
+        embedder = getattr(self._search_service, "resolved_query_embedder", None)
+        if isinstance(embedder, CachedEmbeddingProvider) and snapshot.get("strategy") in {
+            "hybrid",
+            "semantic",
+        }:
+            queries = list(dict.fromkeys(request["query"] for request in requests))
+            if queries:
+                await embedder.embed_texts(queries, purpose=EmbeddingPurpose.QUERY)
+                embedder.work.counts["recovery_query_embedding_batches"] += 1
         branch_factory, session_factory = self._branch_factory, self._session_factory
         limiter = asyncio.Semaphore(3)
 

@@ -779,7 +779,10 @@ async def test_partial_rate_match_cannot_certify_unsupported_composite_arithmeti
         "60,000 \u00d7 10% = 6,000 + 500 = 6,501. [1]",
         [_chunk(content="The investment rebate rate is 10%.")],
     )
-    assert result.claims[0]["verification"] == "unverified"
+    # The simple second equation is explicitly false even though the first
+    # percentage product is correct; this is stronger than unknown support.
+    assert result.claims[0]["verification"] == "unsupported"
+    assert result.grounded is False
 
 
 async def test_short_meta_stance_does_not_make_a_grounded_correction_fail() -> None:

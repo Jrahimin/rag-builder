@@ -109,7 +109,12 @@ class PromptBuilder:
                 "depend on an excluded component. Never call this a complete liability or "
                 "silently treat an excluded amount or adjustment as zero. Explain supported "
                 "intermediate quantities or rules when a subtotal is not independent. "
-                "Ask the user only for missing personal facts; missing law requires evidence."
+                "Ask the user only for missing personal facts; missing law requires evidence. "
+                "A selected passage may contain several rules; its presence authorizes only "
+                "the reviewed requirement scope, not every rule mentioned in that passage. "
+                "Describe pending topics as gaps without computing or asserting their rules. "
+                "Use ordinary user-facing language; never print internal instruction labels "
+                "such as [Developer scope limitation] or reviewer requirement IDs."
             )
 
         if template.final_instructions:
