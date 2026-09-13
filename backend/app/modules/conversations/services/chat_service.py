@@ -1493,6 +1493,16 @@ class ChatService:
                     else "I found related sources, but couldn't verify enough evidence to answer "
                     "this question reliably. More relevant source evidence is needed."
                 )
+            if not _requires_calculation_coverage(question, prepared.chunks):
+                return (
+                    "প্রাসঙ্গিক সূত্র পাওয়া গেছে, কিন্তু বিধানগুলোর প্রযোজ্য সময়কাল, শর্ত বা "
+                    "সংশোধনের প্রভাব নিশ্চিত করা যায়নি। নির্ভরযোগ্য উত্তর দিতে প্রযোজ্য "
+                    "বিধান ও সংশোধনের নির্দিষ্ট প্রমাণ দরকার।"
+                    if bangla
+                    else "Relevant sources were found, but their applicable period, conditions or "
+                    "amendment effect could not be established. The applicable provisions and "
+                    "amendment evidence are needed to answer this question reliably."
+                )
             if bangla:
                 return (
                     "প্রাসঙ্গিক সূত্র পাওয়া গেছে, কিন্তু নিয়মগুলোর প্রযোজ্য সময়কাল, শর্ত বা "

@@ -1,0 +1,29 @@
+{
+  "output": "E:\\python-projects\\rag-builder\\artifacts\\company-readiness\\Companies Act 1994 - Current Act and Schedules.pdf",
+  "body_pages": 132,
+  "total_pages": 256,
+  "schedule_II_original_pages_excluded": [
+    25,
+    33
+  ],
+  "schedule_III_crop_y": 492.3488464355469,
+  "fee_gazette_pages": 4,
+  "source_components": [
+    "act.html",
+    "Companies Act 1994 - Official Schedules.pdf",
+    "RJSC Fee Gazettes.pdf"
+  ],
+  "visual_qa": {
+    "passed_pages": [
+      1,
+      3,
+      132,
+      133,
+      157,
+      161,
+      256
+    ],
+    "cropped_schedule_III_native_extraction": "Verified no excluded Schedule II text",
+    "scope": "Selected-page visual QA; live OCR/citation verification pending"
+  }
+}

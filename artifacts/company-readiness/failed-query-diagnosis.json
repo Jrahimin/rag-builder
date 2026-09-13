@@ -1,0 +1,859 @@
+{
+  "examined_at": "2026-09-13T20:45:36.635540+00:00",
+  "input_sha256": "825eb7ac49d30ee291e830abee9d6a207229b7b49df5c458a3eedc4764287387",
+  "project_id": "f932c9e0-40af-4ff3-8704-ac3e542f2a8c",
+  "conversation_id": "c9038a44-4594-47c8-8aa3-1b273a23b514",
+  "message_id": "48586933-78d6-41c8-a930-5d6d52406153",
+  "question": "A private limited company in Bangladesh has been incorporated but has not started business operations yet. What legal, regulatory, tax, and annual compliance obligations does it still have? Explain what filings or records are required, which authority each obligation belongs to, relevant deadlines if available, and the consequences of non-compliance. Cite the applicable provisions or official guidance.",
+  "response": "Relevant sources were found, but their applicable period, conditions or amendment effect could not be established. A final calculation using those rules would be unreliable. The applicable provisions and amendment evidence are still needed.",
+  "finish_reason": "insufficient_evidence",
+  "insufficient_evidence_reason": "unresolved_authority",
+  "source_metadata_generation": 76,
+  "index_build_id": "c9c7a72c-1fb4-4c9f-93f1-6efba17da5e7",
+  "config_snapshot_id": "5b743ddf-e4d1-4f87-8cf3-5c4de0a69433",
+  "retrieved_chunk_count": 12,
+  "selected_chunk_count": 0,
+  "generation_time_ms": 0,
+  "total_latency_ms": 91935,
+  "lifecycle": {
+    "counts": {
+      "llm_calls": 6,
+      "rerank_calls": 13,
+      "embedded_texts": 286,
+      "embedding_calls": 26,
+      "content_cache_hits": 762,
+      "embedding_cache_hits": 260
+    },
+    "version": "turn.v1",
+    "stages_ms": {
+      "reranking": 17704,
+      "retrieval": 59933,
+      "generation": 0,
+      "resolution": 7,
+      "preparation": 91907,
+      "translation": 5,
+      "content_loading": 2744,
+      "history_loading": 9,
+      "passage_scoring": 8989,
+      "query_embedding": 2495,
+      "snapshot_loading": 17,
+      "initial_retrieval": 4392,
+      "claim_verification": 2,
+      "document_embedding": 7560,
+      "coverage_and_recovery": 87497,
+      "relationship_expansion": 5527,
+      "database_vector_retrieval": 21378,
+      "database_keyword_retrieval_and_scoring": 3677
+    },
+    "processing_ms": 91960,
+    "provider_calls": [
+      {
+        "kind": "embedding",
+        "model": "embed-v4.0",
+        "texts": 1,
+        "status": "completed",
+        "purpose": "query",
+        "provider": "cohere",
+        "duration_ms": 260,
+        "input_tokens": null,
+        "output_tokens": null,
+        "provider_internal_retries": null
+      },
+      {
+        "kind": "rerank",
+        "model": "rerank-v4.0-pro",
+        "usage": {
+          "search_units": 1
+        },
+        "status": "completed",
+        "provider": "cohere",
+        "candidates": 40,
+        "duration_ms": 951,
+        "provider_internal_retries": null
+      },
+      {
+        "kind": "embedding",
+        "model": "embed-v4.0",
+        "texts": 40,
+        "status": "completed",
+        "purpose": "document",
+        "provider": "cohere",
+        "duration_ms": 671,
+        "input_tokens": null,
+        "output_tokens": null,
+        "provider_internal_retries": null
+      },
+      {
+        "kind": "llm",
+        "model": "gpt-5.6-luna",
+        "status": "completed",
+        "provider": "openai",
+        "duration_ms": 13365,
+        "input_tokens": 2270,
+        "output_tokens": 956,
+        "reasoning_tokens": 512,
+        "provider_internal_retries": null
+      },
+      {
+        "kind": "embedding",
+        "model": "embed-v4.0",
+        "texts": 1,
+        "status": "completed",
+        "purpose": "query",
+        "provider": "cohere",
+        "duration_ms": 197,
+        "input_tokens": null,
+        "output_tokens": null,
+        "provider_internal_retries": null
+      },
+      {
+        "kind": "embedding",
+        "model": "embed-v4.0",
+        "texts": 1,
+        "status": "completed",
+        "purpose": "query",
+        "provider": "cohere",
+        "duration_ms": 183,
+        "input_tokens": null,
+        "output_tokens": null,
+        "provider_internal_retries": null
+      },
+      {
+        "kind": "embedding",
+        "model": "embed-v4.0",
+        "texts": 1,
+        "status": "completed",
+        "purpose": "query",
+        "provider": "cohere",
+        "duration_ms": 179,
+        "input_tokens": null,
+        "output_tokens": null,
+        "provider_internal_retries": null
+      },
+      {
+        "kind": "rerank",
+        "model": "rerank-v4.0-pro",
+        "usage": {
+          "search_units": 1
+        },
+        "status": "completed",
+        "provider": "cohere",
+        "candidates": 40,
+        "duration_ms": 2233,
+        "provider_internal_retries": null
+      },
+      {
+        "kind": "embedding",
+        "model": "embed-v4.0",
+        "texts": 38,
+        "status": "completed",
+        "purpose": "document",
+        "provider": "cohere",
+        "duration_ms": 745,
+        "input_tokens": null,
+        "output_tokens": null,
+        "provider_internal_retries": null
+      },
+      {
+        "kind": "embedding",
+        "model": "embed-v4.0",
+        "texts": 1,
+        "status": "completed",
+        "purpose": "query",
+        "provider": "cohere",
+        "duration_ms": 163,
+        "input_tokens": null,
+        "output_tokens": null,
+        "provider_internal_retries": null
+      },
+      {
+        "kind": "rerank",
+        "model": "rerank-v4.0-pro",
+        "usage": {
+          "search_units": 1
+        },
+        "status": "completed",
+        "provider": "cohere",
+        "candidates": 40,
+        "duration_ms": 925,
+        "provider_internal_retries": null
+      },
+      {
+        "kind": "rerank",
+        "model": "rerank-v4.0-pro",
+        "usage": {
+          "search_units": 2
+        },
+        "status": "completed",
+        "provider": "cohere",
+        "candidates": 40,
+        "duration_ms": 1272,
+        "provider_internal_retries": null
+      },
+      {
+        "kind": "embedding",
+        "model": "embed-v4.0",
+        "texts": 30,
+        "status": "completed",
+        "purpose": "document",
+        "provider": "cohere",
+        "duration_ms": 713,
+        "input_tokens": null,
+        "output_tokens": null,
+        "provider_internal_retries": null
+      },
+      {
+        "kind": "embedding",
+        "model": "embed-v4.0",
+        "texts": 22,
+        "status": "completed",
+        "purpose": "document",
+        "provider": "cohere",
+        "duration_ms": 677,
+        "input_tokens": null,
+        "output_tokens": null,
+        "provider_internal_retries": null
+      },
+      {
+        "kind": "embedding",
+        "model": "embed-v4.0",
+        "texts": 1,
+        "status": "completed",
+        "purpose": "query",
+        "provider": "cohere",
+        "duration_ms": 175,
+        "input_tokens": null,
+        "output_tokens": null,
+        "provider_internal_retries": null
+      },
+      {
+        "kind": "embedding",
+        "model": "embed-v4.0",
+        "texts": 1,
+        "status": "completed",
+        "purpose": "query",
+        "provider": "cohere",
+        "duration_ms": 160,
+        "input_tokens": null,
+        "output_tokens": null,
+        "provider_internal_retries": null
+      },
+      {
+        "kind": "rerank",
+        "model": "rerank-v4.0-pro",
+        "usage": {
+          "search_units": 2
+        },
+        "status": "completed",
+        "provider": "cohere",
+        "candidates": 40,
+        "duration_ms": 1083,
+        "provider_internal_retries": null
+      },
+      {
+        "kind": "embedding",
+        "model": "embed-v4.0",
+        "texts": 22,
+        "status": "completed",
+        "purpose": "document",
+        "provider": "cohere",
+        "duration_ms": 671,
+        "input_tokens": null,
+        "output_tokens": null,
+        "provider_internal_retries": null
+      },
+      {
+        "kind": "embedding",
+        "model": "embed-v4.0",
+        "texts": 1,
+        "status": "completed",
+        "purpose": "query",
+        "provider": "cohere",
+        "duration_ms": 161,
+        "input_tokens": null,
+        "output_tokens": null,
+        "provider_internal_retries": null
+      },
+      {
+        "kind": "rerank",
+        "model": "rerank-v4.0-pro",
+        "usage": {
+          "search_units": 1
+        },
+        "status": "completed",
+        "provider": "cohere",
+        "candidates": 40,
+        "duration_ms": 839,
+        "provider_internal_retries": null
+      },
+      {
+        "kind": "rerank",
+        "model": "rerank-v4.0-pro",
+        "usage": {
+          "search_units": 2
+        },
+        "status": "completed",
+        "provider": "cohere",
+        "candidates": 40,
+        "duration_ms": 1137,
+        "provider_internal_retries": null
+      },
+      {
+        "kind": "embedding",
+        "model": "embed-v4.0",
+        "texts": 16,
+        "status": "completed",
+        "purpose": "document",
+        "provider": "cohere",
+        "duration_ms": 399,
+        "input_tokens": null,
+        "output_tokens": null,
+        "provider_internal_retries": null
+      },
+      {
+        "kind": "embedding",
+        "model": "embed-v4.0",
+        "texts": 13,
+        "status": "completed",
+        "purpose": "document",
+        "provider": "cohere",
+        "duration_ms": 649,
+        "input_tokens": null,
+        "output_tokens": null,
+        "provider_internal_retries": null
+      },
+      {
+        "kind": "embedding",
+        "model": "embed-v4.0",
+        "texts": 1,
+        "status": "completed",
+        "purpose": "query",
+        "provider": "cohere",
+        "duration_ms": 183,
+        "input_tokens": null,
+        "output_tokens": null,
+        "provider_internal_retries": null
+      },
+      {
+        "kind": "rerank",
+        "model": "rerank-v4.0-pro",
+        "usage": {
+          "search_units": 1
+        },
+        "status": "completed",
+        "provider": "cohere",
+        "candidates": 40,
+        "duration_ms": 973,
+        "provider_internal_retries": null
+      },
+      {
+        "kind": "embedding",
+        "model": "embed-v4.0",
+        "texts": 24,
+        "status": "completed",
+        "purpose": "document",
+        "provider": "cohere",
+        "duration_ms": 601,
+        "input_tokens": null,
+        "output_tokens": null,
+        "provider_internal_retries": null
+      },
+      {
+        "kind": "rerank",
+        "model": "rerank-v4.0-pro",
+        "usage": {
+          "search_units": 2
+        },
+        "status": "completed",
+        "provider": "cohere",
+        "candidates": 40,
+        "duration_ms": 1186,
+        "provider_internal_retries": null
+      },
+      {
+        "kind": "embedding",
+        "model": "embed-v4.0",
+        "texts": 19,
+        "status": "completed",
+        "purpose": "document",
+        "provider": "cohere",
+        "duration_ms": 561,
+        "input_tokens": null,
+        "output_tokens": null,
+        "provider_internal_retries": null
+      },
+      {
+        "kind": "llm",
+        "model": "gpt-5.6-luna",
+        "status": "completed",
+        "provider": "openai",
+        "duration_ms": 17817,
+        "input_tokens": 48229,
+        "output_tokens": 1700,
+        "reasoning_tokens": 798,
+        "provider_internal_retries": null
+      },
+      {
+        "kind": "llm",
+        "model": "gpt-5.6-luna",
+        "status": "completed",
+        "provider": "openai",
+        "duration_ms": 6343,
+        "input_tokens": 5880,
+        "output_tokens": 504,
+        "reasoning_tokens": 465,
+        "provider_internal_retries": null
+      },
+      {
+        "kind": "embedding",
+        "model": "embed-v4.0",
+        "texts": 1,
+        "status": "completed",
+        "purpose": "query",
+        "provider": "cohere",
+        "duration_ms": 216,
+        "input_tokens": null,
+        "output_tokens": null,
+        "provider_internal_retries": null
+      },
+      {
+        "kind": "embedding",
+        "model": "embed-v4.0",
+        "texts": 1,
+        "status": "completed",
+        "purpose": "query",
+        "provider": "cohere",
+        "duration_ms": 208,
+        "input_tokens": null,
+        "output_tokens": null,
+        "provider_internal_retries": null
+      },
+      {
+        "kind": "rerank",
+        "model": "rerank-v4.0-pro",
+        "usage": {
+          "search_units": 1
+        },
+        "status": "completed",
+        "provider": "cohere",
+        "candidates": 40,
+        "duration_ms": 947,
+        "provider_internal_retries": null
+      },
+      {
+        "kind": "rerank",
+        "model": "rerank-v4.0-pro",
+        "usage": {
+          "search_units": 2
+        },
+        "status": "completed",
+        "provider": "cohere",
+        "candidates": 40,
+        "duration_ms": 1204,
+        "provider_internal_retries": null
+      },
+      {
+        "kind": "embedding",
+        "model": "embed-v4.0",
+        "texts": 18,
+        "status": "completed",
+        "purpose": "document",
+        "provider": "cohere",
+        "duration_ms": 454,
+        "input_tokens": null,
+        "output_tokens": null,
+        "provider_internal_retries": null
+      },
+      {
+        "kind": "embedding",
+        "model": "embed-v4.0",
+        "texts": 11,
+        "status": "completed",
+        "purpose": "document",
+        "provider": "cohere",
+        "duration_ms": 561,
+        "input_tokens": null,
+        "output_tokens": null,
+        "provider_internal_retries": null
+      },
+      {
+        "kind": "llm",
+        "model": "gpt-5.6-luna",
+        "status": "completed",
+        "provider": "openai",
+        "duration_ms": 8227,
+        "input_tokens": 40504,
+        "output_tokens": 908,
+        "reasoning_tokens": 258,
+        "provider_internal_retries": null
+      },
+      {
+        "kind": "llm",
+        "model": "gpt-5.6-luna",
+        "status": "completed",
+        "provider": "openai",
+        "duration_ms": 6529,
+        "input_tokens": 5024,
+        "output_tokens": 500,
+        "reasoning_tokens": 456,
+        "provider_internal_retries": null
+      },
+      {
+        "kind": "embedding",
+        "model": "embed-v4.0",
+        "texts": 1,
+        "status": "completed",
+        "purpose": "query",
+        "provider": "cohere",
+        "duration_ms": 201,
+        "input_tokens": null,
+        "output_tokens": null,
+        "provider_internal_retries": null
+      },
+      {
+        "kind": "embedding",
+        "model": "embed-v4.0",
+        "texts": 1,
+        "status": "completed",
+        "purpose": "query",
+        "provider": "cohere",
+        "duration_ms": 209,
+        "input_tokens": null,
+        "output_tokens": null,
+        "provider_internal_retries": null
+      },
+      {
+        "kind": "rerank",
+        "model": "rerank-v4.0-pro",
+        "usage": {
+          "search_units": 2
+        },
+        "status": "completed",
+        "provider": "cohere",
+        "candidates": 40,
+        "duration_ms": 1067,
+        "provider_internal_retries": null
+      },
+      {
+        "kind": "rerank",
+        "model": "rerank-v4.0-pro",
+        "usage": {
+          "search_units": 2
+        },
+        "status": "completed",
+        "provider": "cohere",
+        "candidates": 40,
+        "duration_ms": 1134,
+        "provider_internal_retries": null
+      },
+      {
+        "kind": "embedding",
+        "model": "embed-v4.0",
+        "texts": 8,
+        "status": "completed",
+        "purpose": "document",
+        "provider": "cohere",
+        "duration_ms": 385,
+        "input_tokens": null,
+        "output_tokens": null,
+        "provider_internal_retries": null
+      },
+      {
+        "kind": "embedding",
+        "model": "embed-v4.0",
+        "texts": 12,
+        "status": "completed",
+        "purpose": "document",
+        "provider": "cohere",
+        "duration_ms": 473,
+        "input_tokens": null,
+        "output_tokens": null,
+        "provider_internal_retries": null
+      },
+      {
+        "kind": "llm",
+        "model": "gpt-5.6-luna",
+        "status": "completed",
+        "provider": "openai",
+        "duration_ms": 11287,
+        "input_tokens": 53442,
+        "output_tokens": 1283,
+        "reasoning_tokens": 512,
+        "provider_internal_retries": null
+      }
+    ],
+    "stage_semantics": "elapsed stage durations may overlap across parallel branches"
+  },
+  "evidence_gate": {
+    "mode": "enforce",
+    "reason": "unresolved_authority",
+    "sufficient": false,
+    "failure_stage": "admission",
+    "lexical_floor": 0.3,
+    "candidate_wise": {
+      "path": "candidate_wise",
+      "alerts": {
+        "missing_provenance_count": 0,
+        "span_hash_mismatch_count": 0,
+        "unknown_calibration_count": 0,
+        "failed_span_derivation_count": 0
+      },
+      "cited_count": 0,
+      "removed_count": 28,
+      "admitted_count": 11,
+      "assessed_count": 12,
+      "reranked_count": 40,
+      "retrieved_count": 100,
+      "context_selected_count": 0
+    },
+    "evidence_score": 0.83846825,
+    "generation_ran": false,
+    "grounding_mode": "balanced",
+    "passage_rescue": {
+      "status": "not_needed",
+      "candidate_count": 0
+    },
+    "winning_char_end": 1506,
+    "winning_chunk_id": "43afc47d-ee85-420a-a896-30a385f5dd21",
+    "context_selection": {
+      "reason": null,
+      "observe_context": null
+    },
+    "winning_span_hash": "f48430ef71760953c307f603bddf091765d44869ec15096a43b762a3f4093ae5",
+    "blocked_generation": true,
+    "reranker_threshold": 0.4,
+    "semantic_threshold": 0.35,
+    "winning_char_start": 0,
+    "winning_rank_score": 0.83846825,
+    "query_token_coverage": 0.2,
+    "evidence_score_method": "reranker_relevance",
+    "lexically_corroborated": false,
+    "winning_semantic_score": 0.5268138678173785,
+    "evidence_calibration_id": "reranker_relevance:v1",
+    "winning_evidence_unit_id": "16b02a7362427b4b0d57cf88e114bdcdd1d186bd0b7a48852deca286f321d65f",
+    "high_confidence_band_enabled": false,
+    "cross_language_semantic_threshold": 0.3,
+    "high_confidence_reranker_threshold": 0.7
+  },
+  "evidence_funnel": {
+    "cited": 0,
+    "fused": 100,
+    "deduped": 12,
+    "outcome": "refused",
+    "admitted": 11,
+    "assessed": 12,
+    "hydrated": 40,
+    "reranked": 40,
+    "loss_reasons": {
+      "deduped": {
+        "result_limit": 2,
+        "section_limit": 12,
+        "document_limit": 14
+      },
+      "admitted": {
+        "no_aligned_independent_signal": 1
+      },
+      "reranked": {
+        "below_rerank_score_threshold": 60
+      },
+      "context_selected": {
+        "authority_or_context_budget": 11
+      }
+    },
+    "rerank_status": "applied",
+    "grounding_path": "candidate_wise",
+    "observe_context": null,
+    "policy_survived": 40,
+    "context_selected": 0,
+    "supported_claims": 0,
+    "would_have_blocked": false
+  },
+  "web_search": {
+    "status": "suppressed_unresolved_authority",
+    "fallback_used": false
+  },
+  "current_authority": {
+    "depth": 1,
+    "status": "expanded",
+    "records": [
+      {
+        "depth": 1,
+        "outcome": "expanded",
+        "candidate_count": 151,
+        "relationship_id": "967b419c-29e3-4241-8e1e-2c87b26a7aeb",
+        "base_document_id": "4687b919-ad77-4126-9a5c-2abe97e2f498",
+        "base_revision_id": "d85d4223-3cdf-47c0-aff8-f73d1de5744f",
+        "base_effective_to": null,
+        "relationship_type": "modifies",
+        "target_provisions": [],
+        "base_effective_from": "2023-06-22",
+        "modifier_document_id": "a86d6898-4750-4468-8eef-93b3c0698268",
+        "modifier_revision_id": "4dd08530-1681-45f3-be4e-1521e507e8b1",
+        "modifier_effective_to": null,
+        "modifier_effective_from": "2026-07-01",
+        "modifier_published_date": "2026-06-30",
+        "modifier_revision_number": 3,
+        "retained_candidate_count": 20
+      },
+      {
+        "depth": 1,
+        "outcome": "expanded",
+        "candidate_count": 0,
+        "relationship_id": "dead04b4-aa50-4cb3-8b57-7dd4f30234d6",
+        "base_document_id": "4687b919-ad77-4126-9a5c-2abe97e2f498",
+        "base_revision_id": "d85d4223-3cdf-47c0-aff8-f73d1de5744f",
+        "base_effective_to": null,
+        "relationship_type": "modifies",
+        "target_provisions": [],
+        "base_effective_from": "2023-06-22",
+        "modifier_document_id": "7bee0f41-c9f8-4ff4-9321-89a3a59f07e4",
+        "modifier_revision_id": "6f9080ae-0e21-4d21-a220-422517f5d317",
+        "modifier_effective_to": null,
+        "modifier_effective_from": "2025-10-06",
+        "modifier_published_date": "2025-10-06",
+        "modifier_revision_number": 3,
+        "retained_candidate_count": 0
+      },
+      {
+        "depth": 1,
+        "outcome": "stale_or_replaced_revision",
+        "candidate_count": 151,
+        "relationship_id": "2018153e-5ce3-49a3-9808-eb7760dd742e",
+        "base_document_id": "4687b919-ad77-4126-9a5c-2abe97e2f498",
+        "base_revision_id": "d85d4223-3cdf-47c0-aff8-f73d1de5744f",
+        "base_effective_to": null,
+        "relationship_type": "modifies",
+        "target_provisions": [],
+        "base_effective_from": "2023-06-22",
+        "modifier_document_id": "a86d6898-4750-4468-8eef-93b3c0698268",
+        "modifier_revision_id": "994de550-d2c1-4513-b95c-623fe8fdf633",
+        "modifier_effective_to": null,
+        "modifier_effective_from": null,
+        "modifier_published_date": "2026-06-30",
+        "modifier_revision_number": 2,
+        "retained_candidate_count": 20
+      },
+      {
+        "depth": 1,
+        "outcome": "ungoverned_or_incomplete_metadata",
+        "candidate_count": 0,
+        "relationship_id": "2934fd38-b3ce-4235-8ec9-c3477570747c",
+        "base_document_id": "4687b919-ad77-4126-9a5c-2abe97e2f498",
+        "base_revision_id": "d85d4223-3cdf-47c0-aff8-f73d1de5744f",
+        "base_effective_to": null,
+        "relationship_type": "modifies",
+        "target_provisions": [],
+        "base_effective_from": "2023-06-22",
+        "modifier_document_id": "745d1e85-d1ba-4849-9a83-74872323d2ee",
+        "modifier_revision_id": "4cdc790a-9f09-44dd-b38d-4b4ff42274f4",
+        "modifier_effective_to": null,
+        "modifier_effective_from": null,
+        "modifier_published_date": "2025-11-06",
+        "modifier_revision_number": 2,
+        "retained_candidate_count": 0
+      },
+      {
+        "depth": 1,
+        "outcome": "stale_or_replaced_revision",
+        "candidate_count": 0,
+        "relationship_id": "3bfbde6f-5820-4894-af09-bfb9b8e1395e",
+        "base_document_id": "4687b919-ad77-4126-9a5c-2abe97e2f498",
+        "base_revision_id": "d85d4223-3cdf-47c0-aff8-f73d1de5744f",
+        "base_effective_to": null,
+        "relationship_type": "modifies",
+        "target_provisions": [],
+        "base_effective_from": "2023-06-22",
+        "modifier_document_id": "7bee0f41-c9f8-4ff4-9321-89a3a59f07e4",
+        "modifier_revision_id": "cf44f64f-c75f-4c0c-a1e1-a556addccecf",
+        "modifier_effective_to": null,
+        "modifier_effective_from": null,
+        "modifier_published_date": "2025-06-25",
+        "modifier_revision_number": 2,
+        "retained_candidate_count": 0
+      }
+    ],
+    "exclusion_reasons": {
+      "stale_or_replaced_revision": 2,
+      "ungoverned_or_incomplete_metadata": 1
+    },
+    "related_source_count": 2,
+    "authority_scope_status": "unresolved_relationships",
+    "authority_unscoped_count": 2,
+    "reranked_candidate_count": 40,
+    "post_rerank_removed_count": 28,
+    "post_rerank_unfilled_slots": 0,
+    "post_rerank_removal_reasons": {
+      "result_limit": 2,
+      "section_limit": 12,
+      "document_limit": 14
+    },
+    "relationship_candidate_count": 20
+  },
+  "repair_summary": {
+    "status": "coverage_incomplete",
+    "trigger": "unresolved_authority",
+    "queries": [
+      "Bangladesh private company RJSC annual return AGM accounts deadline",
+      "বাংলাদেশ প্রাইভেট কোম্পানি RJSC বার্ষিক রিটার্ন AGM হিসাব জমা সময়সীমা",
+      "Bangladesh company income tax return dormant company TIN 2026-27",
+      "বাংলাদেশ নিষ্ক্রিয় কোম্পানি আয়কর রিটার্ন TIN ২০২৬-২৭",
+      "Bangladesh dormant company VAT BIN return obligation",
+      "বাংলাদেশ নিষ্ক্রিয় কোম্পানি ভ্যাট BIN রিটার্ন বাধ্যবাধকতা",
+      "Bangladesh Companies Act default penalties strike off tax noncompliance",
+      "বাংলাদেশ কোম্পানি আইন খেলাপ জরিমানা অবসায়ন কর না মানার পরিণতি",
+      "কোম্পানি বার্ষিক রিটার্ন হিসাব নিরীক্ষা",
+      "কোম্পানি TIN BIN nil return",
+      "কোম্পানির বিধিবদ্ধ হিসাব বার্ষিক রিটার্ন",
+      "ধারা ১৭৩ রিটার্ন দাখিল কোম্পানি"
+    ],
+    "requirements": [
+      {
+        "description": "Under the Companies Act, 1994 and RJSC procedure, establish the continuing obligations of an incorporated private limited company to hold annual general meetings, prepare and maintain accounts and statutory records, and file annual returns or other prescribed documents, including applicable deadlines, authority, required contents, and whether non-operation changes those obligations.",
+        "requirement_id": "R1"
+      },
+      {
+        "description": "Under the Income Tax Act, 2023 and applicable amendments commencing for the relevant period, establish the company's continuing tax-registration, return-filing, accounting or audit, and payment obligations despite having no business operations or taxable income, including the applicable assessment year, filing deadline, authority, required records, and treatment of a nil or dormant return.",
+        "requirement_id": "R2"
+      },
+      {
+        "description": "Establish whether VAT/BIN registration, VAT returns, turnover-tax obligations, withholding or other NBR regulatory filings apply to an incorporated but non-operating company, and identify the conditions, deadlines, records, authority, and any deregistration or suspension procedure supported by the governing rules.",
+        "requirement_id": "R3"
+      },
+      {
+        "description": "Establish the legal consequences of non-compliance with company, tax, and VAT obligations, including statutory penalties, late-filing consequences, liability of officers or directors, prosecution, cancellation or suspension of registration, and RJSC strike-off or restoration mechanisms, with the applicable provisions and official procedures.",
+        "requirement_id": "R4"
+      },
+      {
+        "description": "RJSC strike-off, removal from the register, and restoration mechanisms for a company that fails to maintain filings or remains inactive.",
+        "requirement_id": "R5"
+      },
+      {
+        "description": "Company-specific tax registration, nil or dormant return treatment, statutory accounting or audit requirements, and tax payment consequences where the company has no operations or taxable income.",
+        "requirement_id": "R6"
+      },
+      {
+        "description": "VAT/BIN registration status, nil VAT return obligations, turnover-tax and withholding applicability, VAT records, and suspension or deregistration procedures for a non-operating company.",
+        "requirement_id": "R7"
+      }
+    ]
+  },
+  "repair_missing": [
+    "R1: No supplied evidence establishes Companies Act/RJSC requirements for AGM, accounts, statutory registers, annual returns, deadlines, contents, or the effect of non-operation.",
+    "R2: Evidence is missing for company tax registration, company-specific accounting and audit duties, nil/dormant return treatment, required records, and tax-payment consequences; only the general non-individual return deadline and return-payment framework are supported.",
+    "R3: No supplied evidence establishes VAT/BIN registration, nil VAT returns, turnover-tax, withholding obligations, VAT records, deadlines, or suspension/deregistration procedures for a non-operating company.",
+    "R4: No supplied evidence establishes company, income-tax, or VAT penalties, officer/director liability, prosecution, registration cancellation or suspension, or RJSC strike-off and restoration consequences.",
+    "R5: No supplied evidence establishes RJSC strike-off, removal from the register, or restoration mechanisms for inactive or non-filing companies.",
+    "R6: No supplied evidence establishes company-specific tax registration, nil/dormant return treatment, statutory accounting or audit requirements, or payment consequences where there is no operation or taxable income.",
+    "R7: No supplied evidence establishes VAT/BIN status, nil VAT return duties, turnover-tax or withholding applicability, VAT records, or suspension/deregistration procedures for a non-operating company."
+  ],
+  "live_replay_status": "blocked_browser_sandbox_and_unauthenticated_API",
+  "interpretation": [
+    "API success true is transport/application success, not successful grounded answering.",
+    "Relevance admission accepted 11 passages, but recovery failed current-authority and full coverage checks; final selection was empty.",
+    "Two unscoped active tax modifications and one incomplete-metadata modifier were recorded. Stale revisions were excluded and must not be treated as current operative amendments.",
+    "Company/RJSC continuing obligations, company nil-return rules, VAT/BIN and default consequences remained unsupported after 12 recovery queries.",
+    "Generation never ran. The recorded six LLM calls and 155349 input tokens belong to preparation/recovery activity, not a successful final answer.",
+    "Web fallback was deliberately suppressed for unresolved authority; no endpoint transport failure or model timeout is established.",
+    "Do not disable authority checks or change tax settings to make this query pass."
+  ]
+}
