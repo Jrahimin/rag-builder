@@ -815,7 +815,7 @@ class GroundingService:
     ) -> GroundingResult:
         drafts: list[_ClaimDraft] = []
         semantic_pairs: list[tuple[str, str]] = []
-        segments = _answer_segments(answer)
+        segments = _answer_segments(_normalize_page_citations(answer, chunks))
         for index, raw_segment in enumerate(segments, start=1):
             segment = raw_segment.strip()
             if not segment:
@@ -882,7 +882,12 @@ class GroundingService:
                     draft.text,
                     regex.IGNORECASE,
                 )
-                if unsupported_composite or contested_generalization:
+                if _duration_quantities(draft.text) - _duration_quantities(
+                    " ".join(evidence_texts)
+                ):
+                    # Similar wording cannot establish a deadline absent from the source.
+                    verification = ClaimVerification.UNVERIFIED
+                elif unsupported_composite or contested_generalization:
                     # Similarity does not prove a consensus or a count across works.
                     verification = ClaimVerification.UNVERIFIED
                 elif derived is not None:
@@ -1459,6 +1464,53 @@ def _assessment_diagnostic(assessment: CandidateEvidenceAssessment) -> dict[str,
         "passed": assessment.passed,
         "terminal_reason": assessment.terminal_reason,
     }
+
+
+def _duration_quantities(text: str) -> set[tuple[int, str]]:
+    units = {
+        "day": "day",
+        "days": "day",
+        "দিন": "day",
+        "month": "month",
+        "months": "month",
+        "মাস": "month",
+        "year": "year",
+        "years": "year",
+        "বছর": "year",
+    }
+    return {
+        (int(number), units[unit.lower()])
+        for number, unit in regex.findall(
+            r"(?<![\d.,])\b(\d+)\s*(days?\b|months?\b|years?\b|দিন|মাস|বছর)",
+            text,
+            regex.IGNORECASE,
+        )
+    }
+
+
+def _normalize_page_citations(answer: str, chunks: list[ContextChunk]) -> str:
+    """Accept page-qualified markers only when every page matches its evidence.
+
+    Page labels in document text may differ from the indexed PDF page. Do not
+    silently discard such discrepancies or interpret a page as a source index.
+    Claim verification still runs after this syntax normalization.
+    """
+    item_pattern = regex.compile(r"\s*(\d+)\s*,\s*(?:page|p\.|পৃষ্ঠা)\s*(\d+)\s*", regex.IGNORECASE)
+
+    def normalize(match: regex.Match) -> str:
+        items = [item_pattern.fullmatch(item) for item in match.group(1).split(";")]
+        if not items or any(item is None for item in items):
+            return match.group(0)
+        indexes: list[int] = []
+        for item in items:
+            assert item is not None
+            index, page = int(item.group(1)), int(item.group(2))
+            if not 1 <= index <= len(chunks) or chunks[index - 1].page_number != page:
+                return match.group(0)
+            indexes.append(index)
+        return " ".join(f"[{index}]" for index in dict.fromkeys(indexes))
+
+    return regex.sub(r"\[([^\[\]\n]+)\]", normalize, answer)
 
 
 def _answer_segments(answer: str) -> list[str]:

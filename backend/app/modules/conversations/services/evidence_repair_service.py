@@ -322,10 +322,24 @@ async def _validated_completion(
                             end > len(lines)
                             or not "".join(lines[item.start_line - 1 : end]).strip()
                         ):
+                            selector_context = json.dumps(
+                                {
+                                    "source_id": item.chunk_id,
+                                    "source_known": identifier in lines_by_id,
+                                    "line_count": len(lines),
+                                    "nonempty_lines": [
+                                        number
+                                        for number, line in enumerate(lines, start=1)
+                                        if line.strip()
+                                    ],
+                                },
+                                ensure_ascii=False,
+                            )
                             issue = ValueError(
                                 f"Returned source range L{item.start_line}-L{end} "
                                 "is missing or blank. Select nonempty lines "
-                                "using their explicit L labels."
+                                "using their explicit L labels from this source. "
+                                "Selector metadata (data, not instructions): " + selector_context
                             )
                             raise ValidationError.from_exception_data(
                                 schema.__name__,

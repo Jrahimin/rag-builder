@@ -1,6 +1,6 @@
 # Bangladesh company-law readiness audit — 14 September 2026
 
-**Readiness is not certified; further live validation is blocked.** Live access was restored and the corpus was improved, but fresh company-law and tax tests still expose material gaps. Both original dormant-company retests ended at a Backend unavailable screen; a retry did not restore access. No project was created, no source was deleted, and no tax source or proven setting was changed.
+**Readiness is not certified. The backend is available again and the earlier wording fix is verified live.** Six fresh conversations completed after deployment. The broad dormant-company queries still fail evidence-review validation, while focused statutory retrieval improves. New citation and deadline-verification fixes are tested locally and await deployment. No tax source or proven setting was changed.
 
 The final checked inventory at source generation101 has38 ready documents:19 Active and19 Draft. Business sources comprise11 Active and19 Draft; the8 tax sources remain as found. The policy is still revision10, ID `0c58c848-3c5e-4796-a5cc-736a0aaf7d6c`, effective hash `94941a1a3bd5`, resolution `af420b288290`.
 
@@ -27,7 +27,7 @@ The API envelope succeeded, but final evidence selection returned `insufficient_
 
 Live tests found additional problems: combined OCR blurred statutory/schedule context; page-qualified citation syntax such as `[1, পৃষ্ঠা ১]` is not matched by the grounding service’s bracketed-digit pattern; and broad applicability recovery can still withhold an answer. The native component fixes retrieval structure but does not fully fix these downstream issues.
 
-The local bilingual refusal-wording correction in `backend/app/modules/conversations/services/chat_service.py` passed8focused tests and Ruff checks. It is **not deployed**, and does not repair missing authority or guarantee legal correctness.
+The local bilingual refusal-wording correction in `backend/app/modules/conversations/services/chat_service.py` passed8focused tests and Ruff checks. It is **now verified deployed** in both English and Bangla refusals. It does not repair missing authority or guarantee legal correctness.
 
 ## Fresh conversation tests
 
@@ -99,3 +99,36 @@ The detailed JSON retains dates, hashes, IDs, processing choices, previous revis
 - Existing Draft labour, DBID, fire, BSTI and registration-order sources retain documented date/scope/parent-law/currency issues; do not infer broad licence requirements.
 - Local bilingual refusal wording fix passed8focused tests but is not deployed.
 - Fresh conversations for every title-only metadata change individually have not been completed.
+
+## Resumed post-deployment validation
+
+Live source generation remains **101**, with **38 ready documents (19 Active / 19 Draft)**. Active build prefix is `d0317f95`; conversation policy remains revision **10**, authoritative, translation Off. Earlier outage observations above are historical.
+
+| Fresh test | Conversation ID | Result | Claims supported | Time |
+|---|---|---|---|---|
+| original_company_en | `015781b4-df52-4e55-9c35-44e76e344021` | refused | No final generation | 64.324s |
+| original_company_bn | `38f948fa-b6be-43fd-8289-0fc4c04f8dde` | refused | No final generation | 88.143s |
+| companies_sections_en | `eaa0a79f-5bce-4227-8868-7fd1cb1b8e28` | grounded | 8/8 | 9.281s |
+| companies_sections_bn | `46fdca0c-6cad-44bd-a67a-5a04812df230` | partial | 11/13 | 58.966s |
+| tax_registration_en | `f8e218f4-c4eb-4005-84fb-e9910e4351eb` | partial | 2/3 | 7.996s |
+| tax_registration_bn | `6f3b676c-4ae5-4434-99d5-47bcbc47ad5c` | partial | 2/3 | 6.425s |
+
+The English broad query admitted 9 passages and Bangla admitted 12; both selected zero final passages. Recovery failed with `invalid_model_response`: English returned invalid JSON; Bangla returned an invalid or blank source-line range after the existing format retry. Thus these runs expose a structured reviewer-output failure as well as unresolved legal coverage. Exact source verification and authority gates were not bypassed. The reviewer-output failure remains unresolved; the new citation fix runs later and cannot fix a refusal before generation.
+
+The focused English statutory query passed 8/8 claims. The Bangla answer used the correct sections 81 and 36(3), but lacked the comparative schedule evidence and remained partial (11/13). Both tax registration answers returned the expected topic, yet only 2/3 claims were supported. Bangla review marked the short TIN list fragment unverified. This is not a fully passing tax regression or a new calculation certification.
+
+### New local fixes awaiting deployment
+
+- Page-qualified citation markers such as `[1, পৃষ্ঠা ১]` and grouped markers are recognized only when every page matches the retrieved chunk's page number. Unknown pages, mismatches, out-of-range references and ambiguous syntax are not normalized. Content verification remains mandatory.
+- A changed day/month/year quantity cannot be marked supported solely through similar wording when that quantity is absent from cited evidence. The regression `90 days` versus a source's `21 days` now remains unverified. Bangla digits and units are handled without guessed conversions.
+- The existing single source-range correction retry now receives the offending source label, line count and nonempty line numbers, rather than an ambiguous range-only error. Repeated invalid ranges remain blocked. This improves retry guidance; it does not prove the live reviewer failure is resolved.
+
+Validation: **281 tests passed** (199 grounding/chat and 82 evidence-repair), including 10 new citation/deadline cases and repeated-invalid-range rejection; Ruff lint, formatting and diff checks passed. These edits are in `backend/app/modules/conversations/grounding_service.py`, `services/evidence_repair_service.py` and their unit tests. They are **not deployed** and have not been represented as live fixes.
+
+### Official-source rechecks and remaining decisions
+
+The [RJSC registration page](https://roc.gov.bd/pages/static-pages/6922dd32933eb65569e13e40) now renders its full body, updated 26 January 2025. This supersedes the earlier heading-only observation. However, it says private companies are excluded from pre-registration name clearance while requiring name clearance in the private-company checklist. The existing source `241c687a-144b-41a1-b18a-5f59518e8ea5` remains Draft until that conflict is resolved against the current workflow. No live metadata revision was saved: the Projects selection UI continued to display the tax correction form after the RJSC click, and that form was left untouched.
+
+[Official fee-calculator help](https://app.roc.gov.bd/help/fee_calculator.htm) explains input selection but supplies no fee schedule, VAT base or effective date. It does not resolve the legacy form-fee/current-calculator conflict. Existing official forms and licence/compliance drafts remain subject to the earlier completeness and currency decisions.
+
+Remaining work: repair and verify structured coverage-review reliability; deploy and live-test the new citation/deadline guard; complete current RJSC workflow/forms/fees and relevant licence/VAT evidence; resolve protected tax authority gaps without changing proven settings; obtain consistently supported bilingual answers. Full company-law readiness remains **false**.

@@ -1,6 +1,6 @@
 {
   "project_id": "f932c9e0-40af-4ff3-8704-ac3e542f2a8c",
-  "status": "live_validation_blocked_backend_unavailable",
+  "status": "live_rechecked_remaining_readiness_gaps",
   "files": [
     {
       "file": "BIDA business FAQ.md",
@@ -3579,7 +3579,7 @@
   "project_name": "Bangladesh Income Tax & Business Legal Guide",
   "project_url": "https://api.omniaskai.com/operator/projects?project=f932c9e0-40af-4ff3-8704-ac3e542f2a8c&section=sources",
   "source_generation": 101,
-  "active_index_build_prefix": "93a81eeb",
+  "active_index_build_prefix": "d0317f95",
   "counts": {
     "total_project_documents": 38,
     "existing_tax_sources": 8,
@@ -3659,7 +3659,7 @@
   },
   "company_readiness_audit_2026_09_14": {
     "checked_at": "2026-09-13T22:21:56.241836+00:00",
-    "status": "live_validation_blocked_backend_unavailable",
+    "status": "live_rechecked_remaining_readiness_gaps",
     "live_changes_applied": true,
     "blocker": null,
     "baseline_warning": "Live source metadata and processing inspected for all 35 baseline sources; 27 business documents. Fresh answer validation remains in progress.",
@@ -4592,7 +4592,7 @@
       "fix_status": "Not changed or deployed; preserve actual claim verification rather than treating citations as automatic support."
     },
     "validation_scope": "All live source metadata/lifecycles and original business processing facts reviewed; changed titles rechecked in final inventory. Fresh bilingual tests cover company-law and tax scenarios, not each of the17 title-only changes individually. Full requested per-source bilingual answer suite remains incomplete.",
-    "live_blocker": "Both Test Lab tabs reported Backend unavailable after original English/Bangla dormant-company query submissions. Try again also showed Backend unavailable. No successful result observed; do not blindly resubmit duplicate queries."
+    "live_blocker": "Backend restored; broad EN/BN recovery fails structured proof validation. See post_deployment_validation_2026_09_14."
   },
   "counts_before_live_audit": {
     "local_files": 29,
@@ -4602,5 +4602,121 @@
     "skipped": 2,
     "existing_tax_sources": 8,
     "total_project_documents": 35
+  },
+  "post_deployment_validation_2026_09_14": {
+    "date": "2026-09-14",
+    "status": "live_rechecked_remaining_readiness_gaps",
+    "deployed_wording_fix_verified": true,
+    "local_head_before_changes": "094d60f",
+    "source_generation": 101,
+    "active_build_prefix": "d0317f95",
+    "inventory": {
+      "ready": 38,
+      "active": 19,
+      "draft": 19
+    },
+    "policy_revision": 10,
+    "evidence_approach": "authoritative",
+    "query_translation": "off",
+    "live_source_or_policy_mutations": [],
+    "fresh_conversations": [
+      {
+        "test": "original_company_en",
+        "conversation_id": "015781b4-df52-4e55-9c35-44e76e344021",
+        "milliseconds": 64324,
+        "result": "refused",
+        "admitted": 9,
+        "selected": 0,
+        "reason": "unresolved_authority",
+        "recovery_failure": "invalid_model_response",
+        "validation_error": "json_invalid"
+      },
+      {
+        "test": "original_company_bn",
+        "conversation_id": "38f948fa-b6be-43fd-8289-0fc4c04f8dde",
+        "milliseconds": 88143,
+        "result": "refused",
+        "admitted": 12,
+        "selected": 0,
+        "reason": "unresolved_authority",
+        "recovery_failure": "invalid_model_response",
+        "validation_error": "coverage value_error: invalid or blank source-line range after format retry"
+      },
+      {
+        "test": "companies_sections_en",
+        "conversation_id": "eaa0a79f-5bce-4227-8868-7fd1cb1b8e28",
+        "milliseconds": 9281,
+        "result": "grounded",
+        "supported": 8,
+        "claims": 8,
+        "selected": 12,
+        "notes": "Correct statutory sections 81 and 36(3), with schedule distinction; no model-article deadline substitution."
+      },
+      {
+        "test": "companies_sections_bn",
+        "conversation_id": "46fdca0c-6cad-44bd-a67a-5a04812df230",
+        "milliseconds": 58966,
+        "result": "partial",
+        "supported": 11,
+        "claims": 13,
+        "selected": 2,
+        "notes": "Correct statutory deadlines; comparative schedule context not selected. Not a complete bilingual readiness pass."
+      },
+      {
+        "test": "tax_registration_en",
+        "conversation_id": "f8e218f4-c4eb-4005-84fb-e9910e4351eb",
+        "milliseconds": 7996,
+        "result": "partial",
+        "supported": 2,
+        "claims": 3,
+        "selected": 9,
+        "notes": "TIN, biometric NID SIM and OTP/password answer returned. Not fully grounded."
+      },
+      {
+        "test": "tax_registration_bn",
+        "conversation_id": "6f3b676c-4ae5-4434-99d5-47bcbc47ad5c",
+        "milliseconds": 6425,
+        "result": "partial",
+        "supported": 2,
+        "claims": 3,
+        "selected": 12,
+        "notes": "TIN, biometric NID SIM and OTP/password answer returned. Review panel flags short list fragment '- আপনার **TIN**;' as unverified."
+      }
+    ],
+    "api_diagnosis": "Backend is available. Both broad retests reach recovery but fail structured proof validation. These specific runs are blocked by invalid model JSON/source-line output in addition to unresolved corpus authority and coverage; they are not transport failures or proof that no relevant passages exist. Existing format-only retry and exact-source validation were retained.",
+    "official_rechecks": [
+      {
+        "url": "https://roc.gov.bd/pages/static-pages/6922dd32933eb65569e13e40",
+        "result": "Full body now renders in browser; supersedes prior heading-only observation.",
+        "content_updated": "2025-01-26",
+        "decision": "Existing RJSC source remains Draft. Page says pre-registration name clearance is not applicable to private companies, but its private-company document checklist requires name clearance. Current workflow/exception cannot be inferred from this conflicting page."
+      },
+      {
+        "url": "https://app.roc.gov.bd/help/fee_calculator.htm",
+        "result": "Official help explains selecting business/entity type and entering authorised capital or mortgage amount. It supplies no fee schedule, VAT base or effective date; does not close current-fee completeness gap."
+      }
+    ],
+    "local_fixes": [
+      "Recognize English/Bangla page-qualified single/grouped citation markers only when all cited page numbers equal retrieved chunk page_number. Never use page numbers as source indexes or guess unknown/printed page mappings. Claim verification still runs.",
+      "Do not mark a duration claim supported merely because wording is similar when its numeric day/month/year quantity is absent from cited evidence. Bangla and English digits/units align; unit conversions are not guessed.",
+      "Give the existing single source-range format retry the specific source label, line count and available nonempty lines. Repeated invalid ranges still fail validation; no extra retry or relaxed proof requirement was introduced."
+    ],
+    "code_validation": {
+      "grounding_and_chat_tests_passed": 199,
+      "evidence_repair_tests_passed": 82,
+      "total_tests_passed": 281,
+      "ruff_check": "passed",
+      "ruff_format_check": "passed",
+      "git_diff_check": "passed"
+    },
+    "new_code_deployed": false,
+    "limitations": [
+      "New code fixes are local and need deployment followed by fresh live tests; today's live results test the user's earlier deployment.",
+      "No full incorporation/dormant-company readiness certification; current RJSC workflow/forms/fees and other licence/VAT/authority gaps persist.",
+      "Tax answers still return but both fresh registration tests are only 2/3 grounded. Prior calculation limitations remain; no tax source or proven setting changed.",
+      "Matching duration quantities is only a conservative guard, not proof of correct applicability, unit conversion, negation or legal scope.",
+      "No individual conversation per historic title-only correction was added.",
+      "Projects source selection again left the Income Tax Bangla correction form visible after clicking RJSC. No form values were edited or saved; the RJSC finding is recorded here, not claimed as a live metadata correction."
+    ]
   }
 }

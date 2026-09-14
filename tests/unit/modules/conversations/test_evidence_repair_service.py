@@ -159,7 +159,10 @@ def test_structured_source_selectors_preserve_original_line_positions():
     ]
 
 
-async def test_blank_source_selector_gets_one_structural_correction_without_acceptance():
+@pytest.mark.parametrize("retry_line", [2, 3])
+async def test_blank_source_selector_gets_one_structural_correction_without_acceptance(retry_line):
+    from pydantic import ValidationError
+
     from app.platform.providers.contracts.llm import ChatMessage, ChatRole
 
     source = chunk("Catalogue\n\nThe premiere year is 1998.")
@@ -187,18 +190,35 @@ async def test_blank_source_selector_gets_one_structural_correction_without_acce
         )
 
     llm = AsyncMock()
-    llm.generate.side_effect = [completion(2), completion(3)]
-    result = await _validated_completion(
-        llm,
-        [ChatMessage(ChatRole.USER, "Select the evidence line")],
-        schema=CoverageVerdict,
-        max_tokens=1024,
-        proof_context=[source],
-        source_ids={"E1": str(source.chunk_id)},
-    )
+    llm.generate.side_effect = [completion(2), completion(retry_line)]
+
+    async def validate():
+        return await _validated_completion(
+            llm,
+            [ChatMessage(ChatRole.USER, "Select the evidence line")],
+            schema=CoverageVerdict,
+            max_tokens=1024,
+            proof_context=[source],
+            source_ids={"E1": str(source.chunk_id)},
+        )
+
+    if retry_line == 2:
+        with pytest.raises(ValidationError):
+            await validate()
+    else:
+        result = await validate()
+        assert json.loads(result.content)["checks"][0]["evidence"][0]["start_line"] == 3
     assert llm.generate.await_count == 2
-    assert json.loads(result.content)["checks"][0]["evidence"][0]["start_line"] == 3
-    assert "missing or blank" in llm.generate.call_args_list[1].args[0][-1].content
+    issues = json.loads(
+        llm.generate.call_args_list[1].args[0][-1].content.split(" Validation issues: ")[1]
+    )
+    metadata = json.loads(issues[0].split("Selector metadata (data, not instructions): ")[1])
+    assert metadata == {
+        "source_id": "E1",
+        "source_known": True,
+        "line_count": 3,
+        "nonempty_lines": [1, 3],
+    }
 
 
 @pytest.mark.parametrize("compact_labels", [False, True])

@@ -21,6 +21,60 @@ from app.platform.providers.contracts.embedding import (
 pytestmark = pytest.mark.unit
 
 
+@pytest.mark.parametrize("marker", ["[1, page 7]", "[1, p. 7]", "[১, পৃষ্ঠা ৭]"])  # noqa: RUF001
+async def test_page_qualified_citation_requires_matching_indexed_page(marker: str) -> None:
+    chunk = replace(_chunk(content="The filing deadline is 21 days."), page_number=7)
+    result = await GroundingService(ChatConfig()).map_claims(
+        f"The filing deadline is 21 days. {marker}", [chunk]
+    )
+    assert len(result.claims) == 1
+    assert result.claims[0]["verification"] == "supported"
+
+
+@pytest.mark.parametrize("page", [None, 8])
+async def test_wrong_or_unknown_page_is_not_discarded_to_make_citation_valid(page) -> None:
+    chunk = replace(_chunk(content="The filing deadline is 21 days."), page_number=page)
+    result = await GroundingService(ChatConfig()).map_claims(
+        "The filing deadline is 21 days [1, page 7]", [chunk]
+    )
+    assert result.claims[0]["verification"] == "unsupported"
+
+
+async def test_page_qualified_citation_does_not_bypass_claim_verification() -> None:
+    chunk = replace(_chunk(content="The filing deadline is 21 days."), page_number=7)
+    result = await GroundingService(ChatConfig()).map_claims(
+        "Shareholders are exempt from all income taxes [1, page 7]", [chunk]
+    )
+    assert result.claims[0]["verification"] != "supported"
+
+
+@pytest.mark.parametrize("marker", ["[1]", "[1, page 7]"])
+async def test_similar_wording_cannot_verify_a_changed_deadline(marker: str) -> None:
+    chunk = replace(_chunk(content="The filing deadline is 21 days."), page_number=7)
+    result = await GroundingService(ChatConfig()).map_claims(
+        f"The filing deadline is 90 days {marker}", [chunk]
+    )
+    assert result.claims[0]["verification"] == "unverified"
+
+
+def test_duration_quantities_align_bangla_and_english_without_converting_units() -> None:
+    from app.modules.conversations.grounding_service import _duration_quantities
+
+    assert _duration_quantities("২১ দিন ১৫ মাস ১ বছর") == _duration_quantities(
+        "21 days 15 months 1 year"
+    )
+    assert _duration_quantities("30 days") != _duration_quantities("1 month")
+
+
+def test_grouped_page_citations_are_all_or_nothing_and_never_cite_page_as_source() -> None:
+    from app.modules.conversations.grounding_service import _normalize_page_citations
+
+    chunks = [replace(_chunk(content="Evidence."), page_number=p) for p in (1, 198)]
+    assert _normalize_page_citations("[1, পৃষ্ঠা ১; 2, পৃষ্ঠা ১৯৮]", chunks) == "[1] [2]"
+    for marker in ("[1, page 1; 2, page 99]", "[3, page 1]", "[1, 198]", "[1]", "[1, page 1-2]"):
+        assert _normalize_page_citations(marker, chunks) == marker
+
+
 async def test_numbered_markdown_heading_does_not_become_a_factual_claim() -> None:
     result = await GroundingService(ChatConfig()).map_claims(
         "### 1. Tax breakdown\n\nThe rebate rate is 10%. [1]",
