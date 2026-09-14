@@ -66,6 +66,31 @@ def test_duration_quantities_align_bangla_and_english_without_converting_units()
     assert _duration_quantities("30 days") != _duration_quantities("1 month")
 
 
+@pytest.mark.parametrize(
+    "source",
+    [
+        "পনের মাস আঠারো মাস ত্রিশ দিনের নব্বই দিন একুশ দিনের",
+        "fifteen months eighteen months thirty days ninety days twenty-one days",
+    ],
+)
+def test_statutory_word_durations_match_numeric_answers(source: str) -> None:
+    from app.modules.conversations.grounding_service import _duration_quantities
+
+    assert _duration_quantities(source) == _duration_quantities("১৫ মাস ১৮ মাস ৩০ দিন ৯০ দিন ২১ দিন")
+
+
+async def test_spelled_deadline_is_not_rejected_but_changed_deadline_still_is() -> None:
+    chunk = _chunk(content="The filing deadline is twenty-one days.")
+    valid = await GroundingService(ChatConfig()).map_claims(
+        "The filing deadline is 21 days [1]", [chunk]
+    )
+    assert valid.claims[0]["verification"] == "supported"
+    invalid = await GroundingService(ChatConfig()).map_claims(
+        "The filing deadline is 90 days [1]", [chunk]
+    )
+    assert invalid.claims[0]["verification"] == "unverified"
+
+
 def test_grouped_page_citations_are_all_or_nothing_and_never_cite_page_as_source() -> None:
     from app.modules.conversations.grounding_service import _normalize_page_citations
 

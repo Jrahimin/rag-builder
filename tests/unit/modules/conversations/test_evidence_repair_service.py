@@ -163,6 +163,7 @@ def test_structured_source_selectors_preserve_original_line_positions():
 async def test_blank_source_selector_gets_one_structural_correction_without_acceptance(retry_line):
     from pydantic import ValidationError
 
+    from app.modules.conversations.services.evidence_coverage import numbered_source_lines
     from app.platform.providers.contracts.llm import ChatMessage, ChatRole
 
     source = chunk("Catalogue\n\nThe premiere year is 1998.")
@@ -191,11 +192,16 @@ async def test_blank_source_selector_gets_one_structural_correction_without_acce
 
     llm = AsyncMock()
     llm.generate.side_effect = [completion(2), completion(retry_line)]
+    payload = {
+        "original_question": "Select the evidence line",
+        "as_of": "2026-09-14",
+        "context": [{"chunk_id": "E1", "content": numbered_source_lines(source.content)}],
+    }
 
     async def validate():
         return await _validated_completion(
             llm,
-            [ChatMessage(ChatRole.USER, "Select the evidence line")],
+            [ChatMessage(ChatRole.USER, json.dumps(payload))],
             schema=CoverageVerdict,
             max_tokens=1024,
             proof_context=[source],
@@ -209,6 +215,12 @@ async def test_blank_source_selector_gets_one_structural_correction_without_acce
         result = await validate()
         assert json.loads(result.content)["checks"][0]["evidence"][0]["start_line"] == 3
     assert llm.generate.await_count == 2
+    assert json.loads(llm.generate.call_args_list[0].args[0][0].content) == payload
+    retried = json.loads(llm.generate.call_args_list[1].args[0][0].content)
+    assert retried == {
+        **payload,
+        "context": [{"chunk_id": "E1", "source_lines": _source_line_records(source.content)}],
+    }
     issues = json.loads(
         llm.generate.call_args_list[1].args[0][-1].content.split(" Validation issues: ")[1]
     )
@@ -219,6 +231,31 @@ async def test_blank_source_selector_gets_one_structural_correction_without_acce
         "line_count": 3,
         "nonempty_lines": [1, 3],
     }
+
+
+@pytest.mark.parametrize("case", ["unknown_id", "different_text", "plain_message", "no_context"])
+def test_structured_selector_retry_cannot_rewrite_unmatched_evidence(case):
+    from app.modules.conversations.services.evidence_coverage import numbered_source_lines
+    from app.modules.conversations.services.evidence_repair_service import (
+        _structured_selector_retry,
+    )
+    from app.platform.providers.contracts.llm import ChatMessage, ChatRole
+
+    source = chunk("Exact source text.\n\nIts condition.")
+    payload = {"context": [{"chunk_id": "E1", "content": numbered_source_lines(source.content)}]}
+    if case == "unknown_id":
+        payload["context"][0]["chunk_id"] = "E99"
+    if case == "different_text":
+        payload["context"][0]["content"] = "Different text"
+    messages = [
+        ChatMessage(ChatRole.USER, "Question" if case == "plain_message" else json.dumps(payload))
+    ]
+    assert (
+        _structured_selector_retry(
+            messages, None if case == "no_context" else [source], {"E1": str(source.chunk_id)}
+        )
+        == messages
+    )
 
 
 @pytest.mark.parametrize("compact_labels", [False, True])

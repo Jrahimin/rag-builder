@@ -1,6 +1,6 @@
 {
   "project_id": "f932c9e0-40af-4ff3-8704-ac3e542f2a8c",
-  "status": "live_rechecked_remaining_readiness_gaps",
+  "status": "bounded_check_complete_targeted_fixes_awaiting_deployment",
   "files": [
     {
       "file": "BIDA business FAQ.md",
@@ -4717,6 +4717,77 @@
       "Matching duration quantities is only a conservative guard, not proof of correct applicability, unit conversion, negation or legal scope.",
       "No individual conversation per historic title-only correction was added.",
       "Projects source selection again left the Income Tax Bangla correction form visible after clicking RJSC. No form values were edited or saved; the RJSC finding is recorded here, not claimed as a live metadata correction."
+    ]
+  },
+  "latest_bounded_validation": {
+    "date": "2026-09-14",
+    "baseline_local_commit": "7a84c5e",
+    "previous_changes_deployed": "Reported by user; live duration-guard behavior observed.",
+    "status": "bounded_check_complete_targeted_fixes_awaiting_deployment",
+    "source_generation": 101,
+    "policy_revision": 10,
+    "live_source_or_setting_changes": [],
+    "fresh_tests": [
+      {
+        "test": "original_business_en",
+        "conversation_id": "7491d2bd-3a77-429b-bf15-04dd3d0c8126",
+        "milliseconds": 64861,
+        "result": "refused",
+        "admitted": 9,
+        "selected": 0,
+        "reason": "unresolved_authority",
+        "recovery": "repair_unavailable",
+        "failure": "invalid_model_response",
+        "validation": {
+          "loc": [
+            "coverage"
+          ],
+          "type": "value_error"
+        }
+      },
+      {
+        "test": "statutory_deadlines_bn",
+        "conversation_id": "90220c17-9089-4d44-a192-7173f6421823",
+        "milliseconds": 34355,
+        "result": "partial",
+        "supported": 3,
+        "claims": 12,
+        "selected": 2,
+        "notes": "Answer contains correct 18/15-month and 21-day deadlines; new guard does not recognize official spelled Bangla durations. This is a confirmed contributing verification regression, not proof every unsupported claim has the same cause."
+      },
+      {
+        "test": "tax_registration_en",
+        "conversation_id": "da3a19d5-4399-4dde-a18e-f6be7d600471",
+        "milliseconds": 8018,
+        "result": "partial",
+        "supported": 2,
+        "claims": 3,
+        "selected": 9,
+        "notes": "Answer still returns TIN/SIM/registration steps; same 2/3 support result as preceding smoke test. Not a fully passing tax certification."
+      }
+    ],
+    "pinpointed_issues": [
+      "Broad business recovery fails source-line proof validation before final generation. The API-facing diagnostics show a coverage value_error, not a transport failure. The response does not expose the precise rejected selector, so the model's reason for choosing it is not asserted.",
+      "The deployed duration guard compared numeric answers with only numeric source durations. Statutory section 81 spells out পনের, আঠারো, ত্রিশ and নব্বই; section 36 uses একুশ. Equivalent digits were incorrectly treated as absent."
+    ],
+    "targeted_code_fixes": [
+      "On the existing single failed coverage retry only, replace exact matched numbered content strings with the existing structured source_lines records. Preserve question, dates, IDs, metadata and exact source text; do not duplicate context. Unknown or different source text remains untouched. Invalid second responses still fail closed.",
+      "Normalize supported English and Bangla duration number words before quantity comparison, including the actual statutory spellings. Retain changed-quantity and unknown-page guards. No guessed unit conversions."
+    ],
+    "validation": {
+      "focused_tests_passed": 12,
+      "deselected": 169,
+      "ruff": "passed",
+      "format": "passed",
+      "diff_check": "passed",
+      "large_suite_run": false
+    },
+    "latest_fixes_deployed": false,
+    "ready_for_full_company_queries": false,
+    "remaining": [
+      "Latest fixes require deployment and a bounded live rerun; broad coverage-review reliability is not yet verified.",
+      "Current RJSC name-clearance workflow conflict, forms/fee currency, licence/VAT and protected tax authority gaps remain as previously recorded. No unreliable source was activated to force a result.",
+      "Number-word normalization covers the tested statutory spellings and supported vocabulary; it is not a universal Bangla number parser or proof of legal applicability."
     ]
   }
 }

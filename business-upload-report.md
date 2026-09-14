@@ -1,6 +1,6 @@
 # Bangladesh company-law readiness audit — 14 September 2026
 
-**Readiness is not certified. The backend is available again and the earlier wording fix is verified live.** Six fresh conversations completed after deployment. The broad dormant-company queries still fail evidence-review validation, while focused statutory retrieval improves. New citation and deadline-verification fixes are tested locally and await deployment. No tax source or proven setting was changed.
+**Readiness is not certified. Latest bounded check: 3 live conversations and 12 focused local tests.** The broad business query still fails coverage proof validation. A duration-verification regression was also isolated and corrected locally. Two targeted fixes await deployment; no tax source, source lifecycle or proven setting changed. The latest section below supersedes earlier deployment-status statements.
 
 The final checked inventory at source generation101 has38 ready documents:19 Active and19 Draft. Business sources comprise11 Active and19 Draft; the8 tax sources remain as found. The policy is still revision10, ID `0c58c848-3c5e-4796-a5cc-736a0aaf7d6c`, effective hash `94941a1a3bd5`, resolution `af420b288290`.
 
@@ -132,3 +132,21 @@ The [RJSC registration page](https://roc.gov.bd/pages/static-pages/6922dd32933eb
 [Official fee-calculator help](https://app.roc.gov.bd/help/fee_calculator.htm) explains input selection but supplies no fee schedule, VAT base or effective date. It does not resolve the legacy form-fee/current-calculator conflict. Existing official forms and licence/compliance drafts remain subject to the earlier completeness and currency decisions.
 
 Remaining work: repair and verify structured coverage-review reliability; deploy and live-test the new citation/deadline guard; complete current RJSC workflow/forms/fees and relevant licence/VAT evidence; resolve protected tax authority gaps without changing proven settings; obtain consistently supported bilingual answers. Full company-law readiness remains **false**.
+
+## Latest bounded check after deployment of 7a84c5e
+
+Testing stopped after three live conversations and twelve focused unit tests, as requested. No large suite ran. Source generation remains 101 and policy revision 10; no live metadata or configuration mutation was made.
+
+| Test | Conversation ID | Result | Time |
+|---|---|---|---|
+| Original English business query | `7491d2bd-3a77-429b-bf15-04dd3d0c8126` | Withheld; 9 admitted / 0 selected | 64.861s |
+| Bangla sections 81 / 36(3) | `90220c17-9089-4d44-a192-7173f6421823` | Correct core deadlines, partial; 3/12 supported | 34.355s |
+| English tax registration | `da3a19d5-4399-4dde-a18e-f6be7d600471` | Answer returned; 2/3 supported, matching previous smoke result | 8.018s |
+
+**Specific failures:** The broad query reaches evidence recovery but returns `repair_unavailable / invalid_model_response`, with `coverage / value_error` from source-line validation. This occurs before final generation; it is not a network failure. The API-facing diagnostic does not expose the exact rejected selector, so no claim is made about why the model chose it. Separately, the deployed duration guard rejected equivalent word/digit forms: the official Act uses পনের, আঠারো, ত্রিশ, নব্বই and একুশ, while answers use 15, 18, 30, 90 and 21. That regression is reproduced locally.
+
+**Targeted implementation:** The existing single coverage retry now presents exact matched evidence as structured `source_lines` records instead of numbered strings. This reuses an existing representation; successful first-pass prompts and tax settings are unchanged. It preserves source text, IDs, metadata, question and dates, adds no duplicate context, and still rejects a second invalid response. Duration comparison now normalizes supported English/Bangla number words, including the statutory spellings, while retaining the changed-deadline guard and avoiding guessed unit conversions.
+
+**Verification:** 12 focused tests passed (169 deselected); lint, formatting and diff checks passed. Tests cover the actual word/digit equivalence, continued rejection of a changed deadline, exact retry-context preservation, unknown/mismatched evidence remaining untouched, and repeated-invalid-range rejection. No broad test suite or repeated live refinement cycle ran.
+
+These two fixes are **local, not deployed**. They do not establish a passing live broad-company answer. Existing RJSC workflow/forms/fee, licence/VAT and authority gaps remain documented. Full readiness remains false; the next required action is deployment and one bounded confirmation of the repaired paths, not another open-ended audit.

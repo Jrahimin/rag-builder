@@ -360,7 +360,7 @@ async def _validated_completion(
             if isinstance(work, RequestWork):
                 work.counts["structured_response_retries"] += 1
             messages = [
-                *messages,
+                *_structured_selector_retry(messages, proof_context, source_ids),
                 ChatMessage(
                     role=ChatRole.SYSTEM,
                     content="Return a complete JSON object only, matching this schema. Do not add "
@@ -372,6 +372,51 @@ async def _validated_completion(
                 ),
             ]
     raise AssertionError("bounded validation loop exhausted")
+
+
+def _structured_selector_retry(
+    messages: list[ChatMessage],
+    context: list[ContextChunk] | None,
+    source_ids: dict[str, str] | None,
+) -> list[ChatMessage]:
+    """Replace ambiguous labeled strings with copyable selectors on failed review only.
+
+    Preserve the evidence, identifiers and question; do not append a duplicate
+    context or change successful first-pass authoritative/tax review prompts.
+    """
+    if not context:
+        return messages
+    chunks = {str(chunk.chunk_id): chunk for chunk in context}
+    retried = []
+    for message in messages:
+        if message.role != ChatRole.USER:
+            retried.append(message)
+            continue
+        try:
+            payload = json.loads(message.content)
+        except (ValueError, TypeError):
+            retried.append(message)
+            continue
+        records = payload.get("context") if isinstance(payload, dict) else None
+        changed = False
+        for record in records if isinstance(records, list) else []:
+            if not isinstance(record, dict):
+                continue
+            label = record.get("chunk_id")
+            if not isinstance(label, str):
+                continue
+            chunk = chunks.get((source_ids or {}).get(label, label))
+            if chunk is None or record.get("content") != numbered_source_lines(chunk.content):
+                continue
+            del record["content"]
+            record["source_lines"] = _source_line_records(chunk.content)
+            changed = True
+        retried.append(
+            replace(message, content=json.dumps(payload, ensure_ascii=False))
+            if changed
+            else message
+        )
+    return retried
 
 
 async def repair_knowledge_evidence(
