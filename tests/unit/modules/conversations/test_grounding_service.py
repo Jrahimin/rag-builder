@@ -92,6 +92,36 @@ async def test_spelled_deadline_is_not_rejected_but_changed_deadline_still_is() 
     assert invalid.claims[0]["verification"] == "unverified"
 
 
+@pytest.mark.parametrize(
+    ("claim", "source"),
+    [
+        (
+            "দুই সভার ব্যবধান ১৫ মাসের বেশি হতে পারবে না।",
+            "দুই সভার ব্যবধান পনের মাসের বেশি হতে পারবে না।",
+        ),
+        (
+            "একমাত্র AGM-এর ২১ দিনের মধ্যে বার্ষিক তালিকা দাখিল করতে হবে।",
+            "একমাত্র AGM-এর একুশ দিনের মধ্যে বার্ষিক তালিকা দাখিল করতে হবে।",
+        ),
+    ],
+)
+async def test_bangla_comparisons_respect_word_boundaries_and_spelled_durations(
+    claim: str, source: str
+) -> None:
+    result = await GroundingService(ChatConfig()).map_claims(
+        claim + " [1]", [_chunk(content=source)]
+    )
+    assert result.claims[0]["verification"] == "supported"
+
+
+async def test_changed_bangla_comparison_duration_is_still_unverified() -> None:
+    result = await GroundingService(ChatConfig()).map_claims(
+        "দুই সভার ব্যবধান ২০ মাসের বেশি হতে পারবে না। [1]",
+        [_chunk(content="দুই সভার ব্যবধান পনের মাসের বেশি হতে পারবে না।")],
+    )
+    assert result.claims[0]["verification"] == "unverified"
+
+
 def test_grouped_page_citations_are_all_or_nothing_and_never_cite_page_as_source() -> None:
     from app.modules.conversations.grounding_service import _normalize_page_citations
 

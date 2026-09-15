@@ -897,10 +897,17 @@ class GroundingService:
                     # does not understand (e.g. a sum, nested formula or a contested total).
                     verification = ClaimVerification.UNVERIFIED
                 elif regex.search(
-                    r"\b(longer|shorter|difference|increase|decrease|more|less)\b|পার্থক্য|বেশি|কম",
+                    r"\b(longer|shorter|difference|increase|decrease|more|less)\b|"
+                    r"(?<![\p{L}\p{M}])(?:পার্থক্য|বেশি|কম)(?![\p{L}\p{M}])",
                     draft.text,
                     regex.IGNORECASE,
-                ) and (_amount_set(draft.text) - _amount_set(" ".join(evidence_texts))):
+                ) and (
+                    _amount_set(draft.text)
+                    - (
+                        _amount_set(" ".join(evidence_texts))
+                        | {number for number, _ in _duration_quantities(" ".join(evidence_texts))}
+                    )
+                ):
                     # A newly calculated quantity is not proven by topic similarity.
                     verification = ClaimVerification.UNVERIFIED
                 elif regex.search(

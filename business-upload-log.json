@@ -1,5 +1,20 @@
 {
   "project_id": "f932c9e0-40af-4ff3-8704-ac3e542f2a8c",
+  "deployment_check_2026_09_16": {
+    "baseline_commit": "4044fed",
+    "conversation_id": "e7b12711-ca1f-48e7-9496-dddd228aad05",
+    "live_messages": 2,
+    "english": {"elapsed_ms": 45439, "supported_claims": 9, "total_claims": 10, "coverage": "complete", "remaining_flag": "unsupported corpus-completeness caveat"},
+    "bangla_followup": {"elapsed_ms": 37931, "supported_claims": 2, "total_claims": 4, "citations": 3, "recovery": "recovered", "factual_requirements_only": true},
+    "source_generation": 101,
+    "policy_revision": 10,
+    "local_fixes": ["Whole-word Bengali comparison matching avoids matching কম inside একমাত্র", "Comparison quantities recognize spelled durations while preserving changed-duration rejection", "Prompt v16 limits caveats to material requested gaps and avoids inferring corpus absence from selected excerpts"],
+    "validation": {"focused_backend_passed": 10, "deselected": 92},
+    "new_changes_deployed": false,
+    "quality_rating": {"score_out_of_10": 6, "basis": "Provisional engineering judgment from narrow live cases, not a benchmark or completion percentage"},
+    "remaining_gaps": ["Uneven claim verification", "38–45 second latency in these cases", "Current official RJSC procedures/forms/fees and licence/compliance gaps previously recorded", "Cross-domain and broad compliance quality not established"],
+    "source_or_tax_policy_changes": []
+  },
   "latest_company_message_check": {
     "date": "2026-09-15",
     "baseline_commit": "14a6a97",
