@@ -351,7 +351,7 @@ test("renders grounded citations instead of inferring grounding from answer text
   );
   await userEvent.type(await screen.findByLabelText("Message"), "What is the policy?");
   expect(screen.getByRole("button", { name: "Stream live" })).toHaveAttribute("aria-pressed", "true");
-  await userEvent.click(screen.getByRole("button", { name: "Regular", exact: true }));
+  await userEvent.click(screen.getByRole("button", { name: "Regular" }));
   await userEvent.click(screen.getByRole("button", { name: "Send message" }));
   expect(await screen.findByText("Answer with citations")).toBeInTheDocument();
   expect(screen.getByLabelText("1 citations")).toHaveTextContent("[1] policy.txt");
@@ -472,7 +472,7 @@ test("renders an explicit valid refusal when retrieval evidence is insufficient"
     (await screen.findAllByRole("button", { name: "New test conversation" })).at(-1)!,
   );
   await userEvent.type(await screen.findByLabelText("Message"), "What is not in the corpus?");
-  await userEvent.click(screen.getByRole("button", { name: "Regular", exact: true }));
+  await userEvent.click(screen.getByRole("button", { name: "Regular" }));
   await userEvent.click(screen.getByRole("button", { name: "Send message" }));
   expect(await screen.findByText("Task unanswered / insufficient evidence")).toBeInTheDocument();
   expect(screen.getByText("no retrieval results")).toBeInTheDocument();
