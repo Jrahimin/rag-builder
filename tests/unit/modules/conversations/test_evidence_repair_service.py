@@ -1368,26 +1368,63 @@ async def test_source_range_materialization_preserves_punctuation_and_numbers():
     assert json.loads(calls[1].args[0][1].content)["context"][0]["content"].startswith("L1: Scope:")
 
 
-async def test_adjacent_recovery_keeps_scope_and_rechecks_original_requirements():
+@pytest.mark.parametrize("partial", [False, True])
+@pytest.mark.parametrize("anchor_supported", [False, True])
+async def test_adjacent_recovery_keeps_scope_and_rechecks_original_requirements(
+    partial, anchor_supported
+):
     continuation = chunk("Continuation without governing heading.")
     governing = chunk("The applicable rate is 10% for the current period.")
     calls = []
     result, retrieval, inputs = await run_repair(
         [([continuation], {}), ([governing], {})],
         queries=["Discovery wording mentioning unrelated future years"],
+        requirements=[{"requirement_id": key, "description": key} for key in ("missing", "known")]
+        if partial
+        else None,
         coverage={
             "complete": False,
-            "missing": ["governing heading"],
+            "missing": ["separate unrelated missing topic", "governing heading"],
             "checks": [
                 {
                     "query_index": 0,
-                    "supported": False,
+                    "supported": anchor_supported,
                     "needs_adjacent_context": True,
+                    "description": "Governing heading and scope for this continuation",
+                    **({"requirement_id": "missing"} if partial else {}),
                     "evidence": [
                         {"chunk_id": str(continuation.chunk_id), "start_line": 1, "end_line": 1}
                     ],
                 },
+                *(
+                    [
+                        {
+                            "requirement_id": "known",
+                            "supported": True,
+                            "evidence": [
+                                {
+                                    "chunk_id": str(continuation.chunk_id),
+                                    "start_line": 1,
+                                    "end_line": 1,
+                                }
+                            ],
+                        }
+                    ]
+                    if partial
+                    else []
+                ),
             ],
+            **(
+                {
+                    "partial_answer": {
+                        "scope": "Known scope",
+                        "requirement_ids": ["known"],
+                        "exclusions": ["governing heading"],
+                    }
+                }
+                if partial
+                else {}
+            ),
         },
         final_coverage={
             "complete": True,
@@ -1395,6 +1432,7 @@ async def test_adjacent_recovery_keeps_scope_and_rechecks_original_requirements(
             "checks": [
                 {
                     "query_index": i,
+                    **({"requirement_id": ("missing", "known")[i]} if partial else {}),
                     "supported": True,
                     "evidence": [
                         {"chunk_id": str(governing.chunk_id), "start_line": 1, "end_line": 1}
@@ -1407,9 +1445,12 @@ async def test_adjacent_recovery_keeps_scope_and_rechecks_original_requirements(
         calls=calls,
     )
     assert result.diagnostics["status"] == "recovered"
-    assert len(calls) == 3  # no extra planning call for deterministic neighbours
+    # All-supported/incomplete reviews also classify the unresolved input gap.
+    # Neither path needs another search-planning call for deterministic neighbours.
+    assert len(calls) == 3 + int(anchor_supported)
     request = retrieval.retrieve.call_args_list[1].kwargs
     assert request["adjacent_to"] == [continuation.chunk_id]
+    assert request["query"] == "Governing heading and scope for this continuation"
     assert request["document_id"] == inputs.document_id
     assert request["metadata_filter"] == inputs.metadata_filter
     assert request["as_of"] == inputs.as_of

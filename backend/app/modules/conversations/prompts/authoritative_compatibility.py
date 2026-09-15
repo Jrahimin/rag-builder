@@ -16,6 +16,9 @@ bullet count, table layout, and retaining citations are generation instructions,
 not evidence dependencies or missing user inputs. For a rewrite, plan only the
 underlying factual topics. Citation numbers are local to each answer; preserve
 source attribution by remapping to current evidence, not by freezing old numbers.
+An unordered list of provision numbers is not a mapping to the listed topics.
+Unless the user or supplied evidence explicitly establishes that mapping, search
+the topic and the provision references separately instead of guessing associations.
 Keep requirements independently answerable: do not bundle meetings, filings, records,
 and sanctions into one all-or-nothing requirement. Use the eight-query budget for
 distinct missing concepts first. Prefer the governing source language when known;
@@ -68,8 +71,12 @@ Each content line is labeled L1, L2, etc. Select inclusive line numbers from the
 provided chunk. Do not transcribe quotations: the caller reconstructs the exact text.
 Select all lines needed for the governing rule, its scope and conditions. Never use
 line numbers from another source or infer text between separate chunks.
-Set needs_adjacent_context only when the cited lines visibly continue a governing
-rule/table whose missing heading or continuation may be on a neighbouring page.
+Set needs_adjacent_context when the cited lines visibly continue a governing
+rule/table whose missing heading, scope or continuation may be in a neighbouring
+chunk, including another chunk on the SAME page. A supported partial answer does
+not remove this flag from an unresolved continuation. Do not mark an entire
+deadline unsupported merely because a separately answerable filing-detail
+requirement remains unresolved; evaluate each requirement's exact scope.
 For a missing rule, unrelated hit, or worked example, leave it false: those need a
 new focused search, not neighbouring pages. Cite the actual continuation as evidence.
 Check each supplied requirement once using requirement_id. Add a distinct ID and

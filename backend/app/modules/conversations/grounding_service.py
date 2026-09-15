@@ -905,6 +905,7 @@ class GroundingService:
                     _amount_set(draft.text)
                     - (
                         _amount_set(" ".join(evidence_texts))
+                        | _spelled_number_values(" ".join(evidence_texts))
                         | {number for number, _ in _duration_quantities(" ".join(evidence_texts))}
                     )
                 ):
@@ -1473,8 +1474,7 @@ def _assessment_diagnostic(assessment: CandidateEvidenceAssessment) -> dict[str,
     }
 
 
-def _duration_quantities(text: str) -> set[tuple[int, str]]:
-    # Legal prose commonly spells out durations while answers use digits.
+def _quantity_number_words() -> dict[str, int]:
     words = {
         "one": 1,
         "two": 2,
@@ -1543,6 +1543,41 @@ def _duration_quantities(text: str) -> set[tuple[int, str]]:
         for ones in ("one", "two", "three", "four", "five", "six", "seven", "eight", "nine"):
             for separator in (" ", "-"):
                 words[tens + separator + ones] = words[tens] + words[ones]
+    return words
+
+
+def _spelled_number_values(text: str) -> set[int]:
+    """Recognize isolated integer spellings without truncating larger numbers.
+
+    This only removes a numeric-format mismatch; lexical/semantic verification
+    must still establish the statement. Unsupported compound scales stay closed.
+    """
+    words = _quantity_number_words()
+    # Archaic "বার" means twelve only with a duration unit; alone it also
+    # means an occurrence and must not establish a count of twelve.
+    words.pop("বার", None)
+    alternatives = "|".join(regex.escape(word) for word in sorted(words, key=len, reverse=True))
+    scales = (
+        r"(?:hundred|thousand|million|billion|lakh|crore|[\p{L}\p{M}]*(?:শত|শো)|হাজার|লক্ষ|লাখ|কোটি)"
+    )
+    values = set()
+    for match in regex.finditer(
+        rf"(?<![\p{{L}}\p{{M}}\d])({alternatives})(?:ের|এর)?(?![\p{{L}}\p{{M}}\d])",
+        text,
+        regex.IGNORECASE,
+    ):
+        before, after = text[: match.start()].rstrip(), text[match.end() :].lstrip()
+        if regex.search(rf"{scales}(?:\s+and)?$", before, regex.IGNORECASE) or regex.match(
+            rf"{scales}\b", after, regex.IGNORECASE
+        ):
+            continue
+        values.add(words[match.group(1).lower()])
+    return values
+
+
+def _duration_quantities(text: str) -> set[tuple[int, str]]:
+    # Legal prose commonly spells out durations while answers use digits.
+    words = _quantity_number_words()
     alternatives = "|".join(regex.escape(word) for word in sorted(words, key=len, reverse=True))
     text = regex.sub(
         rf"\b({alternatives})(?=(?:\s+(?:days?\b|months?\b|years?\b)|\s*(?:দিন|মাস|বছর|বৎসর|বত্সর)))",

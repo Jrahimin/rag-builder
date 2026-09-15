@@ -122,6 +122,27 @@ async def test_changed_bangla_comparison_duration_is_still_unverified() -> None:
     assert result.claims[0]["verification"] == "unverified"
 
 
+@pytest.mark.parametrize("number", ["50", "৫০", "51", "৫১"])
+async def test_member_count_comparison_normalizes_words_without_accepting_changed_count(number):
+    result = await GroundingService(ChatConfig()).map_claims(
+        f"সদস্যসংখ্যা {number}-এর বেশি হলে প্রত্যয়ন দিতে হবে। [1]",
+        [_chunk(content="সদস্যসংখ্যা পঞ্চাশের বেশি হলে প্রত্যয়ন দিতে হবে।")],
+    )
+    assert result.claims[0]["verification"] == (
+        "supported" if number in {"50", "৫০"} else "unverified"
+    )
+
+
+@pytest.mark.parametrize(
+    "source", ["one hundred fifty members", "one hundred and fifty members", "দুইশত পঞ্চাশ সদস্য"]
+)
+def test_count_word_normalization_does_not_extract_fifty_from_larger_numbers(source):
+    from app.modules.conversations.grounding_service import _spelled_number_values
+
+    assert 50 not in _spelled_number_values(source)
+    assert 12 not in _spelled_number_values("বার বার আবেদন")
+
+
 def test_grouped_page_citations_are_all_or_nothing_and_never_cite_page_as_source() -> None:
     from app.modules.conversations.grounding_service import _normalize_page_citations
 

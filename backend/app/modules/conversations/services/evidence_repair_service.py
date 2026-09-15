@@ -454,7 +454,7 @@ async def repair_knowledge_evidence(
         AUTHORITATIVE_FOCUSED_PROMPT if authoritative_compatibility else FOCUSED_REPAIR_PROMPT
     )
     diagnostics: dict[str, Any] = {
-        "version": "v19-bounded-planning-and-reference-review"
+        "version": "v20-bounded-continuation-before-partial"
         if authoritative_compatibility
         else EVIDENCE_REPAIR_VERSION,
         "coverage_protocol": "authoritative_compatibility"
@@ -1022,6 +1022,7 @@ async def repair_knowledge_evidence(
                         {
                             "query_index": check.query_index,
                             "supported": check.supported,
+                            "needs_adjacent_context": check.needs_adjacent_context,
                             "chunk_ids": [item.chunk_id for item in check.evidence],
                             "source_ranges": [item.source_range() for item in check.evidence],
                         }
@@ -1039,7 +1040,32 @@ async def repair_knowledge_evidence(
                     )
                 if ranges_valid and verdict.validates(groups, budgeted, requirement_ids):
                     break
-                if ranges_valid and verdict.partial_validates(budgeted, requirement_ids):
+                # A rule can be supported while its applicability still needs
+                # the adjoining heading. Honor the explicit continuation flag
+                # on incomplete reviews instead of testing `supported` alone.
+                recoverable_continuation = (
+                    round_index == 0
+                    and ranges_valid
+                    and bool(verdict.missing)
+                    and getattr(retrieval, "supports_adjacent_retrieval", False) is True
+                    and any(
+                        check.needs_adjacent_context
+                        and check.evidence
+                        and (requirement_ids or 0 <= check.query_index < len(raw_groups))
+                        and any(
+                            item.chunk_id == str(chunk.chunk_id)
+                            for item in check.evidence
+                            for group in raw_groups
+                            for chunk in group
+                        )
+                        for check in verdict.checks
+                    )
+                )
+                if (
+                    ranges_valid
+                    and verdict.partial_validates(budgeted, requirement_ids)
+                    and not recoverable_continuation
+                ):
                     # The reviewer proved a useful independent scope. Preserve the
                     # original incomplete verdict; do not claim full recovery.
                     assert verdict.partial_answer is not None
@@ -1092,8 +1118,7 @@ async def repair_knowledge_evidence(
                     for check in verdict.checks:
                         i = check.query_index
                         if (
-                            check.supported
-                            or not check.needs_adjacent_context
+                            not check.needs_adjacent_context
                             or not check.evidence
                             or not ranges_valid
                             or (not requirement_ids and not 0 <= i < len(raw_groups))
@@ -1117,9 +1142,12 @@ async def repair_knowledge_evidence(
                             # The reviewer may cite a passage found by another
                             # route. Search the actual missing topic, rather than
                             # inheriting an unrelated route's wording or year.
-                            query = verdict.missing[
-                                min(len(adjacent_requests), len(verdict.missing) - 1)
-                            ][:500]
+                            query = (
+                                check.description.strip()
+                                or verdict.missing[
+                                    min(len(adjacent_requests), len(verdict.missing) - 1)
+                                ]
+                            )[:500]
                             adjacent_requests[query] = list(
                                 dict.fromkeys([*adjacent_requests.get(query, []), *anchors])
                             )[:4]
