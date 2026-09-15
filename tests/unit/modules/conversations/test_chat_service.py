@@ -3123,3 +3123,23 @@ def test_authority_refusal_describes_compliance_without_calling_it_calculation(
     mentions_calculation = "final calculation" in content or "চূড়ান্ত হিসাব" in content
     assert mentions_calculation is calculation
     assert "amendment" in content or "সংশোধন" in content
+
+
+@pytest.mark.parametrize("question", ["What filings are required?", "কী দাখিল করতে হবে?"])
+def test_invalid_coverage_response_is_not_reported_as_missing_law(question: str) -> None:
+    from app.modules.conversations.schemas.message import InsufficientEvidenceReason
+
+    service = MagicMock()
+    service._evidence_approach = "authoritative"
+    prepared = MagicMock()
+    prepared.web_search_diagnostics = {}
+    prepared.evidence.reason = InsufficientEvidenceReason.UNRESOLVED_AUTHORITY
+    prepared.retrieval_diagnostics = {
+        "knowledge_repair": {
+            "status": "repair_unavailable",
+            "failure_reason": "invalid_model_response",
+        }
+    }
+    content = ChatService._insufficient_content(service, prepared, question)
+    assert "verification failure" in content or "যাচাই প্রক্রিয়ার ত্রুটি" in content
+    assert "amendment evidence" not in content and "সংশোধনের নির্দিষ্ট প্রমাণ" not in content

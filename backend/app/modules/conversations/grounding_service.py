@@ -1537,7 +1537,7 @@ def _duration_quantities(text: str) -> set[tuple[int, str]]:
                 words[tens + separator + ones] = words[tens] + words[ones]
     alternatives = "|".join(regex.escape(word) for word in sorted(words, key=len, reverse=True))
     text = regex.sub(
-        rf"\b({alternatives})(?=\s+(?:days?\b|months?\b|years?\b|দিন|মাস|বছর))",
+        rf"\b({alternatives})(?=(?:\s+(?:days?\b|months?\b|years?\b)|\s*(?:দিন|মাস|বছর)))",
         lambda match: str(words[match.group().lower()]),
         text,
         flags=regex.IGNORECASE,

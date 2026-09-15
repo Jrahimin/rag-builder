@@ -1483,6 +1483,21 @@ class ChatService:
         status = str(prepared.web_search_diagnostics.get("status") or "")
         bangla = detect_language(question).primary_language == "bn"
         if prepared.evidence.reason is InsufficientEvidenceReason.UNRESOLVED_AUTHORITY:
+            repair = prepared.retrieval_diagnostics.get("knowledge_repair") or {}
+            if (
+                repair.get("status") == "repair_unavailable"
+                and repair.get("failure_reason") == "invalid_model_response"
+            ):
+                return (
+                    "সূত্র যাচাইয়ের ধাপটি বৈধ ফলাফল দেয়নি, তাই নির্ভরযোগ্য উত্তর তৈরি করা "
+                    "যায়নি। এটি যাচাই প্রক্রিয়ার ত্রুটি; প্রয়োজনীয় আইন বা তথ্য সূত্রে নেই—"
+                    "এমন সিদ্ধান্ত নয়।"
+                    if bangla
+                    else "The source verification step did not return a valid result, so a "
+                    "reliable answer could not be generated. This is a verification failure; "
+                    "it does not establish that the required law or information is absent "
+                    "from the sources."
+                )
             if self._evidence_approach != "authoritative" and not _requires_calculation_coverage(
                 question, prepared.chunks
             ):

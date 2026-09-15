@@ -7,6 +7,7 @@ from typing import Literal
 
 import regex
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, model_validator
+from pydantic_core import PydanticCustomError
 
 from app.modules.conversations.ports import ContextChunk
 
@@ -98,21 +99,26 @@ class CoverageVerdict(BaseModel):
     @model_validator(mode="after")
     def require_consistent_completion(self) -> CoverageVerdict:
         if self.gap_kinds and len(self.gap_kinds) != len(self.missing):
-            raise ValueError("gap_kinds must classify every missing item in the same order")
+            raise PydanticCustomError(
+                "coverage_gap_classification_mismatch",
+                "gap_kinds must classify every missing item in the same order",
+            )
         if self.missing_inputs:
-            raise ValueError(
+            raise PydanticCustomError(
+                "coverage_unreviewed_missing_inputs",
                 "List unresolved gaps in missing and mark complete false. "
-                "Only the caller's separate input review may classify missing_inputs."
+                "Only the caller's separate input review may classify missing_inputs.",
             )
         if self.complete and (
             self.missing
             or not self.checks
             or any(not c.supported or not c.evidence for c in self.checks)
         ):
-            raise ValueError(
+            raise PydanticCustomError(
+                "coverage_inconsistent_completion",
                 "A complete verdict must have no missing requirements and source evidence for "
                 "every check. Unsuccessful discovery routes may cite another route's governing "
-                "evidence; otherwise mark the verdict incomplete."
+                "evidence; otherwise mark the verdict incomplete.",
             )
         return self
 

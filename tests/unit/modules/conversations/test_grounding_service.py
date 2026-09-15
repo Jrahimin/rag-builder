@@ -70,6 +70,7 @@ def test_duration_quantities_align_bangla_and_english_without_converting_units()
     "source",
     [
         "পনের মাস আঠারো মাস ত্রিশ দিনের নব্বই দিন একুশ দিনের",
+        "পনেরমাস আঠারোমাস ত্রিশদিনের নব্বইদিন একুশদিনের",
         "fifteen months eighteen months thirty days ninety days twenty-one days",
     ],
 )

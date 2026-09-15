@@ -779,6 +779,39 @@ async def test_verifier_cannot_authorize_unbound_or_incomplete_evidence(fault, m
     assert not result.missing_inputs
 
 
+@pytest.mark.parametrize(
+    ("fields", "code"),
+    [
+        ({"gap_kinds": ["source_rule", "source_rule"]}, "coverage_gap_classification_mismatch"),
+        ({"missing_inputs": ["Private date"]}, "coverage_unreviewed_missing_inputs"),
+        ({"complete": True}, "coverage_inconsistent_completion"),
+    ],
+)
+async def test_coverage_failure_codes_survive_bounded_validation_without_exposing_input(
+    fields, code
+):
+    from pydantic import ValidationError
+
+    invalid = {"complete": False, "missing": ["Missing rule"], "checks": [], **fields}
+    llm = AsyncMock()
+    llm.generate.return_value = ChatCompletionResult(
+        content=json.dumps(invalid),
+        provider="fake",
+        model="test",
+        provider_version="1",
+        finish_reason="stop",
+        usage=ChatUsage(1, 1),
+    )
+    with pytest.raises(ValidationError) as caught:
+        await _validated_completion(llm, [], schema=CoverageVerdict, max_tokens=1024)
+    assert llm.generate.await_count == 2
+    errors = caught.value.errors(include_input=False, include_url=False)
+    assert [{"type": e["type"], "loc": list(e["loc"])} for e in errors] == [
+        {"type": code, "loc": []}
+    ]
+    assert "Private date" not in json.dumps(errors)
+
+
 async def test_proven_conditional_rules_do_not_search_for_missing_personal_facts():
     source = chunk("A refund is available if the purchase was within 45 days.")
     verdict = {

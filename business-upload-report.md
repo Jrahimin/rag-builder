@@ -1,6 +1,6 @@
 # Bangladesh company-law readiness audit — 14 September 2026
 
-**Readiness is not certified. Latest bounded check: 3 live conversations and 12 focused local tests.** The broad business query still fails coverage proof validation. A duration-verification regression was also isolated and corrected locally. Two targeted fixes await deployment; no tax source, source lifecycle or proven setting changed. The latest section below supersedes earlier deployment-status statements.
+**Readiness is not certified. Latest bounded check of deployed e63b393: three fresh live conversations and 24 focused local tests.** The broad business query still fails coverage consistency validation before answer generation. The Bangla deadline answer is substantively correct but only 4/6 claims are verified; the tax-registration answer passes 6/6. Narrow diagnostic, failure-message and joined-Bangla-duration fixes are local and await deployment. No live source, lifecycle, relationship or tax setting changed. The latest section supersedes earlier deployment-status statements.
 
 The final checked inventory at source generation101 has38 ready documents:19 Active and19 Draft. Business sources comprise11 Active and19 Draft; the8 tax sources remain as found. The policy is still revision10, ID `0c58c848-3c5e-4796-a5cc-736a0aaf7d6c`, effective hash `94941a1a3bd5`, resolution `af420b288290`.
 
@@ -150,3 +150,22 @@ Testing stopped after three live conversations and twelve focused unit tests, as
 **Verification:** 12 focused tests passed (169 deselected); lint, formatting and diff checks passed. Tests cover the actual word/digit equivalence, continued rejection of a changed deadline, exact retry-context preservation, unknown/mismatched evidence remaining untouched, and repeated-invalid-range rejection. No broad test suite or repeated live refinement cycle ran.
 
 These two fixes are **local, not deployed**. They do not establish a passing live broad-company answer. Existing RJSC workflow/forms/fee, licence/VAT and authority gaps remain documented. Full readiness remains false; the next required action is deployment and one bounded confirmation of the repaired paths, not another open-ended audit.
+
+
+## Bounded check of deployment e63b393
+
+| Fresh conversation | Result | Time |
+|---|---|---|
+| Original business EN — `58bb96a2-fbbe-463b-bc30-942565f67f59` | Refused: root coverage `value_error`, 9 admitted, 0 selected | 69.279 s |
+| Sections 81/36 BN — `a6ef2366-2952-4340-8454-bcee7d0fc51a` | Correct core deadlines; 4/6 claims supported | 10.901 s |
+| Tax registration EN — `72abfbad-b806-4813-a10f-210e31b3b159` | Grounded; 6/6 claims supported | 8.234 s |
+
+The broad query now fails a root coverage-consistency invariant, not the previously recorded range selector error. The response exposes only `loc: []` and `type: value_error`; it cannot tell us whether gap classifications, missing-input self-classification or completeness contradicted the evidence. A transport-success envelope is not answer success. No final answer was generated. Local changes give those invariant failures distinct safe error codes and make the refusal accurately describe a verification failure instead of asserting missing legal amendments. Strict proof validation and the existing one-retry limit remain intact; these changes do not repair or certify the model's underlying verdict.
+
+The active statutory text's section 190 contains the joined spelling “ত্রিশদিন”. The duration checker now accepts that spelling as equivalent to 30 days. Focused tests preserve rejection of changed deadlines and unbound evidence. The final selection passed **24 tests**, with 270 deselected; lint, formatting and diff checks passed. No large suite or repeated broad live test was run.
+
+The [official RJSC returns page](https://roc.gov.bd/pages/static-pages/6922dbbc933eb65569e0c2d5), official title “রিটার্ন ফাইলিং”, is dated 13 August 2015. Its annual-filing subsection is useful, but suspect cross-references elsewhere (including Form XXVIII references 12/191) prevent treating the entire page as reconciled current authority. It was not uploaded or activated.
+
+The [official DNCC procedure page](https://dncc.gov.bd/pages/static-pages/6922e06d933eb65569e27049) shows “ট্রেড লাইসেন্স ইস্যু ও নবায়ন পদ্ধতি” and a 17 July 2025 update date, but its current procedure body is empty, with no table, document image or iframe. It cannot provide a clean replacement for the clipped local capture. Source `f5cbfdfb-3aa6-4d92-8e7e-95e3c602af82` remains Draft r2 with its existing language, dates and DNCC jurisdiction. No metadata or relationship mutation was made.
+
+Still unresolved: broad recovery reliability, the two Bangla grounding flags, current RJSC workflow/forms/fee reconciliation, and licence/VAT/protected tax-authority gaps recorded above. The latest three local corrections require deployment; this run does not certify broad company-law readiness. Tax sources and policy revision 10 were preserved.
