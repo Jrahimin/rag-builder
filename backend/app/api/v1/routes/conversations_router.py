@@ -6,6 +6,7 @@ import asyncio
 import json
 import uuid
 from collections.abc import AsyncIterator
+from contextlib import suppress
 
 import structlog
 from fastapi import APIRouter, Depends, Query, Request, status
@@ -31,6 +32,36 @@ from app.platform.providers.errors import ProviderError
 
 router = APIRouter()
 logger = structlog.get_logger(__name__)
+
+
+async def _with_sse_heartbeats(
+    events: AsyncIterator[str], *, interval: float = 15.0
+) -> AsyncIterator[str]:
+    """Keep proxies reading while the next event waits on retrieval or a provider."""
+    pending = None
+    try:
+        yield ": connected\n\n"
+        while True:
+            if pending is None:
+                pending = asyncio.create_task(anext(events))
+            done, _ = await asyncio.wait({pending}, timeout=interval)
+            if not done:
+                yield ": keep-alive\n\n"
+                continue
+            try:
+                event = pending.result()
+            except StopAsyncIteration:
+                return
+            pending = None
+            yield event
+    finally:
+        if pending is not None:
+            pending.cancel()
+            await asyncio.gather(pending, return_exceptions=True)
+        close = getattr(events, "aclose", None)
+        if close is not None:
+            with suppress(asyncio.CancelledError):
+                await close()
 
 
 def _message_response(message: object, conversation: object) -> MessageResponse:
@@ -255,4 +286,8 @@ async def stream_message(
                 error_payload = json.dumps({"event": "error", "message": _sse_error_message(exc)})
                 yield f"data: {error_payload}\n\n"
 
-    return StreamingResponse(event_generator(), media_type="text/event-stream")
+    return StreamingResponse(
+        _with_sse_heartbeats(event_generator()),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no"},
+    )

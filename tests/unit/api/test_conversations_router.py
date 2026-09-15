@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
-from app.api.v1.routes.conversations_router import _sse_error_message
+from app.api.v1.routes.conversations_router import _sse_error_message, _with_sse_heartbeats
 from app.core.exceptions import BadRequestError, ServiceUnavailableError
 from app.platform.providers.errors import ProviderError
 
@@ -38,3 +40,40 @@ def test_sse_error_message_maps_service_unavailable() -> None:
         )
     )
     assert "temporarily unavailable" in message
+
+
+async def test_heartbeat_preserves_pending_generation_and_event_order():
+    release = asyncio.Event()
+    calls = []
+
+    async def events():
+        calls.append("started")
+        await release.wait()
+        yield 'data: {"event":"done"}\n\n'
+
+    stream = _with_sse_heartbeats(events(), interval=0.001)
+    assert await anext(stream) == ": connected\n\n"
+    assert await anext(stream) == ": keep-alive\n\n"
+    assert await anext(stream) == ": keep-alive\n\n"
+    release.set()
+    assert await anext(stream) == 'data: {"event":"done"}\n\n'
+    with pytest.raises(StopAsyncIteration):
+        await anext(stream)
+    assert calls == ["started"]
+
+
+async def test_heartbeat_disconnect_cancels_and_closes_upstream():
+    closed = asyncio.Event()
+
+    async def events():
+        try:
+            await asyncio.Event().wait()
+            yield "unreachable"
+        finally:
+            closed.set()
+
+    stream = _with_sse_heartbeats(events(), interval=0.001)
+    await anext(stream)
+    await anext(stream)
+    await stream.aclose()
+    assert closed.is_set()

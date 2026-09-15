@@ -2094,7 +2094,7 @@ function MessagesTab({
   const stream = useStreamMessage(projectId, conversationId);
   const [content, setContent] = useState("");
   const [expected, setExpected] = useState("");
-  const [delivery, setDelivery] = useState<"regular" | "stream">("regular");
+  const [delivery, setDelivery] = useState<"regular" | "stream">("stream");
   const [streamedContent, setStreamedContent] = useState("");
   const [progressMessage, setProgressMessage] = useState("Searching sources");
   const historyRef = useRef<HTMLDivElement>(null);
@@ -2360,6 +2360,7 @@ function MessagesTab({
                           className={delivery === mode ? "is-active" : undefined}
                           disabled={send.isPending || stream.isPending}
                           onClick={() => setDelivery(mode)}
+                          aria-pressed={delivery === mode}
                         >
                           {mode === "regular" ? "Regular" : "Stream live"}
                         </button>

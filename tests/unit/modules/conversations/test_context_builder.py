@@ -7,11 +7,29 @@ import uuid
 import pytest
 
 from app.core.config import ChatConfig
-from app.modules.conversations.context_builder import ContextBuilder
+from app.modules.conversations.context_builder import ContextBuilder, compliance_overview_requested
 from app.modules.conversations.ports import ContextChunk
 from app.platform.domain.content_hash import content_hash
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.mark.parametrize(
+    "question, expected",
+    [
+        (
+            "What legal, regulatory, tax, and annual compliance obligations does it still have?",
+            True,
+        ),
+        ("Which filings are required for an inactive company?", True),
+        ("কোম্পানির কী কী বাধ্যবাধকতা আছে?", True),
+        ("বার্ষিক পরিপালন চেকলিস্ট দিন", True),
+        ("When is the first AGM due?", False),
+        ("Calculate income tax on taxable income of 900000.", False),
+    ],
+)
+def test_compliance_overview_requires_review(question, expected):
+    assert compliance_overview_requested(question) is expected
 
 
 def _chunk(

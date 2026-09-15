@@ -20,7 +20,14 @@ An unordered list of provision numbers is not a mapping to the listed topics.
 Unless the user or supplied evidence explicitly establishes that mapping, search
 the topic and the provision references separately instead of guessing associations.
 Keep requirements independently answerable: do not bundle meetings, filings, records,
-and sanctions into one all-or-nothing requirement. Use the eight-query budget for
+and sanctions into one all-or-nothing requirement. Accounting-record maintenance,
+preparing accounts,
+auditor appointment and accounts filing are separate obligations, not one requirement.
+For a broad overview, plan the principal independently useful duties within the
+budget. Attach authority, deadline and consequence to their relevant duty when
+available; do not add blanket requirements for every form, amendment, exception or
+enforcement route unless the question or evidence makes them material. Missing
+optional detail must not suppress a proven duty. Use the eight-query budget for
 distinct missing concepts first. Prefer the governing source language when known;
 add an alternate-language route only when it adds discovery value and budget remains.
 Do not combine languages or several independent obligations into one query.
@@ -90,6 +97,19 @@ and supplied evidence. Do not create a missing-evidence gap for a mistake introd
 only by the planner, or add a replacement ID while leaving that mistaken check false.
 If the user's own premise is contradicted, establish the correction with source proof.
 This does not permit dropping a requested topic or accepting an unevidenced rule.
+If a planner bundles independently answerable duties, narrow the existing check's
+description to the evidenced duty and keep all unresolved duties explicitly in
+missing and partial_answer.exclusions. Mark the narrowed check supported only with
+exact proof of that duty and its material applicability conditions. The verdict
+must remain incomplete. For example, evidence for preparing audited accounts can
+support that limited rule even if auditor appointment or retention is not established.
+Never apply this separation to interacting calculation dependencies or omit a
+condition that could change whether the stated rule applies.
+For a compliance overview, verify entity-type exclusions and commencement conditions
+for each proposed duty. A general opening subsection does not establish applicability
+when the provision continues beyond the supplied extract. Request adjacent context
+for its remaining subsections, including closing exceptions; do not present the duty
+as conditional on a user fact already supplied (such as private-company status).
 Searches are discovery routes,
 not independent source requirements: an empty or unsuccessful route can be supported
 by governing evidence found by another route. Relevant words, a matching

@@ -120,6 +120,20 @@ def comparison_requested(question: str) -> bool:
     )
 
 
+def compliance_overview_requested(question: str) -> bool:
+    """A checklist needs coverage review even when individual hits are relevant."""
+    return bool(
+        re.search(
+            r"\b(?:compliance\s+(?:obligations|requirements|checklist)|"
+            r"(?:all|what|which)\s+(?:\w+[,/-]?\s+){0,8}(?:obligations|filings))\b|"
+            r"(?:কী\s*কী|কি\s*কি|সকল|সব)\s*.{0,60}(?:বাধ্যবাধকতা|দাখিল|পরিপালন)|"
+            r"(?:কমপ্লায়েন্স|কমপ্লায়েন্স|পরিপালন)\s*(?:চেকলিস্ট|তালিকা)",
+            question,
+            re.IGNORECASE,
+        )
+    )
+
+
 def historical_scope_requested(question: str, evidence_approach: str) -> bool:
     """Use the existing resolver for an explicit first-turn historical cutoff.
 

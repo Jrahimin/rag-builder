@@ -229,6 +229,12 @@ Local company checks recovered more legal conditions but still exposed missing a
 
 The bounded run ended after eight local messages. The final Bangla rewrite gave three cited bullets in 34.780 seconds with complete coverage and 2/3 supported claims. Source continuity improved enough to retrieve both section 36 chunks 48 and 49; the certificate statement remains unverified. No production settings or sources changed, and no broad integration suite ran.
 
+## Timeout and broad compliance review — 16 September 2026
+
+The supplied 524 was caused by a 127.537-second synchronous turn; its answer was saved three seconds after Cloudflare timed out. Read-only live inspection confirms the retry also failed, with an internal evidence-review timeout incorrectly presented as provider unavailability. The first answer was AGM-only and inadequate for the broad question. Review/recovery consumed 115.375 seconds; output generation consumed only 7.995 seconds. Increasing answer tokens is not the remedy.
+
+Local fixes add SSE keep-alives/default streaming, distinguish review timeout errors, trigger completeness review for broad compliance questions, reserve focused dependency context, and retain independently proven duties in a partial answer. Production sources and tax settings were untouched. Twenty-seven targeted checks passed; no integration suite ran. Two local generations were used. The final streamed run completed in 157.165 seconds and covered five scoped areas, but it is **not a readiness pass**: it generated 11 years where section 181(5) says 12, correctly flagged by the verifier. Latency and numerical generation remain unresolved. See [the incident record](artifacts/company-readiness/timeout-investigation-2026-09-16.md) for IDs, timings, decisions and limitations. API consumers must use `/messages/stream` for long work; the existing synchronous JSON route is unchanged.
+
 ## Resource allocation review — 15 September 2026
 
 The earlier 2,048-token planning allowance is demonstrably insufficient for the failed broad question: reasoning exhausted the entire allowance before structured output. OpenAI counts reasoning and visible output together. Local planning now starts at up to 4,096 tokens and has one truncation retry up to 8,192. The default LLM ceiling and both environment examples now use 8,192. Every stage still respects explicit lower deployment caps; the coverage reviewer remains at 4,096. This supersedes the smaller budgets described in the preceding deployment check, without changing its historical test results.

@@ -5,14 +5,35 @@
     "conversation_id": "19fb0889-2d35-4280-8b53-74f3f4a727e6",
     "status": "affected_company_cases_passed",
     "new_local_messages": 2,
-    "broad_english": {"elapsed_ms": 87860, "coverage": "complete", "supported_claims": 11, "total_claims": 11, "recovery": "recovered", "adjacent_recovery_rounds": 1},
-    "bangla_certificate": {"elapsed_ms": 26993, "coverage": "not_assessed", "supported_claims": 3, "total_claims": 3, "grounded": true},
+    "broad_english": {
+      "elapsed_ms": 87860,
+      "coverage": "complete",
+      "supported_claims": 11,
+      "total_claims": 11,
+      "recovery": "recovered",
+      "adjacent_recovery_rounds": 1
+    },
+    "bangla_certificate": {
+      "elapsed_ms": 26993,
+      "coverage": "not_assessed",
+      "supported_claims": 3,
+      "total_claims": 3,
+      "grounded": true
+    },
     "fix": "Comparison guards normalize isolated English/Bangla number words, including পঞ্চাশ versus 50/৫০; changed counts and partial compound-scale matches remain rejected.",
-    "validation": {"focused_grounding_cases_passed": 10, "lint": "passed", "full_integration_suite_run": false},
+    "validation": {
+      "focused_grounding_cases_passed": 10,
+      "lint": "passed",
+      "full_integration_suite_run": false
+    },
     "configuration_changed_this_followup": false,
     "source_generation": 4,
     "policy_revision": 3,
-    "limits": ["Broad query latency remains high", "Available evidence inventory still includes uncited passages in some answers", "These passing cases are not comprehensive legal-source certification"]
+    "limits": [
+      "Broad query latency remains high",
+      "Available evidence inventory still includes uncited passages in some answers",
+      "These passing cases are not comprehensive legal-source certification"
+    ]
   },
   "local_focused_check_2026_09_16": {
     "project_id": "6cd8b5f4-7273-4b10-be84-064c130c8303",
@@ -29,7 +50,13 @@
     "status": "bounded_local_check_complete_with_known_gaps",
     "local_message_checks": 8,
     "final_conversation_id": "2474a3bf-0afb-4a69-81da-95a2e7c08a9d",
-    "final_bangla_rewrite": {"elapsed_ms": 34780, "coverage": "complete", "supported_claims": 2, "total_claims": 3, "citations": 2},
+    "final_bangla_rewrite": {
+      "elapsed_ms": 34780,
+      "coverage": "complete",
+      "supported_claims": 2,
+      "total_claims": 3,
+      "citations": 2
+    },
     "readiness_signoff": false,
     "production_changed": false,
     "full_integration_suite_run": false,
@@ -39,15 +66,43 @@
     "baseline_commit": "4044fed",
     "conversation_id": "e7b12711-ca1f-48e7-9496-dddd228aad05",
     "live_messages": 2,
-    "english": {"elapsed_ms": 45439, "supported_claims": 9, "total_claims": 10, "coverage": "complete", "remaining_flag": "unsupported corpus-completeness caveat"},
-    "bangla_followup": {"elapsed_ms": 37931, "supported_claims": 2, "total_claims": 4, "citations": 3, "recovery": "recovered", "factual_requirements_only": true},
+    "english": {
+      "elapsed_ms": 45439,
+      "supported_claims": 9,
+      "total_claims": 10,
+      "coverage": "complete",
+      "remaining_flag": "unsupported corpus-completeness caveat"
+    },
+    "bangla_followup": {
+      "elapsed_ms": 37931,
+      "supported_claims": 2,
+      "total_claims": 4,
+      "citations": 3,
+      "recovery": "recovered",
+      "factual_requirements_only": true
+    },
     "source_generation": 101,
     "policy_revision": 10,
-    "local_fixes": ["Whole-word Bengali comparison matching avoids matching কম inside একমাত্র", "Comparison quantities recognize spelled durations while preserving changed-duration rejection", "Prompt v16 limits caveats to material requested gaps and avoids inferring corpus absence from selected excerpts"],
-    "validation": {"focused_backend_passed": 10, "deselected": 92},
+    "local_fixes": [
+      "Whole-word Bengali comparison matching avoids matching কম inside একমাত্র",
+      "Comparison quantities recognize spelled durations while preserving changed-duration rejection",
+      "Prompt v16 limits caveats to material requested gaps and avoids inferring corpus absence from selected excerpts"
+    ],
+    "validation": {
+      "focused_backend_passed": 10,
+      "deselected": 92
+    },
     "new_changes_deployed": false,
-    "quality_rating": {"score_out_of_10": 6, "basis": "Provisional engineering judgment from narrow live cases, not a benchmark or completion percentage"},
-    "remaining_gaps": ["Uneven claim verification", "38–45 second latency in these cases", "Current official RJSC procedures/forms/fees and licence/compliance gaps previously recorded", "Cross-domain and broad compliance quality not established"],
+    "quality_rating": {
+      "score_out_of_10": 6,
+      "basis": "Provisional engineering judgment from narrow live cases, not a benchmark or completion percentage"
+    },
+    "remaining_gaps": [
+      "Uneven claim verification",
+      "38–45 second latency in these cases",
+      "Current official RJSC procedures/forms/fees and licence/compliance gaps previously recorded",
+      "Cross-domain and broad compliance quality not established"
+    ],
     "source_or_tax_policy_changes": []
   },
   "latest_company_message_check": {
@@ -55,13 +110,35 @@
     "baseline_commit": "14a6a97",
     "conversation_id": "6a45608e-60b4-4576-8e7f-95b199cd6224",
     "live_messages": 2,
-    "english_table": {"elapsed_ms": 58756, "supported_claims": 9, "claims": 10, "coverage": "complete", "citations": 4},
-    "bangla_rewrite": {"elapsed_ms": 50358, "admitted_prior_passages": 4, "result": "repair_unavailable", "validation_error": "coverage_unreviewed_missing_inputs"},
+    "english_table": {
+      "elapsed_ms": 58756,
+      "supported_claims": 9,
+      "claims": 10,
+      "coverage": "complete",
+      "citations": 4
+    },
+    "bangla_rewrite": {
+      "elapsed_ms": 50358,
+      "admitted_prior_passages": 4,
+      "result": "repair_unavailable",
+      "validation_error": "coverage_unreviewed_missing_inputs"
+    },
     "confirmed_output_reserve": 8192,
-    "validation": {"backend_passed": 16, "frontend_passed": 1, "typescript": "passed", "formatting": "passed", "backend_lint": "passed"},
+    "validation": {
+      "backend_passed": 16,
+      "frontend_passed": 1,
+      "typescript": "passed",
+      "formatting": "passed",
+      "backend_lint": "passed"
+    },
     "source_generation": 101,
     "policy_revision": 10,
-    "local_fixes": ["Keep table citation inheritance within rows and ignore trailing pipe-only fragments", "Exclude presentation requirements from factual coverage planning", "Contain narrow-screen diagnostic overflow", "Avoid renderer loop on incomplete list markers"],
+    "local_fixes": [
+      "Keep table citation inheritance within rows and ignore trailing pipe-only fragments",
+      "Exclude presentation requirements from factual coverage planning",
+      "Contain narrow-screen diagnostic overflow",
+      "Avoid renderer loop on incomplete list markers"
+    ],
     "deployment_status": "new_fixes_not_deployed",
     "readiness": "not_certified_followup_still_failed_live",
     "source_or_policy_changes": []
@@ -5447,5 +5524,41 @@
       "format": "passed"
     },
     "reference": "https://developers.openai.com/api/reference/cli/resources/responses/methods/create"
+  },
+  "timeout_investigation_2026_09_16": {
+    "production_project_id": "f932c9e0-40af-4ff3-8704-ac3e542f2a8c",
+    "production_conversation_id": "e2d4440d-99ab-42f3-b8f3-811674e14dad",
+    "first_assistant_id": "92ca1e2c-e886-44ee-81e1-89cfce44a6fe",
+    "ray_id": "a3bae1819a98a472",
+    "first_latency_ms": 127537,
+    "coverage_recovery_ms": 115375,
+    "generation_ms": 7995,
+    "retry_live_result": "repair_unavailable: timeout; misleading provider-unavailable message",
+    "first_answer_assessment": "AGM-only partial; 10 supported, 13 unsupported, 1 unverified segments; not a complete compliance answer",
+    "changes": [
+      "SSE periodic keep-alives and streaming console default",
+      "Explicit evidence_review_timeout error",
+      "Broad compliance coverage trigger",
+      "Focused dependency context budget reservation",
+      "Independently scoped partial obligations and compact exclusions"
+    ],
+    "production_mutations": false,
+    "production_generations": 0,
+    "local_conversation_id": "338b2a1c-72f9-4126-9faa-4a92df70ed07",
+    "local_latency_ms": 157165,
+    "local_generations": 2,
+    "local_supported_claims": 28,
+    "local_claims": 42,
+    "local_result": "Transport success; five partial obligation areas; NOT a quality/readiness pass",
+    "remaining": [
+      "Section 181(5) retention mistranslated as 11 instead of 12 years; verifier flagged it",
+      "Review latency remains high",
+      "Local tax/VAT and current RJSC coverage incomplete",
+      "Regular JSON endpoint still susceptible to proxy timeout",
+      "Production proxy heartbeat forwarding not yet verified"
+    ],
+    "focused_tests_passed": 27,
+    "integration_suite_run": false,
+    "report": "artifacts/company-readiness/timeout-investigation-2026-09-16.md"
   }
 }

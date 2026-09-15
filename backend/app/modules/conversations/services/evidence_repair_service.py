@@ -454,7 +454,7 @@ async def repair_knowledge_evidence(
         AUTHORITATIVE_FOCUSED_PROMPT if authoritative_compatibility else FOCUSED_REPAIR_PROMPT
     )
     diagnostics: dict[str, Any] = {
-        "version": "v20-bounded-continuation-before-partial"
+        "version": "v21-independent-partial-obligations"
         if authoritative_compatibility
         else EVIDENCE_REPAIR_VERSION,
         "coverage_protocol": "authoritative_compatibility"
@@ -776,6 +776,13 @@ async def repair_knowledge_evidence(
                     if requirement_ids
                     else ordered
                 )
+                if requirement_ids and len(queries) >= 4:
+                    # Broad initial hits must not consume every slot before a
+                    # focused dependency can contribute its strongest evidence.
+                    # Keep the existing admitted span when an ID is rediscovered.
+                    existing = {c.chunk_id: c for c in reversed(ordered)}
+                    heads = [existing[g[0].chunk_id] for g in groups if g]
+                    ordered = [*heads, *ordered]
                 # Two searches can admit different spans of the same chunk. Use
                 # one intact admitted span; never merge them or compare the first
                 # span with a later duplicate's content in the mutation guard.
@@ -1258,7 +1265,9 @@ async def repair_knowledge_evidence(
             result.failure = exc
         elif isinstance(exc, TimeoutError):
             result.failure = ProviderTimeoutError(
-                "Evidence review exceeded its time limit.", provider_name=llm.provider_name
+                "Evidence review exceeded its time limit.",
+                provider_name=llm.provider_name,
+                context={"reason": "evidence_review_timeout"},
             )
         diagnostics["status"] = "repair_unavailable"
         diagnostics["failure_reason"] = (

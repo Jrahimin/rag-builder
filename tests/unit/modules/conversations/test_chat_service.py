@@ -682,12 +682,16 @@ async def test_send_message_llm_failure_persists_failed_execution(
 
 
 @pytest.mark.parametrize("streamed", [False, True])
-@pytest.mark.parametrize("quota", [False, True])
+@pytest.mark.parametrize("quota", [False, True, "review_timeout"])
 async def test_recovery_provider_failure_is_not_a_successful_evidence_refusal(
     session, conversation_repository, message_repository, streamed, quota
 ):
-    error_class = ProviderQuotaError if quota else ProviderError
-    error = error_class("Internal provider failure", provider_name="echo")
+    error_class = ProviderQuotaError if quota is True else ProviderError
+    error = error_class(
+        "Internal provider failure",
+        provider_name="echo",
+        context={"reason": "evidence_review_timeout"} if quota == "review_timeout" else {},
+    )
     llm = EchoLLMProvider(model="test", provider_version="1")
     llm.generate = AsyncMock(side_effect=error)
     service = _service(session, conversation_repository, message_repository, llm)
@@ -710,7 +714,11 @@ async def test_recovery_provider_failure_is_not_a_successful_evidence_refusal(
                 identifier, MessageSendRequest(content="Calculate the current refund for 100.")
             )
     assert failure.value.code == (
-        "llm_provider_quota_exhausted" if quota else "llm_provider_unavailable"
+        "evidence_review_timeout"
+        if quota == "review_timeout"
+        else "llm_provider_quota_exhausted"
+        if quota
+        else "llm_provider_unavailable"
     )
     saved = message_repository.add.call_args_list[-1].args[0]
     assert saved.finish_reason == "error"

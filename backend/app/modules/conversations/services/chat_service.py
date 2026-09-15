@@ -30,6 +30,7 @@ from app.modules.conversations.citation_snapshots import build_citation_snapshot
 from app.modules.conversations.context_builder import (
     ContextBuilder,
     comparison_requested,
+    compliance_overview_requested,
     historical_scope_requested,
     reviewed_work_count,
 )
@@ -776,6 +777,11 @@ class ChatService:
         )
         repair_usage: ChatUsage | None = None
         comparison_review = evidence.sufficient and comparison_requested(retrieval_query)
+        compliance_review = (
+            self._evidence_approach == "authoritative"
+            and evidence.sufficient
+            and compliance_overview_requested(retrieval_query)
+        )
         calculation_review = evidence.sufficient and _requires_calculation_coverage(
             retrieval_query, chunks
         )
@@ -796,11 +802,12 @@ class ChatService:
             or applicability_review
             or relevance_repair
             or comparison_review
+            or compliance_review
         ) and scope_current_authority is None:
             # Similarity to a worked example does not prove that its category,
             # period or complete rule schedule applies to a new calculation.
             # An unsuccessful review must not fall back to those original hits.
-            if calculation_review or applicability_review or comparison_review:
+            if calculation_review or applicability_review or comparison_review or compliance_review:
                 evidence = replace(
                     evidence,
                     sufficient=False,
@@ -828,6 +835,8 @@ class ChatService:
             repair_diagnostics["trigger"] = (
                 "calculation_completeness"
                 if calculation_review
+                else "compliance_overview"
+                if compliance_review
                 else "comparison_coverage"
                 if comparison_review
                 else "current_rule_applicability"
@@ -1595,6 +1604,13 @@ class ChatService:
         return self._llm_config.temperature
 
     def _provider_unavailable(self, exc: ProviderError) -> ServiceUnavailableError:
+        if exc.context.get("reason") == "evidence_review_timeout":
+            return ServiceUnavailableError(
+                message="Evidence review reached its time limit before an answer could be "
+                "verified. Try one part of the question at a time.",
+                code="evidence_review_timeout",
+                context={"retryable": True},
+            )
         if isinstance(exc, ProviderQuotaError):
             return ServiceUnavailableError(
                 message="The language model provider has no API credits available. "

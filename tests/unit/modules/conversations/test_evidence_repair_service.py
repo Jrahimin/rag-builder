@@ -802,6 +802,63 @@ async def test_final_budget_must_retain_every_dependency():
     assert not result.selected
 
 
+async def test_broad_recovery_reserves_budget_for_focused_dependencies():
+    focused = [chunk(f"Governing duty {i} applies.") for i in range(4)]
+    initial = [chunk(f"Broad introductory context {i}.") for i in range(4)]
+    requirements = [{"requirement_id": f"R{i}", "description": f"Duty {i}"} for i in range(4)]
+    result, _, _ = await run_repair(
+        [([source], {}) for source in focused],
+        queries=[f"duty {i}" for i in range(4)],
+        requirements=requirements,
+        selected_context=initial,
+        config=ChatConfig(max_context_chunks=4),
+        coverage={
+            "complete": True,
+            "missing": [],
+            "checks": [
+                {
+                    "requirement_id": f"R{i}",
+                    "supported": True,
+                    "evidence": [{"chunk_id": str(source.chunk_id), "quote": source.content}],
+                }
+                for i, source in enumerate(focused)
+            ],
+        },
+    )
+    assert result.diagnostics["status"] == "recovered"
+    assert {c.chunk_id for c in result.selected} == {c.chunk_id for c in focused}
+
+
+async def test_narrowed_partial_duty_keeps_unresolved_details_explicit():
+    source = chunk("Directors must present audited accounts at the annual meeting.")
+    result, _, _ = await run_repair(
+        [([source], {})],
+        queries=["accounts"],
+        requirements=[{"requirement_id": "R1", "description": "Accounts and auditor appointment"}],
+        coverage={
+            "complete": False,
+            "missing": ["Auditor appointment"],
+            "checks": [
+                {
+                    "requirement_id": "R1",
+                    "description": "Present audited accounts at the AGM",
+                    "supported": True,
+                    "evidence": [{"chunk_id": str(source.chunk_id), "quote": source.content}],
+                }
+            ],
+            "partial_answer": {
+                "scope": "Accounts presentation only",
+                "requirement_ids": ["R1"],
+                "exclusions": ["Auditor appointment"],
+            },
+        },
+        input_gap_kinds=["source_rule"],
+    )
+    assert result.diagnostics["status"] == "partial_answer"
+    assert result.partial_answer["scope"][0]["description"] == "Present audited accounts at the AGM"
+    assert result.partial_answer["pending"] == ["Auditor appointment"]
+
+
 @pytest.mark.parametrize("queries", [[], [" "], ["q"] * 9, ["q" * 501]])
 async def test_invalid_plans_never_search_or_authorize_generation(queries):
     result, retrieval, _ = await run_repair([], queries=queries)
