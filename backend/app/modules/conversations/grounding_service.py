@@ -1597,6 +1597,26 @@ def _answer_segments(answer: str) -> list[str]:
     Inheritance only supplies candidate evidence.  Every sentence is still
     verified independently by ``map_claims`` before it can be grounded.
     """
+    # A table is not a prose paragraph: its final citation belongs to that row,
+    # not every earlier uncited sentence in the table. Remove column labels
+    # before introducing row boundaries so they cannot become factual claims.
+    lines = answer.splitlines()
+    normalized_lines: list[str] = []
+    for index, line in enumerate(lines):
+        is_divider = "|" in line and _MARKDOWN_TABLE_DIVIDER_PATTERN.fullmatch(line.strip())
+        is_header = (
+            "|" in line
+            and index + 1 < len(lines)
+            and "|" in lines[index + 1]
+            and _MARKDOWN_TABLE_DIVIDER_PATTERN.fullmatch(lines[index + 1].strip())
+        )
+        if is_divider or is_header:
+            continue
+        if line.strip().startswith("|") and line.strip().endswith("|"):
+            normalized_lines.extend(["", line, ""])
+        else:
+            normalized_lines.append(line)
+    answer = "\n".join(normalized_lines)
     segments: list[str] = []
     for paragraph in regex.split(r"\n\s*\n", answer):
         if _MARKDOWN_HEADING_PATTERN.fullmatch(paragraph.strip()):
@@ -1626,7 +1646,7 @@ def _answer_segments(answer: str) -> list[str]:
             if leading is not None and paragraph_segments:
                 paragraph_segments[-1] = f"{paragraph_segments[-1]} {leading.group(1).strip()}"
                 segment = leading.group(2).strip()
-            if segment:
+            if segment and not regex.fullmatch(r"[|\s]+", segment):
                 paragraph_segments.append(segment)
         if paragraph_segments:
             final_citations = _CITATION_PATTERN.findall(paragraph_segments[-1])

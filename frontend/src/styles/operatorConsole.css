@@ -2331,6 +2331,10 @@ button.inline-citation:focus-visible {
   color: var(--muted);
   text-align: center;
 }
+.lab-message-inspector > * {
+  min-width: 0;
+  max-width: 100%;
+}
 .lab-inspector-idle svg {
   color: #7ea0d4;
 }

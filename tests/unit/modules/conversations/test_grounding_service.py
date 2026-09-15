@@ -631,6 +631,37 @@ async def test_polarity_only_answer_has_no_verifiable_claims() -> None:
     assert result.claims_status == "no_verifiable_claims"
 
 
+async def test_table_citations_stay_with_their_own_row() -> None:
+    from app.modules.conversations.grounding_service import _answer_segments
+
+    answer = (
+        "| Item | Rule |\n| --- | --- |\n"
+        "| AGM | Meetings occur every 15 months. First meeting within 18 months. [1] |\n"
+        "| Accounts | Accounts must be filed within 30 days. [2] |"
+    )
+    segments = _answer_segments(answer)
+    assert "[1]" in segments[0] and "[2]" not in segments[0]
+    result = await GroundingService(ChatConfig(minimum_claim_token_coverage=0.3)).map_claims(
+        answer,
+        [
+            _chunk(content="AGM meetings occur every 15 months. First meeting within 18 months."),
+            _chunk(content="Accounts must be filed within 30 days."),
+        ],
+    )
+    assert result.grounded is True
+
+
+def test_uncited_table_row_does_not_borrow_next_rows_citation() -> None:
+    from app.modules.conversations.grounding_service import _answer_segments
+
+    segments = _answer_segments(
+        "| Item | Rule |\n| --- | --- |\n"
+        "| AGM | Meetings occur every 15 months. |\n"
+        "| Accounts | Accounts must be filed within 30 days. [2] |"
+    )
+    assert "[2]" not in segments[0]
+
+
 async def test_inherited_citation_does_not_ground_an_unrelated_preceding_claim() -> None:
     service = GroundingService(ChatConfig(minimum_claim_token_coverage=0.3))
     result = await service.map_claims(

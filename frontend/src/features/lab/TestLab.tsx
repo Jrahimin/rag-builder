@@ -2531,7 +2531,7 @@ function MessageContent({
       continue;
     }
 
-    if (/^(?:[-*+]\s+|\d+[.)]\s+)/.test(line)) {
+    if (/^(?:[-*+]\s+|\d+[.)]\s+)\S/.test(line)) {
       const ordered = /^\d+[.)]\s+/.test(line);
       const items: string[] = [];
       while (cursor < lines.length) {

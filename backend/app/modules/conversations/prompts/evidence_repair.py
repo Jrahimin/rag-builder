@@ -8,6 +8,9 @@ Return only JSON with queries, requirements, and coverage:
 {"requirement_id":"R1","description":"needed fact or rule","supported":false,
 "needs_adjacent_context":false,"evidence":[]}]}}.
 Requirements are stable semantic dependencies of the original question, NOT searches.
+Language, brevity, bullet count, layout and citation formatting are generation
+instructions, never source requirements or missing inputs. For rewrites, review
+the underlying facts and remap citations to current evidence.
 Describe each dependency briefly (about 8 to 16 words). Name the needed fact or rule,
 not a calculation result or proof of a supplied personal input. A formula can be
 evidenced before another requirement establishes an input needed to evaluate it.

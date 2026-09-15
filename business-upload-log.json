@@ -1,5 +1,21 @@
 {
   "project_id": "f932c9e0-40af-4ff3-8704-ac3e542f2a8c",
+  "latest_company_message_check": {
+    "date": "2026-09-15",
+    "baseline_commit": "14a6a97",
+    "conversation_id": "6a45608e-60b4-4576-8e7f-95b199cd6224",
+    "live_messages": 2,
+    "english_table": {"elapsed_ms": 58756, "supported_claims": 9, "claims": 10, "coverage": "complete", "citations": 4},
+    "bangla_rewrite": {"elapsed_ms": 50358, "admitted_prior_passages": 4, "result": "repair_unavailable", "validation_error": "coverage_unreviewed_missing_inputs"},
+    "confirmed_output_reserve": 8192,
+    "validation": {"backend_passed": 16, "frontend_passed": 1, "typescript": "passed", "formatting": "passed", "backend_lint": "passed"},
+    "source_generation": 101,
+    "policy_revision": 10,
+    "local_fixes": ["Keep table citation inheritance within rows and ignore trailing pipe-only fragments", "Exclude presentation requirements from factual coverage planning", "Contain narrow-screen diagnostic overflow", "Avoid renderer loop on incomplete list markers"],
+    "deployment_status": "new_fixes_not_deployed",
+    "readiness": "not_certified_followup_still_failed_live",
+    "source_or_policy_changes": []
+  },
   "status": "bounded_deployment_review_complete_new_fixes_awaiting_deployment",
   "files": [
     {

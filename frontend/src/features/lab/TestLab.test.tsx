@@ -323,6 +323,8 @@ test("renders grounded citations instead of inferring grounding from answer text
         "| Requirement | Deadline |",
         "| --- | --- |",
         "| Refund request | Thirty days [1] |",
+        "",
+        "- ",
       ].join("\n"),
       grounded: true,
       citations: [
