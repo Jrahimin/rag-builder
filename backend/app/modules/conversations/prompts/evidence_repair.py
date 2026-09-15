@@ -1,6 +1,6 @@
 """Versioned, domain-neutral search repair instructions."""
 
-EVIDENCE_REPAIR_VERSION = "v22"
+EVIDENCE_REPAIR_VERSION = "v23"
 EVIDENCE_REPAIR_PROMPT = """Plan focused knowledge-base searches to repair an incomplete answer.
 Return only JSON with queries, requirements, and coverage:
 {"queries":["query"],"requirements":[{"requirement_id":"R1","description":"needed fact or rule"}],
@@ -37,10 +37,11 @@ Require the applicable rebate formula and limits, not independent proof of that 
 Do not require a particular publication type unless the user requests it or a known
 same-period authority conflict makes it necessary. Current official guidance can itself
 establish operative rules when it explicitly states their applicable period and conditions.
-Plan at most four necessary evidence concepts. When the relevant sources use another
-language, search each concept separately in the user's language and the source language.
-Do not combine the languages into one query; each wording is its own discovery route.
-For a simple fact or rule question, one concept with two language routes is usually enough.
+Keep requirements independently answerable rather than bundling several topics into
+one all-or-nothing check. Use the eight-query budget for distinct missing concepts
+first. Prefer the source language when known; add an alternate-language route only
+when it adds discovery value and budget remains. Do not combine languages or several
+independent topics into one query. A simple question needs one or two routes.
 For named-source comparisons, preserve requested work names in focused searches.
 The rule-specific instructions below apply only when governing rules or calculations
 are necessary. Independent historical accounts do not need to agree to support a comparison.

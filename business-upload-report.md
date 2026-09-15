@@ -1,6 +1,6 @@
 # Bangladesh company-law readiness audit — 14 September 2026
 
-**Readiness is not certified. Latest bounded check of deployed e63b393: three fresh live conversations and 24 focused local tests.** The broad business query still fails coverage consistency validation before answer generation. The Bangla deadline answer is substantively correct but only 4/6 claims are verified; the tax-registration answer passes 6/6. Narrow diagnostic, failure-message and joined-Bangla-duration fixes are local and await deployment. No live source, lifecycle, relationship or tax setting changed. The latest section supersedes earlier deployment-status statements.
+**Latest check: 15 September 2026, deployment 59efb82.** The attached broad query now gives a partial answer; it is not fully grounded. Four live messages isolated evidence-loss, follow-up citation and conversational-status defects. Targeted local fixes are recorded below. Tax regression passed 3/3 claims. No tax source, lifecycle or project setting changed; the new fixes await deployment.
 
 The final checked inventory at source generation101 has38 ready documents:19 Active and19 Draft. Business sources comprise11 Active and19 Draft; the8 tax sources remain as found. The policy is still revision10, ID `0c58c848-3c5e-4796-a5cc-736a0aaf7d6c`, effective hash `94941a1a3bd5`, resolution `af420b288290`.
 
@@ -169,3 +169,26 @@ The [official RJSC returns page](https://roc.gov.bd/pages/static-pages/6922dbbc9
 The [official DNCC procedure page](https://dncc.gov.bd/pages/static-pages/6922e06d933eb65569e27049) shows “ট্রেড লাইসেন্স ইস্যু ও নবায়ন পদ্ধতি” and a 17 July 2025 update date, but its current procedure body is empty, with no table, document image or iframe. It cannot provide a clean replacement for the clipped local capture. Source `f5cbfdfb-3aa6-4d92-8e7e-95e3c602af82` remains Draft r2 with its existing language, dates and DNCC jurisdiction. No metadata or relationship mutation was made.
 
 Still unresolved: broad recovery reliability, the two Bangla grounding flags, current RJSC workflow/forms/fee reconciliation, and licence/VAT/protected tax-authority gaps recorded above. The latest three local corrections require deployment; this run does not certify broad company-law readiness. Tax sources and policy revision 10 were preserved.
+
+## Application response audit — 15 September 2026
+
+The supplied API response (`844efe7d-66fa-47da-bf3e-416d442bcee8`, answer `6f6004b0-71d8-4f5a-a1c5-ca73e03e851e`) now produces a useful partial answer. It took 69.501 seconds, 122,453 input tokens, four LLM calls and nine rerank calls. There were 25 supported, five unverified and ten unsupported claims. The unverified-rate metric alone must not be read as total accuracy. Some unsupported segments describe limitations rather than legal duties.
+
+| Live case | Result | Round trip |
+|---|---|---|
+| Sections 36/81/190 in English | Relevant rules found; grounding incomplete | 77.589 s |
+| Same answer shortened in Bangla | Three bullets; 4/6 supported; stale citation number | 51.981 s |
+| Thanks | Appropriate reply; console falsely reports grounding failure | 1.273 s |
+| Tax registration, fresh English conversation | Grounded, 3/3 claims | 25.640 s |
+
+The first three use conversation `eac40b9e-372c-4333-8257-cf5739613474`; tax uses `e6fab706-2b2e-4564-97c8-e5e03a5ee12e`. This is four messages, not a broad benchmark. The attached response supplies the broad-query baseline without another expensive repeat.
+
+**Primary defect:** authoritative recovery cleared initially admitted evidence when it skipped initial review. It now retains safe units for the final exact proof and still removes unresolved/superseded evidence. Different admitted spans of the same chunk are deduplicated before reconciliation without combining text. Final admission provenance matches exact content. Focused tests cover retained evidence, excluded unresolved evidence and rediscovered chunks with different spans.
+
+**Other targeted changes:** split independent requirements within the existing search budget; avoid mandatory bilingual pairs that crowd out distinct concepts; make partial-answer instructions domain-neutral and concise; require current-turn citation remapping on follow-ups; recognize statutory “বার বৎসর” and year variants; and suppress the inspector's false failure for explicitly classified non-knowledge replies without claims. Citation checks, authority guards, source lifecycles, model choices, retrieval thresholds and project policy revision 10 remain intact.
+
+The follow-up copied [1] for AGM timing even though current [1] was section 36 and current [2] was section 81. That is a real attribution problem, not a reason to lower grounding thresholds. The year-normalization defect is different: official sections 181/182 use “বার বৎসর”, “এক বৎসর” and “পাঁচ বৎসর”, which should match their numeric English equivalents.
+
+Embedding identity matches the active index (Cohere embed-v4.0, 1024 dimensions, set 3). Named statutory provisions are retrievable. The trace therefore does not establish that bad embeddings or indexing are the main cause. It does show 18 document-cap exclusions (configured cap six); that is a tuning candidate, not permission to increase all budgets. The 19 Draft exclusions are intentional. Unreconciled official source and relationship gaps remain as recorded in earlier sections.
+
+The local backend selection passes 28 tests (172 deselected); the inspector file passes 10 tests. TypeScript, Prettier, Ruff and diff checks pass. Frontend dependencies were restored offline from the existing lockfile; the restricted shell could not resolve dependency links, so those frontend checks ran with approved filesystem access. No large suite was run. New fixes are **not deployed**, and their live latency/quality improvement is not yet measured. Full company compliance and cross-domain competitive readiness are not certified. Follow-up evidence reuse remains a performance opportunity; preserving the protected legal project's policy is separate from the application's factual and multi-perspective capabilities.

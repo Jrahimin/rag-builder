@@ -101,6 +101,19 @@ def test_grouped_page_citations_are_all_or_nothing_and_never_cite_page_as_source
         assert _normalize_page_citations(marker, chunks) == marker
 
 
+def test_statutory_year_spellings_preserve_duration_checks() -> None:
+    from app.modules.conversations.grounding_service import _duration_quantities
+
+    assert _duration_quantities("বার বৎসর এক বৎসরের পাঁচ বৎসর") == {
+        (12, "year"),
+        (1, "year"),
+        (5, "year"),
+    }
+    assert _duration_quantities("১২ বত্সর") == _duration_quantities("twelve years")
+    assert _duration_quantities("বার বার আবেদন") == set()
+    assert _duration_quantities("বার বৎসর") != _duration_quantities("15 years")
+
+
 async def test_numbered_markdown_heading_does_not_become_a_factual_claim() -> None:
     result = await GroundingService(ChatConfig()).map_claims(
         "### 1. Tax breakdown\n\nThe rebate rate is 10%. [1]",

@@ -454,7 +454,7 @@ async def repair_knowledge_evidence(
         AUTHORITATIVE_FOCUSED_PROMPT if authoritative_compatibility else FOCUSED_REPAIR_PROMPT
     )
     diagnostics: dict[str, Any] = {
-        "version": "v17-authoritative-partial"
+        "version": "v18-retained-authoritative-evidence"
         if authoritative_compatibility
         else EVIDENCE_REPAIR_VERSION,
         "coverage_protocol": "authoritative_compatibility"
@@ -506,10 +506,13 @@ async def repair_knowledge_evidence(
             initial_source_ids = {f"E{i}": str(c.chunk_id) for i, c in enumerate(selected, 1)}
             initial_labels = {identifier: label for label, identifier in initial_source_ids.items()}
             if not review_initial:
-                # Unresolved amendments already prevent initial completeness.
-                # Plan missing dependencies without a redundant review of unsafe
-                # excerpts. Exact provider/content work still remains reusable.
-                selected = []
+                # Skipping the initial review does not invalidate already admitted
+                # evidence. Retain safe units for the final proof instead of making
+                # recovery rediscover them. Reconcile new authority records below.
+                selected = [
+                    c for c in selected if c.metadata.get("authority_status") != "unresolved"
+                ]
+            diagnostics["retained_initial_chunk_ids"] = [str(c.chunk_id) for c in selected]
             completion = await _validated_completion(
                 llm,
                 [
@@ -772,6 +775,13 @@ async def repair_knowledge_evidence(
                     if requirement_ids
                     else ordered
                 )
+                # Two searches can admit different spans of the same chunk. Use
+                # one intact admitted span; never merge them or compare the first
+                # span with a later duplicate's content in the mutation guard.
+                unique_ordered: dict[uuid.UUID, ContextChunk] = {}
+                for candidate in ordered:
+                    unique_ordered.setdefault(candidate.chunk_id, candidate)
+                ordered = list(unique_ordered.values())
                 reconciled = remove_superseded_provisions(ordered, records)
                 original_content = {c.chunk_id: c.content for c in ordered}
                 if any(c.content != original_content[c.chunk_id] for c in reconciled):
@@ -1198,13 +1208,15 @@ async def repair_knowledge_evidence(
             diagnostics["proof_chunk_ids"] = [str(c.chunk_id) for c in budgeted]
             result.selected = budgeted
             assessments = {a.chunk_id: a for d in decisions for a in d.candidate_assessments}
-            units_by_id = {u.chunk_id: u for d in decisions for u in d.admitted_units}
+            units_by_id = {(u.chunk_id, u.content): u for d in decisions for u in d.admitted_units}
             result.decision = replace(
                 decisions[0],
                 sufficient=True,
                 reason=None,
                 admitted_units=tuple(
-                    units_by_id[c.chunk_id] for c in budgeted if c.chunk_id in units_by_id
+                    units_by_id[(c.chunk_id, c.content)]
+                    for c in budgeted
+                    if (c.chunk_id, c.content) in units_by_id
                 ),
                 candidate_assessments=tuple(assessments.values()),
             )

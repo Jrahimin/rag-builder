@@ -2446,7 +2446,9 @@ function MessageCard({
           <button className="message-card__inspect" type="button" onClick={() => onInspect?.(0)}>
             {refusal
               ? "View refusal details"
-              : `${citations.length} citation${citations.length === 1 ? "" : "s"} · view evidence`}
+              : message.metadata?.non_knowledge_turn === true
+                ? "View response details"
+                : `${citations.length} citation${citations.length === 1 ? "" : "s"} · view evidence`}
           </button>
         </div>
       )}
@@ -2495,6 +2497,29 @@ export function MessageInspector({
     : [];
   const claims = message.claims ?? [];
   const failedClaims = claims.filter((claim) => claim.verification !== "supported");
+  if (
+    message.metadata?.non_knowledge_turn === true &&
+    !refusal &&
+    !partial &&
+    !citations.length &&
+    !claims.length
+  ) {
+    return (
+      <aside className="lab-message-inspector" aria-label="Grounding details">
+        <div className="lab-message-inspector__heading">
+          <div>
+            <p className="eyebrow">Conversation</p>
+            <h3>Conversational reply</h3>
+          </div>
+        </div>
+        <p>Source verification is not required for this non-knowledge response.</p>
+        {isLatestRun && run && <p>{run.elapsedMs} ms round trip</p>}
+        {isLatestRun && run?.expected.trim() && !expectedMatches && (
+          <p>The answer did not contain the expected words. This is separate from grounding.</p>
+        )}
+      </aside>
+    );
+  }
   return (
     <aside className="lab-message-inspector" aria-label="Grounding details">
       <div className="lab-message-inspector__heading">

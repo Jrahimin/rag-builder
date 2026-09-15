@@ -58,6 +58,25 @@ function inspect(answer: Message, expected = "", passed = false) {
 }
 
 describe("message grounding explanation", () => {
+  test("backend-classified conversational replies do not produce false grounding failures", () => {
+    inspect({
+      ...message,
+      content: "You're welcome.",
+      citations: [],
+      claims: [],
+      metadata: { non_knowledge_turn: true },
+    });
+    expect(screen.getByRole("heading", { name: "Conversational reply" })).toBeInTheDocument();
+    expect(screen.queryByText("No valid citations returned")).not.toBeInTheDocument();
+    expect(screen.queryByText("needs attention")).not.toBeInTheDocument();
+  });
+
+  test("a non-knowledge flag cannot hide an actual unverified claim", () => {
+    inspect({ ...message, metadata: { non_knowledge_turn: true } });
+    expect(screen.queryByRole("heading", { name: "Conversational reply" })).not.toBeInTheDocument();
+    expect(screen.getByText("needs attention")).toBeInTheDocument();
+  });
+
   test("shows the unresolved component and does not promote a legacy refusal pass", () => {
     inspect(
       {

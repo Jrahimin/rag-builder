@@ -388,6 +388,47 @@ def chunk(text: str, **metadata: object) -> ContextChunk:
     )
 
 
+@pytest.mark.parametrize("initial_unresolved", [False, True])
+@pytest.mark.parametrize("same_chunk", [False, True])
+async def test_authoritative_recovery_retains_only_safe_initial_proof(
+    initial_unresolved, same_chunk
+):
+    initial = chunk("The inspection period is 12 months.")
+    if initial_unresolved:
+        initial = replace(initial, metadata={**initial.metadata, "authority_status": "unresolved"})
+    discovered = chunk("The renewal fee is stated separately.")
+    if same_chunk:
+        discovered = replace(discovered, chunk_id=initial.chunk_id)
+    calls = []
+    result, retrieval, _ = await run_repair(
+        [([discovered], {})],
+        queries=["inspection period"],
+        requirements=[{"requirement_id": "period", "description": "Inspection period"}],
+        selected_context=[initial],
+        coverage={
+            "complete": True,
+            "missing": [],
+            "checks": [
+                {
+                    "requirement_id": "period",
+                    "supported": True,
+                    "evidence": [{"chunk_id": str(initial.chunk_id), "quote": initial.content}],
+                }
+            ],
+        },
+        calls=calls,
+    )
+    reviewed = json.loads(calls[1].args[0][1].content)["context"]
+    assert any(initial.content in c.get("content", "") for c in reviewed) is not initial_unresolved
+    assert result.diagnostics["retained_initial_chunk_ids"] == (
+        [] if initial_unresolved else [str(initial.chunk_id)]
+    )
+    assert bool(result.selected) is not initial_unresolved
+    if result.selected:
+        assert [c.chunk_id for c in result.selected] == [initial.chunk_id]
+    assert retrieval.retrieve.await_count == 1
+
+
 async def run_repair(
     branches,
     *,
