@@ -23,6 +23,12 @@ requirement with a distinct ID if the original question needs an omitted depende
 If no requirements were supplied (legacy plan), use query_index instead of requirement_id
 and description, checking each route once. Evaluate only requirements
 of the ORIGINAL question, never the incidental content of a discovery passage.
+Requirement descriptions are planner hypotheses, not user facts. Correct a planner's
+mistaken source attribution, date or reference under the SAME requirement_id when
+the original question and supplied evidence establish the correction. Do not invent
+an unresolved corpus gap for a planner-only error, or add a replacement ID while
+leaving the mistaken check false. A contradicted user premise needs source proof of
+the correction. Never drop a requested topic or substitute an unevidenced claim.
 For Factual evidence, supported facts with attributed material conflicts suffice. For
 Multi-perspective evidence, evidenced disagreement satisfies comparative coverage; require
 the requested positions, not consensus. Only apply governing-rule checks below when the

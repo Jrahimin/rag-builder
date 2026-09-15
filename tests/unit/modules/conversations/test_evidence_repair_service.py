@@ -429,6 +429,64 @@ async def test_authoritative_recovery_retains_only_safe_initial_proof(
     assert retrieval.retrieve.await_count == 1
 
 
+@pytest.mark.parametrize("output_cap", [2048, 4096, 6144, 8192, 16384])
+async def test_authoritative_planner_truncation_uses_larger_bounded_retry(output_cap):
+    source = chunk("Refunds are allowed within 30 days.")
+    calls = []
+    result, retrieval, _ = await run_repair(
+        [([source], {})],
+        queries=["refund deadline"],
+        calls=calls,
+        planning_truncated=True,
+        max_output_tokens=output_cap,
+    )
+    assert calls[0].kwargs["max_tokens"] == min(4096, output_cap)
+    if output_cap <= 4096:
+        assert len(calls) == 1
+        assert result.diagnostics["status"] == "incomplete_plan"
+        assert result.diagnostics["planning_finish_reason"] == "length"
+        assert not result.selected
+        assert retrieval.retrieve.await_count == 0
+    else:
+        assert calls[1].kwargs["max_tokens"] == min(8192, output_cap)
+        assert result.diagnostics["planning_finish_reason"] == "stop"
+        assert result.diagnostics["status"] == "recovered"
+        assert retrieval.retrieve.await_count == 1
+        assert len(calls) == 3  # truncated plan, complete plan, source coverage
+
+
+@pytest.mark.parametrize("valid_proof", [False, True])
+async def test_corrected_planner_reference_keeps_identity_and_requires_source_proof(valid_proof):
+    source = chunk("Section 7: Annual renewal is due within 30 days.")
+    result, _, _ = await run_repair(
+        [([source], {})],
+        queries=["annual renewal deadline"],
+        user_query="What is the annual renewal deadline?",
+        requirements=[{"requirement_id": "renewal", "description": "Section 3 renewal deadline"}],
+        coverage={
+            "complete": True,
+            "missing": [],
+            "checks": [
+                {
+                    "requirement_id": "renewal",
+                    "description": "Section 7 annual renewal deadline",
+                    "supported": True,
+                    "evidence": [
+                        {
+                            "chunk_id": str(source.chunk_id),
+                            "quote": source.content if valid_proof else "Renewal is optional.",
+                        }
+                    ],
+                }
+            ],
+        },
+    )
+    assert bool(result.selected) is valid_proof
+    if valid_proof:
+        assert result.diagnostics["status"] == "recovered"
+        assert result.partial_answer is None
+
+
 async def run_repair(
     branches,
     *,
@@ -448,6 +506,9 @@ async def run_repair(
     requirements=None,
     input_gap_kinds=None,
     input_gap_error=None,
+    planning_truncated=False,
+    max_output_tokens=1024,
+    user_query="Calculate from gross salary and eligible investment for this period.",
 ):
     config = config or ChatConfig()
     queries = (
@@ -482,6 +543,11 @@ async def run_repair(
         }
     )
     llm.generate.side_effect = [
+        *(
+            [replace(plan, content="", finish_reason="length", usage=ChatUsage(10, 2048))]
+            if planning_truncated
+            else []
+        ),
         plan,
         verification_error
         or replace(
@@ -538,7 +604,7 @@ async def run_repair(
         for items, diagnostics in branches
     ]
     inputs = EffectiveRetrievalInputs(
-        query="Calculate from gross salary and eligible investment for this period.",
+        query=user_query,
         document_id=uuid.uuid4(),
         metadata_filter={"region": "local"},
         as_of=datetime(2026, 7, 1, tzinfo=UTC),
@@ -559,7 +625,7 @@ async def run_repair(
         grounding=GroundingService(config),
         chat_config=config,
         retrieval_config=RetrievalConfig(),
-        max_output_tokens=1024,
+        max_output_tokens=max_output_tokens,
     )
     if calls is not None:
         calls.extend(llm.generate.call_args_list)

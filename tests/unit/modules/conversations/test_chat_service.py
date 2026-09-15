@@ -3126,7 +3126,10 @@ def test_authority_refusal_describes_compliance_without_calling_it_calculation(
 
 
 @pytest.mark.parametrize("question", ["What filings are required?", "কী দাখিল করতে হবে?"])
-def test_invalid_coverage_response_is_not_reported_as_missing_law(question: str) -> None:
+@pytest.mark.parametrize("status", ["repair_unavailable", "incomplete_plan"])
+def test_invalid_coverage_response_is_not_reported_as_missing_law(
+    question: str, status: str
+) -> None:
     from app.modules.conversations.schemas.message import InsufficientEvidenceReason
 
     service = MagicMock()
@@ -3136,7 +3139,7 @@ def test_invalid_coverage_response_is_not_reported_as_missing_law(question: str)
     prepared.evidence.reason = InsufficientEvidenceReason.UNRESOLVED_AUTHORITY
     prepared.retrieval_diagnostics = {
         "knowledge_repair": {
-            "status": "repair_unavailable",
+            "status": status,
             "failure_reason": "invalid_model_response",
         }
     }

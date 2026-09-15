@@ -121,6 +121,7 @@ class SearchService:
         *,
         for_public_response: bool = False,
         adjacent_to: list[uuid.UUID] | None = None,
+        cited_chunk_ids: list[uuid.UUID] | None = None,
     ) -> SearchResponse:
         started = time.perf_counter()
         top_k = min(
@@ -193,6 +194,13 @@ class SearchService:
             if adjacent_to is not None
             else None
         )
+
+        if cited_chunk_ids is not None:
+            if adjacent_to is not None:
+                raise ValueError("Choose cited passages or adjacent passages, not both")
+            # A recall constraint only. The normal current-build, project, source
+            # lifecycle, metadata and temporal filters still apply in retrieval.
+            adjacent_ids = tuple(dict.fromkeys(cited_chunk_ids))[:24]
 
         candidate_top_k = min(max(top_k * 2, top_k + 5), 100)
         if source_scope.effective_mode is SourcePolicyMode.ENFORCE:

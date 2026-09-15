@@ -69,6 +69,10 @@ from app.modules.conversations.schemas.message import (
     SourceProvenance,
 )
 from app.modules.conversations.services.evidence_repair_service import repair_knowledge_evidence
+from app.modules.conversations.services.rewrite_retrieval import (
+    retrieve_rewrite_context,
+    rewrite_citation_ids,
+)
 from app.modules.conversations.services.web_evidence_review import (
     review_web_evidence,
     scoped_web_query,
@@ -609,6 +613,11 @@ class ChatService:
                 before_id=user_message.id,
             )
         loaded = [message for message in loaded if message.id != user_message.id]
+        citation_chunks = {
+            message.id: list(message.citations or [])
+            for message in loaded
+            if message.role is MessageRole.ASSISTANT
+        }
         # Capture ORM-backed fields before closing the read transaction.
         generation_history = [
             PromptHistoryMessage(role=message.role, content=message.content) for message in loaded
@@ -708,12 +717,27 @@ class ChatService:
                 diagnostics={"status": status},
             )
         else:
-            retrieval_result = await self._retrieval.retrieve(
-                query=retrieval_query,
-                top_k=self._retrieval_config.default_top_k,
-                document_id=resolved.retrieval.document_id,
-                metadata_filter=resolved.retrieval.metadata_filter or None,
-                as_of=resolved.retrieval.as_of,
+            seeds = (
+                rewrite_citation_ids(
+                    current_content,
+                    resolved.resolution.outcome,
+                    resolved.resolution.relation,
+                    bounded_history,
+                    citation_chunks,
+                )
+                if resolved.resolution.temporal_intent.kind.value == "none"
+                else []
+            )
+            retrieval_result = await retrieve_rewrite_context(
+                self._retrieval,
+                seeds=seeds,
+                request={
+                    "query": retrieval_query,
+                    "top_k": self._retrieval_config.default_top_k,
+                    "document_id": resolved.retrieval.document_id,
+                    "metadata_filter": resolved.retrieval.metadata_filter or None,
+                    "as_of": resolved.retrieval.as_of,
+                },
             )
         chunks = retrieval_result.chunks
         retrieval_ms = int((time.perf_counter() - retrieval_started) * 1000)
@@ -1175,6 +1199,8 @@ class ChatService:
         )
         if not self._store_candidate_trace:
             candidate_diagnostics.pop("assessments", None)
+        if prepared.retrieval_diagnostics.get("rewrite_recall"):
+            metadata["rewrite_recall"] = prepared.retrieval_diagnostics["rewrite_recall"]
         metadata.update(
             {
                 "response_mode": self._chat_config.response_mode.value,
@@ -1484,7 +1510,7 @@ class ChatService:
         bangla = detect_language(question).primary_language == "bn"
         if prepared.evidence.reason is InsufficientEvidenceReason.UNRESOLVED_AUTHORITY:
             repair = prepared.retrieval_diagnostics.get("knowledge_repair") or {}
-            if (
+            if repair.get("status") == "incomplete_plan" or (
                 repair.get("status") == "repair_unavailable"
                 and repair.get("failure_reason") == "invalid_model_response"
             ):

@@ -66,6 +66,7 @@ class SearchServiceRetrievalAdapter:
     """Maps retrieval SearchService to the conversations RetrievalPort."""
 
     supports_adjacent_retrieval = True
+    supports_cited_retrieval = True
     supports_batch_retrieval = True
 
     def __init__(
@@ -154,6 +155,7 @@ class SearchServiceRetrievalAdapter:
         metadata_filter: dict[str, str] | None = None,
         as_of: datetime | None = None,
         adjacent_to: list[uuid.UUID] | None = None,
+        cited_chunk_ids: list[uuid.UUID] | None = None,
     ) -> ContextRetrievalResult:
         response = await self._search_service.search(
             SearchRequest(
@@ -164,6 +166,7 @@ class SearchServiceRetrievalAdapter:
                 as_of=as_of,
             ),
             adjacent_to=adjacent_to,
+            **({"cited_chunk_ids": cited_chunk_ids} if cited_chunk_ids is not None else {}),
         )
         return ContextRetrievalResult(
             chunks=[ContextChunk.from_retrieval_result(result) for result in response.results],

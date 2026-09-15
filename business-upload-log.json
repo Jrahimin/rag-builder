@@ -1,6 +1,6 @@
 {
   "project_id": "f932c9e0-40af-4ff3-8704-ac3e542f2a8c",
-  "status": "targeted_application_fixes_locally_verified_awaiting_deployment",
+  "status": "bounded_deployment_review_complete_new_fixes_awaiting_deployment",
   "files": [
     {
       "file": "BIDA business FAQ.md",
@@ -4721,355 +4721,91 @@
   },
   "latest_bounded_validation": {
     "date": "2026-09-15",
-    "baseline_local_commit": "59efb82",
-    "status": "targeted_application_fixes_locally_verified_awaiting_deployment",
+    "baseline_local_commit": "1fe315e",
+    "status": "bounded_deployment_review_complete_new_fixes_awaiting_deployment",
     "source_generation": 101,
     "policy_revision": 10,
-    "scope": "Source-based conversational application; company/tax cases are the available live corpus, not a cross-domain benchmark.",
-    "attached_response": {
-      "conversation_id": "844efe7d-66fa-47da-bf3e-416d442bcee8",
-      "message_id": "6f6004b0-71d8-4f5a-a1c5-ca73e03e851e",
-      "result": "partial_answer",
-      "grounded": false,
-      "milliseconds": 69501,
-      "input_tokens": 122453,
-      "output_tokens": 5397,
-      "claim_counts": {
-        "supported": 25,
-        "unverified": 5,
-        "unsupported": 10
-      },
-      "embedding": {
-        "model": "embed-v4.0",
-        "provider": "cohere",
-        "dimensions": 1024,
-        "set_version": 3,
-        "identity_status": "matched"
-      },
-      "lifecycle_counts": {
-        "llm_calls": 4,
-        "rerank_calls": 9,
-        "embedded_texts": 255,
-        "embedding_calls": 13,
-        "content_cache_hits": 489,
-        "embedding_cache_hits": 165,
-        "structured_response_retries": 1,
-        "recovery_query_embedding_batches": 1
-      },
-      "evidence_funnel": {
-        "cited": 4,
-        "fused": 100,
-        "deduped": 12,
-        "outcome": "answered",
-        "admitted": 4,
-        "assessed": 45,
-        "hydrated": 40,
-        "reranked": 40,
-        "loss_reasons": {
-          "deduped": {
-            "result_limit": 10,
-            "document_limit": 18
-          },
-          "admitted": {
-            "no_aligned_independent_signal": 3
-          },
-          "reranked": {
-            "below_rerank_score_threshold": 60
-          }
-        },
-        "rerank_status": "applied",
-        "grounding_path": "candidate_wise",
-        "observe_context": null,
-        "policy_survived": 40,
-        "context_selected": 4,
-        "supported_claims": 25,
-        "would_have_blocked": false
-      },
-      "coverage": {
-        "checks": [
-          {
-            "chunk_ids": [
-              "3b04aa56-b593-4664-9a75-54ea0d5c932b",
-              "b5a7aa42-3e02-4730-bf95-2cb2e0c8a9a6",
-              "893b8b06-703b-48ef-8596-c0a9c256c176",
-              "2bd8f527-0808-448e-b175-0958806d1aff"
-            ],
-            "supported": false,
-            "description": "Companies Act and RJSC requirements after incorporation, including annual returns, AGM, audited financial statements, statutory registers, notices, deadlines, and consequences.",
-            "query_index": -1,
-            "source_ranges": [
-              {
-                "chunk_id": "3b04aa56-b593-4664-9a75-54ea0d5c932b",
-                "end_line": 7,
-                "start_line": 7
-              },
-              {
-                "chunk_id": "b5a7aa42-3e02-4730-bf95-2cb2e0c8a9a6",
-                "end_line": 7,
-                "start_line": 7
-              },
-              {
-                "chunk_id": "893b8b06-703b-48ef-8596-c0a9c256c176",
-                "end_line": 7,
-                "start_line": 7
-              },
-              {
-                "chunk_id": "2bd8f527-0808-448e-b175-0958806d1aff",
-                "end_line": 7,
-                "start_line": 7
-              }
-            ],
-            "requirement_id": "R1"
-          },
-          {
-            "chunk_ids": [
-              "46f03a08-c11e-4df7-a191-e3a4bec3db37",
-              "c92af22e-87af-4a56-96ab-ab5ec5275b91",
-              "b21784d9-d65e-48d7-9566-ccd69a36cf29",
-              "a546eb66-4f47-4fbd-81e2-3cdd449f4788"
-            ],
-            "supported": false,
-            "description": "Current income-tax obligations of an incorporated company that has not commenced operations, including TIN, returns, deadline, nil treatment, records, penalties, and consequences.",
-            "query_index": -1,
-            "source_ranges": [
-              {
-                "chunk_id": "46f03a08-c11e-4df7-a191-e3a4bec3db37",
-                "end_line": 17,
-                "start_line": 5
-              },
-              {
-                "chunk_id": "c92af22e-87af-4a56-96ab-ab5ec5275b91",
-                "end_line": 23,
-                "start_line": 13
-              },
-              {
-                "chunk_id": "b21784d9-d65e-48d7-9566-ccd69a36cf29",
-                "end_line": 31,
-                "start_line": 11
-              },
-              {
-                "chunk_id": "a546eb66-4f47-4fbd-81e2-3cdd449f4788",
-                "end_line": 33,
-                "start_line": 13
-              }
-            ],
-            "requirement_id": "R2"
-          },
-          {
-            "chunk_ids": [
-              "e49a0b15-a25a-4243-9d46-737aa5bb6915",
-              "b2ee9599-eba2-4859-b015-fee4dda85812"
-            ],
-            "supported": false,
-            "description": "Conditional VAT and BIN obligations, including registration or enlistment, inactive-entity periodic returns, procedures, deadlines, and consequences.",
-            "query_index": -1,
-            "source_ranges": [
-              {
-                "chunk_id": "e49a0b15-a25a-4243-9d46-737aa5bb6915",
-                "end_line": 23,
-                "start_line": 19
-              },
-              {
-                "chunk_id": "b2ee9599-eba2-4859-b015-fee4dda85812",
-                "end_line": 45,
-                "start_line": 15
-              }
-            ],
-            "requirement_id": "R3"
-          },
-          {
-            "chunk_ids": [
-              "7f043081-ef3c-4557-b178-ecd063809d98",
-              "b5a7aa42-3e02-4730-bf95-2cb2e0c8a9a6",
-              "893b8b06-703b-48ef-8596-c0a9c256c176",
-              "07b81f70-4235-4c9e-8393-bacfaac5b129",
-              "46f03a08-c11e-4df7-a191-e3a4bec3db37"
-            ],
-            "supported": false,
-            "description": "Continuing statutory-record, auditor, regulatory, sanction, amendment, commencement, and savings obligations under company law and related legislation.",
-            "query_index": -1,
-            "source_ranges": [
-              {
-                "chunk_id": "7f043081-ef3c-4557-b178-ecd063809d98",
-                "end_line": 1,
-                "start_line": 1
-              },
-              {
-                "chunk_id": "b5a7aa42-3e02-4730-bf95-2cb2e0c8a9a6",
-                "end_line": 7,
-                "start_line": 7
-              },
-              {
-                "chunk_id": "893b8b06-703b-48ef-8596-c0a9c256c176",
-                "end_line": 7,
-                "start_line": 7
-              },
-              {
-                "chunk_id": "07b81f70-4235-4c9e-8393-bacfaac5b129",
-                "end_line": 7,
-                "start_line": 7
-              },
-              {
-                "chunk_id": "46f03a08-c11e-4df7-a191-e3a4bec3db37",
-                "end_line": 61,
-                "start_line": 59
-              }
-            ],
-            "requirement_id": "R4"
-          },
-          {
-            "chunk_ids": [
-              "7f043081-ef3c-4557-b178-ecd063809d98",
-              "b5a7aa42-3e02-4730-bf95-2cb2e0c8a9a6",
-              "3b04aa56-b593-4664-9a75-54ea0d5c932b",
-              "54c55f03-945b-4bab-aead-c1ae7f90e4cc"
-            ],
-            "supported": true,
-            "description": "Independently established Companies Act duties to maintain accounting books and vouchers, maintain a director or manager register, prepare and audit annual financial statements, and provide specified inspection access.",
-            "query_index": -1,
-            "source_ranges": [
-              {
-                "chunk_id": "7f043081-ef3c-4557-b178-ecd063809d98",
-                "end_line": 1,
-                "start_line": 1
-              },
-              {
-                "chunk_id": "b5a7aa42-3e02-4730-bf95-2cb2e0c8a9a6",
-                "end_line": 7,
-                "start_line": 7
-              },
-              {
-                "chunk_id": "3b04aa56-b593-4664-9a75-54ea0d5c932b",
-                "end_line": 7,
-                "start_line": 7
-              },
-              {
-                "chunk_id": "54c55f03-945b-4bab-aead-c1ae7f90e4cc",
-                "end_line": 7,
-                "start_line": 7
-              }
-            ],
-            "requirement_id": "R5"
-          }
-        ],
-        "missing": [
-          "R1: Evidence does not establish the complete post-incorporation RJSC compliance framework, including annual returns, AGM timing, statutory notices, filing deadlines, and consequences for all relevant defaults.",
-          "R2: Evidence does not establish the company's TIN obligation, nil or no-income return treatment, required tax records, or the complete current penalty and consequence regime for an inactive incorporated company.",
-          "R3: Evidence does not establish the applicable VAT registration or enlistment thresholds, periodic return obligation for an inactive registered entity, filing deadlines, NBR procedures, or consequences of non-compliance.",
-          "R4: Evidence does not establish the complete statutory-register, auditor-appointment, continuing regulatory, sanction, and current-amendment framework applicable to the company, including amendment commencement and savings effects."
-        ],
-        "complete": false,
-        "gap_kinds": [
-          "source_rule",
-          "source_rule",
-          "source_rule",
-          "source_rule"
-        ],
-        "missing_inputs": [],
-        "quotes_validated": false,
-        "source_ranges_validated": true
-      },
-      "partial_scope": {
-        "scope": [
-          {
-            "description": "Independently established Companies Act duties to maintain accounting books and vouchers, maintain a director or manager register, prepare and audit annual financial statements, and provide specified inspection access.",
-            "requirement_id": "R5"
-          }
-        ],
-        "pending": [
-          "R1: Evidence does not establish the complete post-incorporation RJSC compliance framework, including annual returns, AGM timing, statutory notices, filing deadlines, and consequences for all relevant defaults.",
-          "R2: Evidence does not establish the company's TIN obligation, nil or no-income return treatment, required tax records, or the complete current penalty and consequence regime for an inactive incorporated company.",
-          "R3: Evidence does not establish the applicable VAT registration or enlistment thresholds, periodic return obligation for an inactive registered entity, filing deadlines, NBR procedures, or consequences of non-compliance.",
-          "R4: Evidence does not establish the complete statutory-register, auditor-appointment, continuing regulatory, sanction, and current-amendment framework applicable to the company, including amendment commencement and savings effects."
-        ],
-        "gap_kinds": [
-          "source_rule",
-          "source_rule",
-          "source_rule",
-          "source_rule"
-        ],
-        "exclusions": [
-          "RJSC annual-return and AGM filing framework and deadlines",
-          "Complete statutory-register and notice requirements",
-          "Company TIN and complete income-tax return and nil-return treatment",
-          "VAT or BIN thresholds, periodic returns, deadlines, and sanctions",
-          "Complete non-compliance consequences and current amendment commencement or savings rules"
-        ],
-        "requirement_ids": [
-          "R5"
-        ]
-      }
-    },
+    "deployed_repair_version": "v18-retained-authoritative-evidence",
+    "new_repair_version": "v19-bounded-planning-and-reference-review",
     "fresh_tests": [
       {
-        "test": "annual_compliance_en",
-        "conversation_id": "eac40b9e-372c-4333-8257-cf5739613474",
-        "milliseconds": 77589,
-        "result": "cited_grounding_incomplete",
-        "selected": 5,
-        "notes": "Named sections 36/81/190 are retrievable; answer contains 18/15-month AGM, 21-day return and 30-day accounts filing rules. Broad-query omissions are not proof these provisions are absent from the index."
+        "test": "original_business_en",
+        "conversation_id": "72fb5ff8-7a74-4464-ae16-e687adae87eb",
+        "milliseconds": 43238,
+        "result": "refused",
+        "selected": 0,
+        "admitted": 9,
+        "recovery": "incomplete_plan",
+        "llm_calls": 1,
+        "output_tokens": 2048,
+        "reasoning_tokens": 2048,
+        "retained_initial_count": 0,
+        "notes": "Planner exhausted its output allowance before producing JSON. No recovery queries or answer generation ran. Retry cap equalled initial cap, disabling truncation retry."
+      },
+      {
+        "test": "statutory_deadlines_en",
+        "conversation_id": "735c3e0f-dd90-4d58-bad1-00b0c23e64e6",
+        "milliseconds": 51458,
+        "result": "grounded_partial",
+        "supported": 10,
+        "claims": 10,
+        "selected": 4,
+        "retained_initial_count": 11,
+        "notes": "Retained-evidence fix works. Reviewer corrected planner's swapped section 36/81 mappings but left mistaken original requirements as missing, creating a false partial label."
       },
       {
         "test": "same_conversation_bangla_summary",
-        "conversation_id": "eac40b9e-372c-4333-8257-cf5739613474",
-        "milliseconds": 51981,
-        "result": "cited_grounding_incomplete",
-        "supported": 4,
-        "claims": 6,
-        "selected": 4,
-        "notes": "Follows three-bullet Bangla request but first AGM bullet retains [1], which is now section 36; section 81 is [2]. Current-turn citation remapping needs improvement. Rewrite still performs expensive retrieval/recovery."
-      },
-      {
-        "test": "same_conversation_thanks",
-        "conversation_id": "eac40b9e-372c-4333-8257-cf5739613474",
-        "milliseconds": 1273,
-        "result": "appropriate_non_knowledge_reply_ui_false_warning",
-        "selected": 0,
-        "notes": "Returns You're welcome with no evidence, but deployed inspector incorrectly warns of failed grounding. Local UI fix requires backend non_knowledge_turn=true and no claims/citations/refusal/partial scope."
+        "conversation_id": "735c3e0f-dd90-4d58-bad1-00b0c23e64e6",
+        "milliseconds": 51351,
+        "result": "partial_grounding_incomplete",
+        "supported": 1,
+        "claims": 5,
+        "selected": 3,
+        "notes": "Re-search lost the prior annual-return passage. Answer withheld its 21-day rule and still cited section 183 for the section 190 filing claim. Prompt-only remapping was insufficient."
       },
       {
         "test": "tax_registration_en",
-        "conversation_id": "e6fab706-2b2e-4564-97c8-e5e03a5ee12e",
-        "milliseconds": 25640,
-        "result": "grounded",
-        "supported": 3,
+        "conversation_id": "e39486da-5681-46f8-a1dd-6810ed494909",
+        "milliseconds": 30178,
+        "result": "cited_grounding_incomplete",
+        "supported": 1,
         "claims": 3,
-        "selected": 3
+        "selected": 2,
+        "notes": "Correct TIN/biometric SIM requirements remain. TIN fragment is unverified; uncited official-source label unsupported. Not a full grounding pass."
+      },
+      {
+        "test": "thanks",
+        "conversation_id": "e39486da-5681-46f8-a1dd-6810ed494909",
+        "milliseconds": 1314,
+        "result": "conversational_reply_correctly_classified",
+        "selected": 0,
+        "notes": "Deployed UI now shows Conversational reply, source verification not required, and View response details instead of a false grounding failure."
       }
     ],
-    "findings": {
-      "ingestion_and_embedding": "Embedding identity matched (Cohere embed-v4.0, set 3, 1024 dimensions). Relevant Act provisions are indexed and retrievable in a focused live case. No evidence supports a model swap or reindex as the primary fix.",
-      "retrieval": "Authoritative recovery discarded all initial selected evidence whenever initial review was skipped. Broad planning paired four bundled concepts across languages instead of using the existing eight-query budget for distinct needs. The attached funnel also reports 18 document-limit exclusions; cap=6 is preserved pending evidence-based tuning.",
-      "relations_and_documents": "Real source gaps remain: 19 Draft sources are excluded as intended, unresolved authority relationships and current official procedure/fee/licence/VAT gaps remain separately documented. Do not solve them by accepting similarity alone or activating incomplete sources.",
-      "grounding": "Some flags are genuine (wrong current citation); some are normalization defects (বার বৎসর, এক বৎসর, পাঁচ বৎসর). The attachment has 25 supported, 5 unverified and 10 unsupported claims, so its 0.125 unverified_claim_rate does not mean 87.5% of all claims are supported. Several unsupported segments are limitation prose, not fabricated legal duties.",
-      "conversation": "Bangla follow-up works but repeats costly retrieval/recovery and can copy stale citation indices. Partial-answer instructions were unnecessarily legal-specific and encouraged repetitive limitations. Non-knowledge replies were mislabeled as grounding failures in the inspector.",
-      "configuration": "Authoritative policy revision 10 remains appropriate for this legal project. Existing factual and multi-perspective paths must remain distinct for other corpora; no global switch or lower grounding threshold was applied."
-    },
     "targeted_code_fixes": [
-      "Retain initially admitted safe evidence for final recovery proof; exclude unresolved units and reconcile later authority changes. Deduplicate different admitted spans of the same chunk before the mutation guard, without merging their text. Match final admitted units by exact chunk and content.",
-      "Prefer independent search concepts within the existing eight-query budget rather than mandatory bilingual pairs of bundled obligations; preserve calculation and applicability requirements.",
-      "Use domain-neutral partial-scope wording, one concise limitation, and explicitly distinguish reviewed-passage gaps from corpus absence.",
-      "Tell follow-up generation that historical citation numbers are not current evidence identifiers; verify and remap every retained claim.",
-      "Normalize statutory Bangla year spellings and বার only next to duration units; changed numeric durations still fail validation.",
-      "Show neutral conversational-reply status for explicit non-knowledge messages without source claims; retain warnings when factual claims or refusal/partial evidence exist."
+      "Authoritative planning starts at up to 2048 tokens and can retry once at up to 4096, bounded by the configured output cap. Truncated JSON is never accepted. Record planning_finish_reason.",
+      "Incomplete planning is described as a verification failure rather than asserted absence of legal evidence, in English and Bangla.",
+      "Coverage prompts allow correcting planner-only reference errors under the same requirement ID, using original question and source proof. Requested topics and authority checks cannot be dropped.",
+      "For resolved follow-ups explicitly requesting a rewrite/summary with no new information and no temporal change, re-query prior cited chunk IDs first. Current project/build, lifecycle, metadata, document and date filters remain in force; normal evidence admission and proof still run. Empty results fall back once to ordinary scoped search.",
+      "The rewrite path uses bounded validated UUIDs from the immediately preceding assistant's stored citations, never previous answer text as evidence. Legacy adapters keep their existing call signature. Persist rewrite_recall diagnostics in the API metadata."
     ],
     "validation": {
-      "backend_focused_passed": 28,
-      "backend_deselected": 172,
-      "frontend_inspector_passed": 10,
-      "typescript": "passed",
-      "prettier": "passed",
+      "focused_tests_passed": 27,
+      "deselected": 210,
       "ruff": "passed",
+      "format": "passed",
       "diff_check": "passed",
-      "large_suite_run": false
+      "large_suite_run": false,
+      "cases": "Planner truncation/cap, proof-backed reference correction, rewrite routing/filter preservation/fallback, bounded current-build retrieval, existing follow-up/correction/zero-history regressions, and EN/BN failure wording."
     },
     "live_source_or_setting_changes": [],
     "latest_fixes_deployed": false,
     "ready_for_full_company_queries": false,
     "remaining": [
-      "New code and prompt changes need deployment and a bounded live comparison; latency and answer-quality gains are not measured yet.",
-      "Source-complete company compliance remains unproven; official procedure, fee, licence/VAT and authority-resolution gaps are preserved.",
-      "Follow-up evidence reuse and broader multilingual/domain evaluation remain beyond this bounded patch. No modern-RAG competitive benchmark is claimed."
+      "New planner and cited-retrieval fixes need deployment; their live improvement is not yet verified.",
+      "Residual short-fragment and citation-label verification flags remain; no threshold was lowered to hide them.",
+      "Current official company-procedure/forms/fees/licence/VAT and protected tax-authority gaps remain as previously documented. No Draft was promoted or source relationship changed.",
+      "Cross-domain competitive readiness and tax calculation correctness are not established by this bounded check."
     ]
   },
   "bounded_validation_history": [
@@ -5235,6 +4971,415 @@
         "Current RJSC name-clearance workflow/forms/fees, licence/VAT and protected tax-authority gaps remain as documented. Historic or incomplete sources were not activated to force answers.",
         "Local fixes need deployment; this run did not deploy or certify them live."
       ]
+    },
+    {
+      "date": "2026-09-15",
+      "baseline_local_commit": "59efb82",
+      "status": "targeted_application_fixes_locally_verified_awaiting_deployment",
+      "source_generation": 101,
+      "policy_revision": 10,
+      "scope": "Source-based conversational application; company/tax cases are the available live corpus, not a cross-domain benchmark.",
+      "attached_response": {
+        "conversation_id": "844efe7d-66fa-47da-bf3e-416d442bcee8",
+        "message_id": "6f6004b0-71d8-4f5a-a1c5-ca73e03e851e",
+        "result": "partial_answer",
+        "grounded": false,
+        "milliseconds": 69501,
+        "input_tokens": 122453,
+        "output_tokens": 5397,
+        "claim_counts": {
+          "supported": 25,
+          "unverified": 5,
+          "unsupported": 10
+        },
+        "embedding": {
+          "model": "embed-v4.0",
+          "provider": "cohere",
+          "dimensions": 1024,
+          "set_version": 3,
+          "identity_status": "matched"
+        },
+        "lifecycle_counts": {
+          "llm_calls": 4,
+          "rerank_calls": 9,
+          "embedded_texts": 255,
+          "embedding_calls": 13,
+          "content_cache_hits": 489,
+          "embedding_cache_hits": 165,
+          "structured_response_retries": 1,
+          "recovery_query_embedding_batches": 1
+        },
+        "evidence_funnel": {
+          "cited": 4,
+          "fused": 100,
+          "deduped": 12,
+          "outcome": "answered",
+          "admitted": 4,
+          "assessed": 45,
+          "hydrated": 40,
+          "reranked": 40,
+          "loss_reasons": {
+            "deduped": {
+              "result_limit": 10,
+              "document_limit": 18
+            },
+            "admitted": {
+              "no_aligned_independent_signal": 3
+            },
+            "reranked": {
+              "below_rerank_score_threshold": 60
+            }
+          },
+          "rerank_status": "applied",
+          "grounding_path": "candidate_wise",
+          "observe_context": null,
+          "policy_survived": 40,
+          "context_selected": 4,
+          "supported_claims": 25,
+          "would_have_blocked": false
+        },
+        "coverage": {
+          "checks": [
+            {
+              "chunk_ids": [
+                "3b04aa56-b593-4664-9a75-54ea0d5c932b",
+                "b5a7aa42-3e02-4730-bf95-2cb2e0c8a9a6",
+                "893b8b06-703b-48ef-8596-c0a9c256c176",
+                "2bd8f527-0808-448e-b175-0958806d1aff"
+              ],
+              "supported": false,
+              "description": "Companies Act and RJSC requirements after incorporation, including annual returns, AGM, audited financial statements, statutory registers, notices, deadlines, and consequences.",
+              "query_index": -1,
+              "source_ranges": [
+                {
+                  "chunk_id": "3b04aa56-b593-4664-9a75-54ea0d5c932b",
+                  "end_line": 7,
+                  "start_line": 7
+                },
+                {
+                  "chunk_id": "b5a7aa42-3e02-4730-bf95-2cb2e0c8a9a6",
+                  "end_line": 7,
+                  "start_line": 7
+                },
+                {
+                  "chunk_id": "893b8b06-703b-48ef-8596-c0a9c256c176",
+                  "end_line": 7,
+                  "start_line": 7
+                },
+                {
+                  "chunk_id": "2bd8f527-0808-448e-b175-0958806d1aff",
+                  "end_line": 7,
+                  "start_line": 7
+                }
+              ],
+              "requirement_id": "R1"
+            },
+            {
+              "chunk_ids": [
+                "46f03a08-c11e-4df7-a191-e3a4bec3db37",
+                "c92af22e-87af-4a56-96ab-ab5ec5275b91",
+                "b21784d9-d65e-48d7-9566-ccd69a36cf29",
+                "a546eb66-4f47-4fbd-81e2-3cdd449f4788"
+              ],
+              "supported": false,
+              "description": "Current income-tax obligations of an incorporated company that has not commenced operations, including TIN, returns, deadline, nil treatment, records, penalties, and consequences.",
+              "query_index": -1,
+              "source_ranges": [
+                {
+                  "chunk_id": "46f03a08-c11e-4df7-a191-e3a4bec3db37",
+                  "end_line": 17,
+                  "start_line": 5
+                },
+                {
+                  "chunk_id": "c92af22e-87af-4a56-96ab-ab5ec5275b91",
+                  "end_line": 23,
+                  "start_line": 13
+                },
+                {
+                  "chunk_id": "b21784d9-d65e-48d7-9566-ccd69a36cf29",
+                  "end_line": 31,
+                  "start_line": 11
+                },
+                {
+                  "chunk_id": "a546eb66-4f47-4fbd-81e2-3cdd449f4788",
+                  "end_line": 33,
+                  "start_line": 13
+                }
+              ],
+              "requirement_id": "R2"
+            },
+            {
+              "chunk_ids": [
+                "e49a0b15-a25a-4243-9d46-737aa5bb6915",
+                "b2ee9599-eba2-4859-b015-fee4dda85812"
+              ],
+              "supported": false,
+              "description": "Conditional VAT and BIN obligations, including registration or enlistment, inactive-entity periodic returns, procedures, deadlines, and consequences.",
+              "query_index": -1,
+              "source_ranges": [
+                {
+                  "chunk_id": "e49a0b15-a25a-4243-9d46-737aa5bb6915",
+                  "end_line": 23,
+                  "start_line": 19
+                },
+                {
+                  "chunk_id": "b2ee9599-eba2-4859-b015-fee4dda85812",
+                  "end_line": 45,
+                  "start_line": 15
+                }
+              ],
+              "requirement_id": "R3"
+            },
+            {
+              "chunk_ids": [
+                "7f043081-ef3c-4557-b178-ecd063809d98",
+                "b5a7aa42-3e02-4730-bf95-2cb2e0c8a9a6",
+                "893b8b06-703b-48ef-8596-c0a9c256c176",
+                "07b81f70-4235-4c9e-8393-bacfaac5b129",
+                "46f03a08-c11e-4df7-a191-e3a4bec3db37"
+              ],
+              "supported": false,
+              "description": "Continuing statutory-record, auditor, regulatory, sanction, amendment, commencement, and savings obligations under company law and related legislation.",
+              "query_index": -1,
+              "source_ranges": [
+                {
+                  "chunk_id": "7f043081-ef3c-4557-b178-ecd063809d98",
+                  "end_line": 1,
+                  "start_line": 1
+                },
+                {
+                  "chunk_id": "b5a7aa42-3e02-4730-bf95-2cb2e0c8a9a6",
+                  "end_line": 7,
+                  "start_line": 7
+                },
+                {
+                  "chunk_id": "893b8b06-703b-48ef-8596-c0a9c256c176",
+                  "end_line": 7,
+                  "start_line": 7
+                },
+                {
+                  "chunk_id": "07b81f70-4235-4c9e-8393-bacfaac5b129",
+                  "end_line": 7,
+                  "start_line": 7
+                },
+                {
+                  "chunk_id": "46f03a08-c11e-4df7-a191-e3a4bec3db37",
+                  "end_line": 61,
+                  "start_line": 59
+                }
+              ],
+              "requirement_id": "R4"
+            },
+            {
+              "chunk_ids": [
+                "7f043081-ef3c-4557-b178-ecd063809d98",
+                "b5a7aa42-3e02-4730-bf95-2cb2e0c8a9a6",
+                "3b04aa56-b593-4664-9a75-54ea0d5c932b",
+                "54c55f03-945b-4bab-aead-c1ae7f90e4cc"
+              ],
+              "supported": true,
+              "description": "Independently established Companies Act duties to maintain accounting books and vouchers, maintain a director or manager register, prepare and audit annual financial statements, and provide specified inspection access.",
+              "query_index": -1,
+              "source_ranges": [
+                {
+                  "chunk_id": "7f043081-ef3c-4557-b178-ecd063809d98",
+                  "end_line": 1,
+                  "start_line": 1
+                },
+                {
+                  "chunk_id": "b5a7aa42-3e02-4730-bf95-2cb2e0c8a9a6",
+                  "end_line": 7,
+                  "start_line": 7
+                },
+                {
+                  "chunk_id": "3b04aa56-b593-4664-9a75-54ea0d5c932b",
+                  "end_line": 7,
+                  "start_line": 7
+                },
+                {
+                  "chunk_id": "54c55f03-945b-4bab-aead-c1ae7f90e4cc",
+                  "end_line": 7,
+                  "start_line": 7
+                }
+              ],
+              "requirement_id": "R5"
+            }
+          ],
+          "missing": [
+            "R1: Evidence does not establish the complete post-incorporation RJSC compliance framework, including annual returns, AGM timing, statutory notices, filing deadlines, and consequences for all relevant defaults.",
+            "R2: Evidence does not establish the company's TIN obligation, nil or no-income return treatment, required tax records, or the complete current penalty and consequence regime for an inactive incorporated company.",
+            "R3: Evidence does not establish the applicable VAT registration or enlistment thresholds, periodic return obligation for an inactive registered entity, filing deadlines, NBR procedures, or consequences of non-compliance.",
+            "R4: Evidence does not establish the complete statutory-register, auditor-appointment, continuing regulatory, sanction, and current-amendment framework applicable to the company, including amendment commencement and savings effects."
+          ],
+          "complete": false,
+          "gap_kinds": [
+            "source_rule",
+            "source_rule",
+            "source_rule",
+            "source_rule"
+          ],
+          "missing_inputs": [],
+          "quotes_validated": false,
+          "source_ranges_validated": true
+        },
+        "partial_scope": {
+          "scope": [
+            {
+              "description": "Independently established Companies Act duties to maintain accounting books and vouchers, maintain a director or manager register, prepare and audit annual financial statements, and provide specified inspection access.",
+              "requirement_id": "R5"
+            }
+          ],
+          "pending": [
+            "R1: Evidence does not establish the complete post-incorporation RJSC compliance framework, including annual returns, AGM timing, statutory notices, filing deadlines, and consequences for all relevant defaults.",
+            "R2: Evidence does not establish the company's TIN obligation, nil or no-income return treatment, required tax records, or the complete current penalty and consequence regime for an inactive incorporated company.",
+            "R3: Evidence does not establish the applicable VAT registration or enlistment thresholds, periodic return obligation for an inactive registered entity, filing deadlines, NBR procedures, or consequences of non-compliance.",
+            "R4: Evidence does not establish the complete statutory-register, auditor-appointment, continuing regulatory, sanction, and current-amendment framework applicable to the company, including amendment commencement and savings effects."
+          ],
+          "gap_kinds": [
+            "source_rule",
+            "source_rule",
+            "source_rule",
+            "source_rule"
+          ],
+          "exclusions": [
+            "RJSC annual-return and AGM filing framework and deadlines",
+            "Complete statutory-register and notice requirements",
+            "Company TIN and complete income-tax return and nil-return treatment",
+            "VAT or BIN thresholds, periodic returns, deadlines, and sanctions",
+            "Complete non-compliance consequences and current amendment commencement or savings rules"
+          ],
+          "requirement_ids": [
+            "R5"
+          ]
+        }
+      },
+      "fresh_tests": [
+        {
+          "test": "annual_compliance_en",
+          "conversation_id": "eac40b9e-372c-4333-8257-cf5739613474",
+          "milliseconds": 77589,
+          "result": "cited_grounding_incomplete",
+          "selected": 5,
+          "notes": "Named sections 36/81/190 are retrievable; answer contains 18/15-month AGM, 21-day return and 30-day accounts filing rules. Broad-query omissions are not proof these provisions are absent from the index."
+        },
+        {
+          "test": "same_conversation_bangla_summary",
+          "conversation_id": "eac40b9e-372c-4333-8257-cf5739613474",
+          "milliseconds": 51981,
+          "result": "cited_grounding_incomplete",
+          "supported": 4,
+          "claims": 6,
+          "selected": 4,
+          "notes": "Follows three-bullet Bangla request but first AGM bullet retains [1], which is now section 36; section 81 is [2]. Current-turn citation remapping needs improvement. Rewrite still performs expensive retrieval/recovery."
+        },
+        {
+          "test": "same_conversation_thanks",
+          "conversation_id": "eac40b9e-372c-4333-8257-cf5739613474",
+          "milliseconds": 1273,
+          "result": "appropriate_non_knowledge_reply_ui_false_warning",
+          "selected": 0,
+          "notes": "Returns You're welcome with no evidence, but deployed inspector incorrectly warns of failed grounding. Local UI fix requires backend non_knowledge_turn=true and no claims/citations/refusal/partial scope."
+        },
+        {
+          "test": "tax_registration_en",
+          "conversation_id": "e6fab706-2b2e-4564-97c8-e5e03a5ee12e",
+          "milliseconds": 25640,
+          "result": "grounded",
+          "supported": 3,
+          "claims": 3,
+          "selected": 3
+        }
+      ],
+      "findings": {
+        "ingestion_and_embedding": "Embedding identity matched (Cohere embed-v4.0, set 3, 1024 dimensions). Relevant Act provisions are indexed and retrievable in a focused live case. No evidence supports a model swap or reindex as the primary fix.",
+        "retrieval": "Authoritative recovery discarded all initial selected evidence whenever initial review was skipped. Broad planning paired four bundled concepts across languages instead of using the existing eight-query budget for distinct needs. The attached funnel also reports 18 document-limit exclusions; cap=6 is preserved pending evidence-based tuning.",
+        "relations_and_documents": "Real source gaps remain: 19 Draft sources are excluded as intended, unresolved authority relationships and current official procedure/fee/licence/VAT gaps remain separately documented. Do not solve them by accepting similarity alone or activating incomplete sources.",
+        "grounding": "Some flags are genuine (wrong current citation); some are normalization defects (বার বৎসর, এক বৎসর, পাঁচ বৎসর). The attachment has 25 supported, 5 unverified and 10 unsupported claims, so its 0.125 unverified_claim_rate does not mean 87.5% of all claims are supported. Several unsupported segments are limitation prose, not fabricated legal duties.",
+        "conversation": "Bangla follow-up works but repeats costly retrieval/recovery and can copy stale citation indices. Partial-answer instructions were unnecessarily legal-specific and encouraged repetitive limitations. Non-knowledge replies were mislabeled as grounding failures in the inspector.",
+        "configuration": "Authoritative policy revision 10 remains appropriate for this legal project. Existing factual and multi-perspective paths must remain distinct for other corpora; no global switch or lower grounding threshold was applied."
+      },
+      "targeted_code_fixes": [
+        "Retain initially admitted safe evidence for final recovery proof; exclude unresolved units and reconcile later authority changes. Deduplicate different admitted spans of the same chunk before the mutation guard, without merging their text. Match final admitted units by exact chunk and content.",
+        "Prefer independent search concepts within the existing eight-query budget rather than mandatory bilingual pairs of bundled obligations; preserve calculation and applicability requirements.",
+        "Use domain-neutral partial-scope wording, one concise limitation, and explicitly distinguish reviewed-passage gaps from corpus absence.",
+        "Tell follow-up generation that historical citation numbers are not current evidence identifiers; verify and remap every retained claim.",
+        "Normalize statutory Bangla year spellings and বার only next to duration units; changed numeric durations still fail validation.",
+        "Show neutral conversational-reply status for explicit non-knowledge messages without source claims; retain warnings when factual claims or refusal/partial evidence exist."
+      ],
+      "validation": {
+        "backend_focused_passed": 28,
+        "backend_deselected": 172,
+        "frontend_inspector_passed": 10,
+        "typescript": "passed",
+        "prettier": "passed",
+        "ruff": "passed",
+        "diff_check": "passed",
+        "large_suite_run": false
+      },
+      "live_source_or_setting_changes": [],
+      "latest_fixes_deployed": false,
+      "ready_for_full_company_queries": false,
+      "remaining": [
+        "New code and prompt changes need deployment and a bounded live comparison; latency and answer-quality gains are not measured yet.",
+        "Source-complete company compliance remains unproven; official procedure, fee, licence/VAT and authority-resolution gaps are preserved.",
+        "Follow-up evidence reuse and broader multilingual/domain evaluation remain beyond this bounded patch. No modern-RAG competitive benchmark is claimed."
+      ]
     }
-  ]
+  ],
+  "latest_resource_review": {
+    "date": "2026-09-15",
+    "status": "local_resource_changes_awaiting_deployment",
+    "evidence": "Prior live planner consumed 2048 output tokens, all reasoning, and returned incomplete_plan.",
+    "live_config_checked": {
+      "generation_model": "gpt-5.6-luna",
+      "embedding_model": "embed-v4.0",
+      "embedding_dimensions": 1024,
+      "retrieval": "hybrid",
+      "reranker": "cohere",
+      "output_cap": "Not exposed by read-only Configuration UI; deployment override remains unverified."
+    },
+    "local_changes": {
+      "llm_default_max_tokens": {
+        "before": 4096,
+        "after": 8192
+      },
+      "authoritative_plan_initial": {
+        "before": 2048,
+        "after": 4096
+      },
+      "authoritative_plan_single_retry": {
+        "before": 4096,
+        "after": 8192
+      },
+      "deployment_setting": "APE_LLM__MAX_TOKENS=8192; explicit lower caps still take precedence."
+    },
+    "unchanged": {
+      "coverage_review_tokens": 4096,
+      "llm_default_timeout_seconds": 120,
+      "project_last_verified_retrieval": {
+        "semantic_candidates": 80,
+        "keyword_candidates": 80,
+        "rerank_window": 40,
+        "top_k": 12,
+        "max_context_chunks": 24,
+        "context_char_budget": 48000,
+        "max_chunks_per_document": 6
+      },
+      "sources_and_tax_policy": "Preserved"
+    },
+    "limitations": [
+      "Additional token headroom is not a guarantee of completion or citation quality.",
+      "No evidence of embedding dimensionality, CPU/RAM, provider rate limits, or timeout exhaustion causing the observed planning failure.",
+      "CPU/RAM utilization and provider quotas were not measured; no infrastructure upgrade is prescribed.",
+      "Per-document exclusions warrant measurement only if missing evidence remains after correctness fixes.",
+      "No new paid live generations were run for this configuration-only review."
+    ],
+    "validation": {
+      "focused_tests_passed": 15,
+      "deselected": 93,
+      "ruff": "passed",
+      "format": "passed"
+    },
+    "reference": "https://developers.openai.com/api/reference/cli/resources/responses/methods/create"
+  }
 }

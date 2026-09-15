@@ -1,6 +1,6 @@
 # Bangladesh company-law readiness audit — 14 September 2026
 
-**Latest check: 15 September 2026, deployment 59efb82.** The attached broad query now gives a partial answer; it is not fully grounded. Four live messages isolated evidence-loss, follow-up citation and conversational-status defects. Targeted local fixes are recorded below. Tax regression passed 3/3 claims. No tax source, lifecycle or project setting changed; the new fixes await deployment.
+**Latest bounded check: deployment 1fe315e, 15 September 2026.** Five live messages confirmed retained company evidence and the corrected conversational-status UI. The broad query stopped at planner token exhaustion; the Bangla rewrite still lost prior evidence. Three focused areas were corrected locally: bounded planning retry, planner-reference correction, and prior-citation recall for explicit fact-preserving rewrites. 27 focused tests pass. New fixes await deployment; full readiness is not certified. Tax sources and project settings remain unchanged.
 
 The final checked inventory at source generation101 has38 ready documents:19 Active and19 Draft. Business sources comprise11 Active and19 Draft; the8 tax sources remain as found. The policy is still revision10, ID `0c58c848-3c5e-4796-a5cc-736a0aaf7d6c`, effective hash `94941a1a3bd5`, resolution `af420b288290`.
 
@@ -192,3 +192,37 @@ The follow-up copied [1] for AGM timing even though current [1] was section 36 a
 Embedding identity matches the active index (Cohere embed-v4.0, 1024 dimensions, set 3). Named statutory provisions are retrievable. The trace therefore does not establish that bad embeddings or indexing are the main cause. It does show 18 document-cap exclusions (configured cap six); that is a tuning candidate, not permission to increase all budgets. The 19 Draft exclusions are intentional. Unreconciled official source and relationship gaps remain as recorded in earlier sections.
 
 The local backend selection passes 28 tests (172 deselected); the inspector file passes 10 tests. TypeScript, Prettier, Ruff and diff checks pass. Frontend dependencies were restored offline from the existing lockfile; the restricted shell could not resolve dependency links, so those frontend checks ran with approved filesystem access. No large suite was run. New fixes are **not deployed**, and their live latency/quality improvement is not yet measured. Full company compliance and cross-domain competitive readiness are not certified. Follow-up evidence reuse remains a performance opportunity; preserving the protected legal project's policy is separate from the application's factual and multi-perspective capabilities.
+
+
+## Deployment check 1fe315e — 15 September 2026
+
+| Live case | Result | Time |
+|---|---|---|
+| Original business EN | Refused: planner exhausted 2,048 tokens, all reasoning | 43.238 s |
+| Sections 36/81/190 EN | 10/10 claims supported; incorrectly partial due to planner references | 51.458 s |
+| Same answer shortened in Bangla | 1/5 supported; prior annual-return source lost | 51.351 s |
+| Tax registration EN | Expected TIN/SIM requirements; 1/3 claims supported | 30.178 s |
+| Thanks | Correct neutral conversational status | 1.314 s |
+
+Conversation IDs and detailed decisions are in [deployment-check-1fe315e.json](artifacts/company-readiness/deployment-check-1fe315e.json). No broad-query retry or large suite was run.
+
+The broad query did not reach recovery retrieval or generation. Its single LLM call consumed 2,048 output tokens, all reported as reasoning, and recovery returned `incomplete_plan`. The configured truncation retry had the same 2,048-token ceiling as the first attempt, making it unreachable. Local code now permits the existing single retry at up to 4,096 tokens, never above the configured output cap. A capped/truncated response still fails closed. The API now records the planner finish reason, and incomplete planning gets an accurate processing-failure message.
+
+The retained-evidence fix is confirmed live: the focused statutory question retained 11 initial passages and all ten generated claims were supported. Its partial label arose because the planner assigned AGM to section 36 and annual return to section 81, then the reviewer created new correct requirements while leaving the mistaken ones unresolved. Coverage instructions now correct planner-only attribution errors under their original IDs, using source proof, without dropping actual user requirements.
+
+The Bangla rewrite showed that prompt-only citation remapping is insufficient when retrieval loses prior evidence. A narrow, domain-neutral path now searches the preceding answer's cited chunk IDs first for resolved, explicit fact-preserving rewrites with no temporal change. It does not reuse the previous answer as factual evidence. Current project/build and source-policy filters, document/metadata/date constraints, relevance admission and final proof all remain active. Missing current passages trigger one normal scoped search. Topic changes, corrections, resolver fallback, unsupported adapters and ordinary questions retain the existing path. `rewrite_recall` metadata identifies the route taken.
+
+Tax content still states the expected TIN and biometric SIM prerequisites, but the short TIN bullet was unverified and the uncited source-label line unsupported; this is not a fully passing tax-grounding result. The deployed Thanks response now correctly avoids a false grounding warning. Neither finding warrants weakening legal authority checks.
+
+**Validation:** 27 focused backend tests passed, 210 deselected; Ruff, formatting and diff checks passed. These cover bounded truncation, output caps, valid and invalid corrected proofs, rewrite eligibility and fallback, current-build/filter preservation, and existing follow-up/correction/history behavior. No frontend changes were needed this turn. The new code is not deployed and no live performance improvement is claimed yet. Existing official-source and legal-relationship gaps remain; all source lifecycles and tax settings were preserved.
+
+
+## Resource allocation review — 15 September 2026
+
+The earlier 2,048-token planning allowance is demonstrably insufficient for the failed broad question: reasoning exhausted the entire allowance before structured output. OpenAI counts reasoning and visible output together. Local planning now starts at up to 4,096 tokens and has one truncation retry up to 8,192. The default LLM ceiling and both environment examples now use 8,192. Every stage still respects explicit lower deployment caps; the coverage reviewer remains at 4,096. This supersedes the smaller budgets described in the preceding deployment check, without changing its historical test results.
+
+For deployment, set `APE_LLM__MAX_TOKENS=8192` if an existing environment value overrides the new default. The live read-only Configuration page confirms GPT-5.6 Luna, Cohere embed-v4.0/1024 dimensions, and hybrid/Cohere retrieval, but does not display the effective output cap. Production adoption of the new cap is therefore not confirmed.
+
+The last verified project allocation (80 semantic + 80 keyword candidates, 40 reranked, top K 12, up to 24 passages/48,000 characters, six chunks per document) is substantial. No blanket increase is justified by the observed failures. Embeddings, retrieval thresholds, source lifecycles, tax policy, and timeout settings are unchanged. CPU/RAM utilization and provider quotas were not measured. Additional headroom permits more work and potentially higher cost/latency; it does not repair missing sources or incorrect citation mapping.
+
+Validation: 15 focused tests passed, 93 deselected; Ruff and formatting passed. Caps below, between, and above the new stage limits are covered, along with bounded retries and project configuration inheritance. No new live generations were run. These local changes await deployment.

@@ -65,6 +65,13 @@ Check each supplied requirement once using requirement_id. Add a distinct ID and
 description for any necessary omitted rule. Only if no requirements were supplied,
 check each discovery route once using query_index. Evaluate only requirements
 of the ORIGINAL question, never the incidental content of a discovery passage.
+Requirement descriptions are planner hypotheses, not user facts. If the planner
+attached the wrong provision number, source name or date to a requested topic,
+correct that description under the SAME requirement_id using the original question
+and supplied evidence. Do not create a missing-evidence gap for a mistake introduced
+only by the planner, or add a replacement ID while leaving that mistaken check false.
+If the user's own premise is contradicted, establish the correction with source proof.
+This does not permit dropping a requested topic or accepting an unevidenced rule.
 Searches are discovery routes,
 not independent source requirements: an empty or unsuccessful route can be supported
 by governing evidence found by another route. Relevant words, a matching

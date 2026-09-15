@@ -129,6 +129,22 @@ async def test_search_service_rejects_request_strategy_override() -> None:
         await service.search(SearchRequest(query="test", strategy=RetrievalStrategy.HYBRID))
 
 
+@pytest.mark.parametrize("seed_count", [0, 2, 30])
+async def test_cited_recall_is_bounded_and_intersects_normal_retrieval_scope(seed_count):
+    service = _search_service()
+    retriever = _ready_search(service)
+    document_id = uuid.uuid4()
+    seeds = [uuid.uuid4() for _ in range(seed_count)]
+    await service.search(
+        SearchRequest(query="deadline", document_id=document_id), cited_chunk_ids=seeds
+    )
+    context = retriever.retrieve.call_args.args[0]
+    assert context.filters.chunk_ids == tuple(seeds[:24])
+    assert context.filters.document_id == document_id
+    assert context.project_id == service._project_id
+    assert context.index_build_id == service._builds.get_active.return_value.id
+
+
 @pytest.mark.parametrize("has_results", [True, False])
 async def test_authority_records_survive_loss_of_first_candidate(has_results: bool) -> None:
     service = _search_service()

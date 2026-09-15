@@ -454,7 +454,7 @@ async def repair_knowledge_evidence(
         AUTHORITATIVE_FOCUSED_PROMPT if authoritative_compatibility else FOCUSED_REPAIR_PROMPT
     )
     diagnostics: dict[str, Any] = {
-        "version": "v18-retained-authoritative-evidence"
+        "version": "v19-bounded-planning-and-reference-review"
         if authoritative_compatibility
         else EVIDENCE_REPAIR_VERSION,
         "coverage_protocol": "authoritative_compatibility"
@@ -562,8 +562,8 @@ async def repair_knowledge_evidence(
                     ),
                 ],
                 temperature=None,
-                max_tokens=min(2048 if authoritative_compatibility else 4096, max_output_tokens),
-                truncation_retry_tokens=min(2048, max_output_tokens)
+                max_tokens=min(4096, max_output_tokens),
+                truncation_retry_tokens=min(8192, max_output_tokens)
                 if authoritative_compatibility
                 else None,
                 proof_context=selected if review_initial else None,
@@ -571,6 +571,7 @@ async def repair_knowledge_evidence(
                 schema=_SearchPlan,
             )
             result.usage = completion.usage or ChatUsage(None, None)
+            diagnostics["planning_finish_reason"] = completion.finish_reason
             if completion.finish_reason not in {None, "stop", "completed", "end_turn"}:
                 diagnostics["status"] = "incomplete_plan"
                 return result

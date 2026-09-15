@@ -619,7 +619,9 @@ class LLMConfig(BaseModel):
     backend: LLMBackend = LLMBackend.ECHO
     model: str = "gpt-4o-mini"
     temperature: float | None = Field(default=None, ge=0.0, le=2.0)
-    max_tokens: int = Field(default=4096, ge=1, le=128_000)
+    # Reasoning and visible output share this ceiling. Leave room for a bounded
+    # 4096 -> 8192 planning retry as well as multi-source answer generation.
+    max_tokens: int = Field(default=8192, ge=1, le=128_000)
     # Deployment safety budget; override per actual model capability when smaller.
     context_window_tokens: int = Field(default=128_000, ge=1024)
     # Official model capacity, verified 2026-09-08:
