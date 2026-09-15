@@ -315,7 +315,15 @@ test("renders grounded citations instead of inferring grounding from answer text
       ...userMessage,
       id: "cccccccc-cccc-cccc-cccc-cccccccccccc",
       role: "assistant",
-      content: "Refunds are accepted within thirty days.",
+      content: [
+        "## Refund policy [1]",
+        "",
+        "Refunds are accepted within **thirty days**.",
+        "",
+        "| Requirement | Deadline |",
+        "| --- | --- |",
+        "| Refund request | Thirty days [1] |",
+      ].join("\n"),
       grounded: true,
       citations: [
         {
@@ -343,7 +351,9 @@ test("renders grounded citations instead of inferring grounding from answer text
   await userEvent.click(screen.getByRole("button", { name: "Send message" }));
   expect(await screen.findByText("Answer with citations")).toBeInTheDocument();
   expect(screen.getByLabelText("1 citations")).toHaveTextContent("[1] policy.txt");
-  expect(screen.getByText(/Refund requests are accepted/)).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: /Refund policy/ })).toBeInTheDocument();
+  expect(screen.getByRole("table")).toHaveTextContent("Refund request");
+  expect(screen.getAllByRole("button", { name: "Open citation 1: policy.txt" })).toHaveLength(2);
 });
 
 test("allows grounded chat when an active build exists even if documents are still chunked", async () => {

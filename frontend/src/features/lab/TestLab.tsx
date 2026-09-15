@@ -25,6 +25,7 @@ import {
 import {
   type DragEvent,
   type FormEvent,
+  type ReactNode,
   useCallback,
   useEffect,
   useMemo,
@@ -2317,7 +2318,9 @@ function MessagesTab({
                       <strong>Grounded response</strong>
                       <span className="lab-streaming-status">Streaming</span>
                     </div>
-                    <p role="status">{streamedContent || `${progressMessage}…`}</p>
+                    <div role="status">
+                      <MessageContent content={streamedContent || `${progressMessage}…`} />
+                    </div>
                     {!streamedContent && (
                       <span className="lab-typing" aria-hidden="true">
                         <i />
@@ -2425,7 +2428,11 @@ function MessageCard({
         <strong>{message.role === "assistant" ? "Assistant response" : "You"}</strong>
         <time>{formatDate(message.created_at)}</time>
       </div>
-      <p>{message.content}</p>
+      {message.role === "assistant" ? (
+        <MessageContent content={message.content} citations={citations} onCite={onInspect} />
+      ) : (
+        <p>{message.content}</p>
+      )}
       {message.role === "assistant" && (
         <div className="message-card__meta">
           {citations.length > 0 && (
@@ -2454,6 +2461,173 @@ function MessageCard({
       )}
     </article>
   );
+}
+
+type MessageCitation = NonNullable<Message["citations"]>[number];
+
+function MessageContent({
+  content,
+  citations = [],
+  onCite,
+}: {
+  content: string;
+  citations?: MessageCitation[];
+  onCite?: (citationIndex: number) => void;
+}) {
+  const lines = content.replaceAll("\r\n", "\n").split("\n");
+  const blocks: ReactNode[] = [];
+  let cursor = 0;
+
+  while (cursor < lines.length) {
+    const line = lines[cursor] ?? "";
+    if (!line.trim()) {
+      cursor += 1;
+      continue;
+    }
+
+    const heading = /^(#{1,3})\s+(.+)$/.exec(line);
+    if (heading) {
+      const level = heading[1]!.length;
+      const Tag = level === 1 ? "h2" : level === 2 ? "h3" : "h4";
+      blocks.push(
+        <Tag key={`heading-${cursor}`}>{inlineMessageContent(heading[2]!, citations, onCite)}</Tag>,
+      );
+      cursor += 1;
+      continue;
+    }
+
+    if (isMarkdownTable(lines, cursor)) {
+      const header = tableCells(lines[cursor] ?? "");
+      cursor += 2;
+      const rows: string[][] = [];
+      while (cursor < lines.length && (lines[cursor] ?? "").trimStart().startsWith("|")) {
+        rows.push(tableCells(lines[cursor] ?? ""));
+        cursor += 1;
+      }
+      blocks.push(
+        <div className="message-markdown__table-wrap" key={`table-${cursor}`}>
+          <table>
+            <thead>
+              <tr>
+                {header.map((cell, index) => (
+                  <th key={index}>{inlineMessageContent(cell, citations, onCite)}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row, rowIndex) => (
+                <tr key={rowIndex}>
+                  {header.map((_, cellIndex) => (
+                    <td key={cellIndex}>
+                      {inlineMessageContent(row[cellIndex] ?? "", citations, onCite)}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>,
+      );
+      continue;
+    }
+
+    if (/^(?:[-*+]\s+|\d+[.)]\s+)/.test(line)) {
+      const ordered = /^\d+[.)]\s+/.test(line);
+      const items: string[] = [];
+      while (cursor < lines.length) {
+        const item = lines[cursor] ?? "";
+        const match = ordered ? /^\d+[.)]\s+(.+)$/.exec(item) : /^[-*+]\s+(.+)$/.exec(item);
+        if (!match) break;
+        items.push(match[1]!);
+        cursor += 1;
+      }
+      const List = ordered ? "ol" : "ul";
+      blocks.push(
+        <List key={`list-${cursor}`}>
+          {items.map((item, index) => (
+            <li key={index}>{inlineMessageContent(item, citations, onCite)}</li>
+          ))}
+        </List>,
+      );
+      continue;
+    }
+
+    const paragraph: string[] = [];
+    while (cursor < lines.length && (lines[cursor] ?? "").trim()) {
+      if (
+        paragraph.length &&
+        (isMarkdownTable(lines, cursor) ||
+          /^(#{1,3}\s+|[-*+]\s+|\d+[.)]\s+)/.test(lines[cursor] ?? ""))
+      )
+        break;
+      paragraph.push(lines[cursor] ?? "");
+      cursor += 1;
+    }
+    blocks.push(
+      <p key={`paragraph-${cursor}`}>
+        {inlineMessageContent(paragraph.join(" "), citations, onCite)}
+      </p>,
+    );
+  }
+  return <div className="message-markdown">{blocks}</div>;
+}
+
+function isMarkdownTable(lines: string[], index: number) {
+  const header = lines[index] ?? "";
+  const divider = lines[index + 1] ?? "";
+  return (
+    header.trimStart().startsWith("|") &&
+    /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(divider)
+  );
+}
+
+function tableCells(line: string) {
+  return line
+    .trim()
+    .replace(/^\||\|$/g, "")
+    .split("|")
+    .map((cell) => cell.trim());
+}
+
+function inlineMessageContent(
+  value: string,
+  citations: MessageCitation[],
+  onCite?: (citationIndex: number) => void,
+): ReactNode[] {
+  const tokens = value.split(/(\[\d+\]|`[^`]+`|\*\*[^*]+\*\*|\*[^*]+\*)/g).filter(Boolean);
+  return tokens.map((token, index) => {
+    const citation = /^\[(\d+)\]$/.exec(token);
+    if (citation) {
+      const citationIndex = Number(citation[1]) - 1;
+      const source = citations[citationIndex];
+      if (source && onCite) {
+        return (
+          <button
+            aria-label={`Open citation ${citation[1]}: ${source.web_title ?? source.filename}`}
+            className="inline-citation"
+            key={index}
+            onClick={() => onCite(citationIndex)}
+            title={source.web_title ?? source.filename}
+            type="button"
+          >
+            {citation[1]}
+          </button>
+        );
+      }
+      return (
+        <sup className="inline-citation inline-citation--unlinked" key={index}>
+          {citation[1]}
+        </sup>
+      );
+    }
+    if (token.startsWith("**") && token.endsWith("**"))
+      return <strong key={index}>{token.slice(2, -2)}</strong>;
+    if (token.startsWith("`") && token.endsWith("`"))
+      return <code key={index}>{token.slice(1, -1)}</code>;
+    if (token.startsWith("*") && token.endsWith("*"))
+      return <em key={index}>{token.slice(1, -1)}</em>;
+    return token;
+  });
 }
 
 export function MessageInspector({

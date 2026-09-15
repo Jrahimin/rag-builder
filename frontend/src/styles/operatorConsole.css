@@ -2025,11 +2025,121 @@ td small {
   color: var(--muted);
   font-size: 0.62rem;
 }
-.message-card > p {
+.message-markdown {
+  margin-top: 7px;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  color: #172b4d;
+}
+.message-card--user > p {
   margin: 6px 0 0;
   font-size: 0.8rem;
   line-height: 1.5;
   white-space: pre-wrap;
+}
+.message-markdown > :first-child {
+  margin-top: 0;
+}
+.message-markdown > :last-child {
+  margin-bottom: 0;
+}
+.message-markdown p {
+  margin: 0.55rem 0;
+}
+.message-markdown h2,
+.message-markdown h3,
+.message-markdown h4 {
+  margin: 1rem 0 0.42rem;
+  color: #102a54;
+  line-height: 1.24;
+}
+.message-markdown h2 {
+  font-size: 1rem;
+}
+.message-markdown h3 {
+  font-size: 0.9rem;
+}
+.message-markdown h4 {
+  font-size: 0.82rem;
+}
+.message-markdown ul,
+.message-markdown ol {
+  margin: 0.5rem 0;
+  padding-left: 1.25rem;
+}
+.message-markdown li + li {
+  margin-top: 0.22rem;
+}
+.message-markdown code {
+  padding: 0.08rem 0.28rem;
+  color: #123e78;
+  background: #edf3fc;
+  border: 1px solid #d9e5f5;
+  border-radius: 4px;
+  font-size: 0.9em;
+}
+.message-markdown__table-wrap {
+  margin: 0.72rem 0;
+  overflow-x: auto;
+  border: 1px solid #dce7f4;
+  border-radius: 10px;
+  background: #fbfdff;
+}
+.message-markdown table {
+  width: 100%;
+  min-width: 420px;
+  border-collapse: collapse;
+  font-size: 0.72rem;
+}
+.message-markdown th,
+.message-markdown td {
+  padding: 0.48rem 0.55rem;
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid #e4edf7;
+}
+.message-markdown th {
+  color: #173b70;
+  background: #f0f5fc;
+  font-size: 0.66rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+.message-markdown tr:last-child td {
+  border-bottom: 0;
+}
+.inline-citation {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.15rem;
+  height: 1.15rem;
+  margin: 0 0.08rem;
+  padding: 0 0.22rem;
+  color: #1d57a8;
+  vertical-align: text-top;
+  background: #edf4ff;
+  border: 1px solid #cbdcf5;
+  border-radius: 999px;
+  font-size: 0.63rem;
+  font-weight: 800;
+  line-height: 1;
+}
+button.inline-citation {
+  cursor: pointer;
+}
+button.inline-citation:hover,
+button.inline-citation:focus-visible {
+  color: white;
+  background: #1f5fbe;
+  border-color: #1f5fbe;
+  outline: none;
+}
+.inline-citation--unlinked {
+  color: #607b9f;
+  background: #f4f7fb;
+  border-color: #dce5f0;
 }
 .message-card__meta {
   display: flex;
