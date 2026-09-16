@@ -22,10 +22,23 @@ def rewrite_citation_ids(
     if not all(
         re.search(pattern, question, re.I)
         for pattern in (
-            r"\b(previous|earlier|last|above)\b|আগের|পূর্বের",
-            r"\b(summari[sz]e|shorten|translate|rewrite|rephrase)\b|বুলেট|সংক্ষেপ|বাংলায়|বাংলায়|সহজ",
-            r"\b(no new|do not add|don't add|without adding)\b|নতুন তথ্য[^।.!?]*না",
+            r"\b(previous|earlier|last|above|this|that|it)\b|আগের|পূর্বের|এটি|এটা|সেটি|উত্তরটি",
+            r"\b(summari[sz]e|shorten|translate|rewrite|rephrase|bullets?)\b|বুলেট|সংক্ষেপ|সংক্ষিপ্ত|বাংলায়|বাংলায়|সহজ",
         )
+    ):
+        return []
+    # Ordinary rewrites should not require a magic "no new facts" phrase.
+    # Mixed requests still need broad retrieval for their added subject matter.
+    normalized = re.sub(
+        r"\b(no new|do not add|don't add|without adding)\b[^.!?]*|নতুন তথ্য[^।.!?]*না[।.!?]?",
+        "",
+        question,
+        flags=re.I,
+    )
+    if re.search(
+        r"\b(add|also|include new|update|current|latest|compare)\b|আরও|যোগ|বর্তমান|নতুন|তুলনা",
+        normalized,
+        re.I,
     ):
         return []
     previous = next((item for item in reversed(history) if item.role == "assistant"), None)

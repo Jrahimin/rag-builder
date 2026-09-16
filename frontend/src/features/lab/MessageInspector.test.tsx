@@ -1,5 +1,5 @@
-import { render, screen } from "@testing-library/react";
-import { describe, expect, test } from "vitest";
+import { fireEvent, render, screen } from "@testing-library/react";
+import { describe, expect, test, vi } from "vitest";
 import type { Message } from "../../api/operatorApiClient";
 import { MessageInspector } from "./TestLab";
 
@@ -58,6 +58,32 @@ function inspect(answer: Message, expected = "", passed = false) {
 }
 
 describe("message grounding explanation", () => {
+  test("keeps all supplied passages accessible and preserves citation six numbering", () => {
+    const onCite = vi.fn();
+    render(
+      <MessageInspector
+        message={{
+          ...message,
+          content: "A supported rule. [6]",
+          citations: Array.from({ length: 7 }, (_, i) => ({
+            source_kind: "knowledge" as const,
+            filename: `Source ${i + 1}`,
+            chunk_id: `chunk-${i}`,
+            excerpt: `Passage ${i + 1}`,
+          })),
+        }}
+        run={null}
+        activeCitation={5}
+        onCite={onCite}
+      />,
+    );
+    expect(screen.getByText("1 cited passages · 7 supplied passages")).toBeInTheDocument();
+    expect(screen.getAllByText("Cited in answer")).toHaveLength(1);
+    expect(screen.getAllByText("Supplied to generation; not cited")).toHaveLength(6);
+    fireEvent.click(screen.getByRole("button", { name: /\[6\] Source 6/ }));
+    expect(onCite).toHaveBeenCalledWith(5);
+    expect(screen.getByRole("button", { name: /\[7\] Source 7/ })).toBeInTheDocument();
+  });
   test("backend-classified conversational replies do not produce false grounding failures", () => {
     inspect({
       ...message,

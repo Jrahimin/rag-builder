@@ -21,6 +21,7 @@ from app.modules.conversations.services.evidence_repair_service import (
     _search_language_instruction,
     _source_hints,
     _source_line_records,
+    _unique_authority_records,
     _validated_completion,
     repair_knowledge_evidence,
 )
@@ -1172,6 +1173,7 @@ async def test_narrowed_partial_duty_keeps_unresolved_details_explicit():
     assert result.diagnostics["status"] == "partial_answer"
     assert result.partial_answer["scope"][0]["description"] == "Present audited accounts at the AGM"
     assert result.partial_answer["pending"] == ["Auditor appointment"]
+    assert result.diagnostics["requirement_progress"]["stop_reason"] == "validated_partial_scope"
 
 
 @pytest.mark.parametrize("queries", [[], [" "], ["q"] * 9, ["q" * 501]])
@@ -1261,7 +1263,6 @@ async def test_verifier_cannot_authorize_unbound_or_incomplete_evidence(fault, m
 @pytest.mark.parametrize(
     ("fields", "code"),
     [
-        ({"gap_kinds": ["source_rule", "source_rule"]}, "coverage_gap_classification_mismatch"),
         ({"missing_inputs": ["Private date"]}, "coverage_unreviewed_missing_inputs"),
         ({"complete": True}, "coverage_inconsistent_completion"),
     ],
@@ -1289,6 +1290,46 @@ async def test_coverage_failure_codes_survive_bounded_validation_without_exposin
         {"type": code, "loc": []}
     ]
     assert "Private date" not in json.dumps(errors)
+
+
+async def test_misaligned_advisory_gap_labels_keep_gaps_without_retrying_model():
+    llm = AsyncMock()
+    payload = {
+        "complete": False,
+        "missing": ["Filing duty", "Deadline"],
+        "gap_kinds": ["scenario_input"],
+        "checks": [],
+    }
+    llm.generate.return_value = ChatCompletionResult(
+        content=json.dumps(payload),
+        provider="fake",
+        model="test",
+        provider_version="1",
+        finish_reason="stop",
+        usage=ChatUsage(10, 5),
+    )
+    response = await _validated_completion(llm, [], schema=CoverageVerdict, max_tokens=1024)
+    verdict = CoverageVerdict.model_validate_json(response.content)
+    assert llm.generate.await_count == 1
+    assert verdict.missing == payload["missing"]
+    assert verdict.gap_kinds == ["source_rule", "source_rule"]
+    assert verdict._gap_kinds_defaulted
+    assert not verdict.missing_inputs
+    assert not verdict.validates([], [])
+
+
+def test_authority_prompt_dedup_keeps_distinct_outcomes_and_scopes():
+    base = {"relationship_id": "edge", "outcome": "expanded", "target_provisions": ["36"]}
+    changed = {**base, "outcome": "candidate_cap"}
+    scope = {**base, "target_provisions": ["81"]}
+    assert _unique_authority_records(
+        [base, dict(reversed(list(base.items()))), changed, scope]
+    ) == [base, changed, scope]
+    instruction = _search_language_instruction(
+        [{"source": {"language": "bn", "source_role": "primary"}}]
+    )
+    assert "one short source-language query per distinct" in instruction
+    assert "in each language for every" not in instruction
 
 
 async def test_proven_conditional_rules_do_not_search_for_missing_personal_facts():

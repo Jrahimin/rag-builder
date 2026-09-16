@@ -116,10 +116,9 @@ Act schedule does not contradict a circular's earlier-period schedule solely by 
 """
 
 PARTIAL_COVERAGE_PROMPT = """
-Also return gap_kinds, one value per missing item in the same order: source_rule
-or scenario_input. Classify before deciding completeness or separability, even when
-some source checks fail. Split a mixed description into separate missing items when
-possible; otherwise classify it source_rule. Classification alone never proves coverage.
+Keep all unresolved gaps in missing. Omit gap_kinds and missing_inputs: the caller
+defaults gaps to missing source rules and separately reviews personal inputs when
+all governing rules are proven. Do not remove a gap merely because it may be personal.
 When whole-question coverage is incomplete, you may also return an optional
 partial_answer object: {"scope":"precise independently answerable work",
 "requirement_ids":["R1"],"exclusions":["each supplied component left unresolved"]}.

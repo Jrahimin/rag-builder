@@ -2136,6 +2136,7 @@ function MessagesTab({
     const started = performance.now();
     try {
       setStreamedContent("");
+      setProgressMessage("Searching sources");
       const turn =
         delivery === "stream"
           ? await stream.mutateAsync({
@@ -2421,6 +2422,7 @@ function MessageCard({
 }) {
   const refusal = message.insufficient_evidence_reason;
   const citations = message.citations ?? [];
+  const citedIndexes = citedPassageIndexes(message.content, citations.length);
   return (
     <article
       className={`message-card message-card--${message.role}${selected ? " message-card--selected" : ""}`}
@@ -2438,12 +2440,12 @@ function MessageCard({
         <div className="message-card__meta">
           {citations.length > 0 && (
             <div className="cite-chips" aria-label="Citations">
-              {citations.slice(0, 5).map((citation, index) => (
+              {citedIndexes.map((index) => (
                 <button
-                  key={`${citation.chunk_id ?? citation.web_url ?? "source"}-${index}`}
+                  key={index}
                   type="button"
                   className={activeCitation === index ? "is-active" : undefined}
-                  title={citation.web_title ?? citation.filename}
+                  title={citations[index]?.web_title ?? citations[index]?.filename}
                   onClick={() => onInspect?.(index)}
                 >
                   {index + 1}
@@ -2456,7 +2458,7 @@ function MessageCard({
               ? "View refusal details"
               : message.metadata?.non_knowledge_turn === true
                 ? "View response details"
-                : `${citations.length} citation${citations.length === 1 ? "" : "s"} · view evidence`}
+                : `${citedIndexes.length} citation${citedIndexes.length === 1 ? "" : "s"} · view evidence`}
           </button>
         </div>
       )}
@@ -2465,6 +2467,12 @@ function MessageCard({
 }
 
 type MessageCitation = NonNullable<Message["citations"]>[number];
+
+function citedPassageIndexes(content: string, count: number): number[] {
+  return [...new Set([...content.matchAll(/\[(\d+)\]/g)].map((match) => Number(match[1]) - 1))]
+    .filter((index) => index >= 0 && index < count)
+    .sort((left, right) => left - right);
+}
 
 function MessageContent({
   content,
@@ -2682,6 +2690,7 @@ export function MessageInspector({
   const refusal = message.insufficient_evidence_reason;
   const citations = message.citations ?? [];
   const focused = citations[activeCitation] ?? citations[0];
+  const citedIndexes = citedPassageIndexes(message.content, citations.length);
   const groundingPassed = Boolean(!refusal && message.grounded === true && citations.length);
   const expectedMatches =
     !run?.expected.trim() ||
@@ -2784,7 +2793,7 @@ export function MessageInspector({
         </span>
         <span>
           <Quote size={13} aria-hidden="true" />
-          {citations.length} evidence passages
+          {citedIndexes.length} cited passages · {citations.length} supplied passages
         </span>
       </div>
       <TranslationDiagnostics metadata={message.metadata} />
@@ -2924,7 +2933,7 @@ export function MessageInspector({
         </div>
       ) : citations.length ? (
         <ol className="citation-list" aria-label={`${citations.length} citations`}>
-          {citations.slice(0, 5).map((citation, index) => (
+          {citations.map((citation, index) => (
             <li
               key={`${citation.chunk_id ?? citation.web_url ?? "source"}-${index}`}
               className={
@@ -2937,6 +2946,11 @@ export function MessageInspector({
                 <strong>
                   [{index + 1}] <Filename name={citation.web_title ?? citation.filename} />
                 </strong>
+                <span>
+                  {citedIndexes.includes(index)
+                    ? "Cited in answer"
+                    : "Supplied to generation; not cited"}
+                </span>
                 <span>
                   {citation.source_kind === "web"
                     ? `Web · ${citation.web_provider ?? "external source"}`

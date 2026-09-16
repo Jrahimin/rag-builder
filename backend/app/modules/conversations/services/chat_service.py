@@ -1167,11 +1167,21 @@ class ChatService:
             )
         )
         candidate_diagnostics = evidence_gate["candidate_wise"]
+        used_markers = {int(m) for m in re.findall(r"\[(\d+)\]", content)}
+        cited_snapshots = [c for i, c in enumerate(citations, 1) if i in used_markers]
+        cited_chunks = [
+            c
+            for i, c in enumerate(prepared.selected, 1)
+            if i in used_markers and i <= len(citations)
+        ]
+        metadata["current_authority"]["cited"] = cited_authority_summary(
+            cited_chunks, prepared.retrieval_diagnostics.get("modifies_expansion_records")
+        )
         selected_evidence_units = [
             chunk for chunk in prepared.selected if chunk.metadata.get("evidence_unit_id")
         ]
         cited_evidence_units = [
-            citation for citation in citations if citation.get("evidence_unit_id")
+            citation for citation in cited_snapshots if citation.get("evidence_unit_id")
         ]
         candidate_diagnostics.update(
             {
@@ -1202,7 +1212,7 @@ class ChatService:
             evidence=prepared.evidence,
             retrieved_count=len(prepared.chunks),
             selected_count=len(selected_evidence_units),
-            citations=citations,
+            citations=cited_snapshots,
             claims=grounding.claims,
             rerank_status=prepared.retrieval_diagnostics.get("rerank_status"),
             blocked=reason_value is not None,
@@ -1274,7 +1284,6 @@ class ChatService:
             else None,
             "project_revision": self._config_provenance.get("project_config_revision_number"),
         }
-        used_markers = {int(m) for m in re.findall(r"\[(\d+)\]", content)}
         validated_coverage = bool(
             (prepared.retrieval_diagnostics.get("knowledge_repair") or {})
             .get("coverage", {})
@@ -1288,9 +1297,8 @@ class ChatService:
             if prepared.evidence.candidate_assessments
             else len(prepared.evidence.admitted_units),
             "context_passages": len(prepared.selected),
-            "cited_documents": len(
-                {c.document_id for i, c in enumerate(prepared.selected, 1) if i in used_markers}
-            ),
+            "cited_passages": len(cited_snapshots),
+            "cited_documents": len({c.document_id for c in cited_chunks}),
             "reviewed_works": reviewed_work_count(prepared.selected),
             "coverage": "partial"
             if (prepared.retrieval_diagnostics.get("knowledge_repair") or {}).get("partial_answer")

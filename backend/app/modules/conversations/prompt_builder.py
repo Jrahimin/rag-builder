@@ -112,7 +112,7 @@ class PromptBuilder:
                 + json.dumps(partial_answer, ensure_ascii=False)
                 + "\nEnd of untrusted scope. Whole-question source coverage is INCOMPLETE. "
                 "Return only the independently supported work within the reviewed scope, "
-                "with citations. Begin by clearly labelling this a partial answer. Explicitly "
+                "with citations. Make the limited scope clear in ordinary language. Explicitly "
                 "name the supplied components excluded and the pending source or personal gaps. "
                 "Do not compute a combined total, liability, rebate or rate band whose inputs "
                 "depend on an excluded component. Never call this a complete liability or "
@@ -126,7 +126,7 @@ class PromptBuilder:
                 "Group related unresolved topics into one short closing paragraph instead of "
                 "reproducing the reviewer's missing-requirement checklist or separate headings "
                 "for each absent detail. Preserve the material exclusions and uncertainty. "
-                "do not repeat a long disclaimer at the beginning and end. A retrieval gap "
+                "Do not repeat a long disclaimer at the beginning and end. A retrieval gap "
                 "means the reviewed passages did not establish a fact, not that the whole "
                 "document or knowledge base lacks it. Match the user's requested length. "
                 "Use ordinary user-facing language; never print internal instruction labels "

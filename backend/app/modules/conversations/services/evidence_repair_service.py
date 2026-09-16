@@ -201,8 +201,9 @@ def _search_language_instruction(
             if source.get("source_role") == role and language in DEFAULT_SUPPORTED_TARGET_LANGUAGES:
                 return (
                     f"\nCurrent governing sources use language code {language}. "
-                    "If this differs from the user's language, include separate short queries "
-                    "in each language for every necessary concept, within the eight-query limit. "
+                    "Prioritize one short source-language query per distinct necessary concept. "
+                    "Use an alternate-language route only when it adds discovery value after "
+                    "the distinct concepts fit within the eight-query limit. "
                     "Omit document titles; source identity and period are checked separately.\n"
                 )
     return ""
@@ -905,7 +906,7 @@ async def repair_knowledge_evidence(
                                         }
                                         for i, group in enumerate(groups)
                                     ],
-                                    "authority_limitations": records,
+                                    "authority_limitations": _unique_authority_records(records),
                                     "context": [
                                         {
                                             "chunk_id": labels[str(c.chunk_id)],
@@ -1077,6 +1078,7 @@ async def repair_knowledge_evidence(
                     "complete": verdict.complete,
                     "missing": verdict.missing,
                     "gap_kinds": verdict.gap_kinds or ["source_rule"] * len(verdict.missing),
+                    "gap_kinds_defaulted": verdict._gap_kinds_defaulted,
                     "missing_inputs": verdict.missing_inputs,
                     "checks": [
                         {
@@ -1157,6 +1159,11 @@ async def repair_knowledge_evidence(
                     break
                 diagnostics["status"] = "coverage_incomplete"
                 if round_index == MAX_REPAIR_FOLLOWUPS or verdict.complete or not verdict.missing:
+                    diagnostics["requirement_progress"]["stop_reason"] = (
+                        "repair_followup_limit"
+                        if round_index == MAX_REPAIR_FOLLOWUPS
+                        else "coverage_validation_failed"
+                    )
                     return result
                 if not round_index:
                     diagnostics["initial_coverage"] = diagnostics["coverage"]
@@ -1372,6 +1379,13 @@ async def repair_knowledge_evidence(
         diagnostics["elapsed_ms"] = round((monotonic() - started) * 1000)
 
 
+def _unique_authority_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Avoid repeating identical relationship diagnostics for every search route."""
+    return list(
+        {json.dumps(record, sort_keys=True, default=str): record for record in records}.values()
+    )
+
+
 def _checkpoint_matches_branch(
     checkpoint: EvidenceRepairResult,
     checkpoint_key: str | None,
@@ -1430,6 +1444,9 @@ def _handoff_reviewed_proof(
         candidate_assessments=tuple(assessments.values()),
     )
     diagnostics["status"] = "partial_answer" if partial else "recovered"
+    progress = diagnostics.setdefault("requirement_progress", {})
+    if not progress.get("stop_reason"):
+        progress["stop_reason"] = "validated_partial_scope" if partial else "coverage_complete"
     result.partial_answer = partial
     result.missing_inputs = tuple(verdict.missing_inputs)
 

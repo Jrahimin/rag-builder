@@ -1175,6 +1175,24 @@ async def test_unrelated_coverage_bullet_is_not_auto_supported() -> None:
     assert claim["verification_reason"] == "coverage_topic_not_matched"
 
 
+@pytest.mark.parametrize("validated", [True, False])
+async def test_supplied_source_limitation_uses_validated_scope_not_citation_similarity(validated):
+    result = await GroundingService(ChatConfig()).map_claims(
+        "The supplied source does not provide separate RJSC procedural guidance. [1]",
+        [_chunk(content="The annual return must be filed within 21 days.")],
+        coverage={
+            "coverage": {
+                "missing": ["Official RJSC procedural guidance"],
+                "partial_scope_validated": validated,
+            }
+        },
+    )
+    claim = result.claims[0]
+    assert claim["claim_kind"] == "coverage_scope"
+    assert claim["verification_method"] == "coverage_verdict"
+    assert claim["verification"] == ("supported" if validated else "unverified")
+
+
 async def test_equivalent_week_and_day_durations_are_not_contradictions() -> None:
     result = await GroundingService(ChatConfig(minimum_claim_token_coverage=0.3)).map_claims(
         "Notice must be given within 21 days. [1]",

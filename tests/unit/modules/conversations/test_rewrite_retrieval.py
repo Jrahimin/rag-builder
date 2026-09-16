@@ -17,6 +17,15 @@ pytestmark = pytest.mark.unit
     "question,relation,eligible",
     [
         ("Translate the previous answer. Do not add new facts.", TurnRelation.FOLLOW_UP, True),
+        ("Summarize it in three bullets.", TurnRelation.FOLLOW_UP, True),
+        (
+            "এটি তিনটি সংক্ষিপ্ত বাংলা বুলেটে বলুন। "
+            "মূল দায়িত্ব, সময়সীমা এবং প্রযোজ্য সীমাবদ্ধতা রাখুন, সঙ্গে সূত্র দিন।",
+            TurnRelation.FOLLOW_UP,
+            True,
+        ),
+        ("Rewrite it and add current filing fees.", TurnRelation.FOLLOW_UP, False),
+        ("এটি সংক্ষেপ করুন এবং বর্তমান ফি যোগ করুন।", TurnRelation.FOLLOW_UP, False),
         (
             "আগের উত্তরটি সহজ বাংলায় তিনটি বুলেটে বলুন। নতুন তথ্য যোগ করবেন না।",
             TurnRelation.FOLLOW_UP,

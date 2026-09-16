@@ -18,7 +18,8 @@ export function EvidenceSummary({ summary }: { summary: Record<string, unknown> 
             [
               ["candidates", "Initial candidates"],
               ["admitted_passages", "Admitted passages"],
-              ["context_passages", "Passages used for this answer"],
+              ["context_passages", "Passages supplied to generation"],
+              ["cited_passages", "Passages cited in the answer"],
               ["cited_documents", "Documents cited in the answer"],
               ["reviewed_works", "Distinct works reviewed"],
               ["coverage", "Evidence coverage"],

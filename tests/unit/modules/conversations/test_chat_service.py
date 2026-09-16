@@ -344,6 +344,48 @@ def _service(
     )
 
 
+async def test_cited_counts_and_authority_use_answer_markers_without_renumbering_snapshots(
+    session,
+    conversation_repository,
+    message_repository,
+    conversation,
+):
+    first = (await FakeRetrieval().retrieve()).chunks[0]
+    first = replace(first, metadata={"source_revision_id": str(uuid.uuid4())})
+    second = replace(
+        first,
+        chunk_id=uuid.uuid4(),
+        document_id=uuid.uuid4(),
+        score=0.8,
+        content="Customers can request a refund within 30 days of purchase.",
+        chunk_hash="second",
+        metadata={"source_revision_id": str(uuid.uuid4())},
+    )
+    service = _service(
+        session,
+        conversation_repository,
+        message_repository,
+        CitedLLM("Customers can request a refund within 30 days of purchase. [2]"),
+    )
+    service._retrieval = AsyncMock()
+    service._retrieval.query_embedder = None
+    service._retrieval.retrieve.return_value = ContextRetrievalResult(
+        chunks=[first, second], diagnostics={}
+    )
+    turn = await service.send_message(
+        conversation.id, MessageSendRequest(content="What is the refund policy?")
+    )
+    answer = turn.assistant_message
+    assert len(answer.citations) == 2
+    assert answer.citations[1].chunk_id == second.chunk_id
+    assert "[2]" in answer.content
+    assert answer.metadata["evidence_summary"]["context_passages"] == 2
+    assert answer.metadata["evidence_summary"]["cited_passages"] == 1
+    assert answer.metadata["evidence_gate"]["candidate_wise"]["cited_count"] == 1
+    assert answer.metadata["evidence_funnel"]["cited"] == 1
+    assert answer.metadata["current_authority"]["cited"]["cited_revision_count"] == 1
+
+
 async def test_runtime_metadata_keeps_funnel_but_omits_candidate_payloads(
     session: AsyncMock,
     conversation_repository: AsyncMock,

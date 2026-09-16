@@ -95,14 +95,16 @@ class CoverageVerdict(BaseModel):
     missing_inputs: list[str] = Field(default_factory=list, max_length=12)
     partial_answer: PartialAnswerScope | None = None
     checks: list[_Check] = Field(max_length=MAX_REPAIR_DEPENDENCIES + 2 * MAX_REPAIR_FOLLOWUPS)
+    _gap_kinds_defaulted: bool = PrivateAttr(default=False)
 
     @model_validator(mode="after")
     def require_consistent_completion(self) -> CoverageVerdict:
         if self.gap_kinds and len(self.gap_kinds) != len(self.missing):
-            raise PydanticCustomError(
-                "coverage_gap_classification_mismatch",
-                "gap_kinds must classify every missing item in the same order",
-            )
+            # These labels are advisory diagnostics, never authority to promote a
+            # gap to a personal input. Keep every gap and conservatively require
+            # source evidence when the parallel labels cannot be matched safely.
+            self.gap_kinds = ["source_rule"] * len(self.missing)
+            self._gap_kinds_defaulted = True
         if self.missing_inputs:
             raise PydanticCustomError(
                 "coverage_unreviewed_missing_inputs",

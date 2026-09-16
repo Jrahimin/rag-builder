@@ -65,6 +65,8 @@ _COVERAGE_SCOPE_PATTERN = regex.compile(
     r"reviewed (?:evidence|materials|sources) do(?:es)? not|"
     r"this answer does not (?:cover|establish)|"
     r"selected (?:evidence|passages|materials) do(?:es)? not|"
+    r"(?:supplied|provided) (?:source(?:s)?|evidence|passages|materials) "
+    r"do(?:es)? not (?:establish|provide|cover)|"
     r"not established from the (?:available|selected|reviewed)|"
     r"outside the (?:reviewed|selected) evidence|"
     r"উপলব্ধ (?:উপাদান|প্রমাণ)[^\n]{0,40}প্রতিষ্ঠিত হ[য়য়] না|"
