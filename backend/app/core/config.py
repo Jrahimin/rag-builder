@@ -631,6 +631,8 @@ class LLMConfig(BaseModel):
         default_factory=lambda: {"gpt-5.6-luna": 1_050_000}
     )
     request_timeout_seconds: float = Field(default=120.0, ge=1.0, le=600.0)
+    # One evidence review includes planning, retrieval and bounded follow-up calls.
+    evidence_review_timeout_seconds: float = Field(default=300.0, ge=1.0, le=600.0)
     ollama_base_url: str = "http://localhost:11434"
     openai_api_key: str | None = None
     openai_base_url: str = "https://api.openai.com"

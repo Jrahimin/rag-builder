@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import uuid
 from dataclasses import replace
@@ -26,7 +27,7 @@ from app.modules.conversations.services.evidence_repair_service import (
 from app.modules.conversations.turn_resolution import EffectiveRetrievalInputs
 from app.platform.domain.content_hash import content_hash
 from app.platform.providers.contracts.llm import ChatCompletionResult, ChatUsage
-from app.platform.providers.errors import ProviderError
+from app.platform.providers.errors import ProviderError, ProviderTimeoutError
 
 pytestmark = pytest.mark.unit
 
@@ -315,6 +316,110 @@ async def test_unchanged_focused_evidence_keeps_confirmed_partial_proof():
     assert result.partial_answer is not None
     assert [item.chunk_id for item in result.selected] == [known.chunk_id]
     assert retrieval.retrieve.await_count == 2
+
+
+@pytest.mark.parametrize(
+    "stage",
+    [
+        "focused_planning",
+        "coverage_review",
+        "deadline",
+        "authority_changed",
+        "proof_changed",
+        "snapshot_changed",
+    ],
+)
+async def test_timeout_keeps_only_previously_validated_partial_proof(stage):
+    known = chunk("Private companies must hold an annual general meeting.")
+    unreviewed = chunk("An unreviewed annual filing rule.")
+    coverage = {
+        "complete": False,
+        "missing": ["Annual return filing duty"],
+        "checks": [
+            {"requirement_id": "R1", "supported": False, "evidence": []},
+            {
+                "requirement_id": "R2",
+                "description": "AGM duty",
+                "supported": True,
+                "evidence": [{"chunk_id": str(known.chunk_id), "quote": known.content}],
+            },
+        ],
+        "partial_answer": {
+            "scope": "AGM duty",
+            "requirement_ids": ["R2"],
+            "exclusions": ["Annual return filing duty"],
+        },
+    }
+
+    async def wait_for_deadline(messages):
+        if "Find governing evidence missed" in messages[0].content:
+            await asyncio.Event().wait()
+
+    branch_metadata = {}
+    if stage == "authority_changed":
+        branch_metadata["modifies_expansion_records"] = [
+            {"outcome": "ungoverned_or_incomplete_metadata"}
+        ]
+    elif stage == "snapshot_changed":
+        branch_metadata["source_metadata_generation"] = 25
+    if stage == "proof_changed":
+        unreviewed = replace(known, content="A changed rule which has not been reviewed.")
+    followup_chunks = [unreviewed]
+    if stage == "proof_changed":
+        followup_chunks.append(chunk("Additional unreviewed filing context."))
+
+    result, _, _ = await run_repair(
+        [([known], {}), (followup_chunks, branch_metadata)],
+        queries=["company AGM"],
+        requirements=[
+            {"requirement_id": "R1", "description": "Annual return filing duty"},
+            {"requirement_id": "R2", "description": "AGM duty"},
+        ],
+        coverage=coverage,
+        followup_queries=["annual list summary"],
+        followup_error=TimeoutError() if stage == "focused_planning" else None,
+        final_verification_error=(
+            ProviderTimeoutError("Review timed out", provider_name="fake")
+            if stage in {"coverage_review", "authority_changed", "proof_changed"}
+            else None
+        ),
+        generation_hook=wait_for_deadline if stage == "deadline" else None,
+        timeout_seconds=0.3 if stage == "deadline" else 300,
+    )
+    if stage in {"authority_changed", "proof_changed", "snapshot_changed"}:
+        assert not result.selected
+        assert result.decision is None
+        assert result.partial_answer is None
+        return
+    assert result.failure is None
+    assert result.diagnostics["status"] == "partial_answer"
+    assert result.diagnostics["requirement_progress"]["stop_reason"] == "evidence_review_timeout"
+    assert result.diagnostics["coverage"]["partial_scope_validated"] is True
+    assert result.diagnostics["coverage"]["full_coverage_validated"] is False
+    assert [(c.chunk_id, c.content) for c in result.selected] == [(known.chunk_id, known.content)]
+    assert result.partial_answer["pending"] == ["Annual return filing duty"]
+    assert result.usage == ChatUsage(None, None)
+    assert result.diagnostics["elapsed_ms"] >= 0
+
+
+async def test_overall_review_deadline_cannot_promote_unreviewed_evidence():
+    async def block_initial_review(messages):
+        if "Check whether supplied evidence" in messages[0].content:
+            await asyncio.Event().wait()
+
+    result, _, _ = await run_repair(
+        [([chunk("An admitted rule, not yet reviewed for coverage.")], {})],
+        queries=["rule"],
+        generation_hook=block_initial_review,
+        timeout_seconds=0.3,
+    )
+    assert not result.selected
+    assert result.decision is None
+    assert isinstance(result.failure, ProviderTimeoutError)
+    assert result.diagnostics["phase"] == "coverage_review"
+    assert result.diagnostics["failure_reason"] == "timeout"
+    assert result.diagnostics["stop_reason"] == "evidence_review_timeout"
+    assert result.diagnostics["timeout_seconds"] == 0.3
 
 
 @pytest.mark.parametrize("final_finish", ["stop", "length"])
@@ -698,6 +803,10 @@ async def run_repair(
     coverage=None,
     verification_finish="stop",
     verification_error=None,
+    followup_error=None,
+    final_verification_error=None,
+    generation_hook=None,
+    timeout_seconds=300,
     calls=None,
     selected_context=None,
     followup_queries=None,
@@ -760,10 +869,11 @@ async def run_repair(
     ]
     llm.generate.side_effect = [
         *llm.generate.side_effect,
-        replace(
+        followup_error
+        or replace(
             plan, content=json.dumps({"queries": followup_queries or []}), usage=ChatUsage(0, 0)
         ),
-        replace(plan, content=json.dumps(final_coverage or verdict)),
+        final_verification_error or replace(plan, content=json.dumps(final_coverage or verdict)),
         replace(plan, content=json.dumps({"queries": second_followup_queries or []})),
         replace(plan, content=json.dumps(second_final_coverage or final_coverage or verdict)),
     ]
@@ -775,6 +885,8 @@ async def run_repair(
     scripted_responses = iter(llm.generate.side_effect)
 
     async def respond(messages, **kwargs):
+        if generation_hook is not None:
+            await generation_hook(messages)
         if "Classify unresolved requirements" in messages[0].content:
             if input_gap_error is not None:
                 raise input_gap_error
@@ -828,6 +940,7 @@ async def run_repair(
         chat_config=config,
         retrieval_config=RetrievalConfig(),
         max_output_tokens=max_output_tokens,
+        timeout_seconds=timeout_seconds,
     )
     if calls is not None:
         calls.extend(llm.generate.call_args_list)

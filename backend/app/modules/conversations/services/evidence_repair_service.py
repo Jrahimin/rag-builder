@@ -6,7 +6,9 @@ import asyncio
 import json
 import uuid
 from collections.abc import Awaitable, Callable
+from copy import deepcopy
 from dataclasses import dataclass, replace
+from time import monotonic
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -56,7 +58,7 @@ from app.platform.providers.contracts.llm import (
 from app.platform.providers.errors import ProviderError, ProviderTimeoutError
 from app.platform.providers.request_work import RequestWork
 
-REPAIR_TIMEOUT_SECONDS = 120
+REPAIR_TIMEOUT_SECONDS = 300
 REPAIR_CHUNKS_PER_DEPENDENCY = 8
 _SOURCE_CONTEXT_KEYS = (
     "source_title",
@@ -434,6 +436,7 @@ async def repair_knowledge_evidence(
     domain_instructions: str = "",
     initial_decision: EvidenceDecision | None = None,
     evidence_approach: str = "authoritative",
+    timeout_seconds: float = REPAIR_TIMEOUT_SECONDS,
 ) -> EvidenceRepairResult:
     """Never mix active snapshots, relax filters, or promote unknown authority.
 
@@ -467,6 +470,11 @@ async def repair_knowledge_evidence(
         "max_characters": chat_config.context_char_budget,
     }
     result = EvidenceRepairResult([], None, diagnostics)
+    started = monotonic()
+    diagnostics["timeout_seconds"] = timeout_seconds
+    diagnostics["phase"] = "planning"
+    partial_checkpoint: EvidenceRepairResult | None = None
+    checkpoint_key: str | None = None
     reference_date = (
         inputs.as_of.date().isoformat()
         if inputs.as_of
@@ -486,7 +494,7 @@ async def repair_knowledge_evidence(
         diagnostics["status"] = "snapshot_unavailable"
         return result
     try:
-        async with asyncio.timeout(REPAIR_TIMEOUT_SECONDS):
+        async with asyncio.timeout(timeout_seconds):
             # An attempted call with missing usage (including a timeout) is
             # unknown cost, not a free operation in the combined turn usage.
             result.usage = ChatUsage(None, None)
@@ -655,6 +663,7 @@ async def repair_knowledge_evidence(
             last_verdict: CoverageVerdict | None = None
             last_partial_scope_validated = False
             for round_index in range(1 + MAX_REPAIR_FOLLOWUPS):
+                diagnostics["phase"] = "retrieval"
                 batch_retrieve = getattr(retrieval, "retrieve_batch", None)
                 requests: list[dict[str, Any]] = [
                     dict(
@@ -689,8 +698,17 @@ async def repair_knowledge_evidence(
                         ):
                             diagnostics["status"] = "snapshot_changed"
                             return result
+                        if partial_checkpoint is not None and not _checkpoint_matches_branch(
+                            partial_checkpoint,
+                            checkpoint_key,
+                            branch,
+                            records,
+                            diagnostics.get("requirements", []),
+                        ):
+                            partial_checkpoint = None
                         branches.append(branch)
-                for query, branch in zip(pending_queries, branches, strict=True):
+                # Inspect every returned branch before admission can await a provider.
+                for branch in branches:
                     branch_snapshot = tuple(
                         branch.diagnostics.get(k)
                         for k in ("index_build_id", "source_metadata_generation")
@@ -698,6 +716,16 @@ async def repair_knowledge_evidence(
                     if branch_snapshot != snapshot:
                         diagnostics["status"] = "snapshot_changed"
                         return result
+                    if partial_checkpoint is not None and not _checkpoint_matches_branch(
+                        partial_checkpoint,
+                        checkpoint_key,
+                        branch,
+                        records,
+                        diagnostics.get("requirements", []),
+                    ):
+                        # New authority or changed proof text invalidates the old review.
+                        partial_checkpoint = None
+                for query, branch in zip(pending_queries, branches, strict=True):
                     records.extend(branch.diagnostics.get("modifies_expansion_records") or [])
                     raw_groups.append(branch.chunks)
                     safe = [
@@ -705,6 +733,7 @@ async def repair_knowledge_evidence(
                         for c in remove_superseded_provisions(branch.chunks, records)
                         if c.metadata.get("authority_status") != "unresolved"
                     ]
+                    diagnostics["phase"] = "admission"
                     decision, units = await assess_and_select_knowledge(
                         grounding=grounding,
                         context_builder=ContextBuilder(
@@ -846,6 +875,7 @@ async def repair_knowledge_evidence(
                 # local to this final context; persisted provenance keeps real IDs.
                 labels = {str(c.chunk_id): f"E{i}" for i, c in enumerate(budgeted, start=1)}
                 source_ids = {label: source_id for source_id, label in labels.items()}
+                diagnostics["phase"] = "coverage_review"
                 verification = await _validated_completion(
                     llm,
                     [
@@ -947,6 +977,8 @@ async def repair_knowledge_evidence(
                     diagnostics["status"] = "coverage_incomplete"
                     return result
                 verdict = CoverageVerdict.model_validate_json(verification.content)
+                # A completed newer review supersedes the previous partial verdict.
+                partial_checkpoint = None
                 if requirement_ids:
                     for check in verdict.checks:
                         if check.requirement_id and check.requirement_id not in requirement_ids:
@@ -979,6 +1011,7 @@ async def repair_knowledge_evidence(
                 ):
                     previous_usage = result.usage
                     result.usage = ChatUsage(None, None)
+                    diagnostics["phase"] = "input_review"
                     input_review = await _validated_completion(
                         llm,
                         [
@@ -1072,6 +1105,18 @@ async def repair_knowledge_evidence(
                     adjacent_queries=diagnostics.get("adjacent_queries") or [],
                     stop_reason=diagnostics.get("stop_reason"),
                 )
+                if partial_scope_validated:
+                    checkpoint_diagnostics = deepcopy(diagnostics)
+                    _store_partial_answer(checkpoint_diagnostics, verdict)
+                    checkpoint = EvidenceRepairResult([], None, checkpoint_diagnostics)
+                    _handoff_reviewed_proof(
+                        checkpoint, verdict, budgeted, groups, requirement_ids, decisions
+                    )
+                    if checkpoint.decision is not None:
+                        partial_checkpoint = checkpoint
+                        checkpoint_key = _review_evidence_key(
+                            checkpoint.selected, records, diagnostics.get("requirements", [])
+                        )
                 if full_coverage_validated:
                     break
                 # A rule can be supported while its applicability still needs
@@ -1198,6 +1243,7 @@ async def repair_knowledge_evidence(
                     await release_read_transaction()
                 previous_usage = result.usage
                 result.usage = ChatUsage(None, None)
+                diagnostics["phase"] = "focused_planning"
                 followup = await _validated_completion(
                     llm,
                     [
@@ -1266,41 +1312,32 @@ async def repair_knowledge_evidence(
             # Discovery context can contain old/future tables and unrelated examples.
             # Hand generation the passages actually used by the validated proof,
             # instead of every superficially relevant search hit.
-            partial = diagnostics.get("partial_answer")
-            proof_ids = {
-                item.chunk_id
-                for check in verdict.checks
-                if not partial or check.requirement_id in partial["requirement_ids"]
-                for item in check.evidence
-            }
-            budgeted = [c for c in budgeted if str(c.chunk_id) in proof_ids]
-            if not (
-                verdict.partial_validates(budgeted, requirement_ids)
-                if partial
-                else verdict.validates(groups, budgeted, requirement_ids)
-            ):
-                diagnostics["status"] = "coverage_incomplete"
-                return result
-            diagnostics["proof_chunk_ids"] = [str(c.chunk_id) for c in budgeted]
-            result.selected = budgeted
-            assessments = {a.chunk_id: a for d in decisions for a in d.candidate_assessments}
-            units_by_id = {(u.chunk_id, u.content): u for d in decisions for u in d.admitted_units}
-            result.decision = replace(
-                decisions[0],
-                sufficient=True,
-                reason=None,
-                admitted_units=tuple(
-                    units_by_id[(c.chunk_id, c.content)]
-                    for c in budgeted
-                    if (c.chunk_id, c.content) in units_by_id
-                ),
-                candidate_assessments=tuple(assessments.values()),
-            )
-            diagnostics["status"] = "partial_answer" if partial else "recovered"
-            result.partial_answer = partial
-            result.missing_inputs = tuple(verdict.missing_inputs)
+            _handoff_reviewed_proof(result, verdict, budgeted, groups, requirement_ids, decisions)
             return result
     except (ProviderError, TimeoutError, ValidationError) as exc:
+        timed_out = isinstance(exc, (TimeoutError, ProviderTimeoutError))
+        if timed_out:
+            diagnostics["stop_reason"] = "evidence_review_timeout"
+            diagnostics["requirement_progress"] = {
+                **(diagnostics.get("requirement_progress") or {}),
+                "stop_reason": "evidence_review_timeout",
+            }
+        if timed_out and partial_checkpoint is not None:
+            # Retain current attempt diagnostics/unknown usage, but restore only
+            # the validated proof and its coverage contract from the same snapshot.
+            for key in ("coverage", "partial_answer", "proof_chunk_ids"):
+                diagnostics[key] = partial_checkpoint.diagnostics[key]
+            diagnostics["requirement_progress"] = {
+                **partial_checkpoint.diagnostics["requirement_progress"],
+                "focused_requirement_ids": diagnostics.get("focused_requirement_ids", []),
+                "stop_reason": "evidence_review_timeout",
+            }
+            diagnostics["status"] = "partial_answer"
+            result.selected = partial_checkpoint.selected
+            result.decision = partial_checkpoint.decision
+            result.partial_answer = partial_checkpoint.partial_answer
+            result.missing_inputs = partial_checkpoint.missing_inputs
+            return result
         if isinstance(exc, ProviderError):
             result.failure = exc
         elif isinstance(exc, TimeoutError):
@@ -1312,7 +1349,7 @@ async def repair_knowledge_evidence(
         diagnostics["status"] = "repair_unavailable"
         diagnostics["failure_reason"] = (
             "timeout"
-            if isinstance(exc, TimeoutError)
+            if timed_out
             else "invalid_model_response"
             if isinstance(exc, ValidationError)
             else "provider_error"
@@ -1331,6 +1368,70 @@ async def repair_knowledge_evidence(
                 for error in exc.errors(include_input=False, include_url=False)
             ]
         return result
+    finally:
+        diagnostics["elapsed_ms"] = round((monotonic() - started) * 1000)
+
+
+def _checkpoint_matches_branch(
+    checkpoint: EvidenceRepairResult,
+    checkpoint_key: str | None,
+    branch: ContextRetrievalResult,
+    records: list[dict[str, Any]],
+    requirements: list[dict[str, Any]],
+) -> bool:
+    updated_records = [*records, *(branch.diagnostics.get("modifies_expansion_records") or [])]
+    return _review_evidence_key(
+        checkpoint.selected, updated_records, requirements
+    ) == checkpoint_key and not any(
+        fresh.chunk_id == saved.chunk_id and fresh.content != saved.content
+        for fresh in branch.chunks
+        for saved in checkpoint.selected
+    )
+
+
+def _handoff_reviewed_proof(
+    result: EvidenceRepairResult,
+    verdict: CoverageVerdict,
+    budgeted: list[ContextChunk],
+    groups: list[list[ContextChunk]],
+    requirement_ids: set[str],
+    decisions: list[EvidenceDecision],
+) -> None:
+    """Apply the same final proof validation to normal and timeout handoffs."""
+    diagnostics = result.diagnostics
+    partial = diagnostics.get("partial_answer")
+    proof_ids = {
+        item.chunk_id
+        for check in verdict.checks
+        if not partial or check.requirement_id in partial["requirement_ids"]
+        for item in check.evidence
+    }
+    proof = [c for c in budgeted if str(c.chunk_id) in proof_ids]
+    if not decisions or not (
+        verdict.partial_validates(proof, requirement_ids)
+        if partial
+        else verdict.validates(groups, proof, requirement_ids)
+    ):
+        diagnostics["status"] = "coverage_incomplete"
+        return
+    diagnostics["proof_chunk_ids"] = [str(c.chunk_id) for c in proof]
+    result.selected = proof
+    assessments = {a.chunk_id: a for d in decisions for a in d.candidate_assessments}
+    units_by_id = {(u.chunk_id, u.content): u for d in decisions for u in d.admitted_units}
+    result.decision = replace(
+        decisions[0],
+        sufficient=True,
+        reason=None,
+        admitted_units=tuple(
+            units_by_id[(c.chunk_id, c.content)]
+            for c in proof
+            if (c.chunk_id, c.content) in units_by_id
+        ),
+        candidate_assessments=tuple(assessments.values()),
+    )
+    diagnostics["status"] = "partial_answer" if partial else "recovered"
+    result.partial_answer = partial
+    result.missing_inputs = tuple(verdict.missing_inputs)
 
 
 def _coverage_diagnostics(verdict: CoverageVerdict, validated: bool) -> dict[str, Any]:

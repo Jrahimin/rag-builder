@@ -826,6 +826,7 @@ class ChatService:
                 retrieval_config=self._retrieval_config,
                 max_output_tokens=self._llm_max_tokens(),
                 release_read_transaction=self._release_read_transaction,
+                timeout_seconds=self._llm_config.evidence_review_timeout_seconds,
                 domain_instructions=self._domain_instructions,
                 initial_decision=evidence,
                 evidence_approach=self._evidence_approach,
