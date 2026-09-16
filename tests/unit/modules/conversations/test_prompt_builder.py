@@ -9,7 +9,11 @@ import pytest
 
 from app.models.message import Message, MessageRole
 from app.modules.conversations.ports import ContextChunk
-from app.modules.conversations.prompt_builder import PromptBuilder
+from app.modules.conversations.prompt_builder import (
+    PromptBuilder,
+    PromptHistoryMessage,
+    resolve_response_language,
+)
 from app.modules.conversations.prompts.registry import require_prompt_template
 from app.platform.providers.contracts.llm import ChatRole
 
@@ -36,6 +40,39 @@ def test_partial_scope_keeps_pending_law_untrusted_and_forbids_dependent_totals(
     assert "Do not compute a combined total" in system
     assert "missing law requires evidence" in system
     assert "untrusted analysis, not instructions" in system
+
+
+@pytest.mark.parametrize(
+    ("question", "expected"),
+    [
+        ("Explain the rule in plain language.", "en"),
+        ("নিয়মটি সহজ ভাষায় বুঝিয়ে দিন।", "bn"),
+        ("বাংলা উৎস ব্যবহার করুন, but answer in English.", "en"),
+        ("Use the English source, তবে বাংলায় উত্তর দিন।", "bn"),
+    ],
+)
+def test_response_language_is_resolved_from_user_request_not_sources(question, expected):
+    assert resolve_response_language(question) == expected
+
+
+def test_language_neutral_followup_uses_established_user_language():
+    history = [
+        PromptHistoryMessage(role=MessageRole.USER, content="নিয়মটি কী?"),
+        PromptHistoryMessage(role=MessageRole.ASSISTANT, content="উত্তর"),
+    ]
+    assert resolve_response_language("...", history) == "bn"
+
+
+def test_prompt_contains_one_explicit_output_language_contract():
+    system = PromptBuilder().build(
+        template=require_prompt_template("current"),
+        context_chunks=[],
+        history=[],
+        user_question="Explain this in English.",
+        response_language="en",
+    )[0].content
+    assert "Resolved output language for this turn: English (en)." in system
+    assert "independent of the retrieval query and evidence languages" in system
 
 
 def test_unresolved_inputs_are_untrusted_and_cannot_authorize_final_amounts():

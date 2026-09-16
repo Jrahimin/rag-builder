@@ -141,6 +141,11 @@ def _prepare_search_plan(
         # A route explicitly owned only by optional work has no place in bounded recovery.
         if entry.requirement_ids and not ids and set(entry.requirement_ids).issubset(optional):
             continue
+        # Once stable requirements exist, an unbound or invalid route cannot be
+        # treated as if it attempted a requirement. Reject it here instead of
+        # assigning ownership by position later.
+        if allowed and not ids:
+            continue
         key = " ".join(query.split()).casefold()
         existing = keys.get(key)
         if existing is not None:
@@ -153,31 +158,15 @@ def _prepare_search_plan(
 
 
 def _optional_requirement(requirement: EvidenceRequirement, user_question: str) -> bool:
-    if requirement.origin == "optional_corroboration":
-        return True
-    description = requirement.description.casefold()
-    question = user_question.casefold()
-    optional_facets = (
-        "confirmation",
-        "corroboration",
-        "second source",
-        "separate official guidance",
-        "procedure",
-        "e-filing",
-        "electronic filing",
-        "fee",
-        "sanction",
-        "penalty",
-        "full act scope",
-        "complete amendment",
-        "নিশ্চিতকরণ",
-        "পদ্ধতি",
-        "প্রক্রিয়া",
-        "প্রক্রিয়া",
-        "ফি",
-        "জরিমানা",
-    )
-    return any(facet in description and facet not in question for facet in optional_facets)
+    """Trust the planner's typed origin instead of deleting requirements by words.
+
+    A required consequence can naturally mention a fee or penalty even when the
+    user's wording is "consequences".  Keyword subtraction therefore changes the
+    request rather than bounding recovery.  Optional corroboration remains bounded
+    by its explicit origin; explicit and applicability requirements are retained.
+    """
+    del user_question
+    return requirement.origin == "optional_corroboration"
 
 
 def _requirement_labels_match(left: str, right: str) -> bool:
@@ -574,7 +563,7 @@ async def repair_knowledge_evidence(
         AUTHORITATIVE_FOCUSED_PROMPT if authoritative_compatibility else FOCUSED_REPAIR_PROMPT
     )
     diagnostics: dict[str, Any] = {
-        "version": "v21-independent-partial-obligations"
+        "version": "v22-stable-owned-partial-obligations"
         if authoritative_compatibility
         else EVIDENCE_REPAIR_VERSION,
         "coverage_protocol": "authoritative_compatibility"
@@ -591,7 +580,6 @@ async def repair_knowledge_evidence(
     diagnostics["timeout_seconds"] = timeout_seconds
     diagnostics["phase"] = "planning"
     partial_checkpoint: EvidenceRepairResult | None = None
-    checkpoint_key: str | None = None
     reference_date = (
         inputs.as_of.date().isoformat()
         if inputs.as_of
@@ -830,11 +818,14 @@ async def repair_knowledge_evidence(
                             return result
                         if partial_checkpoint is not None and not _checkpoint_matches_branch(
                             partial_checkpoint,
-                            checkpoint_key,
+                            None,
                             branch,
                             records,
                             diagnostics.get("requirements", []),
                         ):
+                            diagnostics["partial_checkpoint_invalidated"] = (
+                                "proof_content_requirement_or_authority_changed"
+                            )
                             partial_checkpoint = None
                         branches.append(branch)
                 # Inspect every returned branch before admission can await a provider.
@@ -848,12 +839,15 @@ async def repair_knowledge_evidence(
                         return result
                     if partial_checkpoint is not None and not _checkpoint_matches_branch(
                         partial_checkpoint,
-                        checkpoint_key,
+                        None,
                         branch,
                         records,
                         diagnostics.get("requirements", []),
                     ):
                         # New authority or changed proof text invalidates the old review.
+                        diagnostics["partial_checkpoint_invalidated"] = (
+                            "proof_content_requirement_or_authority_changed"
+                        )
                         partial_checkpoint = None
                 for query, branch in zip(pending_queries, branches, strict=True):
                     records.extend(branch.diagnostics.get("modifies_expansion_records") or [])
@@ -1128,10 +1122,15 @@ async def repair_knowledge_evidence(
                 )
                 if verification.finish_reason not in {None, "stop", "completed", "end_turn"}:
                     diagnostics["status"] = "coverage_incomplete"
+                    if partial_checkpoint is not None:
+                        _restore_partial_checkpoint(
+                            result,
+                            diagnostics,
+                            partial_checkpoint,
+                            stop_reason="coverage_review_incomplete",
+                        )
                     return result
                 verdict = CoverageVerdict.model_validate_json(verification.content)
-                # A completed newer review supersedes the previous partial verdict.
-                partial_checkpoint = None
                 if requirement_ids:
                     unknown_checks = [
                         check
@@ -1243,6 +1242,13 @@ async def repair_knowledge_evidence(
                     result.usage = _add_usage(previous_usage, input_review.usage)
                     if input_review.finish_reason not in {None, "stop", "completed", "end_turn"}:
                         diagnostics["status"] = "input_review_incomplete"
+                        if partial_checkpoint is not None:
+                            _restore_partial_checkpoint(
+                                result,
+                                diagnostics,
+                                partial_checkpoint,
+                                stop_reason="input_review_incomplete",
+                            )
                         return result
                     classification = InputGapReview.model_validate_json(input_review.content)
                     only_inputs = classification.only_inputs_for(len(verdict.missing))
@@ -1311,9 +1317,6 @@ async def repair_knowledge_evidence(
                     )
                     if checkpoint.decision is not None:
                         partial_checkpoint = checkpoint
-                        checkpoint_key = _review_evidence_key(
-                            checkpoint.selected, records, diagnostics.get("requirements", [])
-                        )
                 if full_coverage_validated:
                     break
                 # A rule can be supported while its applicability still needs
@@ -1371,6 +1374,13 @@ async def repair_knowledge_evidence(
                         else "coverage_validation_failed"
                     )
                     _mark_unattempted_budget(diagnostics["requirement_progress"])
+                    if partial_checkpoint is not None:
+                        _restore_partial_checkpoint(
+                            result,
+                            diagnostics,
+                            partial_checkpoint,
+                            stop_reason=diagnostics["requirement_progress"]["stop_reason"],
+                        )
                     return result
                 if not round_index:
                     diagnostics["initial_coverage"] = diagnostics["coverage"]
@@ -1522,11 +1532,18 @@ async def repair_knowledge_evidence(
                     if partial_scope_validated:
                         _store_partial_answer(diagnostics, verdict)
                         break
+                    if partial_checkpoint is not None:
+                        _restore_partial_checkpoint(
+                            result,
+                            diagnostics,
+                            partial_checkpoint,
+                            stop_reason="focused_plan_incomplete",
+                        )
                     return result
                 followup_plan = _SearchPlan.model_validate_json(followup.content)
                 seen_queries = {" ".join(q.split()).casefold() for q in queries}
                 pending_queries = []
-                for entry_index, entry in enumerate(followup_plan.queries):
+                for entry in followup_plan.queries:
                     query = entry.query.strip()
                     key = " ".join(query.split()).casefold()
                     if key in seen_queries:
@@ -1535,18 +1552,20 @@ async def repair_knowledge_evidence(
                         )
                         continue
                     seen_queries.add(key)
-                    pending_queries.append(query)
                     bound_ids = [
                         requirement_id
                         for requirement_id in entry.requirement_ids
                         if requirement_id in untried_missing
                     ]
-                    if not bound_ids:
-                        ordered_missing = sorted(untried_missing)
-                        if ordered_missing:
-                            bound_ids = [
-                                ordered_missing[min(entry_index, len(ordered_missing) - 1)]
-                            ]
+                    if requirement_ids and not bound_ids:
+                        diagnostics.setdefault("unbound_focused_queries_skipped", []).append(
+                            {
+                                "query": query,
+                                "supplied_requirement_ids": list(entry.requirement_ids),
+                            }
+                        )
+                        continue
+                    pending_queries.append(query)
                     query_requirement_ids[query] = bound_ids
                 pending_queries = pending_queries[:2]
                 if not pending_queries or any(not q or len(q) > 500 for q in pending_queries):
@@ -1558,6 +1577,13 @@ async def repair_knowledge_evidence(
                     if partial_scope_validated:
                         _store_partial_answer(diagnostics, verdict)
                         break
+                    if partial_checkpoint is not None:
+                        _restore_partial_checkpoint(
+                            result,
+                            diagnostics,
+                            partial_checkpoint,
+                            stop_reason="no_new_focused_query",
+                        )
                     return result
                 queries.extend(pending_queries)
                 pending_routes = dict.fromkeys(pending_queries, "focused")
@@ -1566,6 +1592,16 @@ async def repair_knowledge_evidence(
             # Hand generation the passages actually used by the validated proof,
             # instead of every superficially relevant search hit.
             _handoff_reviewed_proof(result, verdict, budgeted, groups, requirement_ids, decisions)
+            if result.decision is None and partial_checkpoint is not None:
+                _restore_partial_checkpoint(
+                    result,
+                    diagnostics,
+                    partial_checkpoint,
+                    stop_reason=(diagnostics.get("requirement_progress") or {}).get(
+                        "stop_reason"
+                    )
+                    or "validated_partial_scope",
+                )
             return result
     except (ProviderError, TimeoutError, ValidationError) as exc:
         timed_out = isinstance(exc, (TimeoutError, ProviderTimeoutError))
@@ -1575,21 +1611,19 @@ async def repair_knowledge_evidence(
                 **(diagnostics.get("requirement_progress") or {}),
                 "stop_reason": "evidence_review_timeout",
             }
-        if timed_out and partial_checkpoint is not None:
-            # Retain current attempt diagnostics/unknown usage, but restore only
-            # the validated proof and its coverage contract from the same snapshot.
-            for key in ("coverage", "partial_answer", "proof_chunk_ids"):
-                diagnostics[key] = partial_checkpoint.diagnostics[key]
-            diagnostics["requirement_progress"] = {
-                **partial_checkpoint.diagnostics["requirement_progress"],
-                "focused_requirement_ids": diagnostics.get("focused_requirement_ids", []),
-                "stop_reason": "evidence_review_timeout",
-            }
-            diagnostics["status"] = "partial_answer"
-            result.selected = partial_checkpoint.selected
-            result.decision = partial_checkpoint.decision
-            result.partial_answer = partial_checkpoint.partial_answer
-            result.missing_inputs = partial_checkpoint.missing_inputs
+        if partial_checkpoint is not None:
+            _restore_partial_checkpoint(
+                result,
+                diagnostics,
+                partial_checkpoint,
+                stop_reason=(
+                    "evidence_review_timeout"
+                    if timed_out
+                    else "invalid_later_review"
+                    if isinstance(exc, ValidationError)
+                    else "later_review_provider_error"
+                ),
+            )
             return result
         if isinstance(exc, ProviderError):
             result.failure = exc
@@ -1639,14 +1673,69 @@ def _checkpoint_matches_branch(
     records: list[dict[str, Any]],
     requirements: list[dict[str, Any]],
 ) -> bool:
-    updated_records = [*records, *(branch.diagnostics.get("modifies_expansion_records") or [])]
-    return _review_evidence_key(
-        checkpoint.selected, updated_records, requirements
-    ) == checkpoint_key and not any(
+    """Keep prior proof when a later branch merely adds unrelated evidence.
+
+    The former key included every authority record, so any new search branch
+    invalidated a checkpoint even when it did not touch the proved sources.  A
+    checkpoint changes only when its requirements or exact proof text changes,
+    or a newly discovered authority record refers to one of its source identities.
+    ``checkpoint_key`` remains in the signature for compatibility with focused tests.
+    """
+    del checkpoint_key, records
+    if checkpoint.diagnostics.get("requirements", []) != requirements:
+        return False
+    if any(
         fresh.chunk_id == saved.chunk_id and fresh.content != saved.content
         for fresh in branch.chunks
         for saved in checkpoint.selected
-    )
+    ):
+        return False
+    identifiers = {
+        str(value)
+        for chunk in checkpoint.selected
+        for value in (
+            chunk.chunk_id,
+            chunk.document_id,
+            chunk.metadata.get("source_revision_id"),
+            chunk.metadata.get("source_work_key"),
+            chunk.metadata.get("source_group_id"),
+        )
+        if value
+    }
+    for record in branch.diagnostics.get("modifies_expansion_records") or []:
+        serialized = json.dumps(record, ensure_ascii=False, sort_keys=True, default=str)
+        if any(identifier in serialized for identifier in identifiers):
+            return False
+    return True
+
+
+def _restore_partial_checkpoint(
+    result: EvidenceRepairResult,
+    diagnostics: dict[str, Any],
+    checkpoint: EvidenceRepairResult,
+    *,
+    stop_reason: str,
+) -> None:
+    """Restore only a checkpoint that already passed exact partial proof validation."""
+    for key in ("coverage", "partial_answer", "proof_chunk_ids"):
+        if key in checkpoint.diagnostics:
+            diagnostics[key] = deepcopy(checkpoint.diagnostics[key])
+    current_attempts = list(diagnostics.get("requirement_attempts") or [])
+    focused_ids = list(diagnostics.get("focused_requirement_ids") or [])
+    diagnostics["requirement_progress"] = {
+        **deepcopy(checkpoint.diagnostics.get("requirement_progress") or {}),
+        "focused_requirement_ids": focused_ids,
+        "stop_reason": stop_reason,
+    }
+    if current_attempts:
+        diagnostics["requirement_progress"]["attempts"] = current_attempts
+    _mark_unattempted_budget(diagnostics["requirement_progress"])
+    diagnostics["status"] = "partial_answer"
+    diagnostics["partial_checkpoint_restored"] = stop_reason
+    result.selected = list(checkpoint.selected)
+    result.decision = checkpoint.decision
+    result.partial_answer = deepcopy(checkpoint.partial_answer)
+    result.missing_inputs = checkpoint.missing_inputs
 
 
 def _handoff_reviewed_proof(

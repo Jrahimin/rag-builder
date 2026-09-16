@@ -38,18 +38,15 @@ def rewrite_followup_mode(
     relation: TurnRelation,
     resolved_mode: FollowupMode = FollowupMode.NOT_APPLICABLE,
 ) -> FollowupMode:
-    """Resolve rewrite intent, with a deterministic fallback for older model payloads."""
-    if resolved_mode is not FollowupMode.NOT_APPLICABLE:
-        return resolved_mode
+    """Resolve rewrite intent while keeping explicit presentation wording authoritative."""
     if outcome is not TurnOutcome.RESOLVED or relation is not TurnRelation.FOLLOW_UP:
         return FollowupMode.NOT_APPLICABLE
-    if not _PRESENTATION_ACTION.search(question):
-        return FollowupMode.NOT_APPLICABLE
-    if _ADDED_FACT.search(question):
+    presentation_action = bool(_PRESENTATION_ACTION.search(question))
+    if presentation_action and _ADDED_FACT.search(question):
         return FollowupMode.ADDS_FACTS
-    if _REFERENCE.search(question) or len(question.split()) <= 12:
+    if presentation_action and (_REFERENCE.search(question) or len(question.split()) <= 12):
         return FollowupMode.PRESENTATION_ONLY
-    return FollowupMode.NOT_APPLICABLE
+    return resolved_mode
 
 
 def retained_rewrite_question(history: list[HistoryMessage]) -> str | None:

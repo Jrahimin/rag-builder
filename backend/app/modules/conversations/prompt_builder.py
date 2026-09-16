@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date
@@ -11,7 +12,20 @@ from app.models.message import MessageRole
 from app.modules.conversations.context_builder import reviewed_work_count, reviewed_work_identities
 from app.modules.conversations.ports import ContextChunk
 from app.modules.conversations.prompts.registry import PromptTemplate
+from app.platform.domain.language_detection import detect_language
 from app.platform.providers.contracts.llm import ChatMessage, ChatRole
+
+_EXPLICIT_ENGLISH = re.compile(
+    r"\b(?:reply|respond|answer|write|translate|rewrite)\s+(?:it\s+)?(?:in|into)\s+english\b|"
+    r"\bin\s+english\b",
+    re.IGNORECASE,
+)
+_EXPLICIT_BANGLA = re.compile(
+    r"\b(?:reply|respond|answer|write|translate|rewrite)\s+(?:it\s+)?(?:in|into)\s+"
+    r"(?:bangla|bengali)\b|\b(?:in\s+)?(?:bangla|bengali)\b|বাংলা(?:য়|য়|তে)",
+    re.IGNORECASE,
+)
+_LANGUAGE_LABELS = {"en": "English", "bn": "Bangla"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,6 +52,7 @@ class PromptBuilder:
         reference_date: date | None = None,
         missing_inputs: Sequence[str] = (),
         partial_answer: dict | None = None,
+        response_language: str | None = None,
     ) -> list[ChatMessage]:
         include_work_metadata = template.evidence_approach != "authoritative"
         context_block = self._format_context(
@@ -133,11 +148,17 @@ class PromptBuilder:
                 "such as [Developer scope limitation] or reviewer requirement IDs."
             )
 
+        resolved_language = response_language or resolve_response_language(
+            user_question, history
+        )
+        label = _LANGUAGE_LABELS.get(resolved_language, resolved_language)
         system_content += (
-            "\n\nReply in the language of the current user message unless the user explicitly "
-            "asks for another language. Preserve the established conversation language for "
-            "short language-neutral follow-ups. Answer the request directly and keep caveats "
-            "brief; do not repeat the question, evidence inventory, or the same limitation."
+            f"\n\nResolved output language for this turn: {label} ({resolved_language}). "
+            f"Write the complete answer in {label}. Source titles, legal names and short quoted "
+            "terms may remain in their original language. This output-language contract is "
+            "independent of the retrieval query and evidence languages. Answer directly and "
+            "keep caveats brief; do not repeat the question, evidence inventory, or the same "
+            "limitation."
         )
 
         if template.final_instructions:
@@ -216,6 +237,44 @@ class PromptBuilder:
                     header += f" {key}={encoded}"
             lines.append(f"{header}\n{chunk.content}")
         return "\n\n".join(lines)
+
+
+def resolve_response_language(
+    user_question: str, history: Sequence[PromptHistoryMessage] = ()
+) -> str:
+    """Resolve generation language once, without using evidence or retrieval text."""
+
+    def explicit(text: str) -> str | None:
+        if _EXPLICIT_ENGLISH.search(text):
+            return "en"
+        if _EXPLICIT_BANGLA.search(text):
+            return "bn"
+        return None
+
+    requested = explicit(user_question)
+    if requested:
+        return requested
+    detected = detect_language(user_question)
+    if detected.primary_language in _LANGUAGE_LABELS:
+        return detected.primary_language
+    if detected.languages:
+        supported = {
+            language: share
+            for language, share in detected.languages.items()
+            if language in _LANGUAGE_LABELS
+        }
+        if supported:
+            return max(supported, key=supported.get)  # type: ignore[arg-type]
+    for message in reversed(history):
+        if message.role is not MessageRole.USER:
+            continue
+        requested = explicit(message.content)
+        if requested:
+            return requested
+        detected = detect_language(message.content)
+        if detected.primary_language in _LANGUAGE_LABELS:
+            return detected.primary_language
+    return "en"
 
 
 def _relationship_label(item: object) -> str | None:

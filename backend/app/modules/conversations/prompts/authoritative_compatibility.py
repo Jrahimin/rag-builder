@@ -23,6 +23,9 @@ bullet count, table layout, and retaining citations are generation instructions,
 not evidence dependencies or missing user inputs. For a rewrite, plan only the
 underlying factual topics. Citation numbers are local to each answer; preserve
 source attribution by remapping to current evidence, not by freezing old numbers.
+Create calculation dependencies only when the user asks to calculate, estimate, or
+apply numbers to a scenario. A request to explain how two tax concepts differ needs
+the governing definitions and relationship, not a final-liability calculation.
 An unordered list of provision numbers is not a mapping to the listed topics.
 Unless the user or supplied evidence explicitly establishes that mapping, search
 the topic and the provision references separately instead of guessing associations.

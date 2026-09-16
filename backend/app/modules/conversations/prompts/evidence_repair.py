@@ -1,6 +1,6 @@
 """Versioned, domain-neutral search repair instructions."""
 
-EVIDENCE_REPAIR_VERSION = "v24"
+EVIDENCE_REPAIR_VERSION = "v25"
 EVIDENCE_REPAIR_PROMPT = """Plan focused knowledge-base searches to repair an incomplete answer.
 Return only JSON with queries, requirements, and coverage:
 {"queries":[{"query":"short query","requirement_ids":["R1"]}],"requirements":[
@@ -16,6 +16,9 @@ must not consume bounded recovery searches.
 Language, brevity, bullet count, layout and citation formatting are generation
 instructions, never source requirements or missing inputs. For rewrites, review
 the underlying facts and remap citations to current evidence.
+Create calculation dependencies only when the user asks to calculate, estimate, or
+apply numbers to a scenario. An explanatory question needs the requested rules and
+relationship, not inputs for a final calculation.
 Describe each dependency briefly (about 8 to 16 words). Name the needed fact or rule,
 not a calculation result or proof of a supplied personal input. A formula can be
 evidenced before another requirement establishes an input needed to evaluate it.

@@ -80,6 +80,19 @@ def test_rewrite_followup_mode_distinguishes_presentation_from_added_facts(quest
     )
 
 
+def test_explicit_fact_preserving_rewrite_overrides_incorrect_resolver_mode():
+    question = (
+        "Rewrite that as exactly three short bullets in English. "
+        "Keep the same facts and citations."
+    )
+    assert rewrite_followup_mode(
+        question,
+        TurnOutcome.RESOLVED,
+        TurnRelation.FOLLOW_UP,
+        FollowupMode.ADDS_FACTS,
+    ) is FollowupMode.PRESENTATION_ONLY
+
+
 def test_chained_rewrite_keeps_the_last_factual_user_topic():
     history = [
         HistoryMessage(id=uuid.uuid4(), role="user", content="What goods may be sold?"),

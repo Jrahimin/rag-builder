@@ -52,7 +52,7 @@ def test_review_identity_preserves_text_authority_and_requirements_but_not_rank(
 
 
 @pytest.mark.parametrize("changed", [False, True])
-async def test_unchanged_followup_evidence_stops_without_retrying_coverage(changed):
+async def test_missing_check_identity_does_not_guess_a_focused_requirement(changed):
     source = chunk("Governing salary rule.")
     next_source = replace(source, content="Different governing salary rule.") if changed else source
     calls = []
@@ -61,13 +61,17 @@ async def test_unchanged_followup_evidence_stops_without_retrying_coverage(chang
         queries=["salary"],
         requirements=[{"requirement_id": "salary", "description": "Salary rule"}],
         coverage={"complete": False, "missing": ["Applicability"], "checks": []},
-        followup_queries=["employment"],
+        followup_queries=[{"query": "employment", "requirement_ids": ["salary"]}],
         calls=calls,
     )
     assert result.decision is None and result.partial_answer is None
-    assert retrieval.retrieve.await_count == 2
-    assert result.diagnostics.get("coverage_reviews_skipped", 0) == (not changed)
-    assert len(calls) == (5 if changed else 3)
+    assert retrieval.retrieve.await_count == 1
+    assert result.diagnostics["unbound_focused_queries_skipped"] == [
+        {"query": "employment", "supplied_requirement_ids": ["salary"]}
+    ]
+    assert result.diagnostics["requirement_progress"]["stop_reason"] == (
+        "no_new_focused_query"
+    )
 
 
 @pytest.mark.parametrize("scope_ids", [["salary"], ["interest"], ["absent"], ["salary", "salary"]])
@@ -452,7 +456,10 @@ async def test_timeout_keeps_only_previously_validated_partial_proof(stage):
     branch_metadata = {}
     if stage == "authority_changed":
         branch_metadata["modifies_expansion_records"] = [
-            {"outcome": "ungoverned_or_incomplete_metadata"}
+            {
+                "outcome": "ungoverned_or_incomplete_metadata",
+                "source_revision_id": str(known.chunk_id),
+            }
         ]
     elif stage == "snapshot_changed":
         branch_metadata["source_metadata_generation"] = 25
@@ -922,9 +929,18 @@ async def run_repair(
         if queries is not None
         else ["gross salary exemption", "general rate bands", "current investment rebate"]
     )
+    plan_queries = queries
+    if requirements:
+        all_requirement_ids = [item["requirement_id"] for item in requirements]
+        plan_queries = [
+            item
+            if isinstance(item, dict)
+            else {"query": item, "requirement_ids": all_requirement_ids}
+            for item in queries
+        ]
     llm = AsyncMock()
     plan = ChatCompletionResult(
-        content=json.dumps({"queries": queries, "requirements": requirements or []}),
+        content=json.dumps({"queries": plan_queries, "requirements": requirements or []}),
         provider="fake",
         model="test",
         finish_reason="stop",
@@ -948,6 +964,24 @@ async def run_repair(
             ],
         }
     )
+
+    def bound_followups(items, current_verdict):
+        if not requirements or not items:
+            return items or []
+        missing_ids = [
+            check.get("requirement_id")
+            for check in current_verdict.get("checks", [])
+            if not check.get("supported") and check.get("requirement_id")
+        ]
+        return [
+            item
+            if isinstance(item, dict)
+            else {
+                "query": item,
+                "requirement_ids": missing_ids[:1],
+            }
+            for item in items
+        ]
     llm.generate.side_effect = [
         *(
             [replace(plan, content="", finish_reason="length", usage=ChatUsage(10, 2048))]
@@ -966,10 +1000,21 @@ async def run_repair(
         *llm.generate.side_effect,
         followup_error
         or replace(
-            plan, content=json.dumps({"queries": followup_queries or []}), usage=ChatUsage(0, 0)
+            plan,
+            content=json.dumps({"queries": bound_followups(followup_queries, verdict)}),
+            usage=ChatUsage(0, 0),
         ),
         final_verification_error or replace(plan, content=json.dumps(final_coverage or verdict)),
-        replace(plan, content=json.dumps({"queries": second_followup_queries or []})),
+        replace(
+            plan,
+            content=json.dumps(
+                {
+                    "queries": bound_followups(
+                        second_followup_queries, final_coverage or verdict
+                    )
+                }
+            ),
+        ),
         replace(plan, content=json.dumps(second_final_coverage or final_coverage or verdict)),
     ]
     retrieval = AsyncMock()
@@ -1812,7 +1857,48 @@ def test_search_plan_binds_queries_and_drops_optional_corroboration_work():
     assert ownership == {"annual return deadline": ["R1"]}
 
 
-def test_search_plan_downgrades_unrequested_confirmation_even_when_origin_is_wrong():
+@pytest.mark.parametrize(
+    ("question", "description"),
+    [
+        (
+            "What are the consequences of non-compliance?",
+            "Consequences including penalties, late fees and prosecution",
+        ),
+        (
+            "না মানলে কী পরিণতি হবে?",
+            "পরিণতি, জরিমানা, বিলম্ব ফি ও মামলার ঝুঁকি",
+        ),
+    ],
+)
+def test_explicit_consequences_are_never_removed_by_optional_detail_words(
+    question, description
+):
+    from app.modules.conversations.services.evidence_repair_service import (
+        _prepare_search_plan,
+        _SearchPlan,
+    )
+
+    plan = _SearchPlan.model_validate(
+        {
+            "requirements": [
+                {
+                    "requirement_id": "consequences",
+                    "description": description,
+                    "origin": "explicit_user_request",
+                }
+            ],
+            "queries": [
+                {"query": "non-compliance consequences", "requirement_ids": ["consequences"]}
+            ],
+        }
+    )
+    requirements, queries, ownership = _prepare_search_plan(plan, question)
+    assert [item.requirement_id for item in requirements] == ["consequences"]
+    assert queries == ["non-compliance consequences"]
+    assert ownership[queries[0]] == ["consequences"]
+
+
+def test_search_plan_does_not_override_required_origin_using_description_words():
     from app.modules.conversations.services.evidence_repair_service import (
         _prepare_search_plan,
         _SearchPlan,
@@ -1841,9 +1927,61 @@ def test_search_plan_downgrades_unrequested_confirmation_even_when_origin_is_wro
     requirements, queries, ownership = _prepare_search_plan(
         plan, "What is the annual return duty and deadline?"
     )
-    assert [item.requirement_id for item in requirements] == ["R1"]
-    assert queries == ["annual return deadline"]
+    assert [item.requirement_id for item in requirements] == ["R1", "R2"]
+    assert queries == ["annual return deadline", "official confirmation"]
     assert ownership["annual return deadline"] == ["R1"]
+    assert ownership["official confirmation"] == ["R2"]
+
+
+def test_legacy_unbound_query_is_not_assigned_to_a_requirement_by_position():
+    from app.modules.conversations.services.evidence_repair_service import (
+        _prepare_search_plan,
+        _SearchPlan,
+    )
+
+    plan = _SearchPlan.model_validate(
+        {
+            "requirements": [
+                {"requirement_id": "R1", "description": "RJSC annual return duty"},
+                {"requirement_id": "R2", "description": "Income tax return duty"},
+            ],
+            "queries": ["section 170 tax return"],
+        }
+    )
+    requirements, queries, ownership = _prepare_search_plan(plan)
+    assert [item.requirement_id for item in requirements] == ["R1", "R2"]
+    assert queries == []
+    assert ownership == {}
+
+
+async def test_invalid_focused_requirement_id_cannot_consume_an_unrelated_retry():
+    source = chunk("Private companies must hold an annual general meeting.")
+    result, retrieval, _ = await run_repair(
+        [([source], {}), ([chunk("Income tax return rule")], {})],
+        queries=[{"query": "company AGM", "requirement_ids": ["R2"]}],
+        requirements=[
+            {"requirement_id": "R1", "description": "Annual return filing duty"},
+            {"requirement_id": "R2", "description": "AGM duty"},
+        ],
+        coverage={
+            "complete": False,
+            "missing": ["Annual return filing duty"],
+            "checks": [
+                {"requirement_id": "R1", "supported": False, "evidence": []},
+                {
+                    "requirement_id": "R2",
+                    "supported": True,
+                    "evidence": [{"chunk_id": str(source.chunk_id), "quote": source.content}],
+                },
+            ],
+        },
+        followup_queries=[{"query": "section 170 tax return", "requirement_ids": ["R2"]}],
+    )
+    assert retrieval.retrieve.await_count == 1
+    assert result.diagnostics["unbound_focused_queries_skipped"] == [
+        {"query": "section 170 tax return", "supplied_requirement_ids": ["R2"]}
+    ]
+    assert "R1" not in result.diagnostics.get("focused_requirement_ids", [])
 
 
 async def test_empty_search_route_can_be_proved_by_another_route():

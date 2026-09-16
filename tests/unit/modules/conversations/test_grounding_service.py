@@ -718,6 +718,17 @@ async def test_table_citations_stay_with_their_own_row() -> None:
     assert all(claim["verification"] == "supported" for claim in result.claims)
 
 
+def test_multisentence_table_row_remains_one_contextualized_claim() -> None:
+    from app.modules.conversations.grounding_service import _answer_segments
+
+    segments = _answer_segments(
+        "| Duty | Authority |\n| --- | --- |\n"
+        "| Hold an AGM. File the return afterward. | Registrar | [1]"
+    )
+    factual = [segment for segment in segments if "Hold an AGM" in segment]
+    assert factual == ["| Hold an AGM. File the return afterward. | Registrar | [1]"]
+
+
 def test_uncited_table_row_does_not_borrow_next_rows_citation() -> None:
     from app.modules.conversations.grounding_service import _answer_segments
 
@@ -1105,6 +1116,22 @@ async def test_missing_evidence_bullets_are_coverage_scope_not_legal_duties() ->
     assert result.claims_status == "no_verifiable_claims"
 
 
+async def test_available_provisions_scope_preamble_scopes_its_bullets() -> None:
+    missing = ["Annual return deadlines", "Non-compliance penalties"]
+    result = await GroundingService(ChatConfig()).map_claims(
+        "The available provisions do not establish the requirements, forms, deadlines or "
+        "penalties for:\n- Annual return deadlines\n- Non-compliance penalties",
+        [_chunk(content="Private companies must hold an annual general meeting.")],
+        coverage={
+            "coverage": {"missing": missing, "partial_scope_validated": True},
+            "partial_answer": {"exclusions": missing},
+        },
+    )
+    assert len(result.claims) == 2
+    assert all(claim["claim_kind"] == "coverage_scope" for claim in result.claims)
+    assert all(claim["verification"] == "supported" for claim in result.claims)
+
+
 async def test_live_bangla_missing_evidence_preamble_scopes_all_bullets() -> None:
     missing = [
         "বার্ষিক রিটার্ন দাখিলের বাধ্যবাধকতা",
@@ -1263,6 +1290,18 @@ async def test_cross_language_similarity_cannot_reverse_negation() -> None:
     ).map_claims(f"{claim} [1]", [_chunk(content=evidence)])
     assert result.claims[0]["verification"] == "unsupported"
     assert result.claims[0]["verification_method"] == "bounded_entailment"
+
+
+async def test_negative_exception_in_another_clause_does_not_reverse_positive_rule() -> None:
+    claim = "A company must hold its first annual general meeting within eighteen months."
+    evidence = (
+        "A company must hold its first annual general meeting within eighteen months. "
+        "The registrar does not grant an extension for later annual meetings."
+    )
+    result = await GroundingService(
+        ChatConfig(minimum_claim_token_coverage=0.3)
+    ).map_claims(f"{claim} [1]", [_chunk(content=evidence)])
+    assert result.claims[0]["verification"] == "supported"
 
 
 async def test_semantic_similarity_cannot_change_comparative_member_count() -> None:

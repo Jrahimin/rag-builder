@@ -22,6 +22,8 @@ from app.core.config import (
 from app.core.exceptions import ConflictError, NotFoundError, ServiceUnavailableError
 from app.models.conversation import Conversation
 from app.models.message import Message, MessageRole
+from app.modules.conversations.context_builder import ContextBuilder
+from app.modules.conversations.grounded_context import select_exact_recalled_knowledge
 from app.modules.conversations.ports import ContextChunk, ContextRetrievalResult
 from app.modules.conversations.prompts.registry import GROUNDED_PROMPT_VERSION
 from app.modules.conversations.schemas.message import MessageSendRequest
@@ -51,6 +53,46 @@ from app.platform.providers.errors import ProviderError, ProviderQuotaError, Pro
 from app.platform.providers.implementations.echo_chat import EchoLLMProvider
 
 pytestmark = pytest.mark.unit
+
+
+def test_exact_recalled_selection_keeps_authority_redaction() -> None:
+    base = ContextChunk(
+        chunk_id=uuid.uuid4(),
+        document_id=uuid.uuid4(),
+        chunk_index=0,
+        content="Section 1\nThe earlier rule required filing within 30 days.",
+        score=0.9,
+        filename="rules.md",
+        chunk_hash="base",
+        metadata={"source_revision_id": "base-revision"},
+    )
+    current = replace(
+        base,
+        chunk_id=uuid.uuid4(),
+        chunk_index=1,
+        content="Section 1\nThe current rule requires filing within 21 days.",
+        chunk_hash="current",
+        metadata={"source_revision_id": "modifier-revision"},
+    )
+    selected = select_exact_recalled_knowledge(
+        context_builder=ContextBuilder(
+            ChatConfig(),
+            evidence_approach="authoritative",
+            question="Make that shorter.",
+        ),
+        chunks=[base, current],
+        expansion_records=[
+            {
+                "base_revision_id": "base-revision",
+                "modifier_revision_id": "modifier-revision",
+                "relationship_type": "modifies",
+                "outcome": "expanded",
+                "target_provisions": ["Section 1"],
+            }
+        ],
+    )
+
+    assert [chunk.chunk_id for chunk in selected] == [current.chunk_id]
 
 
 class FakeRetrieval:
@@ -381,6 +423,18 @@ async def test_cited_counts_and_authority_use_answer_markers_without_renumbering
     assert "[2]" in answer.content
     assert answer.metadata["evidence_summary"]["context_passages"] == 2
     assert answer.metadata["evidence_summary"]["cited_passages"] == 1
+    assert answer.metadata["evidence_summary"]["factual_claims"] == 1
+    assert answer.metadata["evidence_summary"]["supported_factual_claims"] == 1
+    assert answer.metadata["evidence_summary"]["unsupported_factual_claims"] == 0
+    assert answer.metadata["claim_verification_counts"] == {
+        "factual": 1,
+        "coverage_scope": 0,
+        "supported": 1,
+        "unverified": 0,
+        "unsupported": 0,
+    }
+    assert answer.metadata["unsupported_claim_rate"] == 0.0
+    assert answer.metadata["effective_behavior"]["response_language"] == "en"
     assert answer.metadata["evidence_gate"]["candidate_wise"]["cited_count"] == 1
     assert answer.metadata["evidence_funnel"]["cited"] == 1
     assert answer.metadata["current_authority"]["cited"]["cited_revision_count"] == 1

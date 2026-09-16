@@ -118,14 +118,9 @@ frontend/.vite/
 frontend/dist/
 frontend/coverage/
 .pnpm-store/
-# Local RAG journey reports
-artifacts/rag-journey/
-artifacts/tax-investigation/
-artifacts/rag-enhancements/
-artifacts/rag-enhancement-baseline/
-artifacts/rag-enhancement-baseline.zip
-artifacts/interest-before-fix/
-artifacts/enhancement-*.log
+# Generated investigations, downloaded sources, screenshots, and test output.
+# Keep curated, reviewable evidence in docs/ or tests/fixtures/ instead.
+artifacts/
 
 # Held-out turn-resolution examples stay outside the repo until freeze.
 tests/fixtures/journeys/held_out/**

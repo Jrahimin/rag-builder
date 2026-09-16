@@ -133,6 +133,30 @@ async def assess_and_select_knowledge(
     return evidence, knowledge_selected
 
 
+def select_exact_recalled_knowledge(
+    *,
+    context_builder: ContextBuilder,
+    chunks: list[ContextChunk],
+    expansion_records: list[dict[str, object]] | None = None,
+) -> list[ContextChunk]:
+    """Select current exact-citation recall without reapplying query admission.
+
+    Presentation-only follow-ups can use the active passages cited by the prior
+    answer even when the new formatting request is lexically unrelated to those
+    passages. Authority redaction still runs before budgeting, and unresolved
+    authority remains unusable.
+    """
+    records = expansion_records or []
+    authority_safe = remove_superseded_provisions(chunks, records)
+    selected = annotate_authority_limitations(
+        context_builder.select(authority_safe),
+        records,
+    )
+    if any(chunk.metadata.get("authority_status") == "unresolved" for chunk in selected):
+        return []
+    return selected
+
+
 def _monotonic_context_order(units: list[EvidenceUnit]) -> list[EvidenceUnit]:
     """Prefer strict admissions so balanced-only extras cannot crowd them out."""
     strict = [unit for unit in units if is_strict_corroboration(unit.corroboration_method)]

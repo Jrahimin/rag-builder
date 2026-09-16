@@ -35,7 +35,10 @@ from app.modules.conversations.context_builder import (
     reviewed_work_count,
 )
 from app.modules.conversations.current_authority import cited_authority_summary
-from app.modules.conversations.grounded_context import assess_and_select_knowledge
+from app.modules.conversations.grounded_context import (
+    assess_and_select_knowledge,
+    select_exact_recalled_knowledge,
+)
 from app.modules.conversations.grounding_service import (
     EvidenceDecision,
     GroundingResult,
@@ -54,7 +57,11 @@ from app.modules.conversations.ports import (
     EvidenceUnit,
     RetrievalPort,
 )
-from app.modules.conversations.prompt_builder import PromptBuilder, PromptHistoryMessage
+from app.modules.conversations.prompt_builder import (
+    PromptBuilder,
+    PromptHistoryMessage,
+    resolve_response_language,
+)
 from app.modules.conversations.prompts.registry import (
     GROUNDED_PROMPT_VERSION,
     PromptTemplate,
@@ -172,6 +179,7 @@ class _PreparedTurn:
     grounding: GroundingService
     source_provenance: SourceProvenance
     web_search_diagnostics: dict[str, Any]
+    response_language: str
     web_fallback_used: bool = False
     non_knowledge_response: str | None = None
     clarification_response: str | None = None
@@ -710,6 +718,7 @@ class ChatService:
             )
 
         retrieval_query = resolved.retrieval.query
+        followup_mode = FollowupMode.NOT_APPLICABLE
         retrieval_started = time.perf_counter()
         if non_knowledge_response is not None or clarification_response is not None:
             status = (
@@ -786,13 +795,14 @@ class ChatService:
         expansion_records = list(
             retrieval_result.diagnostics.get("modifies_expansion_records") or []
         )
+        context_builder = ContextBuilder(
+            self._chat_config,
+            evidence_approach=self._evidence_approach,
+            question=retrieval_query,
+        )
         evidence, knowledge_selected = await assess_and_select_knowledge(
             grounding=grounding,
-            context_builder=ContextBuilder(
-                self._chat_config,
-                evidence_approach=self._evidence_approach,
-                question=retrieval_query,
-            ),
+            context_builder=context_builder,
             chat_config=self._chat_config,
             question=retrieval_query,
             chunks=chunks,
@@ -801,22 +811,61 @@ class ChatService:
             expansion_records=expansion_records,
         )
         repair_usage: ChatUsage | None = None
-        comparison_review = evidence.sufficient and comparison_requested(retrieval_query)
+        presentation_only = followup_mode is FollowupMode.PRESENTATION_ONLY
+        rewrite_recall = retrieval_result.diagnostics.get("rewrite_recall")
+        exact_presentation_recall = (
+            presentation_only
+            and isinstance(rewrite_recall, dict)
+            and rewrite_recall.get("status") == "cited_passages"
+            and rewrite_recall.get("missing_seed_count") == 0
+        )
+        if (
+            exact_presentation_recall
+            and evidence.reason is InsufficientEvidenceReason.BELOW_RELEVANCE_THRESHOLD
+        ):
+            if not knowledge_selected:
+                knowledge_selected = select_exact_recalled_knowledge(
+                    context_builder=context_builder,
+                    chunks=chunks,
+                    expansion_records=expansion_records,
+                )
+            if knowledge_selected:
+                evidence = replace(
+                    evidence,
+                    sufficient=True,
+                    reason=None,
+                    winning_chunk_id=knowledge_selected[0].chunk_id,
+                )
+                retrieval_result.diagnostics["presentation_reuse"] = {
+                    "status": "reused",
+                    "scope": "current_exact_citations",
+                    "passage_count": len(knowledge_selected),
+                }
+        comparison_review = (
+            not presentation_only
+            and evidence.sufficient
+            and comparison_requested(retrieval_query)
+        )
         compliance_review = (
-            self._evidence_approach == "authoritative"
+            not presentation_only
+            and self._evidence_approach == "authoritative"
             and evidence.sufficient
             and compliance_overview_requested(retrieval_query)
         )
-        calculation_review = evidence.sufficient and _requires_calculation_coverage(
-            retrieval_query, chunks
+        calculation_review = (
+            not presentation_only
+            and evidence.sufficient
+            and _requires_calculation_coverage(retrieval_query, chunks)
         )
         applicability_review = (
-            self._evidence_approach == "authoritative"
+            not presentation_only
+            and self._evidence_approach == "authoritative"
             and evidence.sufficient
             and _requires_current_rule_coverage(retrieval_query, chunks)
         )
         relevance_repair = (
-            evidence.reason is InsufficientEvidenceReason.BELOW_RELEVANCE_THRESHOLD
+            not presentation_only
+            and evidence.reason is InsufficientEvidenceReason.BELOW_RELEVANCE_THRESHOLD
             and evidence.best_score is not None
             and evidence.best_score >= self._chat_config.minimum_reranker_evidence_score
             and rerank_status == "applied"
@@ -890,6 +939,12 @@ class ChatService:
                         if c.chunk_id not in {x.chunk_id for x in chunks}
                     ],
                 ]
+        elif presentation_only and evidence.sufficient:
+            retrieval_result.diagnostics["knowledge_repair"] = {
+                "status": "not_needed",
+                "reason": "presentation_only_reuses_active_cited_evidence",
+                "scope": "current_recalled_passages",
+            }
         retrieval_ms = int((time.perf_counter() - retrieval_started) * 1000)
         self._work.timings["coverage_and_recovery"] += round(
             (time.perf_counter() - coverage_started) * 1000
@@ -1025,6 +1080,7 @@ class ChatService:
         )
         web_diagnostics["fallback_used"] = web_fallback_used
 
+        response_language = resolve_response_language(current_content, prompt_history)
         messages = self._prompt_builder.build(
             template=template,
             context_chunks=selected,
@@ -1036,6 +1092,7 @@ class ChatService:
             reference_date=(resolved.retrieval.as_of or payload.reference_time).date(),
             missing_inputs=missing_inputs if knowledge_usable else (),
             partial_answer=partial_answer if knowledge_usable else None,
+            response_language=response_language,
         )
         budget = prompt_budget(
             messages,
@@ -1054,7 +1111,7 @@ class ChatService:
                 reason=InsufficientEvidenceReason.CONTEXT_SELECTION_EMPTY,
             )
         retrieval_result.diagnostics["prompt_budget"] = budget
-        question_language = detect_language(current_content).primary_language or "en"
+        question_language = response_language
         notices: list[Notice] = []
         unresolved_chunks = [
             str(chunk.chunk_id)
@@ -1097,6 +1154,7 @@ class ChatService:
             grounding=grounding,
             source_provenance=source_provenance,
             web_search_diagnostics=web_diagnostics,
+            response_language=response_language,
             web_fallback_used=web_fallback_used,
             non_knowledge_response=non_knowledge_response,
             clarification_response=clarification_response,
@@ -1175,6 +1233,22 @@ class ChatService:
             retrieval_diagnostics=prepared.retrieval_diagnostics,
             selected_chunks=prepared.selected,
         )
+        factual_claims = [
+            claim for claim in grounding.claims if claim.get("claim_kind") != "coverage_scope"
+        ]
+        coverage_claims = [
+            claim for claim in grounding.claims if claim.get("claim_kind") == "coverage_scope"
+        ]
+        supported_claims = sum(
+            claim.get("verification") == "supported" for claim in factual_claims
+        )
+        unverified_claims = sum(
+            claim.get("verification") == "unverified" for claim in factual_claims
+        )
+        unsupported_claims = sum(
+            claim.get("verification") == "unsupported" for claim in factual_claims
+        )
+        factual_total = len(factual_claims)
         evidence_gate = self._grounding.diagnostics(
             prepared.evidence,
             blocked_generation=reason_value is not None,
@@ -1249,6 +1323,10 @@ class ChatService:
             candidate_diagnostics.pop("assessments", None)
         if prepared.retrieval_diagnostics.get("rewrite_recall"):
             metadata["rewrite_recall"] = prepared.retrieval_diagnostics["rewrite_recall"]
+        if prepared.retrieval_diagnostics.get("presentation_reuse"):
+            metadata["presentation_reuse"] = prepared.retrieval_diagnostics[
+                "presentation_reuse"
+            ]
         metadata.update(
             {
                 "response_mode": self._chat_config.response_mode.value,
@@ -1261,6 +1339,16 @@ class ChatService:
                 "non_knowledge_turn": non_knowledge_turn,
                 "citation_coverage": grounding.citation_coverage,
                 "unverified_claim_rate": grounding.unverified_claim_rate,
+                "unsupported_claim_rate": (
+                    unsupported_claims / factual_total if factual_total else 0.0
+                ),
+                "claim_verification_counts": {
+                    "factual": factual_total,
+                    "coverage_scope": len(coverage_claims),
+                    "supported": supported_claims,
+                    "unverified": unverified_claims,
+                    "unsupported": unsupported_claims,
+                },
                 "best_semantic_evidence_score": prepared.evidence.winning_semantic_score,
                 "evidence_gate": evidence_gate,
                 "evidence_funnel": evidence_funnel,
@@ -1303,6 +1391,7 @@ class ChatService:
         metadata["effective_behavior"] = {
             "evidence_approach": self._evidence_approach,
             "translation_enabled": self._translation_enabled,
+            "response_language": prepared.response_language,
             "config_snapshot_id": str(self._config_snapshot_id)
             if self._config_snapshot_id
             else None,
@@ -1313,6 +1402,12 @@ class ChatService:
             .get("coverage", {})
             .get("quotes_validated")
         )
+        presentation_reuse = prepared.retrieval_diagnostics.get("presentation_reuse")
+        reused_cited_passages = (
+            int(presentation_reuse.get("passage_count") or 0)
+            if isinstance(presentation_reuse, dict)
+            else 0
+        )
         metadata["evidence_summary"] = {
             "candidates": prepared.retrieval_diagnostics.get("retrieved_candidate_count")
             or len(prepared.chunks),
@@ -1320,6 +1415,7 @@ class ChatService:
             "admitted_passages": sum(a.passed for a in prepared.evidence.candidate_assessments)
             if prepared.evidence.candidate_assessments
             else len(prepared.evidence.admitted_units),
+            "reused_cited_passages": reused_cited_passages,
             "context_passages": len(prepared.selected),
             "cited_passages": len(cited_snapshots),
             "cited_documents": len({c.document_id for c in cited_chunks}),
@@ -1337,12 +1433,19 @@ class ChatService:
                 else "validated_requirements"
             )
             if validated_coverage
+            else "current_exact_citation_recall"
+            if reused_cited_passages
             else "ordinary_admission",
             "claim_verification": "verified"
             if grounding.grounded
             else "unverified"
             if grounding.grounded is False
             else "not_applicable",
+            "factual_claims": factual_total,
+            "coverage_scope_claims": len(coverage_claims),
+            "supported_factual_claims": supported_claims,
+            "unverified_factual_claims": unverified_claims,
+            "unsupported_factual_claims": unsupported_claims,
             "input_provenance": {
                 "unresolved_inputs": (
                     (prepared.retrieval_diagnostics.get("knowledge_repair") or {})

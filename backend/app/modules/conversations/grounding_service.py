@@ -60,7 +60,7 @@ _SPAN_BOUNDARY_PATTERN = regex.compile(
 )
 _INSUFFICIENCY_MARKER = "not enough indexed evidence"
 _COVERAGE_SCOPE_PATTERN = regex.compile(
-    r"(?:available materials do not establish|"
+    r"(?:available (?:materials|provisions) do not establish|"
     r"not enough indexed evidence|"
     r"reviewed (?:evidence|materials|sources) do(?:es)? not|"
     r"this answer does not (?:cover|establish)|"
@@ -1800,6 +1800,15 @@ def _answer_segments(answer: str) -> list[str]:
     answer = "\n".join(normalized_lines)
     segments: list[str] = []
     for paragraph in regex.split(r"\n\s*\n", answer):
+        stripped_paragraph = paragraph.strip()
+        if stripped_paragraph.startswith(_TABLE_HEADER_SENTINEL) or _is_markdown_table_row(
+            stripped_paragraph
+        ):
+            # A row is one structural assertion. Sentence punctuation inside a
+            # cell must not detach an authority, condition, or citation from the
+            # duty named in another cell.
+            segments.append(stripped_paragraph)
+            continue
         if _MARKDOWN_HEADING_PATTERN.fullmatch(paragraph.strip()):
             # Do not split a numbered heading at "1." and turn its remaining
             # title into an unsupported factual sentence.
@@ -2660,7 +2669,10 @@ def _durations_equivalent(left: tuple[int, str], right: tuple[int, str]) -> bool
 def _bounded_entailment_guard(claim: str, evidence: str) -> ClaimVerification | None:
     """Reject a few high-risk contradictions that semantic similarity cannot resolve."""
     claim_plain = _plain_claim_text(claim).casefold()
-    evidence_plain = _plain_claim_text(evidence).casefold()
+    evidence_plain = _aligned_entailment_clause(claim_plain, _plain_claim_text(evidence).casefold())
+    if not evidence_plain:
+        # Similarity located a topic but could not align a clause safely.
+        return None
     negative = regex.compile(
         r"\b(?:no|not|never|cannot|can't|doesn't|does not|isn't|is not|exempt)\b|"
         r"(?<![\p{L}\p{M}])(?:না|নয়|নয়|নাই|ব্যতীত)(?![\p{L}\p{M}])",
@@ -2683,6 +2695,29 @@ def _bounded_entailment_guard(claim: str, evidence: str) -> ClaimVerification | 
         if claim_values and evidence_values and claim_values.isdisjoint(evidence_values):
             return ClaimVerification.UNSUPPORTED
     return None
+
+
+def _aligned_entailment_clause(claim: str, evidence: str) -> str:
+    """Choose the clause that shares the claim's subject/predicate before polarity checks.
+
+    For a single clause, cross-language semantic retrieval may still use the
+    bounded negation and comparison guards.  For multiple cross-language clauses,
+    lexical alignment is uncertain, so the guard abstains rather than applying an
+    exception or prohibition from a different sentence to the claim.
+    """
+    clauses = [
+        piece.strip()
+        for piece in regex.split(r"\n+|(?<=[.!?।॥。;])\s+|\s*;\s*", evidence)
+        if piece.strip()
+    ]
+    if len(clauses) <= 1:
+        return clauses[0] if clauses else evidence.strip()
+    claim_tokens = _significant_tokens(claim)
+    ranked = [
+        (_coverage(claim_tokens, _significant_tokens(clause)), clause) for clause in clauses
+    ]
+    score, clause = max(ranked, key=lambda item: item[0])
+    return clause if score >= 0.2 else ""
 
 
 def _missing_duration(claim: str, evidence: str) -> bool:
