@@ -359,6 +359,8 @@ def _diagnostics(
         "relation": resolution.relation.value,
         "reason": resolution.reason,
         "effective_question": resolution.effective_question,
+        "followup_mode": resolution.followup_mode.value,
+        "new_factual_facets": list(resolution.new_factual_facets),
         "active_bindings": [
             binding.model_dump(mode="json") for binding in resolution.active_bindings
         ],

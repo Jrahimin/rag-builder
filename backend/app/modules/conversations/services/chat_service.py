@@ -72,8 +72,10 @@ from app.modules.conversations.schemas.message import (
 )
 from app.modules.conversations.services.evidence_repair_service import repair_knowledge_evidence
 from app.modules.conversations.services.rewrite_retrieval import (
+    retained_rewrite_question,
     retrieve_rewrite_context,
     rewrite_citation_ids,
+    rewrite_followup_mode,
 )
 from app.modules.conversations.services.web_evidence_review import (
     review_web_evidence,
@@ -85,6 +87,7 @@ from app.modules.conversations.turn_resolution import (
     RESOLUTION_MAX_OUTPUT_TOKENS,
     RESOLUTION_TIMEOUT_SECONDS,
     CitationIdentity,
+    FollowupMode,
     HistoryMessage,
     RequestFilters,
     TurnOutcome,
@@ -719,6 +722,25 @@ class ChatService:
                 diagnostics={"status": status},
             )
         else:
+            followup_mode = rewrite_followup_mode(
+                current_content,
+                resolved.resolution.outcome,
+                resolved.resolution.relation,
+                resolved.resolution.followup_mode,
+            )
+            if followup_mode is FollowupMode.NOT_APPLICABLE and any(
+                item.role == "assistant" for item in bounded_history
+            ):
+                followup_mode = rewrite_followup_mode(
+                    current_content,
+                    TurnOutcome.RESOLVED,
+                    TurnRelation.FOLLOW_UP,
+                )
+            retained_question = retained_rewrite_question(bounded_history)
+            if followup_mode is FollowupMode.PRESENTATION_ONLY and retained_question is not None:
+                # Evidence relevance is evaluated against the retained factual topic,
+                # while generation still receives the current presentation request.
+                retrieval_query = retained_question
             seeds = (
                 rewrite_citation_ids(
                     current_content,
@@ -726,6 +748,7 @@ class ChatService:
                     resolved.resolution.relation,
                     bounded_history,
                     citation_chunks,
+                    mode=followup_mode,
                 )
                 if resolved.resolution.temporal_intent.kind.value == "none"
                 else []
@@ -733,6 +756,7 @@ class ChatService:
             retrieval_result = await retrieve_rewrite_context(
                 self._retrieval,
                 seeds=seeds,
+                mode=followup_mode,
                 request={
                     "query": retrieval_query,
                     "top_k": self._retrieval_config.default_top_k,
@@ -816,7 +840,7 @@ class ChatService:
                 )
             await self._release_read_transaction()
             repaired = await repair_knowledge_evidence(
-                inputs=resolved.retrieval,
+                inputs=resolved.retrieval.model_copy(update={"query": retrieval_query}),
                 initial=retrieval_result,
                 selected=knowledge_selected,
                 retrieval=self._retrieval,
@@ -2340,6 +2364,8 @@ def _compact_resolution_summary(metadata: dict[str, Any]) -> dict[str, Any] | No
         "version",
         "outcome",
         "relation",
+        "followup_mode",
+        "new_factual_facets",
         "reason",
         "effective_question",
         "query_changed",

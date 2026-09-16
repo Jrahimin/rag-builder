@@ -4,14 +4,15 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import uuid
 from collections.abc import Awaitable, Callable
 from copy import deepcopy
 from dataclasses import dataclass, replace
 from time import monotonic
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from app.core.config import ChatConfig, RetrievalConfig
 from app.modules.conversations.context_builder import ContextBuilder
@@ -85,13 +86,108 @@ class EvidenceRequirement(BaseModel):
     model_config = ConfigDict(extra="forbid")
     requirement_id: str = Field(min_length=1, max_length=80)
     description: str = Field(min_length=1, max_length=1000)
+    origin: Literal[
+        "explicit_user_request", "necessary_applicability", "optional_corroboration"
+    ] = "necessary_applicability"
+
+
+class _SearchQuery(BaseModel):
+    """A discovery route with explicit ownership of the requirements it attempts."""
+
+    model_config = ConfigDict(extra="forbid")
+    query: str = Field(min_length=1, max_length=500)
+    requirement_ids: list[str] = Field(default_factory=list, max_length=12)
 
 
 class _SearchPlan(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    queries: list[str] = Field(max_length=MAX_REPAIR_DEPENDENCIES)
+    queries: list[_SearchQuery] = Field(max_length=MAX_REPAIR_DEPENDENCIES)
     requirements: list[EvidenceRequirement] = Field(default_factory=list, max_length=12)
     coverage: CoverageVerdict | None = None
+
+    @field_validator("queries", mode="before")
+    @classmethod
+    def accept_legacy_query_strings(cls, value: Any) -> Any:
+        """Keep old providers/tests readable while the wire format moves to bound queries."""
+        if not isinstance(value, list):
+            return value
+        return [
+            {"query": item, "requirement_ids": []} if isinstance(item, str) else item
+            for item in value
+        ]
+
+
+def _prepare_search_plan(
+    plan: _SearchPlan, user_question: str = ""
+) -> tuple[list[EvidenceRequirement], list[str], dict[str, list[str]]]:
+    """Drop optional work and return deduplicated executable routes with ownership."""
+    requirements = [
+        requirement
+        for requirement in plan.requirements
+        if not _optional_requirement(requirement, user_question)
+    ]
+    allowed = {requirement.requirement_id for requirement in requirements}
+    optional = {
+        requirement.requirement_id
+        for requirement in plan.requirements
+        if _optional_requirement(requirement, user_question)
+    }
+    queries: list[str] = []
+    ownership: dict[str, list[str]] = {}
+    keys: dict[str, str] = {}
+    for entry in plan.queries:
+        query = entry.query.strip()
+        ids = list(dict.fromkeys(item for item in entry.requirement_ids if item in allowed))
+        # A route explicitly owned only by optional work has no place in bounded recovery.
+        if entry.requirement_ids and not ids and set(entry.requirement_ids).issubset(optional):
+            continue
+        key = " ".join(query.split()).casefold()
+        existing = keys.get(key)
+        if existing is not None:
+            ownership[existing] = list(dict.fromkeys([*ownership[existing], *ids]))
+            continue
+        keys[key] = query
+        queries.append(query)
+        ownership[query] = ids
+    return requirements, queries, ownership
+
+
+def _optional_requirement(requirement: EvidenceRequirement, user_question: str) -> bool:
+    if requirement.origin == "optional_corroboration":
+        return True
+    description = requirement.description.casefold()
+    question = user_question.casefold()
+    optional_facets = (
+        "confirmation",
+        "corroboration",
+        "second source",
+        "separate official guidance",
+        "procedure",
+        "e-filing",
+        "electronic filing",
+        "fee",
+        "sanction",
+        "penalty",
+        "full act scope",
+        "complete amendment",
+        "নিশ্চিতকরণ",
+        "পদ্ধতি",
+        "প্রক্রিয়া",
+        "প্রক্রিয়া",
+        "ফি",
+        "জরিমানা",
+    )
+    return any(facet in description and facet not in question for facet in optional_facets)
+
+
+def _requirement_labels_match(left: str, right: str) -> bool:
+    def tokens(value: str) -> set[str]:
+        return set(re.findall(r"[^\W_]+", value.casefold(), re.UNICODE))
+
+    left_tokens, right_tokens = tokens(left), tokens(right)
+    if not left_tokens or not right_tokens:
+        return False
+    return len(left_tokens & right_tokens) / min(len(left_tokens), len(right_tokens)) >= 0.6
 
 
 def _source_line_records(content: str) -> list[dict[str, Any]]:
@@ -299,6 +395,13 @@ async def _validated_completion(
                 work = getattr(llm, "work", None)
                 if isinstance(work, RequestWork):
                     work.counts["structured_truncation_retries"] += 1
+                    work.validation_retries.append(
+                        {
+                            "schema": schema.__name__,
+                            "reason": "truncated_output",
+                            "finish_reason": completion.finish_reason,
+                        }
+                    )
                 continue
             return replace(completion, usage=usage)
         content = completion.content.strip()
@@ -362,6 +465,19 @@ async def _validated_completion(
             work = getattr(llm, "work", None)
             if isinstance(work, RequestWork):
                 work.counts["structured_response_retries"] += 1
+                work.validation_retries.append(
+                    {
+                        "schema": schema.__name__,
+                        "reason": "schema_validation",
+                        "issues": [
+                            {
+                                "type": str(error.get("type") or "validation_error"),
+                                "path": ".".join(str(part) for part in error.get("loc") or ()),
+                            }
+                            for error in exc.errors(include_input=False)
+                        ],
+                    }
+                )
             messages = [
                 *_structured_selector_retry(messages, proof_context, source_ids),
                 ChatMessage(
@@ -585,11 +701,22 @@ async def repair_knowledge_evidence(
                 diagnostics["status"] = "incomplete_plan"
                 return result
             plan = _SearchPlan.model_validate_json(completion.content)
-            requirement_ids = {r.requirement_id for r in plan.requirements}
-            if len(requirement_ids) != len(plan.requirements):
+            all_requirement_ids = {r.requirement_id for r in plan.requirements}
+            if len(all_requirement_ids) != len(plan.requirements):
                 diagnostics["status"] = "invalid_plan"
                 return result
-            diagnostics["requirements"] = [r.model_dump() for r in plan.requirements]
+            requirements, queries, query_requirement_ids = _prepare_search_plan(
+                plan, inputs.query
+            )
+            requirement_ids = {r.requirement_id for r in requirements}
+            diagnostics["requirements"] = [r.model_dump() for r in requirements]
+            ignored_optional = [
+                r.model_dump()
+                for r in plan.requirements
+                if r.requirement_id not in requirement_ids
+            ]
+            if ignored_optional:
+                diagnostics["optional_requirements_ignored"] = ignored_optional
             if plan.coverage is not None:
                 for check in plan.coverage.checks:
                     for quote in check.evidence:
@@ -647,19 +774,21 @@ async def repair_knowledge_evidence(
                     for q in check.evidence
                 }
                 selected = [c for c in selected if str(c.chunk_id) in confirmed]
-            queries = list(dict.fromkeys(query.strip() for query in plan.queries))
             if not queries or any(not query or len(query) > 500 for query in queries):
                 diagnostics["status"] = "invalid_plan"
                 return result
             diagnostics["queries"] = queries
             diagnostics["branches"] = []
             diagnostics["focused_requirement_ids"] = []
+            diagnostics["requirement_attempts"] = []
             groups: list[list[ContextChunk]] = []
             raw_groups: list[list[ContextChunk]] = []
             decisions: list[EvidenceDecision] = [initial_decision] if initial_decision else []
             records = list(initial.diagnostics.get("modifies_expansion_records") or [])
             pending_queries = list(queries)
+            pending_routes = dict.fromkeys(pending_queries, "search")
             adjacent_requests: dict[str, list[uuid.UUID]] = {}
+            attempted_adjacent: set[tuple[str, uuid.UUID]] = set()
             reviewed_evidence: set[str] = set()
             last_verdict: CoverageVerdict | None = None
             last_partial_scope_validated = False
@@ -751,12 +880,15 @@ async def repair_knowledge_evidence(
                         retrieval_config=retrieval_config,
                         expansion_records=records,
                     )
+                    route = pending_routes.get(
+                        query, "adjacent" if query in adjacent_requests else "search"
+                    )
+                    attempted_ids = list(query_requirement_ids.get(query, []))
                     diagnostics["branches"].append(
                         {
                             "query": query,
-                            "discovery_route": "adjacent"
-                            if query in adjacent_requests
-                            else "search",
+                            "discovery_route": route,
+                            "requirement_ids": attempted_ids,
                             "translation": {
                                 key: branch.diagnostics.get(key)
                                 for key in (
@@ -779,6 +911,25 @@ async def repair_knowledge_evidence(
                             "selected_chunk_ids": [str(c.chunk_id) for c in units],
                         }
                     )
+                    diagnostics["requirement_attempts"].append(
+                        {
+                            "route": route,
+                            "query": query,
+                            "requirement_ids": attempted_ids,
+                            "status": "executed",
+                            "candidate_ids": [str(c.chunk_id) for c in branch.chunks],
+                            "admitted_ids": [str(c.chunk_id) for c in units],
+                        }
+                    )
+                    if route == "focused":
+                        diagnostics["focused_requirement_ids"] = list(
+                            dict.fromkeys(
+                                [
+                                    *(diagnostics.get("focused_requirement_ids") or []),
+                                    *attempted_ids,
+                                ]
+                            )
+                        )
                     # A search is a discovery route, not a required source. An
                     # empty/blocked route must not abort the other dependencies.
                     groups.append([] if grounding.blocks_generation(decision) else units)
@@ -859,6 +1010,7 @@ async def repair_knowledge_evidence(
                                 last_verdict,
                                 focused_ids=diagnostics.get("focused_requirement_ids") or [],
                                 adjacent_queries=diagnostics.get("adjacent_queries") or [],
+                                attempts=diagnostics.get("requirement_attempts") or [],
                                 stop_reason="unchanged_review_evidence",
                             )
                         if last_partial_scope_validated and last_verdict is not None:
@@ -981,18 +1133,60 @@ async def repair_knowledge_evidence(
                 # A completed newer review supersedes the previous partial verdict.
                 partial_checkpoint = None
                 if requirement_ids:
-                    for check in verdict.checks:
-                        if check.requirement_id and check.requirement_id not in requirement_ids:
-                            if not check.description.strip():
-                                diagnostics["status"] = "invalid_requirement"
-                                return result
-                            requirement_ids.add(check.requirement_id)
-                            diagnostics["requirements"].append(
+                    unknown_checks = [
+                        check
+                        for check in verdict.checks
+                        if check.requirement_id and check.requirement_id not in requirement_ids
+                    ]
+                    if unknown_checks:
+                        # The coverage reviewer verifies the bounded plan. It cannot
+                        # silently enlarge the question and spend another recovery round.
+                        diagnostics.setdefault("reviewer_requirements_ignored", []).extend(
+                            {
+                                "requirement_id": check.requirement_id,
+                                "description": check.description,
+                            }
+                            for check in unknown_checks
+                        )
+                        unknown_descriptions = {
+                            " ".join(check.description.split()).casefold()
+                            for check in unknown_checks
+                            if check.description.strip()
+                        }
+                        kept_missing: list[str] = []
+                        kept_gap_kinds: list[str] = []
+                        gap_kinds = verdict.gap_kinds or ["source_rule"] * len(verdict.missing)
+                        for missing, kind in zip(verdict.missing, gap_kinds, strict=True):
+                            normalized = " ".join(missing.split()).casefold()
+                            if normalized in unknown_descriptions or any(
+                                _requirement_labels_match(missing, description)
+                                for description in unknown_descriptions
+                            ):
+                                continue
+                            kept_missing.append(missing)
+                            kept_gap_kinds.append(kind)
+                        kept_checks = [
+                            check for check in verdict.checks if check not in unknown_checks
+                        ]
+                        can_complete = (
+                            not kept_missing
+                            and requirement_ids.issubset(
                                 {
-                                    "requirement_id": check.requirement_id,
-                                    "description": check.description,
+                                    check.requirement_id
+                                    for check in kept_checks
+                                    if check.supported and check.evidence
                                 }
                             )
+                        )
+                        verdict = verdict.model_copy(
+                            update={
+                                "checks": kept_checks,
+                                "missing": kept_missing,
+                                "gap_kinds": kept_gap_kinds,
+                                "complete": can_complete,
+                                "partial_answer": None if can_complete else verdict.partial_answer,
+                            }
+                        )
                 for check in verdict.checks:
                     for quote in check.evidence:
                         quote.chunk_id = source_ids.get(quote.chunk_id, quote.chunk_id)
@@ -1105,6 +1299,7 @@ async def repair_knowledge_evidence(
                     verdict,
                     focused_ids=diagnostics.get("focused_requirement_ids") or [],
                     adjacent_queries=diagnostics.get("adjacent_queries") or [],
+                    attempts=diagnostics.get("requirement_attempts") or [],
                     stop_reason=diagnostics.get("stop_reason"),
                 )
                 if partial_scope_validated:
@@ -1125,12 +1320,12 @@ async def repair_knowledge_evidence(
                 # the adjoining heading. Honor the explicit continuation flag
                 # on incomplete reviews instead of testing `supported` alone.
                 recoverable_continuation = (
-                    round_index == 0
+                    round_index < MAX_REPAIR_FOLLOWUPS
                     and ranges_valid
                     and bool(verdict.missing)
                     and getattr(retrieval, "supports_adjacent_retrieval", False) is True
                     and any(
-                        check.needs_adjacent_context
+                        (check.needs_adjacent_context or (not check.supported and check.evidence))
                         and check.evidence
                         and (requirement_ids or 0 <= check.query_index < len(raw_groups))
                         and any(
@@ -1138,6 +1333,17 @@ async def repair_knowledge_evidence(
                             for item in check.evidence
                             for group in raw_groups
                             for chunk in group
+                        )
+                        and any(
+                            (
+                                check.requirement_id or f"query-{check.query_index}",
+                                chunk.chunk_id,
+                            )
+                            not in attempted_adjacent
+                            for item in check.evidence
+                            for group in raw_groups
+                            for chunk in group
+                            if item.chunk_id == str(chunk.chunk_id)
                         )
                         for check in verdict.checks
                     )
@@ -1164,6 +1370,7 @@ async def repair_knowledge_evidence(
                         if round_index == MAX_REPAIR_FOLLOWUPS
                         else "coverage_validation_failed"
                     )
+                    _mark_unattempted_budget(diagnostics["requirement_progress"])
                     return result
                 if not round_index:
                     diagnostics["initial_coverage"] = diagnostics["coverage"]
@@ -1184,20 +1391,34 @@ async def repair_knowledge_evidence(
                     )
                 ]
                 confirmed = {q.chunk_id for check in confirmed_checks for q in check.evidence}
-                groups = [[c for c in group if str(c.chunk_id) in confirmed] for group in groups]
-                selected = [c for c in budgeted if str(c.chunk_id) in confirmed]
+                structural_anchors = {
+                    q.chunk_id
+                    for check in verdict.checks
+                    if check.evidence
+                    and (check.needs_adjacent_context or not check.supported)
+                    for q in check.evidence
+                    if q.chunk_id in sources and _contains_quote(sources[q.chunk_id], q.quote)
+                }
+                retained_proof = confirmed | structural_anchors
+                groups = [
+                    [c for c in group if str(c.chunk_id) in retained_proof] for group in groups
+                ]
+                selected = [c for c in budgeted if str(c.chunk_id) in retained_proof]
                 # Read a missing rule's immediate source neighbourhood before
                 # asking for another wording. Neighbours undergo the same search,
                 # source policy, reranking and admission; they inherit no scores.
                 adjacent_requests = {}
                 if (
-                    not round_index
+                    round_index < MAX_REPAIR_FOLLOWUPS
                     and getattr(retrieval, "supports_adjacent_retrieval", False) is True
                 ):
                     for check in verdict.checks:
                         i = check.query_index
                         if (
-                            not check.needs_adjacent_context
+                            not (
+                                check.needs_adjacent_context
+                                or (not check.supported and check.evidence)
+                            )
                             or not check.evidence
                             or not ranges_valid
                             or (not requirement_ids and not 0 <= i < len(raw_groups))
@@ -1213,6 +1434,11 @@ async def repair_knowledge_evidence(
                                         originals[q.chunk_id]
                                         for q in check.evidence
                                         if q.chunk_id in originals
+                                        and (
+                                            check.requirement_id or f"query-{check.query_index}",
+                                            originals[q.chunk_id],
+                                        )
+                                        not in attempted_adjacent
                                     ),
                                 ]
                             )
@@ -1230,20 +1456,25 @@ async def repair_knowledge_evidence(
                             adjacent_requests[query] = list(
                                 dict.fromkeys([*adjacent_requests.get(query, []), *anchors])
                             )[:4]
+                            requirement_key = check.requirement_id or f"query-{check.query_index}"
+                            query_requirement_ids[query] = list(
+                                dict.fromkeys(
+                                    [*query_requirement_ids.get(query, []), requirement_key]
+                                )
+                            )
+                            attempted_adjacent.update(
+                                (requirement_key, anchor) for anchor in anchors
+                            )
                         if len(adjacent_requests) == 2:
                             break
                 if adjacent_requests:
                     pending_queries = list(adjacent_requests)
                     queries.extend(pending_queries)
-                    diagnostics["adjacent_queries"] = pending_queries
+                    pending_routes = dict.fromkeys(pending_queries, "adjacent")
+                    diagnostics.setdefault("adjacent_queries", []).extend(pending_queries)
                     continue
                 untried_missing = missing_core_ids - focused_already
-                if untried_missing:
-                    diagnostics["focused_requirement_ids"] = [
-                        *(diagnostics.get("focused_requirement_ids") or []),
-                        *sorted(untried_missing),
-                    ]
-                elif partial_scope_validated:
+                if not untried_missing and partial_scope_validated:
                     _store_partial_answer(diagnostics, verdict)
                     break
                 if release_read_transaction is not None:
@@ -1295,7 +1526,8 @@ async def repair_knowledge_evidence(
                 followup_plan = _SearchPlan.model_validate_json(followup.content)
                 seen_queries = {" ".join(q.split()).casefold() for q in queries}
                 pending_queries = []
-                for query in followup_plan.queries:
+                for entry_index, entry in enumerate(followup_plan.queries):
+                    query = entry.query.strip()
                     key = " ".join(query.split()).casefold()
                     if key in seen_queries:
                         diagnostics["duplicate_focused_queries_skipped"] = (
@@ -1303,18 +1535,32 @@ async def repair_knowledge_evidence(
                         )
                         continue
                     seen_queries.add(key)
-                    pending_queries.append(query.strip())
+                    pending_queries.append(query)
+                    bound_ids = [
+                        requirement_id
+                        for requirement_id in entry.requirement_ids
+                        if requirement_id in untried_missing
+                    ]
+                    if not bound_ids:
+                        ordered_missing = sorted(untried_missing)
+                        if ordered_missing:
+                            bound_ids = [
+                                ordered_missing[min(entry_index, len(ordered_missing) - 1)]
+                            ]
+                    query_requirement_ids[query] = bound_ids
                 pending_queries = pending_queries[:2]
                 if not pending_queries or any(not q or len(q) > 500 for q in pending_queries):
                     diagnostics["requirement_progress"] = {
                         **(diagnostics.get("requirement_progress") or {}),
                         "stop_reason": "no_new_focused_query",
                     }
+                    _mark_unattempted_budget(diagnostics["requirement_progress"])
                     if partial_scope_validated:
                         _store_partial_answer(diagnostics, verdict)
                         break
                     return result
                 queries.extend(pending_queries)
+                pending_routes = dict.fromkeys(pending_queries, "focused")
                 diagnostics.setdefault("focused_queries", []).extend(pending_queries)
             # Discovery context can contain old/future tables and unrelated examples.
             # Hand generation the passages actually used by the validated proof,
@@ -1447,6 +1693,8 @@ def _handoff_reviewed_proof(
     progress = diagnostics.setdefault("requirement_progress", {})
     if not progress.get("stop_reason"):
         progress["stop_reason"] = "validated_partial_scope" if partial else "coverage_complete"
+    if partial:
+        _mark_unattempted_budget(progress)
     result.partial_answer = partial
     result.missing_inputs = tuple(verdict.missing_inputs)
 
@@ -1505,11 +1753,20 @@ def _requirement_progress(
     *,
     focused_ids: list[str],
     adjacent_queries: list[str],
+    attempts: list[dict[str, Any]] | None = None,
     stop_reason: str | None = None,
 ) -> dict[str, Any]:
+    attempts = list(attempts or [])
+    routes_by_requirement: dict[str, list[str]] = {}
+    for attempt in attempts:
+        for requirement_id in attempt.get("requirement_ids") or []:
+            routes_by_requirement.setdefault(requirement_id, []).append(
+                str(attempt.get("route") or "search")
+            )
     return {
         "focused_requirement_ids": list(focused_ids),
         "adjacent_queries": list(adjacent_queries),
+        "attempts": attempts,
         "stop_reason": stop_reason,
         "checks": [
             {
@@ -1518,17 +1775,33 @@ def _requirement_progress(
                 "supported": check.supported,
                 "needs_adjacent_context": check.needs_adjacent_context,
                 "discovered_ids": [item.chunk_id for item in check.evidence],
+                "routes_attempted": routes_by_requirement.get(
+                    check.requirement_id or f"query-{check.query_index}", []
+                ),
+                "attempt_status": (
+                    "executed"
+                    if routes_by_requirement.get(
+                        check.requirement_id or f"query-{check.query_index}", []
+                    )
+                    else "not_needed"
+                    if check.supported
+                    else "unattempted"
+                ),
                 "route": (
-                    "adjacent"
-                    if check.needs_adjacent_context and check.evidence
-                    else "focused"
-                    if (check.requirement_id or f"query-{check.query_index}") in set(focused_ids)
-                    else "search"
+                    routes_by_requirement.get(
+                        check.requirement_id or f"query-{check.query_index}", ["search"]
+                    )[-1]
                 ),
             }
             for check in verdict.checks
         ],
     }
+
+
+def _mark_unattempted_budget(progress: dict[str, Any]) -> None:
+    for check in progress.get("checks") or []:
+        if isinstance(check, dict) and check.get("attempt_status") == "unattempted":
+            check["attempt_status"] = "budget_exhausted_before_attempt"
 
 
 def _indexed_headings(groups: list[list[ContextChunk]], context: list[ContextChunk]) -> list[str]:

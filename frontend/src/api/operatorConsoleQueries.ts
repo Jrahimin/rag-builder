@@ -417,11 +417,13 @@ export function useStreamMessage(projectId: string, conversationId: string) {
       documentId,
       onDelta,
       onProgress,
+      signal,
     }: {
       content: string;
       documentId?: string;
       onDelta: (delta: string) => void;
       onProgress?: (message: string) => void;
+      signal?: AbortSignal;
     }) => {
       await operatorApiClient.streamMessage(
         projectId,
@@ -430,6 +432,7 @@ export function useStreamMessage(projectId: string, conversationId: string) {
         onDelta,
         documentId,
         onProgress,
+        signal,
       );
       const page = await operatorApiClient.getMessages(projectId, conversationId);
       const assistant = [...page.items].reverse().find((message) => message.role === "assistant");

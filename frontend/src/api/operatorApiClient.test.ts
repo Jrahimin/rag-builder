@@ -42,6 +42,69 @@ test("classifies a development proxy failure as backend unavailable", async () =
   });
 });
 
+test("rejects a clean stream EOF without a terminal event", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn().mockResolvedValue(
+      new Response('data: {"event":"token","delta":"partial"}\n\n', {
+        status: 200,
+        headers: { "Content-Type": "text/event-stream" },
+      }),
+    ),
+  );
+  await expect(
+    operatorApiClient.streamMessage("project-1", "conversation-1", "question", vi.fn()),
+  ).rejects.toMatchObject({ code: "stream_incomplete" });
+});
+
+test("accepts a stream only after its terminal event", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn().mockResolvedValue(
+      new Response(
+        'data: {"event":"token","delta":"answer"}\n\n' +
+          'data: {"event":"done","grounded":true}\n\n',
+        { status: 200, headers: { "Content-Type": "text/event-stream" } },
+      ),
+    ),
+  );
+  const onDelta = vi.fn();
+  await expect(
+    operatorApiClient.streamMessage("project-1", "conversation-1", "question", onDelta),
+  ).resolves.toEqual({ content: "answer" });
+  expect(onDelta).toHaveBeenCalledWith("answer");
+});
+
+test("normalizes cancellation while the response body is being read", async () => {
+  const abort = new AbortController();
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      abort.signal.addEventListener("abort", () => {
+        controller.error(new Error("BodyStreamBuffer was aborted"));
+      });
+    },
+  });
+  vi.stubGlobal(
+    "fetch",
+    vi.fn().mockResolvedValue(
+      new Response(body, { status: 200, headers: { "Content-Type": "text/event-stream" } }),
+    ),
+  );
+
+  const pending = operatorApiClient.streamMessage(
+    "project-1",
+    "conversation-1",
+    "question",
+    vi.fn(),
+    undefined,
+    undefined,
+    abort.signal,
+  );
+  abort.abort();
+
+  await expect(pending).rejects.toMatchObject({ code: "stream_cancelled", status: 499 });
+});
+
 test("forwards OCR language on document reprocess", async () => {
   const fetchMock = vi.fn().mockResolvedValue(
     new Response(JSON.stringify({ success: true, data: {} }), {

@@ -69,7 +69,10 @@ _COVERAGE_SCOPE_PATTERN = regex.compile(
     r"do(?:es)? not (?:establish|provide|cover)|"
     r"not established from the (?:available|selected|reviewed)|"
     r"outside the (?:reviewed|selected) evidence|"
+    r"available (?:sources|passages|excerpts|citations) do(?:es)? not (?:establish|show|confirm)|"
     r"উপলব্ধ (?:উপাদান|প্রমাণ)[^\n]{0,40}প্রতিষ্ঠিত হ[য়য়] না|"
+    r"উপলভ্য (?:উদ্ধৃতি\p{Bengali}*|সূত্র\p{Bengali}*|প্রমাণ\p{Bengali}*)"
+    r"[^\n]{0,100}(?:নিশ্চিতভাবে বলা যা(?:য়|য়) না|প্রতিষ্ঠিত হ(?:য়|য়) না)|"
     r"পর্যালোচিত (?:প্রমাণ|উপাদান|সূত্র)[^\n]{0,40}না|"
     r"যথেষ্ট সূচকীকৃত প্রমাণ নাই)",
     regex.IGNORECASE,
@@ -989,13 +992,13 @@ class GroundingService:
                     verification = ClaimVerification.UNVERIFIED
                     verification_reason = ClaimVerificationReason.UNVERIFIED_AMOUNT
                 else:
-                    uses_lexical = _uses_lexical_verification(draft.assertion, evidence_texts)
+                    scored_texts = span_texts or evidence_texts
+                    uses_lexical = _uses_lexical_verification(draft.assertion, scored_texts)
                     lexical = (
-                        self._lexical_verification(draft.assertion, evidence_texts)
+                        self._lexical_verification(draft.assertion, scored_texts)
                         if uses_lexical
                         else None
                     )
-                    scored_texts = span_texts or evidence_texts
                     scores = [
                         _best_pair_score(similarities, (draft.assertion, draft.text), text)
                         for text in scored_texts
@@ -1010,7 +1013,35 @@ class GroundingService:
                     )
                     verification = _combine_claim_verification(lexical, semantic)
                     verification_method = "lexical" if uses_lexical else "semantic"
-                    if semantic is ClaimVerification.UNVERIFIED and score is None:
+                    if (
+                        uses_lexical
+                        and lexical is ClaimVerification.UNSUPPORTED
+                        and semantic is ClaimVerification.SUPPORTED
+                    ):
+                        # Same-language similarity selects the best span but cannot
+                        # turn a low-overlap passage into factual entailment.
+                        verification = ClaimVerification.UNVERIFIED
+                        verification_method = "semantic_locator"
+                        verification_reason = (
+                            ClaimVerificationReason.UNRELATED_OR_INSUFFICIENT_EVIDENCE
+                        )
+                    entailment_guard = _bounded_entailment_guard(
+                        draft.assertion, " ".join(scored_texts)
+                    )
+                    if (
+                        verification is ClaimVerification.SUPPORTED
+                        and entailment_guard is not None
+                    ):
+                        verification = entailment_guard
+                        verification_method = "bounded_entailment"
+                        verification_reason = (
+                            ClaimVerificationReason.UNRELATED_OR_INSUFFICIENT_EVIDENCE
+                        )
+                    if (
+                        semantic is ClaimVerification.UNVERIFIED
+                        and score is None
+                        and verification_reason is None
+                    ):
                         verification_reason = ClaimVerificationReason.EMBEDDING_UNAVAILABLE
                     elif verification is ClaimVerification.UNSUPPORTED:
                         verification_reason = (
@@ -2353,15 +2384,28 @@ def _coverage_topics(coverage: dict[str, Any]) -> list[str]:
 
 def _coverage_topic_supported(text: str, coverage: dict[str, Any]) -> bool:
     folded = _plain_claim_text(text).casefold()
+    text_concepts = _coverage_concepts(text)
+    text_facets = _coverage_facets(text)
     for topic in _coverage_topics(coverage):
         candidate = topic.casefold().strip()
         if not candidate:
+            continue
+        topic_concepts = _coverage_concepts(topic)
+        topic_facets = _coverage_facets(topic)
+        # Sharing a subject is insufficient when both labels name different
+        # facets. A missing fee cannot validate a deadline or filing duty.
+        if (
+            text_concepts & topic_concepts
+            and text_facets
+            and topic_facets
+            and text_facets.isdisjoint(topic_facets)
+        ):
             continue
         if candidate in folded or folded in candidate:
             return True
         if _coverage(_significant_tokens(topic), _significant_tokens(text)) >= 0.4:
             return True
-        if _coverage_concepts(topic) & _coverage_concepts(text):
+        if topic_concepts & text_concepts:
             return True
     return False
 
@@ -2380,6 +2424,29 @@ def _coverage_concepts(text: str) -> set[str]:
     }
     return {
         concept for concept, values in aliases.items() if any(value in folded for value in values)
+    }
+
+
+def _coverage_facets(text: str) -> set[str]:
+    """Distinguish common missing facets without treating these labels as proof."""
+    folded = _plain_claim_text(text).casefold()
+    aliases = {
+        "duty": (
+            "duty",
+            "obligation",
+            "required to file",
+            "দায়িত্ব",
+            "দায়িত্ব",
+            "বাধ্যবাধকতা",
+        ),
+        "deadline": ("deadline", "time limit", "within", "সময়সীমা", "সময়সীমা", "দিনের মধ্যে"),
+        "fee": ("fee", "fees", "charge", "cost", "ফি", "খরচ"),
+        "procedure": ("procedure", "process", "how to file", "পদ্ধতি", "প্রক্রিয়া", "প্রক্রিয়া"),
+        "penalty": ("penalty", "sanction", "fine", "জরিমানা", "দণ্ড"),
+        "applicability": ("applicability", "applies to", "scope", "প্রযোজ্য", "প্রযোজ্যতা"),
+    }
+    return {
+        facet for facet, values in aliases.items() if any(value in folded for value in values)
     }
 
 
@@ -2588,6 +2655,34 @@ def _durations_equivalent(left: tuple[int, str], right: tuple[int, str]) -> bool
         right_days = right_number * (7 if right_unit == "week" else 1)
         return left_days == right_days
     return False
+
+
+def _bounded_entailment_guard(claim: str, evidence: str) -> ClaimVerification | None:
+    """Reject a few high-risk contradictions that semantic similarity cannot resolve."""
+    claim_plain = _plain_claim_text(claim).casefold()
+    evidence_plain = _plain_claim_text(evidence).casefold()
+    negative = regex.compile(
+        r"\b(?:no|not|never|cannot|can't|doesn't|does not|isn't|is not|exempt)\b|"
+        r"(?<![\p{L}\p{M}])(?:না|নয়|নয়|নাই|ব্যতীত)(?![\p{L}\p{M}])",
+        regex.IGNORECASE,
+    )
+    if bool(negative.search(claim_plain)) != bool(negative.search(evidence_plain)):
+        return ClaimVerification.UNSUPPORTED
+    comparison = regex.compile(
+        r"\b(?:more than|less than|at least|at most|exceed(?:s|ing)?|under|over)\b|"
+        r"(?:অধিক|বেশি|কম|অন্যূন|অনধিক)",
+        regex.IGNORECASE,
+    )
+    if comparison.search(claim_plain) and comparison.search(evidence_plain):
+        claim_values = _digit_tokens(claim_plain) | {
+            str(value) for value in _spelled_number_values(claim_plain)
+        }
+        evidence_values = _digit_tokens(evidence_plain) | {
+            str(value) for value in _spelled_number_values(evidence_plain)
+        }
+        if claim_values and evidence_values and claim_values.isdisjoint(evidence_values):
+            return ClaimVerification.UNSUPPORTED
+    return None
 
 
 def _missing_duration(claim: str, evidence: str) -> bool:

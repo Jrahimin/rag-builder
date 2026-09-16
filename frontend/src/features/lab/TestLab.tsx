@@ -124,6 +124,10 @@ function errorFacts(error: unknown) {
     : { code: "request_failed", requestId: null, detail: (error as Error).message };
 }
 
+function isStreamCancellation(error: unknown): boolean {
+  return error instanceof OperatorApiError && error.code === "stream_cancelled";
+}
+
 const pipelineStages = [
   { status: "uploaded", label: "Upload" },
   { status: "parsing", label: "Parse" },
@@ -2097,6 +2101,9 @@ function MessagesTab({
   const [delivery, setDelivery] = useState<"regular" | "stream">("stream");
   const [streamedContent, setStreamedContent] = useState("");
   const [progressMessage, setProgressMessage] = useState("Searching sources");
+  const [progressElapsedMs, setProgressElapsedMs] = useState(0);
+  const progressStartedAt = useRef(0);
+  const streamAbort = useRef<AbortController | null>(null);
   const historyRef = useRef<HTMLDivElement>(null);
   const [lastRun, setLastRun] = useState<MessageRun | null>(null);
   const [selectedAssistantId, setSelectedAssistantId] = useState("");
@@ -2137,13 +2144,20 @@ function MessagesTab({
     try {
       setStreamedContent("");
       setProgressMessage("Searching sources");
+      progressStartedAt.current = performance.now();
+      setProgressElapsedMs(0);
       const turn =
         delivery === "stream"
-          ? await stream.mutateAsync({
-              content: submittedContent,
-              onDelta: (delta) => setStreamedContent((current) => current + delta),
-              onProgress: setProgressMessage,
-            })
+          ? await (() => {
+              const controller = new AbortController();
+              streamAbort.current = controller;
+              return stream.mutateAsync({
+                content: submittedContent,
+                onDelta: (delta) => setStreamedContent((current) => current + delta),
+                onProgress: setProgressMessage,
+                signal: controller.signal,
+              });
+            })()
           : await send.mutateAsync({ content: submittedContent });
       const assistant = turn.assistant_message;
       const refusal = Boolean(assistant.insufficient_evidence_reason);
@@ -2178,6 +2192,17 @@ function MessagesTab({
       });
     } catch (error) {
       setStreamedContent("");
+      if (isStreamCancellation(error)) {
+        onActivity({
+          name: "Grounded message",
+          outcome: "warning",
+          projectId,
+          conversationId,
+          detail: "Stream cancelled by operator; no incomplete answer was accepted.",
+          tab: "messages",
+        });
+        return;
+      }
       onActivity({
         name: "Grounded message",
         outcome: "failed",
@@ -2186,6 +2211,8 @@ function MessagesTab({
         ...errorFacts(error),
         tab: "messages",
       });
+    } finally {
+      streamAbort.current = null;
     }
   };
   const history = messages.data?.items ?? [];
@@ -2209,6 +2236,13 @@ function MessagesTab({
       historyElement.scrollTop = historyElement.scrollHeight;
     }
   }, [conversationId, streamedContent, visibleMessages.length]);
+  useEffect(() => {
+    if (!stream.isPending) return;
+    const update = () => setProgressElapsedMs(performance.now() - progressStartedAt.current);
+    update();
+    const timer = window.setInterval(update, 1000);
+    return () => window.clearInterval(timer);
+  }, [stream.isPending]);
   return (
     <section className="panel lab-chat-shell">
       <div className="lab-chat-topbar">
@@ -2316,11 +2350,16 @@ function MessagesTab({
                 {stream.isPending && (
                   <article className="message-card message-card--assistant message-card--streaming">
                     <div>
-                      <strong>Grounded response</strong>
+                      <strong>Answer in progress</strong>
                       <span className="lab-streaming-status">Streaming</span>
                     </div>
                     <div role="status">
-                      <MessageContent content={streamedContent || `${progressMessage}…`} />
+                      <MessageContent
+                        content={
+                          streamedContent ||
+                          `${progressMessage}… ${Math.max(1, Math.round(progressElapsedMs / 1000))}s`
+                        }
+                      />
                     </div>
                     {!streamedContent && (
                       <span className="lab-typing" aria-hidden="true">
@@ -2387,6 +2426,15 @@ function MessagesTab({
                       <Send size={16} aria-hidden="true" />
                       <span>{send.isPending || stream.isPending ? "Sending" : "Send"}</span>
                     </button>
+                    {stream.isPending && (
+                      <button
+                        className="button button--secondary button--compact"
+                        type="button"
+                        onClick={() => streamAbort.current?.abort()}
+                      >
+                        Cancel
+                      </button>
+                    )}
                   </div>
                 </div>
               </form>
@@ -2398,7 +2446,14 @@ function MessagesTab({
               onCite={setActiveCitation}
             />
           </div>
-          {(send.isError || stream.isError) && (
+          {stream.isError && isStreamCancellation(stream.error) && (
+            <div className="lab-panel-body">
+              <div className="notice-card" role="status">
+                Stream cancelled. No incomplete answer was accepted.
+              </div>
+            </div>
+          )}
+          {(send.isError || (stream.isError && !isStreamCancellation(stream.error))) && (
             <div className="lab-panel-body">
               <ApiFailure error={(send.error ?? stream.error) as Error} />
             </div>
@@ -2698,6 +2753,14 @@ export function MessageInspector({
   const repair = message.metadata?.knowledge_repair as Record<string, unknown> | undefined;
   const partial = repair?.partial_answer as Record<string, unknown> | undefined;
   const coverage = repair?.coverage as Record<string, unknown> | undefined;
+  const requirementProgress = repair?.requirement_progress as
+    | Record<string, unknown>
+    | undefined;
+  const recoveryAttempts = Array.isArray(requirementProgress?.attempts)
+    ? requirementProgress.attempts.filter(
+        (item): item is Record<string, unknown> => typeof item === "object" && item !== null,
+      )
+    : [];
   const missing = Array.isArray(coverage?.missing)
     ? coverage.missing.filter((item): item is string => typeof item === "string")
     : [];
@@ -2823,6 +2886,38 @@ export function MessageInspector({
         </details>
       )}
       <RerankDiagnostics metadata={message.metadata} />
+      {requirementProgress && (
+        <details>
+          <summary>
+            Evidence recovery attempts ({recoveryAttempts.length})
+            {typeof requirementProgress.stop_reason === "string"
+              ? ` · ${requirementProgress.stop_reason.replaceAll("_", " ")}`
+              : ""}
+          </summary>
+          {recoveryAttempts.length ? (
+            <ol>
+              {recoveryAttempts.map((attempt, index) => {
+                const requirementIds = Array.isArray(attempt.requirement_ids)
+                  ? attempt.requirement_ids.filter((item): item is string => typeof item === "string")
+                  : [];
+                const admitted = Array.isArray(attempt.admitted_ids)
+                  ? attempt.admitted_ids.length
+                  : 0;
+                return (
+                  <li key={`${String(attempt.route ?? "search")}-${index}`}>
+                    <strong>{String(attempt.route ?? "search").replaceAll("_", " ")}</strong>
+                    {requirementIds.length ? ` · ${requirementIds.join(", ")}` : ""}
+                    <p>{String(attempt.query ?? "Unknown query")}</p>
+                    <small>{admitted} passage{admitted === 1 ? "" : "s"} admitted</small>
+                  </li>
+                );
+              })}
+            </ol>
+          ) : (
+            <p>No recovery query was executed.</p>
+          )}
+        </details>
+      )}
       <details>
         <summary>Authority and evidence recovery</summary>
         <p>

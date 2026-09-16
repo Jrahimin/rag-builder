@@ -133,6 +133,13 @@ class PromptBuilder:
                 "such as [Developer scope limitation] or reviewer requirement IDs."
             )
 
+        system_content += (
+            "\n\nReply in the language of the current user message unless the user explicitly "
+            "asks for another language. Preserve the established conversation language for "
+            "short language-neutral follow-ups. Answer the request directly and keep caveats "
+            "brief; do not repeat the question, evidence inventory, or the same limitation."
+        )
+
         if template.final_instructions:
             system_content = f"{system_content}\n\n{template.final_instructions}"
 

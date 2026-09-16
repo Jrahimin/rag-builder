@@ -130,6 +130,16 @@ export class OperatorApiError extends Error {
   }
 }
 
+function isAbortError(error: unknown, signal?: AbortSignal): boolean {
+  if (signal?.aborted) return true;
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "name" in error &&
+    (error as { name?: unknown }).name === "AbortError"
+  );
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const send = () =>
     fetch(apiUrl(path), {
@@ -619,6 +629,7 @@ export const operatorApiClient = {
     onDelta: (delta: string) => void,
     documentId?: string,
     onProgress?: (message: string) => void,
+    signal?: AbortSignal,
   ): Promise<StreamMessageResult> => {
     const send = () =>
       fetch(`${apiRoot}/projects/${projectId}/conversations/${conversationId}/messages/stream`, {
@@ -630,6 +641,7 @@ export const operatorApiClient = {
           ...getCsrfHeader(),
         },
         body: JSON.stringify({ content, document_id: documentId ?? null, metadata_filter: {} }),
+        signal,
       });
 
     let response: Response;
@@ -639,7 +651,10 @@ export const operatorApiClient = {
         if (await refreshSession()) response = await send();
         if (response.status === 401) notifyExpiredSession();
       }
-    } catch {
+    } catch (error) {
+      if (isAbortError(error, signal)) {
+        throw new OperatorApiError("The streamed message was cancelled.", 499, "stream_cancelled");
+      }
       throw new OperatorApiError(
         "The backend is unavailable. Start the API service and try again.",
         0,
@@ -659,6 +674,7 @@ export const operatorApiClient = {
     const decoder = new TextDecoder();
     let buffer = "";
     let streamed = "";
+    let completed = false;
     const consume = (frame: string) => {
       const data = frame
         .split("\n")
@@ -679,16 +695,31 @@ export const operatorApiClient = {
         onDelta(event.delta);
       }
       if (event.event === "progress" && event.message) onProgress?.(event.message);
+      if (event.event === "done") completed = true;
     };
-    while (true) {
-      const { done, value } = await reader.read();
-      buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done });
-      const frames = buffer.split("\n\n");
-      buffer = frames.pop() ?? "";
-      frames.forEach(consume);
-      if (done) break;
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done });
+        const frames = buffer.split("\n\n");
+        buffer = frames.pop() ?? "";
+        frames.forEach(consume);
+        if (done) break;
+      }
+    } catch (error) {
+      if (isAbortError(error, signal)) {
+        throw new OperatorApiError("The streamed message was cancelled.", 499, "stream_cancelled");
+      }
+      throw error;
     }
     if (buffer.trim()) consume(buffer);
+    if (!completed) {
+      throw new OperatorApiError(
+        "The streamed response ended before completion.",
+        502,
+        "stream_incomplete",
+      );
+    }
     return { content: streamed };
   },
   getJobs: (

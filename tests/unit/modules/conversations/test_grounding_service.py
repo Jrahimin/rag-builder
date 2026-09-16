@@ -1105,6 +1105,49 @@ async def test_missing_evidence_bullets_are_coverage_scope_not_legal_duties() ->
     assert result.claims_status == "no_verifiable_claims"
 
 
+async def test_live_bangla_missing_evidence_preamble_scopes_all_bullets() -> None:
+    missing = [
+        "বার্ষিক রিটার্ন দাখিলের বাধ্যবাধকতা",
+        "বার্ষিক রিটার্ন দাখিলের সময়সীমা",
+        "নিরীক্ষক নিয়োগ",
+        "হিসাব-বহি সংরক্ষণ",
+        "ন্যূনতম কর প্রযোজ্যতা",
+        "ভ্যাট রিটার্ন দাখিল",
+    ]
+    result = await GroundingService(ChatConfig()).map_claims(
+        "উপলভ্য উদ্ধৃতিগুলো থেকে নিচের বিষয়গুলো নিশ্চিতভাবে বলা যায় না:\n"
+        + "\n".join(f"- {item}" for item in missing),
+        [_chunk(content="কোম্পানী বার্ষিক সাধারণ সভা করিবে।")],
+        coverage={
+            "coverage": {
+                "missing": missing,
+                "partial_scope_validated": True,
+            },
+            "partial_answer": {"exclusions": missing},
+        },
+    )
+    assert len(result.claims) == len(missing)
+    assert {claim["claim_kind"] for claim in result.claims} == {"coverage_scope"}
+    assert all(claim["verification"] == "supported" for claim in result.claims)
+
+
+@pytest.mark.parametrize("facet", ["deadline", "filing duty"])
+async def test_coverage_scope_does_not_match_same_subject_unrelated_fee(facet: str) -> None:
+    result = await GroundingService(ChatConfig()).map_claims(
+        f"The available sources do not establish the annual return {facet}.",
+        [_chunk(content="Private companies must hold an annual general meeting.")],
+        coverage={
+            "coverage": {
+                "missing": ["Annual return electronic filing fees"],
+                "partial_scope_validated": True,
+            }
+        },
+    )
+    assert result.claims[0]["claim_kind"] == "coverage_scope"
+    assert result.claims[0]["verification"] == "unverified"
+    assert result.claims[0]["verification_reason"] == "coverage_topic_not_matched"
+
+
 async def test_whole_corpus_absence_claim_is_not_exempted_after_partial_search() -> None:
     result = await GroundingService(ChatConfig()).map_claims(
         "The corpus contains no annual-return provision.",
@@ -1209,6 +1252,28 @@ async def test_nearby_but_changed_day_deadline_is_rejected() -> None:
     )
     assert result.claims[0]["verification"] == "unsupported"
     assert result.claims[0]["verification_reason"] == "duration_mismatch"
+
+
+async def test_cross_language_similarity_cannot_reverse_negation() -> None:
+    claim = "The company is not required to file an annual return."
+    evidence = "কোম্পানীকে বার্ষিক রিটার্ন দাখিল করিতে হইবে।"
+    result = await GroundingService(
+        ChatConfig(minimum_claim_semantic_score=0.7),
+        embedder=_cluster_embedder({claim: "annual-return", evidence: "annual-return"}),
+    ).map_claims(f"{claim} [1]", [_chunk(content=evidence)])
+    assert result.claims[0]["verification"] == "unsupported"
+    assert result.claims[0]["verification_method"] == "bounded_entailment"
+
+
+async def test_semantic_similarity_cannot_change_comparative_member_count() -> None:
+    claim = "The certificate is required when membership exceeds 51."
+    evidence = "সদস্য সংখ্যা পঞ্চাশের অধিক হইলে সার্টিফিকেট সংযুক্ত করিতে হইবে।"
+    result = await GroundingService(
+        ChatConfig(minimum_claim_semantic_score=0.7),
+        embedder=_cluster_embedder({claim: "member-count", evidence: "member-count"}),
+    ).map_claims(f"{claim} [1]", [_chunk(content=evidence)])
+    assert result.claims[0]["verification"] == "unsupported"
+    assert result.claims[0]["verification_method"] == "bounded_entailment"
 
 
 async def test_unrelated_duration_evidence_keeps_unrelated_reason_precedence() -> None:

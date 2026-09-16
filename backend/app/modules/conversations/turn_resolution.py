@@ -406,6 +406,12 @@ class TurnRelation(StrEnum):
     TOPIC_CHANGE = "topic_change"
 
 
+class FollowupMode(StrEnum):
+    NOT_APPLICABLE = "not_applicable"
+    PRESENTATION_ONLY = "presentation_only"
+    ADDS_FACTS = "adds_facts"
+
+
 class TemporalIntentKind(StrEnum):
     NONE = "none"
     TODAY = "today"
@@ -573,6 +579,8 @@ class TurnResolution(BaseModel):
     outcome: TurnOutcome
     relation: TurnRelation
     effective_question: str = Field(min_length=1)
+    followup_mode: FollowupMode = FollowupMode.NOT_APPLICABLE
+    new_factual_facets: list[str] = Field(default_factory=list, max_length=8)
     active_bindings: list[ReferenceBinding] = Field(default_factory=list)
     temporal_intent: TemporalIntent = Field(default_factory=TemporalIntent)
     clarification_question: str | None = None
@@ -626,6 +634,12 @@ class TurnResolution(BaseModel):
             raise ValueError("standalone outcomes must use the standalone relation")
         if self.outcome is TurnOutcome.RESOLVED and self.relation is TurnRelation.STANDALONE:
             raise ValueError("resolved outcomes cannot use the standalone relation")
+        if self.relation is not TurnRelation.FOLLOW_UP and (
+            self.followup_mode is not FollowupMode.NOT_APPLICABLE or self.new_factual_facets
+        ):
+            raise ValueError("follow-up intent applies only to follow_up relations")
+        if self.followup_mode is not FollowupMode.ADDS_FACTS and self.new_factual_facets:
+            raise ValueError("new factual facets require adds_facts mode")
         return self
 
 

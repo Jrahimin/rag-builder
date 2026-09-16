@@ -236,6 +236,99 @@ async def test_supported_fragment_still_fetches_structural_continuation_before_p
     }
 
 
+async def test_focused_anchor_can_trigger_structural_recovery_in_final_round():
+    known = chunk("Private companies must file an annual list.")
+    anchor = chunk("Section 36 filing rule continues in the following paragraph.")
+    neighbor = chunk("The annual list must be filed within twenty-one days.")
+
+    def proof(requirement_id, description, source, *, supported=True):
+        return {
+            "requirement_id": requirement_id,
+            "description": description,
+            "supported": supported,
+            "evidence": [{"chunk_id": str(source.chunk_id), "quote": source.content}],
+        }
+
+    initial_coverage = {
+        "complete": False,
+        "missing": ["Annual return deadline"],
+        "checks": [
+            {
+                "requirement_id": "R1",
+                "description": "Annual return deadline",
+                "supported": False,
+                "evidence": [],
+            },
+            proof("R2", "Annual return duty", known),
+        ],
+        "partial_answer": {
+            "scope": "Annual return duty",
+            "requirement_ids": ["R2"],
+            "exclusions": ["Annual return deadline"],
+        },
+    }
+    anchor_coverage = {
+        **initial_coverage,
+        "checks": [
+            proof("R1", "Annual return deadline", anchor, supported=False),
+            proof("R2", "Annual return duty", known),
+        ],
+    }
+    complete = {
+        "complete": True,
+        "missing": [],
+        "checks": [
+            {
+                "requirement_id": "R1",
+                "description": "Annual return deadline",
+                "supported": True,
+                "evidence": [
+                    {"chunk_id": str(anchor.chunk_id), "quote": anchor.content},
+                    {"chunk_id": str(neighbor.chunk_id), "quote": neighbor.content},
+                ],
+            },
+            proof("R2", "Annual return duty", known),
+        ],
+    }
+    result, retrieval, _ = await run_repair(
+        [([known], {}), ([anchor], {}), ([neighbor], {})],
+        queries=[{"query": "annual return duty", "requirement_ids": ["R2"]}],
+        requirements=[
+            {
+                "requirement_id": "R1",
+                "description": "Annual return deadline",
+                "origin": "explicit_user_request",
+            },
+            {
+                "requirement_id": "R2",
+                "description": "Annual return duty",
+                "origin": "explicit_user_request",
+            },
+        ],
+        coverage=initial_coverage,
+        followup_queries=[
+            {"query": "annual return deadline", "requirement_ids": ["R1"]}
+        ],
+        final_coverage=anchor_coverage,
+        second_final_coverage=complete,
+        late_adjacent=True,
+        user_query="What are the annual return duty and deadline?",
+    )
+    assert result.diagnostics["status"] == "recovered"
+    assert {item.chunk_id for item in result.selected} == {
+        known.chunk_id,
+        anchor.chunk_id,
+        neighbor.chunk_id,
+    }
+    assert result.diagnostics["focused_requirement_ids"] == ["R1"]
+    assert [attempt["route"] for attempt in result.diagnostics["requirement_attempts"]] == [
+        "search",
+        "focused",
+        "adjacent",
+    ]
+    assert retrieval.retrieve.call_args_list[-1].kwargs["adjacent_to"] == [anchor.chunk_id]
+
+
 async def test_duplicate_focused_query_stops_and_keeps_confirmed_partial_proof():
     known = chunk("The governing rate is 10%.")
     coverage = {
@@ -815,6 +908,7 @@ async def run_repair(
     second_followup_queries=None,
     second_final_coverage=None,
     adjacent=False,
+    late_adjacent=False,
     requirements=None,
     input_gap_kinds=None,
     input_gap_error=None,
@@ -879,10 +973,14 @@ async def run_repair(
         replace(plan, content=json.dumps(second_final_coverage or final_coverage or verdict)),
     ]
     retrieval = AsyncMock()
-    if adjacent:
+    if adjacent or late_adjacent:
         retrieval.supports_adjacent_retrieval = True
+    if adjacent:
         completions = list(llm.generate.side_effect)
         llm.generate.side_effect = [*completions[:2], *completions[3:]]
+    elif late_adjacent:
+        completions = list(llm.generate.side_effect)
+        llm.generate.side_effect = [*completions[:4], completions[5]]
     scripted_responses = iter(llm.generate.side_effect)
 
     async def respond(messages, **kwargs):
@@ -1675,10 +1773,77 @@ async def test_json_format_recovery_remains_schema_validated(first_response):
     llm = AsyncMock()
     llm.generate.side_effect = [base, replace(base, content='{"queries":["rule"]}')]
     response = await _validated_completion(llm, [], schema=_SearchPlan, max_tokens=1024)
-    assert _SearchPlan.model_validate_json(response.content).queries == ["rule"]
+    parsed = _SearchPlan.model_validate_json(response.content)
+    assert [query.query for query in parsed.queries] == ["rule"]
     expected_calls = 1 if first_response.startswith("```") else 2
     assert llm.generate.await_count == expected_calls
     assert response.usage == ChatUsage(2 * expected_calls, 3 * expected_calls)
+
+
+def test_search_plan_binds_queries_and_drops_optional_corroboration_work():
+    from app.modules.conversations.services.evidence_repair_service import (
+        _prepare_search_plan,
+        _SearchPlan,
+    )
+
+    plan = _SearchPlan.model_validate(
+        {
+            "requirements": [
+                {
+                    "requirement_id": "R1",
+                    "description": "Annual return deadline",
+                    "origin": "explicit_user_request",
+                },
+                {
+                    "requirement_id": "R2",
+                    "description": "Separate agency confirmation",
+                    "origin": "optional_corroboration",
+                },
+            ],
+            "queries": [
+                {"query": "annual return deadline", "requirement_ids": ["R1"]},
+                {"query": "agency confirmation", "requirement_ids": ["R2"]},
+            ],
+        }
+    )
+    requirements, queries, ownership = _prepare_search_plan(plan)
+    assert [item.requirement_id for item in requirements] == ["R1"]
+    assert queries == ["annual return deadline"]
+    assert ownership == {"annual return deadline": ["R1"]}
+
+
+def test_search_plan_downgrades_unrequested_confirmation_even_when_origin_is_wrong():
+    from app.modules.conversations.services.evidence_repair_service import (
+        _prepare_search_plan,
+        _SearchPlan,
+    )
+
+    plan = _SearchPlan.model_validate(
+        {
+            "requirements": [
+                {
+                    "requirement_id": "R1",
+                    "description": "Annual return duty and deadline",
+                    "origin": "explicit_user_request",
+                },
+                {
+                    "requirement_id": "R2",
+                    "description": "Separate official guidance confirmation",
+                    "origin": "necessary_applicability",
+                },
+            ],
+            "queries": [
+                {"query": "annual return deadline", "requirement_ids": ["R1"]},
+                {"query": "official confirmation", "requirement_ids": ["R2"]},
+            ],
+        }
+    )
+    requirements, queries, ownership = _prepare_search_plan(
+        plan, "What is the annual return duty and deadline?"
+    )
+    assert [item.requirement_id for item in requirements] == ["R1"]
+    assert queries == ["annual return deadline"]
+    assert ownership["annual return deadline"] == ["R1"]
 
 
 async def test_empty_search_route_can_be_proved_by_another_route():

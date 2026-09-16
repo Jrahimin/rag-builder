@@ -11,7 +11,7 @@ from app.modules.conversations.turn_resolution import (
 )
 from app.platform.providers.contracts.llm import ChatMessage, ChatRole
 
-TURN_RESOLUTION_PROMPT_VERSION = "v7"
+TURN_RESOLUTION_PROMPT_VERSION = "v8"
 
 TURN_RESOLUTION_TEMPLATE = """\
 You interpret the current user message against bounded preceding conversation history.
@@ -22,10 +22,18 @@ The JSON object must use exactly these keys:
 - outcome: standalone | resolved | clarify | fallback
 - relation: standalone | follow_up | correction | topic_change
 - effective_question: string
+- followup_mode: not_applicable | presentation_only | adds_facts
+- new_factual_facets: array of short strings
 - active_bindings: array
 - temporal_intent: object
 - clarification_question: string or null
 - reason: string or null
+
+Use presentation_only when the user only asks to shorten, translate, reformat,
+rephrase, preserve citations, or otherwise restate the preceding answer. This includes
+short instructions such as "Make it shorter". Use adds_facts when that presentation
+request also asks for a new factual topic, comparison, update, fee, penalty, or rule;
+list only those added topics in new_factual_facets. Use not_applicable otherwise.
 
 Each active_bindings item:
 - kind: topic_entity | scenario_parameter | period_date | source
@@ -61,6 +69,9 @@ Rules:
   historical snapshot from the Project policy. Explicit user periods still win.
 - follow_up continues the same topic. correction replaces a prior active parameter.
   topic_change drops old topic-specific amounts and dates.
+- A presentation-only follow-up keeps the preceding answer's factual scope. A request
+  to retain citations or use a table does not add facts. "Summarize it and include
+  filing penalties" adds the filing-penalty facet and must not be treated as a pure rewrite.
 - Emit only bindings needed for the current turn. Do not restate dropped amounts.
 - Jurisdiction and subject category can remain necessary when an amount is dropped.
   A follow-up asking for a current rule must retain the user's country, location or

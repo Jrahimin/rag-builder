@@ -60,6 +60,7 @@ class RequestWork:
         self.content: dict[tuple[object, ...], object] = {}
         self.embedding_lock = asyncio.Lock()
         self.calls: list[dict[str, Any]] = []
+        self.validation_retries: list[dict[str, Any]] = []
 
     @contextmanager
     def stage(self, name: str) -> Iterator[None]:
@@ -76,6 +77,7 @@ class RequestWork:
             "stages_ms": dict(self.timings),
             "counts": dict(self.counts),
             "provider_calls": list(self.calls),
+            "validation_retries": list(self.validation_retries),
             "stage_semantics": "elapsed stage durations may overlap across parallel branches",
         }
 
