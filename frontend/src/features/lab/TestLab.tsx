@@ -2631,6 +2631,28 @@ function inlineMessageContent(
   });
 }
 
+const VERIFICATION_REASON_LABELS: Record<string, string> = {
+  whole_corpus_absence_unproven:
+    "This claims the whole corpus lacks a rule; a partial search does not prove that.",
+  coverage_topic_not_matched:
+    "This coverage statement does not match a missing topic in the structured verdict.",
+  coverage_verdict_unavailable: "No structured coverage verdict was available for this statement.",
+  duration_mismatch: "The stated duration contradicts the source.",
+  duration_not_in_evidence: "The stated duration is not in the cited evidence.",
+  embedding_unavailable: "Semantic comparison was unavailable, so this claim stayed unverified.",
+  unresolved_authority: "Cited source authority is unresolved.",
+  missing_citation: "No valid citation supports this claim.",
+  unrelated_or_insufficient_evidence: "The cited evidence does not support this claim.",
+  contested_generalization: "The evidence does not establish this generalization.",
+  unparsed_calculation: "The calculation could not be verified.",
+  derived_quantity: "The derived quantity is not established by the cited evidence.",
+  unverified_amount: "The stated amount is not established by the cited evidence.",
+  arithmetic_mismatch: "The arithmetic is inconsistent.",
+  matches_coverage_verdict: "This limitation matches the structured coverage verdict.",
+  coverage_statement_not_in_verdict:
+    "This coverage statement is not present in the structured verdict.",
+};
+
 export function MessageInspector({
   message,
   run,
@@ -2671,6 +2693,9 @@ export function MessageInspector({
     ? coverage.missing.filter((item): item is string => typeof item === "string")
     : [];
   const claims = message.claims ?? [];
+  const factualClaims = claims.filter((claim) => claim.claim_kind !== "coverage_scope");
+  const coverageClaims = claims.filter((claim) => claim.claim_kind === "coverage_scope");
+  const supportedFactual = factualClaims.filter((claim) => claim.verification === "supported");
   const failedClaims = claims.filter((claim) => claim.verification !== "supported");
   if (
     message.metadata?.non_knowledge_turn === true &&
@@ -2793,7 +2818,9 @@ export function MessageInspector({
         <summary>Authority and evidence recovery</summary>
         <p>
           Recovery status is separate from citation support. Missing diagnostics do not confirm that
-          recovery ran.
+          recovery ran. Global expansion health is retrieval-wide and is not a verdict about every
+          cited source. Citation authority is assessed per source, including incoming modifier
+          edges.
         </p>
         <pre className="json-view">
           {JSON.stringify(
@@ -2812,9 +2839,27 @@ export function MessageInspector({
         <section className="notice-card" aria-label="Claim verification">
           <strong>
             {claims.length
-              ? `${claims.length - failedClaims.length} of ${claims.length} claims supported`
+              ? coverageClaims.length
+                ? `${supportedFactual.length} of ${factualClaims.length} factual claims supported`
+                : `${supportedFactual.length} of ${factualClaims.length} claims supported`
               : "No claim verdicts available"}
           </strong>
+          {coverageClaims.length > 0 && (
+            <p>
+              Coverage statements are checked against the structured verdict, not as uncited legal
+              duties.
+            </p>
+          )}
+          {partial && missing.length > 0 && (
+            <div>
+              <strong>Missing coverage</strong>
+              <ul>
+                {missing.map((gap, index) => (
+                  <li key={index}>{gap}</li>
+                ))}
+              </ul>
+            </div>
+          )}
           {!groundingPassed && (
             <p>
               {message.grounded == null
@@ -2840,10 +2885,17 @@ export function MessageInspector({
                       </p>
                     )}
                     <p>{claim.text}</p>
+                    {claim.verification_reason && (
+                      <p>
+                        Reason:{" "}
+                        {VERIFICATION_REASON_LABELS[claim.verification_reason] ??
+                          claim.verification_reason}
+                      </p>
+                    )}
                     {claim.authority_status === "unresolved" && (
                       <p>
-                        Source authority is unresolved; text support does not establish
-                        applicability.
+                        Source authority is unresolved for this cited passage; retrieval-wide
+                        warnings are not applied to unrelated sources.
                       </p>
                     )}
                   </li>
@@ -2890,6 +2942,9 @@ export function MessageInspector({
                     ? `Web · ${citation.web_provider ?? "external source"}`
                     : `Page ${citation.page_number ?? "—"} · chunk ${citation.chunk_index ?? "—"}`}
                   {citation.score == null ? "" : ` · score ${citation.score.toFixed(4)}`}
+                  {citation.authority_status && citation.authority_status !== "not_assessed"
+                    ? ` · authority ${citation.authority_status}`
+                    : ""}
                 </span>
                 {citation.score != null && (
                   <span

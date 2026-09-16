@@ -27,6 +27,23 @@ test("validates required login credentials before submitting", async () => {
   expect(await screen.findByRole("alert")).toHaveTextContent("Enter your email and password.");
 });
 
+test("toggles password visibility from the eye control", () => {
+  render(
+    <MemoryRouter initialEntries={["/login"]}>
+      <AdminAuthProvider initialAdmin={null}>
+        <LoginPage />
+      </AdminAuthProvider>
+    </MemoryRouter>,
+  );
+
+  const password = screen.getByLabelText("Password");
+  expect(password).toHaveAttribute("type", "password");
+  fireEvent.click(screen.getByRole("button", { name: "Show password" }));
+  expect(password).toHaveAttribute("type", "text");
+  fireEvent.click(screen.getByRole("button", { name: "Hide password" }));
+  expect(password).toHaveAttribute("type", "password");
+});
+
 test("logs in and navigates into the protected console", async () => {
   vi.spyOn(adminAuthApi, "login").mockResolvedValue(admin);
   render(

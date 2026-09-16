@@ -145,6 +145,23 @@ async def test_cited_recall_is_bounded_and_intersects_normal_retrieval_scope(see
     assert context.index_build_id == service._builds.get_active.return_value.id
 
 
+async def test_empty_adjacent_restriction_does_not_search_the_corpus() -> None:
+    service = _search_service()
+    retriever = _ready_search(service)
+    with patch(
+        "app.modules.retrieval.services.search_service.RetrievalChunkRepository"
+    ) as repository:
+        repository.return_value.adjacent_ids = AsyncMock(return_value=())
+        response = await service.search(
+            SearchRequest(query="section continuation"),
+            adjacent_to=[uuid.uuid4()],
+        )
+    assert response.results == []
+    retriever.retrieve.assert_not_called()
+    assert response.diagnostics.skipped_reason == "empty_adjacent_restriction"
+    assert response.diagnostics.rerank_status == "skipped"
+
+
 @pytest.mark.parametrize("has_results", [True, False])
 async def test_authority_records_survive_loss_of_first_candidate(has_results: bool) -> None:
     service = _search_service()

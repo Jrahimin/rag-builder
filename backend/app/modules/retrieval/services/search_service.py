@@ -155,32 +155,16 @@ class SearchService:
         )
         source_scope, source_policy_status = await self._capture_source_scope(request.as_of)
         if active_build is None:
-            elapsed_ms = int((time.perf_counter() - started) * 1000)
-            return SearchResponse(
-                results=[],
-                query=request.query,
+            return self._empty_search_response(
+                request,
                 top_k=top_k,
-                diagnostics=SearchDiagnostics(
-                    strategy=strategy,
-                    duration_ms=elapsed_ms,
-                    rerank_requested=False,
-                    rerank_status="empty_corpus",
-                    reranker_provider=None,
-                    reranker_model=None,
-                    reranker_version=None,
-                    compatibility_diagnostics=diagnostics,
-                    as_of=request.as_of,
-                    embedding_identity_status="empty_corpus",
-                    embedding_provider=None,
-                    embedding_model=None,
-                    embedding_dimensions=None,
-                    embedding_set_version=None,
-                    **self._source_diagnostics(
-                        source_scope,
-                        index_build_id=None,
-                        status=source_policy_status,
-                    ),
-                ),
+                strategy=strategy,
+                started=started,
+                diagnostics=diagnostics,
+                source_scope=source_scope,
+                source_policy_status=source_policy_status,
+                rerank_status="empty_corpus",
+                embedding_identity_status="empty_corpus",
             )
 
         identity, query_embedder = await self._resolve_query_embedder(active_build)
@@ -194,6 +178,22 @@ class SearchService:
             if adjacent_to is not None
             else None
         )
+        if adjacent_to is not None and not adjacent_ids:
+            # An empty neighbour set is a restriction, never an unrestricted corpus search.
+            return self._empty_search_response(
+                request,
+                top_k=top_k,
+                strategy=strategy,
+                started=started,
+                diagnostics=diagnostics,
+                source_scope=source_scope,
+                source_policy_status=source_policy_status,
+                rerank_status="skipped",
+                skipped_reason="empty_adjacent_restriction",
+                embedding_identity_status="ok",
+                identity=identity,
+                index_build_id=active_build.id,
+            )
 
         if cited_chunk_ids is not None:
             if adjacent_to is not None:
@@ -678,6 +678,51 @@ class SearchService:
             "configuration_hash": self._configuration_hash,
             "config_provenance": dict(self._config_provenance),
         }
+
+    def _empty_search_response(
+        self,
+        request: SearchRequest,
+        *,
+        top_k: int,
+        strategy: RetrievalStrategy,
+        started: float,
+        diagnostics: list[str],
+        source_scope: SourceMetadataScope,
+        source_policy_status: str,
+        rerank_status: str,
+        embedding_identity_status: str,
+        skipped_reason: str | None = None,
+        identity: EmbeddingIdentity | None = None,
+        index_build_id: uuid.UUID | None = None,
+    ) -> SearchResponse:
+        elapsed_ms = int((time.perf_counter() - started) * 1000)
+        return SearchResponse(
+            results=[],
+            query=request.query,
+            top_k=top_k,
+            diagnostics=SearchDiagnostics(
+                strategy=strategy,
+                duration_ms=elapsed_ms,
+                rerank_requested=False,
+                rerank_status=rerank_status,
+                skipped_reason=skipped_reason,
+                reranker_provider=None,
+                reranker_model=None,
+                reranker_version=None,
+                compatibility_diagnostics=diagnostics,
+                as_of=request.as_of,
+                embedding_identity_status=embedding_identity_status,
+                embedding_provider=None if identity is None else identity.provider,
+                embedding_model=None if identity is None else identity.model,
+                embedding_dimensions=None if identity is None else identity.dimensions,
+                embedding_set_version=None if identity is None else identity.embedding_set_version,
+                **self._source_diagnostics(
+                    source_scope,
+                    index_build_id=index_build_id,
+                    status=source_policy_status,
+                ),
+            ),
+        )
 
     async def _resolve_query_embedder(
         self, active_build: IndexBuild

@@ -76,6 +76,11 @@ async def test_replaces_beats_old_active_content_and_survives_metadata_correctio
         assert by_doc[solo]["source_policy_applicable"] is True
         if not historical:
             assert by_doc[old]["source_policy_exclusion_reason"] == "source_replaced"
+            outgoing = by_doc[new]["source_relationships"] or []
+            incoming = by_doc[old]["source_relationships"] or []
+            assert any(edge.get("direction") == "outgoing" for edge in outgoing)
+            assert any(edge.get("direction") == "incoming" for edge in incoming)
+            assert any(edge.get("relationship_type") == "replaces" for edge in incoming)
 
 
 async def test_multi_target_amendment_edit_replacement_and_cycle_rejection(db_client: AsyncClient):

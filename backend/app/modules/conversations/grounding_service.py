@@ -20,6 +20,7 @@ from app.modules.conversations.schemas.message import (
     CitationSourceKind,
     ClaimEvidence,
     ClaimVerification,
+    ClaimVerificationReason,
     InsufficientEvidenceReason,
 )
 from app.platform.domain.content_hash import content_hash
@@ -43,6 +44,7 @@ _LEADING_CITATIONS_PATTERN = regex.compile(r"^((?:\[\d+\]\s*)+)(.*)$", regex.DOT
 _MARKDOWN_HEADING_PATTERN = regex.compile(r"^#{1,6}\s+\S.*$")
 _MARKDOWN_ORDINAL_PATTERN = regex.compile(r"^(?:[-*+]\s*)?\p{Number}+[.)]?$")
 _MARKDOWN_TABLE_DIVIDER_PATTERN = regex.compile(r"^\|?[\s:|-]+\|?$")
+_TABLE_HEADER_SENTINEL = "\u2063table-header\u2063"
 _LIST_PREAMBLE_PATTERN = regex.compile(
     r"^[^.\n!?।॥。\uff01\uff1f…]+[:：—–]\s*$",  # noqa: RUF001
 )
@@ -57,6 +59,29 @@ _SPAN_BOUNDARY_PATTERN = regex.compile(
     regex.UNICODE,
 )
 _INSUFFICIENCY_MARKER = "not enough indexed evidence"
+_COVERAGE_SCOPE_PATTERN = regex.compile(
+    r"(?:available materials do not establish|"
+    r"not enough indexed evidence|"
+    r"reviewed (?:evidence|materials|sources) do(?:es)? not|"
+    r"this answer does not (?:cover|establish)|"
+    r"selected (?:evidence|passages|materials) do(?:es)? not|"
+    r"not established from the (?:available|selected|reviewed)|"
+    r"outside the (?:reviewed|selected) evidence|"
+    r"উপলব্ধ (?:উপাদান|প্রমাণ)[^\n]{0,40}প্রতিষ্ঠিত হ[য়য়] না|"
+    r"পর্যালোচিত (?:প্রমাণ|উপাদান|সূত্র)[^\n]{0,40}না|"
+    r"যথেষ্ট সূচকীকৃত প্রমাণ নাই)",
+    regex.IGNORECASE,
+)
+_WHOLE_CORPUS_ABSENCE_PATTERN = regex.compile(
+    r"(?:no provision exists(?:\s+anywhere)?|"
+    r"(?:the )?(?:corpus|index) contains no|"
+    r"nowhere in (?:the )?(?:corpus|index|materials)|"
+    r"does not exist anywhere|"
+    r"there is no (?:such )?(?:provision|rule) (?:anywhere|in (?:the )?(?:corpus|index))|"
+    r"কর্পাসে কোনো|"
+    r"সূচকে কোনো বিধান নাই)",
+    regex.IGNORECASE,
+)
 # _SOURCE_NOTICE_MARKERS removed in Phase 3: web-fallback notice text is no longer
 # prepended to answer content; it is a structured Notice metadata field instead.
 _MAX_CITATION_INHERITANCE_STRUCTURAL_GAP = 1
@@ -234,8 +259,10 @@ class GroundingResult:
 class _ClaimDraft:
     index: int
     text: str
+    assertion: str
     evidence_chunks: list[tuple[int, ContextChunk]]
     has_valid_citation: bool
+    kind_hint: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -812,9 +839,11 @@ class GroundingService:
         *,
         require_citations: bool = True,
         user_input: str = "",
+        coverage: dict[str, Any] | None = None,
     ) -> GroundingResult:
         drafts: list[_ClaimDraft] = []
         semantic_pairs: list[tuple[str, str]] = []
+        spans_by_chunk: dict[uuid.UUID, list[_SelectedSpan]] = {}
         segments = _answer_segments(_normalize_page_citations(answer, chunks))
         for index, raw_segment in enumerate(segments, start=1):
             segment = raw_segment.strip()
@@ -824,54 +853,85 @@ class GroundingService:
             claim_text = _CITATION_PATTERN.sub("", segment).strip()
             if (
                 not claim_text
+                or _is_leading_table_header(segments, index - 1)
                 or _is_structural_segment(claim_text)
                 or _is_quantity_setup_segment(segment)
                 or _is_short_stance_segment(claim_text)
                 or _is_insufficiency_statement(claim_text)
             ):
                 continue
+            context = _verification_context(segments, index - 1)
+            assertion = _contextualized_assertion(claim_text, context)
+            kind_hint = _coverage_kind_hint(assertion, display=claim_text)
             evidence_chunks = [
                 (citation_index, chunks[citation_index - 1])
                 for citation_index in dict.fromkeys(citation_indexes)
                 if 1 <= citation_index <= len(chunks)
             ]
             has_valid_citation = bool(evidence_chunks)
-            if not evidence_chunks and not require_citations:
-                best = _best_evidence(claim_text, chunks)
+            if kind_hint != "coverage_scope" and not evidence_chunks and not require_citations:
+                best = _best_evidence(assertion, chunks)
                 if best is not None:
                     evidence_chunks = [best]
             drafts.append(
                 _ClaimDraft(
                     index=index,
                     text=claim_text,
+                    assertion=assertion,
                     evidence_chunks=evidence_chunks,
                     has_valid_citation=has_valid_citation,
+                    kind_hint=kind_hint,
                 )
             )
-            if evidence_chunks:
-                semantic_pairs.extend((claim_text, chunk.content) for _, chunk in evidence_chunks)
+            if kind_hint != "coverage_scope":
+                keys = {claim_text, assertion} - {""}
+                for _, chunk in evidence_chunks:
+                    spans_by_chunk.setdefault(chunk.chunk_id, _candidate_spans(chunk.content))
+                    for span in _spans_for_embedding(assertion, claim_text, chunk, spans_by_chunk):
+                        for key in keys:
+                            semantic_pairs.append((key, span.text))
         similarities = await self._claim_similarities(semantic_pairs)
 
         claims: list[AnswerClaim] = []
-        supported = 0
-        unverified = 0
-        cited = 0
         for draft in drafts:
-            evidence_texts = [chunk.content for _, chunk in draft.evidence_chunks]
-            if not draft.evidence_chunks:
+            kind = draft.kind_hint or _claim_kind(draft.assertion, user_input)
+            supporting_spans: dict[uuid.UUID, _SelectedSpan] = {}
+            verification_method: str | None = None
+            verification_reason: str | None = None
+            if kind == "coverage_scope":
+                verification, verification_reason = _coverage_scope_verification(
+                    draft.assertion, coverage, display=draft.text
+                )
+                verification_method = "coverage_verdict"
+                evidence_texts: list[str] = []
+            elif not draft.evidence_chunks:
                 verification = ClaimVerification.UNSUPPORTED
+                verification_reason = ClaimVerificationReason.MISSING_CITATION
+                evidence_texts = []
             else:
+                selected_spans = _best_evidence_spans(
+                    draft.assertion,
+                    draft.evidence_chunks,
+                    similarities,
+                    spans_by_chunk,
+                    display=draft.text,
+                )
+                supporting_spans = selected_spans
+                span_texts = [span.text for span in selected_spans.values()]
+                evidence_texts = [chunk.content for _, chunk in draft.evidence_chunks]
+                full_evidence = " ".join(evidence_texts)
+                duration_evidence = " ".join(span_texts or evidence_texts)
                 neighbor = _nearest_matching_cited_calculation(segments, draft.index - 1)
                 adjacent_texts = (segments[neighbor],) if neighbor is not None else ()
                 derived = _derived_calculation_verification(
-                    draft.text,
+                    draft.assertion,
                     evidence_texts,
                     adjacent_texts=adjacent_texts,
                     extra_bases=_setup_amounts(segments),
                 )
-                unsupported_composite = "=" in draft.text and regex.search(
+                unsupported_composite = "=" in draft.assertion and regex.search(
                     r"\d\s*[+\u2212-]\s*\d|\b(?:min|max|sum)\s*\(",
-                    draft.text,
+                    draft.assertion,
                     regex.IGNORECASE,
                 )
                 contested_generalization = regex.search(
@@ -879,116 +939,157 @@ class GroundingService:
                     r"\b(?:all|most)\s+(?:of\s+the\s+)?(?:reviewed\s+)?"
                     r"(?:works|accounts|sources|authors|historians)\b|"
                     r"সংখ্যাগরিষ্ঠ|সর্বসম্মত",
-                    draft.text,
+                    draft.assertion,
                     regex.IGNORECASE,
                 )
-                if _duration_quantities(draft.text) - _duration_quantities(
-                    " ".join(evidence_texts)
-                ):
-                    # Similar wording cannot establish a deadline absent from the source.
-                    verification = ClaimVerification.UNVERIFIED
+                if _missing_duration(
+                    draft.assertion, duration_evidence
+                ) and _duration_context_related(draft.assertion, duration_evidence):
+                    verification = ClaimVerification.UNSUPPORTED
+                    verification_method = "duration"
+                    verification_reason = ClaimVerificationReason.DURATION_MISMATCH
                 elif unsupported_composite or contested_generalization:
                     # Similarity does not prove a consensus or a count across works.
                     verification = ClaimVerification.UNVERIFIED
+                    verification_reason = ClaimVerificationReason.CONTESTED_GENERALIZATION
                 elif derived is not None:
                     verification = derived
-                elif regex.search(r"\d[^\n]*(?:[\u00d7\u00f7=]|\s[x*]\s)[^\n]*\d", draft.text):
+                    verification_method = "arithmetic"
+                elif regex.search(r"\d[^\n]*(?:[\u00d7\u00f7=]|\s[x*]\s)[^\n]*\d", draft.assertion):
                     # Similarity cannot certify calculation syntax the arithmetic verifier
                     # does not understand (e.g. a sum, nested formula or a contested total).
                     verification = ClaimVerification.UNVERIFIED
+                    verification_reason = ClaimVerificationReason.UNPARSED_CALCULATION
                 elif regex.search(
                     r"\b(longer|shorter|difference|increase|decrease|more|less)\b|"
                     r"(?<![\p{L}\p{M}])(?:পার্থক্য|বেশি|কম)(?![\p{L}\p{M}])",
-                    draft.text,
+                    draft.assertion,
                     regex.IGNORECASE,
                 ) and (
-                    _amount_set(draft.text)
+                    _amount_set(draft.assertion)
                     - (
-                        _amount_set(" ".join(evidence_texts))
-                        | _spelled_number_values(" ".join(evidence_texts))
-                        | {number for number, _ in _duration_quantities(" ".join(evidence_texts))}
+                        _amount_set(full_evidence)
+                        | _spelled_number_values(full_evidence)
+                        | {number for number, _ in _duration_quantities(full_evidence)}
                     )
                 ):
                     # A newly calculated quantity is not proven by topic similarity.
                     verification = ClaimVerification.UNVERIFIED
+                    verification_reason = ClaimVerificationReason.DERIVED_QUANTITY
                 elif regex.search(
                     r"\b(total|payable|liability|net|remaining|after|calculated|result)\b|মোট|প্রদেয়",
-                    draft.text,
+                    draft.assertion,
                     regex.IGNORECASE,
                 ) and any(
-                    not _amounts_include(_money_amounts(" ".join(evidence_texts)), amount)
-                    for amount in _money_amounts(draft.text)
+                    not _amounts_include(_money_amounts(full_evidence), amount)
+                    for amount in _money_amounts(draft.assertion)
                 ):
                     verification = ClaimVerification.UNVERIFIED
+                    verification_reason = ClaimVerificationReason.UNVERIFIED_AMOUNT
                 else:
-                    uses_lexical = _uses_lexical_verification(draft.text, evidence_texts)
+                    uses_lexical = _uses_lexical_verification(draft.assertion, evidence_texts)
                     lexical = (
-                        self._lexical_verification(draft.text, evidence_texts)
+                        self._lexical_verification(draft.assertion, evidence_texts)
                         if uses_lexical
                         else None
                     )
+                    scored_texts = span_texts or evidence_texts
                     scores = [
-                        similarities.get((draft.text, chunk.content))
-                        for _, chunk in draft.evidence_chunks
+                        _best_pair_score(similarities, (draft.assertion, draft.text), text)
+                        for text in scored_texts
                     ]
                     numeric = [value for value in scores if value is not None]
                     score = max(numeric) if numeric else None
+                    embedder_usable = _usable_embedder(self._embedder)
                     semantic = (
                         self._cross_language_verification(score)
-                        if not uses_lexical or _usable_embedder(self._embedder)
+                        if not uses_lexical or embedder_usable
                         else None
                     )
                     verification = _combine_claim_verification(lexical, semantic)
+                    verification_method = "lexical" if uses_lexical else "semantic"
+                    if semantic is ClaimVerification.UNVERIFIED and score is None:
+                        verification_reason = ClaimVerificationReason.EMBEDDING_UNAVAILABLE
+                    elif verification is ClaimVerification.UNSUPPORTED:
+                        verification_reason = (
+                            ClaimVerificationReason.UNRELATED_OR_INSUFFICIENT_EVIDENCE
+                        )
+                    duration_delta = _missing_duration(draft.assertion, duration_evidence)
+                    if duration_delta and verification is ClaimVerification.SUPPORTED:
+                        # Related evidence with a different duration is a contradiction;
+                        # related evidence with no duration is merely incomplete.
+                        verification = (
+                            ClaimVerification.UNSUPPORTED
+                            if _duration_quantities(duration_evidence)
+                            else ClaimVerification.UNVERIFIED
+                        )
+                        verification_method = "duration"
+                        verification_reason = (
+                            ClaimVerificationReason.DURATION_MISMATCH
+                            if verification is ClaimVerification.UNSUPPORTED
+                            else ClaimVerificationReason.DURATION_NOT_IN_EVIDENCE
+                        )
+                    elif (
+                        duration_delta
+                        and verification is ClaimVerification.UNVERIFIED
+                        and _duration_quantities(duration_evidence)
+                    ):
+                        # When semantic verification is unavailable, an explicit changed
+                        # duration still must not become an unscored maybe.
+                        verification = ClaimVerification.UNSUPPORTED
+                        verification_method = "duration"
+                        verification_reason = ClaimVerificationReason.DURATION_MISMATCH
+                    elif duration_delta and verification is ClaimVerification.UNVERIFIED:
+                        verification_reason = verification_reason or (
+                            ClaimVerificationReason.DURATION_NOT_IN_EVIDENCE
+                        )
             # Lexical/semantic similarity and correct arithmetic do not resolve
             # amendment scope. Do not give these claims a false green status.
             evidence_support = verification
-            arithmetic = _arithmetic_consistency(draft.text)
+            arithmetic = _arithmetic_consistency(draft.assertion)
             if arithmetic is ClaimVerification.UNSUPPORTED:
                 verification = ClaimVerification.UNSUPPORTED
+                verification_reason = ClaimVerificationReason.ARITHMETIC_MISMATCH
             authority_unresolved = any(
                 chunk.metadata.get("authority_status") == "unresolved"
                 for _, chunk in draft.evidence_chunks
             )
             if verification is ClaimVerification.SUPPORTED and authority_unresolved:
                 verification = ClaimVerification.UNVERIFIED
-            claim_grounded = verification is ClaimVerification.SUPPORTED
-            supported += int(claim_grounded)
-            unverified += int(verification is ClaimVerification.UNVERIFIED)
-            cited += int(draft.has_valid_citation)
+                verification_reason = ClaimVerificationReason.UNRESOLVED_AUTHORITY
             claims.append(
                 AnswerClaim(
                     evidence_support=evidence_support,
                     authority_status="unresolved" if authority_unresolved else "not_assessed",
-                    claim_kind=_claim_kind(draft.text, user_input),
+                    claim_kind=kind,
                     arithmetic_verification=arithmetic,
+                    verification_method=verification_method,
+                    verification_reason=(
+                        None if verification_reason is None else str(verification_reason)
+                    ),
+                    assertion_text=draft.assertion if draft.assertion != draft.text else None,
                     claim_id=f"claim-{draft.index}",
                     text=draft.text,
-                    grounded=claim_grounded,
+                    grounded=verification is ClaimVerification.SUPPORTED,
                     verification=verification,
                     evidence=[
-                        _evidence_snapshot(citation_index, chunk, self._config)
+                        _evidence_snapshot(
+                            citation_index,
+                            chunk,
+                            self._config,
+                            span=supporting_spans.get(chunk.chunk_id),
+                        )
                         for citation_index, chunk in draft.evidence_chunks
                     ],
                 )
             )
-        total = len(claims)
-        if not claims:
-            # All segments were polarity-only, headings, or other non-factual
-            # content.  grounded=None distinguishes this from an ungrounded
-            # factual answer (grounded=False).  The caller (chat_service) only
-            # uses this when generation ran on admitted evidence.
-            return GroundingResult(
-                claims=[],
-                grounded=None,
-                citation_coverage=0.0,
-                unverified_claim_rate=0.0,
-                claims_status="no_verifiable_claims",
-            )
-        return GroundingResult(
-            claims=[claim.model_dump(mode="json") for claim in claims],
-            grounded=bool(claims) and supported == total,
-            citation_coverage=(cited / total) if total else 0.0,
-            unverified_claim_rate=(unverified / total) if total else 0.0,
+        return _grounding_result_from_claims(
+            claims,
+            cited_factual=sum(
+                draft.has_valid_citation
+                for draft, claim in zip(drafts, claims, strict=True)
+                if claim.claim_kind != "coverage_scope"
+            ),
         )
 
     def _lexical_verification(self, text: str, evidence_texts: list[str]) -> ClaimVerification:
@@ -1580,7 +1681,7 @@ def _duration_quantities(text: str) -> set[tuple[int, str]]:
     words = _quantity_number_words()
     alternatives = "|".join(regex.escape(word) for word in sorted(words, key=len, reverse=True))
     text = regex.sub(
-        rf"\b({alternatives})(?=(?:\s+(?:days?\b|months?\b|years?\b)|\s*(?:দিন|মাস|বছর|বৎসর|বত্সর)))",
+        rf"\b({alternatives})(?=(?:\s+(?:days?\b|weeks?\b|months?\b|years?\b)|\s*(?:দিন|সপ্তাহ|মাস|বছর|বৎসর|বত্সর)))",
         lambda match: str(words[match.group().lower()]),
         text,
         flags=regex.IGNORECASE,
@@ -1589,6 +1690,9 @@ def _duration_quantities(text: str) -> set[tuple[int, str]]:
         "day": "day",
         "days": "day",
         "দিন": "day",
+        "week": "week",
+        "weeks": "week",
+        "সপ্তাহ": "week",
         "month": "month",
         "months": "month",
         "মাস": "month",
@@ -1601,7 +1705,7 @@ def _duration_quantities(text: str) -> set[tuple[int, str]]:
     return {
         (int(number), units[unit.lower()])
         for number, unit in regex.findall(
-            r"(?<![\d.,])\b(\d+)\s*(days?\b|months?\b|years?\b|দিন|মাস|বছর|বৎসর|বত্সর)",
+            r"(?<![\d.,])\b(\d+)\s*(days?\b|weeks?\b|months?\b|years?\b|দিন|সপ্তাহ|মাস|বছর|বৎসর|বত্সর)",
             text,
             regex.IGNORECASE,
         )
@@ -1640,22 +1744,24 @@ def _answer_segments(answer: str) -> list[str]:
     verified independently by ``map_claims`` before it can be grounded.
     """
     # A table is not a prose paragraph: its final citation belongs to that row,
-    # not every earlier uncited sentence in the table. Remove column labels
-    # before introducing row boundaries so they cannot become factual claims.
+    # not every earlier uncited sentence in the table. Keep the header row as
+    # verification context; map_claims skips it as a factual claim.
     lines = answer.splitlines()
     normalized_lines: list[str] = []
     for index, line in enumerate(lines):
         is_divider = "|" in line and _MARKDOWN_TABLE_DIVIDER_PATTERN.fullmatch(line.strip())
+        if is_divider:
+            continue
         is_header = (
             "|" in line
             and index + 1 < len(lines)
             and "|" in lines[index + 1]
             and _MARKDOWN_TABLE_DIVIDER_PATTERN.fullmatch(lines[index + 1].strip())
         )
-        if is_divider or is_header:
-            continue
         if line.strip().startswith("|") and line.strip().endswith("|"):
-            normalized_lines.extend(["", line, ""])
+            normalized_lines.extend(
+                ["", f"{_TABLE_HEADER_SENTINEL}{line}" if is_header else line, ""]
+            )
         else:
             normalized_lines.append(line)
     answer = "\n".join(normalized_lines)
@@ -1666,19 +1772,6 @@ def _answer_segments(answer: str) -> list[str]:
             # title into an unsupported factual sentence.
             segments.append(paragraph.strip())
             continue
-        lines = paragraph.splitlines()
-        # A Markdown header immediately above its divider names table columns;
-        # data rows below it still require independent claim verification.
-        paragraph = "\n".join(
-            line
-            for index, line in enumerate(lines)
-            if not (
-                "|" in line
-                and index + 1 < len(lines)
-                and "|" in lines[index + 1]
-                and _MARKDOWN_TABLE_DIVIDER_PATTERN.fullmatch(lines[index + 1].strip())
-            )
-        )
         paragraph_segments: list[str] = []
         for raw_segment in _SEGMENT_PATTERN.split(paragraph):
             segment = raw_segment.strip()
@@ -1898,7 +1991,7 @@ def _fold_indic_digits(text: str) -> str:
 
 
 def _plain_claim_text(text: str) -> str:
-    stripped = _CITATION_PATTERN.sub("", text)
+    stripped = _CITATION_PATTERN.sub("", text).replace(_TABLE_HEADER_SENTINEL, "")
     return regex.sub(r"[*_`]+", "", stripped).strip()
 
 
@@ -1924,6 +2017,8 @@ def _is_quantity_setup_segment(text: str) -> bool:
 
 def _claim_kind(text: str, user_input: str) -> str:
     """Inspection categories do not exempt any assertion from source verification."""
+    if _coverage_kind_hint(text, display=text) == "coverage_scope":
+        return "coverage_scope"
     plain = _plain_claim_text(text).casefold()
     if _CALCULATION_OPERATOR_PATTERN.search(plain):
         return "arithmetic"
@@ -2144,17 +2239,466 @@ def _is_insufficiency_statement(text: str) -> bool:
     return _INSUFFICIENCY_MARKER in folded
 
 
+def _coverage_kind_hint(text: str, *, display: str | None = None) -> str | None:
+    material = _plain_claim_text(text)
+    shown = _plain_claim_text(display or text)
+    if _WHOLE_CORPUS_ABSENCE_PATTERN.search(material) or _WHOLE_CORPUS_ABSENCE_PATTERN.search(
+        shown
+    ):
+        return "coverage_scope"
+    if not (_COVERAGE_SCOPE_PATTERN.search(material) or _COVERAGE_SCOPE_PATTERN.search(shown)):
+        return None
+    if regex.search(
+        r"(?:,|;)\s*(?:so|therefore|thus|consequently)\b|(?:তাই|অতএব|সুতরাং)",
+        shown,
+        regex.IGNORECASE,
+    ):
+        # The limitation does not exempt a conclusion joined to it.
+        return None
+    if _COVERAGE_SCOPE_PATTERN.search(shown) or _WHOLE_CORPUS_ABSENCE_PATTERN.search(shown):
+        return "coverage_scope"
+    if regex.search(
+        r"\b(?:must|shall|required to|does not|cannot|is not|are not)\b|করিতে হইবে",
+        shown,
+        regex.IGNORECASE,
+    ):
+        return None
+    return "coverage_scope"
+
+
+def _coverage_scope_verification(
+    text: str,
+    coverage: dict[str, Any] | None,
+    *,
+    display: str | None = None,
+) -> tuple[ClaimVerification, str]:
+    """Validate limitation prose against the trusted coverage verdict, not the corpus."""
+    shown = display or text
+    coverage = _normalize_coverage(coverage)
+    if _WHOLE_CORPUS_ABSENCE_PATTERN.search(_plain_claim_text(text)) or (
+        _WHOLE_CORPUS_ABSENCE_PATTERN.search(_plain_claim_text(shown))
+    ):
+        return (
+            ClaimVerification.UNSUPPORTED,
+            ClaimVerificationReason.WHOLE_CORPUS_ABSENCE_UNPROVEN,
+        )
+    if not coverage:
+        return (
+            ClaimVerification.UNVERIFIED,
+            ClaimVerificationReason.COVERAGE_VERDICT_UNAVAILABLE,
+        )
+    if (
+        coverage.get("partial_scope_validated") is False
+        and coverage.get("full_coverage_validated") is not True
+    ):
+        return (
+            ClaimVerification.UNVERIFIED,
+            ClaimVerificationReason.COVERAGE_VERDICT_UNAVAILABLE,
+        )
+    if _coverage_topic_supported(text, coverage) or _coverage_topic_supported(shown, coverage):
+        return ClaimVerification.SUPPORTED, ClaimVerificationReason.MATCHES_COVERAGE_VERDICT
+    if _COVERAGE_SCOPE_PATTERN.search(_plain_claim_text(shown)) or _COVERAGE_SCOPE_PATTERN.search(
+        _plain_claim_text(text)
+    ):
+        if _coverage_topics(coverage):
+            return (
+                ClaimVerification.UNVERIFIED,
+                ClaimVerificationReason.COVERAGE_TOPIC_NOT_MATCHED,
+            )
+        return (
+            ClaimVerification.UNVERIFIED,
+            ClaimVerificationReason.COVERAGE_VERDICT_UNAVAILABLE,
+        )
+    return (
+        ClaimVerification.UNSUPPORTED,
+        ClaimVerificationReason.COVERAGE_STATEMENT_NOT_IN_VERDICT,
+    )
+
+
+def _normalize_coverage(coverage: dict[str, Any] | None) -> dict[str, Any]:
+    """Accept either a flat coverage dict or the knowledge_repair diagnostics envelope."""
+    if not coverage:
+        return {}
+    nested = coverage.get("coverage")
+    partial = coverage.get("partial_answer")
+    if isinstance(nested, dict):
+        return {
+            "missing": list(nested.get("missing") or []),
+            "missing_inputs": list(nested.get("missing_inputs") or []),
+            "partial_answer": (
+                partial if isinstance(partial, dict) else nested.get("partial_answer")
+            ),
+            "full_coverage_validated": nested.get("full_coverage_validated"),
+            "partial_scope_validated": nested.get("partial_scope_validated"),
+        }
+    return coverage
+
+
+def _coverage_topics(coverage: dict[str, Any]) -> list[str]:
+    topics: list[str] = []
+    for key in ("missing", "missing_inputs"):
+        value = coverage.get(key)
+        if isinstance(value, list):
+            topics.extend(str(item) for item in value if str(item).strip())
+    partial = coverage.get("partial_answer")
+    if isinstance(partial, dict):
+        for key in ("exclusions", "pending"):
+            value = partial.get(key)
+            if isinstance(value, list):
+                topics.extend(str(item) for item in value if str(item).strip())
+    return topics
+
+
+def _coverage_topic_supported(text: str, coverage: dict[str, Any]) -> bool:
+    folded = _plain_claim_text(text).casefold()
+    for topic in _coverage_topics(coverage):
+        candidate = topic.casefold().strip()
+        if not candidate:
+            continue
+        if candidate in folded or folded in candidate:
+            return True
+        if _coverage(_significant_tokens(topic), _significant_tokens(text)) >= 0.4:
+            return True
+        if _coverage_concepts(topic) & _coverage_concepts(text):
+            return True
+    return False
+
+
+def _coverage_concepts(text: str) -> set[str]:
+    """Bilingual identities for recurring requirement labels, never factual proof."""
+    folded = _plain_claim_text(text).casefold()
+    aliases = {
+        "annual_return": ("annual return", "annual list", "বার্ষিক রিটার্ন", "বার্ষিক তালিকা"),
+        "auditor_appointment": (
+            "auditor appointment",
+            "appointment of auditor",
+            "নিরীক্ষক নিয়োগ",
+            "নিরীক্ষক নিয়োগ",
+        ),
+    }
+    return {
+        concept for concept, values in aliases.items() if any(value in folded for value in values)
+    }
+
+
+def _is_markdown_table_row(text: str) -> bool:
+    stripped = _plain_claim_text(text).strip()
+    return stripped.startswith("|") and stripped.endswith("|") and stripped.count("|") >= 2
+
+
+def _is_leading_table_header(segments: list[str], index: int) -> bool:
+    return 0 <= index < len(segments) and segments[index].startswith(_TABLE_HEADER_SENTINEL)
+
+
+def _verification_context(segments: list[str], index: int) -> str:
+    parts: list[str] = []
+    current = segments[index] if 0 <= index < len(segments) else ""
+    if _is_markdown_table_row(current):
+        start = index
+        while start > 0 and _is_markdown_table_row(segments[start - 1]):
+            start -= 1
+        if start != index:
+            parts.append(_plain_claim_text(segments[start]))
+    for prev in range(index - 1, -1, -1):
+        plain = _plain_claim_text(segments[prev]).strip()
+        if _MARKDOWN_HEADING_PATTERN.fullmatch(plain) or _LIST_PREAMBLE_PATTERN.fullmatch(plain):
+            parts.append(plain)
+            break
+        if _is_markdown_table_row(segments[prev]) or _is_structural_segment(plain):
+            continue
+        if _is_markdown_list_item(segments[prev]):
+            continue
+        break
+    return " ".join(reversed(parts))
+
+
+def _contextualized_assertion(display: str, context: str) -> str:
+    plain = _plain_claim_text(display)
+    if not context or context.casefold() in plain.casefold():
+        return plain
+    return f"{context} {plain}"
+
+
+def _candidate_spans(content: str) -> list[_SelectedSpan]:
+    spans: list[_SelectedSpan] = []
+    last = 0
+    for match in _SPAN_BOUNDARY_PATTERN.finditer(content):
+        piece = content[last : match.start()]
+        text = piece.strip()
+        if text:
+            start = last + piece.find(text)
+            spans.append(
+                _SelectedSpan(
+                    text=text,
+                    char_start=start,
+                    char_end=start + len(text),
+                    derivation="sentence",
+                    semantic_score=None,
+                    semantic_span_aligned=False,
+                )
+            )
+        last = match.end()
+    piece = content[last:]
+    text = piece.strip()
+    if text:
+        start = last + piece.find(text)
+        spans.append(
+            _SelectedSpan(
+                text=text,
+                char_start=start,
+                char_end=start + len(text),
+                derivation="sentence",
+                semantic_score=None,
+                semantic_span_aligned=False,
+            )
+        )
+    if content.strip():
+        stripped = content.strip()
+        start = content.find(stripped)
+        full = _SelectedSpan(
+            text=stripped,
+            char_start=max(start, 0),
+            char_end=max(start, 0) + len(stripped),
+            derivation="chunk",
+            semantic_score=None,
+            semantic_span_aligned=False,
+        )
+        if not spans or spans[0].text != stripped:
+            spans.append(full)
+    return spans
+
+
+def _digit_tokens(text: str) -> set[str]:
+    return set(regex.findall(r"\d+", _fold_indic_digits(text)))
+
+
+def _sample_spans(spans: list[_SelectedSpan], limit: int) -> list[_SelectedSpan]:
+    if len(spans) <= limit:
+        return list(spans)
+    head, tail = min(4, limit // 2), min(4, limit - min(4, limit // 2))
+    middle = spans[head : len(spans) - tail] if tail else spans[head:]
+    budget = max(0, limit - head - tail)
+    sampled: list[_SelectedSpan] = []
+    if budget and middle:
+        step = max(len(middle) / budget, 1)
+        sampled = [middle[min(int(index * step), len(middle) - 1)] for index in range(budget)]
+    tail_spans = spans[-tail:] if tail else []
+    chosen = [*spans[:head], *sampled, *tail_spans]
+    seen: set[tuple[int, int]] = set()
+    unique: list[_SelectedSpan] = []
+    for span in chosen:
+        key = (span.char_start, span.char_end)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(span)
+    return unique
+
+
+def _prefilter_spans(
+    spans: list[_SelectedSpan],
+    assertion: str,
+    display: str,
+    *,
+    limit: int,
+) -> list[_SelectedSpan]:
+    sentences = [span for span in spans if span.derivation != "chunk"]
+    full = next((span for span in spans if span.derivation == "chunk"), None)
+    claim_tokens = _significant_tokens(assertion) | _significant_tokens(display)
+    digits = _digit_tokens(f"{assertion} {display}")
+
+    def rank(span: _SelectedSpan) -> tuple[float, int]:
+        return (
+            _coverage(claim_tokens, _significant_tokens(span.text)),
+            len(digits & _digit_tokens(span.text)),
+        )
+
+    scored = sorted(sentences, key=rank, reverse=True)
+    chosen = (
+        scored[:limit]
+        if scored and rank(scored[0]) != (0.0, 0)
+        else _sample_spans(sentences, limit)
+    )
+    if full is not None and all(span.text != full.text for span in chosen):
+        chosen.append(full)
+    return chosen
+
+
+def _spans_for_embedding(
+    assertion: str,
+    display: str,
+    chunk: ContextChunk,
+    spans_by_chunk: dict[uuid.UUID, list[_SelectedSpan]],
+) -> list[_SelectedSpan]:
+    spans = spans_by_chunk.setdefault(chunk.chunk_id, _candidate_spans(chunk.content))
+    same_script = _uses_lexical_verification(assertion, [chunk.content])
+    return _prefilter_spans(spans, assertion, display, limit=8 if same_script else 20)
+
+
+def _best_evidence_spans(
+    assertion: str,
+    evidence_chunks: list[tuple[int, ContextChunk]],
+    similarities: dict[tuple[str, str], float | None],
+    spans_by_chunk: dict[uuid.UUID, list[_SelectedSpan]],
+    *,
+    display: str = "",
+) -> dict[uuid.UUID, _SelectedSpan]:
+    selected: dict[uuid.UUID, _SelectedSpan] = {}
+    claim_tokens = _significant_tokens(assertion)
+    keys = {assertion, display} - {""}
+    for _, chunk in evidence_chunks:
+        candidates = spans_by_chunk.get(chunk.chunk_id) or _candidate_spans(chunk.content)
+        if not candidates:
+            continue
+
+        def rank(span: _SelectedSpan) -> tuple[float, float, int]:
+            score = _best_pair_score(similarities, keys, span.text)
+            lexical = _coverage(claim_tokens, _significant_tokens(span.text))
+            sentence = 1 if span.derivation != "chunk" else 0
+            return (score if score is not None else -1.0, lexical, sentence)
+
+        selected[chunk.chunk_id] = max(candidates, key=rank)
+    return selected
+
+
+def _best_pair_score(
+    similarities: dict[tuple[str, str], float | None],
+    keys: tuple[str, ...] | set[str],
+    evidence: str,
+) -> float | None:
+    values = [
+        score
+        for key in keys
+        if key
+        for score in [similarities.get((key, evidence))]
+        if score is not None
+    ]
+    return max(values) if values else None
+
+
+def _durations_equivalent(left: tuple[int, str], right: tuple[int, str]) -> bool:
+    left_number, left_unit = left
+    right_number, right_unit = right
+    if left_unit == right_unit:
+        return left_number == right_number
+    if {left_unit, right_unit} <= {"day", "week"}:
+        left_days = left_number * (7 if left_unit == "week" else 1)
+        right_days = right_number * (7 if right_unit == "week" else 1)
+        return left_days == right_days
+    return False
+
+
+def _missing_duration(claim: str, evidence: str) -> bool:
+    claim_durations = _duration_quantities(claim)
+    if not claim_durations:
+        return False
+    evidence_durations = _duration_quantities(evidence)
+    for duration in claim_durations:
+        if any(_durations_equivalent(duration, other) for other in evidence_durations):
+            continue
+        return True
+    return False
+
+
+def _duration_context_related(claim: str, evidence: str) -> bool:
+    if not _uses_lexical_verification(claim, [evidence]):
+        return False
+    ignored = {
+        "day",
+        "days",
+        "week",
+        "weeks",
+        "month",
+        "months",
+        "year",
+        "years",
+        "দিন",
+        "সপ্তাহ",
+        "মাস",
+        "বছর",
+        "বৎসর",
+        "বত্সর",
+    }
+    claim_tokens = {
+        token
+        for token in _significant_tokens(claim)
+        if token not in ignored and not token.isdigit()
+    }
+    evidence_tokens = {
+        token
+        for token in _significant_tokens(evidence)
+        if token not in ignored and not token.isdigit()
+    }
+    return bool(claim_tokens) and _coverage(claim_tokens, evidence_tokens) >= 0.3
+
+
+def _grounding_result_from_claims(
+    claims: list[AnswerClaim], *, cited_factual: int | None = None
+) -> GroundingResult:
+    if not claims:
+        return GroundingResult(
+            claims=[],
+            grounded=None,
+            citation_coverage=0.0,
+            unverified_claim_rate=0.0,
+            claims_status="no_verifiable_claims",
+        )
+    factual = [claim for claim in claims if claim.claim_kind != "coverage_scope"]
+    invalid_scope = [
+        claim
+        for claim in claims
+        if claim.claim_kind == "coverage_scope"
+        and claim.verification is not ClaimVerification.SUPPORTED
+    ]
+    if not factual:
+        return GroundingResult(
+            claims=[claim.model_dump(mode="json") for claim in claims],
+            grounded=False if invalid_scope else None,
+            citation_coverage=0.0,
+            unverified_claim_rate=0.0,
+            claims_status=(
+                "invalid_coverage_statement" if invalid_scope else "no_verifiable_claims"
+            ),
+        )
+    supported = sum(claim.verification is ClaimVerification.SUPPORTED for claim in factual)
+    unverified = sum(claim.verification is ClaimVerification.UNVERIFIED for claim in factual)
+    cited = (
+        cited_factual
+        if cited_factual is not None
+        else sum(bool(claim.evidence) for claim in factual)
+    )
+    total = len(factual)
+    return GroundingResult(
+        claims=[claim.model_dump(mode="json") for claim in claims],
+        grounded=supported == total,
+        citation_coverage=cited / total,
+        unverified_claim_rate=unverified / total,
+        claims_status="invalid_coverage_statement" if invalid_scope else None,
+    )
+
+
 def _evidence_snapshot(
     citation_index: int,
     chunk: ContextChunk,
     config: ChatConfig,
+    span: _SelectedSpan | None = None,
 ) -> ClaimEvidence:
+    source = span.text if span is not None else chunk.content
     excerpt = (
-        chunk.content[: config.citation_excerpt_max_chars]
+        source[: config.citation_excerpt_max_chars]
         if config.citation_excerpt_max_chars > 0
         else None
     )
     is_web = chunk.metadata.get("source_kind") == CitationSourceKind.WEB.value
+    span_hash = (
+        None
+        if is_web
+        else (
+            content_hash(span.text)
+            if span is not None
+            else chunk.metadata.get("evidence_span_hash")
+        )
+    )
     return ClaimEvidence(
         citation_index=citation_index,
         chunk_id=None if is_web else chunk.chunk_id,
@@ -2162,11 +2706,23 @@ def _evidence_snapshot(
         filename=chunk.filename,
         chunk_index=None if is_web else chunk.chunk_index,
         page_number=None if is_web else chunk.page_number,
-        char_start=None if is_web else chunk.char_start,
-        char_end=None if is_web else chunk.char_end,
+        char_start=(
+            None
+            if is_web or chunk.char_start is None
+            else chunk.char_start + (span.char_start if span is not None else 0)
+        ),
+        char_end=(
+            None
+            if is_web
+            else (
+                chunk.char_start + span.char_end
+                if span is not None and chunk.char_start is not None
+                else chunk.char_end
+            )
+        ),
         excerpt=excerpt,
         evidence_unit_id=None if is_web else chunk.metadata.get("evidence_unit_id"),
-        evidence_span_hash=None if is_web else chunk.metadata.get("evidence_span_hash"),
+        evidence_span_hash=span_hash,
         source_kind=CitationSourceKind.WEB if is_web else CitationSourceKind.KNOWLEDGE,
         web_url=chunk.metadata.get("web_url") if is_web else None,
         web_title=chunk.metadata.get("web_title") if is_web else None,

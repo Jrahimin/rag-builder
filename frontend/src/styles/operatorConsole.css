@@ -3486,6 +3486,35 @@ code {
 .login-card button:disabled {
   opacity: 0.65;
 }
+.login-password-field {
+  position: relative;
+}
+.login-password-field input {
+  width: 100%;
+  padding-right: 44px;
+}
+.login-card button.login-password-toggle {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  display: grid;
+  width: 34px;
+  min-height: 34px;
+  place-items: center;
+  padding: 0;
+  color: #344054;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  box-shadow: none;
+  transform: translateY(-50%);
+  font-weight: 500;
+}
+.login-card button.login-password-toggle:hover,
+.login-card button.login-password-toggle:focus-visible {
+  color: #172033;
+  background: #eef3fb;
+}
 .login-error {
   padding: 9px;
   color: #b42318;

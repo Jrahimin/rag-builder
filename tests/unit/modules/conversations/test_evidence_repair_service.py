@@ -115,6 +115,208 @@ async def test_partial_scope_requires_every_selected_rule_and_retains_incomplete
     assert retrieval.retrieve.await_count == 1
 
 
+async def test_missing_rule_gets_one_focused_retry_before_partial_acceptance():
+    known = chunk("Private companies must hold an annual general meeting.")
+    later = chunk("The annual list of members is filed with the Registrar.")
+    coverage = {
+        "complete": False,
+        "missing": ["Annual return filing duty"],
+        "checks": [
+            {
+                "requirement_id": "R1",
+                "description": "Annual return filing duty",
+                "supported": False,
+                "evidence": [],
+            },
+            {
+                "requirement_id": "R2",
+                "description": "AGM duty",
+                "supported": True,
+                "evidence": [{"chunk_id": str(known.chunk_id), "quote": known.content}],
+            },
+        ],
+        "partial_answer": {
+            "scope": "AGM duty",
+            "requirement_ids": ["R2"],
+            "exclusions": ["Annual return filing duty"],
+        },
+    }
+    result, retrieval, _ = await run_repair(
+        [([known], {}), ([later], {})],
+        queries=["company AGM"],
+        requirements=[
+            {"requirement_id": "R1", "description": "Annual return filing duty"},
+            {"requirement_id": "R2", "description": "AGM duty"},
+        ],
+        coverage=coverage,
+        followup_queries=["annual list summary"],
+        final_coverage=coverage,
+    )
+    assert result.diagnostics["status"] == "partial_answer"
+    assert result.diagnostics["focused_queries"] == ["annual list summary"]
+    assert "R1" in result.diagnostics["focused_requirement_ids"]
+    assert result.diagnostics["coverage"]["partial_scope_validated"] is True
+    assert result.diagnostics["coverage"]["full_coverage_validated"] is False
+    assert [item.chunk_id for item in result.selected] == [known.chunk_id]
+    assert retrieval.retrieve.await_count == 2
+
+
+async def test_supported_fragment_still_fetches_structural_continuation_before_partial():
+    continuation = chunk("Continuation without governing heading.")
+    predecessor = chunk("Section 36 opening applicability and return contents.")
+    coverage = {
+        "complete": False,
+        "missing": ["filing deadline"],
+        "checks": [
+            {
+                "requirement_id": "R1",
+                "description": "Section 36 continuation",
+                "supported": True,
+                "needs_adjacent_context": True,
+                "evidence": [
+                    {"chunk_id": str(continuation.chunk_id), "quote": continuation.content}
+                ],
+            },
+            {
+                "requirement_id": "R2",
+                "description": "Known AGM duty",
+                "supported": True,
+                "evidence": [
+                    {"chunk_id": str(continuation.chunk_id), "quote": continuation.content}
+                ],
+            },
+        ],
+        "partial_answer": {
+            "scope": "Known AGM duty",
+            "requirement_ids": ["R2"],
+            "exclusions": ["filing deadline"],
+        },
+    }
+    result, retrieval, inputs = await run_repair(
+        [([continuation], {}), ([predecessor], {})],
+        queries=["annual general meeting"],
+        requirements=[
+            {"requirement_id": "R1", "description": "Section 36 continuation"},
+            {"requirement_id": "R2", "description": "Known AGM duty"},
+        ],
+        coverage=coverage,
+        final_coverage={
+            "complete": True,
+            "missing": [],
+            "checks": [
+                {
+                    "requirement_id": "R1",
+                    "description": "Section 36 continuation",
+                    "supported": True,
+                    "evidence": [
+                        {"chunk_id": str(predecessor.chunk_id), "quote": predecessor.content}
+                    ],
+                },
+                {
+                    "requirement_id": "R2",
+                    "description": "Known AGM duty",
+                    "supported": True,
+                    "evidence": [
+                        {"chunk_id": str(continuation.chunk_id), "quote": continuation.content}
+                    ],
+                },
+            ],
+        },
+        adjacent=True,
+    )
+    assert retrieval.retrieve.await_count == 2
+    assert retrieval.retrieve.call_args_list[1].kwargs["adjacent_to"] == [continuation.chunk_id]
+    assert result.diagnostics["status"] == "recovered"
+    assert retrieval.retrieve.call_args_list[1].kwargs["document_id"] == inputs.document_id
+    assert {item.chunk_id for item in result.selected} == {
+        continuation.chunk_id,
+        predecessor.chunk_id,
+    }
+
+
+async def test_duplicate_focused_query_stops_and_keeps_confirmed_partial_proof():
+    known = chunk("The governing rate is 10%.")
+    coverage = {
+        "complete": False,
+        "missing": ["exclusion"],
+        "checks": [
+            {
+                "requirement_id": "rate",
+                "description": "Rate",
+                "supported": True,
+                "evidence": [{"chunk_id": str(known.chunk_id), "quote": known.content}],
+            },
+            {"requirement_id": "exclusion", "supported": False, "evidence": []},
+        ],
+        "partial_answer": {
+            "scope": "Rate",
+            "requirement_ids": ["rate"],
+            "exclusions": ["exclusion"],
+        },
+    }
+    result, retrieval, _ = await run_repair(
+        [([known], {})],
+        queries=["rate"],
+        requirements=[
+            {"requirement_id": "rate", "description": "Rate"},
+            {"requirement_id": "exclusion", "description": "Exclusion"},
+        ],
+        coverage=coverage,
+        followup_queries=["rate"],
+    )
+    assert result.diagnostics["status"] == "partial_answer"
+    assert result.diagnostics.get("duplicate_focused_queries_skipped") == 1
+    assert result.diagnostics["requirement_progress"]["stop_reason"] == "no_new_focused_query"
+    assert [item.chunk_id for item in result.selected] == [known.chunk_id]
+    assert retrieval.retrieve.await_count == 1
+
+
+async def test_unchanged_focused_evidence_keeps_confirmed_partial_proof():
+    known = chunk("Private companies must hold an annual general meeting.")
+    coverage = {
+        "complete": False,
+        "missing": ["Annual return filing duty"],
+        "checks": [
+            {
+                "requirement_id": "R1",
+                "description": "Annual return filing duty",
+                "supported": False,
+                "evidence": [],
+            },
+            {
+                "requirement_id": "R2",
+                "description": "AGM duty",
+                "supported": True,
+                "evidence": [{"chunk_id": str(known.chunk_id), "quote": known.content}],
+            },
+        ],
+        "partial_answer": {
+            "scope": "AGM duty",
+            "requirement_ids": ["R2"],
+            "exclusions": ["Annual return filing duty"],
+        },
+    }
+    result, retrieval, _ = await run_repair(
+        [([known], {}), ([known], {})],
+        queries=["company AGM"],
+        requirements=[
+            {"requirement_id": "R1", "description": "Annual return filing duty"},
+            {"requirement_id": "R2", "description": "AGM duty"},
+        ],
+        coverage=coverage,
+        followup_queries=["annual list summary"],
+        final_coverage=coverage,
+    )
+    assert result.diagnostics["status"] == "partial_answer"
+    assert result.diagnostics["requirement_progress"]["stop_reason"] == (
+        "unchanged_review_evidence"
+    )
+    assert result.diagnostics["requirement_progress"]["focused_requirement_ids"] == ["R1"]
+    assert result.partial_answer is not None
+    assert [item.chunk_id for item in result.selected] == [known.chunk_id]
+    assert retrieval.retrieve.await_count == 2
+
+
 @pytest.mark.parametrize("final_finish", ["stop", "length"])
 async def test_truncated_structured_request_restarts_once_with_bounded_budget(final_finish):
     from app.platform.providers.contracts.llm import ChatMessage, ChatRole

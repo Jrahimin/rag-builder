@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import uuid
 from dataclasses import replace
 
@@ -54,7 +55,8 @@ async def test_similar_wording_cannot_verify_a_changed_deadline(marker: str) -> 
     result = await GroundingService(ChatConfig()).map_claims(
         f"The filing deadline is 90 days {marker}", [chunk]
     )
-    assert result.claims[0]["verification"] == "unverified"
+    assert result.claims[0]["verification"] == "unsupported"
+    assert result.claims[0]["verification_reason"] == "duration_mismatch"
 
 
 def test_duration_quantities_align_bangla_and_english_without_converting_units() -> None:
@@ -89,7 +91,7 @@ async def test_spelled_deadline_is_not_rejected_but_changed_deadline_still_is() 
     invalid = await GroundingService(ChatConfig()).map_claims(
         "The filing deadline is 90 days [1]", [chunk]
     )
-    assert invalid.claims[0]["verification"] == "unverified"
+    assert invalid.claims[0]["verification"] == "unsupported"
 
 
 @pytest.mark.parametrize(
@@ -119,7 +121,7 @@ async def test_changed_bangla_comparison_duration_is_still_unverified() -> None:
         "দুই সভার ব্যবধান ২০ মাসের বেশি হতে পারবে না। [1]",
         [_chunk(content="দুই সভার ব্যবধান পনের মাসের বেশি হতে পারবে না।")],
     )
-    assert result.claims[0]["verification"] == "unverified"
+    assert result.claims[0]["verification"] == "unsupported"
 
 
 @pytest.mark.parametrize("number", ["50", "৫০", "51", "৫১"])
@@ -309,13 +311,24 @@ class _ClusterEmbeddingProvider(BaseEmbeddingProvider):
         )
 
     def _vector(self, text: str) -> list[float]:
-        cluster = self._clusters.get(text, f"unique:{text}")
+        cluster = self._clusters.get(text)
+        if cluster is None:
+            for key, name in self._clusters.items():
+                if key and (key in text or text in key):
+                    cluster = name
+                    break
+        cluster = cluster or f"unique:{text}"
         known = {
             "table": [1.0, 0.0, 0.0, 0.0],
             "vacation": [0.0, 1.0, 0.0, 0.0],
             "refund": [0.0, 0.0, 1.0, 0.0],
         }
-        return known.get(cluster, [0.0, 0.0, 0.0, 1.0])
+        if cluster in known:
+            return known[cluster]
+        digest = hashlib.sha256(cluster.encode()).digest()
+        values = [byte / 255.0 for byte in digest[:4]]
+        norm = sum(value * value for value in values) ** 0.5 or 1.0
+        return [value / norm for value in values]
 
 
 def _cluster_embedder(clusters: dict[str, str]) -> _ClusterEmbeddingProvider:
@@ -553,7 +566,7 @@ async def test_claims_link_to_cited_page_and_offsets() -> None:
     assert evidence["chunk_id"] == str(chunk.chunk_id)
     assert evidence["page_number"] == 4
     assert evidence["char_start"] == 120
-    assert evidence["char_end"] == 240
+    assert evidence["char_end"] == 120 + len(chunk.content)
 
 
 async def test_uncited_factual_claim_is_unsupported() -> None:
@@ -691,7 +704,8 @@ async def test_table_citations_stay_with_their_own_row() -> None:
         "| Accounts | Accounts must be filed within 30 days. [2] |"
     )
     segments = _answer_segments(answer)
-    assert "[1]" in segments[0] and "[2]" not in segments[0]
+    cited = next(segment for segment in segments if "[1]" in segment)
+    assert "[2]" not in cited
     result = await GroundingService(ChatConfig(minimum_claim_token_coverage=0.3)).map_claims(
         answer,
         [
@@ -700,6 +714,8 @@ async def test_table_citations_stay_with_their_own_row() -> None:
         ],
     )
     assert result.grounded is True
+    assert all("| Item |" not in claim["text"] for claim in result.claims)
+    assert all(claim["verification"] == "supported" for claim in result.claims)
 
 
 def test_uncited_table_row_does_not_borrow_next_rows_citation() -> None:
@@ -710,7 +726,8 @@ def test_uncited_table_row_does_not_borrow_next_rows_citation() -> None:
         "| AGM | Meetings occur every 15 months. |\n"
         "| Accounts | Accounts must be filed within 30 days. [2] |"
     )
-    assert "[2]" not in segments[0]
+    agm = next(segment for segment in segments if "AGM" in segment)
+    assert "[2]" not in agm
 
 
 async def test_inherited_citation_does_not_ground_an_unrelated_preceding_claim() -> None:
@@ -1025,6 +1042,290 @@ async def test_en_unrelated_claim_to_bn_evidence_is_unsupported() -> None:
 
     assert result.claims[0]["verification"] == "unsupported"
     assert result.grounded is False
+    assert result.claims[0]["verification_reason"] == "unrelated_or_insufficient_evidence"
+
+
+async def test_english_purchases_claim_is_supported_by_bangla_span() -> None:
+    evidence = (
+        "১৮১৷ (১) প্রত্যেক কোম্পানী নিম্নলিখিত বিষয়াদি সম্পর্কে যথাযথ হিসাব-বহি রক্ষণ করিবে, যথা :- "
+        "(ক) কোম্পানী কর্তৃক জমাকৃত এবং ব্যয়কৃত সকল অর্থ; "
+        "(খ) সকল পণ্যের ক্রয় ও বিক্রয়; "
+        "(গ) সকল পরিসম্পদ ও দায়-দেনা।"
+    )
+    purchases = "Companies must keep records of purchases and sales."
+    assets = "Companies must keep records of assets and liabilities."
+    service = GroundingService(
+        ChatConfig(minimum_claim_token_coverage=0.3),
+        embedder=_cluster_embedder(
+            {
+                purchases: "records",
+                assets: "records",
+                "(খ) সকল পণ্যের ক্রয় ও বিক্রয়": "records",
+                "(গ) সকল পরিসম্পদ ও দায়-দেনা।": "records",
+                evidence: "records",
+            }
+        ),
+    )
+    result = await service.map_claims(
+        f"{purchases} [1]\n\n{assets} [1]",
+        [_chunk(content=evidence)],
+    )
+    assert [claim["verification"] for claim in result.claims] == ["supported", "supported"]
+    assert all(claim["evidence"][0]["excerpt"] for claim in result.claims)
+
+
+async def test_short_authority_label_keeps_table_row_context() -> None:
+    result = await GroundingService(ChatConfig(minimum_claim_token_coverage=0.2)).map_claims(
+        "| Duty | Authority |\n| --- | --- |\n| File the annual return | Registrar | [1]",
+        [_chunk(content="The annual return is filed with the Registrar.")],
+    )
+    claim = next(item for item in result.claims if "Registrar" in item["text"])
+    assert "File the annual return" in (claim.get("assertion_text") or claim["text"])
+    assert "Duty" in (claim.get("assertion_text") or "")
+    assert claim["verification"] == "supported"
+
+
+async def test_missing_evidence_bullets_are_coverage_scope_not_legal_duties() -> None:
+    result = await GroundingService(ChatConfig()).map_claims(
+        "The available materials do not establish:\n"
+        "- Annual return filing duty\n"
+        "- Auditor appointment",
+        [_chunk(content="Private companies must hold an annual general meeting.")],
+        coverage={
+            "complete": False,
+            "missing": ["Annual return filing duty", "Auditor appointment"],
+            "partial_answer": {
+                "exclusions": ["Annual return filing duty", "Auditor appointment"],
+            },
+        },
+    )
+    assert {claim["claim_kind"] for claim in result.claims} == {"coverage_scope"}
+    assert all(claim["verification"] == "supported" for claim in result.claims)
+    assert result.grounded is None
+    assert result.claims_status == "no_verifiable_claims"
+
+
+async def test_whole_corpus_absence_claim_is_not_exempted_after_partial_search() -> None:
+    result = await GroundingService(ChatConfig()).map_claims(
+        "The corpus contains no annual-return provision.",
+        [_chunk(content="Private companies must hold an annual general meeting.")],
+        coverage={
+            "complete": False,
+            "missing": ["Annual return filing duty"],
+            "partial_answer": {"exclusions": ["Annual return filing duty"]},
+        },
+    )
+    assert result.claims[0]["claim_kind"] == "coverage_scope"
+    assert result.claims[0]["verification"] == "unsupported"
+    assert result.claims[0]["verification_reason"] == "whole_corpus_absence_unproven"
+    assert result.grounded is False
+
+
+async def test_eleven_year_retention_is_not_supported_by_twelve_year_source() -> None:
+    result = await GroundingService(ChatConfig()).map_claims(
+        "Accounting records must be retained for 11 years. [1]",
+        [_chunk(content="প্রত্যেক কোম্পানী অব্যবহিত পূর্বের অন্যুন বার বৎসর সময়কালের হিসাব-বহি সংরক্ষণ করিবে।")],
+    )
+    assert result.claims[0]["verification"] == "unsupported"
+    assert result.claims[0]["verification_reason"] == "duration_mismatch"
+
+
+async def test_caveat_legal_conclusion_still_requires_source_support() -> None:
+    result = await GroundingService(ChatConfig()).map_claims(
+        "The available materials do not establish some filing forms.\n"
+        "Inactivity does not eliminate obligations.",
+        [_chunk(content="Private companies must hold an annual general meeting.")],
+        coverage={"complete": False, "missing": ["filing forms"]},
+    )
+    conclusion = next(claim for claim in result.claims if "Inactivity" in claim["text"])
+    assert conclusion["claim_kind"] == "source_assertion"
+    assert conclusion["verification"] != "supported"
+
+
+async def test_coverage_uses_knowledge_repair_envelope_not_only_flat_missing() -> None:
+    result = await GroundingService(ChatConfig()).map_claims(
+        "The available materials do not establish:\n"
+        "- Annual return filing duty\n"
+        "- Auditor appointment",
+        [_chunk(content="Private companies must hold an annual general meeting.")],
+        coverage={
+            "status": "coverage_incomplete",
+            "coverage": {
+                "missing": ["Annual return filing duty", "Auditor appointment"],
+                "partial_scope_validated": True,
+            },
+            "partial_answer": {
+                "exclusions": ["Annual return filing duty", "Auditor appointment"],
+            },
+        },
+    )
+    assert {claim["claim_kind"] for claim in result.claims} == {"coverage_scope"}
+    assert all(claim["verification"] == "supported" for claim in result.claims)
+
+
+async def test_unrelated_coverage_bullet_is_not_auto_supported() -> None:
+    result = await GroundingService(ChatConfig()).map_claims(
+        "The available materials do not establish auditor appointment.",
+        [_chunk(content="Private companies must hold an annual general meeting.")],
+        coverage={"complete": False, "missing": ["Annual return filing duty"]},
+    )
+    claim = result.claims[0]
+    assert claim["claim_kind"] == "coverage_scope"
+    assert claim["verification"] == "unverified"
+    assert claim["verification_reason"] == "coverage_topic_not_matched"
+
+
+async def test_equivalent_week_and_day_durations_are_not_contradictions() -> None:
+    result = await GroundingService(ChatConfig(minimum_claim_token_coverage=0.3)).map_claims(
+        "Notice must be given within 21 days. [1]",
+        [_chunk(content="Notice must be given within three weeks.")],
+    )
+    assert result.claims[0]["verification"] == "supported"
+    assert result.claims[0]["verification_reason"] != "duration_mismatch"
+
+
+async def test_nearby_but_changed_day_deadline_is_rejected() -> None:
+    result = await GroundingService(ChatConfig(minimum_claim_token_coverage=0.3)).map_claims(
+        "The filing deadline is 22 days. [1]",
+        [_chunk(content="The filing deadline is 21 days.")],
+    )
+    assert result.claims[0]["verification"] == "unsupported"
+    assert result.claims[0]["verification_reason"] == "duration_mismatch"
+
+
+async def test_unrelated_duration_evidence_keeps_unrelated_reason_precedence() -> None:
+    claim = "Employees receive 20 days of paid vacation each year."
+    evidence = "Customers may request a refund within 30 days."
+    service = GroundingService(
+        ChatConfig(minimum_claim_token_coverage=0.3),
+        embedder=_cluster_embedder({claim: "vacation", evidence: "refund"}),
+    )
+    result = await service.map_claims(f"{claim} [1]", [_chunk(content=evidence)])
+    assert result.claims[0]["verification"] == "unsupported"
+    assert result.claims[0]["verification_reason"] == ("unrelated_or_insufficient_evidence")
+
+
+async def test_headerless_table_does_not_drop_first_factual_row() -> None:
+    result = await GroundingService(ChatConfig(minimum_claim_token_coverage=0.3)).map_claims(
+        "| Filing is never required | [1] |\n| Records last 12 years | [1] |",
+        [_chunk(content="Records last 12 years.")],
+    )
+    assert len(result.claims) == 2
+    assert result.claims[0]["verification"] != "supported"
+    assert result.grounded is False
+
+
+async def test_short_factual_table_row_is_not_discarded_as_a_label() -> None:
+    result = await GroundingService(ChatConfig(minimum_claim_token_coverage=0.2)).map_claims(
+        "| Duty | Authority |\n| --- | --- |\n| Annual return | Registrar | [1]",
+        [_chunk(content="The annual return is filed with the Registrar.")],
+    )
+    assert len(result.claims) == 1
+    assert "Registrar" in result.claims[0]["text"]
+
+
+async def test_coverage_limitation_does_not_exempt_joined_legal_conclusion() -> None:
+    result = await GroundingService(ChatConfig(minimum_claim_token_coverage=0.3)).map_claims(
+        "The available materials do not establish filing forms, "
+        "so companies need not file annual returns.",
+        [_chunk(content="Private companies must hold an annual general meeting.")],
+        coverage={
+            "coverage": {
+                "missing": ["filing forms"],
+                "partial_scope_validated": True,
+            }
+        },
+    )
+    assert result.claims[0]["claim_kind"] == "source_assertion"
+    assert result.claims[0]["verification"] != "supported"
+
+
+async def test_unvalidated_coverage_envelope_cannot_support_scope_statement() -> None:
+    result = await GroundingService(ChatConfig()).map_claims(
+        "The available materials do not establish annual return filing duty.",
+        [_chunk(content="Annual returns are required.")],
+        coverage={
+            "coverage": {
+                "missing": ["annual return filing duty"],
+                "partial_scope_validated": False,
+                "full_coverage_validated": False,
+            }
+        },
+    )
+    assert result.claims[0]["verification"] == "unverified"
+    assert result.claims[0]["verification_reason"] == "coverage_verdict_unavailable"
+
+
+async def test_bangla_scope_bullets_match_validated_english_requirements() -> None:
+    result = await GroundingService(ChatConfig()).map_claims(
+        "পর্যালোচিত প্রমাণ থেকে প্রতিষ্ঠিত হয় না:\n- বার্ষিক রিটার্ন দাখিল\n- নিরীক্ষক নিয়োগ",
+        [_chunk(content="কোম্পানী সভা করিবে।")],
+        coverage={
+            "coverage": {
+                "missing": ["Annual return filing duty", "Auditor appointment"],
+                "partial_scope_validated": True,
+            }
+        },
+    )
+    assert len(result.claims) == 2
+    assert all(claim["verification"] == "supported" for claim in result.claims)
+
+
+async def test_supported_facts_are_not_ungrounded_by_an_invalid_corpus_absence() -> None:
+    result = await GroundingService(ChatConfig(minimum_claim_token_coverage=0.3)).map_claims(
+        "Private companies must hold an annual general meeting. [1]\n"
+        "The corpus contains no annual-return provision.",
+        [_chunk(content="Private companies must hold an annual general meeting.")],
+        coverage={
+            "complete": False,
+            "missing": ["Annual return filing duty"],
+            "partial_answer": {"exclusions": ["Annual return filing duty"]},
+        },
+    )
+    kinds = {claim["claim_kind"]: claim for claim in result.claims}
+    assert kinds["source_assertion"]["verification"] == "supported"
+    assert kinds["coverage_scope"]["verification"] == "unsupported"
+    assert result.grounded is True
+    assert result.claims_status == "invalid_coverage_statement"
+
+
+async def test_late_sentence_in_a_long_chunk_can_support_a_short_english_claim() -> None:
+    filler = " ".join(f"Unrelated sentence number {index}." for index in range(12))
+    target = "(খ) সকল পণ্যের ক্রয় ও বিক্রয়।"
+    evidence = f"{filler} {target}"
+    claim = "Companies must keep records of purchases and sales."
+    service = GroundingService(
+        ChatConfig(minimum_claim_token_coverage=0.3),
+        embedder=_cluster_embedder({claim: "table", target: "table"}),
+    )
+    result = await service.map_claims(f"{claim} [1]", [_chunk(content=evidence)])
+    assert result.claims[0]["verification"] == "supported"
+    excerpt = result.claims[0]["evidence"][0]["excerpt"]
+    assert excerpt
+    assert "পণ্যের" in excerpt or "ক্রয়" in excerpt
+
+
+async def test_embedding_provider_failure_is_unverified_with_reason() -> None:
+    from app.platform.providers.errors import ProviderError
+
+    class _FailingEmbedder(_ClusterEmbeddingProvider):
+        async def embed_texts(
+            self,
+            texts: list[str],
+            *,
+            purpose: EmbeddingPurpose = EmbeddingPurpose.DOCUMENT,
+        ) -> EmbeddingBatchResult:
+            raise ProviderError("embedder unavailable", provider_name="test")
+
+    claim = "Source tax categories include savings certificates."
+    table = "সঞ্চয়পত্র হইতে অর্জিত মুনাফা"
+    service = GroundingService(
+        ChatConfig(minimum_claim_token_coverage=0.3),
+        embedder=_FailingEmbedder({claim: "table", table: "table"}),
+    )
+    result = await service.map_claims(f"{claim} [1]", [_chunk(content=table)])
+    assert result.claims[0]["verification"] == "unverified"
+    assert result.claims[0]["verification_reason"] == "embedding_unavailable"
 
 
 async def test_zero_overlap_without_a_valid_citation_is_unsupported() -> None:

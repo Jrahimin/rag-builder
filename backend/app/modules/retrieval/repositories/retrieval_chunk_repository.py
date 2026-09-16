@@ -3,12 +3,20 @@
 from __future__ import annotations
 
 import uuid
+from typing import Any
 
-from sqlalchemy import and_, func, or_, select
-from sqlalchemy.orm import aliased
+from sqlalchemy import and_, func, or_, select, tuple_
 
 from app.models.chunk_keyword_index import ChunkKeywordIndex
 from app.models.document_chunk import DocumentChunk
+from app.modules.retrieval.adjacent_selection import (
+    ADJACENT_LIMIT,
+    MAX_ADJACENT_ANCHORS,
+    AdjacentChunkRef,
+    page_provenance_is_meaningful,
+    page_value,
+    select_adjacent_ids,
+)
 from app.platform.persistence.project_scoped_repository import ProjectScopedRepository
 
 
@@ -20,60 +28,25 @@ class RetrievalChunkRepository(ProjectScopedRepository[DocumentChunk]):
     async def adjacent_ids(
         self, anchor_ids: list[uuid.UUID], *, index_build_id: uuid.UUID
     ) -> tuple[uuid.UUID, ...]:
-        """Neighbouring pages (or chunks for unpaged text), in one indexed version.
+        """Structurally neighbouring chunks in one indexed document version.
 
-        Table evidence units need not have consecutive chunk indices in page order.
-        Exclude the anchors themselves so they cannot crowd out the missing context.
+        Immediate index neighbours and same-section continuations outrank page
+        windows. Synthetic Markdown page numbers are not proximity. Table chunks
+        on real PDF pages may still expand by page when indices are not consecutive.
+        Exclude the anchors themselves so they cannot crowd out missing context.
         """
         if not anchor_ids:
             return ()
-        anchor = aliased(DocumentChunk)
-        anchor_index = aliased(ChunkKeywordIndex)
-        page = func.coalesce(self.model.page_start, self.model.page_number)
-        anchor_page = func.coalesce(anchor.page_start, anchor.page_number)
-        adjacent = or_(
-            and_(
-                page.is_not(None),
-                anchor_page.is_not(None),
-                page.between(anchor_page - 1, anchor_page + 1),
-            ),
-            and_(
-                or_(page.is_(None), anchor_page.is_(None)),
-                self.model.chunk_index.between(anchor.chunk_index - 1, anchor.chunk_index + 1),
-            ),
+        limited = list(dict.fromkeys(anchor_ids))[:MAX_ADJACENT_ANCHORS]
+        anchors = await self._indexed_chunk_refs(limited, index_build_id=index_build_id)
+        if not anchors:
+            return ()
+        candidates = await self._indexed_chunk_refs_near_anchors(
+            anchors,
+            index_build_id=index_build_id,
+            exclude_ids=limited,
         )
-        stmt = (
-            select(self.model.id)
-            .distinct()
-            .join(
-                anchor,
-                (anchor.document_id == self.model.document_id)
-                & (anchor.document_version == self.model.document_version)
-                & (anchor.project_id == self.model.project_id)
-                & adjacent,
-            )
-            .join(
-                anchor_index,
-                (anchor_index.chunk_id == anchor.id)
-                & (anchor_index.project_id == anchor.project_id),
-            )
-            .join(
-                ChunkKeywordIndex,
-                (ChunkKeywordIndex.chunk_id == self.model.id)
-                & (ChunkKeywordIndex.project_id == self.model.project_id),
-            )
-            .where(
-                self.model.project_id == self._project_id,
-                anchor.id.in_(anchor_ids[:4]),
-                self.model.id.not_in(anchor_ids[:4]),
-                anchor_index.index_build_id == index_build_id,
-                ChunkKeywordIndex.index_build_id == index_build_id,
-            )
-            .order_by(self.model.id)
-            .limit(48)
-        )
-        result = await self._session.execute(stmt)
-        return tuple(result.scalars().all())
+        return select_adjacent_ids(anchors, candidates)
 
     async def list_by_document(
         self, document_id: uuid.UUID, *, document_version: int | None = None
@@ -104,3 +77,115 @@ class RetrievalChunkRepository(ProjectScopedRepository[DocumentChunk]):
         result = await self._session.execute(stmt)
         rows = list(result.scalars().all())
         return {row.id: row for row in rows}
+
+    async def _indexed_chunk_refs(
+        self, chunk_ids: list[uuid.UUID], *, index_build_id: uuid.UUID
+    ) -> list[AdjacentChunkRef]:
+        stmt = (
+            select(
+                self.model.id,
+                self.model.document_id,
+                self.model.document_version,
+                self.model.chunk_index,
+                self.model.page_start,
+                self.model.page_end,
+                self.model.page_number,
+                self.model.chunk_metadata,
+            )
+            .join(
+                ChunkKeywordIndex,
+                (ChunkKeywordIndex.chunk_id == self.model.id)
+                & (ChunkKeywordIndex.project_id == self.model.project_id),
+            )
+            .where(
+                self.model.project_id == self._project_id,
+                self.model.id.in_(chunk_ids),
+                ChunkKeywordIndex.project_id == self._project_id,
+                ChunkKeywordIndex.index_build_id == index_build_id,
+            )
+        )
+        result = await self._session.execute(stmt)
+        return [_chunk_ref(row) for row in result.all()]
+
+    async def _indexed_chunk_refs_near_anchors(
+        self,
+        anchors: list[AdjacentChunkRef],
+        *,
+        index_build_id: uuid.UUID,
+        exclude_ids: list[uuid.UUID],
+    ) -> list[AdjacentChunkRef]:
+        if not anchors:
+            return []
+        document_versions = {(row.document_id, row.document_version) for row in anchors}
+        windows: list[Any] = []
+        page_col = func.coalesce(self.model.page_start, self.model.page_number)
+        page_end_col = func.coalesce(
+            self.model.page_end,
+            self.model.page_start,
+            self.model.page_number,
+        )
+        for anchor in anchors:
+            windows.append(
+                and_(
+                    self.model.document_id == anchor.document_id,
+                    self.model.document_version == anchor.document_version,
+                    self.model.chunk_index.between(
+                        anchor.chunk_index - ADJACENT_LIMIT,
+                        anchor.chunk_index + ADJACENT_LIMIT,
+                    ),
+                )
+            )
+            if page_provenance_is_meaningful(anchor):
+                page = page_value(anchor)
+                if page is not None:
+                    page_end = anchor.page_end if anchor.page_end is not None else page
+                    page_low, page_high = min(page, page_end), max(page, page_end)
+                    windows.append(
+                        and_(
+                            self.model.document_id == anchor.document_id,
+                            self.model.document_version == anchor.document_version,
+                            page_col <= page_high + 1,
+                            page_end_col >= page_low - 1,
+                        )
+                    )
+        stmt = (
+            select(
+                self.model.id,
+                self.model.document_id,
+                self.model.document_version,
+                self.model.chunk_index,
+                self.model.page_start,
+                self.model.page_end,
+                self.model.page_number,
+                self.model.chunk_metadata,
+            )
+            .join(
+                ChunkKeywordIndex,
+                (ChunkKeywordIndex.chunk_id == self.model.id)
+                & (ChunkKeywordIndex.project_id == self.model.project_id),
+            )
+            .where(
+                self.model.project_id == self._project_id,
+                tuple_(self.model.document_id, self.model.document_version).in_(document_versions),
+                or_(*windows),
+                self.model.id.not_in(exclude_ids),
+                ChunkKeywordIndex.project_id == self._project_id,
+                ChunkKeywordIndex.index_build_id == index_build_id,
+            )
+        )
+        result = await self._session.execute(stmt)
+        return [_chunk_ref(row) for row in result.all()]
+
+
+def _chunk_ref(row: Any) -> AdjacentChunkRef:
+    metadata = row.chunk_metadata if isinstance(row.chunk_metadata, dict) else {}
+    return AdjacentChunkRef(
+        id=row.id,
+        document_id=row.document_id,
+        document_version=row.document_version,
+        chunk_index=row.chunk_index,
+        page_start=row.page_start,
+        page_end=row.page_end,
+        page_number=row.page_number,
+        metadata=metadata,
+    )

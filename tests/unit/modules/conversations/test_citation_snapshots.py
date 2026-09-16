@@ -41,7 +41,11 @@ def test_build_citation_snapshots_includes_hash_and_excerpt() -> None:
             "source_role": "primary",
             "source_effective_from": date(2026, 1, 1).isoformat(),
             "source_relationships": [
-                {"relationship_type": "replaces", "target_revision_id": str(uuid.uuid4())}
+                {
+                    "relationship_type": "replaces",
+                    "target_revision_id": str(uuid.uuid4()),
+                    "direction": "incoming",
+                }
             ],
             "relationship_recall_provenance": [
                 {
@@ -76,6 +80,7 @@ def test_build_citation_snapshots_includes_hash_and_excerpt() -> None:
     assert snapshots[0]["config_snapshot_id"] == str(snapshot_id)
     assert snapshots[0]["configuration_hash"] == "a" * 64
     assert snapshots[0]["source_relationships"][0]["relationship_type"] == "replaces"
+    assert snapshots[0]["source_relationships"][0]["direction"] == "incoming"
     assert snapshots[0]["relationship_recall_provenance"][0]["relationship_type"] == ("modifies")
 
 

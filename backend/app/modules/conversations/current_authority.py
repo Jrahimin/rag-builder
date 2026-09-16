@@ -15,6 +15,16 @@ _PROVISION_HEADING = regex.compile(
     regex.IGNORECASE,
 )
 _ENFORCEABLE_OUTCOMES = {"expanded", "already_in_recall"}
+_LIMITED_OUTCOMES = {
+    "ungoverned_or_incomplete_metadata",
+    "not_in_active_index",
+    "source_cap_exceeded",
+    "candidate_cap_exceeded",
+    "cycle",
+    "missing_provision_scope",
+    "unscoped",
+}
+_RESOLVED_OUTCOMES = _ENFORCEABLE_OUTCOMES | {"duplicate"}
 
 
 def remove_superseded_provisions(
@@ -86,6 +96,59 @@ def remove_superseded_provisions(
             )
         )
     return annotate_authority_limitations(output, expansion_records)
+
+
+def cited_authority_summary(
+    chunks: list[ContextChunk],
+    expansion_records: list[dict[str, object]] | None = None,
+) -> dict[str, object]:
+    """Per-citation authority, kept distinct from retrieval-wide expansion health."""
+    records = expansion_records if expansion_records is not None else _records_from_chunks(chunks)
+    cited_revisions = {
+        str(chunk.metadata.get("source_revision_id") or "")
+        for chunk in chunks
+        if chunk.metadata.get("source_revision_id")
+    }
+    cited_records = [
+        record
+        for record in records
+        if isinstance(record, dict)
+        and (
+            str(record.get("base_revision_id") or "") in cited_revisions
+            or str(record.get("modifier_revision_id") or "") in cited_revisions
+        )
+    ]
+    unresolved = sum(
+        1 for chunk in chunks if chunk.metadata.get("authority_status") == "unresolved"
+    )
+    not_assessed = sum(
+        1 for chunk in chunks if chunk.metadata.get("authority_status") in {None, "not_assessed"}
+    )
+    if unresolved:
+        status = "unresolved"
+    elif cited_records:
+        outcomes = {str(record.get("outcome") or "") for record in cited_records}
+        missing_scope = any(
+            str(record.get("outcome") or "") in _RESOLVED_OUTCOMES
+            and not record.get("target_provisions")
+            for record in cited_records
+        )
+        status = (
+            "limited"
+            if missing_scope or bool(outcomes & _LIMITED_OUTCOMES)
+            else "resolved"
+            if outcomes and outcomes <= _RESOLVED_OUTCOMES
+            else "not_assessed"
+        )
+    else:
+        status = "not_assessed"
+    return {
+        "status": status,
+        "cited_revision_count": len(cited_revisions - {""}),
+        "cited_record_count": len(cited_records),
+        "unresolved_citation_count": unresolved,
+        "not_assessed_citation_count": not_assessed,
+    }
 
 
 def annotate_authority_limitations(

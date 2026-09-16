@@ -135,6 +135,67 @@ describe("message grounding explanation", () => {
     expect(screen.queryByText("Answer withheld")).not.toBeInTheDocument();
   });
 
+  test("keeps supported factual claims distinct from coverage statements and missing topics", () => {
+    inspect({
+      ...message,
+      grounded: true,
+      claims: [
+        {
+          claim_id: "claim-supported",
+          text: "Private companies must hold an AGM.",
+          grounded: true,
+          verification: "supported",
+          authority_status: "not_assessed",
+          claim_kind: "source_assertion",
+          evidence: [],
+        },
+        {
+          claim_id: "claim-scope",
+          text: "Annual return filing duty",
+          grounded: true,
+          verification: "supported",
+          authority_status: "not_assessed",
+          claim_kind: "coverage_scope",
+          evidence: [],
+        },
+        {
+          claim_id: "claim-invalid-scope",
+          text: "The corpus contains no annual-return provision.",
+          grounded: false,
+          verification: "unsupported",
+          authority_status: "not_assessed",
+          claim_kind: "coverage_scope",
+          verification_reason: "whole_corpus_absence_unproven",
+          evidence: [],
+        },
+      ],
+      metadata: {
+        knowledge_repair: {
+          partial_answer: { scope: "AGM duty" },
+          coverage: { missing: ["Annual return filing duty"] },
+        },
+        current_authority: {
+          authority_scope_status: "unresolved_relationships",
+          cited: { status: "not_assessed" },
+        },
+      },
+    });
+    expect(screen.getByRole("heading", { name: "Partial answer" })).toBeInTheDocument();
+    expect(screen.getByText("1 of 1 factual claims supported")).toBeInTheDocument();
+    expect(screen.getByText("Annual return filing duty")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        /This claims the whole corpus lacks a rule; a partial search does not prove that/,
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        /Global expansion health is retrieval-wide and is not a verdict about every/,
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/"status": "not_assessed"/)).toBeInTheDocument();
+  });
+
   test("separates expected-word failure from successful grounding", () => {
     inspect({ ...message, grounded: true, claims: [] }, "absent phrase");
     expect(screen.getByRole("heading", { name: "Grounded answer" })).toBeInTheDocument();

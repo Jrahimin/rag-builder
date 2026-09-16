@@ -166,7 +166,7 @@ class SearchServiceRetrievalAdapter:
                 as_of=as_of,
             ),
             adjacent_to=adjacent_to,
-            **({"cited_chunk_ids": cited_chunk_ids} if cited_chunk_ids is not None else {}),
+            cited_chunk_ids=cited_chunk_ids,
         )
         return ContextRetrievalResult(
             chunks=[ContextChunk.from_retrieval_result(result) for result in response.results],

@@ -1644,6 +1644,11 @@ export interface components {
         AnswerClaim: {
             arithmetic_verification?: components["schemas"]["ClaimVerification"] | null;
             /**
+             * Assertion Text
+             * @description Contextualized text used for verification when it differs from display text.
+             */
+            assertion_text?: string | null;
+            /**
              * Authority Status
              * @default not_assessed
              */
@@ -1663,6 +1668,10 @@ export interface components {
             /** Text */
             text: string;
             verification: components["schemas"]["ClaimVerification"];
+            /** Verification Method */
+            verification_method?: string | null;
+            /** Verification Reason */
+            verification_reason?: string | null;
         };
         /**
          * ApiKeyCreate

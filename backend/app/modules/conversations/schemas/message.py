@@ -122,6 +122,27 @@ class ClaimVerification(StrEnum):
     UNSUPPORTED = "unsupported"
 
 
+class ClaimVerificationReason(StrEnum):
+    """Stable reason codes for claim verification outcomes."""
+
+    MISSING_CITATION = "missing_citation"
+    DURATION_MISMATCH = "duration_mismatch"
+    DURATION_NOT_IN_EVIDENCE = "duration_not_in_evidence"
+    CONTESTED_GENERALIZATION = "contested_generalization"
+    UNPARSED_CALCULATION = "unparsed_calculation"
+    DERIVED_QUANTITY = "derived_quantity"
+    UNVERIFIED_AMOUNT = "unverified_amount"
+    EMBEDDING_UNAVAILABLE = "embedding_unavailable"
+    UNRELATED_OR_INSUFFICIENT_EVIDENCE = "unrelated_or_insufficient_evidence"
+    ARITHMETIC_MISMATCH = "arithmetic_mismatch"
+    UNRESOLVED_AUTHORITY = "unresolved_authority"
+    MATCHES_COVERAGE_VERDICT = "matches_coverage_verdict"
+    WHOLE_CORPUS_ABSENCE_UNPROVEN = "whole_corpus_absence_unproven"
+    COVERAGE_VERDICT_UNAVAILABLE = "coverage_verdict_unavailable"
+    COVERAGE_TOPIC_NOT_MATCHED = "coverage_topic_not_matched"
+    COVERAGE_STATEMENT_NOT_IN_VERDICT = "coverage_statement_not_in_verdict"
+
+
 class ClaimEvidence(BaseModel):
     """One source location supporting an answer claim."""
 
@@ -186,6 +207,9 @@ class AnswerClaim(BaseModel):
     authority_status: str = "not_assessed"
     claim_kind: str = "source_assertion"
     arithmetic_verification: ClaimVerification | None = None
+    verification_method: str | None = None
+    verification_reason: str | None = None
+    assertion_text: str | None = None
 
     claim_id: str
     text: str

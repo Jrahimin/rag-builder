@@ -1,4 +1,5 @@
 import { FormEvent, useState } from "react";
+import { Eye, EyeOff } from "lucide-react";
 import { Navigate, useLocation, useNavigate } from "react-router-dom";
 import { AdminAuthError } from "./adminAuthApi";
 import { useAdminAuth } from "./useAdminAuth";
@@ -9,6 +10,7 @@ export function LoginPage() {
   const location = useLocation();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const destination = (location.state as { from?: string } | null)?.from ?? "/";
@@ -59,13 +61,28 @@ export function LoginPage() {
         </label>
         <label>
           Password
-          <input
-            autoComplete="current-password"
-            type="password"
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-            disabled={submitting}
-          />
+          <div className="login-password-field">
+            <input
+              autoComplete="current-password"
+              type={showPassword ? "text" : "password"}
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              disabled={submitting}
+            />
+            <button
+              type="button"
+              className="login-password-toggle"
+              aria-label={showPassword ? "Hide password" : "Show password"}
+              onClick={() => setShowPassword((visible) => !visible)}
+              disabled={submitting}
+            >
+              {showPassword ? (
+                <EyeOff size={18} aria-hidden="true" />
+              ) : (
+                <Eye size={18} aria-hidden="true" />
+              )}
+            </button>
+          </div>
         </label>
         {error && (
           <p className="login-error" role="alert">

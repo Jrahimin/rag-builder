@@ -34,16 +34,21 @@ router = APIRouter()
 logger = structlog.get_logger(__name__)
 
 
+async def _next_sse_event(events: AsyncIterator[str]) -> str:
+    """Wrap ``anext`` so ``asyncio.create_task`` receives a coroutine, not an awaitable."""
+    return await anext(events)
+
+
 async def _with_sse_heartbeats(
     events: AsyncIterator[str], *, interval: float = 15.0
 ) -> AsyncIterator[str]:
     """Keep proxies reading while the next event waits on retrieval or a provider."""
-    pending = None
+    pending: asyncio.Task[str] | None = None
     try:
         yield ": connected\n\n"
         while True:
             if pending is None:
-                pending = asyncio.create_task(anext(events))
+                pending = asyncio.create_task(_next_sse_event(events))
             done, _ = await asyncio.wait({pending}, timeout=interval)
             if not done:
                 yield ": keep-alive\n\n"

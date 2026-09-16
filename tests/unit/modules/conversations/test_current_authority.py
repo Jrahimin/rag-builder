@@ -8,6 +8,7 @@ import pytest
 
 from app.modules.conversations.current_authority import (
     annotate_authority_limitations,
+    cited_authority_summary,
     remove_superseded_provisions,
 )
 from app.modules.conversations.ports import ContextChunk
@@ -256,3 +257,114 @@ def test_legacy_orphan_table_is_flagged_without_erasing_source_text() -> None:
     assert selected[0].metadata["authority_limitations"] == [
         {"reason": "table_applicability_context_missing"}
     ]
+
+
+def test_unrelated_tax_expansion_does_not_demote_unassessed_company_citations() -> None:
+    company = _chunk(revision=uuid.uuid4(), content="Section 36 — Annual list.")
+    tax_base = uuid.uuid4()
+    records = [
+        {
+            "base_revision_id": str(tax_base),
+            "modifier_revision_id": str(uuid.uuid4()),
+            "outcome": "ungoverned_or_incomplete_metadata",
+            "target_provisions": [],
+        }
+    ]
+    selected = annotate_authority_limitations([company], records)
+    assert selected[0].metadata.get("authority_status") != "unresolved"
+    summary = cited_authority_summary(selected, records)
+    assert summary["status"] == "not_assessed"
+    assert summary["cited_record_count"] == 0
+    assert summary["unresolved_citation_count"] == 0
+
+
+def test_incoming_modifier_on_the_cited_base_is_assessed() -> None:
+    base = uuid.uuid4()
+    modifier = uuid.uuid4()
+    records = [
+        {
+            "base_revision_id": str(base),
+            "modifier_revision_id": str(modifier),
+            "outcome": "ungoverned_or_incomplete_metadata",
+            "target_provisions": ["Section 36"],
+        }
+    ]
+    selected = annotate_authority_limitations(
+        [_chunk(revision=base, content="Section 36 — Annual list.")],
+        records,
+    )
+    assert selected[0].metadata["authority_status"] == "unresolved"
+    summary = cited_authority_summary(selected, records)
+    assert summary["status"] == "unresolved"
+    assert summary["cited_record_count"] == 1
+
+
+def test_missing_operative_scope_stays_visible_and_is_not_resolved() -> None:
+    base = uuid.uuid4()
+    selected = annotate_authority_limitations(
+        [_chunk(revision=base, content="Section 78 — Rebate.")],
+        [
+            {
+                "base_revision_id": str(base),
+                "modifier_revision_id": str(uuid.uuid4()),
+                "outcome": "already_in_recall",
+                "target_provisions": [],
+            }
+        ],
+    )
+    assert selected[0].metadata["authority_status"] == "unresolved"
+    assert selected[0].metadata["authority_limitations"][0]["reason"] == "missing_provision_scope"
+
+
+def test_disjoint_incomplete_record_on_cited_source_is_limited_not_resolved() -> None:
+    base = uuid.uuid4()
+    records = [
+        {
+            "base_revision_id": str(base),
+            "modifier_revision_id": str(uuid.uuid4()),
+            "outcome": "ungoverned_or_incomplete_metadata",
+            "target_provisions": ["Section 99"],
+        }
+    ]
+    selected = annotate_authority_limitations(
+        [_chunk(revision=base, content="Section 36 — Annual list.")],
+        records,
+    )
+    assert selected[0].metadata.get("authority_status") != "unresolved"
+    summary = cited_authority_summary(selected, records)
+    assert summary["status"] == "limited"
+    assert summary["cited_record_count"] == 1
+
+
+def test_disjoint_unavailable_modifier_is_limited_not_resolved() -> None:
+    base = uuid.uuid4()
+    records = [
+        {
+            "base_revision_id": str(base),
+            "modifier_revision_id": str(uuid.uuid4()),
+            "outcome": "not_in_active_index",
+            "target_provisions": ["Section 99"],
+        }
+    ]
+    selected = annotate_authority_limitations(
+        [_chunk(revision=base, content="Section 36 — Annual list.")],
+        records,
+    )
+    assert selected[0].metadata.get("authority_status") != "unresolved"
+    assert cited_authority_summary(selected, records)["status"] == "limited"
+
+
+def test_duplicate_modifier_without_scope_is_limited_not_resolved() -> None:
+    base = uuid.uuid4()
+    records = [
+        {
+            "base_revision_id": str(base),
+            "modifier_revision_id": str(uuid.uuid4()),
+            "outcome": "duplicate",
+            "target_provisions": [],
+        }
+    ]
+    summary = cited_authority_summary(
+        [_chunk(revision=base, content="Section 36 — Annual list.")], records
+    )
+    assert summary["status"] == "limited"

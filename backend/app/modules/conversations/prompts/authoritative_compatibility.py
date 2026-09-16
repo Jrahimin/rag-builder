@@ -177,6 +177,9 @@ Search ONLY the missing requirements. The first query must be a compact rule con
 in the source language, roughly 3 to 8 words. Omit years, document titles, location names
 and generic words such as applicable/current/provision from that concept query: the
 caller retains the original snapshot and scope, and the reviewer still checks the year.
+Use indexed headings and phrases observed in discovery excerpts as aliases.
+Never invent a section number from model memory. Search each missing requirement
+separately when the budget allows; do not fuse distinct duties or topics into one query.
 If useful, make the second query a different discovery route using a rule name, quoted
 phrase or provision reference actually present in a discovery excerpt. Search the
 rule concept (such as an income exclusion), not the arithmetic expression in an example:

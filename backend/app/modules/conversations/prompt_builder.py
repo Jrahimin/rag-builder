@@ -185,12 +185,11 @@ class PromptBuilder:
             if effective_from or effective_to:
                 header = f"{header} effective={effective_from or '..'}..{effective_to or '..'}"
             relationships = chunk.metadata.get("source_relationships") or []
-            if relationships:
-                relation_text = ",".join(
-                    f"{item.get('relationship_type')}:{item.get('target_revision_id')}"
-                    for item in relationships
-                )
-                header = f"{header} relationships={relation_text}"
+            labels = [
+                label for item in relationships if (label := _relationship_label(item)) is not None
+            ]
+            if labels:
+                header = f"{header} relationships={','.join(labels)}"
             # Source structure is evidence, never a trusted instruction. JSON keeps
             # embedded newlines from impersonating another evidence header.
             for key in (
@@ -210,3 +209,18 @@ class PromptBuilder:
                     header += f" {key}={encoded}"
             lines.append(f"{header}\n{chunk.content}")
         return "\n\n".join(lines)
+
+
+def _relationship_label(item: object) -> str | None:
+    """Render edge direction so incoming amendments are not shown as self-modifies."""
+    if not isinstance(item, dict):
+        return None
+    rel = str(item.get("relationship_type") or "related")
+    direction = str(item.get("direction") or "outgoing")
+    if direction == "incoming":
+        peer = item.get("source_revision_id") or item.get("target_revision_id")
+        if rel == "modifies":
+            return f"modified_by:{peer}"
+        return f"incoming_{rel}:{peer}"
+    peer = item.get("target_revision_id")
+    return f"{rel}:{peer}"

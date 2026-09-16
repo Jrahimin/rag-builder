@@ -644,6 +644,7 @@ async def repair_knowledge_evidence(
                 return result
             diagnostics["queries"] = queries
             diagnostics["branches"] = []
+            diagnostics["focused_requirement_ids"] = []
             groups: list[list[ContextChunk]] = []
             raw_groups: list[list[ContextChunk]] = []
             decisions: list[EvidenceDecision] = [initial_decision] if initial_decision else []
@@ -651,6 +652,8 @@ async def repair_knowledge_evidence(
             pending_queries = list(queries)
             adjacent_requests: dict[str, list[uuid.UUID]] = {}
             reviewed_evidence: set[str] = set()
+            last_verdict: CoverageVerdict | None = None
+            last_partial_scope_validated = False
             for round_index in range(1 + MAX_REPAIR_FOLLOWUPS):
                 batch_retrieve = getattr(retrieval, "retrieve_batch", None)
                 requests: list[dict[str, Any]] = [
@@ -818,11 +821,20 @@ async def repair_knowledge_evidence(
                     )
                     if review_key in reviewed_evidence:
                         # A new wording/rank does not supply new legal proof.
-                        # The prior review established neither completeness nor
-                        # a valid partial scope, so keep that failure closed.
                         diagnostics["status"] = "coverage_incomplete"
                         diagnostics["stop_reason"] = "unchanged_review_evidence"
                         diagnostics["coverage_reviews_skipped"] = 1
+                        if last_verdict is not None:
+                            diagnostics["requirement_progress"] = _requirement_progress(
+                                last_verdict,
+                                focused_ids=diagnostics.get("focused_requirement_ids") or [],
+                                adjacent_queries=diagnostics.get("adjacent_queries") or [],
+                                stop_reason="unchanged_review_evidence",
+                            )
+                        if last_partial_scope_validated and last_verdict is not None:
+                            verdict = last_verdict
+                            _store_partial_answer(diagnostics, last_verdict)
+                            break
                         return result
                     reviewed_evidence.add(review_key)
                 if release_read_transaction is not None:
@@ -955,7 +967,7 @@ async def repair_knowledge_evidence(
                 # Preserve the established successful review/generation payloads.
                 # Only an otherwise incomplete verdict with *every* source check
                 # proven can ask whether the remaining gaps are personal inputs.
-                candidate = verdict.model_copy(
+                closed_verdict = verdict.model_copy(
                     update={"complete": True, "missing": [], "gap_kinds": []}
                 )
                 if (
@@ -963,7 +975,7 @@ async def repair_knowledge_evidence(
                     and not verdict.complete
                     and verdict.missing
                     and ranges_valid
-                    and candidate.validates(groups, budgeted, requirement_ids)
+                    and closed_verdict.validates(groups, budgeted, requirement_ids)
                 ):
                     previous_usage = result.usage
                     result.usage = ChatUsage(None, None)
@@ -1015,11 +1027,19 @@ async def repair_knowledge_evidence(
                         }
                     )
                     if only_inputs:
-                        verdict = candidate.model_copy(
+                        verdict = closed_verdict.model_copy(
                             update={"missing_inputs": [*verdict.missing_inputs, *verdict.missing]}
                         )
                 # Keep quotes internal: candidate trace opt-out must not leak source
                 # text through the verifier's diagnostic payload.
+                full_coverage_validated = ranges_valid and verdict.validates(
+                    groups, budgeted, requirement_ids
+                )
+                partial_scope_validated = ranges_valid and verdict.partial_validates(
+                    budgeted, requirement_ids
+                )
+                last_verdict = verdict
+                last_partial_scope_validated = partial_scope_validated
                 diagnostics["coverage"] = {
                     "complete": verdict.complete,
                     "missing": verdict.missing,
@@ -1035,9 +1055,10 @@ async def repair_knowledge_evidence(
                         }
                         for check in verdict.checks
                     ],
-                    "quotes_validated": ranges_valid
-                    and verdict.validates(groups, budgeted, requirement_ids),
+                    "quotes_validated": full_coverage_validated,
                     "source_ranges_validated": ranges_valid,
+                    "full_coverage_validated": full_coverage_validated,
+                    "partial_scope_validated": partial_scope_validated,
                 }
                 for check, payload in zip(
                     verdict.checks, diagnostics["coverage"]["checks"], strict=True
@@ -1045,7 +1066,13 @@ async def repair_knowledge_evidence(
                     payload.update(
                         requirement_id=check.requirement_id, description=check.description
                     )
-                if ranges_valid and verdict.validates(groups, budgeted, requirement_ids):
+                diagnostics["requirement_progress"] = _requirement_progress(
+                    verdict,
+                    focused_ids=diagnostics.get("focused_requirement_ids") or [],
+                    adjacent_queries=diagnostics.get("adjacent_queries") or [],
+                    stop_reason=diagnostics.get("stop_reason"),
+                )
+                if full_coverage_validated:
                     break
                 # A rule can be supported while its applicability still needs
                 # the adjoining heading. Honor the explicit continuation flag
@@ -1068,27 +1095,20 @@ async def repair_knowledge_evidence(
                         for check in verdict.checks
                     )
                 )
-                if (
+                missing_core_ids = _unsupported_requirement_keys(verdict, requirement_ids)
+                focused_already = set(diagnostics.get("focused_requirement_ids") or [])
+                missing_rule_retry = (
                     ranges_valid
-                    and verdict.partial_validates(budgeted, requirement_ids)
+                    and bool(verdict.missing)
+                    and bool(missing_core_ids - focused_already)
+                    and round_index < MAX_REPAIR_FOLLOWUPS
+                )
+                if (
+                    partial_scope_validated
                     and not recoverable_continuation
+                    and not missing_rule_retry
                 ):
-                    # The reviewer proved a useful independent scope. Preserve the
-                    # original incomplete verdict; do not claim full recovery.
-                    assert verdict.partial_answer is not None
-                    diagnostics["partial_answer"] = verdict.partial_answer.model_dump()
-                    # Model-authored scope prose can mention an unchecked rule.
-                    # Generation receives only the identities/descriptions of the
-                    # checks whose source proof actually passed.
-                    diagnostics["partial_answer"]["scope"] = [
-                        {"requirement_id": check.requirement_id, "description": check.description}
-                        for check in verdict.checks
-                        if check.requirement_id in verdict.partial_answer.requirement_ids
-                    ]
-                    diagnostics["partial_answer"]["pending"] = verdict.missing
-                    diagnostics["partial_answer"]["gap_kinds"] = diagnostics["coverage"][
-                        "gap_kinds"
-                    ]
+                    _store_partial_answer(diagnostics, verdict)
                     break
                 diagnostics["status"] = "coverage_incomplete"
                 if round_index == MAX_REPAIR_FOLLOWUPS or verdict.complete or not verdict.missing:
@@ -1165,6 +1185,15 @@ async def repair_knowledge_evidence(
                     queries.extend(pending_queries)
                     diagnostics["adjacent_queries"] = pending_queries
                     continue
+                untried_missing = missing_core_ids - focused_already
+                if untried_missing:
+                    diagnostics["focused_requirement_ids"] = [
+                        *(diagnostics.get("focused_requirement_ids") or []),
+                        *sorted(untried_missing),
+                    ]
+                elif partial_scope_validated:
+                    _store_partial_answer(diagnostics, verdict)
+                    break
                 if release_read_transaction is not None:
                     await release_read_transaction()
                 previous_usage = result.usage
@@ -1191,6 +1220,7 @@ async def repair_knowledge_evidence(
                                     "discovery_excerpts": _discovery_excerpts(
                                         verdict, raw_groups, budgeted
                                     ),
+                                    "indexed_headings": _indexed_headings(raw_groups, budgeted),
                                     "source_hints": list(
                                         dict.fromkeys(c.filename for c in budgeted)
                                     ),
@@ -1205,6 +1235,9 @@ async def repair_knowledge_evidence(
                 )
                 result.usage = _add_usage(previous_usage, followup.usage)
                 if followup.finish_reason not in {None, "stop", "completed", "end_turn"}:
+                    if partial_scope_validated:
+                        _store_partial_answer(diagnostics, verdict)
+                        break
                     return result
                 followup_plan = _SearchPlan.model_validate_json(followup.content)
                 seen_queries = {" ".join(q.split()).casefold() for q in queries}
@@ -1220,6 +1253,13 @@ async def repair_knowledge_evidence(
                     pending_queries.append(query.strip())
                 pending_queries = pending_queries[:2]
                 if not pending_queries or any(not q or len(q) > 500 for q in pending_queries):
+                    diagnostics["requirement_progress"] = {
+                        **(diagnostics.get("requirement_progress") or {}),
+                        "stop_reason": "no_new_focused_query",
+                    }
+                    if partial_scope_validated:
+                        _store_partial_answer(diagnostics, verdict)
+                        break
                     return result
                 queries.extend(pending_queries)
                 diagnostics.setdefault("focused_queries", []).extend(pending_queries)
@@ -1300,6 +1340,8 @@ def _coverage_diagnostics(verdict: CoverageVerdict, validated: bool) -> dict[str
         "missing_inputs": verdict.missing_inputs,
         "quotes_validated": validated,
         "source_ranges_validated": validated,
+        "full_coverage_validated": validated,
+        "partial_scope_validated": False,
         "checks": [
             {
                 "requirement_id": c.requirement_id,
@@ -1311,3 +1353,77 @@ def _coverage_diagnostics(verdict: CoverageVerdict, validated: bool) -> dict[str
             for c in verdict.checks
         ],
     }
+
+
+def _unsupported_requirement_keys(verdict: CoverageVerdict, requirement_ids: set[str]) -> set[str]:
+    """Stable IDs for required rules that still have no cited evidence."""
+    keys: set[str] = set()
+    for check in verdict.checks:
+        if check.supported or check.evidence:
+            continue
+        if requirement_ids:
+            if check.requirement_id in requirement_ids:
+                keys.add(check.requirement_id)
+            continue
+        keys.add(check.requirement_id or f"query-{check.query_index}")
+    return keys
+
+
+def _store_partial_answer(diagnostics: dict[str, Any], verdict: CoverageVerdict) -> None:
+    if verdict.partial_answer is None:
+        return
+    diagnostics["partial_answer"] = verdict.partial_answer.model_dump()
+    diagnostics["partial_answer"]["scope"] = [
+        {"requirement_id": check.requirement_id, "description": check.description}
+        for check in verdict.checks
+        if check.requirement_id in verdict.partial_answer.requirement_ids
+    ]
+    diagnostics["partial_answer"]["pending"] = verdict.missing
+    diagnostics["partial_answer"]["gap_kinds"] = diagnostics["coverage"]["gap_kinds"]
+
+
+def _requirement_progress(
+    verdict: CoverageVerdict,
+    *,
+    focused_ids: list[str],
+    adjacent_queries: list[str],
+    stop_reason: str | None = None,
+) -> dict[str, Any]:
+    return {
+        "focused_requirement_ids": list(focused_ids),
+        "adjacent_queries": list(adjacent_queries),
+        "stop_reason": stop_reason,
+        "checks": [
+            {
+                "requirement_id": check.requirement_id or f"query-{check.query_index}",
+                "description": check.description,
+                "supported": check.supported,
+                "needs_adjacent_context": check.needs_adjacent_context,
+                "discovered_ids": [item.chunk_id for item in check.evidence],
+                "route": (
+                    "adjacent"
+                    if check.needs_adjacent_context and check.evidence
+                    else "focused"
+                    if (check.requirement_id or f"query-{check.query_index}") in set(focused_ids)
+                    else "search"
+                ),
+            }
+            for check in verdict.checks
+        ],
+    }
+
+
+def _indexed_headings(groups: list[list[ContextChunk]], context: list[ContextChunk]) -> list[str]:
+    headings: list[str] = []
+    seen: set[str] = set()
+    for chunk in [*context, *[item for group in groups for item in group]]:
+        path = chunk.metadata.get("heading_path")
+        title = chunk.metadata.get("section_title")
+        label = " / ".join(str(part) for part in path) if isinstance(path, list) and path else title
+        if not isinstance(label, str) or not label.strip() or label in seen:
+            continue
+        seen.add(label)
+        headings.append(label.strip())
+        if len(headings) == 12:
+            break
+    return headings

@@ -339,6 +339,7 @@ async def test_current_historical_replacement_modifier_hybrid_and_legacy_behavio
     assert current_hit["metadata"]["source_revision_id"] == new_revision["id"]
     assert current_hit["metadata"]["source_title"] == "Current policy"
     assert current_hit["metadata"]["source_relationships"][0]["relationship_type"] == "replaces"
+    assert current_hit["metadata"]["source_relationships"][0]["direction"] == "outgoing"
     timeline_hit = next(
         item for item in data["results"] if item["document_id"] == timeline_document
     )

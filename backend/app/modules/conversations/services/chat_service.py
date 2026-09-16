@@ -34,6 +34,7 @@ from app.modules.conversations.context_builder import (
     historical_scope_requested,
     reviewed_work_count,
 )
+from app.modules.conversations.current_authority import cited_authority_summary
 from app.modules.conversations.grounded_context import assess_and_select_knowledge
 from app.modules.conversations.grounding_service import (
     EvidenceDecision,
@@ -1118,7 +1119,10 @@ class ChatService:
             )
         else:
             grounding = await prepared.grounding.map_claims(
-                content, prepared.selected, user_input=user_content_for_title
+                content,
+                prepared.selected,
+                user_input=user_content_for_title,
+                coverage=prepared.retrieval_diagnostics.get("knowledge_repair"),
             )
             if reason_value is not None:
                 grounding = type(grounding)(claims=[], grounded=False, citation_coverage=1.0)
@@ -1847,6 +1851,7 @@ class ChatService:
             },
             "current_authority": {
                 "status": retrieval_diagnostics.get("modifies_expansion_status"),
+                "scope": "retrieval_expansion",
                 "depth": retrieval_diagnostics.get("modifies_expansion_depth"),
                 "records": retrieval_diagnostics.get("modifies_expansion_records") or [],
                 "exclusion_reasons": retrieval_diagnostics.get(
@@ -1873,6 +1878,10 @@ class ChatService:
                 ),
                 "post_rerank_unfilled_slots": retrieval_diagnostics.get(
                     "post_rerank_unfilled_slots", 0
+                ),
+                "cited": cited_authority_summary(
+                    selected_chunks,
+                    retrieval_diagnostics.get("modifies_expansion_records"),
                 ),
             },
             "retrieval_reference_date": retrieval_diagnostics.get("reference_date"),

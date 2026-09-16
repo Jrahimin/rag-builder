@@ -145,6 +145,44 @@ def test_build_includes_system_context_and_user_question() -> None:
     assert messages[-1].content == "What is the policy?"
 
 
+def test_incoming_modifier_is_labeled_modified_by_not_self_modifies() -> None:
+    base = uuid.uuid4()
+    modifier = uuid.uuid4()
+    template = require_prompt_template("current")
+    chunk = ContextChunk(
+        chunk_id=uuid.uuid4(),
+        document_id=uuid.uuid4(),
+        chunk_index=0,
+        content="Section 36 annual list.",
+        score=0.9,
+        filename="act.md",
+        chunk_hash="act",
+        metadata={
+            "source_revision_id": str(base),
+            "source_relationships": [
+                {
+                    "relationship_type": "modifies",
+                    "direction": "incoming",
+                    "source_revision_id": str(modifier),
+                    "target_revision_id": str(base),
+                }
+            ],
+        },
+    )
+    system = (
+        PromptBuilder()
+        .build(
+            template=template,
+            context_chunks=[chunk],
+            history=[],
+            user_question="What is section 36?",
+        )[0]
+        .content
+    )
+    assert f"modified_by:{modifier}" in system
+    assert f"modifies:{base}" not in system
+
+
 def test_web_evidence_is_closed_before_final_platform_instructions() -> None:
     chunk = ContextChunk(
         chunk_id=uuid.uuid4(),

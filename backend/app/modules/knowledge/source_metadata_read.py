@@ -446,7 +446,7 @@ def _canonical_source_scope(
         .where(ranked_activations.c.position == 1)
         .cte("active_source_state")
     )
-    relationships = (
+    outgoing_relationships = (
         select(
             SourceRevisionRelationship.source_revision_id,
             func.jsonb_agg(
@@ -455,17 +455,56 @@ def _canonical_source_scope(
                     SourceRevisionRelationship.id,
                     "relationship_type",
                     SourceRevisionRelationship.relationship_type,
+                    "source_revision_id",
+                    SourceRevisionRelationship.source_revision_id,
                     "target_revision_id",
                     SourceRevisionRelationship.target_revision_id,
                     "target_provisions",
                     SourceRevisionRelationship.target_provisions,
+                    "direction",
+                    literal("outgoing"),
                 )
             ).label("relationships"),
         )
         .where(SourceRevisionRelationship.project_id == project_id)
         .group_by(SourceRevisionRelationship.source_revision_id)
-        .cte("source_relationship_aggregate")
+        .cte("outgoing_source_relationships")
     )
+    target_revision = aliased(SourceMetadataRevision)
+    incoming_relationships = (
+        select(
+            target_revision.source_group_id,
+            func.jsonb_agg(
+                func.jsonb_build_object(
+                    "id",
+                    SourceRevisionRelationship.id,
+                    "relationship_type",
+                    SourceRevisionRelationship.relationship_type,
+                    "source_revision_id",
+                    SourceRevisionRelationship.source_revision_id,
+                    "target_revision_id",
+                    SourceRevisionRelationship.target_revision_id,
+                    "target_provisions",
+                    SourceRevisionRelationship.target_provisions,
+                    "direction",
+                    literal("incoming"),
+                )
+            ).label("relationships"),
+        )
+        .join(
+            target_revision,
+            and_(
+                target_revision.id == SourceRevisionRelationship.target_revision_id,
+                target_revision.project_id == project_id,
+            ),
+        )
+        .where(SourceRevisionRelationship.project_id == project_id)
+        .group_by(target_revision.source_group_id)
+        .cte("incoming_source_relationships")
+    )
+    relationships = func.coalesce(
+        outgoing_relationships.c.relationships, func.jsonb_build_array()
+    ).op("||")(func.coalesce(incoming_relationships.c.relationships, func.jsonb_build_array()))
 
     interval_applies = and_(
         or_(state.c.effective_from.is_(None), state.c.effective_from <= reference_date),
@@ -588,7 +627,7 @@ def _canonical_source_scope(
             state.c.effective_to.label("source_effective_to"),
             state.c.lifecycle_status.label("source_lifecycle_status"),
             state.c.source_role.label("source_role"),
-            relationships.c.relationships.label("source_relationships"),
+            relationships.label("source_relationships"),
             applicable.label("source_policy_applicable"),
             exclusion_reason.label("source_policy_exclusion_reason"),
         )
@@ -598,8 +637,12 @@ def _canonical_source_scope(
             state.c.document_id == Document.id,
         )
         .outerjoin(
-            relationships,
-            relationships.c.source_revision_id == state.c.source_revision_id,
+            outgoing_relationships,
+            outgoing_relationships.c.source_revision_id == state.c.source_revision_id,
+        )
+        .outerjoin(
+            incoming_relationships,
+            incoming_relationships.c.source_group_id == state.c.source_group_id,
         )
         .where(Document.project_id == project_id)
         .subquery("canonical_source_scope")

@@ -1,6 +1,7 @@
 """Neighbour discovery must stay in the exact Project/build/processing version."""
 
 import uuid
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -11,24 +12,52 @@ from app.modules.retrieval.repositories.retrieval_chunk_repository import Retrie
 pytestmark = pytest.mark.unit
 
 
+def _row(**values):
+    return SimpleNamespace(**values)
+
+
 async def test_adjacent_sql_preserves_scope_and_bounds_page_discovery():
     session = AsyncMock()
-    session.execute.return_value = MagicMock()
-    session.execute.return_value.scalars.return_value.all.return_value = []
     project, build = uuid.uuid4(), uuid.uuid4()
+    document = uuid.uuid4()
     anchors = [uuid.uuid4() for _ in range(6)]
+    anchor_row = _row(
+        id=anchors[0],
+        document_id=document,
+        document_version=3,
+        chunk_index=49,
+        page_start=1,
+        page_end=1,
+        page_number=1,
+        chunk_metadata={"strategy_used": "markdown"},
+    )
+    first = MagicMock()
+    first.all.return_value = [anchor_row]
+    second = MagicMock()
+    second.all.return_value = []
+    session.execute.side_effect = [first, second]
     await RetrievalChunkRepository(session, project).adjacent_ids(anchors, index_build_id=build)
-    stmt = session.execute.call_args.args[0]
-    sql = str(stmt.compile(dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}))
-    assert str(project) in sql
-    assert sql.count(str(build)) == 2  # both anchor and neighbour indexed in this build
-    assert "document_version = document_chunks.document_version" in sql
-    assert "coalesce(document_chunks.page_start, document_chunks.page_number)" in sql
-    assert "chunk_index BETWEEN" in sql  # fallback for unpaged text
-    assert "NOT IN" in sql  # repeated anchors cannot crowd out adjacent text
-    assert all(str(anchor) in sql for anchor in anchors[:4])
-    assert all(str(anchor) not in sql for anchor in anchors[4:])
-    assert "LIMIT 48" in sql
+    anchor_sql = str(
+        session.execute.call_args_list[0]
+        .args[0]
+        .compile(dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True})
+    )
+    candidate_sql = str(
+        session.execute.call_args_list[1]
+        .args[0]
+        .compile(dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True})
+    )
+    assert str(project) in anchor_sql
+    assert str(build) in anchor_sql
+    assert all(str(anchor) in anchor_sql for anchor in anchors[:4])
+    assert all(str(anchor) not in anchor_sql for anchor in anchors[4:])
+    assert str(project) in candidate_sql
+    assert str(build) in candidate_sql
+    assert str(document) in candidate_sql
+    assert "document_version" in candidate_sql
+    assert "NOT IN" in candidate_sql
+    assert "BETWEEN" in candidate_sql
+    assert str(anchors[0]) in candidate_sql
 
 
 async def test_empty_anchors_do_not_query_or_broaden_scope():
@@ -38,3 +67,15 @@ async def test_empty_anchors_do_not_query_or_broaden_scope():
     )
     assert result == ()
     session.execute.assert_not_called()
+
+
+async def test_inactive_anchor_outside_the_build_does_not_query_the_corpus():
+    session = AsyncMock()
+    first = MagicMock()
+    first.all.return_value = []
+    session.execute.return_value = first
+    result = await RetrievalChunkRepository(session, uuid.uuid4()).adjacent_ids(
+        [uuid.uuid4()], index_build_id=uuid.uuid4()
+    )
+    assert result == ()
+    assert session.execute.await_count == 1
