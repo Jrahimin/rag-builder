@@ -494,7 +494,8 @@ function BehaviorSetting({
 
 const BEHAVIOR_HINTS = {
   generationModel: "Pin a deployment-approved logical generation model for this Project.",
-  responseMode: "Choose indexed-only, fallback web, or indexed-and-web evidence behavior.",
+  responseMode:
+    "Indexed then web searches the web only when indexed evidence cannot support an answer; scoped requests and unresolved authority stay within their safety checks.",
   grounding: "Choose the Project's bounded grounding posture.",
   translation: "Enable translation only for cross-language retrieval.",
   domain: "Project-specific standing instructions. This is not a full system prompt.",

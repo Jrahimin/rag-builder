@@ -46,6 +46,7 @@ import {
 } from "../../api/operatorApiClient";
 import {
   useCreateConversation,
+  useConversations,
   useDocumentLifecycleAction,
   useDocuments,
   useIndexBuilds,
@@ -238,12 +239,15 @@ export function TestLab() {
   const [params, setParams] = useSearchParams();
   const requestedProjectId = params.get("project") ?? "";
   const requestedTab = params.get("tab") as LabTab | null;
+  const requestedConversationId = params.get("conversation") ?? "";
+  const requestedDocumentId = params.get("document") ?? "";
+  const requestedJobId = params.get("job") ?? "";
   const tab = requestedTab && tabs.includes(requestedTab) ? requestedTab : "journey";
   const [activities, setActivities] = useState<LabActivity[]>([]);
   const [activityOpen, setActivityOpen] = useState(false);
-  const [selectedDocumentId, setSelectedDocumentId] = useState(params.get("document") ?? "");
-  const [latestJobId, setLatestJobId] = useState(params.get("job") ?? "");
-  const [conversationId, setConversationId] = useState(params.get("conversation") ?? "");
+  const [selectedDocumentId, setSelectedDocumentId] = useState(requestedDocumentId);
+  const [latestJobId, setLatestJobId] = useState(requestedJobId);
+  const [conversationId, setConversationId] = useState(requestedConversationId);
   const [searchRun, setSearchRun] = useState<SearchRun | null>(null);
   const [messageRun, setMessageRun] = useState<MessageRun | null>(null);
 
@@ -265,6 +269,14 @@ export function TestLab() {
       { replace: true },
     );
   }, [projectId, requestedProjectId, setParams]);
+
+  useEffect(() => {
+    setConversationId(requestedConversationId);
+    setMessageRun(null);
+  }, [requestedConversationId]);
+
+  useEffect(() => setSelectedDocumentId(requestedDocumentId), [requestedDocumentId]);
+  useEffect(() => setLatestJobId(requestedJobId), [requestedJobId]);
 
   const documents = useDocuments(projectId);
   const jobs = useJobs(projectId, "", "");
@@ -333,9 +345,27 @@ export function TestLab() {
     setParams((current) => {
       current.set("project", next);
       current.set("tab", tab);
+      current.delete("conversation");
+      current.delete("document");
+      current.delete("job");
       return current;
     });
   };
+
+  const chooseConversation = useCallback(
+    (next: string) => {
+      setConversationId(next);
+      setMessageRun(null);
+      setParams((current) => {
+        if (projectId) current.set("project", projectId);
+        current.set("tab", "messages");
+        if (next) current.set("conversation", next);
+        else current.delete("conversation");
+        return current;
+      });
+    },
+    [projectId, setParams],
+  );
 
   if (projects.isPending) return <LoadingState label="Loading Test Lab projects" />;
   if (projects.isError)
@@ -413,7 +443,7 @@ export function TestLab() {
               projectId={projectId}
               conversationId={conversationId}
               hasActiveCorpus={hasActiveCorpus}
-              onConversation={setConversationId}
+              onConversation={chooseConversation}
               onRun={setMessageRun}
               onNavigate={chooseTab}
               onActivity={addActivity}
@@ -2093,6 +2123,7 @@ function MessagesTab({
   onActivity: (item: Omit<LabActivity, "id" | "timestamp">) => void;
 }) {
   const create = useCreateConversation(projectId);
+  const conversations = useConversations(projectId);
   const messages = useMessages(projectId, conversationId);
   const send = useSendMessage(projectId, conversationId);
   const stream = useStreamMessage(projectId, conversationId);
@@ -2100,10 +2131,13 @@ function MessagesTab({
   const [expected, setExpected] = useState("");
   const [delivery, setDelivery] = useState<"regular" | "stream">("stream");
   const [streamedContent, setStreamedContent] = useState("");
-  const [progressMessage, setProgressMessage] = useState("Searching sources");
+  const [progressMessage, setProgressMessage] = useState("Understanding request");
   const [progressElapsedMs, setProgressElapsedMs] = useState(0);
   const progressStartedAt = useRef(0);
   const streamAbort = useRef<AbortController | null>(null);
+  const replayHref = conversationId
+    ? `/lab?project=${encodeURIComponent(projectId)}&tab=messages&conversation=${encodeURIComponent(conversationId)}`
+    : null;
   const historyRef = useRef<HTMLDivElement>(null);
   const [lastRun, setLastRun] = useState<MessageRun | null>(null);
   const [selectedAssistantId, setSelectedAssistantId] = useState("");
@@ -2143,7 +2177,7 @@ function MessagesTab({
     const started = performance.now();
     try {
       setStreamedContent("");
-      setProgressMessage("Searching sources");
+      setProgressMessage("Understanding request");
       progressStartedAt.current = performance.now();
       setProgressElapsedMs(0);
       const turn =
@@ -2237,6 +2271,12 @@ function MessagesTab({
     }
   }, [conversationId, streamedContent, visibleMessages.length]);
   useEffect(() => {
+    setLastRun(null);
+    setStreamedContent("");
+    setSelectedAssistantId("");
+    setActiveCitation(0);
+  }, [conversationId]);
+  useEffect(() => {
     if (!stream.isPending) return;
     const update = () => setProgressElapsedMs(performance.now() - progressStartedAt.current);
     update();
@@ -2251,7 +2291,27 @@ function MessagesTab({
           <h2>Ask the corpus</h2>
         </div>
         <div className="lab-chat-topbar__actions">
+          {(conversations.data?.items.length ?? 0) > 0 && (
+            <select
+              aria-label="Recent project conversation"
+              value={conversationId}
+              onChange={(event) => onConversation(event.target.value)}
+              disabled={create.isPending || send.isPending || stream.isPending}
+            >
+              <option value="">Select a recent conversation</option>
+              {conversations.data?.items.map((conversation) => (
+                <option key={conversation.id} value={conversation.id}>
+                  {conversation.title || "Untitled conversation"} · {shortId(conversation.id)}
+                </option>
+              ))}
+            </select>
+          )}
           {conversationId && <CopyableId value={conversationId} label="Conversation ID" />}
+          {replayHref && (
+            <Link className="table-link" to={replayHref}>
+              Replay link
+            </Link>
+          )}
           <button
             className="button button--secondary button--compact"
             type="button"
@@ -2287,10 +2347,7 @@ function MessagesTab({
             <Sparkles size={22} />
           </span>
           <h2>No test conversation</h2>
-          <p>
-            Create one on demand for this project. Existing product conversations are not reused
-            automatically.
-          </p>
+          <p>Create one on demand or select a recent conversation for this project.</p>
           <button
             className="button button--primary"
             type="button"
@@ -2529,6 +2586,20 @@ function citedPassageIndexes(content: string, count: number): number[] {
     .sort((left, right) => left - right);
 }
 
+function citationLocation(citation: MessageCitation): string {
+  if (citation.source_kind === "web") {
+    return `Web · ${citation.web_provider ?? "external source"}`;
+  }
+  const parts: string[] = [];
+  const textLike = /\.(?:md|markdown|txt|csv|tsv|json|html?)$/i.test(citation.filename);
+  if (citation.page_number != null && !textLike) parts.push(`Page ${citation.page_number}`);
+  if (citation.char_start != null && citation.char_end != null) {
+    parts.push(`characters ${citation.char_start}–${citation.char_end}`);
+  }
+  parts.push(`chunk ${citation.chunk_index ?? "—"}`);
+  return parts.join(" · ");
+}
+
 function MessageContent({
   content,
   citations = [],
@@ -2750,12 +2821,19 @@ export function MessageInspector({
   const expectedMatches =
     !run?.expected.trim() ||
     message.content.toLocaleLowerCase().includes(run.expected.trim().toLocaleLowerCase());
+  const lifecycle = message.metadata?.lifecycle as Record<string, unknown> | undefined;
+  const serverProcessingMs =
+    typeof lifecycle?.processing_ms === "number" ? lifecycle.processing_ms : null;
+  const timingLabel =
+    isLatestRun && run
+      ? `${run.elapsedMs} ms client round trip${serverProcessingMs == null ? "" : ` · ${serverProcessingMs} ms server processing`}`
+      : serverProcessingMs == null
+        ? "Timing unavailable"
+        : `${serverProcessingMs} ms server processing · client round trip was not persisted`;
   const repair = message.metadata?.knowledge_repair as Record<string, unknown> | undefined;
   const partial = repair?.partial_answer as Record<string, unknown> | undefined;
   const coverage = repair?.coverage as Record<string, unknown> | undefined;
-  const requirementProgress = repair?.requirement_progress as
-    | Record<string, unknown>
-    | undefined;
+  const requirementProgress = repair?.requirement_progress as Record<string, unknown> | undefined;
   const recoveryAttempts = Array.isArray(requirementProgress?.attempts)
     ? requirementProgress.attempts.filter(
         (item): item is Record<string, unknown> => typeof item === "object" && item !== null,
@@ -2785,7 +2863,7 @@ export function MessageInspector({
           </div>
         </div>
         <p>Source verification is not required for this non-knowledge response.</p>
-        {isLatestRun && run && <p>{run.elapsedMs} ms round trip</p>}
+        <p>{timingLabel}</p>
         {isLatestRun && run?.expected.trim() && !expectedMatches && (
           <p>The answer did not contain the expected words. This is separate from grounding.</p>
         )}
@@ -2829,7 +2907,7 @@ export function MessageInspector({
                 : "Answer is not verifiably grounded"}
           </strong>
           <span>
-            {run.elapsedMs} ms round trip
+            {timingLabel}
             {run.expected.trim()
               ? ` · expected words ${expectedMatches ? "matched" : "did not match"}`
               : ""}
@@ -2842,7 +2920,7 @@ export function MessageInspector({
       <div className="lab-inspector-metrics">
         <span>
           <Clock size={13} aria-hidden="true" />
-          {isLatestRun && run ? `${run.elapsedMs} ms` : "—"}
+          {timingLabel}
         </span>
         <span>
           <Sparkles size={13} aria-hidden="true" />
@@ -2898,17 +2976,23 @@ export function MessageInspector({
             <ol>
               {recoveryAttempts.map((attempt, index) => {
                 const requirementIds = Array.isArray(attempt.requirement_ids)
-                  ? attempt.requirement_ids.filter((item): item is string => typeof item === "string")
+                  ? attempt.requirement_ids.filter(
+                      (item): item is string => typeof item === "string",
+                    )
                   : [];
                 const admitted = Array.isArray(attempt.admitted_ids)
                   ? attempt.admitted_ids.length
                   : 0;
+                const route = typeof attempt.route === "string" ? attempt.route : "search";
+                const query = typeof attempt.query === "string" ? attempt.query : "Unknown query";
                 return (
-                  <li key={`${String(attempt.route ?? "search")}-${index}`}>
-                    <strong>{String(attempt.route ?? "search").replaceAll("_", " ")}</strong>
+                  <li key={`${route}-${index}`}>
+                    <strong>{route.replaceAll("_", " ")}</strong>
                     {requirementIds.length ? ` · ${requirementIds.join(", ")}` : ""}
-                    <p>{String(attempt.query ?? "Unknown query")}</p>
-                    <small>{admitted} passage{admitted === 1 ? "" : "s"} admitted</small>
+                    <p>{query}</p>
+                    <small>
+                      {admitted} passage{admitted === 1 ? "" : "s"} admitted
+                    </small>
                   </li>
                 );
               })}
@@ -3028,60 +3112,82 @@ export function MessageInspector({
         </div>
       ) : citations.length ? (
         <ol className="citation-list" aria-label={`${citations.length} citations`}>
-          {citations.map((citation, index) => (
-            <li
-              key={`${citation.chunk_id ?? citation.web_url ?? "source"}-${index}`}
-              className={
-                focused?.chunk_id === citation.chunk_id && index === activeCitation
-                  ? "is-active"
-                  : undefined
-              }
-            >
-              <button type="button" onClick={() => onCite?.(index)}>
-                <strong>
-                  [{index + 1}] <Filename name={citation.web_title ?? citation.filename} />
-                </strong>
-                <span>
-                  {citedIndexes.includes(index)
-                    ? "Cited in answer"
-                    : "Supplied to generation; not cited"}
-                </span>
-                <span>
-                  {citation.source_kind === "web"
-                    ? `Web · ${citation.web_provider ?? "external source"}`
-                    : `Page ${citation.page_number ?? "—"} · chunk ${citation.chunk_index ?? "—"}`}
-                  {citation.score == null ? "" : ` · score ${citation.score.toFixed(4)}`}
-                  {citation.authority_status && citation.authority_status !== "not_assessed"
-                    ? ` · authority ${citation.authority_status}`
-                    : ""}
-                </span>
-                {citation.score != null && (
-                  <span
-                    className="cite-score"
-                    aria-hidden="true"
-                    style={{
-                      ["--score" as string]: `${Math.round(Math.min(1, Math.max(0, citation.score)) * 100)}%`,
-                    }}
-                  >
-                    <i />
+          {citations.map((citation, index) => {
+            const spanLength =
+              citation.char_start != null && citation.char_end != null
+                ? Math.max(0, citation.char_end - citation.char_start)
+                : null;
+            const clippedPreview = Boolean(
+              citation.excerpt && spanLength != null && citation.excerpt.length < spanLength,
+            );
+            return (
+              <li
+                key={`${citation.chunk_id ?? citation.web_url ?? "source"}-${index}`}
+                className={
+                  focused?.chunk_id === citation.chunk_id && index === activeCitation
+                    ? "is-active"
+                    : undefined
+                }
+              >
+                <button type="button" onClick={() => onCite?.(index)}>
+                  <strong>
+                    [{index + 1}] <Filename name={citation.web_title ?? citation.filename} />
+                  </strong>
+                  <span>
+                    {citedIndexes.includes(index)
+                      ? "Cited in answer"
+                      : "Supplied to generation; not cited"}
                   </span>
-                )}
-                <p>
-                  {citation.excerpt ??
-                    (citation.source_kind === "web"
-                      ? citation.web_url
-                      : `Stable chunk reference ${citation.chunk_id}`)}
-                </p>
-              </button>
-              {citation.chunk_id ? (
-                <CopyableId value={citation.chunk_id} label="Citation chunk ID" />
-              ) : citation.web_url ? (
-                <a href={citation.web_url} target="_blank" rel="noreferrer">
-                  Open web source
-                </a>
-              ) : null}
-            </li>
-          ))}
+                  <span>
+                    {citationLocation(citation)}
+                    {citation.score == null ? "" : ` · score ${citation.score.toFixed(4)}`}
+                    {citation.authority_status && citation.authority_status !== "not_assessed"
+                      ? ` · authority ${citation.authority_status}`
+                      : ""}
+                  </span>
+                  {citation.score != null && (
+                    <span
+                      className="cite-score"
+                      aria-hidden="true"
+                      style={{
+                        ["--score" as string]: `${Math.round(Math.min(1, Math.max(0, citation.score)) * 100)}%`,
+                      }}
+                    >
+                      <i />
+                    </span>
+                  )}
+                  <p>
+                    {citation.excerpt ??
+                      (citation.source_kind === "web"
+                        ? citation.web_url
+                        : `Stable chunk reference ${citation.chunk_id}`)}
+                  </p>
+                  {clippedPreview && (
+                    <small>
+                      Preview shows {citation.excerpt?.length ?? 0} of {spanLength} source
+                      characters.
+                    </small>
+                  )}
+                </button>
+                {citation.chunk_id ? (
+                  <>
+                    <CopyableId value={citation.chunk_id} label="Citation chunk ID" />
+                    {citation.document_id && (
+                      <Link
+                        to={`/lab?project=${message.project_id}&tab=documents&document=${citation.document_id}`}
+                      >
+                        Open source record
+                      </Link>
+                    )}
+                  </>
+                ) : citation.web_url ? (
+                  <a href={citation.web_url} target="_blank" rel="noreferrer">
+                    Open web source
+                  </a>
+                ) : null}
+              </li>
+            );
+          })}
         </ol>
       ) : (
         <div className="failure-box">

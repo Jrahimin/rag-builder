@@ -4,6 +4,7 @@ import { vi } from "vitest";
 import {
   OperatorApiError,
   operatorApiClient,
+  type Conversation,
   type Document,
   type IndexBuild,
   type Job,
@@ -13,6 +14,7 @@ import {
 import { OperatorConsoleApp } from "../../app/OperatorConsoleApp";
 import { renderOperatorComponent } from "../../test/renderOperatorComponent";
 import { jobFixture, now, projectFixture } from "../../test/operatorTestFixtures";
+import { MessageInspector } from "./TestLab";
 
 const documentFixture: Document = {
   id: "33333333-3333-3333-3333-333333333333",
@@ -75,10 +77,28 @@ const succeededJob: Job = {
   failure_message: null,
 };
 
+const conversationFixture: Conversation = {
+  id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+  project_id: projectFixture.id,
+  title: "Measured rewrite flow",
+  provider: null,
+  model: null,
+  temperature: null,
+  system_prompt_version: null,
+  active_config_snapshot_id: null,
+  last_message_at: now,
+  is_active: true,
+  deleted_at: null,
+  deleted_by: null,
+  created_at: now,
+  updated_at: now,
+};
+
 function mockLabBase({
   documents = [documentFixture],
   jobs = [succeededJob],
-}: { documents?: Document[]; jobs?: Job[] } = {}) {
+  conversations = [],
+}: { documents?: Document[]; jobs?: Job[]; conversations?: Conversation[] } = {}) {
   vi.spyOn(operatorApiClient, "getProjects").mockResolvedValue({
     items: [projectFixture],
     total: 1,
@@ -108,7 +128,81 @@ function mockLabBase({
     current_generation: 1,
     items: [],
   });
+  vi.spyOn(operatorApiClient, "getConversations").mockResolvedValue({
+    items: conversations,
+    total: conversations.length,
+    limit: 100,
+    offset: 0,
+  });
 }
+
+test("restores a selected Test Lab conversation and exposes a replayable URL", async () => {
+  const second = {
+    ...conversationFixture,
+    id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+    title: "Second measured flow",
+  };
+  mockLabBase({ conversations: [conversationFixture, second] });
+  const getMessages = vi.spyOn(operatorApiClient, "getMessages").mockResolvedValue({
+    items: [],
+    total: 0,
+    limit: 200,
+    offset: 0,
+  });
+  renderOperatorComponent(
+    <OperatorConsoleApp />,
+    `/lab?project=${projectFixture.id}&tab=messages&conversation=${conversationFixture.id}`,
+  );
+
+  const selector = await screen.findByRole(
+    "combobox",
+    { name: "Recent project conversation" },
+    { timeout: 5_000 },
+  );
+  expect(selector).toHaveValue(conversationFixture.id);
+  expect(getMessages).toHaveBeenCalledWith(projectFixture.id, conversationFixture.id);
+  expect(screen.getByRole("link", { name: "Replay link" })).toHaveAttribute(
+    "href",
+    `/lab?project=${projectFixture.id}&tab=messages&conversation=${conversationFixture.id}`,
+  );
+
+  await userEvent.selectOptions(selector, second.id);
+  await waitFor(() => expect(getMessages).toHaveBeenCalledWith(projectFixture.id, second.id));
+  expect(screen.getByRole("link", { name: "Replay link" })).toHaveAttribute(
+    "href",
+    `/lab?project=${projectFixture.id}&tab=messages&conversation=${second.id}`,
+  );
+});
+
+test("labels persisted server processing separately from unavailable client round trip", () => {
+  const message: Message = {
+    id: "cccccccc-cccc-cccc-cccc-cccccccccccc",
+    project_id: projectFixture.id,
+    conversation_id: conversationFixture.id,
+    role: "assistant",
+    content: "Refunds are accepted within thirty days. [1]",
+    finish_reason: "stop",
+    input_tokens: 10,
+    output_tokens: 8,
+    prompt_version: "v17",
+    embedding_set_version: 1,
+    provider: "test",
+    model: "test",
+    metadata: { lifecycle: { processing_ms: 321 } },
+    source_provenance: "knowledge",
+    citations: [],
+    claims: [],
+    grounded: false,
+    insufficient_evidence_reason: null,
+    created_at: now,
+    updated_at: now,
+  };
+
+  renderOperatorComponent(<MessageInspector message={message} run={null} />);
+
+  expect(screen.getByText(/321 ms server processing/)).toBeInTheDocument();
+  expect(screen.getByText(/client round trip was not persisted/)).toBeInTheDocument();
+});
 
 test("routes to Test Lab, keeps project selection, and derives Journey progress from backend state", async () => {
   mockLabBase();
@@ -350,7 +444,10 @@ test("renders grounded citations instead of inferring grounding from answer text
     (await screen.findAllByRole("button", { name: "New test conversation" })).at(-1)!,
   );
   await userEvent.type(await screen.findByLabelText("Message"), "What is the policy?");
-  expect(screen.getByRole("button", { name: "Stream live" })).toHaveAttribute("aria-pressed", "true");
+  expect(screen.getByRole("button", { name: "Stream live" })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
   await userEvent.click(screen.getByRole("button", { name: "Regular" }));
   await userEvent.click(screen.getByRole("button", { name: "Send message" }));
   expect(await screen.findByText("Answer with citations")).toBeInTheDocument();
@@ -358,6 +455,11 @@ test("renders grounded citations instead of inferring grounding from answer text
   expect(screen.getByRole("heading", { name: /Refund policy/ })).toBeInTheDocument();
   expect(screen.getByRole("table")).toHaveTextContent("Refund request");
   expect(screen.getAllByRole("button", { name: "Open citation 1: policy.txt" })).toHaveLength(2);
+  expect(screen.getByText(/characters 0–51 · chunk 0/)).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "Open source record" })).toHaveAttribute(
+    "href",
+    `/lab?project=${projectFixture.id}&tab=documents&document=${documentFixture.id}`,
+  );
 });
 
 test("allows grounded chat when an active build exists even if documents are still chunked", async () => {

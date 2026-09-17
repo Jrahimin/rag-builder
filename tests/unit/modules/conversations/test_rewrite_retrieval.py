@@ -46,7 +46,7 @@ pytestmark = pytest.mark.unit
 )
 def test_rewrite_recall_requires_explicit_fact_preserving_followup(question, relation, eligible):
     previous_id, current_id, chunk_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
-    history = [HistoryMessage(id=previous_id, role="assistant", content="Previous answer")]
+    history = [HistoryMessage(id=previous_id, role="assistant", content="Previous answer [1]")]
     citations = {
         previous_id: [
             {"chunk_id": str(chunk_id)},
@@ -74,23 +74,49 @@ def test_rewrite_recall_requires_explicit_fact_preserving_followup(question, rel
     ],
 )
 def test_rewrite_followup_mode_distinguishes_presentation_from_added_facts(question, mode):
-    assert (
-        rewrite_followup_mode(question, TurnOutcome.RESOLVED, TurnRelation.FOLLOW_UP)
-        is mode
-    )
+    assert rewrite_followup_mode(question, TurnOutcome.RESOLVED, TurnRelation.FOLLOW_UP) is mode
 
 
 def test_explicit_fact_preserving_rewrite_overrides_incorrect_resolver_mode():
     question = (
-        "Rewrite that as exactly three short bullets in English. "
-        "Keep the same facts and citations."
+        "Rewrite that as exactly three short bullets in English. Keep the same facts and citations."
     )
-    assert rewrite_followup_mode(
-        question,
-        TurnOutcome.RESOLVED,
-        TurnRelation.FOLLOW_UP,
-        FollowupMode.ADDS_FACTS,
-    ) is FollowupMode.PRESENTATION_ONLY
+    assert (
+        rewrite_followup_mode(
+            question,
+            TurnOutcome.RESOLVED,
+            TurnRelation.FOLLOW_UP,
+            FollowupMode.ADDS_FACTS,
+        )
+        is FollowupMode.PRESENTATION_ONLY
+    )
+
+
+def test_rewrite_recall_uses_only_markers_rendered_in_the_previous_answer():
+    previous_id = uuid.uuid4()
+    uncited, cited = uuid.uuid4(), uuid.uuid4()
+    history = [
+        HistoryMessage(
+            id=previous_id,
+            role="assistant",
+            content="The concise supported point uses the second passage. [2]",
+        )
+    ]
+    citations = {
+        previous_id: [
+            {"chunk_id": str(uncited)},
+            {"chunk_id": str(cited)},
+        ]
+    }
+
+    assert rewrite_citation_ids(
+        "Make it shorter.",
+        TurnOutcome.STANDALONE,
+        TurnRelation.TOPIC_CHANGE,
+        history,
+        citations,
+        mode=FollowupMode.PRESENTATION_ONLY,
+    ) == [cited]
 
 
 def test_chained_rewrite_keeps_the_last_factual_user_topic():
@@ -123,10 +149,10 @@ async def test_rewrite_recall_keeps_filters_and_falls_back_only_when_empty(empty
     assert retrieval.retrieve.call_args_list[0].kwargs == {**request, "cited_chunk_ids": [chunk_id]}
     assert retrieval.retrieve.await_count == (2 if empty else 1)
     if empty:
-        assert retrieval.retrieve.call_args_list[1].kwargs == request
+        assert retrieval.retrieve.call_args_list[1].kwargs == {**request, "top_k": 3}
     assert result.chunks == [chunk]
     assert result.diagnostics["rewrite_recall"]["status"] == (
-        "fallback_search" if empty else "cited_passages"
+        "bounded_fallback_search" if empty else "cited_passages"
     )
 
 
@@ -138,6 +164,25 @@ async def test_legacy_retrieval_port_does_not_receive_new_keyword():
         retrieval, seeds=[uuid.uuid4()], request={"query": "topic", "top_k": 5}
     )
     retrieval.retrieve.assert_awaited_once_with(query="topic", top_k=5)
+
+
+async def test_presentation_without_visible_citations_uses_a_small_labeled_fallback():
+    retrieval = AsyncMock()
+    retrieval.supports_cited_retrieval = True
+    retrieval.retrieve.return_value = ContextRetrievalResult([], {})
+
+    result = await retrieve_rewrite_context(
+        retrieval,
+        seeds=[],
+        request={"query": "original topic", "top_k": 5},
+        mode=FollowupMode.PRESENTATION_ONLY,
+    )
+
+    retrieval.retrieve.assert_awaited_once_with(query="original topic", top_k=3)
+    assert result.chunks == []
+    assert result.diagnostics["rewrite_recall"]["status"] == (
+        "bounded_fallback_search_no_citations"
+    )
 
 
 async def test_mixed_rewrite_reserves_space_for_prior_proof_and_new_search_results():

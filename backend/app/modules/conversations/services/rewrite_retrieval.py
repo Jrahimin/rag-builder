@@ -30,6 +30,21 @@ _ADDED_FACT = re.compile(
     r"(?:আরও|যোগ|বর্তমান|নতুন|তুলনা).{0,40}(?:তথ্য|ফি|জরিমানা|নিয়ম|নিয়ম|হার)",
     re.I,
 )
+_CITATION_MARKER = re.compile(r"\[(\d+)\]")
+
+
+def used_citation_items(content: str, citations: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return citation snapshots whose numbered markers appear in visible content."""
+    used_positions = {
+        int(match)
+        for match in _CITATION_MARKER.findall(content)
+        if 1 <= int(match) <= len(citations)
+    }
+    return [
+        citation
+        for position, citation in enumerate(citations, start=1)
+        if position in used_positions and isinstance(citation, dict)
+    ]
 
 
 def rewrite_followup_mode(
@@ -73,15 +88,31 @@ def rewrite_citation_ids(
     *,
     mode: FollowupMode = FollowupMode.NOT_APPLICABLE,
 ) -> list[uuid.UUID]:
-    mode = rewrite_followup_mode(question, outcome, relation, mode)
+    # ChatService may have already recovered an explicit rewrite intent after a
+    # conservative resolver result. Preserve that bounded decision here instead
+    # of recomputing it from the resolver's original relation.
+    mode = (
+        rewrite_followup_mode(question, outcome, relation, mode)
+        if mode is FollowupMode.NOT_APPLICABLE
+        else rewrite_followup_mode(
+            question,
+            TurnOutcome.RESOLVED,
+            TurnRelation.FOLLOW_UP,
+            mode,
+        )
+    )
     if mode is FollowupMode.NOT_APPLICABLE:
         return []
     previous = next((item for item in reversed(history) if item.role == "assistant"), None)
     if previous is None:
         return []
+    citations = citations_by_message.get(previous.id, [])
     ids = []
-    for citation in citations_by_message.get(previous.id, []):
-        if not isinstance(citation, dict) or citation.get("source_kind") == "web":
+    for citation in used_citation_items(previous.content, citations):
+        # Assistant messages retain all passages supplied to generation for
+        # inspection. Only markers rendered in the visible answer are citations
+        # that a presentation-only follow-up may reuse.
+        if citation.get("source_kind") == "web":
             continue
         try:
             identifier = uuid.UUID(str(citation.get("chunk_id")))
@@ -99,6 +130,18 @@ async def retrieve_rewrite_context(
     request: dict[str, Any],
     mode: FollowupMode = FollowupMode.PRESENTATION_ONLY,
 ) -> ContextRetrievalResult:
+    if not seeds and mode is FollowupMode.PRESENTATION_ONLY:
+        bounded_request = dict(request)
+        bounded_request["top_k"] = min(int(request.get("top_k") or 3), 3)
+        result = await retrieval.retrieve(**bounded_request)
+        result.diagnostics["rewrite_recall"] = {
+            "status": "bounded_fallback_search_no_citations",
+            "seed_count": 0,
+            "recalled_count": 0,
+            "missing_seed_count": 0,
+            "mode": mode.value,
+        }
+        return result
     if not seeds or getattr(retrieval, "supports_cited_retrieval", False) is not True:
         return await retrieval.retrieve(**request)
     cited = await retrieval.retrieve(**request, cited_chunk_ids=seeds)
@@ -108,7 +151,13 @@ async def retrieve_rewrite_context(
     if needs_search:
         # Source IDs can disappear after a rebuild. Re-search under the same
         # requested filters and fill mixed/new facets from the active snapshot.
-        searched = await retrieval.retrieve(**request)
+        search_request = dict(request)
+        if mode is FollowupMode.PRESENTATION_ONLY:
+            search_request["top_k"] = min(
+                int(request.get("top_k") or max(3, len(seeds))),
+                max(3, len(seeds)),
+            )
+        searched = await retrieval.retrieve(**search_request)
         top_k = int(request.get("top_k") or len(cited.chunks) + len(searched.chunks))
         if mode is FollowupMode.ADDS_FACTS and cited.chunks:
             cited_slots = max(1, top_k // 2)
@@ -131,7 +180,7 @@ async def retrieve_rewrite_context(
         "status": (
             "mixed_cited_and_search"
             if mode is FollowupMode.ADDS_FACTS
-            else "fallback_search"
+            else "bounded_fallback_search"
             if not cited.chunks
             else "partial_fallback_search"
             if missing_seed_count

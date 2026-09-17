@@ -53,6 +53,7 @@ class PromptBuilder:
         missing_inputs: Sequence[str] = (),
         partial_answer: dict | None = None,
         response_language: str | None = None,
+        presentation_only: bool = False,
     ) -> list[ChatMessage]:
         include_work_metadata = template.evidence_approach != "authoritative"
         context_block = self._format_context(
@@ -148,9 +149,17 @@ class PromptBuilder:
                 "such as [Developer scope limitation] or reviewer requirement IDs."
             )
 
-        resolved_language = response_language or resolve_response_language(
-            user_question, history
-        )
+        if presentation_only:
+            system_content += (
+                "\n\nThe current request changes presentation while keeping the prior answer's "
+                "supported facts. Preserve material meaning naturally, including the subject, "
+                "time anchor, condition, exception, and scope when they matter. You may combine, "
+                "reorder, or paraphrase details to match the requested shape and brevity. Avoid "
+                "turning a conditional statement into an unconditional one or leaving a duration "
+                "without what it measures. Do not add facts merely to fill the requested format."
+            )
+
+        resolved_language = response_language or resolve_response_language(user_question, history)
         label = _LANGUAGE_LABELS.get(resolved_language, resolved_language)
         system_content += (
             f"\n\nResolved output language for this turn: {label} ({resolved_language}). "

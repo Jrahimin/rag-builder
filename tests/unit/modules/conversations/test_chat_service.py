@@ -2523,6 +2523,95 @@ class ScriptedResolutionLLM(EchoLLMProvider):
         )
 
 
+async def test_explicit_presentation_rewrite_reuses_only_visible_prior_citations(
+    session,
+    conversation_repository,
+    message_repository,
+    conversation,
+):
+    prior_user, prior_assistant = _history_messages(
+        conversation,
+        user_content="What is the refund period?",
+        assistant_content="A request may be made within 30 days of purchase. [2]",
+    )
+    cited_chunk = ContextChunk(
+        chunk_id=uuid.uuid4(),
+        document_id=uuid.uuid4(),
+        chunk_index=1,
+        content="A customer may request a refund within 30 days of purchase.",
+        score=0.9,
+        filename="policy.txt",
+        chunk_hash="cited",
+        semantic_score=0.9,
+    )
+    prior_assistant.citations = [
+        {
+            "source_kind": "knowledge",
+            "chunk_id": str(uuid.uuid4()),
+            "document_id": str(uuid.uuid4()),
+            "filename": "nearby.txt",
+        },
+        {
+            "source_kind": "knowledge",
+            "chunk_id": str(cited_chunk.chunk_id),
+            "document_id": str(cited_chunk.document_id),
+            "filename": cited_chunk.filename,
+        },
+    ]
+    message_repository.list_recent_for_conversation.return_value = [
+        prior_user,
+        prior_assistant,
+    ]
+
+    class ExactCitationRetrieval:
+        supports_cited_retrieval = True
+
+        def __init__(self):
+            self.calls = []
+
+        async def retrieve(self, **kwargs):
+            self.calls.append(kwargs)
+            assert kwargs["cited_chunk_ids"] == [cited_chunk.chunk_id]
+            return ContextRetrievalResult(
+                chunks=[cited_chunk],
+                diagnostics={"retrieved_candidate_count": 1},
+            )
+
+    retrieval = ExactCitationRetrieval()
+    llm = ScriptedResolutionLLM(
+        _resolved_payload(
+            relation="standalone",
+            effective_question="Rewrite that as exactly three short bullets in English.",
+        ),
+        answer=(
+            "- Refunds may be requested. [1]\n"
+            "- The period is 30 days. [1]\n"
+            "- It runs from purchase. [1]"
+        ),
+    )
+    service = _service(session, conversation_repository, message_repository, llm)
+    service._retrieval = retrieval
+
+    turn = await service.send_message(
+        conversation.id,
+        MessageSendRequest(
+            content=(
+                "Rewrite that as exactly three short bullets in English. "
+                "Keep the same facts and citations."
+            )
+        ),
+    )
+
+    assert len(retrieval.calls) == 1
+    metadata = turn.assistant_message.metadata
+    assert metadata["rewrite_recall"]["status"] == "cited_passages"
+    assert metadata["knowledge_repair"]["status"] == "not_needed"
+    assert metadata["evidence_summary"]["coverage_method"] == ("current_exact_citation_recall")
+    assert metadata["evidence_summary"]["admitted_passages"] == 0
+    assert metadata["evidence_summary"]["reused_cited_passages"] == 1
+    assert "Preserve material meaning naturally" in llm.generation_prompts[0][0].content
+
+
 def _history_messages(
     conversation: Conversation,
     *,
@@ -3199,6 +3288,33 @@ def test_turn_token_totals_distinguish_bypass_from_unknown_usage(resolver, gener
     from app.modules.conversations.services.chat_service import _combine_token_counts
 
     assert _combine_token_counts(resolver, *generation) == expected
+
+
+@pytest.mark.parametrize(
+    ("counts", "expected"),
+    [
+        ({}, ("understanding_request", "Understanding request")),
+        ({"cited_recall_requests": 1}, ("finding_cited_passages", "Finding cited passages")),
+        (
+            {"source_version_checks": 1},
+            ("checking_source_versions", "Checking source versions"),
+        ),
+        ({"embedding_calls": 1}, ("finding_passages", "Finding relevant passages")),
+        ({"llm_calls": 2}, ("checking_support", "Checking support")),
+        (
+            {"llm_calls": 2, "rerank_calls": 2},
+            ("searching_missing_evidence", "Searching for missing evidence"),
+        ),
+        (
+            {"llm_calls": 3, "rerank_calls": 2},
+            ("checking_recovered_evidence", "Checking recovered evidence"),
+        ),
+    ],
+)
+def test_preparation_progress_uses_clear_public_phases(counts, expected):
+    from app.modules.conversations.services.chat_service import _preparation_progress
+
+    assert _preparation_progress(counts) == expected
 
 
 @pytest.mark.parametrize(

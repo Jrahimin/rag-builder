@@ -64,15 +64,38 @@ def test_language_neutral_followup_uses_established_user_language():
 
 
 def test_prompt_contains_one_explicit_output_language_contract():
-    system = PromptBuilder().build(
-        template=require_prompt_template("current"),
-        context_chunks=[],
-        history=[],
-        user_question="Explain this in English.",
-        response_language="en",
-    )[0].content
+    system = (
+        PromptBuilder()
+        .build(
+            template=require_prompt_template("current"),
+            context_chunks=[],
+            history=[],
+            user_question="Explain this in English.",
+            response_language="en",
+        )[0]
+        .content
+    )
     assert "Resolved output language for this turn: English (en)." in system
     assert "independent of the retrieval query and evidence languages" in system
+
+
+def test_presentation_followup_gets_flexible_qualifier_preservation_guidance():
+    system = (
+        PromptBuilder()
+        .build(
+            template=require_prompt_template("current"),
+            context_chunks=[],
+            history=[],
+            user_question="Rewrite that as three short bullets.",
+            presentation_only=True,
+        )[0]
+        .content
+    )
+
+    assert "Preserve material meaning naturally" in system
+    assert "condition, exception, and scope" in system
+    assert "combine, reorder, or paraphrase" in system
+    assert "Do not add facts merely to fill" in system
 
 
 def test_unresolved_inputs_are_untrusted_and_cannot_authorize_final_amounts():

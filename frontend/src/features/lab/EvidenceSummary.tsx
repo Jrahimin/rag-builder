@@ -8,7 +8,7 @@ export function EvidenceSummary({ summary }: { summary: Record<string, unknown> 
   const rows: ReadonlyArray<readonly [string, string]> = [
     ["candidates", "Initial candidates"],
     ["admitted_passages", "Newly admitted passages"],
-    ...(typeof summary.reused_cited_passages === "number" && summary.reused_cited_passages > 0
+    ...(typeof summary.reused_cited_passages === "number"
       ? ([["reused_cited_passages", "Reused cited passages"]] as const)
       : []),
     ["context_passages", "Passages supplied to generation"],

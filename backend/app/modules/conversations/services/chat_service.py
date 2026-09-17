@@ -6,7 +6,7 @@ import asyncio
 import re
 import time
 import uuid
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime
 from typing import Any
@@ -83,6 +83,7 @@ from app.modules.conversations.services.rewrite_retrieval import (
     retrieve_rewrite_context,
     rewrite_citation_ids,
     rewrite_followup_mode,
+    used_citation_items,
 )
 from app.modules.conversations.services.web_evidence_review import (
     review_web_evidence,
@@ -429,7 +430,11 @@ class ChatService:
         started = time.perf_counter()
 
         user_message = await self._commit_user_message(conversation, request.content)
-        yield {"event": "progress", "stage": "searching_sources", "message": "Searching sources"}
+        yield {
+            "event": "progress",
+            "stage": "understanding_request",
+            "message": "Understanding request",
+        }
         preparation = asyncio.create_task(
             self._prepare_turn(
                 conversation=conversation,
@@ -438,18 +443,19 @@ class ChatService:
                 request=request,
             )
         )
-        progress_stage = "searching_sources"
+        progress_stage = "understanding_request"
         try:
             while not preparation.done():
                 await asyncio.wait({preparation}, timeout=1)
                 if should_cancel is not None and await should_cancel():
                     return
-                if self._work.counts.get("llm_calls", 0) and progress_stage != "checking_evidence":
-                    progress_stage = "checking_evidence"
+                next_stage, next_message = _preparation_progress(self._work.counts)
+                if next_stage != progress_stage:
+                    progress_stage = next_stage
                     yield {
                         "event": "progress",
                         "stage": progress_stage,
-                        "message": "Checking evidence",
+                        "message": next_message,
                     }
             prepared = await preparation
         finally:
@@ -459,7 +465,7 @@ class ChatService:
         await self._raise_preparation_failure(
             conversation, prepared, request.content, started=started, streamed=True
         )
-        yield {"event": "progress", "stage": "generating_answer", "message": "Preparing answer"}
+        yield {"event": "progress", "stage": "generating_answer", "message": "Writing answer"}
 
         if should_cancel is not None and await should_cancel():
             return
@@ -586,6 +592,11 @@ class ChatService:
             generation_output,
         )
 
+        yield {
+            "event": "progress",
+            "stage": "verifying_citations",
+            "message": "Verifying citations",
+        }
         assistant_message = await self._persist_assistant_turn(
             conversation=conversation,
             prepared=prepared,
@@ -750,18 +761,16 @@ class ChatService:
                 # Evidence relevance is evaluated against the retained factual topic,
                 # while generation still receives the current presentation request.
                 retrieval_query = retained_question
-            seeds = (
-                rewrite_citation_ids(
-                    current_content,
-                    resolved.resolution.outcome,
-                    resolved.resolution.relation,
-                    bounded_history,
-                    citation_chunks,
-                    mode=followup_mode,
-                )
-                if resolved.resolution.temporal_intent.kind.value == "none"
-                else []
+            seeds = rewrite_citation_ids(
+                current_content,
+                resolved.resolution.outcome,
+                resolved.resolution.relation,
+                bounded_history,
+                citation_chunks,
+                mode=followup_mode,
             )
+            if seeds:
+                self._work.counts["cited_recall_requests"] += 1
             retrieval_result = await retrieve_rewrite_context(
                 self._retrieval,
                 seeds=seeds,
@@ -771,7 +780,11 @@ class ChatService:
                     "top_k": self._retrieval_config.default_top_k,
                     "document_id": resolved.retrieval.document_id,
                     "metadata_filter": resolved.retrieval.metadata_filter or None,
-                    "as_of": resolved.retrieval.as_of,
+                    "as_of": (
+                        request.as_of
+                        if followup_mode is FollowupMode.PRESENTATION_ONLY
+                        else resolved.retrieval.as_of
+                    ),
                 },
             )
         chunks = retrieval_result.chunks
@@ -800,6 +813,7 @@ class ChatService:
             evidence_approach=self._evidence_approach,
             question=retrieval_query,
         )
+        self._work.counts["source_version_checks"] += 1
         evidence, knowledge_selected = await assess_and_select_knowledge(
             grounding=grounding,
             context_builder=context_builder,
@@ -819,16 +833,14 @@ class ChatService:
             and rewrite_recall.get("status") == "cited_passages"
             and rewrite_recall.get("missing_seed_count") == 0
         )
-        if (
-            exact_presentation_recall
-            and evidence.reason is InsufficientEvidenceReason.BELOW_RELEVANCE_THRESHOLD
-        ):
-            if not knowledge_selected:
-                knowledge_selected = select_exact_recalled_knowledge(
-                    context_builder=context_builder,
-                    chunks=chunks,
-                    expansion_records=expansion_records,
-                )
+        if exact_presentation_recall:
+            # Re-evaluate authority and context budget, but do not make a
+            # presentation request win a second lexical relevance contest.
+            knowledge_selected = select_exact_recalled_knowledge(
+                context_builder=context_builder,
+                chunks=chunks,
+                expansion_records=expansion_records,
+            )
             if knowledge_selected:
                 evidence = replace(
                     evidence,
@@ -841,10 +853,21 @@ class ChatService:
                     "scope": "current_exact_citations",
                     "passage_count": len(knowledge_selected),
                 }
+            else:
+                evidence = replace(
+                    evidence,
+                    sufficient=False,
+                    reason=(
+                        InsufficientEvidenceReason.UNRESOLVED_AUTHORITY
+                        if any(
+                            chunk.metadata.get("authority_status") == "unresolved"
+                            for chunk in chunks
+                        )
+                        else InsufficientEvidenceReason.CONTEXT_SELECTION_EMPTY
+                    ),
+                )
         comparison_review = (
-            not presentation_only
-            and evidence.sufficient
-            and comparison_requested(retrieval_query)
+            not presentation_only and evidence.sufficient and comparison_requested(retrieval_query)
         )
         compliance_review = (
             not presentation_only
@@ -939,7 +962,7 @@ class ChatService:
                         if c.chunk_id not in {x.chunk_id for x in chunks}
                     ],
                 ]
-        elif presentation_only and evidence.sufficient:
+        elif exact_presentation_recall and evidence.sufficient:
             retrieval_result.diagnostics["knowledge_repair"] = {
                 "status": "not_needed",
                 "reason": "presentation_only_reuses_active_cited_evidence",
@@ -1093,6 +1116,7 @@ class ChatService:
             missing_inputs=missing_inputs if knowledge_usable else (),
             partial_answer=partial_answer if knowledge_usable else None,
             response_language=response_language,
+            presentation_only=presentation_only,
         )
         budget = prompt_budget(
             messages,
@@ -1239,9 +1263,7 @@ class ChatService:
         coverage_claims = [
             claim for claim in grounding.claims if claim.get("claim_kind") == "coverage_scope"
         ]
-        supported_claims = sum(
-            claim.get("verification") == "supported" for claim in factual_claims
-        )
+        supported_claims = sum(claim.get("verification") == "supported" for claim in factual_claims)
         unverified_claims = sum(
             claim.get("verification") == "unverified" for claim in factual_claims
         )
@@ -1324,9 +1346,7 @@ class ChatService:
         if prepared.retrieval_diagnostics.get("rewrite_recall"):
             metadata["rewrite_recall"] = prepared.retrieval_diagnostics["rewrite_recall"]
         if prepared.retrieval_diagnostics.get("presentation_reuse"):
-            metadata["presentation_reuse"] = prepared.retrieval_diagnostics[
-                "presentation_reuse"
-            ]
+            metadata["presentation_reuse"] = prepared.retrieval_diagnostics["presentation_reuse"]
         metadata.update(
             {
                 "response_mode": self._chat_config.response_mode.value,
@@ -1408,13 +1428,16 @@ class ChatService:
             if isinstance(presentation_reuse, dict)
             else 0
         )
+        ordinarily_admitted_passages = (
+            sum(a.passed for a in prepared.evidence.candidate_assessments)
+            if prepared.evidence.candidate_assessments
+            else len(prepared.evidence.admitted_units)
+        )
         metadata["evidence_summary"] = {
             "candidates": prepared.retrieval_diagnostics.get("retrieved_candidate_count")
             or len(prepared.chunks),
             "candidate_count_scope": "initial_search_before_reranking",
-            "admitted_passages": sum(a.passed for a in prepared.evidence.candidate_assessments)
-            if prepared.evidence.candidate_assessments
-            else len(prepared.evidence.admitted_units),
+            "admitted_passages": 0 if reused_cited_passages else ordinarily_admitted_passages,
             "reused_cited_passages": reused_cited_passages,
             "context_passages": len(prepared.selected),
             "cited_passages": len(cited_snapshots),
@@ -2373,6 +2396,25 @@ def _combined_auxiliary_usage(
     )
 
 
+def _preparation_progress(counts: Mapping[str, int]) -> tuple[str, str]:
+    """Describe long preparation work without exposing prompts or source text."""
+    llm_calls = counts.get("llm_calls", 0)
+    rerank_calls = counts.get("rerank_calls", 0)
+    if llm_calls >= 3:
+        return "checking_recovered_evidence", "Checking recovered evidence"
+    if rerank_calls >= 2:
+        return "searching_missing_evidence", "Searching for missing evidence"
+    if llm_calls >= 2:
+        return "checking_support", "Checking support"
+    if counts.get("source_version_checks", 0):
+        return "checking_source_versions", "Checking source versions"
+    if counts.get("cited_recall_requests", 0):
+        return "finding_cited_passages", "Finding cited passages"
+    if counts.get("embedding_calls", 0) or rerank_calls:
+        return "finding_passages", "Finding relevant passages"
+    return "understanding_request", "Understanding request"
+
+
 def _combine_token_counts(
     resolver: ChatUsage | None,
     generation_input: int | None,
@@ -2418,9 +2460,7 @@ def _history_message_from_orm(message: Message) -> HistoryMessage:
 
 def _citation_identities_from_message(message: Message) -> list[CitationIdentity]:
     identities: list[CitationIdentity] = []
-    for item in message.citations or []:
-        if not isinstance(item, dict):
-            continue
+    for item in used_citation_items(message.content, message.citations or []):
         identities.append(
             CitationIdentity(
                 message_id=message.id,
