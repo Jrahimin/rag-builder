@@ -126,6 +126,7 @@ class SourceMetadataReadPort(Protocol):
         deployment_cap: str,
         as_of: datetime | None,
         generation: int | None = None,
+        scoped_document_id: uuid.UUID | None = None,
     ) -> SourceMetadataScope: ...
 
     async def incoming_modifiers(

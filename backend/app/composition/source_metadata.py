@@ -31,14 +31,18 @@ class KnowledgeRetrievalSourceMetadataAdapter:
         deployment_cap: str,
         as_of: datetime | None,
         generation: int | None = None,
+        scoped_document_id: uuid.UUID | None = None,
     ) -> SourceMetadataScope:
         cap = SourcePolicyDeploymentCap(deployment_cap)
         effective_mode = cap_source_policy_mode(configured_mode, cap)
+        enforce_join = (
+            effective_mode is SourcePolicyMode.ENFORCE and scoped_document_id is None
+        )
         captured = await self._reader.capture(
             project_id=project_id,
             generation=generation,
             as_of=as_of,
-            enforce=effective_mode is SourcePolicyMode.ENFORCE,
+            enforce=enforce_join,
         )
         return SourceMetadataScope(
             selectable=captured.selectable,

@@ -158,7 +158,10 @@ class SearchService:
             if self._pinned_index_build_id is not None
             else await self._builds.get_active()
         )
-        source_scope, source_policy_status = await self._capture_source_scope(request.as_of)
+        source_scope, source_policy_status = await self._capture_source_scope(
+            request.as_of,
+            scoped_document_id=request.document_id,
+        )
         if active_build is None:
             return self._empty_search_response(
                 request,
@@ -592,7 +595,10 @@ class SearchService:
         """Hydrate bounded indexed identities without ranked retrieval."""
         started = time.perf_counter()
         strategy = self._config.strategy
-        source_scope, source_policy_status = await self._capture_source_scope(as_of)
+        source_scope, source_policy_status = await self._capture_source_scope(
+            as_of,
+            scoped_document_id=document_id,
+        )
         identities = list(dict.fromkeys(chunk_ids))[:24]
         if not identities:
             return self._identity_recall_response(
@@ -762,6 +768,8 @@ class SearchService:
     async def _capture_source_scope(
         self,
         as_of: datetime | None,
+        *,
+        scoped_document_id: uuid.UUID | None = None,
     ) -> tuple[SourceMetadataScope, str]:
         if (
             as_of is None
@@ -815,6 +823,7 @@ class SearchService:
                 deployment_cap=deployment_cap.value,
                 as_of=as_of,
                 generation=self._pinned_source_metadata_generation,
+                scoped_document_id=scoped_document_id,
             )
         except SQLAlchemyError as exc:
             if effective_mode is SourcePolicyMode.ENFORCE:
