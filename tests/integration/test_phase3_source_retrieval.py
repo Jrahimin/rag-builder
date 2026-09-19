@@ -76,6 +76,11 @@ async def _project(client: AsyncClient) -> tuple[str, str]:
     return str(data["id"]), str(bootstrap_revision_id)
 
 
+async def _project_id(client: AsyncClient) -> str:
+    project_id, _bootstrap_revision_id = await _project(client)
+    return project_id
+
+
 async def _upload(client: AsyncClient, project_id: str, filename: str, suffix: str) -> str:
     response = await client.post(
         f"/api/v1/projects/{project_id}/documents",
