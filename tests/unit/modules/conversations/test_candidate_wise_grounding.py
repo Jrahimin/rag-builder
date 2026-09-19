@@ -710,3 +710,49 @@ def test_captured_bangla_excerpt_shares_too_few_tokens_for_lexical_admission() -
         )
         > 0
     )
+
+
+def test_stage3_does_not_change_candidate_wise_admission_thresholds() -> None:
+    original = _variant("original", "What are the source tax deduction categories?", "en")
+    translated = _variant(
+        "translated:bn",
+        "উৎসে কর কর্তনের খাতগুলো কী কী",
+        "bn",
+        translated=True,
+    )
+    matching = _candidate(
+        "উৎসে কর কর্তনের খাতগুলো হলো সঞ্চয়পত্র এবং সম্পত্তি অধিগ্রহণ।",
+        variants=(original, translated),
+        contributions=(_contribution("translated_lexical", translated.variant_id),),
+    )
+    rejected = _candidate(
+        "Parking permits are issued on Tuesdays only.",
+        variants=(original,),
+        contributions=(_contribution("original_dense", original.variant_id),),
+        reranker_score=0.92,
+        semantic_score=0.10,
+    )
+    decision = _service().assess(
+        original.text, [matching, rejected], rerank_status="applied"
+    )
+    assert decision.sufficient is True
+    assert {unit.chunk_id for unit in decision.admitted_units} == {matching.chunk_id}
+
+
+async def test_candidate_wise_admitted_evidence_still_runs_final_claim_verification() -> None:
+    original = _variant("original", "What is the customer refund period?", "en")
+    content = "Customer refund period is thirty days after purchase."
+    chunk = _candidate(
+        content,
+        variants=(original,),
+        contributions=(_contribution("original_dense", original.variant_id),),
+        semantic_score=0.5,
+    )
+    service = _service()
+    decision = service.assess(original.text, [chunk], rerank_status="applied")
+    assert decision.sufficient is True
+    result = await service.map_claims(
+        "Customer refund period is thirty days after purchase. [1]",
+        list(decision.admitted_units) or [chunk],
+    )
+    assert result.claims[0]["verification"] == "supported"

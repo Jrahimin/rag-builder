@@ -22,6 +22,7 @@ from app.core.config import (
 from app.core.exceptions import ConflictError, NotFoundError, ServiceUnavailableError
 from app.models.conversation import Conversation
 from app.models.message import Message, MessageRole
+from app.modules.conversations.citation_snapshots import EVIDENCE_PROVENANCE_VERSION
 from app.modules.conversations.context_builder import ContextBuilder
 from app.modules.conversations.grounded_context import select_exact_recalled_knowledge
 from app.modules.conversations.ports import ContextChunk, ContextRetrievalResult
@@ -51,6 +52,7 @@ from app.platform.providers.contracts.web_search import (
 )
 from app.platform.providers.errors import ProviderError, ProviderQuotaError, ProviderTimeoutError
 from app.platform.providers.implementations.echo_chat import EchoLLMProvider
+from app.platform.providers.request_work import current_request_work
 
 pytestmark = pytest.mark.unit
 
@@ -1252,6 +1254,14 @@ async def test_stream_cancel_skips_assistant_persist(
         events.append(item)
     assert session.commit.await_count == 1
     assert not any(isinstance(item, dict) and item["event"] == "done" for item in events)
+    snapshot = service._work.snapshot()
+    generation = next(
+        span for span in snapshot["spans"]["items"] if span["name"] == "answer_generation"
+    )
+    assert generation["outcome"] == "cancelled"
+    llm_calls = [call for call in snapshot["provider_calls"] if call.get("kind") == "llm"]
+    assert llm_calls
+    assert llm_calls[-1]["status"] == "cancelled"
 
 
 async def test_applied_rerank_without_corroboration_blocks_unrelated_query(
@@ -1835,6 +1845,277 @@ async def test_indexed_then_web_skips_web_when_knowledge_is_sufficient(
     assert web.calls == []
     assert turn.assistant_message.source_provenance == "knowledge"
     assert turn.assistant_message.metadata["web_search"]["status"] == "not_requested"
+    policy = turn.assistant_message.metadata["response_policy"]
+    assert policy["indexed_policy"]["knowledge_usable"] is True
+    assert policy["web"]["requested"] is False
+    assert policy["answerable_scope"]["partial"] is False
+
+
+@pytest.mark.parametrize("streamed", [False, True])
+@pytest.mark.parametrize(
+    "case",
+    [
+        "indexed_only_complete",
+        "indexed_then_web_incomplete",
+        "indexed_then_web_unresolved",
+        "indexed_then_web_observe_near_miss",
+        "indexed_then_web_unavailable",
+        "indexed_then_web_failed",
+        "indexed_then_web_rejected",
+        "indexed_then_web_scoped",
+        "indexed_and_web_combined",
+    ],
+)
+async def test_response_policy_matrix_for_streaming_and_non_streaming(
+    session,
+    conversation_repository,
+    message_repository,
+    conversation,
+    streamed,
+    case,
+) -> None:
+    conversation.system_prompt_version = "v5"
+    web: FakeWebSearch | FailingWebSearch | None = FakeWebSearch()
+    chat = ChatConfig(response_mode=ResponseMode.INDEXED_THEN_WEB, system_prompt_version="v5")
+    retrieval: object = FakeRetrieval()
+    llm: EchoLLMProvider = CitedLLM("Refunds are available within 30 days [1].")
+    request = MessageSendRequest(content="What is the current refund guidance?")
+    if case == "indexed_only_complete":
+        chat = ChatConfig(response_mode=ResponseMode.INDEXED_ONLY, system_prompt_version="v5")
+        llm = CitedLLM("Refunds are available within 30 days [1].")
+        request = MessageSendRequest(content="What is the refund policy?")
+    elif case == "indexed_then_web_incomplete":
+        retrieval = EmptyRetrieval()
+        llm = CitedLLM("Current web guidance allows refunds within 30 days [1].")
+    elif case == "indexed_then_web_unresolved":
+        retrieval = UnresolvedRuleRetrieval()
+        llm = FailingLLM(model="test", provider_version="1")
+    elif case == "indexed_then_web_observe_near_miss":
+        chat = ChatConfig(
+            response_mode=ResponseMode.INDEXED_THEN_WEB,
+            evidence_gate_mode=EvidenceGateMode.OBSERVE,
+            system_prompt_version="v5",
+        )
+        retrieval = NearMissRetrieval()
+        llm = CitedLLM("Office stationery occupies this chapter [1].")
+        request = MessageSendRequest(content="What are the source tax deduction categories?")
+    elif case == "indexed_then_web_unavailable":
+        retrieval = EmptyRetrieval()
+        web = None
+    elif case == "indexed_then_web_failed":
+        retrieval = EmptyRetrieval()
+        web = FailingWebSearch()
+    elif case == "indexed_then_web_rejected":
+        retrieval = EmptyRetrieval()
+        llm = CitedLLM("must not run")
+        web = FakeWebSearch(
+            [
+                WebSearchEvidence(
+                    evidence_id="uncited",
+                    title="Refund policy",
+                    url="https://example.test/refunds",
+                    content="Refunds are available within 30 days.",
+                    retrieved_at=datetime.now(UTC),
+                    citation_verified=False,
+                )
+            ]
+        )
+    elif case == "indexed_then_web_scoped":
+        retrieval = EmptyRetrieval()
+        request = MessageSendRequest(
+            content="What is the current refund guidance?",
+            document_id=uuid.uuid4(),
+        )
+    else:
+        chat = ChatConfig(response_mode=ResponseMode.INDEXED_AND_WEB, system_prompt_version="v5")
+        llm = CitedLLM("Refunds are available within 30 days [1].")
+        request = MessageSendRequest(content="What is the refund policy?")
+    service = _service(
+        session,
+        conversation_repository,
+        message_repository,
+        llm,
+        chat_config=chat,
+    )
+    service._retrieval = retrieval
+    service._web_search = web
+    if streamed:
+        events = [event async for event in service.stream_message(conversation.id, request)]
+        assert events
+        saved = message_repository.add.call_args_list[-1].args[0]
+        metadata = saved.message_metadata or {}
+    else:
+        turn = await service.send_message(conversation.id, request)
+        metadata = turn.assistant_message.metadata
+    policy = metadata["response_policy"]
+    assert policy["response_mode"] == chat.response_mode.value
+    assert policy["gate_mode"] == chat.evidence_gate_mode.value
+    if case == "indexed_only_complete":
+        assert policy["indexed_policy"]["knowledge_usable"] is True
+        assert policy["web"]["requested"] is False
+        assert policy["web"]["status"] == "not_requested"
+    elif case == "indexed_then_web_incomplete":
+        assert policy["indexed_policy"]["knowledge_usable"] is False
+        assert policy["web"]["requested"] is True
+        assert policy["web"]["fallback_used"] is True
+        assert policy["web"]["status"] == "evidence_accepted"
+        assert policy["answerable_scope"]["complete"] is False
+    elif case == "indexed_then_web_unresolved":
+        assert policy["unresolved_authority"] is True
+        assert policy["web"]["status"] == "suppressed_unresolved_authority"
+        assert policy["web"]["requested"] is True
+        assert policy["indexed_policy"]["blocks_generation"] is True
+    elif case == "indexed_then_web_observe_near_miss":
+        assert policy["gate_mode"] == EvidenceGateMode.OBSERVE.value
+        assert policy["indexed_policy"]["knowledge_usable"] is True
+        assert policy["web"]["requested"] is False
+    elif case == "indexed_then_web_unavailable":
+        assert policy["web"]["status"] == "provider_unavailable"
+        assert policy["web"]["fallback_used"] is False
+    elif case == "indexed_then_web_failed":
+        assert policy["web"]["status"] == "failed"
+        assert policy["web"]["fallback_used"] is False
+    elif case == "indexed_then_web_rejected":
+        assert policy["web"]["status"] == "evidence_extracted_irrelevant"
+        assert policy["web"]["fallback_used"] is False
+        assert policy["indexed_policy"]["knowledge_usable"] is False
+    elif case == "indexed_then_web_scoped":
+        assert policy["scoped_request"] is True
+        assert policy["web"]["status"] == "suppressed_scoped_request"
+    else:
+        assert policy["response_mode"] == ResponseMode.INDEXED_AND_WEB.value
+        assert policy["web"]["requested"] is True
+        assert policy["indexed_policy"]["knowledge_usable"] is True
+
+
+@pytest.mark.parametrize("streamed", [False, True])
+@pytest.mark.parametrize("mode", [ResponseMode.INDEXED_ONLY, ResponseMode.INDEXED_THEN_WEB])
+async def test_validated_partial_cannot_alter_indexed_web_policy(
+    session,
+    conversation_repository,
+    message_repository,
+    conversation,
+    streamed,
+    mode,
+) -> None:
+    initial = await UnresolvedRuleRetrieval().retrieve()
+    initial.diagnostics["source_metadata_generation"] = 24
+    current = replace(
+        initial.chunks[0],
+        chunk_id=uuid.uuid4(),
+        content="Current refund entitlement is 45 days for eligible purchases.",
+        metadata={},
+        score=0.95,
+        semantic_score=0.95,
+        chunk_hash="current-policy",
+    )
+    retrieval = AsyncMock()
+    retrieval.query_embedder = None
+    retrieval.retrieve.side_effect = [
+        initial,
+        ContextRetrievalResult(
+            chunks=[current],
+            diagnostics={
+                "index_build_id": initial.diagnostics["index_build_id"],
+                "source_metadata_generation": 24,
+            },
+        ),
+    ]
+    llm = CitedLLM("Current refund entitlement is 45 days for eligible purchases [1].")
+    generate = llm.generate
+    answer = await generate([], temperature=None, max_tokens=100)
+    llm.generate = AsyncMock(
+        side_effect=[
+            replace(
+                answer,
+                content=json.dumps(
+                    {
+                        "queries": [
+                            {
+                                "query": "current refund entitlement eligibility",
+                                "requirement_ids": ["R1", "R2"],
+                            }
+                        ],
+                        "requirements": [
+                            {
+                                "requirement_id": "R1",
+                                "description": "Filing duty",
+                            },
+                            {
+                                "requirement_id": "R2",
+                                "description": "Refund period",
+                            },
+                        ],
+                    }
+                ),
+            ),
+            replace(
+                answer,
+                content=json.dumps(
+                    {
+                        "complete": False,
+                        "missing": ["Filing duty"],
+                        "checks": [
+                            {
+                                "requirement_id": "R1",
+                                "description": "Filing duty",
+                                "supported": False,
+                                "evidence": [],
+                            },
+                            {
+                                "requirement_id": "R2",
+                                "description": "Refund period",
+                                "supported": True,
+                                "evidence": [
+                                    {
+                                        "chunk_id": str(current.chunk_id),
+                                        "quote": current.content,
+                                    }
+                                ],
+                            },
+                        ],
+                        "partial_answer": {
+                            "scope": "Refund period",
+                            "requirement_ids": ["R2"],
+                            "exclusions": ["Filing duty"],
+                        },
+                    }
+                ),
+            ),
+            replace(answer, content=json.dumps({"queries": []})),
+            answer,
+        ]
+    )
+    web = FakeWebSearch()
+    service = _service(
+        session,
+        conversation_repository,
+        message_repository,
+        llm,
+        chat_config=ChatConfig(response_mode=mode, system_prompt_version="v5"),
+    )
+    service._retrieval = retrieval
+    service._web_search = web
+    request = MessageSendRequest(content="What is the current refund guidance?")
+    if streamed:
+        events = [event async for event in service.stream_message(conversation.id, request)]
+        assert events
+        saved = message_repository.add.call_args_list[-1].args[0]
+        metadata = saved.message_metadata or {}
+        content = saved.content
+    else:
+        turn = await service.send_message(conversation.id, request)
+        metadata = turn.assistant_message.metadata
+        content = turn.assistant_message.content
+    assert not web.calls
+    policy = metadata["response_policy"]
+    assert policy["indexed_policy"]["knowledge_usable"] is True
+    assert policy["indexed_policy"]["sufficient"] is True
+    assert policy["web"]["requested"] is False
+    assert policy["answerable_scope"]["complete"] is False
+    assert policy["answerable_scope"]["partial"] is True
+    assert metadata["knowledge_repair"]["status"] == "partial_answer"
+    assert "independently supported" in content or "45 days" in content
 
 
 async def test_modifies_expansion_survives_combined_rerank_and_skips_web(
@@ -2470,6 +2751,26 @@ def test_scope_notice_keeps_expanded_effective_modifiers() -> None:
     assert status["excluded_effective_modifier_count"] == 1
 
 
+def test_scope_notice_uses_inherited_document_id() -> None:
+    inherited = uuid.uuid4()
+    status = _scope_current_authority_status(
+        MessageSendRequest(content="Make it shorter."),
+        {
+            "modifies_expansion_status": "suppressed_document_scope",
+            "modifies_expansion_records": [
+                {
+                    "relationship_type": "modifies",
+                    "modifier_effective_from": "2020-01-01",
+                    "outcome": "expanded",
+                }
+            ],
+        },
+        document_id=inherited,
+    )
+    assert status is not None
+    assert status["status"] == "effective_modifier_excluded_by_scope"
+
+
 class CapturingRetrieval(FakeRetrieval):
     def __init__(self) -> None:
         self.calls: list[dict[str, object]] = []
@@ -2523,26 +2824,143 @@ class ScriptedResolutionLLM(EchoLLMProvider):
         )
 
 
+def _reusable_chunk(
+    content: str = "A customer may request a refund within 30 days of purchase.",
+) -> ContextChunk:
+    raw_hash = content_hash(content)
+    return ContextChunk(
+        chunk_id=uuid.uuid4(),
+        document_id=uuid.uuid4(),
+        chunk_index=1,
+        content=content,
+        score=0.9,
+        filename="policy.txt",
+        chunk_hash=raw_hash,
+        semantic_score=0.9,
+        char_start=0,
+        char_end=len(content),
+        metadata={
+            "indexed_chunk_hash": raw_hash,
+            "configuration_hash": "a" * 64,
+            "index_build_id": str(uuid.uuid4()),
+            "source_metadata_generation": 1,
+            "processing_version": 1,
+        },
+    )
+
+
+def _reusable_citation(chunk: ContextChunk, **overrides: object) -> dict[str, object]:
+    span_hash = content_hash(chunk.content)
+    citation: dict[str, object] = {
+        "source_kind": "knowledge",
+        "chunk_id": str(chunk.chunk_id),
+        "document_id": str(chunk.document_id),
+        "filename": chunk.filename,
+        "evidence_provenance_version": EVIDENCE_PROVENANCE_VERSION,
+        "indexed_chunk_hash": chunk.metadata["indexed_chunk_hash"],
+        "evidence_source_chunk_hash": chunk.metadata["indexed_chunk_hash"],
+        "evidence_span_hash": span_hash,
+        "evidence_chunk_char_start": 0,
+        "evidence_chunk_char_end": len(chunk.content),
+        "evidence_span_derivation": "complete_chunk",
+        "evidence_corroboration_method": "original_lexical",
+        "evidence_source_envelope": "contiguous_span",
+        "configuration_hash": chunk.metadata.get("configuration_hash"),
+        "chunk_hash": span_hash,
+        "evidence_unit_id": str(uuid.uuid4()),
+    }
+    citation.update(overrides)
+    return citation
+
+
+_RUNTIME_IDENTITY_KEYS = (
+    "retrieval_scope",
+    "relationship_recall_provenance",
+    "relationship_grounding_trust",
+)
+
+
+def _identity_recalled_chunk(chunk: ContextChunk) -> ContextChunk:
+    return replace(
+        chunk,
+        metadata={
+            key: value for key, value in chunk.metadata.items() if key not in _RUNTIME_IDENTITY_KEYS
+        },
+    )
+
+
+class ExactRecallRetrieval:
+    supports_cited_retrieval = True
+    supports_exact_recall = True
+
+    def __init__(
+        self,
+        chunk: ContextChunk,
+        *,
+        extras: list[ContextChunk] | None = None,
+        configuration_hash: str | None = None,
+        expansion_records: list[dict[str, object]] | None = None,
+    ) -> None:
+        self.chunk = chunk
+        self.extras = extras or []
+        self.expansion_records = expansion_records or []
+        self.retrieve_calls: list[dict[str, object]] = []
+        self.exact_calls: list[dict[str, object]] = []
+        self._configuration_hash = configuration_hash or chunk.metadata.get("configuration_hash")
+
+    def _requested_chunks(self, kwargs: dict[str, object]) -> list[ContextChunk]:
+        requested = kwargs.get("chunk_ids") or []
+        available = [self.chunk, *self.extras]
+        if not isinstance(requested, list) or not requested:
+            return available
+        by_id = {chunk.chunk_id: chunk for chunk in available}
+        return [by_id[item] for item in requested if item in by_id]
+
+    def _identity_diagnostics(self, kwargs: dict[str, object], count: int) -> dict[str, object]:
+        if kwargs.get("document_id") is not None:
+            status = "suppressed_document_scope"
+        elif self.expansion_records:
+            status = "observe"
+        else:
+            status = "no_relationships"
+        return {
+            "retrieved_candidate_count": count,
+            "rerank_status": "skipped",
+            "configuration_hash": self._configuration_hash,
+            "modifies_expansion_records": list(self.expansion_records),
+            "modifies_expansion_status": status,
+        }
+
+    async def retrieve(self, **kwargs: object) -> ContextRetrievalResult:
+        work = current_request_work()
+        if work is not None:
+            work.counts["ranked_retrieval_calls"] += 1
+        self.retrieve_calls.append(kwargs)
+        return ContextRetrievalResult(
+            chunks=[self.chunk],
+            diagnostics={"retrieved_candidate_count": 1, "rerank_status": "skipped"},
+        )
+
+    async def retrieve_exact(self, **kwargs: object) -> ContextRetrievalResult:
+        self.exact_calls.append(kwargs)
+        chunks = [_identity_recalled_chunk(item) for item in self._requested_chunks(kwargs)]
+        return ContextRetrievalResult(
+            chunks=chunks,
+            diagnostics=self._identity_diagnostics(kwargs, len(chunks)),
+        )
+
+
 async def test_explicit_presentation_rewrite_reuses_only_visible_prior_citations(
     session,
     conversation_repository,
     message_repository,
     conversation,
 ):
+    cited_chunk = _reusable_chunk()
     prior_user, prior_assistant = _history_messages(
         conversation,
         user_content="What is the refund period?",
         assistant_content="A request may be made within 30 days of purchase. [2]",
-    )
-    cited_chunk = ContextChunk(
-        chunk_id=uuid.uuid4(),
-        document_id=uuid.uuid4(),
-        chunk_index=1,
-        content="A customer may request a refund within 30 days of purchase.",
-        score=0.9,
-        filename="policy.txt",
-        chunk_hash="cited",
-        semantic_score=0.9,
     )
     prior_assistant.citations = [
         {
@@ -2551,33 +2969,13 @@ async def test_explicit_presentation_rewrite_reuses_only_visible_prior_citations
             "document_id": str(uuid.uuid4()),
             "filename": "nearby.txt",
         },
-        {
-            "source_kind": "knowledge",
-            "chunk_id": str(cited_chunk.chunk_id),
-            "document_id": str(cited_chunk.document_id),
-            "filename": cited_chunk.filename,
-        },
+        _reusable_citation(cited_chunk),
     ]
     message_repository.list_recent_for_conversation.return_value = [
         prior_user,
         prior_assistant,
     ]
-
-    class ExactCitationRetrieval:
-        supports_cited_retrieval = True
-
-        def __init__(self):
-            self.calls = []
-
-        async def retrieve(self, **kwargs):
-            self.calls.append(kwargs)
-            assert kwargs["cited_chunk_ids"] == [cited_chunk.chunk_id]
-            return ContextRetrievalResult(
-                chunks=[cited_chunk],
-                diagnostics={"retrieved_candidate_count": 1},
-            )
-
-    retrieval = ExactCitationRetrieval()
+    retrieval = ExactRecallRetrieval(cited_chunk)
     llm = ScriptedResolutionLLM(
         _resolved_payload(
             relation="standalone",
@@ -2602,14 +3000,659 @@ async def test_explicit_presentation_rewrite_reuses_only_visible_prior_citations
         ),
     )
 
-    assert len(retrieval.calls) == 1
+    assert retrieval.exact_calls and not retrieval.retrieve_calls
+    assert retrieval.exact_calls[0]["chunk_ids"] == [cited_chunk.chunk_id]
+    counts = turn.assistant_message.metadata["lifecycle"]["counts"]
+    assert counts.get("resolver_calls", 0) == 0
+    assert counts.get("ranked_retrieval_calls", 0) == 0
+    assert counts.get("translation_calls", 0) == 0
+    assert counts.get("rerank_calls", 0) == 0
+    assert counts.get("planner_calls", 0) == 0
+    assert counts.get("coverage_review_calls", 0) == 0
+    assert counts.get("recovery_attempts", 0) == 0
+    assert llm.resolver_calls == 0
+    assert llm.generate_calls == 1
     metadata = turn.assistant_message.metadata
-    assert metadata["rewrite_recall"]["status"] == "cited_passages"
+    assert metadata["evidence_gate"]["passage_rescue"]["candidate_count"] == 0
+    assert metadata["evidence_gate"]["candidate_wise"]["path"] == "exact_citation_recall"
+    assert metadata["rewrite_recall"]["status"] == "exact_cited_passages"
     assert metadata["knowledge_repair"]["status"] == "not_needed"
+    assert metadata["turn_resolution"]["routing_origin"] == "deterministic"
+    assert metadata["turn_resolution"]["followup_mode"] == "presentation_only"
     assert metadata["evidence_summary"]["coverage_method"] == ("current_exact_citation_recall")
     assert metadata["evidence_summary"]["admitted_passages"] == 0
     assert metadata["evidence_summary"]["reused_cited_passages"] == 1
+    assert metadata["presentation_reuse"]["reuse_validation_outcome"] == "passed"
+    assert turn.assistant_message.citations[0].chunk_id == cited_chunk.chunk_id
     assert "Preserve material meaning naturally" in llm.generation_prompts[0][0].content
+    assert metadata["evidence_summary"]["claim_verification"] in {"verified", "unverified"}
+    assert metadata["evidence_summary"]["supported_factual_claims"] >= 1
+    assert turn.assistant_message.content.count("- ") == 3
+
+
+async def test_missing_provenance_falls_back_to_ranked_cited_recall(
+    session,
+    conversation_repository,
+    message_repository,
+    conversation,
+):
+    cited_chunk = _reusable_chunk()
+    prior_user, prior_assistant = _history_messages(
+        conversation,
+        user_content="What is the refund period?",
+        assistant_content="A request may be made within 30 days of purchase. [1]",
+    )
+    prior_assistant.citations = [
+        {
+            "source_kind": "knowledge",
+            "chunk_id": str(cited_chunk.chunk_id),
+            "document_id": str(cited_chunk.document_id),
+            "filename": cited_chunk.filename,
+        }
+    ]
+    message_repository.list_recent_for_conversation.return_value = [prior_user, prior_assistant]
+    retrieval = ExactRecallRetrieval(cited_chunk)
+    llm = ScriptedResolutionLLM({}, answer="Refunds may be requested within 30 days. [1]")
+    service = _service(session, conversation_repository, message_repository, llm)
+    service._retrieval = retrieval
+    turn = await service.send_message(
+        conversation.id, MessageSendRequest(content="Make it shorter.")
+    )
+    assert not retrieval.exact_calls
+    assert retrieval.retrieve_calls
+    assert turn.assistant_message.metadata["presentation_reuse"]["status"] == "fallback"
+    assert turn.assistant_message.metadata["presentation_reuse"]["reuse_failure_category"] == (
+        "missing_provenance"
+    )
+    assert llm.resolver_calls == 0
+    assert (
+        turn.assistant_message.metadata["lifecycle"]["counts"].get("ranked_retrieval_calls", 0) == 1
+    )
+
+
+async def test_second_presentation_rewrite_stays_on_exact_recall(
+    session,
+    conversation_repository,
+    message_repository,
+    conversation,
+):
+    cited_chunk = _reusable_chunk()
+    first_user, first_assistant = _history_messages(
+        conversation,
+        user_content="What is the refund period?",
+        assistant_content="A request may be made within 30 days of purchase. [1]",
+    )
+    rewrite_user, rewrite_assistant = _history_messages(
+        conversation,
+        user_content="Rewrite that as exactly three short bullets in English.",
+        assistant_content="- Refunds may be requested. [1]\n- The period is 30 days. [1]",
+    )
+    first_assistant.citations = [_reusable_citation(cited_chunk)]
+    rewrite_assistant.citations = [_reusable_citation(cited_chunk)]
+    message_repository.list_recent_for_conversation.return_value = [
+        first_user,
+        first_assistant,
+        rewrite_user,
+        rewrite_assistant,
+    ]
+    retrieval = ExactRecallRetrieval(cited_chunk)
+    llm = ScriptedResolutionLLM({}, answer="Refunds are available within 30 days. [1]")
+    service = _service(session, conversation_repository, message_repository, llm)
+    service._retrieval = retrieval
+    turn = await service.send_message(
+        conversation.id, MessageSendRequest(content="Make it shorter.")
+    )
+    assert retrieval.exact_calls and not retrieval.retrieve_calls
+    assert llm.generate_calls == 1 and llm.resolver_calls == 0
+    assert turn.assistant_message.metadata["evidence_summary"]["coverage_method"] == (
+        "current_exact_citation_recall"
+    )
+
+
+async def test_mixed_web_citations_do_not_qualify_indexed_only_reuse(
+    session,
+    conversation_repository,
+    message_repository,
+    conversation,
+):
+    cited_chunk = _reusable_chunk()
+    prior_user, prior_assistant = _history_messages(
+        conversation,
+        user_content="What is the refund period?",
+        assistant_content="Indexed fact [1] and a public note [2].",
+    )
+    prior_assistant.citations = [
+        _reusable_citation(cited_chunk),
+        {
+            "source_kind": "web",
+            "filename": "Refund policy",
+            "web_url": "https://example.test/refunds",
+            "web_title": "Refund policy",
+            "web_retrieved_at": datetime(2026, 7, 1, tzinfo=UTC).isoformat(),
+            "web_provider": "test_web",
+        },
+    ]
+    message_repository.list_recent_for_conversation.return_value = [prior_user, prior_assistant]
+    retrieval = ExactRecallRetrieval(cited_chunk)
+    llm = ScriptedResolutionLLM(
+        _resolved_payload(relation="follow_up", effective_question="Make it shorter."),
+        answer="Refunds are available within 30 days. [1]",
+    )
+    service = _service(session, conversation_repository, message_repository, llm)
+    service._retrieval = retrieval
+    turn = await service.send_message(
+        conversation.id, MessageSendRequest(content="Make it shorter.")
+    )
+    assert llm.resolver_calls == 0
+    assert llm.generate_calls == 1
+    assert not retrieval.exact_calls
+    assert retrieval.retrieve_calls
+    assert turn.assistant_message.metadata["turn_resolution"]["routing_origin"] == ("deterministic")
+    assert turn.assistant_message.metadata.get("presentation_reuse", {}).get("status") != ("reused")
+    assert turn.assistant_message.metadata["presentation_reuse"]["reuse_failure_category"] == (
+        "mixed_web"
+    )
+
+
+async def test_indexed_and_web_mixed_citations_reuse_indexed_branch_and_keep_web(
+    session,
+    conversation_repository,
+    message_repository,
+    conversation,
+):
+    cited_chunk = _reusable_chunk()
+    prior_user, prior_assistant = _history_messages(
+        conversation,
+        user_content="What is the refund period?",
+        assistant_content="Indexed fact [1] and a public note [2].",
+    )
+    prior_assistant.citations = [
+        _reusable_citation(cited_chunk),
+        {
+            "source_kind": "web",
+            "filename": "Refund policy",
+            "web_url": "https://example.test/refunds",
+            "web_title": "Refund policy",
+            "web_retrieved_at": datetime(2026, 7, 1, tzinfo=UTC).isoformat(),
+            "web_provider": "test_web",
+        },
+    ]
+    message_repository.list_recent_for_conversation.return_value = [prior_user, prior_assistant]
+    retrieval = ExactRecallRetrieval(cited_chunk)
+    llm = ScriptedResolutionLLM({}, answer="Refunds are available within 30 days. [1]")
+    service = _service(
+        session,
+        conversation_repository,
+        message_repository,
+        llm,
+        chat_config=ChatConfig(
+            system_prompt_version="v1",
+            response_mode=ResponseMode.INDEXED_AND_WEB,
+        ),
+    )
+    service._retrieval = retrieval
+    service._web_search = FakeWebSearch()
+    turn = await service.send_message(
+        conversation.id, MessageSendRequest(content="Make it shorter.")
+    )
+    assert retrieval.exact_calls and not retrieval.retrieve_calls
+    assert service._web_search.calls
+    assert llm.resolver_calls == 0
+    assert (
+        turn.assistant_message.metadata["lifecycle"]["counts"].get("ranked_retrieval_calls", 0) == 0
+    )
+    assert turn.assistant_message.metadata["presentation_reuse"]["status"] == "reused"
+    assert turn.assistant_message.metadata["web_search"]["status"] != "not_requested"
+
+
+async def test_changed_request_document_scope_exits_exact_reuse(
+    session,
+    conversation_repository,
+    message_repository,
+    conversation,
+):
+    cited_chunk = _reusable_chunk()
+    prior_user, prior_assistant = _history_messages(
+        conversation,
+        user_content="What is the refund period?",
+        assistant_content="A request may be made within 30 days of purchase. [1]",
+    )
+    prior_assistant.citations = [
+        _reusable_citation(
+            cited_chunk,
+            evidence_scope_document_id=str(cited_chunk.document_id),
+            evidence_scope_metadata_filter={},
+        )
+    ]
+    message_repository.list_recent_for_conversation.return_value = [prior_user, prior_assistant]
+    retrieval = ExactRecallRetrieval(cited_chunk)
+    llm = ScriptedResolutionLLM({}, answer="Refunds are available within 30 days. [1]")
+    service = _service(session, conversation_repository, message_repository, llm)
+    service._retrieval = retrieval
+    turn = await service.send_message(
+        conversation.id,
+        MessageSendRequest(content="Make it shorter.", document_id=uuid.uuid4()),
+    )
+    assert llm.resolver_calls == 0
+    assert not retrieval.exact_calls
+    assert retrieval.retrieve_calls
+    assert turn.assistant_message.metadata["presentation_reuse"]["reuse_failure_category"] == (
+        "request_scope_changed"
+    )
+
+
+async def test_inherited_historical_scope_is_passed_to_exact_recall(
+    session,
+    conversation_repository,
+    message_repository,
+    conversation,
+):
+    cited_chunk = _reusable_chunk()
+    as_of = datetime(2025, 6, 1, tzinfo=UTC)
+    prior_user, prior_assistant = _history_messages(
+        conversation,
+        user_content="What rules applied on 2025-06-01?",
+        assistant_content="The 2025 edition required filing within 30 days. [1]",
+    )
+    prior_assistant.citations = [
+        _reusable_citation(
+            cited_chunk,
+            evidence_scope_as_of=as_of.isoformat(),
+            evidence_scope_snapshot_origin="user_literal",
+        )
+    ]
+    message_repository.list_recent_for_conversation.return_value = [prior_user, prior_assistant]
+    retrieval = ExactRecallRetrieval(cited_chunk)
+    llm = ScriptedResolutionLLM({}, answer="Filing was required within 30 days. [1]")
+    service = _service(
+        session,
+        conversation_repository,
+        message_repository,
+        llm,
+        chat_config=ChatConfig(
+            system_prompt_version="v1",
+            response_mode=ResponseMode.INDEXED_THEN_WEB,
+        ),
+    )
+    service._retrieval = retrieval
+    service._web_search = FakeWebSearch()
+    turn = await service.send_message(
+        conversation.id, MessageSendRequest(content="Make it shorter.")
+    )
+    assert retrieval.exact_calls[0]["as_of"] == as_of
+    assert not service._web_search.calls
+    assert turn.assistant_message.metadata["web_search"]["status"] in {
+        "not_requested",
+        "suppressed_scoped_request",
+    }
+    assert turn.assistant_message.metadata["presentation_reuse"]["status"] == "reused"
+
+
+async def test_configuration_change_invalidates_exact_reuse(
+    session,
+    conversation_repository,
+    message_repository,
+    conversation,
+):
+    cited_chunk = _reusable_chunk()
+    prior_user, prior_assistant = _history_messages(
+        conversation,
+        user_content="What is the refund period?",
+        assistant_content="A request may be made within 30 days of purchase. [1]",
+    )
+    prior_assistant.citations = [_reusable_citation(cited_chunk)]
+    message_repository.list_recent_for_conversation.return_value = [prior_user, prior_assistant]
+    retrieval = ExactRecallRetrieval(cited_chunk, configuration_hash="z" * 64)
+    llm = ScriptedResolutionLLM({}, answer="Refunds are available within 30 days. [1]")
+    service = _service(session, conversation_repository, message_repository, llm)
+    service._retrieval = retrieval
+    turn = await service.send_message(
+        conversation.id, MessageSendRequest(content="Make it shorter.")
+    )
+    assert retrieval.exact_calls and retrieval.retrieve_calls
+    assert turn.assistant_message.metadata["presentation_reuse"]["reuse_failure_category"] == (
+        "configuration_changed"
+    )
+
+
+async def test_bangla_presentation_rewrite_uses_exact_recall(
+    session,
+    conversation_repository,
+    message_repository,
+    conversation,
+):
+    cited_chunk = _reusable_chunk()
+    prior_user, prior_assistant = _history_messages(
+        conversation,
+        user_content="ফেরতের সময়সীমা কত?",
+        assistant_content="ক্রয়ের ৩০ দিনের মধ্যে ফেরত চাওয়া যায়। [1]",
+    )
+    prior_assistant.citations = [_reusable_citation(cited_chunk)]
+    message_repository.list_recent_for_conversation.return_value = [prior_user, prior_assistant]
+    retrieval = ExactRecallRetrieval(cited_chunk)
+    llm = ScriptedResolutionLLM(
+        {},
+        answer="- ফেরত চাওয়া যায়। [1]\n- সময়সীমা ৩০ দিন। [1]\n- ক্রয় থেকে গণনা হয়। [1]",
+    )
+    service = _service(session, conversation_repository, message_repository, llm)
+    service._retrieval = retrieval
+    turn = await service.send_message(
+        conversation.id,
+        MessageSendRequest(content="আগের উত্তরটি সহজ বাংলায় তিনটি বুলেটে বলুন। নতুন তথ্য যোগ করবেন না।"),
+    )
+    assert retrieval.exact_calls and not retrieval.retrieve_calls
+    assert llm.resolver_calls == 0
+    assert llm.generate_calls == 1
+    assert turn.assistant_message.metadata["turn_resolution"]["followup_mode"] == (
+        "presentation_only"
+    )
+    assert turn.assistant_message.metadata["evidence_summary"]["coverage_method"] == (
+        "current_exact_citation_recall"
+    )
+
+
+async def test_mixed_web_indexed_and_web_keeps_exact_indexed_branch_and_web_workflow(
+    session,
+    conversation_repository,
+    message_repository,
+    conversation,
+):
+    cited_chunk = _reusable_chunk()
+    prior_user, prior_assistant = _history_messages(
+        conversation,
+        user_content="What is the refund period?",
+        assistant_content="Indexed fact [1] and a public note [2].",
+    )
+    prior_assistant.citations = [
+        _reusable_citation(cited_chunk),
+        {
+            "source_kind": "web",
+            "filename": "Refund policy",
+            "web_url": "https://example.test/refunds",
+            "web_title": "Refund policy",
+            "web_retrieved_at": datetime(2026, 7, 1, tzinfo=UTC).isoformat(),
+            "web_provider": "test_web",
+        },
+    ]
+    message_repository.list_recent_for_conversation.return_value = [prior_user, prior_assistant]
+    retrieval = ExactRecallRetrieval(cited_chunk)
+    llm = ScriptedResolutionLLM({}, answer="Refunds are available within 30 days. [1]")
+    service = _service(
+        session,
+        conversation_repository,
+        message_repository,
+        llm,
+        chat_config=ChatConfig(
+            system_prompt_version="v1",
+            response_mode=ResponseMode.INDEXED_AND_WEB,
+        ),
+    )
+    service._retrieval = retrieval
+    service._web_search = FakeWebSearch([])
+    turn = await service.send_message(
+        conversation.id, MessageSendRequest(content="Make it shorter.")
+    )
+    assert retrieval.exact_calls and not retrieval.retrieve_calls
+    assert service._web_search.calls
+    assert llm.resolver_calls == 0
+    assert turn.assistant_message.metadata["presentation_reuse"]["status"] == "reused"
+    assert turn.assistant_message.metadata["web_search"]["status"] != "not_requested"
+
+
+async def test_adapter_without_exact_recall_falls_back_to_cited_retrieve(
+    session,
+    conversation_repository,
+    message_repository,
+    conversation,
+):
+    cited_chunk = _reusable_chunk()
+    prior_user, prior_assistant = _history_messages(
+        conversation,
+        user_content="What is the refund period?",
+        assistant_content="A request may be made within 30 days of purchase. [1]",
+    )
+    prior_assistant.citations = [_reusable_citation(cited_chunk)]
+    message_repository.list_recent_for_conversation.return_value = [prior_user, prior_assistant]
+
+    class CitedOnlyRetrieval:
+        supports_cited_retrieval = True
+        supports_exact_recall = False
+
+        def __init__(self) -> None:
+            self.retrieve_calls: list[dict[str, object]] = []
+
+        async def retrieve(self, **kwargs: object) -> ContextRetrievalResult:
+            work = current_request_work()
+            if work is not None:
+                work.counts["ranked_retrieval_calls"] += 1
+            self.retrieve_calls.append(kwargs)
+            return ContextRetrievalResult(
+                chunks=[cited_chunk],
+                diagnostics={"retrieved_candidate_count": 1, "rerank_status": "skipped"},
+            )
+
+    retrieval = CitedOnlyRetrieval()
+    llm = ScriptedResolutionLLM({}, answer="Refunds are available within 30 days. [1]")
+    service = _service(session, conversation_repository, message_repository, llm)
+    service._retrieval = retrieval
+    turn = await service.send_message(
+        conversation.id, MessageSendRequest(content="Make it shorter.")
+    )
+    assert retrieval.retrieve_calls
+    assert "cited_chunk_ids" in retrieval.retrieve_calls[0]
+    assert llm.resolver_calls == 0
+    assert turn.assistant_message.metadata.get("presentation_reuse", {}).get("status") != "reused"
+    assert turn.assistant_message.metadata["presentation_reuse"]["reuse_failure_category"] == (
+        "exact_recall_unsupported"
+    )
+    assert (
+        turn.assistant_message.metadata["lifecycle"]["counts"].get("ranked_retrieval_calls", 0) == 1
+    )
+
+
+async def test_missing_identity_and_unrecorded_modifier_fall_back_from_exact_recall(
+    session,
+    conversation_repository,
+    message_repository,
+    conversation,
+):
+    cited_chunk = _reusable_chunk()
+    prior_user, prior_assistant = _history_messages(
+        conversation,
+        user_content="What is the refund period?",
+        assistant_content="A request may be made within 30 days of purchase. [1]",
+    )
+    prior_assistant.citations = [_reusable_citation(cited_chunk)]
+    message_repository.list_recent_for_conversation.return_value = [prior_user, prior_assistant]
+    retrieval = ExactRecallRetrieval(cited_chunk)
+    retrieval.retrieve_exact = AsyncMock(  # type: ignore[method-assign]
+        return_value=ContextRetrievalResult(
+            chunks=[],
+            diagnostics={"configuration_hash": cited_chunk.metadata["configuration_hash"]},
+        )
+    )
+    llm = ScriptedResolutionLLM({}, answer="Refunds are available within 30 days. [1]")
+    service = _service(session, conversation_repository, message_repository, llm)
+    service._retrieval = retrieval
+    missing = await service.send_message(
+        conversation.id, MessageSendRequest(content="Make it shorter.")
+    )
+    assert retrieval.retrieve_calls
+    assert missing.assistant_message.metadata["presentation_reuse"]["reuse_failure_category"] == (
+        "missing_identity"
+    )
+
+    modifier_chunk = replace(
+        cited_chunk,
+        metadata={
+            **cited_chunk.metadata,
+            "source_revision_id": str(uuid.uuid4()),
+            "source_relationships": [
+                {
+                    "relationship_type": "modifies",
+                    "direction": "incoming",
+                    "source_revision_id": str(uuid.uuid4()),
+                }
+            ],
+        },
+    )
+    retrieval = ExactRecallRetrieval(modifier_chunk)
+    service._retrieval = retrieval
+    authority = await service.send_message(
+        conversation.id, MessageSendRequest(content="Make it shorter.")
+    )
+    assert retrieval.exact_calls and retrieval.retrieve_calls
+    assert authority.assistant_message.metadata["presentation_reuse"]["reuse_failure_category"] == (
+        "unrecorded_authority_dependency"
+    )
+
+
+async def test_applicability_update_does_not_use_deterministic_exact_reuse(
+    session,
+    conversation_repository,
+    message_repository,
+    conversation,
+):
+    cited_chunk = _reusable_chunk()
+    prior_user, prior_assistant = _history_messages(
+        conversation,
+        user_content="What is the refund period?",
+        assistant_content="A request may be made within 30 days of purchase. [1]",
+    )
+    prior_assistant.citations = [_reusable_citation(cited_chunk)]
+    message_repository.list_recent_for_conversation.return_value = [prior_user, prior_assistant]
+    retrieval = ExactRecallRetrieval(cited_chunk)
+    llm = ScriptedResolutionLLM(
+        _resolved_payload(relation="follow_up", effective_question="Do these rules still apply?"),
+        answer="The selected evidence did not establish current applicability.",
+    )
+    service = _service(session, conversation_repository, message_repository, llm)
+    service._retrieval = retrieval
+    await service.send_message(
+        conversation.id, MessageSendRequest(content="Do these rules still apply?")
+    )
+    assert llm.resolver_calls == 1
+    assert not retrieval.exact_calls
+    assert retrieval.retrieve_calls
+
+
+async def test_ordinary_followup_does_not_seed_cited_retrieval(
+    session,
+    conversation_repository,
+    message_repository,
+    conversation,
+):
+    cited_chunk = _reusable_chunk()
+    prior_user, prior_assistant = _history_messages(
+        conversation,
+        user_content="What is the refund period?",
+        assistant_content="A request may be made within 30 days of purchase. [1]",
+    )
+    prior_assistant.citations = [_reusable_citation(cited_chunk)]
+    message_repository.list_recent_for_conversation.return_value = [prior_user, prior_assistant]
+    retrieval = ExactRecallRetrieval(cited_chunk)
+    llm = ScriptedResolutionLLM(
+        _resolved_payload(
+            relation="standalone",
+            effective_question="How much is the late filing penalty?",
+        ),
+        answer="The selected evidence did not establish a late filing penalty.",
+    )
+    service = _service(session, conversation_repository, message_repository, llm)
+    service._retrieval = retrieval
+    turn = await service.send_message(
+        conversation.id, MessageSendRequest(content="How much is the late filing penalty?")
+    )
+    assert llm.resolver_calls == 1
+    assert not retrieval.exact_calls
+    assert len(retrieval.retrieve_calls) == 1
+    assert "cited_chunk_ids" not in retrieval.retrieve_calls[0]
+    assert (
+        turn.assistant_message.metadata["lifecycle"]["counts"].get("ranked_retrieval_calls", 0) == 1
+    )
+
+
+async def test_ranked_cited_fallback_admits_chunk_when_relevance_rejects(
+    session,
+    conversation_repository,
+    message_repository,
+    conversation,
+    monkeypatch,
+):
+    from app.modules.conversations.grounding_service import EvidenceDecision
+    from app.modules.conversations.schemas.message import InsufficientEvidenceReason
+    from app.modules.conversations.services import chat_service as chat_service_mod
+
+    cited_chunk = _reusable_chunk()
+    prior_user, prior_assistant = _history_messages(
+        conversation,
+        user_content="What is the refund period?",
+        assistant_content="A request may be made within 30 days of purchase. [1]",
+    )
+    prior_assistant.citations = [
+        {
+            "source_kind": "knowledge",
+            "chunk_id": str(cited_chunk.chunk_id),
+            "document_id": str(cited_chunk.document_id),
+            "filename": cited_chunk.filename,
+        }
+    ]
+    message_repository.list_recent_for_conversation.return_value = [prior_user, prior_assistant]
+
+    async def reject_relevance(**kwargs: object):
+        del kwargs
+        return (
+            EvidenceDecision(
+                sufficient=False,
+                reason=InsufficientEvidenceReason.BELOW_RELEVANCE_THRESHOLD,
+                best_score=0.1,
+            ),
+            [],
+        )
+
+    monkeypatch.setattr(chat_service_mod, "assess_and_select_knowledge", reject_relevance)
+    retrieval = ExactRecallRetrieval(cited_chunk)
+    llm = ScriptedResolutionLLM({}, answer="Refunds may be requested within 30 days. [1]")
+    service = _service(session, conversation_repository, message_repository, llm)
+    service._retrieval = retrieval
+    turn = await service.send_message(
+        conversation.id, MessageSendRequest(content="Make it shorter.")
+    )
+    assert not retrieval.exact_calls
+    assert retrieval.retrieve_calls
+    assert turn.assistant_message.insufficient_evidence_reason is None
+    assert turn.assistant_message.metadata["knowledge_repair"]["status"] == "not_needed"
+    assert "[1]" in turn.assistant_message.content
+
+
+def test_new_review_citations_do_not_use_prior_coverage_origin(
+    session,
+    conversation_repository,
+    message_repository,
+):
+    chunk = _reusable_chunk()
+    prior = uuid.uuid4()
+    llm = ScriptedResolutionLLM({}, answer="ok")
+    service = _service(session, conversation_repository, message_repository, llm)
+    snapshots = service._citations_for(
+        [chunk],
+        prompt_version="v1",
+        originating_assistant_message_id=prior,
+        inherited_coverage=None,
+        knowledge_repair={"coverage": {"quotes_validated": True}},
+    )
+    assert snapshots[0]["coverage_origin_message_id"] is None
+    inherited = service._citations_for(
+        [chunk],
+        prompt_version="v1",
+        originating_assistant_message_id=prior,
+        inherited_coverage={
+            "coverage_origin_message_id": str(prior),
+            "coverage_status": "complete",
+        },
+        knowledge_repair={"status": "not_needed"},
+    )
+    assert inherited[0]["coverage_origin_message_id"] == str(prior)
 
 
 def _history_messages(
@@ -3290,31 +4333,42 @@ def test_turn_token_totals_distinguish_bypass_from_unknown_usage(resolver, gener
     assert _combine_token_counts(resolver, *generation) == expected
 
 
-@pytest.mark.parametrize(
-    ("counts", "expected"),
-    [
-        ({}, ("understanding_request", "Understanding request")),
-        ({"cited_recall_requests": 1}, ("finding_cited_passages", "Finding cited passages")),
-        (
-            {"source_version_checks": 1},
-            ("checking_source_versions", "Checking source versions"),
-        ),
-        ({"embedding_calls": 1}, ("finding_passages", "Finding relevant passages")),
-        ({"llm_calls": 2}, ("checking_support", "Checking support")),
-        (
-            {"llm_calls": 2, "rerank_calls": 2},
-            ("searching_missing_evidence", "Searching for missing evidence"),
-        ),
-        (
-            {"llm_calls": 3, "rerank_calls": 2},
-            ("checking_recovered_evidence", "Checking recovered evidence"),
-        ),
-    ],
-)
-def test_preparation_progress_uses_clear_public_phases(counts, expected):
+def test_preparation_progress_uses_active_phases_not_llm_counts():
     from app.modules.conversations.services.chat_service import _preparation_progress
+    from app.platform.providers.request_work import RequestWork
 
-    assert _preparation_progress(counts) == expected
+    work = RequestWork(uuid.uuid4())
+    assert _preparation_progress(work) == ("understanding_request", "Understanding request")
+    with work.stage("finding_cited_passages"):
+        assert _preparation_progress(work) == (
+            "finding_cited_passages",
+            "Finding cited passages",
+        )
+    with work.stage("finding_relevant_sources"):
+        assert _preparation_progress(work) == (
+            "finding_relevant_sources",
+            "Finding relevant sources",
+        )
+    with work.stage("checking_missing_details"):
+        assert _preparation_progress(work) == (
+            "checking_missing_details",
+            "Checking missing details",
+        )
+    with work.stage("checking_source_applicability"):
+        assert _preparation_progress(work) == (
+            "checking_source_applicability",
+            "Checking source applicability",
+        )
+    with work.stage("preparing_answer"):
+        assert _preparation_progress(work) == ("generating_answer", "Preparing your answer")
+    work.counts["llm_calls"] = 3
+    work.counts["rerank_calls"] = 2
+    assert _preparation_progress(work) == ("understanding_request", "Understanding request")
+    with work.stage("finding_cited_passages"), work.stage("coverage_review"):
+        assert _preparation_progress(work) == (
+            "checking_missing_details",
+            "Checking missing details",
+        )
 
 
 @pytest.mark.parametrize(
@@ -3366,3 +4420,597 @@ def test_invalid_coverage_response_is_not_reported_as_missing_law(
     content = ChatService._insufficient_content(service, prepared, question)
     assert "verification failure" in content or "যাচাই প্রক্রিয়ার ত্রুটি" in content
     assert "amendment evidence" not in content and "সংশোধনের নির্দিষ্ট প্রমাণ" not in content
+
+
+async def test_rewrite_inherits_document_and_metadata_scope(
+    session,
+    conversation_repository,
+    message_repository,
+    conversation,
+):
+    cited_chunk = _reusable_chunk()
+    prior_user, prior_assistant = _history_messages(
+        conversation,
+        user_content="What is the refund period?",
+        assistant_content="A request may be made within 30 days of purchase. [1]",
+    )
+    prior_assistant.citations = [
+        _reusable_citation(
+            cited_chunk,
+            evidence_scope_document_id=str(cited_chunk.document_id),
+            evidence_scope_metadata_filter={"country": "BD"},
+        )
+    ]
+    message_repository.list_recent_for_conversation.return_value = [prior_user, prior_assistant]
+    retrieval = ExactRecallRetrieval(cited_chunk)
+    llm = ScriptedResolutionLLM({}, answer="Refunds are available within 30 days. [1]")
+    service = _service(
+        session,
+        conversation_repository,
+        message_repository,
+        llm,
+        chat_config=ChatConfig(
+            system_prompt_version="v1",
+            response_mode=ResponseMode.INDEXED_THEN_WEB,
+        ),
+    )
+    service._retrieval = retrieval
+    service._web_search = FakeWebSearch()
+    turn = await service.send_message(
+        conversation.id, MessageSendRequest(content="Make it shorter.")
+    )
+    assert retrieval.exact_calls[0]["document_id"] == cited_chunk.document_id
+    assert retrieval.exact_calls[0]["metadata_filter"] == {"country": "BD"}
+    assert not service._web_search.calls
+    assert turn.assistant_message.metadata["web_search"]["status"] in {
+        "not_requested",
+        "suppressed_scoped_request",
+    }
+    assert turn.assistant_message.metadata["presentation_reuse"]["status"] == "reused"
+
+
+async def test_rewrite_carries_validated_partial_scope_into_generation_and_policy(
+    session,
+    conversation_repository,
+    message_repository,
+    conversation,
+):
+    cited_chunk = _reusable_chunk()
+    prior_user, prior_assistant = _history_messages(
+        conversation,
+        user_content="What AGM and filing rules apply?",
+        assistant_content="Private companies must hold an AGM. [1]",
+    )
+    prior_assistant.citations = [_reusable_citation(cited_chunk)]
+    prior_assistant.message_metadata = {
+        "knowledge_repair": {
+            "status": "partial_answer",
+            "partial_answer": {
+                "scope": "AGM duty",
+                "requirement_ids": ["R1"],
+                "exclusions": ["filing deadline"],
+                "pending": ["filing deadline"],
+            },
+            "missing_inputs": ["company type"],
+            "coverage": {"quotes_validated": True, "partial_scope_validated": True},
+        },
+        "evidence_summary": {
+            "coverage": "partial",
+            "coverage_method": "validated_requirements",
+        },
+    }
+    message_repository.list_recent_for_conversation.return_value = [prior_user, prior_assistant]
+    retrieval = ExactRecallRetrieval(cited_chunk)
+    llm = ScriptedResolutionLLM({}, answer="Private companies must hold an AGM. [1]")
+    service = _service(session, conversation_repository, message_repository, llm)
+    service._retrieval = retrieval
+    turn = await service.send_message(
+        conversation.id, MessageSendRequest(content="Make it shorter.")
+    )
+    assert turn.assistant_message.metadata["presentation_reuse"]["status"] == "reused"
+    policy = turn.assistant_message.metadata["response_policy"]["answerable_scope"]
+    assert policy["partial"] is True
+    assert policy["complete"] is False
+    assert "filing deadline" in policy["unresolved_facets"]
+    assert "company type" in policy["missing_inputs"]
+    assert turn.assistant_message.metadata["inherited_coverage"][
+        "coverage_origin_message_id"
+    ] == str(prior_assistant.id)
+    prompt = "\n".join(message.content for message in llm.generation_prompts[0])
+    assert "filing deadline" in prompt
+    assert "company type" in prompt
+
+    rewrite_user, rewrite_assistant = _history_messages(
+        conversation,
+        user_content="Make it shorter.",
+        assistant_content="Private companies must hold an AGM. [1]",
+    )
+    saved = message_repository.add.call_args_list[-1].args[0]
+    rewrite_assistant.citations = list(saved.citations or [])
+    rewrite_assistant.message_metadata = dict(saved.message_metadata or {})
+    message_repository.list_recent_for_conversation.return_value = [
+        prior_user,
+        prior_assistant,
+        rewrite_user,
+        rewrite_assistant,
+    ]
+    second = await service.send_message(
+        conversation.id, MessageSendRequest(content="Translate the previous answer.")
+    )
+    assert second.assistant_message.metadata["presentation_reuse"]["status"] == "reused"
+    assert second.assistant_message.metadata["inherited_coverage"][
+        "coverage_origin_message_id"
+    ] == str(prior_assistant.id)
+    assert (
+        second.assistant_message.metadata["response_policy"]["answerable_scope"]["partial"] is True
+    )
+
+
+async def test_search_adapter_exact_recall_rejects_changed_modifier_scope(
+    session,
+    conversation_repository,
+    message_repository,
+    conversation,
+):
+    from app.core.config import RetrievalStrategy
+    from app.dependencies.conversations import SearchServiceRetrievalAdapter
+    from app.modules.retrieval.schemas.search import (
+        RetrievalResult,
+        SearchDiagnostics,
+        SearchRequest,
+        SearchResponse,
+    )
+
+    cited_chunk = _reusable_chunk()
+    relationship_id = uuid.uuid4()
+    base_revision = uuid.uuid4()
+    modifier_revision = uuid.uuid4()
+    cited_chunk = replace(
+        cited_chunk,
+        metadata={
+            **cited_chunk.metadata,
+            "source_revision_id": str(base_revision),
+        },
+    )
+    saved = {
+        "relationship_id": str(relationship_id),
+        "base_revision_id": str(base_revision),
+        "modifier_revision_id": str(modifier_revision),
+        "target_provisions": ["Section 21 — Rebate"],
+        "modifier_effective_from": "2020-01-01",
+        "base_effective_from": "2018-01-01",
+    }
+    current = {
+        **saved,
+        "outcome": "already_in_recall",
+        "target_provisions": ["Section 22 — Limit"],
+    }
+    prior_user, prior_assistant = _history_messages(
+        conversation,
+        user_content="What is the rebate?",
+        assistant_content="The rebate is 15%. [1]",
+    )
+    prior_assistant.citations = [
+        _reusable_citation(cited_chunk, relationship_recall_provenance=[saved])
+    ]
+    message_repository.list_recent_for_conversation.return_value = [prior_user, prior_assistant]
+
+    class FakeSearch:
+        def __init__(self) -> None:
+            self.exact_calls: list[dict[str, object]] = []
+            self.search_calls: list[object] = []
+
+        async def recall_indexed_identities(self, **kwargs: object) -> SearchResponse:
+            self.exact_calls.append(kwargs)
+            return SearchResponse(
+                results=[
+                    RetrievalResult(
+                        chunk_id=cited_chunk.chunk_id,
+                        document_id=cited_chunk.document_id,
+                        chunk_index=cited_chunk.chunk_index,
+                        content=cited_chunk.content,
+                        score=1.0,
+                        filename=cited_chunk.filename,
+                        metadata=cited_chunk.metadata,
+                    )
+                ],
+                query=str(kwargs.get("query") or ""),
+                top_k=1,
+                diagnostics=SearchDiagnostics(
+                    strategy=RetrievalStrategy.HYBRID,
+                    duration_ms=1,
+                    rerank_requested=False,
+                    rerank_status="skipped",
+                    configuration_hash=cited_chunk.metadata.get("configuration_hash"),
+                    modifies_expansion_records=[current],
+                ),
+            )
+
+        async def search(
+            self,
+            request: SearchRequest,
+            *,
+            adjacent_to: object = None,
+            cited_chunk_ids: object = None,
+        ) -> SearchResponse:
+            del adjacent_to, cited_chunk_ids
+            self.search_calls.append(request)
+            return SearchResponse(
+                results=[
+                    RetrievalResult(
+                        chunk_id=cited_chunk.chunk_id,
+                        document_id=cited_chunk.document_id,
+                        chunk_index=cited_chunk.chunk_index,
+                        content=cited_chunk.content,
+                        score=1.0,
+                        filename=cited_chunk.filename,
+                        metadata=cited_chunk.metadata,
+                    )
+                ],
+                query=request.query,
+                top_k=request.top_k or 1,
+                diagnostics=SearchDiagnostics(
+                    strategy=RetrievalStrategy.HYBRID,
+                    duration_ms=1,
+                    rerank_requested=False,
+                    rerank_status="skipped",
+                    configuration_hash=cited_chunk.metadata.get("configuration_hash"),
+                ),
+            )
+
+    fake = FakeSearch()
+    llm = ScriptedResolutionLLM({}, answer="The rebate is 15%. [1]")
+    service = _service(session, conversation_repository, message_repository, llm)
+    service._retrieval = SearchServiceRetrievalAdapter(fake)  # type: ignore[arg-type]
+    turn = await service.send_message(
+        conversation.id, MessageSendRequest(content="Make it shorter.")
+    )
+    assert fake.exact_calls
+    assert fake.search_calls
+    assert turn.assistant_message.metadata["presentation_reuse"]["reuse_failure_category"] == (
+        "authority_dependency_changed"
+    )
+
+
+def _governed_base_and_modifier() -> tuple[ContextChunk, ContextChunk, dict[str, object]]:
+    base_revision = uuid.uuid4()
+    modifier_revision = uuid.uuid4()
+    relationship_id = uuid.uuid4()
+    question = "What is the rebate limit?"
+    original = QueryVariant(
+        variant_id="original",
+        kind=QueryVariantKind.ORIGINAL,
+        language="en",
+        text=question,
+    )
+    base_content = (
+        "Section 20 — Eligible Investment\nApproved savings certificates.\n\n"
+        "Section 21 — Investment Rebate Rate\nThe rebate is 15%.\n\n"
+        "Section 22 — Rebate Limit\nThe rebate cannot exceed tax liability."
+    )
+    modifier_content = "Section 21 — Investment Rebate Rate\nThe rebate is 10%."
+    config_hash = "a" * 64
+
+    def governed_chunk(
+        *,
+        content: str,
+        score: float,
+        related: bool,
+        revision: uuid.UUID,
+    ) -> ContextChunk:
+        raw_hash = content_hash(content)
+        return ContextChunk(
+            chunk_id=uuid.uuid4(),
+            document_id=uuid.uuid4(),
+            chunk_index=0,
+            content=content,
+            score=score,
+            filename="amendment.txt" if related else "act.txt",
+            chunk_hash=raw_hash,
+            semantic_score=0.1,
+            rerank_relevance_score=score,
+            evidence_relevance_score=score,
+            evidence_score_method="reranker_relevance",
+            evidence_calibration_id=RERANKER_RELEVANCE_CALIBRATION_ID,
+            query_variants=(original,),
+            metadata={
+                "indexed_chunk_hash": raw_hash,
+                "configuration_hash": config_hash,
+                "rerank_status": "applied",
+                "retrieval_scope": "related_modifier" if related else "direct",
+                "source_revision_id": str(revision),
+            },
+        )
+
+    base = governed_chunk(content=base_content, score=0.94, related=False, revision=base_revision)
+    modifier = governed_chunk(
+        content=modifier_content, score=0.82, related=True, revision=modifier_revision
+    )
+    record = {
+        "relationship_id": str(relationship_id),
+        "relationship_type": "modifies",
+        "outcome": "expanded",
+        "base_revision_id": str(base_revision),
+        "modifier_revision_id": str(modifier_revision),
+        "target_provisions": ["Section 21 — Investment Rebate Rate"],
+        "modifier_effective_from": "2020-01-01",
+    }
+    return base, modifier, record
+
+
+class GovernedRecallRetrieval:
+    supports_cited_retrieval = True
+    supports_exact_recall = True
+
+    def __init__(
+        self,
+        base: ContextChunk,
+        modifier: ContextChunk,
+        record: dict[str, object],
+    ) -> None:
+        self.base = base
+        self.modifier = modifier
+        self.record = record
+        self.omit_modifier = False
+        self.retrieve_calls: list[dict[str, object]] = []
+        self.exact_calls: list[dict[str, object]] = []
+
+    async def retrieve(self, **kwargs: object) -> ContextRetrievalResult:
+        self.retrieve_calls.append(kwargs)
+        return ContextRetrievalResult(
+            chunks=[self.base, self.modifier],
+            diagnostics={
+                "rerank_status": "applied",
+                "modifies_expansion_status": "expanded",
+                "modifies_expansion_records": [self.record],
+                "configuration_hash": self.base.metadata["configuration_hash"],
+                "retrieved_candidate_count": 2,
+            },
+        )
+
+    async def retrieve_exact(self, **kwargs: object) -> ContextRetrievalResult:
+        self.exact_calls.append(kwargs)
+        requested = kwargs.get("chunk_ids") or []
+        available = [self.base] if self.omit_modifier else [self.base, self.modifier]
+        by_id = {chunk.chunk_id: chunk for chunk in available}
+        chunks = (
+            [by_id[item] for item in requested if item in by_id]
+            if isinstance(requested, list) and requested
+            else available
+        )
+        return ContextRetrievalResult(
+            chunks=[_identity_recalled_chunk(item) for item in chunks],
+            diagnostics={
+                "rerank_status": "skipped",
+                "configuration_hash": self.base.metadata["configuration_hash"],
+                "modifies_expansion_records": [self.record],
+                "modifies_expansion_status": "observe",
+            },
+        )
+
+
+async def test_governed_presentation_rewrite_reuses_real_authority_snapshots(
+    session,
+    conversation_repository,
+    message_repository,
+    conversation,
+):
+    base, modifier, record = _governed_base_and_modifier()
+    retrieval = GovernedRecallRetrieval(base, modifier, record)
+    llm = CitedLLM("The rebate cannot exceed tax liability. [1]")
+    service = _service(session, conversation_repository, message_repository, llm)
+    service._retrieval = retrieval
+    first = await service.send_message(
+        conversation.id, MessageSendRequest(content="What is the rebate limit?")
+    )
+    saved = message_repository.add.call_args_list[-1].args[0]
+    citations = list(saved.citations or [])
+    assert citations
+    assert citations[0]["chunk_id"] == str(base.chunk_id)
+    assert citations[0]["authority_dependencies"]
+    assert citations[0]["authority_dependencies"][0]["modifier_recalled"] is True
+    assert citations[0]["authority_dependencies"][0]["modifier_chunk_id"] == str(modifier.chunk_id)
+
+    first_user = next(
+        call.args[0]
+        for call in message_repository.add.call_args_list
+        if call.args[0].role is MessageRole.USER
+    )
+    message_repository.list_recent_for_conversation.return_value = [first_user, saved]
+    rewrite = await service.send_message(
+        conversation.id, MessageSendRequest(content="Make it shorter.")
+    )
+    assert retrieval.exact_calls
+    assert rewrite.assistant_message.metadata["presentation_reuse"]["status"] == "reused"
+    assert first.assistant_message.citations[0].chunk_id == base.chunk_id
+
+    retrieval.omit_modifier = True
+    missing = await service.send_message(
+        conversation.id, MessageSendRequest(content="Translate the previous answer.")
+    )
+    assert missing.assistant_message.metadata["presentation_reuse"]["status"] == "fallback"
+    assert missing.assistant_message.metadata["presentation_reuse"]["reuse_failure_category"] == (
+        "missing_identity"
+    )
+
+
+async def test_governed_presentation_rewrite_reuses_cited_modifier_passage(
+    session,
+    conversation_repository,
+    message_repository,
+    conversation,
+):
+    from app.modules.conversations.current_authority import remove_superseded_provisions
+
+    base, modifier, record = _governed_base_and_modifier()
+    redacted_base = next(
+        chunk
+        for chunk in remove_superseded_provisions([base, modifier], [record])
+        if chunk.chunk_id == base.chunk_id
+    )
+    dependency = {
+        **record,
+        "modifier_recalled": True,
+        "modifier_chunk_id": str(modifier.chunk_id),
+    }
+    prior_user, prior_assistant = _history_messages(
+        conversation,
+        user_content="What is the current rebate rate?",
+        assistant_content="The rebate is 10%. [2]",
+    )
+    prior_assistant.citations = [
+        _reusable_citation(
+            redacted_base,
+            evidence_source_chunk_hash=content_hash(redacted_base.content),
+            evidence_span_hash=content_hash(redacted_base.content),
+            evidence_chunk_char_end=len(redacted_base.content),
+            source_revision_id=base.metadata["source_revision_id"],
+            authority_dependencies=[dependency],
+        ),
+        _reusable_citation(
+            modifier,
+            source_revision_id=modifier.metadata["source_revision_id"],
+            authority_dependencies=[dependency],
+        ),
+    ]
+    message_repository.list_recent_for_conversation.return_value = [prior_user, prior_assistant]
+    retrieval = GovernedRecallRetrieval(base, modifier, record)
+    llm = ScriptedResolutionLLM({}, answer="The rebate is 10%. [2]")
+    service = _service(session, conversation_repository, message_repository, llm)
+    service._retrieval = retrieval
+    rewrite = await service.send_message(
+        conversation.id, MessageSendRequest(content="Make it shorter.")
+    )
+    assert retrieval.exact_calls
+    requested = retrieval.exact_calls[0]["chunk_ids"]
+    assert modifier.chunk_id in requested
+    assert rewrite.assistant_message.metadata["presentation_reuse"]["status"] == "reused"
+    assert retrieval.retrieve_calls == []
+
+
+class _ExpireAfterRollback:
+    """Stand-in that fails if ChatService lazy-loads history after rollback."""
+
+    def __init__(self, inner: Message) -> None:
+        object.__setattr__(self, "_inner", inner)
+        object.__setattr__(self, "expired", False)
+
+    def __getattr__(self, name: str) -> object:
+        if object.__getattribute__(self, "expired"):
+            raise RuntimeError("greenlet_spawn has not been called; can't call await_only() here")
+        return getattr(object.__getattribute__(self, "_inner"), name)
+
+    def __setattr__(self, name: str, value: object) -> None:
+        if name in {"expired", "_inner"}:
+            object.__setattr__(self, name, value)
+            return
+        setattr(object.__getattribute__(self, "_inner"), name, value)
+
+
+async def test_presentation_rewrite_does_not_lazy_load_history_after_rollback(
+    session,
+    conversation_repository,
+    message_repository,
+    conversation,
+):
+    base, modifier, record = _governed_base_and_modifier()
+    dependency = {
+        **record,
+        "modifier_recalled": True,
+        "modifier_chunk_id": str(modifier.chunk_id),
+    }
+    prior_user, prior_assistant = _history_messages(
+        conversation,
+        user_content="What is the current rebate rate?",
+        assistant_content="The rebate is 10%. [2]",
+    )
+    prior_assistant.citations = [
+        _reusable_citation(
+            base,
+            source_revision_id=base.metadata["source_revision_id"],
+            authority_dependencies=[dependency],
+        ),
+        _reusable_citation(
+            modifier,
+            source_revision_id=modifier.metadata["source_revision_id"],
+            authority_dependencies=[dependency],
+        ),
+    ]
+    prior_assistant.message_metadata = {
+        "knowledge_repair": {"status": "not_needed"},
+        "evidence_summary": {"coverage": "complete"},
+    }
+    wrapped_user = _ExpireAfterRollback(prior_user)
+    wrapped_assistant = _ExpireAfterRollback(prior_assistant)
+    message_repository.list_recent_for_conversation.return_value = [
+        wrapped_user,
+        wrapped_assistant,
+    ]
+
+    async def expire_history(*_args: object, **_kwargs: object) -> None:
+        wrapped_user.expired = True
+        wrapped_assistant.expired = True
+
+    session.rollback.side_effect = expire_history
+    retrieval = GovernedRecallRetrieval(base, modifier, record)
+    llm = ScriptedResolutionLLM({}, answer="The rebate is 10%. [2]")
+    service = _service(session, conversation_repository, message_repository, llm)
+    service._retrieval = retrieval
+    rewrite = await service.send_message(
+        conversation.id, MessageSendRequest(content="Make it shorter.")
+    )
+    assert retrieval.exact_calls
+    assert rewrite.assistant_message.metadata["presentation_reuse"]["status"] == "reused"
+
+
+async def test_scoped_rewrite_keeps_effective_modifier_excluded_notice(
+    session,
+    conversation_repository,
+    message_repository,
+    conversation,
+):
+    base_revision = uuid.uuid4()
+    cited_chunk = _reusable_chunk()
+    cited_chunk = replace(
+        cited_chunk,
+        metadata={
+            **cited_chunk.metadata,
+            "source_revision_id": str(base_revision),
+        },
+    )
+    expansion = {
+        "relationship_id": str(uuid.uuid4()),
+        "relationship_type": "modifies",
+        "outcome": "expanded",
+        "base_revision_id": str(base_revision),
+        "modifier_revision_id": str(uuid.uuid4()),
+        "target_provisions": ["Section 21 — Investment Rebate Rate"],
+        "modifier_effective_from": "2020-01-01",
+        "modifier_recalled": False,
+    }
+    prior_user, prior_assistant = _history_messages(
+        conversation,
+        user_content="What is the refund period?",
+        assistant_content="A request may be made within 30 days of purchase. [1]",
+    )
+    prior_assistant.citations = [
+        _reusable_citation(
+            cited_chunk,
+            evidence_scope_document_id=str(cited_chunk.document_id),
+            authority_dependencies=[expansion],
+            source_revision_id=str(base_revision),
+        )
+    ]
+    message_repository.list_recent_for_conversation.return_value = [prior_user, prior_assistant]
+    retrieval = ExactRecallRetrieval(cited_chunk, expansion_records=[expansion])
+    llm = ScriptedResolutionLLM({}, answer="Refunds are available within 30 days. [1]")
+    service = _service(session, conversation_repository, message_repository, llm)
+    service._retrieval = retrieval
+    turn = await service.send_message(
+        conversation.id, MessageSendRequest(content="Make it shorter.")
+    )
+    assert retrieval.exact_calls[0]["document_id"] == cited_chunk.document_id
+    assert turn.assistant_message.metadata["scope_current_authority"]["status"] == (
+        "effective_modifier_excluded_by_scope"
+    )
+    assert turn.assistant_message.metadata["presentation_reuse"]["status"] == "reused"

@@ -33,22 +33,48 @@ from app.platform.providers.errors import ProviderError, ProviderTimeoutError
 pytestmark = pytest.mark.unit
 
 
+def _coverage_review_payloads(calls):
+    payloads = []
+    for call in calls:
+        messages = call.args[0] if call.args else []
+        if not messages:
+            continue
+        content = getattr(messages[0], "content", "")
+        if "Check whether supplied evidence" in str(content):
+            payloads.append(json.loads(messages[1].content))
+    return payloads
+
+
 def test_review_identity_preserves_text_authority_and_requirements_but_not_rank():
     source = chunk("Exact rule", source_revision_id="revision-1")
     requirements = [{"requirement_id": "rule", "description": "Applicable rule"}]
-    records = [{"outcome": "expanded", "target_provisions": ["62"]}]
+    records = [
+        {
+            "outcome": "expanded",
+            "base_revision_id": "revision-1",
+            "target_provisions": ["62"],
+        }
+    ]
     key = _review_evidence_key([source], records, requirements)
     assert key == _review_evidence_key([replace(source, score=0.1)], records * 2, requirements)
+    assert key == _review_evidence_key(
+        [source], [*records, {"outcome": "unresolved"}], requirements
+    )
     for changed in (
         replace(source, content="Changed rule"),
         replace(source, metadata={**source.metadata, "source_revision_id": "revision-2"}),
         replace(source, metadata={**source.metadata, "source_effective_from": "2027-07-01"}),
     ):
         assert key != _review_evidence_key([changed], records, requirements)
-    assert key != _review_evidence_key([source], [{"outcome": "unresolved"}], requirements)
+    assert key != _review_evidence_key(
+        [source],
+        [{"outcome": "unresolved", "base_revision_id": "revision-1"}],
+        requirements,
+    )
     assert key != _review_evidence_key(
         [source], records, [*requirements, {"requirement_id": "other"}]
     )
+    assert key != _review_evidence_key([source], records, requirements, unresolved_ids=["other"])
 
 
 @pytest.mark.parametrize("changed", [False, True])
@@ -69,9 +95,7 @@ async def test_missing_check_identity_does_not_guess_a_focused_requirement(chang
     assert result.diagnostics["unbound_focused_queries_skipped"] == [
         {"query": "employment", "supplied_requirement_ids": ["salary"]}
     ]
-    assert result.diagnostics["requirement_progress"]["stop_reason"] == (
-        "no_new_focused_query"
-    )
+    assert result.diagnostics["requirement_progress"]["stop_reason"] == ("no_new_focused_query")
 
 
 @pytest.mark.parametrize("scope_ids", [["salary"], ["interest"], ["absent"], ["salary", "salary"]])
@@ -310,9 +334,7 @@ async def test_focused_anchor_can_trigger_structural_recovery_in_final_round():
             },
         ],
         coverage=initial_coverage,
-        followup_queries=[
-            {"query": "annual return deadline", "requirement_ids": ["R1"]}
-        ],
+        followup_queries=[{"query": "annual return deadline", "requirement_ids": ["R1"]}],
         final_coverage=anchor_coverage,
         second_final_coverage=complete,
         late_adjacent=True,
@@ -428,7 +450,10 @@ async def test_unchanged_focused_evidence_keeps_confirmed_partial_proof():
     ],
 )
 async def test_timeout_keeps_only_previously_validated_partial_proof(stage):
-    known = chunk("Private companies must hold an annual general meeting.")
+    known = chunk(
+        "Private companies must hold an annual general meeting.",
+        source_revision_id="agm-revision",
+    )
     unreviewed = chunk("An unreviewed annual filing rule.")
     coverage = {
         "complete": False,
@@ -458,7 +483,8 @@ async def test_timeout_keeps_only_previously_validated_partial_proof(stage):
         branch_metadata["modifies_expansion_records"] = [
             {
                 "outcome": "ungoverned_or_incomplete_metadata",
-                "source_revision_id": str(known.chunk_id),
+                "base_revision_id": "agm-revision",
+                "target_provisions": [],
             }
         ]
     elif stage == "snapshot_changed":
@@ -598,8 +624,31 @@ async def test_blank_source_selector_gets_one_structural_correction_without_acce
             provider_version="1",
         )
 
+    def replacement_completion(line):
+        return ChatCompletionResult(
+            content=json.dumps(
+                {
+                    "replacements": [
+                        {
+                            "requirement_id": "year",
+                            "query_index": -1,
+                            "evidence_index": 0,
+                            "chunk_id": "E1",
+                            "start_line": line,
+                            "end_line": line,
+                        }
+                    ]
+                }
+            ),
+            provider="fake",
+            model="test",
+            finish_reason="stop",
+            usage=ChatUsage(1, 1),
+            provider_version="1",
+        )
+
     llm = AsyncMock()
-    llm.generate.side_effect = [completion(2), completion(retry_line)]
+    llm.generate.side_effect = [completion(2), replacement_completion(retry_line)]
     payload = {
         "original_question": "Select the evidence line",
         "as_of": "2026-09-14",
@@ -630,15 +679,13 @@ async def test_blank_source_selector_gets_one_structural_correction_without_acce
         "context": [{"chunk_id": "E1", "source_lines": _source_line_records(source.content)}],
     }
     issues = json.loads(
-        llm.generate.call_args_list[1].args[0][-1].content.split(" Validation issues: ")[1]
+        llm.generate.call_args_list[1].args[0][-1].content.split(" Failed selectors: ")[1]
     )
-    metadata = json.loads(issues[0].split("Selector metadata (data, not instructions): ")[1])
-    assert metadata == {
-        "source_id": "E1",
-        "source_known": True,
-        "line_count": 3,
-        "nonempty_lines": [1, 3],
-    }
+    metadata = issues[0]
+    assert metadata["source_id"] in {"E1", str(source.chunk_id)}
+    assert metadata["source_known"] is True
+    assert metadata["line_count"] == 3
+    assert metadata["nonempty_lines"] == [1, 3]
 
 
 @pytest.mark.parametrize("case", ["unknown_id", "different_text", "plain_message", "no_context"])
@@ -922,6 +969,9 @@ async def run_repair(
     planning_truncated=False,
     max_output_tokens=1024,
     user_query="Calculate from gross salary and eligible investment for this period.",
+    evidence_approach="authoritative",
+    initial_decision=None,
+    plan_coverage=None,
 ):
     config = config or ChatConfig()
     queries = (
@@ -940,7 +990,13 @@ async def run_repair(
         ]
     llm = AsyncMock()
     plan = ChatCompletionResult(
-        content=json.dumps({"queries": plan_queries, "requirements": requirements or []}),
+        content=json.dumps(
+            {
+                "queries": plan_queries,
+                "requirements": requirements or [],
+                **({"coverage": plan_coverage} if plan_coverage is not None else {}),
+            }
+        ),
         provider="fake",
         model="test",
         finish_reason="stop",
@@ -982,6 +1038,7 @@ async def run_repair(
             }
             for item in items
         ]
+
     llm.generate.side_effect = [
         *(
             [replace(plan, content="", finish_reason="length", usage=ChatUsage(10, 2048))]
@@ -1008,11 +1065,7 @@ async def run_repair(
         replace(
             plan,
             content=json.dumps(
-                {
-                    "queries": bound_followups(
-                        second_followup_queries, final_coverage or verdict
-                    )
-                }
+                {"queries": bound_followups(second_followup_queries, final_coverage or verdict)}
             ),
         ),
         replace(plan, content=json.dumps(second_final_coverage or final_coverage or verdict)),
@@ -1085,6 +1138,8 @@ async def run_repair(
         retrieval_config=RetrievalConfig(),
         max_output_tokens=max_output_tokens,
         timeout_seconds=timeout_seconds,
+        evidence_approach=evidence_approach,
+        initial_decision=initial_decision,
     )
     if calls is not None:
         calls.extend(llm.generate.call_args_list)
@@ -1857,6 +1912,32 @@ def test_search_plan_binds_queries_and_drops_optional_corroboration_work():
     assert ownership == {"annual return deadline": ["R1"]}
 
 
+def test_search_plan_keeps_mixed_ownership_until_every_owned_requirement_is_proven():
+    from app.modules.conversations.services.evidence_repair_service import (
+        _prepare_search_plan,
+        _SearchPlan,
+    )
+
+    plan = _SearchPlan.model_validate(
+        {
+            "requirements": [
+                {"requirement_id": "R1", "description": "Filing duty"},
+                {"requirement_id": "R2", "description": "AGM duty"},
+            ],
+            "queries": [
+                {"query": "filing duty", "requirement_ids": ["R1"]},
+                {"query": "agm duty", "requirement_ids": ["R2"]},
+                {"query": "company duties", "requirement_ids": ["R1", "R2"]},
+            ],
+        }
+    )
+    _, queries, ownership = _prepare_search_plan(plan, proven_ids={"R2"})
+    assert queries == ["filing duty", "company duties"]
+    assert ownership["company duties"] == ["R1", "R2"]
+    _, remaining, _ = _prepare_search_plan(plan, proven_ids={"R1", "R2"})
+    assert remaining == []
+
+
 @pytest.mark.parametrize(
     ("question", "description"),
     [
@@ -1870,9 +1951,7 @@ def test_search_plan_binds_queries_and_drops_optional_corroboration_work():
         ),
     ],
 )
-def test_explicit_consequences_are_never_removed_by_optional_detail_words(
-    question, description
-):
+def test_explicit_consequences_are_never_removed_by_optional_detail_words(question, description):
     from app.modules.conversations.services.evidence_repair_service import (
         _prepare_search_plan,
         _SearchPlan,
@@ -2324,3 +2403,858 @@ async def test_cosmetic_focused_duplicate_stops_before_search_and_review(followu
     assert len(calls) == 3
     assert result.decision is None and result.partial_answer is None
     assert result.diagnostics["duplicate_focused_queries_skipped"] == 1
+
+
+async def test_authoritative_initial_complete_proof_skips_retrieval_without_extra_llm():
+    config = ChatConfig()
+    source = chunk("Private companies must hold an annual general meeting.")
+    grounding = GroundingService(config)
+    decision = grounding.assess("What is the AGM duty?", [source], rerank_status="off")
+    selected = list(decision.admitted_units) or [source]
+    proof = {
+        "complete": True,
+        "missing": [],
+        "checks": [
+            {
+                "requirement_id": "agm",
+                "description": "AGM duty",
+                "supported": True,
+                "evidence": [
+                    {
+                        "chunk_id": str(selected[0].chunk_id),
+                        "start_line": 1,
+                        "end_line": 1,
+                    }
+                ],
+            }
+        ],
+    }
+    llm, retrieval = AsyncMock(), AsyncMock()
+    llm.generate.return_value = ChatCompletionResult(
+        content=json.dumps(
+            {
+                "queries": [{"query": "annual general meeting", "requirement_ids": ["agm"]}],
+                "requirements": [{"requirement_id": "agm", "description": "AGM duty"}],
+                "coverage": proof,
+            }
+        ),
+        provider="fake",
+        model="test",
+        provider_version="1",
+        finish_reason="stop",
+        usage=ChatUsage(1, 1),
+    )
+    result = await repair_knowledge_evidence(
+        inputs=EffectiveRetrievalInputs(query="What is the AGM duty?"),
+        initial=ContextRetrievalResult(
+            [source], {"index_build_id": "build", "source_metadata_generation": 1}
+        ),
+        selected=selected,
+        initial_decision=decision,
+        retrieval=retrieval,
+        llm=llm,
+        grounding=grounding,
+        chat_config=config,
+        retrieval_config=RetrievalConfig(),
+        max_output_tokens=4096,
+        evidence_approach="authoritative",
+    )
+    assert result.diagnostics["status"] == "initial_evidence_complete"
+    assert result.decision.sufficient
+    assert result.answerable_scope["complete"] is True
+    retrieval.retrieve.assert_not_awaited()
+    retrieval.retrieve_batch.assert_not_awaited()
+    assert llm.generate.await_count == 1
+
+
+async def test_all_proven_filtered_queries_handoff_instead_of_invalid_plan():
+    config = ChatConfig()
+    source = chunk("Private companies must hold an annual general meeting.")
+    grounding = GroundingService(config)
+    decision = grounding.assess("What is the AGM duty?", [source], rerank_status="off")
+    selected = list(decision.admitted_units) or [source]
+    result, retrieval, _ = await run_repair(
+        [],
+        queries=[{"query": "annual general meeting", "requirement_ids": ["agm"]}],
+        requirements=[{"requirement_id": "agm", "description": "AGM duty"}],
+        selected_context=selected,
+        initial_decision=decision,
+        plan_coverage={
+            "complete": False,
+            "missing": [],
+            "checks": [
+                {
+                    "requirement_id": "agm",
+                    "description": "AGM duty",
+                    "supported": True,
+                    "evidence": [
+                        {
+                            "chunk_id": str(selected[0].chunk_id),
+                            "start_line": 1,
+                            "end_line": 1,
+                        }
+                    ],
+                }
+            ],
+        },
+        user_query="What is the AGM duty?",
+    )
+    assert result.diagnostics["status"] != "invalid_plan"
+    assert result.diagnostics["status"] in {
+        "recovered",
+        "initial_evidence_complete",
+        "partial_answer",
+    }
+    assert result.decision is not None and result.decision.sufficient
+    retrieval.retrieve.assert_not_awaited()
+    retrieval.retrieve_batch.assert_not_awaited()
+
+
+async def test_authoritative_partial_initial_proof_filters_proven_queries():
+    known = chunk("Private companies must hold an annual general meeting.")
+    later = chunk("The annual list of members is filed with the Registrar.")
+    config = ChatConfig()
+    grounding = GroundingService(config)
+    decision = grounding.assess("What are the AGM and filing duties?", [known], rerank_status="off")
+    selected = list(decision.admitted_units) or [known]
+    calls = []
+    result, retrieval, _ = await run_repair(
+        [([later], {}), ([later], {})],
+        queries=[
+            {"query": "annual return filing", "requirement_ids": ["R1"]},
+            {"query": "company AGM", "requirement_ids": ["R2"]},
+            {"query": "company duties overview", "requirement_ids": ["R1", "R2"]},
+        ],
+        requirements=[
+            {"requirement_id": "R1", "description": "Annual return filing duty"},
+            {"requirement_id": "R2", "description": "AGM duty"},
+        ],
+        selected_context=selected,
+        initial_decision=decision,
+        plan_coverage={
+            "complete": False,
+            "missing": ["Annual return filing duty"],
+            "checks": [
+                {"requirement_id": "R1", "supported": False, "evidence": []},
+                {
+                    "requirement_id": "R2",
+                    "description": "AGM duty",
+                    "supported": True,
+                    "evidence": [
+                        {
+                            "chunk_id": str(selected[0].chunk_id),
+                            "start_line": 1,
+                            "end_line": 1,
+                        }
+                    ],
+                },
+            ],
+        },
+        coverage={
+            "complete": True,
+            "missing": [],
+            "checks": [
+                {
+                    "requirement_id": "R1",
+                    "supported": True,
+                    "evidence": [{"chunk_id": str(later.chunk_id), "quote": later.content}],
+                },
+                {
+                    "requirement_id": "R2",
+                    "description": "AGM duty",
+                    "supported": True,
+                    "evidence": [
+                        {
+                            "chunk_id": str(selected[0].chunk_id),
+                            "quote": selected[0].content,
+                        }
+                    ],
+                },
+            ],
+        },
+        calls=calls,
+        user_query="What are the AGM and filing duties?",
+    )
+    assert retrieval.retrieve.await_count == 2
+    assert [call.kwargs["query"] for call in retrieval.retrieve.call_args_list] == [
+        "annual return filing",
+        "company duties overview",
+    ]
+    assert len(calls) == 2
+    assert result.diagnostics["status"] == "recovered"
+    assert {item.chunk_id for item in result.selected} == {selected[0].chunk_id, later.chunk_id}
+
+
+async def test_delta_review_keeps_valid_facet_and_unresolved_obligation():
+    known = chunk("Private companies must hold an annual general meeting.")
+    later = chunk("An unreviewed annual filing rule.")
+    coverage = {
+        "complete": False,
+        "missing": ["Annual return filing duty"],
+        "checks": [
+            {
+                "requirement_id": "R1",
+                "description": "Annual return filing duty",
+                "supported": False,
+                "evidence": [],
+            },
+            {
+                "requirement_id": "R2",
+                "description": "AGM duty",
+                "supported": True,
+                "evidence": [{"chunk_id": str(known.chunk_id), "quote": known.content}],
+            },
+        ],
+        "partial_answer": {
+            "scope": "AGM duty",
+            "requirement_ids": ["R2"],
+            "exclusions": ["Annual return filing duty"],
+        },
+    }
+    calls = []
+    result, retrieval, _ = await run_repair(
+        [([known], {}), ([later], {})],
+        queries=["company AGM"],
+        requirements=[
+            {"requirement_id": "R1", "description": "Annual return filing duty"},
+            {"requirement_id": "R2", "description": "AGM duty"},
+        ],
+        coverage=coverage,
+        followup_queries=["annual list summary"],
+        final_coverage={
+            "complete": False,
+            "missing": ["Annual return filing duty", "penalty schedule for late filing"],
+            "checks": [
+                {
+                    "requirement_id": "R1",
+                    "description": "Renamed filing obligation",
+                    "supported": False,
+                    "evidence": [],
+                }
+            ],
+            "partial_answer": coverage["partial_answer"],
+        },
+        calls=calls,
+    )
+    coverage_payloads = _coverage_review_payloads(calls)
+    assert len(coverage_payloads) == 2
+    second_review = coverage_payloads[1]
+    assert second_review["review_mode"] == "changed_or_unresolved_facets"
+    assert [item["requirement_id"] for item in second_review["requirements"]] == ["R1"]
+    assert result.diagnostics["status"] == "partial_answer"
+    assert "penalty schedule for late filing" in result.diagnostics["coverage"]["missing"]
+    assert result.diagnostics["coverage"]["complete"] is False
+    facets = {item["requirement_id"]: item for item in result.diagnostics["proof_map"]["facets"]}
+    assert facets["R2"]["valid"] is True
+    assert facets["R2"]["description"] == "AGM duty"
+    assert facets["R1"]["valid"] is False
+    assert facets["R1"]["description"] == "Annual return filing duty"
+    assert [item.chunk_id for item in result.selected] == [known.chunk_id]
+    assert retrieval.retrieve.await_count == 2
+
+
+def test_unmatched_delta_missing_blocks_complete_verdict():
+    from app.modules.conversations.services.evidence_coverage import CoverageDelta
+    from app.modules.conversations.services.evidence_repair_service import (
+        EvidenceRequirement,
+        _TurnProofMap,
+    )
+
+    known = chunk("Private companies must hold an annual general meeting.")
+    later = chunk("Private companies must file an annual return.")
+    proof = _TurnProofMap(
+        [
+            EvidenceRequirement(requirement_id="R1", description="AGM duty"),
+            EvidenceRequirement(requirement_id="R2", description="Filing duty"),
+        ]
+    )
+    proof.accept_check(_supported_check("R1", known, "AGM duty"), [known, later], [])
+    delta = CoverageDelta.model_validate(
+        {
+            "complete": True,
+            "missing": ["penalty schedule for late filing"],
+            "checks": [
+                {
+                    "requirement_id": "R2",
+                    "description": "Filing duty",
+                    "supported": True,
+                    "evidence": [{"chunk_id": str(later.chunk_id), "quote": later.content}],
+                }
+            ],
+        }
+    )
+    verdict = proof.merge_delta(delta, {"R2"}, [known, later], [])
+    assert verdict.complete is False
+    assert "penalty schedule for late filing" in verdict.missing
+    assert proof.proven_ids() == {"R1", "R2"}
+    assert verdict.validates([], [known, later], {"R1", "R2"}) is False
+
+
+def _supported_check(requirement_id: str, source: ContextChunk, description: str = "") -> object:
+    from app.modules.conversations.services.evidence_coverage import _Check
+
+    return _Check.model_validate(
+        {
+            "requirement_id": requirement_id,
+            "description": description or requirement_id,
+            "supported": True,
+            "evidence": [{"chunk_id": str(source.chunk_id), "quote": source.content}],
+        }
+    )
+
+
+def test_shared_proof_dependency_invalidates_every_dependent_facet():
+    from app.modules.conversations.services.evidence_repair_service import (
+        EvidenceRequirement,
+        _TurnProofMap,
+    )
+
+    shared = chunk(
+        "Section 36: companies must hold an AGM and file an annual list.",
+        source_revision_id="shared-revision",
+    )
+    proof = _TurnProofMap(
+        [
+            EvidenceRequirement(requirement_id="R1", description="AGM duty"),
+            EvidenceRequirement(requirement_id="R2", description="Filing duty"),
+            EvidenceRequirement(requirement_id="R3", description="Filing deadline"),
+        ]
+    )
+    proof.accept_check(_supported_check("R1", shared, "AGM duty"), [shared], [])
+    proof.accept_check(_supported_check("R2", shared, "Filing duty"), [shared], [])
+    changed = replace(shared, content="Changed section 36 duties.")
+    invalidated = proof.invalidate_changed([changed], [])
+    assert invalidated == {"R1", "R2", "R3"}
+    assert proof.proven_ids() == set()
+    assert proof._facets["R1"].description == "AGM duty"
+    assert proof._facets["R2"].description == "Filing duty"
+
+
+def test_identical_authority_records_do_not_invalidate_validated_partial():
+    from app.modules.conversations.services.evidence_repair_service import (
+        EvidenceRequirement,
+        _TurnProofMap,
+    )
+
+    known = chunk(
+        "Private companies must hold an annual general meeting.",
+        source_revision_id="agm-revision",
+    )
+    record = {
+        "relationship_type": "related",
+        "outcome": "expanded",
+        "base_revision_id": "agm-revision",
+        "source_revision_id": "agm-revision",
+        "target_provisions": ["36"],
+    }
+    proof = _TurnProofMap(
+        [
+            EvidenceRequirement(requirement_id="R1", description="Annual return filing duty"),
+            EvidenceRequirement(requirement_id="R2", description="AGM duty"),
+        ]
+    )
+    proof.remember_records([record])
+    proof.accept_check(_supported_check("R2", known, "AGM duty"), [known], [record])
+    invalidated = proof.invalidate_changed([known], [record, dict(record)])
+    assert "R2" not in invalidated or proof._facets["R2"].valid
+    assert proof._facets["R2"].valid is True
+    assert proof.proven_ids() == {"R2"}
+
+
+def test_new_scoped_authority_reopens_only_affected_facet():
+    from app.modules.conversations.services.evidence_repair_service import (
+        EvidenceRequirement,
+        _TurnProofMap,
+    )
+
+    first = chunk("AGM duty applies to private companies.", source_revision_id="agm-revision")
+    second = chunk("Filing duty applies separately.", source_revision_id="filing-revision")
+    proof = _TurnProofMap(
+        [
+            EvidenceRequirement(requirement_id="R1", description="AGM duty"),
+            EvidenceRequirement(requirement_id="R2", description="Filing duty"),
+            EvidenceRequirement(requirement_id="R3", description="Filing deadline"),
+        ]
+    )
+    proof.accept_check(_supported_check("R1", first, "AGM duty"), [first, second], [])
+    proof.accept_check(_supported_check("R2", second, "Filing duty"), [first, second], [])
+    record = {
+        "outcome": "expanded",
+        "base_revision_id": "agm-revision",
+        "target_provisions": ["Section 81 AGM"],
+    }
+    invalidated = proof.invalidate_changed([first, second], [record])
+    assert "R1" in invalidated
+    assert proof._facets["R1"].valid is False
+    assert proof._facets["R2"].valid is True
+    assert proof._facets["R2"].description == "Filing duty"
+    assert "R3" in invalidated
+
+
+async def test_identical_authority_records_skip_repeat_coverage_review():
+    known = chunk(
+        "Private companies must hold an annual general meeting.",
+        source_revision_id="agm-revision",
+    )
+    coverage = {
+        "complete": False,
+        "missing": ["Annual return filing duty"],
+        "checks": [
+            {"requirement_id": "R1", "supported": False, "evidence": []},
+            {
+                "requirement_id": "R2",
+                "description": "AGM duty",
+                "supported": True,
+                "evidence": [{"chunk_id": str(known.chunk_id), "quote": known.content}],
+            },
+        ],
+        "partial_answer": {
+            "scope": "AGM duty",
+            "requirement_ids": ["R2"],
+            "exclusions": ["Annual return filing duty"],
+        },
+    }
+    record = {
+        "relationship_type": "related",
+        "outcome": "expanded",
+        "base_revision_id": "agm-revision",
+        "source_revision_id": "agm-revision",
+        "target_provisions": ["36"],
+    }
+    calls = []
+    result, retrieval, _ = await run_repair(
+        [([known], {}), ([known], {"modifies_expansion_records": [record, record]})],
+        queries=["company AGM"],
+        requirements=[
+            {"requirement_id": "R1", "description": "Annual return filing duty"},
+            {"requirement_id": "R2", "description": "AGM duty"},
+        ],
+        coverage=coverage,
+        followup_queries=["annual list summary"],
+        initial_records=[record],
+        final_verification_error=ProviderTimeoutError("Review timed out", provider_name="fake"),
+        calls=calls,
+    )
+    assert result.diagnostics["status"] == "partial_answer"
+    assert result.diagnostics.get("coverage_reviews_skipped") == 1
+    assert len(_coverage_review_payloads(calls)) == 1
+    assert retrieval.retrieve.await_count == 2
+    assert [item.chunk_id for item in result.selected] == [known.chunk_id]
+
+
+async def test_changed_shared_evidence_reviews_every_dependent_facet():
+    shared = chunk(
+        "Section 36: companies must hold an AGM and file an annual list.",
+        source_revision_id="shared-revision",
+    )
+    coverage = {
+        "complete": False,
+        "missing": ["Filing deadline"],
+        "checks": [
+            {
+                "requirement_id": "R1",
+                "description": "AGM duty",
+                "supported": True,
+                "evidence": [{"chunk_id": str(shared.chunk_id), "quote": shared.content}],
+            },
+            {
+                "requirement_id": "R2",
+                "description": "Filing duty",
+                "supported": True,
+                "evidence": [{"chunk_id": str(shared.chunk_id), "quote": shared.content}],
+            },
+            {
+                "requirement_id": "R3",
+                "description": "Filing deadline",
+                "supported": False,
+                "evidence": [],
+            },
+        ],
+        "partial_answer": {
+            "scope": "AGM and filing duties",
+            "requirement_ids": ["R1", "R2"],
+            "exclusions": ["Filing deadline"],
+        },
+    }
+    changed = replace(shared, content="Changed section 36 duties.")
+    calls = []
+    result, _, _ = await run_repair(
+        [([shared], {}), ([changed], {})],
+        queries=["section 36 duties"],
+        requirements=[
+            {"requirement_id": "R1", "description": "AGM duty"},
+            {"requirement_id": "R2", "description": "Filing duty"},
+            {"requirement_id": "R3", "description": "Filing deadline"},
+        ],
+        coverage=coverage,
+        followup_queries=["section 36 deadline"],
+        final_coverage={
+            "complete": False,
+            "missing": ["AGM duty", "Filing duty", "Filing deadline"],
+            "checks": [
+                {"requirement_id": "R1", "supported": False, "evidence": []},
+                {"requirement_id": "R2", "supported": False, "evidence": []},
+                {"requirement_id": "R3", "supported": False, "evidence": []},
+            ],
+        },
+        calls=calls,
+    )
+    coverage_payloads = _coverage_review_payloads(calls)
+    assert len(coverage_payloads) == 2
+    assert {item["requirement_id"] for item in coverage_payloads[1]["requirements"]} == {
+        "R1",
+        "R2",
+        "R3",
+    }
+    facets = {item["requirement_id"]: item for item in result.diagnostics["proof_map"]["facets"]}
+    assert facets["R1"]["valid"] is False
+    assert facets["R2"]["valid"] is False
+
+
+async def test_new_scoped_authority_reviews_only_affected_requirements():
+    first = chunk("AGM duty applies to private companies.", source_revision_id="agm-revision")
+    second = chunk("Filing duty applies separately.", source_revision_id="filing-revision")
+    coverage = {
+        "complete": False,
+        "missing": ["Filing deadline"],
+        "checks": [
+            {
+                "requirement_id": "R1",
+                "description": "AGM duty",
+                "supported": True,
+                "evidence": [{"chunk_id": str(first.chunk_id), "quote": first.content}],
+            },
+            {
+                "requirement_id": "R2",
+                "description": "Filing duty",
+                "supported": True,
+                "evidence": [{"chunk_id": str(second.chunk_id), "quote": second.content}],
+            },
+            {"requirement_id": "R3", "supported": False, "evidence": []},
+        ],
+        "partial_answer": {
+            "scope": "Known duties",
+            "requirement_ids": ["R1", "R2"],
+            "exclusions": ["Filing deadline"],
+        },
+    }
+    calls = []
+    result, _, _ = await run_repair(
+        [
+            ([first, second], {}),
+            (
+                [first, second],
+                {
+                    "modifies_expansion_records": [
+                        {
+                            "relationship_type": "related",
+                            "outcome": "expanded",
+                            "base_revision_id": "agm-revision",
+                            "target_provisions": ["Section 81 AGM"],
+                        }
+                    ]
+                },
+            ),
+        ],
+        queries=["company duties"],
+        requirements=[
+            {"requirement_id": "R1", "description": "AGM duty"},
+            {"requirement_id": "R2", "description": "Filing duty"},
+            {"requirement_id": "R3", "description": "Filing deadline"},
+        ],
+        coverage=coverage,
+        followup_queries=["filing deadline"],
+        final_coverage=coverage,
+        calls=calls,
+    )
+    coverage_payloads = _coverage_review_payloads(calls)
+    assert len(coverage_payloads) == 2
+    reviewed = {item["requirement_id"] for item in coverage_payloads[1]["requirements"]}
+    assert "R1" in reviewed
+    assert "R3" in reviewed
+    assert "R2" not in reviewed
+    facets = {item["requirement_id"]: item for item in result.diagnostics["proof_map"]["facets"]}
+    assert facets["R2"]["valid"] is True
+    assert facets["R2"]["description"] == "Filing duty"
+
+
+async def test_unknown_authority_scope_is_conservative():
+    known = chunk(
+        "Private companies must hold an annual general meeting.",
+        source_revision_id="agm-revision",
+    )
+    coverage = {
+        "complete": False,
+        "missing": ["Annual return filing duty"],
+        "checks": [
+            {"requirement_id": "R1", "supported": False, "evidence": []},
+            {
+                "requirement_id": "R2",
+                "description": "AGM duty",
+                "supported": True,
+                "evidence": [{"chunk_id": str(known.chunk_id), "quote": known.content}],
+            },
+        ],
+        "partial_answer": {
+            "scope": "AGM duty",
+            "requirement_ids": ["R2"],
+            "exclusions": ["Annual return filing duty"],
+        },
+    }
+    result, _, _ = await run_repair(
+        [
+            ([known], {}),
+            (
+                [known],
+                {
+                    "modifies_expansion_records": [
+                        {
+                            "outcome": "ungoverned_or_incomplete_metadata",
+                            "base_revision_id": "agm-revision",
+                            "target_provisions": [],
+                        }
+                    ]
+                },
+            ),
+        ],
+        queries=["company AGM"],
+        requirements=[
+            {"requirement_id": "R1", "description": "Annual return filing duty"},
+            {"requirement_id": "R2", "description": "AGM duty"},
+        ],
+        coverage=coverage,
+        followup_queries=["annual list summary"],
+        final_verification_error=ProviderTimeoutError("Review timed out", provider_name="fake"),
+    )
+    assert result.partial_answer is None
+    assert result.decision is None
+
+
+async def test_selector_only_retry_repairs_isolated_range_without_full_review():
+    from app.modules.conversations.services.evidence_coverage import numbered_source_lines
+    from app.platform.providers.contracts.llm import ChatMessage, ChatRole
+
+    source = chunk("Catalogue\n\nThe premiere year is 1998.")
+    first = ChatCompletionResult(
+        content=json.dumps(
+            {
+                "complete": True,
+                "missing": [],
+                "checks": [
+                    {
+                        "requirement_id": "year",
+                        "supported": True,
+                        "evidence": [{"chunk_id": "E1", "start_line": 2, "end_line": 2}],
+                    }
+                ],
+            }
+        ),
+        provider="fake",
+        model="test",
+        finish_reason="stop",
+        usage=ChatUsage(1, 1),
+        provider_version="1",
+    )
+    repair = replace(
+        first,
+        content=json.dumps(
+            {
+                "replacements": [
+                    {
+                        "requirement_id": "year",
+                        "evidence_index": 0,
+                        "chunk_id": "E1",
+                        "start_line": 3,
+                        "end_line": 3,
+                    }
+                ]
+            }
+        ),
+    )
+    llm = AsyncMock()
+    llm.generate.side_effect = [first, repair]
+    payload = {
+        "original_question": "Select the evidence line",
+        "context": [{"chunk_id": "E1", "content": numbered_source_lines(source.content)}],
+    }
+    result = await _validated_completion(
+        llm,
+        [ChatMessage(ChatRole.USER, json.dumps(payload))],
+        schema=CoverageVerdict,
+        max_tokens=1024,
+        proof_context=[source],
+        source_ids={"E1": str(source.chunk_id)},
+    )
+    assert llm.generate.await_count == 2
+    assert "Failed selectors:" in llm.generate.call_args_list[1].args[0][-1].content
+    parsed = json.loads(result.content)
+    assert parsed["checks"][0]["evidence"][0]["start_line"] == 3
+    assert parsed["complete"] is True
+
+
+async def test_contradictory_verdict_keeps_bounded_full_retry():
+    from app.platform.providers.contracts.llm import ChatMessage, ChatRole
+
+    first = ChatCompletionResult(
+        content=json.dumps({"complete": True, "missing": ["rule"], "checks": []}),
+        provider="fake",
+        model="test",
+        finish_reason="stop",
+        usage=ChatUsage(1, 1),
+        provider_version="1",
+    )
+    retried = replace(
+        first,
+        content=json.dumps({"complete": False, "missing": ["rule"], "checks": []}),
+    )
+    llm = AsyncMock()
+    llm.generate.side_effect = [first, retried]
+    result = await _validated_completion(
+        llm,
+        [ChatMessage(ChatRole.USER, "Review the evidence")],
+        schema=CoverageVerdict,
+        max_tokens=1024,
+    )
+    assert llm.generate.await_count == 2
+    assert "Validation issues:" in llm.generate.call_args_list[1].args[0][-1].content
+    assert "Failed selectors:" not in llm.generate.call_args_list[1].args[0][-1].content
+    assert json.loads(result.content)["complete"] is False
+
+
+def test_snapshot_verdict_keeps_extra_missing_without_synthesizing_partial():
+    from app.modules.conversations.services.evidence_repair_service import (
+        EvidenceRequirement,
+        _TurnProofMap,
+    )
+
+    known = chunk("Private companies must hold an annual general meeting.")
+    proof = _TurnProofMap(
+        [EvidenceRequirement(requirement_id="R1", description="AGM duty")]
+    )
+    proof.accept_check(_supported_check("R1", known, "AGM duty"), [known], [])
+    proof.remember_gaps(["Required filing deadline still unknown"])
+    verdict = proof.snapshot_verdict()
+    assert verdict.complete is False
+    assert "Required filing deadline still unknown" in verdict.missing
+    assert verdict.partial_answer is None
+
+
+def test_invalid_optional_planning_coverage_is_discarded():
+    from app.modules.conversations.services.evidence_repair_service import _SearchPlan
+
+    plan = _SearchPlan.model_validate(
+        {
+            "queries": [{"query": "annual return deadline", "requirement_ids": ["R1"]}],
+            "requirements": [
+                {
+                    "requirement_id": "R1",
+                    "description": "Annual return deadline",
+                    "origin": "explicit_user_request",
+                }
+            ],
+            "coverage": {
+                "complete": True,
+                "missing": ["Required filing deadline still unknown"],
+                "checks": [],
+            },
+        }
+    )
+    assert [query.query for query in plan.queries] == ["annual return deadline"]
+    assert plan.coverage is None
+
+
+async def test_invalid_optional_plan_coverage_does_not_block_validated_completion():
+    from app.modules.conversations.services.evidence_repair_service import (
+        _SearchPlan,
+        _validated_completion,
+    )
+
+    payload = {
+        "queries": [{"query": "annual return deadline", "requirement_ids": ["R1"]}],
+        "requirements": [
+            {
+                "requirement_id": "R1",
+                "description": "Annual return deadline",
+                "origin": "explicit_user_request",
+            }
+        ],
+        "coverage": {
+            "complete": True,
+            "missing": ["Required filing deadline still unknown"],
+            "checks": [],
+        },
+    }
+    llm = AsyncMock()
+    llm.generate.return_value = ChatCompletionResult(
+        content=json.dumps(payload),
+        provider="fake",
+        model="test",
+        finish_reason="stop",
+        usage=ChatUsage(1, 1),
+        provider_version="1",
+    )
+    response = await _validated_completion(llm, [], schema=_SearchPlan, max_tokens=1024)
+    parsed = _SearchPlan.model_validate_json(response.content)
+    assert llm.generate.await_count == 1
+    assert parsed.coverage is None
+    assert [query.query for query in parsed.queries] == ["annual return deadline"]
+
+
+def test_selector_repair_matches_legacy_checks_by_query_index():
+    from app.modules.conversations.services.evidence_repair_service import (
+        _apply_selector_replacements,
+        _SelectorRepairResponse,
+    )
+
+    parsed = CoverageVerdict.model_validate(
+        {
+            "complete": False,
+            "missing": ["rule"],
+            "checks": [
+                {
+                    "query_index": 0,
+                    "supported": True,
+                    "evidence": [
+                        {
+                            "chunk_id": "aaaa",
+                            "start_line": 99,
+                            "end_line": 99,
+                        }
+                    ],
+                },
+                {
+                    "query_index": 1,
+                    "supported": True,
+                    "evidence": [
+                        {
+                            "chunk_id": "bbbb",
+                            "start_line": 99,
+                            "end_line": 99,
+                        }
+                    ],
+                },
+            ],
+        }
+    )
+    original_first = parsed.checks[0].evidence[0].model_copy()
+    repair = _SelectorRepairResponse.model_validate(
+        {
+            "replacements": [
+                {
+                    "query_index": 1,
+                    "evidence_index": 0,
+                    "chunk_id": "cccc",
+                    "start_line": 1,
+                    "end_line": 1,
+                }
+            ]
+        }
+    )
+    failures = [
+        {"requirement_id": None, "query_index": 1, "evidence_index": 0},
+    ]
+    assert _apply_selector_replacements(parsed, repair, failures) is True
+    assert parsed.checks[0].evidence[0].chunk_id == original_first.chunk_id
+    assert parsed.checks[0].evidence[0].start_line == original_first.start_line
+    assert parsed.checks[1].evidence[0].chunk_id == "cccc"
+    assert parsed.checks[1].evidence[0].start_line == 1

@@ -65,7 +65,20 @@ export type SearchResponse = components["schemas"]["SearchResponse"];
 export type Conversation = components["schemas"]["ConversationResponse"];
 export type Message = components["schemas"]["MessageResponse"];
 export type ChatTurn = components["schemas"]["ChatTurnResponse"];
-export type StreamMessageResult = { content: string };
+export type StreamMessageResult = {
+  content: string;
+  timing: StreamDeliveryTiming;
+};
+
+export type StreamDeliveryTiming = {
+  requestStartedAt: number;
+  responseHeadersAt?: number;
+  firstAnswerTokenAt?: number;
+  doneReceivedAt?: number;
+  streamClosedAt?: number;
+  persistedMessageFetchedAt?: number;
+  requestId?: string | null;
+};
 export type ProjectPage = components["schemas"]["PaginatedResult_ProjectResponse_"];
 export type DocumentPage = components["schemas"]["PaginatedResult_DocumentResponse_"];
 export type JobPage = components["schemas"]["PaginatedResult_JobResponse_"];
@@ -630,7 +643,9 @@ export const operatorApiClient = {
     documentId?: string,
     onProgress?: (message: string) => void,
     signal?: AbortSignal,
+    onTiming?: (timing: StreamDeliveryTiming) => void,
   ): Promise<StreamMessageResult> => {
+    const timing: StreamDeliveryTiming = { requestStartedAt: performance.now() };
     const send = () =>
       fetch(`${apiRoot}/projects/${projectId}/conversations/${conversationId}/messages/stream`, {
         method: "POST",
@@ -661,6 +676,9 @@ export const operatorApiClient = {
         "backend_unavailable",
       );
     }
+    timing.responseHeadersAt = performance.now();
+    timing.requestId = response.headers.get("x-request-id");
+    onTiming?.(timing);
     if (!response.ok || !response.body) {
       throw new OperatorApiError(
         "The streaming response could not be started.",
@@ -691,11 +709,19 @@ export const operatorApiClient = {
         );
       }
       if (event.event === "token" && event.delta) {
+        if (timing.firstAnswerTokenAt == null && event.delta.trim() !== "") {
+          timing.firstAnswerTokenAt = performance.now();
+          onTiming?.(timing);
+        }
         streamed += event.delta;
         onDelta(event.delta);
       }
       if (event.event === "progress" && event.message) onProgress?.(event.message);
-      if (event.event === "done") completed = true;
+      if (event.event === "done") {
+        timing.doneReceivedAt = performance.now();
+        onTiming?.(timing);
+        completed = true;
+      }
     };
     try {
       while (true) {
@@ -707,12 +733,16 @@ export const operatorApiClient = {
         if (done) break;
       }
     } catch (error) {
+      timing.streamClosedAt = performance.now();
+      onTiming?.(timing);
       if (isAbortError(error, signal)) {
         throw new OperatorApiError("The streamed message was cancelled.", 499, "stream_cancelled");
       }
       throw error;
     }
     if (buffer.trim()) consume(buffer);
+    timing.streamClosedAt = performance.now();
+    onTiming?.(timing);
     if (!completed) {
       throw new OperatorApiError(
         "The streamed response ended before completion.",
@@ -720,7 +750,7 @@ export const operatorApiClient = {
         "stream_incomplete",
       );
     }
-    return { content: streamed };
+    return { content: streamed, timing };
   },
   getJobs: (
     projectId: string,

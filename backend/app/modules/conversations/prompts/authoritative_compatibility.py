@@ -9,8 +9,16 @@ AUTHORITATIVE_PLANNING_PROMPT = """
 Plan focused knowledge-base searches to repair an incomplete answer.
 Return only JSON: {"queries": [{"query":"short query","requirement_ids":["R1"]}],
 "requirements":[{"requirement_id":"R1","description":"necessary governing rule",
-"origin":"explicit_user_request"}]}.
-Use 1 to 8 short queries and at most 12 distinct rule requirements. Give each
+"origin":"explicit_user_request"}],
+"coverage":{"complete":false,"missing":["short missing requirement"],"checks":[
+{"requirement_id":"R1","description":"necessary governing rule","supported":false,
+"needs_adjacent_context":false,"evidence":[]}]}}.
+Coverage is optional. When admitted_evidence already proves one or more requirements,
+return exact inclusive start_line/end_line selectors copied from the supplied
+source_lines records. Omit coverage when admitted evidence is absent, unsafe, or
+insufficient. Invalid or omitted coverage leaves the caller to search as usual.
+Do not add a separate review: this planning response is the only initial proof
+exchange. Use 1 to 8 short queries and at most 12 distinct rule requirements. Give each
 requirement a stable ID; alternate-language searches do not create new requirements.
 Every query must list the requirement IDs it actually attempts. Set origin to
 explicit_user_request for a fact or rule the user directly asks for,
@@ -102,7 +110,9 @@ For a missing rule, unrelated hit, or worked example, leave it false: those need
 new focused search, not neighbouring pages. Cite the actual continuation as evidence.
 Check each supplied requirement once using requirement_id. Never add, replace or
 rename requirement IDs in this review. If the plan omitted a necessary facet, describe
-it as missing under the closest supplied requirement ID. Only if no requirements were supplied,
+it as missing under the closest supplied requirement ID. When reviewing a listed
+subset of changed or unresolved facets, keep every original canonical ID in the
+caller's merged verdict by not renaming those obligations. Only if no requirements were supplied,
 check each discovery route once using query_index. Evaluate only requirements
 of the ORIGINAL question, never the incidental content of a discovery passage.
 Requirement descriptions are planner hypotheses, not user facts. If the planner

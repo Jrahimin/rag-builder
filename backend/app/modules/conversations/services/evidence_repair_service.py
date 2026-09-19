@@ -7,17 +7,20 @@ import json
 import re
 import uuid
 from collections.abc import Awaitable, Callable
+from contextlib import nullcontext
 from copy import deepcopy
 from dataclasses import dataclass, replace
+from datetime import date
 from time import monotonic
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from app.core.config import ChatConfig, RetrievalConfig
 from app.modules.conversations.context_builder import ContextBuilder
 from app.modules.conversations.current_authority import (
     annotate_authority_limitations,
+    authority_record_affects_chunk,
     remove_superseded_provisions,
 )
 from app.modules.conversations.grounded_context import assess_and_select_knowledge
@@ -31,6 +34,7 @@ from app.modules.conversations.prompts.authoritative_compatibility import (
 )
 from app.modules.conversations.prompts.evidence_coverage import (
     COVERAGE_PROMPT,
+    DELTA_COVERAGE_PROMPT,
     PARTIAL_COVERAGE_PROMPT,
 )
 from app.modules.conversations.prompts.evidence_repair import (
@@ -41,13 +45,17 @@ from app.modules.conversations.prompts.evidence_repair import (
 from app.modules.conversations.services.evidence_coverage import (
     MAX_REPAIR_DEPENDENCIES,
     MAX_REPAIR_FOLLOWUPS,
+    CoverageDelta,
     CoverageVerdict,
     InputGapReview,
+    PartialAnswerScope,
+    _Check,
     _contains_quote,
     _quote_tokens,
     numbered_source_lines,
 )
 from app.modules.conversations.turn_resolution import EffectiveRetrievalInputs
+from app.platform.domain.content_hash import content_hash
 from app.platform.domain.language_detection import DEFAULT_SUPPORTED_TARGET_LANGUAGES
 from app.platform.providers.contracts.llm import (
     BaseLLMProvider,
@@ -57,7 +65,7 @@ from app.platform.providers.contracts.llm import (
     ChatUsage,
 )
 from app.platform.providers.errors import ProviderError, ProviderTimeoutError
-from app.platform.providers.request_work import RequestWork
+from app.platform.providers.request_work import RequestWork, current_request_work
 
 REPAIR_TIMEOUT_SECONDS = 300
 REPAIR_CHUNKS_PER_DEPENDENCY = 8
@@ -103,7 +111,7 @@ class _SearchPlan(BaseModel):
     model_config = ConfigDict(extra="forbid")
     queries: list[_SearchQuery] = Field(max_length=MAX_REPAIR_DEPENDENCIES)
     requirements: list[EvidenceRequirement] = Field(default_factory=list, max_length=12)
-    coverage: CoverageVerdict | None = None
+    coverage: Any = None
 
     @field_validator("queries", mode="before")
     @classmethod
@@ -116,11 +124,22 @@ class _SearchPlan(BaseModel):
             for item in value
         ]
 
+    @model_validator(mode="after")
+    def drop_invalid_optional_coverage(self) -> _SearchPlan:
+        if self.coverage is None:
+            return self
+        try:
+            self.coverage = CoverageVerdict.model_validate(self.coverage)
+        except ValidationError:
+            self.coverage = None
+        return self
+
 
 def _prepare_search_plan(
-    plan: _SearchPlan, user_question: str = ""
+    plan: _SearchPlan, user_question: str = "", proven_ids: set[str] | None = None
 ) -> tuple[list[EvidenceRequirement], list[str], dict[str, list[str]]]:
     """Drop optional work and return deduplicated executable routes with ownership."""
+    proven = proven_ids or set()
     requirements = [
         requirement
         for requirement in plan.requirements
@@ -146,6 +165,9 @@ def _prepare_search_plan(
         # assigning ownership by position later.
         if allowed and not ids:
             continue
+        # Mixed-ownership queries stay eligible until every owned requirement is proven.
+        if ids and proven and set(ids) <= proven:
+            continue
         key = " ".join(query.split()).casefold()
         existing = keys.get(key)
         if existing is not None:
@@ -169,6 +191,398 @@ def _optional_requirement(requirement: EvidenceRequirement, user_question: str) 
     return requirement.origin == "optional_corroboration"
 
 
+def _authority_dependency_key(record: dict[str, Any]) -> tuple[str, ...]:
+    provisions = record.get("target_provisions")
+    scoped = (
+        tuple(sorted(str(item) for item in provisions if item))
+        if isinstance(provisions, list)
+        else ()
+    )
+    return (
+        str(record.get("relationship_id") or ""),
+        str(record.get("base_revision_id") or ""),
+        str(record.get("modifier_revision_id") or ""),
+        str(record.get("source_revision_id") or ""),
+        str(record.get("outcome") or ""),
+        str(record.get("relationship_type") or "modifies"),
+        *scoped,
+    )
+
+
+def _chunk_content_hash(chunk: ContextChunk) -> str:
+    return content_hash(chunk.content)
+
+
+def _check_confirmed(check: _Check, sources: dict[str, tuple[str, ...]]) -> bool:
+    return bool(
+        check.supported
+        and check.evidence
+        and all(
+            item.chunk_id in sources and _contains_quote(sources[item.chunk_id], item.quote)
+            for item in check.evidence
+        )
+    )
+
+
+@dataclass
+class _ProofFacet:
+    requirement_id: str
+    description: str
+    origin: str
+    check: _Check | None = None
+    evidence_ids: tuple[str, ...] = ()
+    evidence_hashes: tuple[str, ...] = ()
+    authority_keys: tuple[tuple[str, ...], ...] = ()
+    valid: bool = False
+
+
+class _TurnProofMap:
+    """Turn-local validated checks keyed by canonical requirement IDs."""
+
+    def __init__(self, requirements: list[EvidenceRequirement]) -> None:
+        self.requirements = list(requirements)
+        self._facets: dict[str, _ProofFacet] = {
+            item.requirement_id: _ProofFacet(
+                requirement_id=item.requirement_id,
+                description=item.description,
+                origin=item.origin,
+            )
+            for item in requirements
+        }
+        self._known_authority_keys: set[tuple[str, ...]] = set()
+        self._retained_gaps: list[str] = []
+        self._validated_partial: PartialAnswerScope | None = None
+
+    def canonical_ids(self) -> set[str]:
+        return set(self._facets)
+
+    def proven_ids(self) -> set[str]:
+        return {key for key, facet in self._facets.items() if facet.valid}
+
+    def unresolved_ids(self) -> set[str]:
+        return {key for key, facet in self._facets.items() if not facet.valid}
+
+    def remember_records(self, records: list[dict[str, Any]]) -> None:
+        for record in records:
+            self._known_authority_keys.add(_authority_dependency_key(record))
+
+    def remember_gaps(self, missing: list[str]) -> None:
+        for item in missing:
+            text = str(item).strip()
+            if text and text not in self._retained_gaps:
+                self._retained_gaps.append(text)
+
+    def remember_partial(self, partial: PartialAnswerScope | None) -> None:
+        if partial is not None:
+            self._validated_partial = partial
+
+    def _gap_resolved(self, label: str) -> bool:
+        for facet in self._facets.values():
+            if not facet.valid:
+                continue
+            description = facet.description or facet.requirement_id
+            if label == description or _requirement_labels_match(label, description):
+                return True
+        return False
+
+    def new_affecting_records(
+        self, records: list[dict[str, Any]], chunks: list[ContextChunk]
+    ) -> list[dict[str, Any]]:
+        fresh: list[dict[str, Any]] = []
+        seen: set[tuple[str, ...]] = set()
+        for record in records:
+            key = _authority_dependency_key(record)
+            if key in self._known_authority_keys or key in seen:
+                continue
+            seen.add(key)
+            if any(authority_record_affects_chunk(record, chunk) for chunk in chunks):
+                fresh.append(record)
+        return fresh
+
+    def invalidate_changed(
+        self,
+        budgeted: list[ContextChunk],
+        records: list[dict[str, Any]],
+        discovered: list[ContextChunk] | None = None,
+    ) -> set[str]:
+        by_id = {str(chunk.chunk_id): chunk for chunk in budgeted}
+        for chunk in discovered or []:
+            current = by_id.get(str(chunk.chunk_id))
+            if current is None or current.content != chunk.content:
+                by_id[str(chunk.chunk_id)] = chunk
+        fresh_records = self.new_affecting_records(records, list(by_id.values()))
+        changed: set[str] = set()
+        for req_id, facet in self._facets.items():
+            if not facet.valid:
+                changed.add(req_id)
+                continue
+            missing_or_changed = False
+            for evidence_id, evidence_hash in zip(
+                facet.evidence_ids, facet.evidence_hashes, strict=False
+            ):
+                current = by_id.get(evidence_id)
+                if current is None or _chunk_content_hash(current) != evidence_hash:
+                    missing_or_changed = True
+                    break
+            if missing_or_changed:
+                changed.add(req_id)
+                continue
+            proof_chunks = [by_id[item] for item in facet.evidence_ids if item in by_id]
+            if any(
+                authority_record_affects_chunk(record, chunk)
+                for record in fresh_records
+                for chunk in proof_chunks
+            ):
+                changed.add(req_id)
+        dependents = set(changed)
+        changed_evidence = {
+            evidence_id for req_id in changed for evidence_id in self._facets[req_id].evidence_ids
+        }
+        changed_authority = {
+            key for req_id in changed for key in self._facets[req_id].authority_keys
+        }
+        for req_id, facet in self._facets.items():
+            if req_id in dependents or not facet.valid:
+                continue
+            if changed_evidence & set(facet.evidence_ids) or changed_authority & set(
+                facet.authority_keys
+            ):
+                dependents.add(req_id)
+        for req_id in dependents:
+            self._mark_invalid(req_id)
+        return dependents
+
+    def _mark_invalid(self, req_id: str) -> None:
+        facet = self._facets[req_id]
+        facet.valid = False
+        if facet.check is not None and facet.check.supported:
+            facet.check = facet.check.model_copy(update={"supported": False})
+
+    def _retain_canonical_check(self, check: _Check) -> _Check:
+        """Keep the original obligation text; a later review cannot rename it."""
+        req_id = check.requirement_id
+        if not req_id:
+            return check
+        facet = self._facets[req_id]
+        canonical = facet.description.strip()
+        if not canonical and check.description.strip():
+            facet.description = check.description
+            return check
+        if canonical and check.description != canonical:
+            return check.model_copy(update={"description": canonical})
+        return check
+
+    def accept_check(
+        self, check: _Check, chunks: list[ContextChunk], records: list[dict[str, Any]]
+    ) -> None:
+        req_id = check.requirement_id
+        if not req_id or req_id not in self._facets:
+            return
+        check = self._retain_canonical_check(check)
+        facet = self._facets[req_id]
+        facet.check = check
+        evidence_ids = tuple(item.chunk_id for item in check.evidence)
+        by_id = {str(chunk.chunk_id): chunk for chunk in chunks}
+        hashes = tuple(_chunk_content_hash(by_id[item]) for item in evidence_ids if item in by_id)
+        authority: list[tuple[str, ...]] = []
+        for evidence_id in evidence_ids:
+            chunk = by_id.get(evidence_id)
+            if chunk is None:
+                continue
+            for record in records:
+                if authority_record_affects_chunk(record, chunk):
+                    authority.append(_authority_dependency_key(record))
+        facet.evidence_ids = evidence_ids
+        facet.evidence_hashes = hashes
+        facet.authority_keys = tuple(dict.fromkeys(authority))
+        sources = {str(chunk.chunk_id): _quote_tokens(chunk.content) for chunk in chunks}
+        facet.valid = _check_confirmed(check, sources)
+
+    def accept_confirmed(
+        self,
+        checks: list[_Check],
+        chunks: list[ContextChunk],
+        records: list[dict[str, Any]],
+    ) -> None:
+        sources = {str(chunk.chunk_id): _quote_tokens(chunk.content) for chunk in chunks}
+        for check in checks:
+            if check.requirement_id in self._facets and _check_confirmed(check, sources):
+                self.accept_check(check, chunks, records)
+
+    def observe_review_checks(
+        self,
+        checks: list[_Check],
+        chunks: list[ContextChunk],
+        records: list[dict[str, Any]],
+    ) -> None:
+        sources = {str(chunk.chunk_id): _quote_tokens(chunk.content) for chunk in chunks}
+        for check in checks:
+            req_id = check.requirement_id
+            if not req_id or req_id not in self._facets:
+                continue
+            if _check_confirmed(check, sources):
+                self.accept_check(check, chunks, records)
+                continue
+            check = self._retain_canonical_check(check)
+            facet = self._facets[req_id]
+            facet.check = check
+            facet.valid = False
+
+    def merge_delta(
+        self,
+        delta: CoverageDelta | CoverageVerdict,
+        reviewing: set[str],
+        chunks: list[ContextChunk],
+        records: list[dict[str, Any]],
+    ) -> CoverageVerdict:
+        pending = set(reviewing)
+        sources = {str(chunk.chunk_id): _quote_tokens(chunk.content) for chunk in chunks}
+        for check in delta.checks:
+            req_id = check.requirement_id
+            if not req_id or req_id not in self._facets or req_id in pending:
+                continue
+            if self._facets[req_id].valid and not _check_confirmed(check, sources):
+                pending.add(req_id)
+        self.observe_review_checks(
+            [check for check in delta.checks if check.requirement_id in pending],
+            chunks,
+            records,
+        )
+        returned = {check.requirement_id for check in delta.checks}
+        for req_id in pending:
+            if req_id not in returned:
+                self._mark_invalid(req_id)
+        unresolved = [
+            self._facets[item.requirement_id].description or item.requirement_id
+            for item in self.requirements
+            if not self._facets[item.requirement_id].valid
+        ]
+        missing: list[str] = []
+        for item in delta.missing:
+            if item in missing:
+                continue
+            missing.append(item)
+        for label in unresolved:
+            if label in missing or any(
+                _requirement_labels_match(label, existing) for existing in missing
+            ):
+                continue
+            missing.append(label)
+        partial = delta.partial_answer
+        if partial is not None and missing:
+            exclusions = list(partial.exclusions)
+            for label in missing:
+                if label in exclusions or any(
+                    _requirement_labels_match(label, existing) for existing in exclusions
+                ):
+                    continue
+                exclusions.append(label)
+            if exclusions != list(partial.exclusions):
+                partial = partial.model_copy(update={"exclusions": exclusions})
+        self.remember_gaps(missing)
+        if partial is not None:
+            self.remember_partial(partial)
+        return self.canonical_verdict(
+            missing=missing,
+            gap_kinds=list(delta.gap_kinds),
+            partial_answer=partial,
+        )
+
+    def canonical_verdict(
+        self,
+        *,
+        missing: list[str],
+        gap_kinds: list[str],
+        partial_answer: PartialAnswerScope | None,
+    ) -> CoverageVerdict:
+        checks: list[_Check] = []
+        for requirement in self.requirements:
+            facet = self._facets[requirement.requirement_id]
+            if facet.check is not None:
+                check = facet.check
+                if not facet.valid and check.supported:
+                    check = check.model_copy(update={"supported": False})
+                checks.append(check)
+            else:
+                checks.append(
+                    _Check(
+                        requirement_id=requirement.requirement_id,
+                        description=facet.description,
+                        supported=False,
+                        evidence=[],
+                    )
+                )
+        complete = (
+            bool(checks)
+            and all(check.supported and check.evidence for check in checks)
+            and not missing
+            and not self.unresolved_ids()
+        )
+        kinds: list[Any] = gap_kinds if not complete else []
+        if kinds and len(kinds) != len(missing if not complete else []):
+            kinds = ["source_rule"] * len(missing)
+        return CoverageVerdict(
+            complete=complete,
+            missing=[] if complete else missing,
+            gap_kinds=kinds,
+            partial_answer=None if complete else partial_answer,
+            checks=checks,
+        )
+
+    def snapshot_verdict(self) -> CoverageVerdict:
+        """Canonical verdict from retained proof; extra reviewer gaps stay incomplete."""
+        unresolved = [
+            self._facets[item.requirement_id].description or item.requirement_id
+            for item in self.requirements
+            if not self._facets[item.requirement_id].valid
+        ]
+        missing: list[str] = list(unresolved)
+        for gap in self._retained_gaps:
+            if gap in missing or any(
+                _requirement_labels_match(gap, existing) for existing in missing
+            ):
+                continue
+            if self._gap_resolved(gap):
+                continue
+            missing.append(gap)
+        partial = None if not missing else self._validated_partial
+        return self.canonical_verdict(
+            missing=missing,
+            gap_kinds=["source_rule"] * len(missing),
+            partial_answer=partial,
+        )
+
+    def relevant_chunks(
+        self, budgeted: list[ContextChunk], reviewing: set[str]
+    ) -> list[ContextChunk]:
+        needed: set[str] = set()
+        for req_id in reviewing:
+            needed.update(self._facets[req_id].evidence_ids)
+        for facet in self._facets.values():
+            if facet.valid:
+                needed.update(facet.evidence_ids)
+        selected = [chunk for chunk in budgeted if str(chunk.chunk_id) in needed]
+        if selected:
+            return selected
+        return budgeted
+
+    def diagnostics(self) -> dict[str, Any]:
+        return {
+            "facets": [
+                {
+                    "requirement_id": facet.requirement_id,
+                    "description": facet.description,
+                    "origin": facet.origin,
+                    "valid": facet.valid,
+                    "evidence_ids": list(facet.evidence_ids),
+                    "evidence_hashes": list(facet.evidence_hashes),
+                    "authority_keys": [list(key) for key in facet.authority_keys],
+                }
+                for facet in self._facets.values()
+            ]
+        }
+
+
 def _requirement_labels_match(left: str, right: str) -> bool:
     def tokens(value: str) -> set[str]:
         return set(re.findall(r"[^\W_]+", value.casefold(), re.UNICODE))
@@ -189,32 +603,40 @@ def _source_line_records(content: str) -> list[dict[str, Any]]:
 
 
 def _review_evidence_key(
-    chunks: list[ContextChunk], records: list[dict[str, Any]], requirements: list[dict[str, Any]]
+    chunks: list[ContextChunk],
+    records: list[dict[str, Any]],
+    requirements: list[dict[str, Any]],
+    unresolved_ids: list[str] | None = None,
 ) -> str:
     """Compare exact proof inputs, never similarity, rank, or just chunk IDs."""
 
     def canonical(value: Any) -> str:
         return json.dumps(value, sort_keys=True, ensure_ascii=False, default=str)
 
+    relevant_authority = sorted(
+        {
+            canonical(_authority_dependency_key(record))
+            for record in records
+            if any(authority_record_affects_chunk(record, chunk) for chunk in chunks)
+        }
+    )
     return canonical(
         {
             "requirements": requirements,
-            "authority": sorted({canonical(record) for record in records}),
+            "unresolved": sorted(unresolved_ids or []),
+            "authority": relevant_authority,
             "passages": sorted(
                 {
                     canonical(
                         {
                             "id": chunk.chunk_id,
                             "document": chunk.document_id,
-                            "index": chunk.chunk_index,
-                            "page": chunk.page_number,
-                            "title": chunk.filename,
-                            "content": chunk.content,
-                            "source": {
-                                key: chunk.metadata[key]
-                                for key in _SOURCE_CONTEXT_KEYS
-                                if key in chunk.metadata
-                            },
+                            "hash": content_hash(chunk.content),
+                            "revision": chunk.metadata.get("source_revision_id"),
+                            "effective_from": chunk.metadata.get("source_effective_from"),
+                            "effective_to": chunk.metadata.get("source_effective_to"),
+                            "lifecycle": chunk.metadata.get("source_lifecycle_status"),
+                            "authority_status": chunk.metadata.get("authority_status"),
                         }
                     )
                     for chunk in chunks
@@ -338,6 +760,7 @@ class EvidenceRepairResult:
     missing_inputs: tuple[str, ...] = ()
     partial_answer: dict[str, Any] | None = None
     failure: ProviderError | None = None
+    answerable_scope: dict[str, Any] | None = None
 
 
 def _add_usage(left: ChatUsage | None, right: ChatUsage | None) -> ChatUsage:
@@ -351,6 +774,176 @@ def _add_usage(left: ChatUsage | None, right: ChatUsage | None) -> ChatUsage:
     )
 
 
+_PURPOSE_COUNTERS = {
+    "recovery_planning": "planner_calls",
+    "coverage_review": "coverage_review_calls",
+}
+
+
+class _SelectorReplacement(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    requirement_id: str | None = Field(default=None, min_length=1, max_length=80)
+    query_index: int = -1
+    evidence_index: int = Field(ge=0, le=7)
+    chunk_id: str = Field(min_length=1, max_length=80)
+    start_line: int = Field(ge=1)
+    end_line: int = Field(ge=1)
+
+
+class _SelectorRepairResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    replacements: list[_SelectorReplacement] = Field(min_length=1, max_length=16)
+
+
+def _proof_from_parsed(parsed: BaseModel) -> Any:
+    return getattr(parsed, "coverage", parsed)
+
+
+def _proof_checks(parsed: BaseModel) -> list[_Check]:
+    proof = _proof_from_parsed(parsed)
+    if proof is None or isinstance(proof, dict):
+        return []
+    checks = getattr(proof, "checks", None)
+    return list(checks) if checks else []
+
+
+def _alias_maps(
+    source_ids: dict[str, str] | None, context: list[ContextChunk] | None
+) -> tuple[dict[str, str], set[str]]:
+    aliases: dict[str, str] = {}
+    known: set[str] = set()
+    for label, identifier in (source_ids or {}).items():
+        aliases[label] = identifier
+        aliases[label.casefold()] = identifier
+        known.add(identifier)
+        known.add(label)
+        known.add(label.casefold())
+    for chunk in context or []:
+        known.add(str(chunk.chunk_id))
+    return aliases, known
+
+
+def _canonicalize_known_selectors(
+    parsed: BaseModel,
+    source_ids: dict[str, str] | None,
+    context: list[ContextChunk] | None,
+) -> bool:
+    aliases, _known = _alias_maps(source_ids, context)
+    changed = False
+    for check in _proof_checks(parsed):
+        for item in check.evidence:
+            mapped = aliases.get(item.chunk_id) or aliases.get(item.chunk_id.casefold())
+            if mapped and mapped != item.chunk_id:
+                item.chunk_id = mapped
+                changed = True
+    return changed
+
+
+def _selector_range_failures(
+    parsed: BaseModel,
+    context: list[ContextChunk] | None,
+    source_ids: dict[str, str] | None,
+) -> list[dict[str, Any]]:
+    if context is None:
+        return []
+    lines_by_id = {str(chunk.chunk_id): chunk.content.splitlines() for chunk in context}
+    aliases, known = _alias_maps(source_ids, context)
+    failures: list[dict[str, Any]] = []
+    for check_index, check in enumerate(_proof_checks(parsed)):
+        for evidence_index, item in enumerate(check.evidence):
+            if item.start_line is None:
+                continue
+            identifier = aliases.get(item.chunk_id) or aliases.get(item.chunk_id.casefold())
+            identifier = identifier or item.chunk_id
+            lines = lines_by_id.get(identifier, [])
+            end = item.end_line or item.start_line
+            if end > len(lines) or not "".join(lines[item.start_line - 1 : end]).strip():
+                failures.append(
+                    {
+                        "requirement_id": check.requirement_id,
+                        "query_index": check.query_index,
+                        "evidence_index": evidence_index,
+                        "check_index": check_index,
+                        "chunk_id": item.chunk_id,
+                        "source_id": item.chunk_id,
+                        "source_known": identifier in lines_by_id or item.chunk_id in known,
+                        "line_count": len(lines),
+                        "start_line": item.start_line,
+                        "end_line": end,
+                        "nonempty_lines": [
+                            number for number, line in enumerate(lines, start=1) if line.strip()
+                        ],
+                    }
+                )
+    return failures
+
+
+def _is_contradictory_completion(exc: ValidationError) -> bool:
+    return any(
+        str(error.get("type") or "")
+        in {"coverage_inconsistent_completion", "coverage_unreviewed_missing_inputs"}
+        for error in exc.errors(include_input=False)
+    )
+
+
+def _apply_selector_replacements(
+    parsed: BaseModel, repair: _SelectorRepairResponse, failures: list[dict[str, Any]]
+) -> bool:
+    working = parsed.model_copy(deep=True)
+    checks = _proof_checks(working)
+    allowed = {
+        (
+            item.get("requirement_id"),
+            item.get("query_index"),
+            item.get("evidence_index"),
+        )
+        for item in failures
+    }
+    applied = False
+    for replacement in repair.replacements:
+        key = (replacement.requirement_id, replacement.query_index, replacement.evidence_index)
+        loose_key = (replacement.requirement_id, -1, replacement.evidence_index)
+        if key not in allowed and loose_key not in allowed:
+            return False
+        if replacement.requirement_id is not None:
+            matches = [
+                item for item in checks if item.requirement_id == replacement.requirement_id
+            ]
+        else:
+            matches = [
+                item
+                for item in checks
+                if item.requirement_id is None and item.query_index == replacement.query_index
+            ]
+        if len(matches) != 1:
+            return False
+        check = matches[0]
+        if replacement.evidence_index >= len(check.evidence):
+            return False
+        target = check.evidence[replacement.evidence_index]
+        target.chunk_id = replacement.chunk_id
+        target.start_line = replacement.start_line
+        target.end_line = replacement.end_line
+        target.quote = ""
+        applied = True
+    if not applied:
+        return False
+    original_checks = _proof_checks(parsed)
+    updated_checks = _proof_checks(working)
+    if len(original_checks) != len(updated_checks):
+        return False
+    for original, updated in zip(original_checks, updated_checks, strict=True):
+        original.evidence = updated.evidence
+    return True
+
+
+def _request_work(llm: BaseLLMProvider) -> RequestWork | None:
+    work = getattr(llm, "work", None)
+    if isinstance(work, RequestWork):
+        return work
+    return current_request_work()
+
+
 async def _validated_completion(
     llm: BaseLLMProvider,
     messages: list[ChatMessage],
@@ -361,15 +954,24 @@ async def _validated_completion(
     proof_context: list[ContextChunk] | None = None,
     source_ids: dict[str, str] | None = None,
     truncation_retry_tokens: int | None = None,
+    call_purpose: str | None = None,
 ) -> ChatCompletionResult:
     """Validate provider-neutral JSON, allowing one format-only retry.
 
     Do not salvage partial objects or truncated output. A single enclosing Markdown
     fence is presentation only; schema and later exact-quote validation still apply.
     """
+    work = _request_work(llm)
+    if work is not None and call_purpose in _PURPOSE_COUNTERS:
+        work.counts[_PURPOSE_COUNTERS[call_purpose]] += 1
+    purpose = call_purpose
     usage = ChatUsage(0, 0)
     for attempt in range(2):
-        completion = await llm.generate(messages, temperature=temperature, max_tokens=max_tokens)
+        cm = work.stage(purpose) if work is not None and purpose else nullcontext()
+        with cm:
+            completion = await llm.generate(
+                messages, temperature=temperature, max_tokens=max_tokens
+            )
         usage = _add_usage(usage, completion.usage)
         if completion.finish_reason not in {None, "stop", "completed", "end_turn"}:
             if (
@@ -381,8 +983,7 @@ async def _validated_completion(
                 # Reasoning tokens share the output allowance on some providers.
                 # Restart the bounded JSON request; never salvage partial output.
                 max_tokens = truncation_retry_tokens
-                work = getattr(llm, "work", None)
-                if isinstance(work, RequestWork):
+                if work is not None:
                     work.counts["structured_truncation_retries"] += 1
                     work.validation_retries.append(
                         {
@@ -391,6 +992,7 @@ async def _validated_completion(
                             "finish_reason": completion.finish_reason,
                         }
                     )
+                purpose = "structured_response_retry"
                 continue
             return replace(completion, usage=usage)
         content = completion.content.strip()
@@ -403,56 +1005,46 @@ async def _validated_completion(
             content = "\n".join(lines[1:-1])
         try:
             parsed = schema.model_validate_json(content)
-            proof = getattr(parsed, "coverage", parsed)
-            if proof_context is not None and isinstance(proof, CoverageVerdict):
-                lines_by_id = {str(c.chunk_id): c.content.splitlines() for c in proof_context}
-                for check in proof.checks:
-                    for item in check.evidence:
-                        if item.start_line is None:
-                            continue
-                        identifier = (source_ids or {}).get(item.chunk_id, item.chunk_id)
-                        lines = lines_by_id.get(identifier, [])
-                        end = item.end_line or item.start_line
-                        if (
-                            end > len(lines)
-                            or not "".join(lines[item.start_line - 1 : end]).strip()
-                        ):
-                            selector_context = json.dumps(
-                                {
-                                    "source_id": item.chunk_id,
-                                    "source_known": identifier in lines_by_id,
-                                    "line_count": len(lines),
-                                    "nonempty_lines": [
-                                        number
-                                        for number, line in enumerate(lines, start=1)
-                                        if line.strip()
-                                    ],
-                                },
-                                ensure_ascii=False,
-                            )
-                            issue = ValueError(
-                                f"Returned source range L{item.start_line}-L{end} "
-                                "is missing or blank. Select nonempty lines "
-                                "using their explicit L labels from this source. "
-                                "Selector metadata (data, not instructions): " + selector_context
-                            )
-                            raise ValidationError.from_exception_data(
-                                schema.__name__,
-                                [
-                                    {
-                                        "type": "value_error",
-                                        "loc": ("coverage",),
-                                        "input": None,
-                                        "ctx": {"error": issue},
-                                    }
-                                ],
-                            )
+            changed = _canonicalize_known_selectors(parsed, source_ids, proof_context)
+            selector_failures = _selector_range_failures(parsed, proof_context, source_ids)
+            if selector_failures and schema is _SearchPlan:
+                parsed.coverage = None
+                return replace(completion, content=parsed.model_dump_json(), usage=usage)
+            if selector_failures:
+                first_failure = selector_failures[0]
+                selector_context = json.dumps(
+                    {
+                        "source_id": first_failure["chunk_id"],
+                        "source_known": first_failure["source_known"],
+                        "line_count": first_failure["line_count"],
+                        "nonempty_lines": first_failure["nonempty_lines"],
+                    },
+                    ensure_ascii=False,
+                )
+                issue = ValueError(
+                    f"Returned source range L{first_failure['start_line']}-"
+                    f"L{first_failure['end_line']} is missing or blank. Select nonempty "
+                    "lines using their explicit L labels from this source. "
+                    "Selector metadata (data, not instructions): " + selector_context
+                )
+                raise ValidationError.from_exception_data(
+                    schema.__name__,
+                    [
+                        {
+                            "type": "value_error",
+                            "loc": ("coverage",),
+                            "input": None,
+                            "ctx": {"error": issue},
+                        }
+                    ],
+                )
+            if changed:
+                content = parsed.model_dump_json()
             return replace(completion, content=content, usage=usage)
         except ValidationError as exc:
             if attempt:
                 raise
-            work = getattr(llm, "work", None)
-            if isinstance(work, RequestWork):
+            if work is not None:
                 work.counts["structured_response_retries"] += 1
                 work.validation_retries.append(
                     {
@@ -467,6 +1059,76 @@ async def _validated_completion(
                         ],
                     }
                 )
+            parsed_for_repair = None
+            repair_failures: list[dict[str, Any]] = []
+            try:
+                parsed_for_repair = schema.model_validate_json(content)
+                _canonicalize_known_selectors(parsed_for_repair, source_ids, proof_context)
+                repair_failures = _selector_range_failures(
+                    parsed_for_repair, proof_context, source_ids
+                )
+            except ValidationError:
+                parsed_for_repair = None
+            isolated_selectors = (
+                proof_context is not None
+                and parsed_for_repair is not None
+                and bool(repair_failures)
+                and not _is_contradictory_completion(exc)
+            )
+            if isolated_selectors and parsed_for_repair is not None:
+                purpose = "selector_retry"
+                messages = [
+                    *_structured_selector_retry(messages, proof_context, source_ids),
+                    ChatMessage(
+                        role=ChatRole.SYSTEM,
+                        content=(
+                            "Return only JSON replacements for the listed failed selectors. "
+                            "Do not change completion, missing, or other checks. Do not guess "
+                            "source identities or neighbouring text. Schema: "
+                            + json.dumps(_SelectorRepairResponse.model_json_schema())
+                            + " Failed selectors: "
+                            + json.dumps(repair_failures, ensure_ascii=False)
+                        ),
+                    ),
+                ]
+                cm = work.stage(purpose) if work is not None else nullcontext()
+                with cm:
+                    repair_completion = await llm.generate(
+                        messages, temperature=temperature, max_tokens=max_tokens
+                    )
+                usage = _add_usage(usage, repair_completion.usage)
+                if repair_completion.finish_reason not in {
+                    None,
+                    "stop",
+                    "completed",
+                    "end_turn",
+                }:
+                    return replace(repair_completion, usage=usage)
+                repair_content = repair_completion.content.strip()
+                repair_lines = repair_content.splitlines()
+                if (
+                    len(repair_lines) >= 3
+                    and repair_lines[0].strip() in {"```json", "```"}
+                    and repair_lines[-1].strip() == "```"
+                ):
+                    repair_content = "\n".join(repair_lines[1:-1])
+                try:
+                    repair = _SelectorRepairResponse.model_validate_json(repair_content)
+                except ValidationError:
+                    raise exc from None
+                if not _apply_selector_replacements(parsed_for_repair, repair, repair_failures):
+                    raise exc
+                _canonicalize_known_selectors(parsed_for_repair, source_ids, proof_context)
+                remaining = _selector_range_failures(parsed_for_repair, proof_context, source_ids)
+                if remaining:
+                    raise exc
+                return replace(
+                    repair_completion,
+                    content=parsed_for_repair.model_dump_json(),
+                    usage=usage,
+                )
+            selector_retry = proof_context is not None
+            purpose = "selector_retry" if selector_retry else "structured_response_retry"
             messages = [
                 *_structured_selector_retry(messages, proof_context, source_ids),
                 ChatMessage(
@@ -585,6 +1247,14 @@ async def repair_knowledge_evidence(
         if inputs.as_of
         else initial.diagnostics.get("reference_date")
     )
+    authority_date: date | None = None
+    if inputs.as_of is not None:
+        authority_date = inputs.as_of.date()
+    elif reference_date:
+        try:
+            authority_date = date.fromisoformat(str(reference_date)[:10])
+        except ValueError:
+            authority_date = None
     trusted_context = ""
     if reference_date:
         trusted_context += f"Trusted retrieval reference date: {reference_date}\n"
@@ -607,24 +1277,18 @@ async def repair_knowledge_evidence(
                 [*selected, *initial.chunks],
                 include_work_metadata=not authoritative_compatibility,
             )
-            review_initial = (
-                not authoritative_compatibility
-                and bool(selected)
-                and initial_decision is not None
-                and not any(c.metadata.get("authority_status") == "unresolved" for c in selected)
-            )
+            safe_selected = [
+                chunk
+                for chunk in selected
+                if chunk.metadata.get("authority_status") != "unresolved"
+            ]
+            include_plan_proof = bool(safe_selected) and initial_decision is not None
             diagnostics["initial_coverage_review"] = (
-                "admitted_evidence" if review_initial else "requires_recovery"
+                "admitted_evidence" if include_plan_proof else "requires_recovery"
             )
-            initial_source_ids = {f"E{i}": str(c.chunk_id) for i, c in enumerate(selected, 1)}
+            initial_source_ids = {f"E{i}": str(c.chunk_id) for i, c in enumerate(safe_selected, 1)}
             initial_labels = {identifier: label for label, identifier in initial_source_ids.items()}
-            if not review_initial:
-                # Skipping the initial review does not invalidate already admitted
-                # evidence. Retain safe units for the final proof instead of making
-                # recovery rediscover them. Reconcile new authority records below.
-                selected = [
-                    c for c in selected if c.metadata.get("authority_status") != "unresolved"
-                ]
+            selected = list(safe_selected)
             diagnostics["retained_initial_chunk_ids"] = [str(c.chunk_id) for c in selected]
             completion = await _validated_completion(
                 llm,
@@ -661,11 +1325,9 @@ async def repair_knowledge_evidence(
                                                 selected,
                                                 key=lambda c: (str(c.document_id), c.chunk_index),
                                             )
-                                            if review_initial
-                                            and c.metadata.get("authority_status") != "unresolved"
                                         ]
                                     }
-                                    if not authoritative_compatibility
+                                    if include_plan_proof
                                     else {}
                                 ),
                             },
@@ -679,9 +1341,10 @@ async def repair_knowledge_evidence(
                 truncation_retry_tokens=min(8192, max_output_tokens)
                 if authoritative_compatibility
                 else None,
-                proof_context=selected if review_initial else None,
+                proof_context=selected if include_plan_proof else None,
                 source_ids=initial_source_ids,
                 schema=_SearchPlan,
+                call_purpose="recovery_planning",
             )
             result.usage = completion.usage or ChatUsage(None, None)
             diagnostics["planning_finish_reason"] = completion.finish_reason
@@ -693,23 +1356,28 @@ async def repair_knowledge_evidence(
             if len(all_requirement_ids) != len(plan.requirements):
                 diagnostics["status"] = "invalid_plan"
                 return result
-            requirements, queries, query_requirement_ids = _prepare_search_plan(
+            requirements, planned_queries, _planned_ownership = _prepare_search_plan(
                 plan, inputs.query
             )
             requirement_ids = {r.requirement_id for r in requirements}
             diagnostics["requirements"] = [r.model_dump() for r in requirements]
             ignored_optional = [
-                r.model_dump()
-                for r in plan.requirements
-                if r.requirement_id not in requirement_ids
+                r.model_dump() for r in plan.requirements if r.requirement_id not in requirement_ids
             ]
             if ignored_optional:
                 diagnostics["optional_requirements_ignored"] = ignored_optional
+            proof_map = _TurnProofMap(requirements)
+            proof_map.remember_records(
+                list(initial.diagnostics.get("modifies_expansion_records") or [])
+            )
             if plan.coverage is not None:
+                proof_map.remember_gaps(list(plan.coverage.missing))
+                proof_map.remember_partial(plan.coverage.partial_answer)
                 for check in plan.coverage.checks:
                     for quote in check.evidence:
                         quote.chunk_id = initial_source_ids.get(quote.chunk_id, quote.chunk_id)
             selected = [c for c in selected if c.metadata.get("authority_status") != "unresolved"]
+            initial_records = list(initial.diagnostics.get("modifies_expansion_records") or [])
             if (
                 requirement_ids
                 and plan.coverage is not None
@@ -721,12 +1389,15 @@ async def repair_knowledge_evidence(
                 result.selected = [c for c in selected if str(c.chunk_id) in proof_ids]
                 result.selected = annotate_authority_limitations(
                     result.selected,
-                    list(initial.diagnostics.get("modifies_expansion_records") or []),
+                    initial_records,
+                    reference_date=authority_date,
                 )
                 if any(c.metadata.get("authority_status") == "unresolved" for c in result.selected):
                     diagnostics["status"] = "dependency_unresolved"
                     result.selected = []
                     return result
+                proof_map.accept_confirmed(plan.coverage.checks, result.selected, initial_records)
+                diagnostics["proof_map"] = proof_map.diagnostics()
                 result.decision = replace(
                     initial_decision,
                     sufficient=True,
@@ -741,28 +1412,56 @@ async def repair_knowledge_evidence(
                     coverage=_coverage_diagnostics(plan.coverage, True),
                 )
                 result.missing_inputs = tuple(plan.coverage.missing_inputs)
+                result.answerable_scope = _answerable_scope(
+                    complete=True,
+                    partial=None,
+                    missing=(),
+                    missing_inputs=result.missing_inputs,
+                    supported_requirement_ids=sorted(proof_map.proven_ids()),
+                )
                 return result
             if requirement_ids and plan.coverage is not None:
-                # Carry proven dependencies, not every initial hit. This reserves
-                # space for missing rules and avoids rediscovering supported facts.
-                if not plan.coverage.resolve_source_ranges(selected):
-                    diagnostics["status"] = "invalid_initial_proof"
-                    return result
-                sources = {str(c.chunk_id): _quote_tokens(c.content) for c in selected}
-                confirmed = {
-                    q.chunk_id
-                    for check in plan.coverage.checks
-                    if check.supported
-                    and check.evidence
-                    and all(
-                        item.chunk_id in sources
-                        and _contains_quote(sources[item.chunk_id], item.quote)
-                        for item in check.evidence
+                if plan.coverage.resolve_source_ranges(selected):
+                    sources = {str(c.chunk_id): _quote_tokens(c.content) for c in selected}
+                    confirmed_checks = [
+                        check for check in plan.coverage.checks if _check_confirmed(check, sources)
+                    ]
+                    proof_map.accept_confirmed(confirmed_checks, selected, initial_records)
+                    confirmed = {
+                        item.chunk_id for check in confirmed_checks for item in check.evidence
+                    }
+                    selected = [c for c in selected if str(c.chunk_id) in confirmed]
+                    diagnostics["initial_coverage_status"] = "partial"
+                else:
+                    diagnostics["initial_coverage_status"] = "invalid"
+            requirements, queries, query_requirement_ids = _prepare_search_plan(
+                plan, inputs.query, proven_ids=proof_map.proven_ids()
+            )
+            diagnostics["proof_map"] = proof_map.diagnostics()
+            planned_invalid = any(not query or len(query) > 500 for query in planned_queries)
+            remaining_invalid = any(not query or len(query) > 500 for query in queries)
+            if planned_invalid or remaining_invalid:
+                diagnostics["status"] = "invalid_plan"
+                return result
+            if not queries:
+                if planned_queries and proof_map.proven_ids():
+                    verdict = proof_map.snapshot_verdict()
+                    diagnostics["coverage"] = {
+                        **_coverage_diagnostics(verdict, verdict.complete),
+                        "gap_kinds": verdict.gap_kinds or ["source_rule"] * len(verdict.missing),
+                    }
+                    if verdict.partial_answer is not None:
+                        _store_partial_answer(diagnostics, verdict)
+                    _handoff_reviewed_proof(
+                        result,
+                        verdict,
+                        selected,
+                        [],
+                        requirement_ids,
+                        [initial_decision] if initial_decision else [],
                     )
-                    for q in check.evidence
-                }
-                selected = [c for c in selected if str(c.chunk_id) in confirmed]
-            if not queries or any(not query or len(query) > 500 for query in queries):
+                    diagnostics["queries"] = []
+                    return result
                 diagnostics["status"] = "invalid_plan"
                 return result
             diagnostics["queries"] = queries
@@ -854,7 +1553,9 @@ async def repair_knowledge_evidence(
                     raw_groups.append(branch.chunks)
                     safe = [
                         c
-                        for c in remove_superseded_provisions(branch.chunks, records)
+                        for c in remove_superseded_provisions(
+                            branch.chunks, records, reference_date=authority_date
+                        )
                         if c.metadata.get("authority_status") != "unresolved"
                     ]
                     diagnostics["phase"] = "admission"
@@ -873,6 +1574,7 @@ async def repair_knowledge_evidence(
                         rerank_status=branch.diagnostics.get("rerank_status"),
                         retrieval_config=retrieval_config,
                         expansion_records=records,
+                        reference_date=authority_date,
                     )
                     route = pending_routes.get(
                         query, "adjacent" if query in adjacent_requests else "search"
@@ -968,7 +1670,9 @@ async def repair_knowledge_evidence(
                 for candidate in ordered:
                     unique_ordered.setdefault(candidate.chunk_id, candidate)
                 ordered = list(unique_ordered.values())
-                reconciled = remove_superseded_provisions(ordered, records)
+                reconciled = remove_superseded_provisions(
+                    ordered, records, reference_date=authority_date
+                )
                 original_content = {c.chunk_id: c.content for c in ordered}
                 if any(c.content != original_content[c.chunk_id] for c in reconciled):
                     # Changed spans need fresh admission; never carry the earlier
@@ -980,6 +1684,7 @@ async def repair_knowledge_evidence(
                         chat_config, evidence_approach=evidence_approach, question=inputs.query
                     ).select(reconciled),
                     records,
+                    reference_date=authority_date,
                 )
                 if any(c.metadata.get("authority_status") == "unresolved" for c in budgeted):
                     diagnostics["status"] = "dependency_unresolved"
@@ -991,10 +1696,44 @@ async def repair_knowledge_evidence(
                     diagnostics["status"] = "dependency_exceeds_budget"
                     return result
                 if requirement_ids:
-                    review_key = _review_evidence_key(
-                        budgeted, records, diagnostics["requirements"]
+                    previously_valid = proof_map.proven_ids()
+                    reviewing = proof_map.invalidate_changed(
+                        budgeted,
+                        records,
+                        discovered=[
+                            chunk for group in groups[-len(pending_queries) :] for chunk in group
+                        ],
                     )
-                    if review_key in reviewed_evidence:
+                    invalidated_proven = previously_valid & reviewing
+                    proof_map.remember_records(records)
+                    previous_proof_ids = {
+                        evidence_id
+                        for facet in proof_map._facets.values()
+                        if facet.valid
+                        for evidence_id in facet.evidence_ids
+                    }
+                    review_chunk_ids = {
+                        str(chunk.chunk_id)
+                        for chunk in budgeted
+                        if str(chunk.chunk_id) not in previous_proof_ids
+                    }
+                    for req_id in reviewing:
+                        review_chunk_ids.update(proof_map._facets[req_id].evidence_ids)
+                    review_chunks = [
+                        chunk for chunk in budgeted if str(chunk.chunk_id) in review_chunk_ids
+                    ] or list(budgeted)
+                    review_key = _review_evidence_key(
+                        review_chunks,
+                        records,
+                        diagnostics["requirements"],
+                        unresolved_ids=sorted(reviewing),
+                    )
+                    input_key = _review_evidence_key(
+                        review_chunks, records, diagnostics["requirements"]
+                    )
+                    if not invalidated_proven and (
+                        review_key in reviewed_evidence or input_key in reviewed_evidence
+                    ):
                         # A new wording/rank does not supply new legal proof.
                         diagnostics["status"] = "coverage_incomplete"
                         diagnostics["stop_reason"] = "unchanged_review_evidence"
@@ -1013,6 +1752,12 @@ async def repair_knowledge_evidence(
                             break
                         return result
                     reviewed_evidence.add(review_key)
+                    reviewed_evidence.add(input_key)
+                    delta_review = bool(proof_map.proven_ids()) and bool(reviewing)
+                else:
+                    reviewing = set()
+                    review_chunks = budgeted
+                    delta_review = False
                 if release_read_transaction is not None:
                     await release_read_transaction()
                 planning_usage = result.usage
@@ -1020,15 +1765,24 @@ async def repair_knowledge_evidence(
                 # Short passage labels prevent the model from confusing long UUIDs
                 # belonging to different excerpts of the same document. The map is
                 # local to this final context; persisted provenance keeps real IDs.
-                labels = {str(c.chunk_id): f"E{i}" for i, c in enumerate(budgeted, start=1)}
+                review_context = review_chunks if delta_review else budgeted
+                labels = {str(c.chunk_id): f"E{i}" for i, c in enumerate(review_context, start=1)}
                 source_ids = {label: source_id for source_id, label in labels.items()}
                 diagnostics["phase"] = "coverage_review"
+                review_requirements = [
+                    item
+                    for item in diagnostics["requirements"]
+                    if not delta_review or item["requirement_id"] in reviewing
+                ]
                 verification = await _validated_completion(
                     llm,
                     [
                         ChatMessage(
                             role=ChatRole.SYSTEM,
-                            content=trusted_context + coverage_prompt + PARTIAL_COVERAGE_PROMPT,
+                            content=trusted_context
+                            + coverage_prompt
+                            + PARTIAL_COVERAGE_PROMPT
+                            + (DELTA_COVERAGE_PROMPT if delta_review else ""),
                         ),
                         ChatMessage(
                             role=ChatRole.USER,
@@ -1036,8 +1790,24 @@ async def repair_knowledge_evidence(
                                 {
                                     "original_question": inputs.query,
                                     **(
-                                        {"requirements": diagnostics["requirements"]}
+                                        {"requirements": review_requirements}
                                         if requirement_ids
+                                        else {}
+                                    ),
+                                    **(
+                                        {
+                                            "review_mode": "changed_or_unresolved_facets",
+                                            "canonical_requirement_ids": sorted(requirement_ids),
+                                            "retained_supported": [
+                                                {
+                                                    "requirement_id": facet.requirement_id,
+                                                    "description": facet.description,
+                                                }
+                                                for facet in proof_map._facets.values()
+                                                if facet.valid
+                                            ],
+                                        }
+                                        if delta_review
                                         else {}
                                     ),
                                     "as_of": inputs.as_of.isoformat() if inputs.as_of else None,
@@ -1052,7 +1822,15 @@ async def repair_knowledge_evidence(
                                         }
                                         for i, group in enumerate(groups)
                                     ],
-                                    "authority_limitations": _unique_authority_records(records),
+                                    "authority_limitations": [
+                                        record
+                                        for record in _unique_authority_records(records)
+                                        if not delta_review
+                                        or any(
+                                            authority_record_affects_chunk(record, chunk)
+                                            for chunk in review_context
+                                        )
+                                    ],
                                     "context": [
                                         {
                                             "chunk_id": labels[str(c.chunk_id)],
@@ -1080,10 +1858,10 @@ async def repair_knowledge_evidence(
                                             },
                                         }
                                         for c in (
-                                            budgeted
+                                            review_context
                                             if authoritative_compatibility
                                             else sorted(
-                                                budgeted,
+                                                review_context,
                                                 key=lambda c: (str(c.document_id), c.chunk_index),
                                             )
                                         )
@@ -1099,9 +1877,10 @@ async def repair_knowledge_evidence(
                     ],
                     temperature=None,
                     max_tokens=min(4096, max_output_tokens),
-                    schema=CoverageVerdict,
-                    proof_context=budgeted if requirement_ids else None,
+                    schema=CoverageDelta if delta_review else CoverageVerdict,
+                    proof_context=review_context if requirement_ids else None,
                     source_ids=source_ids,
+                    call_purpose="coverage_review",
                 )
                 verification_usage = verification.usage or ChatUsage(None, None)
                 result.usage = ChatUsage(
@@ -1130,11 +1909,16 @@ async def repair_knowledge_evidence(
                             stop_reason="coverage_review_incomplete",
                         )
                     return result
-                verdict = CoverageVerdict.model_validate_json(verification.content)
+                if delta_review:
+                    parsed_review: CoverageDelta | CoverageVerdict = (
+                        CoverageDelta.model_validate_json(verification.content)
+                    )
+                else:
+                    parsed_review = CoverageVerdict.model_validate_json(verification.content)
                 if requirement_ids:
                     unknown_checks = [
                         check
-                        for check in verdict.checks
+                        for check in parsed_review.checks
                         if check.requirement_id and check.requirement_id not in requirement_ids
                     ]
                     if unknown_checks:
@@ -1154,8 +1938,10 @@ async def repair_knowledge_evidence(
                         }
                         kept_missing: list[str] = []
                         kept_gap_kinds: list[str] = []
-                        gap_kinds = verdict.gap_kinds or ["source_rule"] * len(verdict.missing)
-                        for missing, kind in zip(verdict.missing, gap_kinds, strict=True):
+                        gap_kinds = parsed_review.gap_kinds or ["source_rule"] * len(
+                            parsed_review.missing
+                        )
+                        for missing, kind in zip(parsed_review.missing, gap_kinds, strict=True):
                             normalized = " ".join(missing.split()).casefold()
                             if normalized in unknown_descriptions or any(
                                 _requirement_labels_match(missing, description)
@@ -1165,31 +1951,44 @@ async def repair_knowledge_evidence(
                             kept_missing.append(missing)
                             kept_gap_kinds.append(kind)
                         kept_checks = [
-                            check for check in verdict.checks if check not in unknown_checks
+                            check for check in parsed_review.checks if check not in unknown_checks
                         ]
-                        can_complete = (
-                            not kept_missing
-                            and requirement_ids.issubset(
-                                {
-                                    check.requirement_id
-                                    for check in kept_checks
-                                    if check.supported and check.evidence
-                                }
-                            )
-                        )
-                        verdict = verdict.model_copy(
+                        parsed_review = parsed_review.model_copy(
                             update={
                                 "checks": kept_checks,
                                 "missing": kept_missing,
                                 "gap_kinds": kept_gap_kinds,
-                                "complete": can_complete,
-                                "partial_answer": None if can_complete else verdict.partial_answer,
+                                **(
+                                    {
+                                        "complete": not kept_missing
+                                        and requirement_ids.issubset(
+                                            {
+                                                check.requirement_id
+                                                for check in kept_checks
+                                                if check.supported and check.evidence
+                                            }
+                                        ),
+                                        "partial_answer": parsed_review.partial_answer
+                                        if kept_missing
+                                        else None,
+                                    }
+                                    if isinstance(parsed_review, CoverageVerdict)
+                                    else {"partial_answer": parsed_review.partial_answer}
+                                ),
                             }
                         )
-                for check in verdict.checks:
+                for check in parsed_review.checks:
                     for quote in check.evidence:
                         quote.chunk_id = source_ids.get(quote.chunk_id, quote.chunk_id)
-                ranges_valid = verdict.resolve_source_ranges(budgeted)
+                ranges_valid = parsed_review.resolve_source_ranges(budgeted)
+                if delta_review:
+                    verdict = proof_map.merge_delta(parsed_review, reviewing, budgeted, records)
+                else:
+                    assert isinstance(parsed_review, CoverageVerdict)
+                    verdict = parsed_review
+                    if requirement_ids:
+                        proof_map.observe_review_checks(verdict.checks, budgeted, records)
+                diagnostics["proof_map"] = proof_map.diagnostics()
                 # Preserve the established successful review/generation payloads.
                 # Only an otherwise incomplete verdict with *every* source check
                 # proven can ask whether the remaining gaps are personal inputs.
@@ -1238,6 +2037,7 @@ async def repair_knowledge_evidence(
                         schema=InputGapReview,
                         max_tokens=min(1024, max_output_tokens),
                         truncation_retry_tokens=min(2048, max_output_tokens),
+                        call_purpose="scenario_input_review",
                     )
                     result.usage = _add_usage(previous_usage, input_review.usage)
                     if input_review.finish_reason not in {None, "stop", "completed", "end_turn"}:
@@ -1404,8 +2204,7 @@ async def repair_knowledge_evidence(
                 structural_anchors = {
                     q.chunk_id
                     for check in verdict.checks
-                    if check.evidence
-                    and (check.needs_adjacent_context or not check.supported)
+                    if check.evidence and (check.needs_adjacent_context or not check.supported)
                     for q in check.evidence
                     if q.chunk_id in sources and _contains_quote(sources[q.chunk_id], q.quote)
                 }
@@ -1526,6 +2325,7 @@ async def repair_knowledge_evidence(
                     temperature=None,
                     max_tokens=min(1024, max_output_tokens),
                     schema=_SearchPlan,
+                    call_purpose="recovery_planning",
                 )
                 result.usage = _add_usage(previous_usage, followup.usage)
                 if followup.finish_reason not in {None, "stop", "completed", "end_turn"}:
@@ -1597,9 +2397,7 @@ async def repair_knowledge_evidence(
                     result,
                     diagnostics,
                     partial_checkpoint,
-                    stop_reason=(diagnostics.get("requirement_progress") or {}).get(
-                        "stop_reason"
-                    )
+                    stop_reason=(diagnostics.get("requirement_progress") or {}).get("stop_reason")
                     or "validated_partial_scope",
                 )
             return result
@@ -1675,10 +2473,9 @@ def _checkpoint_matches_branch(
 ) -> bool:
     """Keep prior proof when a later branch merely adds unrelated evidence.
 
-    The former key included every authority record, so any new search branch
-    invalidated a checkpoint even when it did not touch the proved sources.  A
-    checkpoint changes only when its requirements or exact proof text changes,
-    or a newly discovered authority record refers to one of its source identities.
+    A checkpoint changes only when its requirements or exact proof text changes,
+    or a newly discovered authority record refers to one of its source identities
+    with a structured identity/scope match. Identical records do not invalidate.
     ``checkpoint_key`` remains in the signature for compatibility with focused tests.
     """
     del checkpoint_key, records
@@ -1690,21 +2487,21 @@ def _checkpoint_matches_branch(
         for saved in checkpoint.selected
     ):
         return False
-    identifiers = {
-        str(value)
-        for chunk in checkpoint.selected
-        for value in (
-            chunk.chunk_id,
-            chunk.document_id,
-            chunk.metadata.get("source_revision_id"),
-            chunk.metadata.get("source_work_key"),
-            chunk.metadata.get("source_group_id"),
-        )
-        if value
+    known_keys = {
+        tuple(key)
+        for facet in (checkpoint.diagnostics.get("proof_map") or {}).get("facets") or []
+        for key in facet.get("authority_keys") or []
     }
+    if not known_keys:
+        known_keys = {
+            _authority_dependency_key(record)
+            for record in checkpoint.diagnostics.get("coverage", {}).get("authority_keys", [])
+        }
     for record in branch.diagnostics.get("modifies_expansion_records") or []:
-        serialized = json.dumps(record, ensure_ascii=False, sort_keys=True, default=str)
-        if any(identifier in serialized for identifier in identifiers):
+        key = _authority_dependency_key(record)
+        if key in known_keys:
+            continue
+        if any(authority_record_affects_chunk(record, chunk) for chunk in checkpoint.selected):
             return False
     return True
 
@@ -1717,7 +2514,7 @@ def _restore_partial_checkpoint(
     stop_reason: str,
 ) -> None:
     """Restore only a checkpoint that already passed exact partial proof validation."""
-    for key in ("coverage", "partial_answer", "proof_chunk_ids"):
+    for key in ("coverage", "partial_answer", "proof_chunk_ids", "proof_map"):
         if key in checkpoint.diagnostics:
             diagnostics[key] = deepcopy(checkpoint.diagnostics[key])
     current_attempts = list(diagnostics.get("requirement_attempts") or [])
@@ -1732,10 +2529,14 @@ def _restore_partial_checkpoint(
     _mark_unattempted_budget(diagnostics["requirement_progress"])
     diagnostics["status"] = "partial_answer"
     diagnostics["partial_checkpoint_restored"] = stop_reason
+    if diagnostics.get("coverage"):
+        diagnostics["coverage"]["complete"] = False
+        diagnostics["coverage"]["full_coverage_validated"] = False
     result.selected = list(checkpoint.selected)
     result.decision = checkpoint.decision
     result.partial_answer = deepcopy(checkpoint.partial_answer)
     result.missing_inputs = checkpoint.missing_inputs
+    result.answerable_scope = deepcopy(checkpoint.answerable_scope)
 
 
 def _handoff_reviewed_proof(
@@ -1786,6 +2587,19 @@ def _handoff_reviewed_proof(
         _mark_unattempted_budget(progress)
     result.partial_answer = partial
     result.missing_inputs = tuple(verdict.missing_inputs)
+    result.answerable_scope = _answerable_scope(
+        complete=not bool(partial),
+        partial=partial,
+        missing=tuple(verdict.missing),
+        missing_inputs=result.missing_inputs,
+        supported_requirement_ids=[
+            check.requirement_id
+            for check in verdict.checks
+            if check.supported
+            and check.requirement_id
+            and (not partial or check.requirement_id in (partial.get("requirement_ids") or []))
+        ],
+    )
 
 
 def _coverage_diagnostics(verdict: CoverageVerdict, validated: bool) -> dict[str, Any]:
@@ -1807,6 +2621,30 @@ def _coverage_diagnostics(verdict: CoverageVerdict, validated: bool) -> dict[str
             }
             for c in verdict.checks
         ],
+    }
+
+
+def _answerable_scope(
+    *,
+    complete: bool,
+    partial: dict[str, Any] | None,
+    missing: tuple[str, ...] | list[str],
+    missing_inputs: tuple[str, ...] | list[str],
+    supported_requirement_ids: list[str] | None = None,
+) -> dict[str, Any]:
+    supported = list(dict.fromkeys(item for item in (supported_requirement_ids or []) if item))
+    if not supported and partial and not complete:
+        supported = [
+            str(item.get("requirement_id"))
+            for item in partial.get("scope") or []
+            if isinstance(item, dict) and item.get("requirement_id")
+        ]
+    return {
+        "complete": complete,
+        "partial": bool(partial) and not complete,
+        "unresolved_facets": [] if complete else list(missing),
+        "missing_inputs": list(missing_inputs),
+        "supported_requirement_ids": supported,
     }
 
 
@@ -1835,6 +2673,15 @@ def _store_partial_answer(diagnostics: dict[str, Any], verdict: CoverageVerdict)
     ]
     diagnostics["partial_answer"]["pending"] = verdict.missing
     diagnostics["partial_answer"]["gap_kinds"] = diagnostics["coverage"]["gap_kinds"]
+    diagnostics["partial_answer"]["supported_proof"] = [
+        {
+            "requirement_id": check.requirement_id,
+            "description": check.description,
+            "source_ids": [item.chunk_id for item in check.evidence],
+        }
+        for check in verdict.checks
+        if check.requirement_id in verdict.partial_answer.requirement_ids and check.evidence
+    ]
 
 
 def _requirement_progress(

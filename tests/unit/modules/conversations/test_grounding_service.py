@@ -1358,8 +1358,9 @@ async def test_coverage_limitation_does_not_exempt_joined_legal_conclusion() -> 
             }
         },
     )
-    assert result.claims[0]["claim_kind"] == "source_assertion"
-    assert result.claims[0]["verification"] != "supported"
+    conclusion = next(claim for claim in result.claims if "need not file" in claim["text"])
+    assert conclusion["claim_kind"] == "source_assertion"
+    assert conclusion["verification"] != "supported"
 
 
 async def test_unvalidated_coverage_envelope_cannot_support_scope_statement() -> None:
@@ -1866,3 +1867,211 @@ async def test_similarity_cannot_verify_an_uncomputed_runtime_difference() -> No
     )
     result = await service.map_claims(f"{claim} [1]", [_chunk(content=evidence)])
     assert result.claims[0]["verification"] == "unverified"
+
+
+class _CountingEmbedder(_ClusterEmbeddingProvider):
+    def __init__(self, clusters: dict[str, str]) -> None:
+        super().__init__(clusters)
+        self.calls = 0
+
+    async def embed_texts(
+        self,
+        texts: list[str],
+        *,
+        purpose: EmbeddingPurpose = EmbeddingPurpose.DOCUMENT,
+    ) -> EmbeddingBatchResult:
+        self.calls += 1
+        return await super().embed_texts(texts, purpose=purpose)
+
+
+async def test_scope_heading_does_not_exempt_statutory_duty_bullet() -> None:
+    result = await GroundingService(ChatConfig()).map_claims(
+        "The available materials do not establish:\n"
+        "- Private companies must file an annual return",
+        [_chunk(content="Private companies must hold an annual general meeting.")],
+        coverage={
+            "coverage": {
+                "missing": ["Annual return filing duty"],
+                "partial_scope_validated": True,
+            }
+        },
+    )
+    duty = next(claim for claim in result.claims if "must file" in claim["text"])
+    assert duty["claim_kind"] == "source_assertion"
+    assert duty["verification"] != "supported"
+
+
+async def test_selected_evidence_therefore_conclusion_stays_ordinary_verification() -> None:
+    result = await GroundingService(ChatConfig()).map_claims(
+        "The selected evidence did not establish the filing rule, "
+        "therefore no filing is required.",
+        [_chunk(content="Private companies must hold an annual general meeting.")],
+        coverage={
+            "coverage": {
+                "missing": ["filing rule"],
+                "partial_scope_validated": True,
+            }
+        },
+    )
+    conclusion = next(
+        claim for claim in result.claims if "no filing is required" in claim["text"]
+    )
+    assert conclusion["claim_kind"] == "source_assertion"
+    assert conclusion["verification"] != "supported"
+    limitation = next(
+        claim for claim in result.claims if claim["claim_kind"] == "coverage_scope"
+    )
+    assert limitation["verification"] == "supported"
+
+
+async def test_did_not_establish_limitation_matches_validated_coverage() -> None:
+    result = await GroundingService(ChatConfig()).map_claims(
+        "The selected evidence did not establish the filing rule.",
+        [_chunk(content="Private companies must hold an annual general meeting.")],
+        coverage={
+            "coverage": {
+                "missing": ["filing rule"],
+                "partial_scope_validated": True,
+            }
+        },
+    )
+    assert result.claims[0]["claim_kind"] == "coverage_scope"
+    assert result.claims[0]["verification"] == "supported"
+
+
+async def test_comparative_week_and_day_durations_are_not_contradictions() -> None:
+    result = await GroundingService(ChatConfig(minimum_claim_token_coverage=0.3)).map_claims(
+        "Notice must be given in more than 21 days. [1]",
+        [_chunk(content="Notice must be given in more than three weeks.")],
+    )
+    assert result.claims[0]["verification"] == "supported"
+    assert result.claims[0]["verification_method"] != "bounded_entailment"
+
+
+async def test_calendar_month_is_not_equated_with_fixed_days() -> None:
+    result = await GroundingService(ChatConfig(minimum_claim_token_coverage=0.3)).map_claims(
+        "The records must be kept for 30 days. [1]",
+        [_chunk(content="The records must be kept for one month.")],
+    )
+    assert result.claims[0]["verification"] == "unsupported"
+    assert result.claims[0]["verification_reason"] == "duration_mismatch"
+
+
+async def test_calendar_days_are_not_equated_with_business_days() -> None:
+    result = await GroundingService(ChatConfig(minimum_claim_token_coverage=0.3)).map_claims(
+        "Notice must be given within 21 calendar days. [1]",
+        [_chunk(content="Notice must be given within 21 business days.")],
+    )
+    assert result.claims[0]["verification"] == "unsupported"
+    assert result.claims[0]["verification_reason"] == "duration_mismatch"
+
+
+async def test_section_number_does_not_contradict_equivalent_notice_duration() -> None:
+    result = await GroundingService(ChatConfig(minimum_claim_token_coverage=0.3)).map_claims(
+        "The notice period is more than 21 days. [1]",
+        [
+            _chunk(
+                content=(
+                    "Chapter 12 sets the board size. "
+                    "The notice period is more than three weeks."
+                )
+            )
+        ],
+    )
+    assert result.claims[0]["verification"] == "supported"
+    assert result.claims[0]["verification_method"] != "bounded_entailment"
+
+
+async def test_necessary_condition_paraphrase_is_not_a_negation_contradiction() -> None:
+    claim = "The certificate is valid only if the prescribed fee is paid."
+    evidence = "The certificate is not valid unless the prescribed fee is paid."
+    result = await GroundingService(ChatConfig(minimum_claim_token_coverage=0.3)).map_claims(
+        f"{claim} [1]", [_chunk(content=evidence)]
+    )
+    assert result.claims[0]["verification"] == "supported"
+    assert result.claims[0]["verification_method"] != "bounded_entailment"
+
+
+async def test_required_for_validity_paraphrase_is_not_a_negation_contradiction() -> None:
+    claim = "Payment of the fee is required for the certificate to be valid."
+    evidence = "The certificate is not valid unless the fee is paid."
+    result = await GroundingService(ChatConfig(minimum_claim_token_coverage=0.3)).map_claims(
+        f"{claim} [1]", [_chunk(content=evidence)]
+    )
+    assert result.claims[0]["verification"] == "supported"
+    assert result.claims[0]["verification_method"] != "bounded_entailment"
+
+
+async def test_unless_clause_does_not_establish_that_the_condition_alone_suffices() -> None:
+    claim = "The certificate is valid if the prescribed fee is paid."
+    evidence = "The certificate is not valid unless the prescribed fee is paid."
+    result = await GroundingService(
+        ChatConfig(minimum_claim_token_coverage=0.3),
+        embedder=_cluster_embedder({claim: "certificate", evidence: "certificate"}),
+    ).map_claims(f"{claim} [1]", [_chunk(content=evidence)])
+    assert result.claims[0]["verification"] != "supported"
+
+
+async def test_equivalent_duration_does_not_skip_conflicting_amount() -> None:
+    claim = "The late filing surcharge exceeds 21 days and 5000 taka."
+    evidence = "The late filing surcharge exceeds three weeks and 8000 taka."
+    result = await GroundingService(
+        ChatConfig(minimum_claim_token_coverage=0.3),
+        embedder=_cluster_embedder({claim: "penalty", evidence: "penalty"}),
+    ).map_claims(f"{claim} [1]", [_chunk(content=evidence)])
+    assert result.claims[0]["verification"] == "unsupported"
+    assert result.claims[0]["verification_method"] == "bounded_entailment"
+
+
+async def test_necessary_condition_does_not_allow_direct_obligation_reversal() -> None:
+    claim = "Filing is required only when turnover exceeds 3 crore."
+    evidence = "Filing is not required when turnover exceeds 3 crore."
+    result = await GroundingService(
+        ChatConfig(minimum_claim_token_coverage=0.3),
+        embedder=_cluster_embedder({claim: "filing-turnover", evidence: "filing-turnover"}),
+    ).map_claims(f"{claim} [1]", [_chunk(content=evidence)])
+    assert result.claims[0]["verification"] == "unsupported"
+    assert result.claims[0]["verification_method"] == "bounded_entailment"
+
+
+async def test_bangla_direct_obligation_reversal_stays_unsupported() -> None:
+    claim = "বার্ষিক রিটার্ন দাখিল করিতে হইবে।"
+    evidence = "বার্ষিক রিটার্ন দাখিল করিতে হইবে না।"
+    result = await GroundingService(
+        ChatConfig(minimum_claim_semantic_score=0.7),
+        embedder=_cluster_embedder({claim: "annual-return", evidence: "annual-return"}),
+    ).map_claims(f"{claim} [1]", [_chunk(content=evidence)])
+    assert result.claims[0]["verification"] == "unsupported"
+
+
+async def test_stage3_lexical_paraphrases_do_not_add_provider_calls() -> None:
+    embedder = _CountingEmbedder({})
+    result = await GroundingService(
+        ChatConfig(minimum_claim_token_coverage=0.3),
+        embedder=embedder,
+    ).map_claims(
+        "Notice must be given within 21 days. [1]",
+        [_chunk(content="Notice must be given within three weeks.")],
+    )
+    assert result.claims[0]["verification"] == "supported"
+    assert embedder.calls == 2
+
+
+@pytest.mark.parametrize(
+    "claim,expected",
+    [
+        ("The certificate is valid without the prescribed fee being paid.", "unsupported"),
+        ("The certificate is always valid.", "unsupported"),
+        ("Paying the prescribed fee guarantees the certificate is valid.", "unverified"),
+        ("The certificate is valid only if the prescribed fee is paid.", "supported"),
+    ],
+)
+async def test_necessary_condition_does_not_support_reversed_or_sufficient_claims(
+    claim, expected
+) -> None:
+    evidence = "The certificate is not valid unless the prescribed fee is paid."
+    result = await GroundingService(
+        ChatConfig(minimum_claim_token_coverage=0.3),
+        embedder=_cluster_embedder({claim: "certificate", evidence: "certificate"}),
+    ).map_claims(f"{claim} [1]", [_chunk(content=evidence)])
+    assert result.claims[0]["verification"] == expected

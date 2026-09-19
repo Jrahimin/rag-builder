@@ -204,6 +204,57 @@ test("labels persisted server processing separately from unavailable client roun
   expect(screen.getByText(/client round trip was not persisted/)).toBeInTheDocument();
 });
 
+test("distinguishes server processing, first token, stream completion, and message refresh", () => {
+  const message: Message = {
+    id: "cccccccc-cccc-cccc-cccc-cccccccccccc",
+    project_id: projectFixture.id,
+    conversation_id: conversationFixture.id,
+    role: "assistant",
+    content: "Refunds are accepted within thirty days. [1]",
+    finish_reason: "stop",
+    input_tokens: 10,
+    output_tokens: 8,
+    prompt_version: "v17",
+    embedding_set_version: 1,
+    provider: "test",
+    model: "test",
+    metadata: { lifecycle: { processing_ms: 321, version: "turn.v1" } },
+    source_provenance: "knowledge",
+    citations: [],
+    claims: [],
+    grounded: false,
+    insufficient_evidence_reason: null,
+    created_at: now,
+    updated_at: now,
+  };
+
+  renderOperatorComponent(
+    <MessageInspector
+      message={message}
+      run={{
+        turn: { user_message: { ...message, role: "user" }, assistant_message: message },
+        expected: "",
+        passed: false,
+        elapsedMs: 1800,
+        deliveryTiming: {
+          requestStartedAt: 1000,
+          responseHeadersAt: 1100,
+          firstAnswerTokenAt: 1400,
+          doneReceivedAt: 1700,
+          streamClosedAt: 1710,
+          persistedMessageFetchedAt: 1900,
+        },
+      }}
+    />,
+  );
+
+  expect(screen.getAllByText(/321 ms server processing/).length).toBeGreaterThan(0);
+  expect(screen.getAllByText(/400 ms to first answer token/).length).toBeGreaterThan(0);
+  expect(screen.getAllByText(/700 ms to stream completion/).length).toBeGreaterThan(0);
+  expect(screen.getAllByText(/190 ms message refresh/).length).toBeGreaterThan(0);
+  expect(screen.queryByText(/first useful answer/i)).not.toBeInTheDocument();
+});
+
 test("routes to Test Lab, keeps project selection, and derives Journey progress from backend state", async () => {
   mockLabBase();
   renderOperatorComponent(<OperatorConsoleApp />, `/lab?project=${projectFixture.id}&tab=journey`);

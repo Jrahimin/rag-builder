@@ -43,6 +43,7 @@ import {
   type Project,
   type SearchResponse,
   type SourceState,
+  type StreamDeliveryTiming,
 } from "../../api/operatorApiClient";
 import {
   useCreateConversation,
@@ -117,6 +118,7 @@ type MessageRun = {
   expected: string;
   passed: boolean;
   elapsedMs: number;
+  deliveryTiming?: StreamDeliveryTiming;
 };
 
 function errorFacts(error: unknown) {
@@ -2180,19 +2182,25 @@ function MessagesTab({
       setProgressMessage("Understanding request");
       progressStartedAt.current = performance.now();
       setProgressElapsedMs(0);
-      const turn =
-        delivery === "stream"
-          ? await (() => {
-              const controller = new AbortController();
-              streamAbort.current = controller;
-              return stream.mutateAsync({
-                content: submittedContent,
-                onDelta: (delta) => setStreamedContent((current) => current + delta),
-                onProgress: setProgressMessage,
-                signal: controller.signal,
-              });
-            })()
-          : await send.mutateAsync({ content: submittedContent });
+      let turn: ChatTurn;
+      let deliveryTiming: StreamDeliveryTiming | undefined;
+      if (delivery === "stream") {
+        const controller = new AbortController();
+        streamAbort.current = controller;
+        const streamed = await stream.mutateAsync({
+          content: submittedContent,
+          onDelta: (delta) => setStreamedContent((current) => current + delta),
+          onProgress: setProgressMessage,
+          signal: controller.signal,
+        });
+        turn = {
+          user_message: streamed.user_message,
+          assistant_message: streamed.assistant_message,
+        };
+        deliveryTiming = streamed.timing;
+      } else {
+        turn = await send.mutateAsync({ content: submittedContent });
+      }
       const assistant = turn.assistant_message;
       const refusal = Boolean(assistant.insufficient_evidence_reason);
       const hasCitations = Boolean(assistant.citations?.length);
@@ -2207,7 +2215,13 @@ function MessagesTab({
         !assistant.metadata?.partial_answer &&
         !(assistant.metadata?.knowledge_repair as Record<string, unknown> | undefined)
           ?.partial_answer;
-      const next = { turn, expected, passed, elapsedMs: Math.round(performance.now() - started) };
+      const next = {
+        turn,
+        expected,
+        passed,
+        elapsedMs: Math.round(performance.now() - started),
+        deliveryTiming,
+      };
       setLastRun(next);
       setSelectedAssistantId(turn.assistant_message.id);
       setActiveCitation(0);
@@ -2787,6 +2801,40 @@ const VERIFICATION_REASON_LABELS: Record<string, string> = {
     "This coverage statement is not present in the structured verdict.",
 };
 
+function deliveryTimingLabel(
+  run: MessageRun | null,
+  serverProcessingMs: number | null,
+  isLatestRun: boolean,
+): string {
+  const timing = isLatestRun ? run?.deliveryTiming : undefined;
+  if (timing) {
+    const elapsed = (mark?: number) =>
+      mark == null ? null : Math.round(mark - timing.requestStartedAt);
+    const parts: string[] = [];
+    if (serverProcessingMs != null) {
+      parts.push(`${serverProcessingMs} ms server processing`);
+    }
+    const firstToken = elapsed(timing.firstAnswerTokenAt);
+    if (firstToken != null) parts.push(`${firstToken} ms to first answer token`);
+    const streamCompleted = elapsed(timing.doneReceivedAt ?? timing.streamClosedAt);
+    if (streamCompleted != null) parts.push(`${streamCompleted} ms to stream completion`);
+    if (
+      timing.persistedMessageFetchedAt != null &&
+      timing.streamClosedAt != null
+    ) {
+      parts.push(
+        `${Math.round(timing.persistedMessageFetchedAt - timing.streamClosedAt)} ms message refresh`,
+      );
+    }
+    return parts.length ? parts.join(" · ") : "Timing unavailable";
+  }
+  if (isLatestRun && run) {
+    return `${run.elapsedMs} ms client round trip${serverProcessingMs == null ? "" : ` · ${serverProcessingMs} ms server processing`}`;
+  }
+  if (serverProcessingMs == null) return "Timing unavailable";
+  return `${serverProcessingMs} ms server processing · client round trip was not persisted`;
+}
+
 export function MessageInspector({
   message,
   run,
@@ -2824,12 +2872,7 @@ export function MessageInspector({
   const lifecycle = message.metadata?.lifecycle as Record<string, unknown> | undefined;
   const serverProcessingMs =
     typeof lifecycle?.processing_ms === "number" ? lifecycle.processing_ms : null;
-  const timingLabel =
-    isLatestRun && run
-      ? `${run.elapsedMs} ms client round trip${serverProcessingMs == null ? "" : ` · ${serverProcessingMs} ms server processing`}`
-      : serverProcessingMs == null
-        ? "Timing unavailable"
-        : `${serverProcessingMs} ms server processing · client round trip was not persisted`;
+  const timingLabel = deliveryTimingLabel(run, serverProcessingMs, isLatestRun);
   const repair = message.metadata?.knowledge_repair as Record<string, unknown> | undefined;
   const partial = repair?.partial_answer as Record<string, unknown> | undefined;
   const coverage = repair?.coverage as Record<string, unknown> | undefined;

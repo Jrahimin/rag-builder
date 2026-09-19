@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import unicodedata
-from typing import Literal
+from typing import Any, Literal
 
 import regex
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, model_validator
@@ -46,6 +46,20 @@ class _Quote(BaseModel):
             "end_line": self._resolved_range[1] if self._resolved_range else self.end_line,
         }
 
+    @model_validator(mode="before")
+    @classmethod
+    def canonicalize_equivalent_selector_forms(cls, value: Any) -> Any:
+        """Fill a missing bound on a single-line range; never invent a source identity."""
+        if not isinstance(value, dict):
+            return value
+        data = dict(value)
+        start, end = data.get("start_line"), data.get("end_line")
+        if start is not None and end is None:
+            data["end_line"] = start
+        elif end is not None and start is None:
+            data["start_line"] = end
+        return data
+
     @model_validator(mode="after")
     def require_quote_or_range(self) -> _Quote:
         has_range = self.start_line is not None or self.end_line is not None
@@ -81,6 +95,26 @@ class PartialAnswerScope(BaseModel):
     scope: str = Field(min_length=1, max_length=2000)
     requirement_ids: list[str] = Field(min_length=1, max_length=12)
     exclusions: list[str] = Field(min_length=1, max_length=12)
+
+
+def resolve_source_ranges(checks: list[_Check], context: list[ContextChunk]) -> bool:
+    """Materialize model-selected ranges; never approximate a transcribed quotation."""
+    sources = {str(c.chunk_id): c.content.splitlines(keepends=True) for c in context}
+    for check in checks:
+        for item in check.evidence:
+            if item.start_line is None:
+                continue
+            lines = sources.get(item.chunk_id)
+            if lines is None or item.end_line is None or item.end_line > len(lines):
+                return False
+            quote = "".join(lines[item.start_line - 1 : item.end_line])
+            if not quote.strip():
+                return False
+            item._resolved_range = (item.start_line, item.end_line)
+            item.quote = quote
+            item.start_line = None
+            item.end_line = None
+    return True
 
 
 class CoverageVerdict(BaseModel):
@@ -126,22 +160,7 @@ class CoverageVerdict(BaseModel):
 
     def resolve_source_ranges(self, context: list[ContextChunk]) -> bool:
         """Materialize model-selected ranges; never approximate a transcribed quotation."""
-        sources = {str(c.chunk_id): c.content.splitlines(keepends=True) for c in context}
-        for check in self.checks:
-            for item in check.evidence:
-                if item.start_line is None:
-                    continue
-                lines = sources.get(item.chunk_id)
-                if lines is None or item.end_line is None or item.end_line > len(lines):
-                    return False
-                quote = "".join(lines[item.start_line - 1 : item.end_line])
-                if not quote.strip():
-                    return False
-                item._resolved_range = (item.start_line, item.end_line)
-                item.quote = quote
-                item.start_line = None
-                item.end_line = None
-        return True
+        return resolve_source_ranges(self.checks, context)
 
     def partial_validates(self, context: list[ContextChunk], requirement_ids: set[str]) -> bool:
         """Require exact proof for every dependency of the explicitly limited scope."""
@@ -188,6 +207,43 @@ class CoverageVerdict(BaseModel):
                 ):
                     return False
         return True
+
+
+class CoverageDelta(BaseModel):
+    """Subset review of changed or unresolved facets only.
+
+    ``complete`` is accepted for wire compatibility with a full verdict payload and
+    is never trusted. The caller merges retained checks into a canonical
+    ``CoverageVerdict`` before full/partial validation.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    complete: bool | None = None
+    missing: list[str] = Field(max_length=12)
+    gap_kinds: list[Literal["source_rule", "scenario_input"]] = Field(
+        default_factory=list, max_length=12
+    )
+    missing_inputs: list[str] = Field(default_factory=list, max_length=12)
+    partial_answer: PartialAnswerScope | None = None
+    checks: list[_Check] = Field(max_length=MAX_REPAIR_DEPENDENCIES + 2 * MAX_REPAIR_FOLLOWUPS)
+
+    @model_validator(mode="after")
+    def reject_unreviewed_missing_inputs(self) -> CoverageDelta:
+        if self.gap_kinds and len(self.gap_kinds) != len(self.missing):
+            self.gap_kinds = ["source_rule"] * len(self.missing)
+        if self.missing:
+            # ``complete`` is never trusted on a delta; a reported gap must survive.
+            self.complete = False
+        if self.missing_inputs:
+            raise PydanticCustomError(
+                "coverage_unreviewed_missing_inputs",
+                "List unresolved gaps in missing. "
+                "Only the caller's separate input review may classify missing_inputs.",
+            )
+        return self
+
+    def resolve_source_ranges(self, context: list[ContextChunk]) -> bool:
+        return resolve_source_ranges(self.checks, context)
 
 
 class _GapClassification(BaseModel):

@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import time
+import uuid
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 from app.modules.conversations.prompts.turn_resolution import (
@@ -17,6 +19,8 @@ from app.modules.conversations.turn_resolution import (
     TURN_RESOLUTION_VERSION,
     EffectiveRetrievalInputs,
     EffectiveSnapshot,
+    FollowupMode,
+    SnapshotOrigin,
     TemporalIntent,
     TurnOutcome,
     TurnRelation,
@@ -185,6 +189,7 @@ class TurnResolver:
                 model=model,
                 finish_reason=completion.finish_reason,
                 usage=usage,
+                routing_origin="resolver",
             ),
             usage=usage,
             latency_ms=latency_ms,
@@ -238,12 +243,96 @@ class TurnResolver:
                 usage=usage,
                 failure_code=failure_code,
                 failure_field=failure_field,
+                routing_origin="fallback",
             ),
             usage=usage,
             latency_ms=latency_ms,
             attempted=True,
             interpretation=None,
         )
+
+
+def presentation_followup_resolution(
+    payload: TurnResolutionInput,
+    *,
+    reason: str,
+    inherited_as_of: datetime | None = None,
+    inherited_snapshot_origin: str | None = None,
+    inherited_document_id: uuid.UUID | None = None,
+    inherited_metadata_filter: dict[str, str] | None = None,
+) -> ResolvedTurn:
+    """Construct a validated presentation follow-up without the standalone bypass."""
+    resolution = validate_turn_resolution(
+        TurnResolution(
+            outcome=TurnOutcome.RESOLVED,
+            relation=TurnRelation.FOLLOW_UP,
+            followup_mode=FollowupMode.PRESENTATION_ONLY,
+            effective_question=payload.current_message,
+            reason=reason,
+        ),
+        payload,
+    )
+    if inherited_as_of is not None and payload.request_filters.as_of is None:
+        origin = None
+        if inherited_snapshot_origin:
+            try:
+                origin = SnapshotOrigin(inherited_snapshot_origin)
+            except ValueError:
+                origin = SnapshotOrigin.REQUEST_AS_OF
+        snapshot = EffectiveSnapshot(
+            as_of=inherited_as_of,
+            origin=origin or SnapshotOrigin.REQUEST_AS_OF,
+            suppress_web=True,
+        )
+    else:
+        snapshot = resolve_effective_as_of(
+            request_as_of=payload.request_filters.as_of,
+            temporal_intent=resolution.temporal_intent,
+            bindings=resolution.active_bindings,
+            reference_time=payload.reference_time,
+        )
+    retrieval = effective_retrieval_inputs(
+        original_message=payload.current_message,
+        resolution=resolution,
+        request_filters=payload.request_filters,
+        snapshot=snapshot,
+    )
+    document_id = payload.request_filters.document_id or inherited_document_id
+    metadata_filter = dict(payload.request_filters.metadata_filter)
+    if not metadata_filter and inherited_metadata_filter:
+        metadata_filter = dict(inherited_metadata_filter)
+    retrieval = EffectiveRetrievalInputs(
+        query=retrieval.query,
+        document_id=document_id,
+        metadata_filter=metadata_filter,
+        as_of=retrieval.as_of,
+        suppress_web=bool(
+            retrieval.suppress_web
+            or document_id
+            or metadata_filter
+            or retrieval.as_of
+            or payload.request_filters.as_of
+        ),
+    )
+    return ResolvedTurn(
+        resolution=resolution,
+        snapshot=snapshot,
+        retrieval=retrieval,
+        diagnostics=_diagnostics(
+            payload=payload,
+            resolution=resolution,
+            snapshot=snapshot,
+            retrieval=retrieval,
+            attempted=False,
+            latency_ms=0,
+            routing_origin="deterministic",
+            bypass_reason=reason,
+        ),
+        usage=None,
+        latency_ms=0,
+        attempted=False,
+        interpretation=_interpretation_text(resolution),
+    )
 
 
 def bypass_resolution(
@@ -282,6 +371,7 @@ def bypass_resolution(
             attempted=False,
             latency_ms=0,
             bypass_reason=reason,
+            routing_origin="fallback",
         ),
         usage=None,
         latency_ms=0,
@@ -350,6 +440,7 @@ def _diagnostics(
     failure_code: str | None = None,
     failure_field: str | None = None,
     bypass_reason: str | None = None,
+    routing_origin: str = "resolver",
 ) -> dict[str, Any]:
     query_changed = retrieval.query != payload.current_message
     diagnostics: dict[str, Any] = {
@@ -374,6 +465,7 @@ def _diagnostics(
         "filter_changed": retrieval.as_of != payload.request_filters.as_of,
         "attempted": attempted,
         "latency_ms": latency_ms,
+        "routing_origin": routing_origin,
     }
     if bypass_reason is not None:
         diagnostics["bypass_reason"] = bypass_reason

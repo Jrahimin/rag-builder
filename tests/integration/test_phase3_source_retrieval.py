@@ -666,3 +666,54 @@ async def test_depth_one_modifier_expansion_is_current_scoped_and_incoming_only(
         and record["outcome"] == "expanded"
         for record in records
     )
+
+
+async def test_indexed_identity_lookup_is_bounded_and_never_unrestricted(
+    db_client: AsyncClient,
+    integration_connection: AsyncConnection,
+    captured_jobs: list[JobDefinition],
+) -> None:
+    from app.modules.retrieval.repositories.retrieval_chunk_repository import (
+        RetrievalChunkRepository,
+    )
+
+    project_id = await _project(db_client)
+    document_id = await _upload(db_client, project_id, "identity.txt", "refund period")
+    await _index_documents(
+        db_client, integration_connection, captured_jobs, project_id, [document_id]
+    )
+    search = await db_client.post(
+        f"/api/v1/projects/{project_id}/search",
+        json={"query": _QUERY, "top_k": 3},
+    )
+    assert search.status_code == 200, search.text
+    payload = search.json()["data"]
+    assert payload["results"]
+    chunk_id = uuid.UUID(str(payload["results"][0]["chunk_id"]))
+    index_build_id = uuid.UUID(str(payload["diagnostics"]["index_build_id"]))
+    sessions = async_sessionmaker(integration_connection.engine, expire_on_commit=False)
+    async with sessions() as session:
+        repository = RetrievalChunkRepository(session, uuid.UUID(project_id))
+        assert await repository.map_indexed_identities([], index_build_id=index_build_id) == {}
+        found = await repository.map_indexed_identities(
+            [chunk_id, uuid.uuid4()],
+            index_build_id=index_build_id,
+        )
+        assert set(found) == {chunk_id}
+        scoped_out = await repository.map_indexed_identities(
+            [chunk_id],
+            index_build_id=index_build_id,
+            document_id=uuid.uuid4(),
+        )
+        assert scoped_out == {}
+        other_build = await repository.map_indexed_identities(
+            [chunk_id],
+            index_build_id=uuid.uuid4(),
+        )
+        assert other_build == {}
+        filtered_out = await repository.map_indexed_identities(
+            [chunk_id],
+            index_build_id=index_build_id,
+            metadata_filter={"missing_key": "no-such-value"},
+        )
+        assert filtered_out == {}

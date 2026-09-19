@@ -834,3 +834,156 @@ async def test_search_keeps_results_when_rerank_falls_back_unavailable() -> None
     assert response.diagnostics.evidence_funnel["hydrated"] == 1
     assert response.diagnostics.evidence_funnel["deduped"] == 1
     assert response.diagnostics.evidence_funnel["context_selected"] == 0
+
+
+async def test_empty_identity_recall_does_not_search_or_hydrate() -> None:
+    service = _search_service()
+    retriever = _ready_search(service)
+    response = await service.recall_indexed_identities(chunk_ids=[], query="deadline")
+    retriever.retrieve.assert_not_called()
+    service._hydrator.hydrate.assert_not_called()
+    service._build_retriever.assert_not_called()
+    assert response.results == []
+    assert response.diagnostics.identity_recall_status == "empty_restriction"
+    assert response.diagnostics.skipped_reason == "empty_identity_restriction"
+    assert response.diagnostics.rerank_status == "skipped"
+
+
+async def test_identity_recall_uses_indexed_lookup_without_ranked_retriever() -> None:
+    service = _search_service()
+    retriever = _ready_search(service)
+    chunk_id = uuid.uuid4()
+    document_id = uuid.uuid4()
+    hydrated = RetrievalResult(
+        chunk_id=chunk_id,
+        document_id=document_id,
+        chunk_index=0,
+        content="refund within 30 days",
+        score=1.0,
+        filename="policy.txt",
+    )
+    service._hydrator.hydrate = AsyncMock(return_value=[hydrated])
+    with (
+        patch(
+            "app.modules.retrieval.services.search_service.RetrievalChunkRepository"
+        ) as repository,
+        patch(
+            "app.modules.retrieval.services.search_service.resolve_multilingual_plan"
+        ) as translator,
+    ):
+        repository.return_value.map_indexed_identities = AsyncMock(
+            return_value={chunk_id: {"region": "Dhaka"}}
+        )
+        response = await service.recall_indexed_identities(
+            chunk_ids=[chunk_id, chunk_id],
+            query="deadline",
+            document_id=document_id,
+        )
+    retriever.retrieve.assert_not_called()
+    service._build_retriever.assert_not_called()
+    translator.assert_not_called()
+    assert [item.chunk_id for item in response.results] == [chunk_id]
+    assert response.diagnostics.identity_recall_status == "exact"
+    assert response.diagnostics.rerank_status == "skipped"
+    assert response.diagnostics.skipped_reason == "exact_identity_recall"
+    repository.return_value.map_indexed_identities.assert_awaited_once()
+    assert repository.return_value.map_indexed_identities.await_args.args[0] == [chunk_id]
+
+
+async def test_identity_recall_loads_current_modifier_metadata_without_ranked_search() -> None:
+    from app.modules.retrieval.source_policy import (
+        ModifierExpansionOutcome,
+        ModifierExpansionRecord,
+        SourceMetadataScope,
+    )
+
+    service = _search_service()
+    retriever = _ready_search(service)
+    chunk_id = uuid.uuid4()
+    document_id = uuid.uuid4()
+    revision_id = uuid.uuid4()
+    relationship_id = uuid.uuid4()
+    modifier_revision = uuid.uuid4()
+    modifier_document = uuid.uuid4()
+    record = ModifierExpansionRecord(
+        relationship_id=relationship_id,
+        base_revision_id=revision_id,
+        base_document_id=document_id,
+        modifier_revision_id=modifier_revision,
+        modifier_document_id=modifier_document,
+        modifier_effective_from="2020-01-01",
+        modifier_published_date="2020-01-01",
+        modifier_revision_number=2,
+        outcome=ModifierExpansionOutcome.ALREADY_IN_RECALL,
+        target_provisions=("Section 21",),
+    )
+    source_metadata = MagicMock()
+    source_metadata.capture = AsyncMock(
+        return_value=SourceMetadataScope(
+            selectable=None,
+            generation=1,
+            configured_mode=SourcePolicyMode.OFF,
+            effective_mode=SourcePolicyMode.OFF,
+            deployment_cap="off",
+            reference_date="2026-09-19",
+            explicit_as_of=None,
+        )
+    )
+    source_metadata.incoming_modifiers = AsyncMock(return_value=[record])
+    service._source_metadata = source_metadata
+    hydrated = RetrievalResult(
+        chunk_id=chunk_id,
+        document_id=document_id,
+        chunk_index=0,
+        content="refund within 30 days",
+        score=1.0,
+        filename="policy.txt",
+        metadata={"source_revision_id": str(revision_id)},
+    )
+    service._hydrator.hydrate = AsyncMock(return_value=[hydrated])
+    with patch(
+        "app.modules.retrieval.services.search_service.RetrievalChunkRepository"
+    ) as repository:
+        repository.return_value.map_indexed_identities = AsyncMock(
+            return_value={chunk_id: {"source_revision_id": str(revision_id)}}
+        )
+        response = await service.recall_indexed_identities(
+            chunk_ids=[chunk_id],
+            query="deadline",
+        )
+        scoped = await service.recall_indexed_identities(
+            chunk_ids=[chunk_id],
+            query="deadline",
+            document_id=document_id,
+        )
+    retriever.retrieve.assert_not_called()
+    assert source_metadata.incoming_modifiers.await_count == 2
+    assert response.diagnostics.modifies_expansion_status == "observe"
+    assert scoped.diagnostics.modifies_expansion_status == "suppressed_document_scope"
+    assert response.diagnostics.modifies_expansion_records[0]["relationship_id"] == str(
+        relationship_id
+    )
+    assert response.diagnostics.modifies_expansion_records[0]["target_provisions"] == [
+        "Section 21"
+    ]
+
+
+async def test_identity_recall_omits_identities_absent_from_active_index() -> None:
+    service = _search_service()
+    retriever = _ready_search(service)
+    chunk_id = uuid.uuid4()
+    service._hydrator.hydrate = AsyncMock(return_value=[])
+    with patch(
+        "app.modules.retrieval.services.search_service.RetrievalChunkRepository"
+    ) as repository:
+        repository.return_value.map_indexed_identities = AsyncMock(return_value={})
+        response = await service.recall_indexed_identities(
+            chunk_ids=[chunk_id],
+            query="deadline",
+        )
+    retriever.retrieve.assert_not_called()
+    service._build_retriever.assert_not_called()
+    assert response.results == []
+    assert response.diagnostics.identity_recall_status == "exact"
+    assert response.diagnostics.rerank_status == "skipped"
+    repository.return_value.map_indexed_identities.assert_awaited_once()

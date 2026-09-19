@@ -701,6 +701,7 @@ class HybridRetriever(BaseRetriever):
         started = time.perf_counter()
         if isinstance(work, RequestWork):
             work.counts["rerank_calls"] += 1
+            work.annotate_provider_call(call)
         try:
             response = await self._reranker.rerank(request)
             call.update(status="completed", usage=response.usage)

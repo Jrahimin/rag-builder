@@ -79,3 +79,43 @@ async def test_inactive_anchor_outside_the_build_does_not_query_the_corpus():
     )
     assert result == ()
     assert session.execute.await_count == 1
+
+
+async def test_empty_indexed_identities_do_not_query_the_corpus():
+    session = AsyncMock()
+    found = await RetrievalChunkRepository(session, uuid.uuid4()).map_indexed_identities(
+        [],
+        index_build_id=uuid.uuid4(),
+    )
+    assert found == {}
+    session.execute.assert_not_called()
+
+
+async def test_indexed_identity_sql_stays_inside_project_build_and_optional_document():
+    session = AsyncMock()
+    project, build, document = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    chunk_id = uuid.uuid4()
+    result = MagicMock()
+    result.all.return_value = [
+        _row(id=chunk_id, metadata_snapshot={"region": "Dhaka"}, _mapping={})
+    ]
+    session.execute.return_value = result
+    found = await RetrievalChunkRepository(session, project).map_indexed_identities(
+        [chunk_id, chunk_id],
+        index_build_id=build,
+        document_id=document,
+        metadata_filter={"region": "Dhaka"},
+    )
+    sql = str(
+        session.execute.call_args.args[0].compile(
+            dialect=postgresql.dialect(),
+            compile_kwargs={"literal_binds": True},
+        )
+    )
+    assert found == {chunk_id: {"region": "Dhaka"}}
+    assert str(project) in sql
+    assert str(build) in sql
+    assert str(document) in sql
+    assert str(chunk_id) in sql
+    assert "deleted_at" in sql
+    session.execute.assert_awaited_once()

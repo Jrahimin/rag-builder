@@ -8,11 +8,16 @@ through dependency injection (see ``app.dependencies.database``).
 
 from __future__ import annotations
 
+import asyncio
+import time
+from collections.abc import Mapping
 from pathlib import Path
+from typing import Any
 
 from alembic.script import ScriptDirectory
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import (
+    AsyncConnection,
     AsyncEngine,
     AsyncSession,
     async_sessionmaker,
@@ -21,6 +26,7 @@ from sqlalchemy.ext.asyncio import (
 
 from app.core.config import Settings
 from app.core.logging import get_logger
+from app.platform.providers.request_work import current_request_work
 
 log = get_logger(__name__)
 _MIGRATION_ROOT = Path(__file__).resolve().parents[2] / "composition" / "migrations"
@@ -32,6 +38,51 @@ class PgVectorUnavailableError(RuntimeError):
 
 class MigrationStateError(RuntimeError):
     """Raised when the database revision does not match the checked-in migration head."""
+
+
+class ObservedAsyncSession(AsyncSession):
+    """Record connection acquisition, including pool wait, creation, and pre-ping."""
+
+    async def connection(
+        self,
+        bind_arguments: dict[str, Any] | None = None,
+        execution_options: Mapping[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> AsyncConnection:
+        work = current_request_work()
+        if work is None or self.in_transaction() or self.in_nested_transaction():
+            return await super().connection(
+                bind_arguments=bind_arguments,
+                execution_options=execution_options,
+                **kwargs,
+            )
+        started = time.perf_counter()
+        try:
+            connection = await super().connection(
+                bind_arguments=bind_arguments,
+                execution_options=execution_options,
+                **kwargs,
+            )
+        except asyncio.CancelledError:
+            work.record_wait("database_connection_acquisition", started, outcome="cancelled")
+            raise
+        except Exception as exc:
+            work.record_wait(
+                "database_connection_acquisition", started, outcome="failed", error=exc
+            )
+            raise
+        work.record_wait("database_connection_acquisition", started)
+        return connection
+
+    async def execute(self, *args: Any, **kwargs: Any) -> Any:
+        if not self.in_transaction() and not self.in_nested_transaction():
+            await self.connection()
+        return await super().execute(*args, **kwargs)
+
+    async def flush(self, objects: Any = None) -> None:
+        if not self.in_transaction() and not self.in_nested_transaction():
+            await self.connection()
+        return await super().flush(objects)
 
 
 class Database:
@@ -52,7 +103,7 @@ class Database:
         )
         self._session_factory: async_sessionmaker[AsyncSession] = async_sessionmaker(
             bind=self._engine,
-            class_=AsyncSession,
+            class_=ObservedAsyncSession,
             expire_on_commit=False,
             autoflush=False,
         )

@@ -129,6 +129,7 @@ class SearchDiagnostics(BaseModel):
     post_rerank_removal_reasons: dict[str, int] = Field(default_factory=dict)
     post_rerank_unfilled_slots: int = 0
     evidence_funnel: dict[str, Any] = Field(default_factory=dict)
+    identity_recall_status: str | None = None
 
 
 class SearchResponse(BaseModel):

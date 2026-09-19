@@ -12,6 +12,7 @@ from app.modules.retrieval.repositories.retrieval_document_repository import (
 )
 from app.modules.retrieval.retrievers.models import CandidateHit
 from app.modules.retrieval.schemas.search import RetrievalResult
+from app.platform.domain.content_hash import content_hash
 
 
 class ResultHydrator:
@@ -72,6 +73,7 @@ class ResultHydrator:
                         **_public_candidate_metadata(candidate.metadata),
                         "retrieval_source": candidate.source.value,
                         "processing_version": chunk.document_version,
+                        "indexed_chunk_hash": content_hash(chunk.content),
                     },
                 )
             )
