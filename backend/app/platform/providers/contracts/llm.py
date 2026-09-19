@@ -24,7 +24,7 @@ See ``docs/learning/conversation_provider_integration.md``.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 from enum import StrEnum
 
@@ -110,5 +110,5 @@ class BaseLLMProvider(ABC):
         *,
         temperature: float | None = None,
         max_tokens: int,
-    ) -> AsyncIterator[ChatCompletionChunk]:
+    ) -> AsyncGenerator[ChatCompletionChunk, None]:
         """Stream deltas; ``None`` uses provider defaults."""

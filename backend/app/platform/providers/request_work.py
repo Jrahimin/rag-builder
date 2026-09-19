@@ -7,7 +7,7 @@ import hashlib
 import time
 import uuid
 from collections import Counter
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Iterator
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar, Token
 from functools import wraps
@@ -420,7 +420,7 @@ class ObservedLLM(BaseLLMProvider):
 
     async def stream(
         self, messages: list[ChatMessage], *, temperature: float | None = None, max_tokens: int
-    ) -> AsyncIterator[ChatCompletionChunk]:
+    ) -> AsyncGenerator[ChatCompletionChunk, None]:
         self._check_budget(messages, max_tokens)
         call, started = self._open_call()
         try:

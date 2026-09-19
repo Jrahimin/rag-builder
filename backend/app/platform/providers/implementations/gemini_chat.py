@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 
 import httpx
 
@@ -179,7 +179,7 @@ class GeminiChatProvider(BaseLLMProvider):
         *,
         temperature: float | None = None,
         max_tokens: int,
-    ) -> AsyncIterator[ChatCompletionChunk]:
+    ) -> AsyncGenerator[ChatCompletionChunk, None]:
         url = self._url(stream=True)
         body = self._request_body(messages, temperature=temperature, max_tokens=max_tokens)
         client = httpx.AsyncClient(timeout=self._timeout)

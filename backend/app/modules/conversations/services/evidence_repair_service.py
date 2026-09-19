@@ -12,7 +12,7 @@ from copy import deepcopy
 from dataclasses import dataclass, replace
 from datetime import date
 from time import monotonic
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
@@ -1006,8 +1006,8 @@ async def _validated_completion(
             changed = _canonicalize_known_selectors(parsed, source_ids, proof_context)
             selector_failures = _selector_range_failures(parsed, proof_context, source_ids)
             if selector_failures and schema is _SearchPlan:
-                parsed.coverage = None
-                return replace(completion, content=parsed.model_dump_json(), usage=usage)
+                plan = cast(_SearchPlan, parsed).model_copy(update={"coverage": None})
+                return replace(completion, content=plan.model_dump_json(), usage=usage)
             if selector_failures:
                 first_failure = selector_failures[0]
                 selector_context = json.dumps(

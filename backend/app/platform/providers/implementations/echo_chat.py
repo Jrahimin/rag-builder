@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 
 from app.platform.providers.capabilities import (
     describe_llm_capability,
@@ -72,7 +72,7 @@ class EchoLLMProvider(BaseLLMProvider):
         *,
         temperature: float | None = None,
         max_tokens: int,
-    ) -> AsyncIterator[ChatCompletionChunk]:
+    ) -> AsyncGenerator[ChatCompletionChunk, None]:
         validate_generation_parameters(
             describe_llm_capability(self.provider_name, self.model_name),
             temperature=temperature,
