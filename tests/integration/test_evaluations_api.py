@@ -79,10 +79,7 @@ async def test_dataset_and_run_capture_reproducible_versions(db_client: AsyncCli
     assert len(run["configuration_hash"]) == 64
     assert run["versions"]["dataset"]["hash"] == dataset_data["dataset_hash"]
     assert run["versions"]["prompt_version"] == GROUNDED_PROMPT_VERSION
-    assert (
-        run["versions"]["chunking"]["chunker_version"]
-        == get_settings().chunking.chunker_version
-    )
+    assert run["versions"]["chunking"]["chunker_version"] == get_settings().chunking.chunker_version
     assert len(run["versions"]["corpus"]["fingerprint"]) == 64
     assert run["versions"]["corpus"]["indexed_chunk_count"] == 0
 
