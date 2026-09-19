@@ -122,12 +122,8 @@ async def test_hydrator_records_raw_indexed_chunk_hash() -> None:
     hydrator._document_repository.map_by_ids = AsyncMock(
         return_value={document_id: _document(project_id, document_id)}
     )
-    results = await hydrator.hydrate(
-        [CandidateHit(present.id, 0.9, CandidateSource.HYBRID)]
-    )
+    results = await hydrator.hydrate([CandidateHit(present.id, 0.9, CandidateSource.HYBRID)])
     assert results[0].metadata["indexed_chunk_hash"] == content_hash(present.content)
-    exact = await hydrator.hydrate(
-        [CandidateHit(present.id, 1.0, CandidateSource.EXACT_RECALL)]
-    )
+    exact = await hydrator.hydrate([CandidateHit(present.id, 1.0, CandidateSource.EXACT_RECALL)])
     assert exact[0].metadata["retrieval_source"] == CandidateSource.EXACT_RECALL.value
     assert exact[0].metadata["indexed_chunk_hash"] == content_hash(present.content)

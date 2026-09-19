@@ -3128,9 +3128,7 @@ def test_snapshot_verdict_keeps_extra_missing_without_synthesizing_partial():
     )
 
     known = chunk("Private companies must hold an annual general meeting.")
-    proof = _TurnProofMap(
-        [EvidenceRequirement(requirement_id="R1", description="AGM duty")]
-    )
+    proof = _TurnProofMap([EvidenceRequirement(requirement_id="R1", description="AGM duty")])
     proof.accept_check(_supported_check("R1", known, "AGM duty"), [known], [])
     proof.remember_gaps(["Required filing deadline still unknown"])
     verdict = proof.snapshot_verdict()

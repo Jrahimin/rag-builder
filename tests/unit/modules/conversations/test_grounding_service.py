@@ -1298,9 +1298,9 @@ async def test_negative_exception_in_another_clause_does_not_reverse_positive_ru
         "A company must hold its first annual general meeting within eighteen months. "
         "The registrar does not grant an extension for later annual meetings."
     )
-    result = await GroundingService(
-        ChatConfig(minimum_claim_token_coverage=0.3)
-    ).map_claims(f"{claim} [1]", [_chunk(content=evidence)])
+    result = await GroundingService(ChatConfig(minimum_claim_token_coverage=0.3)).map_claims(
+        f"{claim} [1]", [_chunk(content=evidence)]
+    )
     assert result.claims[0]["verification"] == "supported"
 
 
@@ -1886,8 +1886,7 @@ class _CountingEmbedder(_ClusterEmbeddingProvider):
 
 async def test_scope_heading_does_not_exempt_statutory_duty_bullet() -> None:
     result = await GroundingService(ChatConfig()).map_claims(
-        "The available materials do not establish:\n"
-        "- Private companies must file an annual return",
+        "The available materials do not establish:\n- Private companies must file an annual return",
         [_chunk(content="Private companies must hold an annual general meeting.")],
         coverage={
             "coverage": {
@@ -1903,8 +1902,7 @@ async def test_scope_heading_does_not_exempt_statutory_duty_bullet() -> None:
 
 async def test_selected_evidence_therefore_conclusion_stays_ordinary_verification() -> None:
     result = await GroundingService(ChatConfig()).map_claims(
-        "The selected evidence did not establish the filing rule, "
-        "therefore no filing is required.",
+        "The selected evidence did not establish the filing rule, therefore no filing is required.",
         [_chunk(content="Private companies must hold an annual general meeting.")],
         coverage={
             "coverage": {
@@ -1913,14 +1911,10 @@ async def test_selected_evidence_therefore_conclusion_stays_ordinary_verificatio
             }
         },
     )
-    conclusion = next(
-        claim for claim in result.claims if "no filing is required" in claim["text"]
-    )
+    conclusion = next(claim for claim in result.claims if "no filing is required" in claim["text"])
     assert conclusion["claim_kind"] == "source_assertion"
     assert conclusion["verification"] != "supported"
-    limitation = next(
-        claim for claim in result.claims if claim["claim_kind"] == "coverage_scope"
-    )
+    limitation = next(claim for claim in result.claims if claim["claim_kind"] == "coverage_scope")
     assert limitation["verification"] == "supported"
 
 
@@ -1972,8 +1966,7 @@ async def test_section_number_does_not_contradict_equivalent_notice_duration() -
         [
             _chunk(
                 content=(
-                    "Chapter 12 sets the board size. "
-                    "The notice period is more than three weeks."
+                    "Chapter 12 sets the board size. The notice period is more than three weeks."
                 )
             )
         ],

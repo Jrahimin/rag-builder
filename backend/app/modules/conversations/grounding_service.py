@@ -929,9 +929,7 @@ class GroundingService:
 
         claims: list[AnswerClaim] = []
         for draft in drafts:
-            kind = draft.kind_hint or _claim_kind(
-                draft.assertion, user_input, display=draft.text
-            )
+            kind = draft.kind_hint or _claim_kind(draft.assertion, user_input, display=draft.text)
             supporting_spans: dict[uuid.UUID, _SelectedSpan] = {}
             verification_method: str | None = None
             verification_reason: str | None = None
@@ -1056,10 +1054,7 @@ class GroundingService:
                     entailment_guard = _bounded_entailment_guard(
                         draft.assertion, " ".join(scored_texts)
                     )
-                    if (
-                        verification is ClaimVerification.SUPPORTED
-                        and entailment_guard is not None
-                    ):
+                    if verification is ClaimVerification.SUPPORTED and entailment_guard is not None:
                         verification = entailment_guard
                         verification_method = "bounded_entailment"
                         verification_reason = (
@@ -2523,9 +2518,7 @@ def _coverage_facets(text: str) -> set[str]:
         "penalty": ("penalty", "sanction", "fine", "জরিমানা", "দণ্ড"),
         "applicability": ("applicability", "applies to", "scope", "প্রযোজ্য", "প্রযোজ্যতা"),
     }
-    return {
-        facet for facet, values in aliases.items() if any(value in folded for value in values)
-    }
+    return {facet for facet, values in aliases.items() if any(value in folded for value in values)}
 
 
 def _is_markdown_table_row(text: str) -> bool:
@@ -2787,10 +2780,9 @@ def _bounded_entailment_guard(claim: str, evidence: str) -> ClaimVerification | 
         r"(?<![\p{L}\p{M}])(?:না|নয়|নয়|নাই|ব্যতীত)(?![\p{L}\p{M}])",
         regex.IGNORECASE,
     )
-    if (
-        not _suppress_negation_mismatch(claim_plain, evidence_plain)
-        and bool(negative.search(claim_plain)) != bool(negative.search(evidence_plain))
-    ):
+    if not _suppress_negation_mismatch(claim_plain, evidence_plain) and bool(
+        negative.search(claim_plain)
+    ) != bool(negative.search(evidence_plain)):
         return ClaimVerification.UNSUPPORTED
     comparison = regex.compile(
         r"\b(?:more than|less than|at least|at most|exceed(?:s|ing)?|under|over)\b|"
@@ -2845,9 +2837,7 @@ def _aligned_entailment_clause(claim: str, evidence: str) -> str:
     if len(clauses) <= 1:
         return clauses[0] if clauses else evidence.strip()
     claim_tokens = _significant_tokens(claim)
-    ranked = [
-        (_coverage(claim_tokens, _significant_tokens(clause)), clause) for clause in clauses
-    ]
+    ranked = [(_coverage(claim_tokens, _significant_tokens(clause)), clause) for clause in clauses]
     score, clause = max(ranked, key=lambda item: item[0])
     return clause if score >= 0.2 else ""
 

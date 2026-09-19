@@ -368,9 +368,7 @@ async def test_stream_cancel_records_cancelled_provider_call():
 
     work = RequestWork(uuid.uuid4())
     observed = ObservedLLM(EchoLLMProvider(model="echo", provider_version="1"), work)
-    agen = observed.stream(
-        [ChatMessage(role=ChatRole.USER, content="hello")], max_tokens=16
-    )
+    agen = observed.stream([ChatMessage(role=ChatRole.USER, content="hello")], max_tokens=16)
     assert await agen.__anext__()
     await agen.aclose()
     assert work.calls[0]["status"] == "cancelled"
@@ -385,9 +383,7 @@ async def test_snapshot_aggregates_tokens_and_calls_by_purpose():
     work = RequestWork(uuid.uuid4())
     observed = ObservedLLM(EchoLLMProvider(model="echo", provider_version="1"), work)
     with work.stage("turn_resolution"):
-        await observed.generate(
-            [ChatMessage(role=ChatRole.USER, content="hello")], max_tokens=16
-        )
+        await observed.generate([ChatMessage(role=ChatRole.USER, content="hello")], max_tokens=16)
     snapshot = work.snapshot()
     assert snapshot["calls_by_purpose"]["turn_resolution"] == 1
     tokens = snapshot["tokens_by_purpose"]["turn_resolution"]

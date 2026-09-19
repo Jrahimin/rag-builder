@@ -623,9 +623,7 @@ class SearchService:
             )
         allowed_keys = tuple(self._config.filterable_metadata_keys)
         sanitized_filter = {
-            key: value
-            for key, value in dict(metadata_filter or {}).items()
-            if key in allowed_keys
+            key: value for key, value in dict(metadata_filter or {}).items() if key in allowed_keys
         }
         membership = await RetrievalChunkRepository(
             self._session, self._project_id
@@ -663,14 +661,16 @@ class SearchService:
         hydrated_results = await self._hydrator.hydrate(provenanced)
         by_id = {result.chunk_id: result for result in hydrated_results}
         results = [by_id[item.chunk_id] for item in provenanced if item.chunk_id in by_id]
-        expansion_records, expansion_status, expansion_exclusions = (
-            await self._identity_modifier_diagnostics(
-                results,
-                source_scope=source_scope,
-                index_build_id=active_build.id,
-                as_of=as_of,
-                document_id=document_id,
-            )
+        (
+            expansion_records,
+            expansion_status,
+            expansion_exclusions,
+        ) = await self._identity_modifier_diagnostics(
+            results,
+            source_scope=source_scope,
+            index_build_id=active_build.id,
+            as_of=as_of,
+            document_id=document_id,
         )
         elapsed_ms = int((time.perf_counter() - started) * 1000)
         hydration_removed = len(provenanced) - len(hydrated_results)
@@ -871,9 +871,7 @@ class SearchService:
     ) -> tuple[list[dict[str, Any]], str, dict[str, int]]:
         """Read current incoming modifiers without retrieving related chunks."""
         if self._source_metadata is None or not results:
-            status = (
-                "disabled" if self._source_metadata is None else "no_retrieved_governed_bases"
-            )
+            status = "disabled" if self._source_metadata is None else "no_retrieved_governed_bases"
             return [], status, {}
         base_revision_ids = tuple(
             dict.fromkeys(

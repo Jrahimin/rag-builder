@@ -732,9 +732,7 @@ def test_stage3_does_not_change_candidate_wise_admission_thresholds() -> None:
         reranker_score=0.92,
         semantic_score=0.10,
     )
-    decision = _service().assess(
-        original.text, [matching, rejected], rerank_status="applied"
-    )
+    decision = _service().assess(original.text, [matching, rejected], rerank_status="applied")
     assert decision.sufficient is True
     assert {unit.chunk_id for unit in decision.admitted_units} == {matching.chunk_id}
 

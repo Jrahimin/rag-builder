@@ -963,9 +963,7 @@ async def test_identity_recall_loads_current_modifier_metadata_without_ranked_se
     assert response.diagnostics.modifies_expansion_records[0]["relationship_id"] == str(
         relationship_id
     )
-    assert response.diagnostics.modifies_expansion_records[0]["target_provisions"] == [
-        "Section 21"
-    ]
+    assert response.diagnostics.modifies_expansion_records[0]["target_provisions"] == ["Section 21"]
 
 
 async def test_identity_recall_omits_identities_absent_from_active_index() -> None:

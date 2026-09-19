@@ -906,9 +906,7 @@ def _apply_selector_replacements(
         if key not in allowed and loose_key not in allowed:
             return False
         if replacement.requirement_id is not None:
-            matches = [
-                item for item in checks if item.requirement_id == replacement.requirement_id
-            ]
+            matches = [item for item in checks if item.requirement_id == replacement.requirement_id]
         else:
             matches = [
                 item
