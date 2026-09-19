@@ -284,7 +284,11 @@ class SearchService:
             [],
         )
         reranked_candidate_count = len(reranked_candidates)
-        policy = apply_source_policy(reranked_candidates, mode=source_scope.effective_mode)
+        policy = apply_source_policy(
+            reranked_candidates,
+            mode=source_scope.effective_mode,
+            scoped_document_id=request.document_id,
+        )
         candidates = add_retrieval_provenance(
             policy.candidates,
             index_build_id=active_build.id,
@@ -650,7 +654,11 @@ class SearchService:
                     metadata=metadata,
                 )
             )
-        policy = apply_source_policy(candidates, mode=source_scope.effective_mode)
+        policy = apply_source_policy(
+            candidates,
+            mode=source_scope.effective_mode,
+            scoped_document_id=document_id,
+        )
         provenanced = add_retrieval_provenance(
             policy.candidates,
             index_build_id=active_build.id,

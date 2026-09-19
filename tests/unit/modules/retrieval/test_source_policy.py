@@ -69,6 +69,32 @@ def test_enforce_filters_drafts_and_observe_preserves_ranked_candidates() -> Non
     assert enforced.candidates == [active]
 
 
+def test_enforce_keeps_replaced_source_when_document_scope_matches() -> None:
+    scoped_document = uuid.uuid4()
+    replaced = _candidate(0.9, applicable=False, reason="source_replaced")
+    replaced = CandidateHit(
+        chunk_id=replaced.chunk_id,
+        score=replaced.score,
+        source=replaced.source,
+        metadata={
+            **replaced.metadata,
+            "source_document_id": str(scoped_document),
+        },
+    )
+    other = _candidate(0.8, applicable=False, reason="source_replaced")
+
+    enforced = apply_source_policy(
+        [replaced, other],
+        mode=SourcePolicyMode.ENFORCE,
+        scoped_document_id=scoped_document,
+    )
+
+    assert len(enforced.candidates) == 1
+    assert enforced.candidates[0].chunk_id == replaced.chunk_id
+    assert enforced.candidates[0].metadata.get("source_policy_applicable") is True
+    assert enforced.observed_exclusion_counts == {"source_replaced": 2}
+
+
 def test_same_group_revisions_consolidate_but_modifying_source_stays_separate() -> None:
     previous = _candidate(0.7, revision="revision-1", group="policy")
     current = _candidate(0.9, revision="revision-2", group="policy")
