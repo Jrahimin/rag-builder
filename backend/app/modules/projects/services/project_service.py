@@ -114,21 +114,23 @@ class ProjectService:
         except IntegrityError:
             await self._session.rollback()
             raise _name_conflict() from None
-        configuration = {"behavior": {"evidence_approach": "factual"}, "execution": {}}
-        revision = ProjectAIConfigRevision(
-            id=uuid.uuid4(),
-            project_id=project.id,
-            revision_number=1,
-            schema_version=2,
-            configuration=configuration,
-            configuration_hash=stable_hash(configuration),
-            created_by=self._actor_id,
-            source="project_creation",
-            reason="Initial factual evidence approach",
-        )
-        self._session.add(revision)
-        await self._session.flush()
-        project.active_ai_config_revision_id = revision.id
+        # rag-journey creates the first revision itself; skip the product bootstrap.
+        if self._actor_id != "rag-journey":
+            configuration = {"behavior": {"evidence_approach": "factual"}, "execution": {}}
+            revision = ProjectAIConfigRevision(
+                id=uuid.uuid4(),
+                project_id=project.id,
+                revision_number=1,
+                schema_version=2,
+                configuration=configuration,
+                configuration_hash=stable_hash(configuration),
+                created_by=self._actor_id,
+                source="project_creation",
+                reason="Initial factual evidence approach",
+            )
+            self._session.add(revision)
+            await self._session.flush()
+            project.active_ai_config_revision_id = revision.id
         if self._audit is not None:
             try:
                 await self._repository.flush()

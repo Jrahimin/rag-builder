@@ -3970,9 +3970,6 @@ async def run_journey(
             result["project_id"] = str(project_id)
 
         baseline_values = dict(options.overrides)
-        # Project creation seeds a factual bootstrap revision; the journey baseline
-        # must replace it with the historical authoritative runtime contract.
-        baseline_values.setdefault("behavior.evidence_approach", "authoritative")
         baseline_config = build_project_config(baseline_values)
         async with database.session_factory() as session:
             from app.models.project import Project
@@ -3980,17 +3977,12 @@ async def run_journey(
             project_row = await session.get(Project, project_id)
             if project_row is None:
                 raise JourneyError("Temporary project disappeared before baseline activation.")
-            bootstrap_revision_id = project_row.active_ai_config_revision_id
-            if bootstrap_revision_id is None:
-                raise JourneyError(
-                    "Temporary project is missing its bootstrap AI configuration revision."
-                )
             baseline_revision = await _activate_configuration(
                 session,
                 project_id=project_id,
                 settings=settings,
                 configuration=baseline_config,
-                expected_revision_id=bootstrap_revision_id,
+                expected_revision_id=project_row.active_ai_config_revision_id,
                 reason=f"{manifest.key} baseline runtime configuration",
             )
         revision_ids = await _ingest_sources(
