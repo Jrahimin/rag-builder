@@ -35,9 +35,7 @@ class KnowledgeRetrievalSourceMetadataAdapter:
     ) -> SourceMetadataScope:
         cap = SourcePolicyDeploymentCap(deployment_cap)
         effective_mode = cap_source_policy_mode(configured_mode, cap)
-        enforce_join = (
-            effective_mode is SourcePolicyMode.ENFORCE and scoped_document_id is None
-        )
+        enforce_join = effective_mode is SourcePolicyMode.ENFORCE and scoped_document_id is None
         captured = await self._reader.capture(
             project_id=project_id,
             generation=generation,
