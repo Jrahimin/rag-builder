@@ -8,7 +8,7 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy import delete, select
 from sqlalchemy.exc import DBAPIError
-from sqlalchemy.ext.asyncio import AsyncConnection, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession, async_sessionmaker
 
 from app.models.organization import Organization
 from app.models.project import Project
@@ -64,13 +64,16 @@ async def test_metadata_lock_allows_foreign_key_checks_but_serializes_updates(
             await cleanup.commit()
 
 
-async def _project(client: AsyncClient) -> str:
+async def _project(client: AsyncClient) -> tuple[str, str]:
     response = await client.post(
         "/api/v1/projects",
         json={"name": f"Phase 3 Retrieval {uuid.uuid4().hex[:8]}"},
     )
     assert response.status_code == 201, response.text
-    return str(response.json()["data"]["id"])
+    data = response.json()["data"]
+    bootstrap_revision_id = data.get("active_ai_config_revision_id")
+    assert bootstrap_revision_id is not None
+    return str(data["id"]), str(bootstrap_revision_id)
 
 
 async def _upload(client: AsyncClient, project_id: str, filename: str, suffix: str) -> str:
@@ -121,7 +124,7 @@ async def test_current_historical_replacement_modifier_hybrid_and_legacy_behavio
     integration_connection: AsyncConnection,
     captured_jobs: list[JobDefinition],
 ) -> None:
-    project_id = await _project(db_client)
+    project_id, bootstrap_revision_id = await _project(db_client)
     old_document = await _upload(db_client, project_id, "old-policy.txt", "old revision")
     new_document = await _upload(db_client, project_id, "new-policy.txt", "new revision")
     modifier_document = await _upload(db_client, project_id, "amendment.txt", "modifier")
@@ -285,7 +288,7 @@ async def test_current_historical_replacement_modifier_hybrid_and_legacy_behavio
     configured = await db_client.post(
         f"/api/v1/operator/projects/{project_id}/ai-config/revisions",
         json={
-            "expected_active_revision_id": None,
+            "expected_active_revision_id": bootstrap_revision_id,
             "reason": "Enable Phase 3 source enforcement",
             "configuration": {
                 "behavior": {},
@@ -480,7 +483,7 @@ async def test_depth_one_modifier_expansion_is_current_scoped_and_incoming_only(
     integration_connection: AsyncConnection,
     captured_jobs: list[JobDefinition],
 ) -> None:
-    project_id = await _project(db_client)
+    project_id, bootstrap_revision_id = await _project(db_client)
     base_document = await _upload(
         db_client,
         project_id,
@@ -554,7 +557,7 @@ async def test_depth_one_modifier_expansion_is_current_scoped_and_incoming_only(
     configured = await db_client.post(
         f"/api/v1/operator/projects/{project_id}/ai-config/revisions",
         json={
-            "expected_active_revision_id": None,
+            "expected_active_revision_id": bootstrap_revision_id,
             "reason": "Enable bounded current-authority expansion",
             "configuration": {
                 "behavior": {},
@@ -677,7 +680,7 @@ async def test_indexed_identity_lookup_is_bounded_and_never_unrestricted(
         RetrievalChunkRepository,
     )
 
-    project_id = await _project(db_client)
+    project_id, _bootstrap_revision_id = await _project(db_client)
     document_id = await _upload(db_client, project_id, "identity.txt", "refund period")
     await _index_documents(
         db_client, integration_connection, captured_jobs, project_id, [document_id]
@@ -691,8 +694,11 @@ async def test_indexed_identity_lookup_is_bounded_and_never_unrestricted(
     assert payload["results"]
     chunk_id = uuid.UUID(str(payload["results"][0]["chunk_id"]))
     index_build_id = uuid.UUID(str(payload["diagnostics"]["index_build_id"]))
-    sessions = async_sessionmaker(integration_connection.engine, expire_on_commit=False)
-    async with sessions() as session:
+    async with AsyncSession(
+        bind=integration_connection,
+        expire_on_commit=False,
+        join_transaction_mode="create_savepoint",
+    ) as session:
         repository = RetrievalChunkRepository(session, uuid.UUID(project_id))
         assert await repository.map_indexed_identities([], index_build_id=index_build_id) == {}
         found = await repository.map_indexed_identities(
