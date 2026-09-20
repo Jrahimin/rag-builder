@@ -35,6 +35,9 @@ class NoticeKind:
 
     UNRESOLVED_AUTHORITY = "unresolved_authority"
 
+    VERIFICATION_FAILED = "verification_failed"
+    """Relevant evidence was found, but a bounded verification step failed."""
+
 
 # ---------------------------------------------------------------------------
 # Notice data model
@@ -79,6 +82,10 @@ _EN_TEXTS: dict[str, str] = {
     NoticeKind.INSUFFICIENT_EVIDENCE: (
         "There is not enough indexed evidence to answer this question."
     ),
+    NoticeKind.VERIFICATION_FAILED: (
+        "Relevant sources were found, but the verification step failed before a supported "
+        "answer could be produced. This does not mean the information is absent."
+    ),
 }
 
 _BN_TEXTS: dict[str, str] = {
@@ -95,6 +102,10 @@ _BN_TEXTS: dict[str, str] = {
         "এই উত্তরের কিছু বা সব অংশ indexed knowledge নয়, বর্তমান web সূত্র থেকে নেওয়া হয়েছে।"
     ),
     NoticeKind.INSUFFICIENT_EVIDENCE: ("এই প্রশ্নের উত্তর দেওয়ার জন্য যথেষ্ট indexed evidence নেই।"),
+    NoticeKind.VERIFICATION_FAILED: (
+        "প্রাসঙ্গিক সূত্র পাওয়া গেছে, কিন্তু সমর্থিত উত্তর তৈরির আগে যাচাই ধাপ ব্যর্থ হয়েছে। "
+        "এর অর্থ এই নয় যে তথ্যটি সূত্রে নেই।"
+    ),
 }
 
 
@@ -165,4 +176,13 @@ def insufficient_evidence_notice(*, language: str) -> Notice:
         language=language,
         text=_notice_text(NoticeKind.INSUFFICIENT_EVIDENCE, language),
         source={},
+    )
+
+
+def verification_failed_notice(*, language: str, stage: str = "coverage_review") -> Notice:
+    return Notice(
+        kind=NoticeKind.VERIFICATION_FAILED,
+        language=language,
+        text=_notice_text(NoticeKind.VERIFICATION_FAILED, language),
+        source={"failure_stage": stage},
     )

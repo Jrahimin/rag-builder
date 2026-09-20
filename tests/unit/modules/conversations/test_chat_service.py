@@ -30,6 +30,8 @@ from app.modules.conversations.prompts.registry import GROUNDED_PROMPT_VERSION
 from app.modules.conversations.schemas.message import MessageSendRequest
 from app.modules.conversations.services.chat_service import (
     ChatService,
+    _assemble_response_policy,
+    _coverage_verification_failed,
     _scope_current_authority_status,
 )
 from app.platform.domain.content_hash import content_hash
@@ -4483,6 +4485,35 @@ def test_invalid_coverage_response_is_not_reported_as_missing_law(
     content = ChatService._insufficient_content(service, prepared, question)
     assert "verification failure" in content or "যাচাই প্রক্রিয়ার ত্রুটি" in content
     assert "amendment evidence" not in content and "সংশোধনের নির্দিষ্ট প্রমাণ" not in content
+
+
+def test_invalid_coverage_response_preserves_requirements_in_response_policy() -> None:
+    repair = {
+        "status": "repair_unavailable",
+        "failure_reason": "invalid_model_response",
+        "requirements": [
+            {"requirement_id": "R1", "description": "Annual return filing duty"},
+            {"requirement_id": "R2", "description": "Income-tax return duty"},
+        ],
+    }
+    assert _coverage_verification_failed({"knowledge_repair": repair}) is True
+    policy = _assemble_response_policy(
+        mode=ResponseMode.INDEXED_THEN_WEB,
+        gate_mode=EvidenceGateMode.ENFORCE,
+        indexed_policy={"sufficient": False},
+        partial_answer=None,
+        repair=repair,
+        answerable_scope=None,
+        web={"status": "suppressed_unresolved_authority", "fallback_used": False},
+        web_requested=True,
+        scoped_request=False,
+        unresolved_authority=True,
+        scope_current_authority=False,
+    )
+    assert policy["answerable_scope"]["unresolved_facets"] == [
+        "Annual return filing duty",
+        "Income-tax return duty",
+    ]
 
 
 async def test_rewrite_inherits_document_and_metadata_scope(

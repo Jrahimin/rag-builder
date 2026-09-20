@@ -8,6 +8,7 @@ from app.modules.conversations.notices import (
     NoticeKind,
     insufficient_evidence_notice,
     scope_excludes_effective_modifier_notice,
+    verification_failed_notice,
     web_evidence_used_notice,
 )
 
@@ -45,3 +46,11 @@ def test_web_and_insufficient_notices_are_purpose_specific() -> None:
     assert missing.kind == NoticeKind.INSUFFICIENT_EVIDENCE
     assert web.source == {}
     assert missing.source == {}
+
+
+def test_verification_failure_notice_does_not_claim_sources_are_missing() -> None:
+    notice = verification_failed_notice(language="en")
+    assert notice.kind == NoticeKind.VERIFICATION_FAILED
+    assert notice.source == {"failure_stage": "coverage_review"}
+    assert "verification step failed" in notice.text
+    assert "information is absent" in notice.text

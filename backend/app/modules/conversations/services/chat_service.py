@@ -52,6 +52,7 @@ from app.modules.conversations.notices import (
     insufficient_evidence_notice,
     scope_excludes_effective_modifier_notice,
     unresolved_authority_notice,
+    verification_failed_notice,
     web_evidence_used_notice,
 )
 from app.modules.conversations.ports import (
@@ -1717,9 +1718,20 @@ class ChatService:
                         if reason_value is None
                         else (
                             *prepared.notices,
-                            insufficient_evidence_notice(
-                                language=detect_language(user_content_for_title).primary_language
-                                or "en"
+                            (
+                                verification_failed_notice(
+                                    language=detect_language(
+                                        user_content_for_title
+                                    ).primary_language
+                                    or "en"
+                                )
+                                if _coverage_verification_failed(prepared.retrieval_diagnostics)
+                                else insufficient_evidence_notice(
+                                    language=detect_language(
+                                        user_content_for_title
+                                    ).primary_language
+                                    or "en"
+                                )
                             ),
                         )
                     )
@@ -2955,6 +2967,12 @@ def _assemble_response_policy(
         or coverage.get("missing")
         or []
     )
+    if not unresolved and repair_payload.get("status") == "repair_unavailable":
+        unresolved = [
+            str(item.get("description"))
+            for item in repair_payload.get("requirements") or []
+            if isinstance(item, dict) and item.get("description")
+        ]
     return {
         "response_mode": mode.value,
         "gate_mode": gate_mode.value,
@@ -2981,6 +2999,15 @@ def _assemble_response_policy(
         "unresolved_authority": unresolved_authority,
         "scope_excludes_effective_modifier": scope_current_authority,
     }
+
+
+def _coverage_verification_failed(retrieval_diagnostics: dict[str, Any]) -> bool:
+    repair = retrieval_diagnostics.get("knowledge_repair")
+    return bool(
+        isinstance(repair, dict)
+        and repair.get("status") == "repair_unavailable"
+        and repair.get("failure_reason") == "invalid_model_response"
+    )
 
 
 def _inherited_coverage_diagnostics(

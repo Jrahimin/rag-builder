@@ -29,6 +29,7 @@ from app.modules.conversations.turn_resolution import EffectiveRetrievalInputs
 from app.platform.domain.content_hash import content_hash
 from app.platform.providers.contracts.llm import ChatCompletionResult, ChatUsage
 from app.platform.providers.errors import ProviderError, ProviderTimeoutError
+from app.platform.providers.request_work import RequestWork
 
 pytestmark = pytest.mark.unit
 
@@ -673,19 +674,20 @@ async def test_blank_source_selector_gets_one_structural_correction_without_acce
         assert json.loads(result.content)["checks"][0]["evidence"][0]["start_line"] == 3
     assert llm.generate.await_count == 2
     assert json.loads(llm.generate.call_args_list[0].args[0][0].content) == payload
-    retried = json.loads(llm.generate.call_args_list[1].args[0][0].content)
-    assert retried == {
-        **payload,
-        "context": [{"chunk_id": "E1", "source_lines": _source_line_records(source.content)}],
-    }
-    issues = json.loads(
-        llm.generate.call_args_list[1].args[0][-1].content.split(" Failed selectors: ")[1]
-    )
-    metadata = issues[0]
-    assert metadata["source_id"] in {"E1", str(source.chunk_id)}
-    assert metadata["source_known"] is True
-    assert metadata["line_count"] == 3
-    assert metadata["nonempty_lines"] == [1, 3]
+    retry_messages = llm.generate.call_args_list[1].args[0]
+    retried = json.loads(retry_messages[1].content)
+    assert retried["task"] == "replace_invalid_evidence_selectors"
+    assert retried["sources"] == [
+        {
+            "chunk_id": str(source.chunk_id),
+            "source_lines": _source_line_records(source.content),
+        }
+    ]
+    failed = retried["failed_checks"][0]
+    assert failed["requirement_id"] == "year"
+    assert failed["evidence_index"] == 0
+    assert failed["invalid_selector"]["start_line"] == 2
+    assert "original_question" not in retried
 
 
 @pytest.mark.parametrize("case", ["unknown_id", "different_text", "plain_message", "no_context"])
@@ -3141,6 +3143,7 @@ async def test_selector_only_retry_repairs_isolated_range_without_full_review():
         ),
     )
     llm = AsyncMock()
+    llm.work = RequestWork(uuid.uuid4())
     llm.generate.side_effect = [first, repair]
     payload = {
         "original_question": "Select the evidence line",
@@ -3155,7 +3158,16 @@ async def test_selector_only_retry_repairs_isolated_range_without_full_review():
         source_ids={"E1": str(source.chunk_id)},
     )
     assert llm.generate.await_count == 2
-    assert "Failed selectors:" in llm.generate.call_args_list[1].args[0][-1].content
+    retry_messages = llm.generate.call_args_list[1].args[0]
+    assert "Replace every listed invalid selector" in retry_messages[0].content
+    retry_payload = json.loads(retry_messages[1].content)
+    assert retry_payload["task"] == "replace_invalid_evidence_selectors"
+    assert "original_question" not in retry_payload
+    assert len(retry_payload["sources"]) == 1
+    assert len(retry_payload["failed_checks"]) == 1
+    snapshot = llm.work.snapshot()
+    assert snapshot["counts"]["selector_retries"] == 1
+    assert snapshot["validation_retries"][0]["selector_failures"][0]["reason"] == "blank_range"
     parsed = json.loads(result.content)
     assert parsed["checks"][0]["evidence"][0]["start_line"] == 3
     assert parsed["complete"] is True
@@ -3177,6 +3189,7 @@ async def test_contradictory_verdict_keeps_bounded_full_retry():
         content=json.dumps({"complete": False, "missing": ["rule"], "checks": []}),
     )
     llm = AsyncMock()
+    llm.work = RequestWork(uuid.uuid4())
     llm.generate.side_effect = [first, retried]
     result = await _validated_completion(
         llm,
@@ -3187,6 +3200,9 @@ async def test_contradictory_verdict_keeps_bounded_full_retry():
     assert llm.generate.await_count == 2
     assert "Validation issues:" in llm.generate.call_args_list[1].args[0][-1].content
     assert "Failed selectors:" not in llm.generate.call_args_list[1].args[0][-1].content
+    span_names = {item["name"] for item in llm.work.snapshot()["spans"]["items"]}
+    assert "structured_response_retry" in span_names
+    assert "selector_retry" not in span_names
     assert json.loads(result.content)["complete"] is False
 
 

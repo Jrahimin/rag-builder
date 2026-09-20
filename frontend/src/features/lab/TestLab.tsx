@@ -654,7 +654,9 @@ function JourneyTab({
       title: "Chat",
       detail: messageRun
         ? messageRun.turn.assistant_message.insufficient_evidence_reason
-          ? `Answer withheld: ${messageRun.turn.assistant_message.insufficient_evidence_reason.replaceAll("_", " ")}.`
+          ? isCoverageVerificationFailure(messageRun.turn.assistant_message)
+            ? "Coverage verification failed after retrieval."
+            : `Answer withheld: ${messageRun.turn.assistant_message.insufficient_evidence_reason.replaceAll("_", " ")}.`
           : `${messageRun.turn.assistant_message.citations?.length ?? 0} durable citations returned.`
         : "Send a grounded message and inspect citation snapshots.",
       state: chatState,
@@ -2245,7 +2247,9 @@ function MessagesTab({
         projectId,
         conversationId,
         detail: refusal
-          ? `Answer withheld: ${assistant.insufficient_evidence_reason}`
+          ? isCoverageVerificationFailure(assistant)
+            ? "Coverage verification failed after retrieval."
+            : `Answer withheld: ${assistant.insufficient_evidence_reason}`
           : usefulPartial
             ? `Useful partial answer (not complete); ${assistant.citations?.length ?? 0} citations; ${next.elapsedMs} ms.`
             : `${assistant.citations?.length ?? 0} citations; ${next.elapsedMs} ms.`,
@@ -2560,6 +2564,7 @@ function MessageCard({
   onInspect?: (citationIndex?: number) => void;
 }) {
   const refusal = message.insufficient_evidence_reason;
+  const verificationFailure = isCoverageVerificationFailure(message);
   const citations = message.citations ?? [];
   const citedIndexes = citedPassageIndexes(message.content, citations.length);
   return (
@@ -2594,7 +2599,9 @@ function MessageCard({
           )}
           <button className="message-card__inspect" type="button" onClick={() => onInspect?.(0)}>
             {refusal
-              ? "View refusal details"
+              ? verificationFailure
+                ? "View verification details"
+                : "View refusal details"
               : message.metadata?.non_knowledge_turn === true
                 ? "View response details"
                 : `${citedIndexes.length} citation${citedIndexes.length === 1 ? "" : "s"} · view evidence`}
@@ -2606,6 +2613,13 @@ function MessageCard({
 }
 
 type MessageCitation = NonNullable<Message["citations"]>[number];
+
+function isCoverageVerificationFailure(message: Message): boolean {
+  const repair = message.metadata?.knowledge_repair as Record<string, unknown> | undefined;
+  return Boolean(
+    repair?.status === "repair_unavailable" && repair?.failure_reason === "invalid_model_response",
+  );
+}
 
 function citedPassageIndexes(content: string, count: number): number[] {
   return [...new Set([...content.matchAll(/\[(\d+)\]/g)].map((match) => Number(match[1]) - 1))]
@@ -2872,6 +2886,7 @@ export function MessageInspector({
     );
   }
   const refusal = message.insufficient_evidence_reason;
+  const verificationFailure = isCoverageVerificationFailure(message);
   const citations = message.citations ?? [];
   const focused = citations[activeCitation] ?? citations[0];
   const citedIndexes = citedPassageIndexes(message.content, citations.length);
@@ -2936,7 +2951,9 @@ export function MessageInspector({
           <p className="eyebrow">Sources</p>
           <h3>
             {refusal
-              ? "Answer withheld"
+              ? verificationFailure
+                ? "Verification failed"
+                : "Answer withheld"
               : partial
                 ? "Partial answer"
                 : groundingPassed
@@ -2958,7 +2975,9 @@ export function MessageInspector({
         >
           <strong>
             {message.insufficient_evidence_reason
-              ? "Task unanswered / insufficient evidence"
+              ? verificationFailure
+                ? "Task unanswered / verification failed"
+                : "Task unanswered / insufficient evidence"
               : usefulPartial
                 ? "Useful partial answer — not a complete-answer pass"
                 : message.citations?.length

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import replace
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -36,6 +37,7 @@ from app.platform.providers.errors import (
     ProviderTimeoutError,
 )
 from app.platform.providers.implementations.noop_reranker import NoopRerankerProvider
+from app.platform.providers.request_work import RequestWork
 
 pytestmark = pytest.mark.unit
 
@@ -213,6 +215,39 @@ async def test_applied_rerank_copies_relevance_onto_evidence_fields() -> None:
     assert result[0].evidence_score_method == "reranker_relevance"
     assert result[0].metadata["rerank_status"] == "applied"
     retriever._reranker.rerank.assert_awaited_once()
+
+
+async def test_rerank_provider_work_is_recorded_once() -> None:
+    chunk_id = uuid.uuid4()
+    work = RequestWork(uuid.uuid4())
+    retriever = HybridRetriever.__new__(HybridRetriever)
+    retriever._embedder = SimpleNamespace(work=work)
+    retriever._content_loader = AsyncMock()
+    retriever._content_loader.load_texts.return_value = {chunk_id: "refund policy"}
+    retriever._reranker = AsyncMock()
+    retriever._reranker.provider_name = "cohere"
+    retriever._reranker.model_name = "rerank-v4.0-pro"
+    retriever._reranker.rerank.return_value = RerankResponse(
+        results=[RerankResult(chunk_id=chunk_id, score=0.81)],
+        provider="cohere",
+        model="rerank-v4.0-pro",
+        provider_version="1",
+        score_scale=RerankScoreScale.MODEL_RELEVANCE,
+        latency_ms=12,
+    )
+    fused = [CandidateHit(chunk_id, 0.03, CandidateSource.HYBRID, semantic_score=0.22)]
+
+    with work.stage("reranking"):
+        await retriever._rerank_candidates(_context(rerank_enabled=True), fused)
+
+    snapshot = work.snapshot()
+    rerank_calls = [call for call in snapshot["provider_calls"] if call["kind"] == "rerank"]
+    assert len(rerank_calls) == 1
+    assert snapshot["counts"]["rerank_calls"] == 1
+    assert snapshot["calls_by_purpose"]["reranking"] == 1
+    assert any(
+        span.get("provider_call_indexes") == [0] for span in snapshot["spans"]["items"]
+    )
 
 
 async def test_reranker_receives_and_returns_the_full_bounded_window() -> None:

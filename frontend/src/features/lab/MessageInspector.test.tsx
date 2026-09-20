@@ -251,4 +251,22 @@ describe("message grounding explanation", () => {
     expect(screen.getByText("needs attention")).toBeInTheDocument();
     expect(screen.queryByLabelText("Claim verification")).not.toBeInTheDocument();
   });
+
+  test("distinguishes a coverage verification failure from missing evidence", () => {
+    inspect({
+      ...message,
+      insufficient_evidence_reason: "unresolved_authority",
+      metadata: {
+        knowledge_repair: {
+          status: "repair_unavailable",
+          failure_reason: "invalid_model_response",
+        },
+      },
+      citations: [],
+      claims: [],
+    });
+    expect(screen.getByRole("heading", { name: "Verification failed" })).toBeInTheDocument();
+    expect(screen.getByText("Task unanswered / verification failed")).toBeInTheDocument();
+    expect(screen.queryByText("Task unanswered / insufficient evidence")).not.toBeInTheDocument();
+  });
 });

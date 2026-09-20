@@ -62,6 +62,16 @@ pytestmark = pytest.mark.unit
             FollowupMode.PRESENTATION_ONLY,
         ),
         (
+            "উপরের উত্তরটি নতুন কোনো তথ্য যোগ না করে ৩টি বুলেট পয়েন্টে লিখুন।",
+            TurnRelation.FOLLOW_UP,
+            FollowupMode.PRESENTATION_ONLY,
+        ),
+        (
+            "আগের উত্তরের তথ্য অপরিবর্তিত রেখে এক বাক্যে লিখুন।",
+            TurnRelation.FOLLOW_UP,
+            FollowupMode.PRESENTATION_ONLY,
+        ),
+        (
             "Rewrite the previous answer and add current fees.",
             TurnRelation.FOLLOW_UP,
             FollowupMode.ADDS_FACTS,
@@ -512,6 +522,21 @@ def test_preflight_accepts_clear_presentation_without_resolver():
     assert resolved.resolution.followup_mode is FollowupMode.PRESENTATION_ONLY
     assert resolved.diagnostics["routing_origin"] == "deterministic"
     assert resolved.attempted is False
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "উপরের উত্তরটি নতুন কোনো তথ্য যোগ না করে ৩টি বুলেট পয়েন্টে লিখুন।",
+        "আগের উত্তরের তথ্য অপরিবর্তিত রেখে এক বাক্যে লিখুন।",
+    ],
+)
+def test_preflight_accepts_observed_bangla_transformations(question):
+    payload, citations, _assistant = _preflight_payload(question)
+    resolved = try_presentation_preflight(payload, citations_by_message=citations)
+    assert resolved is not None
+    assert resolved.resolution.followup_mode is FollowupMode.PRESENTATION_ONLY
+    assert resolved.diagnostics["routing_origin"] == "deterministic"
 
 
 def test_preflight_rejects_unknown_and_added_fact_wording():

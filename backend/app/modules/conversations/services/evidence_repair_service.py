@@ -865,6 +865,102 @@ def _selector_range_failures(
     return failures
 
 
+def _selector_failure_diagnostics(failures: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Persist bounded selector facts without source text or provider output."""
+    items: list[dict[str, Any]] = []
+    for failure in failures[:16]:
+        line_count = int(failure.get("line_count") or 0)
+        start = int(failure.get("start_line") or 0)
+        end = int(failure.get("end_line") or start)
+        if not failure.get("source_known"):
+            reason = "unknown_source"
+        elif start < 1 or end < start or end > line_count:
+            reason = "out_of_range"
+        else:
+            reason = "blank_range"
+        items.append(
+            {
+                "requirement_id": failure.get("requirement_id"),
+                "query_index": failure.get("query_index"),
+                "evidence_index": failure.get("evidence_index"),
+                "source_known": bool(failure.get("source_known")),
+                "line_count": line_count,
+                "start_line": start,
+                "end_line": end,
+                "reason": reason,
+            }
+        )
+    return items
+
+
+def _selector_repair_messages(
+    parsed: BaseModel,
+    failures: list[dict[str, Any]],
+    context: list[ContextChunk],
+    source_ids: dict[str, str] | None,
+) -> list[ChatMessage] | None:
+    """Build a small repair request containing only failed checks and their sources."""
+    if not failures or any(not failure.get("source_known") for failure in failures):
+        return None
+    aliases, _known = _alias_maps(source_ids, context)
+    chunks = {str(chunk.chunk_id): chunk for chunk in context}
+    checks = _proof_checks(parsed)
+    requested_checks: list[dict[str, Any]] = []
+    requested_sources: dict[str, dict[str, Any]] = {}
+    for failure in failures:
+        check_index = int(failure["check_index"])
+        if check_index >= len(checks):
+            return None
+        check = checks[check_index]
+        identifier = aliases.get(str(failure["chunk_id"])) or aliases.get(
+            str(failure["chunk_id"]).casefold()
+        )
+        identifier = identifier or str(failure["chunk_id"])
+        chunk = chunks.get(identifier)
+        if chunk is None:
+            return None
+        requested_sources.setdefault(
+            identifier,
+            {
+                "chunk_id": identifier,
+                "source_lines": _source_line_records(chunk.content),
+            },
+        )
+        requested_checks.append(
+            {
+                "requirement_id": check.requirement_id,
+                "query_index": check.query_index,
+                "description": check.description,
+                "supported": check.supported,
+                "evidence_index": failure["evidence_index"],
+                "invalid_selector": {
+                    "chunk_id": identifier,
+                    "start_line": failure["start_line"],
+                    "end_line": failure["end_line"],
+                },
+            }
+        )
+    payload = {
+        "task": "replace_invalid_evidence_selectors",
+        "failed_checks": requested_checks,
+        "sources": list(requested_sources.values()),
+    }
+    return [
+        ChatMessage(
+            role=ChatRole.SYSTEM,
+            content=(
+                "Return only JSON matching this schema: "
+                + json.dumps(_SelectorRepairResponse.model_json_schema())
+                + " Replace every listed invalid selector exactly once. Copy chunk_id, "
+                "start_line and end_line from the supplied source_lines. Preserve each "
+                "requirement_id, query_index and evidence_index. Do not change whether a "
+                "check is supported and do not invent or infer missing text."
+            ),
+        ),
+        ChatMessage(role=ChatRole.USER, content=json.dumps(payload, ensure_ascii=False)),
+    ]
+
+
 def _is_contradictory_completion(exc: ValidationError) -> bool:
     return any(
         str(error.get("type") or "")
@@ -1054,6 +1150,7 @@ async def _validated_completion(
                 )
             except ValidationError:
                 parsed_for_repair = None
+            repair_messages: list[ChatMessage] | None = None
             isolated_selectors = (
                 proof_context is not None
                 and parsed_for_repair is not None
@@ -1061,25 +1158,25 @@ async def _validated_completion(
                 and not _is_contradictory_completion(exc)
             )
             if isolated_selectors and parsed_for_repair is not None:
+                repair_messages = _selector_repair_messages(
+                    parsed_for_repair,
+                    repair_failures,
+                    proof_context or [],
+                    source_ids,
+                )
+                isolated_selectors = repair_messages is not None
+                if work is not None and work.validation_retries:
+                    work.validation_retries[-1]["selector_failures"] = (
+                        _selector_failure_diagnostics(repair_failures)
+                    )
+            if isolated_selectors and parsed_for_repair is not None and repair_messages is not None:
                 purpose = "selector_retry"
-                messages = [
-                    *_structured_selector_retry(messages, proof_context, source_ids),
-                    ChatMessage(
-                        role=ChatRole.SYSTEM,
-                        content=(
-                            "Return only JSON replacements for the listed failed selectors. "
-                            "Do not change completion, missing, or other checks. Do not guess "
-                            "source identities or neighbouring text. Schema: "
-                            + json.dumps(_SelectorRepairResponse.model_json_schema())
-                            + " Failed selectors: "
-                            + json.dumps(repair_failures, ensure_ascii=False)
-                        ),
-                    ),
-                ]
+                if work is not None:
+                    work.counts["selector_retries"] += 1
                 cm = work.stage(purpose) if work is not None else nullcontext()
                 with cm:
                     repair_completion = await llm.generate(
-                        messages, temperature=temperature, max_tokens=max_tokens
+                        repair_messages, temperature=temperature, max_tokens=max_tokens
                     )
                 usage = _add_usage(usage, repair_completion.usage)
                 if repair_completion.finish_reason not in {
@@ -1099,21 +1196,56 @@ async def _validated_completion(
                     repair_content = "\n".join(repair_lines[1:-1])
                 try:
                     repair = _SelectorRepairResponse.model_validate_json(repair_content)
-                except ValidationError:
+                except ValidationError as repair_exc:
+                    if work is not None:
+                        work.counts["selector_retry_failures"] += 1
+                        work.validation_retries.append(
+                            {
+                                "schema": _SelectorRepairResponse.__name__,
+                                "reason": "selector_retry_invalid_response",
+                                "issues": [
+                                    {
+                                        "type": str(error.get("type") or "validation_error"),
+                                        "path": ".".join(
+                                            str(part) for part in error.get("loc") or ()
+                                        ),
+                                    }
+                                    for error in repair_exc.errors(include_input=False)
+                                ],
+                            }
+                        )
                     raise exc from None
                 if not _apply_selector_replacements(parsed_for_repair, repair, repair_failures):
+                    if work is not None:
+                        work.counts["selector_retry_failures"] += 1
+                        work.validation_retries.append(
+                            {
+                                "schema": _SelectorRepairResponse.__name__,
+                                "reason": "selector_retry_unmatched_replacement",
+                            }
+                        )
                     raise exc
                 _canonicalize_known_selectors(parsed_for_repair, source_ids, proof_context)
                 remaining = _selector_range_failures(parsed_for_repair, proof_context, source_ids)
                 if remaining:
+                    if work is not None:
+                        work.counts["selector_retry_failures"] += 1
+                        work.validation_retries.append(
+                            {
+                                "schema": _SelectorRepairResponse.__name__,
+                                "reason": "selector_retry_invalid_replacement",
+                                "selector_failures": _selector_failure_diagnostics(remaining),
+                            }
+                        )
                     raise exc
                 return replace(
                     repair_completion,
                     content=parsed_for_repair.model_dump_json(),
                     usage=usage,
                 )
-            selector_retry = proof_context is not None
-            purpose = "selector_retry" if selector_retry else "structured_response_retry"
+            # This is a complete-schema retry. Only the dedicated replacement
+            # branch above is a selector retry; keep telemetry unambiguous.
+            purpose = "structured_response_retry"
             messages = [
                 *_structured_selector_retry(messages, proof_context, source_ids),
                 ChatMessage(
@@ -2445,6 +2577,12 @@ async def repair_knowledge_evidence(
                 {"type": error["type"], "loc": list(error["loc"])}
                 for error in exc.errors(include_input=False, include_url=False)
             ]
+            diagnostics["failure_stage"] = str(diagnostics.get("phase") or "coverage_review")
+            request_work = _request_work(llm)
+            if request_work is not None and request_work.validation_retries:
+                diagnostics["validation_failure"] = dict(
+                    request_work.validation_retries[-1]
+                )
         return result
     finally:
         diagnostics["elapsed_ms"] = round((monotonic() - started) * 1000)

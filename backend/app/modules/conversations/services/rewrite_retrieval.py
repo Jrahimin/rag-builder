@@ -27,16 +27,17 @@ from app.modules.conversations.turn_resolver import ResolvedTurn, presentation_f
 
 _PRESENTATION_ACTION = re.compile(
     r"\b(?:summari[sz]e|shorten|translate|rewrite|rephrase|simplify|format|table|bullets?|"
-    r"shorter|concise)\b|বুলেট|সংক্ষেপ|সংক্ষিপ্ত|বাংলায়|বাংলায়|সহজ|ছোট",
+    r"shorter|concise)\b|বুলেট|বাক্যে|লিখুন|সংক্ষেপ|সংক্ষিপ্ত|বাংলায়|বাংলায়|সহজ|ছোট",
     re.I,
 )
 _REFERENCE = re.compile(
-    r"\b(?:previous|earlier|last|above|this|that|it|answer)\b|আগের|পূর্বের|এটি|এটা|সেটি|উত্তরটি",
+    r"\b(?:previous|earlier|last|above|this|that|it|answer)\b|"
+    r"আগের|পূর্বের|উপরের|এটি|এটা|সেটি|উত্তর(?:টি|টির|ের)?",
     re.I,
 )
 _KEEP_ORIGINAL = re.compile(
     r"\b(?:keep|same|citations?|sources?|references?|facts?|original)\b|"
-    r"মূল|রাখুন|সূত্র|তথ্য|"
+    r"মূল|রাখুন|রেখে|সূত্র|তথ্য|অপরিবর্তিত|"
     r"নতুন তথ্য যোগ করবেন না|যোগ করবেন না",
     re.I,
 )
@@ -44,7 +45,8 @@ _FORMAT_INSTRUCTION = re.compile(
     r"\b(?:bullets?|table|markdown|english|bengali|bangla|points?|list|"
     r"three|two|four|five|short(?:er)?|concise|brief|please|also|just|only|"
     r"make|into|exactly)\b|"
-    r"বুলেট|বাংলায়|বাংলায়|বাংলা|তিনটি|সংক্ষিপ্ত|সহজ|ছোট|বলুন|দিন|সঙ্গে",
+    r"বুলেট|পয়েন্টে|পয়েন্টে|বাংলায়|বাংলায়|বাংলা|তিনটি|একটি|এক|"
+    r"[\u09E6-\u09EF]+টি|বাক্যে|সংক্ষিপ্ত|সহজ|ছোট|বলুন|লিখুন|দিন|সঙ্গে",
     re.I,
 )
 _RESIDUAL_FACT = re.compile(
@@ -91,6 +93,7 @@ _ADDED_FACT = re.compile(
 )
 _NEGATED_ADDITION = re.compile(
     r"\b(?:do\s+not|don't|dont|without)\s+add\b|"
+    r"(?:নতুন\s+)?(?:কোনো\s+|কোন\s+)?তথ্য\s+যোগ\s+না\s+করে|"
     r"নতুন তথ্য যোগ করবেন না|যোগ করবেন না",
     re.I,
 )

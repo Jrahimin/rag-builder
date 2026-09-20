@@ -722,8 +722,6 @@ class HybridRetriever(BaseRetriever):
             )
         finally:
             call["duration_ms"] = round((time.perf_counter() - started) * 1000)
-            if isinstance(work, RequestWork):
-                work.calls.append(call)
 
         reranked: list[CandidateHit] = []
         source_by_id = {candidate.chunk_id: candidate for candidate in rerank_window}
