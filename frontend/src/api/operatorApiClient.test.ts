@@ -52,7 +52,8 @@ test("rejects a clean stream EOF without a terminal event", async () => {
       }),
     ),
   );
-  let timing: { doneReceivedAt?: number; streamClosedAt?: number; firstAnswerTokenAt?: number } = {};
+  let timing: { doneReceivedAt?: number; streamClosedAt?: number; firstAnswerTokenAt?: number } =
+    {};
   await expect(
     operatorApiClient.streamMessage(
       "project-1",
@@ -75,13 +76,15 @@ test("rejects a clean stream EOF without a terminal event", async () => {
 test("accepts a stream only after its terminal event", async () => {
   vi.stubGlobal(
     "fetch",
-    vi.fn().mockResolvedValue(
-      new Response(
-        'data: {"event":"token","delta":"answer"}\n\n' +
-          'data: {"event":"done","grounded":true}\n\n',
-        { status: 200, headers: { "Content-Type": "text/event-stream" } },
+    vi
+      .fn()
+      .mockResolvedValue(
+        new Response(
+          'data: {"event":"token","delta":"answer"}\n\n' +
+            'data: {"event":"done","grounded":true}\n\n',
+          { status: 200, headers: { "Content-Type": "text/event-stream" } },
+        ),
       ),
-    ),
   );
   const onDelta = vi.fn();
   const result = await operatorApiClient.streamMessage(
@@ -114,9 +117,11 @@ test("records token, done, and EOF marks without treating whitespace as an answe
   });
   vi.stubGlobal(
     "fetch",
-    vi.fn().mockResolvedValue(
-      new Response(body, { status: 200, headers: { "Content-Type": "text/event-stream" } }),
-    ),
+    vi
+      .fn()
+      .mockResolvedValue(
+        new Response(body, { status: 200, headers: { "Content-Type": "text/event-stream" } }),
+      ),
   );
   const result = await operatorApiClient.streamMessage(
     "project-1",
@@ -141,9 +146,11 @@ test("keeps cancellation and premature EOF distinct from a completed stream", as
   });
   vi.stubGlobal(
     "fetch",
-    vi.fn().mockResolvedValue(
-      new Response(body, { status: 200, headers: { "Content-Type": "text/event-stream" } }),
-    ),
+    vi
+      .fn()
+      .mockResolvedValue(
+        new Response(body, { status: 200, headers: { "Content-Type": "text/event-stream" } }),
+      ),
   );
 
   const pending = operatorApiClient.streamMessage(

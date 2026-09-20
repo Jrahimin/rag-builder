@@ -2818,10 +2818,7 @@ function deliveryTimingLabel(
     if (firstToken != null) parts.push(`${firstToken} ms to first answer token`);
     const streamCompleted = elapsed(timing.doneReceivedAt ?? timing.streamClosedAt);
     if (streamCompleted != null) parts.push(`${streamCompleted} ms to stream completion`);
-    if (
-      timing.persistedMessageFetchedAt != null &&
-      timing.streamClosedAt != null
-    ) {
+    if (timing.persistedMessageFetchedAt != null && timing.streamClosedAt != null) {
       parts.push(
         `${Math.round(timing.persistedMessageFetchedAt - timing.streamClosedAt)} ms message refresh`,
       );
