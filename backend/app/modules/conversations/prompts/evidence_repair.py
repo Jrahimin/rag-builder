@@ -1,6 +1,6 @@
 """Versioned, domain-neutral search repair instructions."""
 
-EVIDENCE_REPAIR_VERSION = "v25"
+EVIDENCE_REPAIR_VERSION = "v26"
 EVIDENCE_REPAIR_PROMPT = """Plan focused knowledge-base searches to repair an incomplete answer.
 Return only JSON with queries, requirements, and coverage:
 {"queries":[{"query":"short query","requirement_ids":["R1"]}],"requirements":[

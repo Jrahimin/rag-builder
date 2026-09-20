@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from typing import Any
 
 import httpx
@@ -209,7 +209,7 @@ class OpenAICompatibleChatProvider(BaseLLMProvider):
         *,
         temperature: float | None = None,
         max_tokens: int,
-    ) -> AsyncIterator[ChatCompletionChunk]:
+    ) -> AsyncGenerator[ChatCompletionChunk, None]:
         url = f"{self._base_url}/v1/chat/completions"
         client = httpx.AsyncClient(timeout=self._timeout)
         try:

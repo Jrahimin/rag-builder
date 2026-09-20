@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import date, datetime
 
 import regex
 
@@ -15,6 +16,14 @@ _PROVISION_HEADING = regex.compile(
     regex.IGNORECASE,
 )
 _ENFORCEABLE_OUTCOMES = {"expanded", "already_in_recall"}
+IRRELEVANT_AUTHORITY_OUTCOMES = frozenset(
+    {
+        "inactive",
+        "outside_as_of",
+        "stale_or_replaced_revision",
+        "cross_project_or_generation",
+    }
+)
 _LIMITED_OUTCOMES = {
     "ungoverned_or_incomplete_metadata",
     "not_in_active_index",
@@ -30,6 +39,8 @@ _RESOLVED_OUTCOMES = _ENFORCEABLE_OUTCOMES | {"duplicate"}
 def remove_superseded_provisions(
     chunks: list[ContextChunk],
     expansion_records: list[dict[str, object]] | None = None,
+    *,
+    reference_date: date | None = None,
 ) -> list[ContextChunk]:
     """Redact only explicitly scoped base provisions with a recalled modifier.
 
@@ -56,6 +67,8 @@ def remove_superseded_provisions(
     scopes_by_base: dict[str, set[str]] = {}
     for record in expansion_records:
         if str(record.get("outcome")) not in _ENFORCEABLE_OUTCOMES:
+            continue
+        if not record_applies_on(record, reference_date=reference_date):
             continue
         if str(record.get("modifier_revision_id")) not in present_revisions:
             continue
@@ -95,7 +108,49 @@ def remove_superseded_provisions(
                 },
             )
         )
-    return annotate_authority_limitations(output, expansion_records)
+    return annotate_authority_limitations(output, expansion_records, reference_date=reference_date)
+
+
+def authority_record_affects_chunk(record: dict[str, object], chunk: ContextChunk) -> bool:
+    """Structured identity/scope match; unknown provision scope stays conservative."""
+    if not isinstance(record, dict):
+        return False
+    chunk_identities = {
+        str(value)
+        for value in (
+            chunk.metadata.get("source_revision_id"),
+            chunk.metadata.get("source_work_key"),
+            chunk.metadata.get("source_group_id"),
+            chunk.document_id,
+        )
+        if value
+    }
+    record_identities = {
+        str(value)
+        for value in (
+            record.get("base_revision_id"),
+            record.get("modifier_revision_id"),
+            record.get("source_revision_id"),
+            record.get("relationship_id"),
+        )
+        if value
+    }
+    if not record_identities or not (record_identities & chunk_identities):
+        return False
+    modifier_revision = record.get("modifier_revision_id")
+    if modifier_revision is not None and str(modifier_revision) in chunk_identities:
+        # target_provisions name the base passage. A modifier chunk is this
+        # record's source even when it is headed by its own section.
+        return True
+    scopes = record.get("target_provisions")
+    if not isinstance(scopes, list) or not scopes:
+        return True
+    redacted = {
+        str(item) for item in (chunk.metadata.get("authority_redacted_provisions") or []) if item
+    }
+    if redacted and any(str(scope) in redacted for scope in scopes):
+        return True
+    return not _explicitly_disjoint_provisions(chunk.content, scopes)
 
 
 def cited_authority_summary(
@@ -152,7 +207,10 @@ def cited_authority_summary(
 
 
 def annotate_authority_limitations(
-    chunks: list[ContextChunk], records: list[dict[str, object]]
+    chunks: list[ContextChunk],
+    records: list[dict[str, object]],
+    *,
+    reference_date: date | None = None,
 ) -> list[ContextChunk]:
     """Do not mistake failure to prove supersession for proof of current authority.
 
@@ -160,12 +218,6 @@ def annotate_authority_limitations(
     text survived admission/selection. No tax vocabulary, date guessing or
     document-wide invalidation is used here.
     """
-    irrelevant = {
-        "inactive",
-        "outside_as_of",
-        "stale_or_replaced_revision",
-        "cross_project_or_generation",
-    }
     present = {str(c.metadata.get("source_revision_id") or "") for c in chunks}
     output: list[ContextChunk] = []
     for chunk in chunks:
@@ -183,7 +235,9 @@ def annotate_authority_limitations(
             if not revision or str(record.get("base_revision_id") or "") != revision:
                 continue
             outcome = str(record.get("outcome") or "")
-            if outcome in irrelevant:
+            if outcome in IRRELEVANT_AUTHORITY_OUTCOMES:
+                continue
+            if not record_applies_on(record, reference_date=reference_date):
                 continue
             scopes = record.get("target_provisions")
             if _explicitly_disjoint_provisions(chunk.content, scopes):
@@ -215,6 +269,9 @@ def annotate_authority_limitations(
         metadata = dict(chunk.metadata)
         if limitations:
             metadata.update(authority_status="unresolved", authority_limitations=limitations)
+        else:
+            metadata.pop("authority_status", None)
+            metadata.pop("authority_limitations", None)
         output.append(replace(chunk, metadata=metadata))
     return output
 
@@ -260,6 +317,45 @@ def _normalize_heading(value: str) -> str:
     return " ".join(value.casefold().strip().split())
 
 
+def parse_record_date(value: object) -> date | None:
+    """Parse a metadata date without inferring an unstated bound."""
+    if value is None or value == "":
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        return date.fromisoformat(text[:10])
+    except ValueError:
+        try:
+            return datetime.fromisoformat(text.replace("Z", "+00:00")).date()
+        except ValueError:
+            return None
+
+
+def record_applies_on(record: dict[str, object], *, reference_date: date | None = None) -> bool:
+    """True when the modifier (and its base, if dated) is in force on the reference date.
+
+    Missing bounds stay unbounded. Unparseable dates do not hide a recalled modifier.
+    """
+    reference = reference_date or date.today()
+    start = parse_record_date(record.get("modifier_effective_from"))
+    end = parse_record_date(record.get("modifier_effective_to"))
+    if start is not None and start > reference:
+        return False
+    if end is not None and end < reference:
+        return False
+    base_start = parse_record_date(record.get("base_effective_from"))
+    base_end = parse_record_date(record.get("base_effective_to"))
+    if base_start is not None and base_start > reference:
+        return False
+    return base_end is None or base_end >= reference
+
+
 def _explicitly_disjoint_provisions(content: str, scopes: object) -> bool:
     """Only complete headed passages can prove a scoped amendment unrelated.
 
@@ -289,13 +385,32 @@ def _explicitly_disjoint_provisions(content: str, scopes: object) -> bool:
         number = "".join(str(int(c)) if c.isdecimal() else c.casefold() for c in number)
         return kind, number
 
-    lines = content.strip().splitlines()
-    if not lines or not _PROVISION_HEADING.fullmatch(lines[0].strip()):
-        return False
-    if any(regex.match(r"^\s*\p{Number}+[.)]\s", line) for line in lines[1:]):
+    non_empty = [line.strip() for line in content.strip().splitlines() if line.strip()]
+    if not non_empty:
         return False
     targets = [key(scope) if isinstance(scope, str) else None for scope in scopes]
     if None in targets:
         return False
-    headings = [key(line) for line in lines if _PROVISION_HEADING.fullmatch(line.strip())]
+    headings = [key(line) for line in non_empty if _PROVISION_HEADING.fullmatch(line)]
+    if not headings:
+        return False
+    first_provision_idx = next(
+        i for i, line in enumerate(non_empty) if _PROVISION_HEADING.fullmatch(line)
+    )
+    # Preceding lines before the first provision heading must not be numbered subsections
+    if any(regex.match(r"^\s*\p{Number}+[.)]\s", line) for line in non_empty[:first_provision_idx]):
+        return False
+    # If the first provision heading is not the first non-empty line, only allow it if
+    # leading lines are higher-level structural headers or titles (e.g. Chapter, Act title).
+    if first_provision_idx > 0:
+        for line in non_empty[:first_provision_idx]:
+            if not regex.match(
+                r"^(?:#{1,6}\s+|(?:chapter|part|act|title|অধ্যায়|ভাগ|আইন)\b|"
+                r"[A-Za-z\s]+(?:act|code|law|ordinance|statute|regulation)\b)",
+                line,
+                regex.IGNORECASE,
+            ):
+                return False
+    # Substantive lines inside the provision may contain numbered lists, which should
+    # not invalidate disjointness.
     return bool(headings) and None not in headings and set(headings).isdisjoint(targets)

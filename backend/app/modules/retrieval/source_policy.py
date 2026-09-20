@@ -126,6 +126,7 @@ class SourceMetadataReadPort(Protocol):
         deployment_cap: str,
         as_of: datetime | None,
         generation: int | None = None,
+        scoped_document_id: uuid.UUID | None = None,
     ) -> SourceMetadataScope: ...
 
     async def incoming_modifiers(
@@ -169,6 +170,7 @@ def apply_source_policy(
     candidates: list[CandidateHit],
     *,
     mode: SourcePolicyMode,
+    scoped_document_id: uuid.UUID | None = None,
 ) -> SourcePolicyApplication:
     """Apply or observe post-ranking role tie-breaking and revision consolidation."""
     if mode is SourcePolicyMode.OFF:
@@ -177,7 +179,11 @@ def apply_source_policy(
             consolidation_counts={},
             observed_exclusion_counts={},
         )
-    hypothetical, consolidation = _enforced_candidates(candidates)
+    enforce_candidates = _candidates_for_enforcement(
+        candidates,
+        scoped_document_id=scoped_document_id,
+    )
+    hypothetical, consolidation = _enforced_candidates(enforce_candidates)
     observed_exclusions: dict[str, int] = {}
     for candidate in candidates:
         if candidate.metadata.get("source_policy_applicable") is False:
@@ -197,6 +203,16 @@ def apply_source_policy(
         consolidation_counts=consolidation,
         observed_exclusion_counts=observed_exclusions,
     )
+
+
+def _candidates_for_enforcement(
+    candidates: list[CandidateHit],
+    *,
+    scoped_document_id: uuid.UUID | None,
+) -> list[CandidateHit]:
+    """Return candidates unchanged; document scope is orthogonal to applicability."""
+    del scoped_document_id
+    return candidates
 
 
 def add_retrieval_provenance(

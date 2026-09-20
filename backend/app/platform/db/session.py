@@ -8,22 +8,54 @@ through dependency injection (see ``app.dependencies.database``).
 
 from __future__ import annotations
 
+import time
+from collections.abc import Awaitable, Callable, Mapping
+from contextvars import ContextVar, Token
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, TypeVar
 
 from alembic.script import ScriptDirectory
-from sqlalchemy import text
+from sqlalchemy import event, text
+from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
 from sqlalchemy.ext.asyncio import (
+    AsyncConnection,
     AsyncEngine,
     AsyncSession,
     async_sessionmaker,
     create_async_engine,
 )
+from sqlalchemy.pool import Pool
 
 from app.core.config import Settings
 from app.core.logging import get_logger
+from app.platform.providers.request_work import RequestWork, current_request_work
 
 log = get_logger(__name__)
 _MIGRATION_ROOT = Path(__file__).resolve().parents[2] / "composition" / "migrations"
+_ResultT = TypeVar("_ResultT")
+
+
+@dataclass
+class _AcquisitionProbe:
+    work: RequestWork
+    started: float
+    recorded: bool = False
+
+
+_acquisition_probe: ContextVar[_AcquisitionProbe | None] = ContextVar(
+    "database_acquisition_probe", default=None
+)
+
+
+@event.listens_for(Pool, "checkout")
+def _record_pool_checkout(*_args: object) -> None:
+    """Complete a pending request probe only when the pool actually checks out."""
+    probe = _acquisition_probe.get()
+    if probe is None or probe.recorded:
+        return
+    probe.recorded = True
+    probe.work.record_wait("database_connection_acquisition", probe.started)
 
 
 class PgVectorUnavailableError(RuntimeError):
@@ -32,6 +64,84 @@ class PgVectorUnavailableError(RuntimeError):
 
 class MigrationStateError(RuntimeError):
     """Raised when the database revision does not match the checked-in migration head."""
+
+
+class ObservedAsyncSession(AsyncSession):
+    """Record connection acquisition, including pool wait, creation, and pre-ping."""
+
+    async def _with_acquisition_probe(
+        self, operation: Callable[[], Awaitable[_ResultT]]
+    ) -> _ResultT:
+        work = current_request_work()
+        if work is None:
+            return await operation()
+        probe = _AcquisitionProbe(work=work, started=time.perf_counter())
+        token: Token[_AcquisitionProbe | None] = _acquisition_probe.set(probe)
+        try:
+            return await operation()
+        except SQLAlchemyTimeoutError as exc:
+            if not probe.recorded:
+                work.record_wait(
+                    "database_connection_acquisition", probe.started, outcome="failed", error=exc
+                )
+            raise
+        finally:
+            _acquisition_probe.reset(token)
+
+    async def connection(
+        self,
+        bind_arguments: dict[str, Any] | None = None,
+        execution_options: Mapping[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> AsyncConnection:
+        async def connect() -> AsyncConnection:
+            return await super(ObservedAsyncSession, self).connection(
+                bind_arguments=bind_arguments,
+                execution_options=execution_options,
+                **kwargs,
+            )
+
+        return await self._with_acquisition_probe(connect)
+
+    async def execute(self, *args: Any, **kwargs: Any) -> Any:
+        return await self._with_acquisition_probe(
+            lambda: super(ObservedAsyncSession, self).execute(*args, **kwargs)
+        )
+
+    async def scalar(self, *args: Any, **kwargs: Any) -> Any:
+        return await self._with_acquisition_probe(
+            lambda: super(ObservedAsyncSession, self).scalar(*args, **kwargs)
+        )
+
+    async def scalars(self, *args: Any, **kwargs: Any) -> Any:
+        return await self._with_acquisition_probe(
+            lambda: super(ObservedAsyncSession, self).scalars(*args, **kwargs)
+        )
+
+    async def stream(self, *args: Any, **kwargs: Any) -> Any:
+        return await self._with_acquisition_probe(
+            lambda: super(ObservedAsyncSession, self).stream(*args, **kwargs)
+        )
+
+    async def stream_scalars(self, *args: Any, **kwargs: Any) -> Any:
+        return await self._with_acquisition_probe(
+            lambda: super(ObservedAsyncSession, self).stream_scalars(*args, **kwargs)
+        )
+
+    async def get(self, *args: Any, **kwargs: Any) -> Any:
+        return await self._with_acquisition_probe(
+            lambda: super(ObservedAsyncSession, self).get(*args, **kwargs)
+        )
+
+    async def flush(self, objects: Any = None) -> None:
+        return await self._with_acquisition_probe(
+            lambda: super(ObservedAsyncSession, self).flush(objects)
+        )
+
+    async def commit(self) -> None:
+        return await self._with_acquisition_probe(
+            lambda: super(ObservedAsyncSession, self).commit()
+        )
 
 
 class Database:
@@ -52,7 +162,7 @@ class Database:
         )
         self._session_factory: async_sessionmaker[AsyncSession] = async_sessionmaker(
             bind=self._engine,
-            class_=AsyncSession,
+            class_=ObservedAsyncSession,
             expire_on_commit=False,
             autoflush=False,
         )

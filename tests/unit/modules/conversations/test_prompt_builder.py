@@ -336,4 +336,6 @@ def test_partial_scope_controls_shared_passages_and_internal_labels():
     assert "not every rule mentioned in that passage" in system
     assert "never print internal instruction labels" in system
     assert "without computing or asserting their rules" in system
+    assert "Lead with independently supported findings" in system
+    assert "not corpus-wide absence" in system
     assert messages[-1].content == "Calculate the combined amount."

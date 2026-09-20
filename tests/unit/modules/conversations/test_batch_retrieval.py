@@ -148,6 +148,97 @@ async def test_batch_owns_sessions_bounds_parallelism_and_preserves_order(monkey
 
 
 @pytest.mark.asyncio
+async def test_batch_records_separate_waits_and_cancels_siblings(monkeypatch):
+    work = RequestWork(uuid.uuid4())
+    provider = HashEmbeddingProvider(dimensions=8, model="hash", provider_version="1")
+    snapshot = {
+        "index_build_id": "build",
+        "source_metadata_generation": 7,
+        "configuration_hash": "config",
+        "reference_date": "2026-09-08",
+    }
+    active = maximum = 0
+    closed: list[bool] = []
+    started = asyncio.Event()
+
+    @asynccontextmanager
+    async def sessions():
+        try:
+            yield object()
+        finally:
+            closed.append(True)
+
+    async def retrieve(adapter, **request):
+        nonlocal active, maximum
+        active += 1
+        maximum = max(maximum, active)
+        started.set()
+        try:
+            await asyncio.sleep(0.05)
+            return ContextRetrievalResult([], {**snapshot, "query": request["query"]})
+        finally:
+            active -= 1
+
+    monkeypatch.setattr(SearchServiceRetrievalAdapter, "retrieve", retrieve)
+    adapter = SearchServiceRetrievalAdapter(
+        SimpleNamespace(resolved_query_embedder=work.wrap(provider), snapshot=snapshot),
+        session_factory=sessions,
+        branch_factory=lambda session, pinned: SimpleNamespace(session=session, snapshot=pinned),
+    )
+    results = await adapter.retrieve_batch(
+        [{"query": str(index)} for index in range(6)], snapshot=snapshot
+    )
+    assert [result.diagnostics["query"] for result in results] == list(map(str, range(6)))
+    assert maximum == 3
+    snapshot_payload = work.snapshot()
+    wait_names = {span["name"] for span in snapshot_payload["spans"]["items"]}
+    assert {
+        "recovery_batch_semaphore",
+        "process_recovery_semaphore",
+    } <= wait_names
+    assert "deployment_recovery_lease" not in wait_names
+    wait_elapsed = [
+        span["elapsed_ms"]
+        for span in snapshot_payload["spans"]["items"]
+        if span["name"] == "recovery_batch_semaphore"
+    ]
+    assert wait_elapsed
+    assert min(wait_elapsed) < 40
+    assert snapshot_payload["counts"]["recovery_attempts"] == 1
+    assert snapshot_payload["stage_semantics"]
+
+    closed.clear()
+    hanging = asyncio.Event()
+
+    async def hanging_retrieve(adapter, **request):
+        with work_cancel.stage("ranked_retrieval"):
+            started.set()
+            if request["query"] == "bad":
+                raise ProviderError("Unavailable")
+            await hanging.wait()
+
+    monkeypatch.setattr(SearchServiceRetrievalAdapter, "retrieve", hanging_retrieve)
+    started.clear()
+    work_cancel = RequestWork(uuid.uuid4())
+    adapter = SearchServiceRetrievalAdapter(
+        SimpleNamespace(resolved_query_embedder=work_cancel.wrap(provider)),
+        session_factory=sessions,
+        branch_factory=lambda session, pinned: object(),
+    )
+    task = asyncio.create_task(
+        adapter.retrieve_batch(
+            [{"query": "bad"}, {"query": "wait"}], snapshot={"index_build_id": "expected"}
+        )
+    )
+    await started.wait()
+    with pytest.raises(ProviderError):
+        await task
+    assert len(closed) == 2
+    outcomes = {span["outcome"] for span in work_cancel.snapshot()["spans"]["items"]}
+    assert "cancelled" in outcomes or "failed" in outcomes
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("failure", ["snapshot", "provider", "cancel"])
 async def test_batch_failure_and_cancellation_close_all_sessions(monkeypatch, failure):
     closed = []
@@ -185,3 +276,14 @@ async def test_batch_failure_and_cancellation_close_all_sessions(monkeypatch, fa
     with pytest.raises(asyncio.CancelledError if failure == "cancel" else ProviderError):
         await task
     assert len(closed) == 2
+
+
+async def test_adapter_exact_recall_empty_identities_never_search():
+    search = AsyncMock()
+    adapter = SearchServiceRetrievalAdapter(search)
+    result = await adapter.retrieve_exact(chunk_ids=[])
+    search.recall_indexed_identities.assert_not_awaited()
+    search.search.assert_not_awaited()
+    assert result.chunks == []
+    assert result.diagnostics["identity_recall_status"] == "empty_restriction"
+    assert result.diagnostics["skipped_reason"] == "empty_identity_restriction"

@@ -115,6 +115,15 @@ supplied evidence shows a conflicting governing rule for that same period. A lat
 Act schedule does not contradict a circular's earlier-period schedule solely by being later.
 """
 
+DELTA_COVERAGE_PROMPT = """
+When review_mode is changed_or_unresolved_facets, review ONLY the listed
+requirements. Return checks for those IDs only. Keep each original
+requirement_id and its meaning; never rename an obligation or drop an unresolved
+requested ID from missing/exclusions. Retained_supported items are already
+validated: do not reopen them unless the supplied evidence contradicts them.
+Do not claim whole-question completion from a subset review.
+"""
+
 PARTIAL_COVERAGE_PROMPT = """
 Keep all unresolved gaps in missing. Omit gap_kinds and missing_inputs: the caller
 defaults gaps to missing source rules and separately reviews personal inputs when

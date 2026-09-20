@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import uuid
+from datetime import date
 
 import pytest
 
 from app.modules.conversations.current_authority import (
     annotate_authority_limitations,
+    authority_record_affects_chunk,
     cited_authority_summary,
     remove_superseded_provisions,
 )
@@ -20,6 +22,11 @@ pytestmark = pytest.mark.unit
     "content,unresolved",
     [
         ("Section 78 — Rebate\nCurrent rebate rule.", False),
+        (
+            "Income Tax Act 2023\n\nChapter 3 — Rebates\n\n"
+            "Section 78 — Rebate\nCurrent rebate rule.",
+            False,
+        ),
         ("Section 106 — Administration\nAdministrative rule.", True),
         ("Section 106(1) — Administration\nAdministrative rule.", True),
         ("Continuation without a heading.", True),
@@ -368,3 +375,242 @@ def test_duplicate_modifier_without_scope_is_limited_not_resolved() -> None:
         [_chunk(revision=base, content="Section 36 — Annual list.")], records
     )
     assert summary["status"] == "limited"
+
+
+def test_newer_publication_does_not_replace_whole_document() -> None:
+    base = uuid.uuid4()
+    modifier = uuid.uuid4()
+    records = [
+        {
+            "outcome": "already_in_recall",
+            "base_revision_id": str(base),
+            "modifier_revision_id": str(modifier),
+            "modifier_published_date": "2026-07-01",
+            "modifier_effective_from": "2026-07-01",
+            "target_provisions": [],
+        }
+    ]
+    base_chunk = _chunk(
+        revision=base,
+        records=records,
+        content="Section 20 — Eligible Investment\nApproved savings certificates.",
+    )
+    modifier_chunk = _chunk(
+        revision=modifier,
+        records=records,
+        content="Section 20 — Eligible Investment\nThe eligible list is replaced.",
+    )
+    safe = remove_superseded_provisions([base_chunk, modifier_chunk], records)
+    assert "Approved savings certificates" in safe[0].content
+    assert safe[0].metadata.get("authority_status") == "unresolved"
+
+
+def test_older_modifier_publication_still_redacts_explicit_provision() -> None:
+    base = uuid.uuid4()
+    modifier = uuid.uuid4()
+    records = [
+        {
+            "outcome": "already_in_recall",
+            "base_revision_id": str(base),
+            "modifier_revision_id": str(modifier),
+            "modifier_published_date": "2020-01-01",
+            "modifier_effective_from": "2020-01-01",
+            "target_provisions": ["Section 21 — Investment Rebate Rate"],
+        }
+    ]
+    base_chunk = _chunk(
+        revision=base,
+        records=records,
+        content=(
+            "Section 20 — Eligible Investment\nApproved savings certificates.\n\n"
+            "Section 21 — Investment Rebate Rate\nThe rebate is 15%.\n\n"
+            "Section 22 — Rebate Limit\nThe rebate cannot exceed tax liability."
+        ),
+    )
+    modifier_chunk = _chunk(revision=modifier, records=records, content="The rebate is 10%.")
+    safe = remove_superseded_provisions([base_chunk, modifier_chunk], records)
+    assert "Approved savings certificates" in safe[0].content
+    assert "15%" not in safe[0].content
+    assert "cannot exceed tax liability" in safe[0].content
+
+
+def test_uncommenced_modifier_does_not_redact_a_current_provision() -> None:
+    base = uuid.uuid4()
+    modifier = uuid.uuid4()
+    records = [
+        {
+            "outcome": "already_in_recall",
+            "base_revision_id": str(base),
+            "modifier_revision_id": str(modifier),
+            "modifier_effective_from": "2099-01-01",
+            "target_provisions": ["Section 21 — Investment Rebate Rate"],
+        }
+    ]
+    base_chunk = _chunk(
+        revision=base,
+        records=records,
+        content=(
+            "Section 21 — Investment Rebate Rate\nThe rebate is 15%.\n\n"
+            "Section 22 — Rebate Limit\nThe rebate cannot exceed tax liability."
+        ),
+    )
+    modifier_chunk = _chunk(revision=modifier, records=records, content="The rebate is 10%.")
+    safe = remove_superseded_provisions([base_chunk, modifier_chunk], records)
+    assert "The rebate is 15%" in safe[0].content
+    assert safe[0].metadata.get("authority_status") != "unresolved"
+
+
+def test_future_as_of_still_redacts_a_commenced_modifier() -> None:
+    base = uuid.uuid4()
+    modifier = uuid.uuid4()
+    records = [
+        {
+            "outcome": "already_in_recall",
+            "base_revision_id": str(base),
+            "modifier_revision_id": str(modifier),
+            "modifier_effective_from": "2026-10-01",
+            "target_provisions": ["Section 21 — Investment Rebate Rate"],
+        }
+    ]
+    base_chunk = _chunk(
+        revision=base,
+        records=records,
+        content=(
+            "Section 21 — Investment Rebate Rate\nThe rebate is 15%.\n\n"
+            "Section 22 — Rebate Limit\nThe rebate cannot exceed tax liability."
+        ),
+    )
+    modifier_chunk = _chunk(revision=modifier, records=records, content="The rebate is 10%.")
+    as_of = date(2027, 1, 1)
+    safe = remove_superseded_provisions([base_chunk, modifier_chunk], records, reference_date=as_of)
+    assert "15%" not in safe[0].content
+    today_safe = remove_superseded_provisions(
+        [base_chunk, modifier_chunk], records, reference_date=date(2026, 9, 1)
+    )
+    assert "The rebate is 15%" in today_safe[0].content
+
+
+def test_dropping_required_modifier_cannot_make_base_provision_usable() -> None:
+    base = uuid.uuid4()
+    selected = annotate_authority_limitations(
+        [_chunk(revision=base, content="Section 21 — Investment Rebate Rate\nThe rebate is 15%.")],
+        [
+            {
+                "base_revision_id": str(base),
+                "modifier_revision_id": str(uuid.uuid4()),
+                "outcome": "already_in_recall",
+                "modifier_effective_from": "2020-01-01",
+                "target_provisions": ["Section 21 — Investment Rebate Rate"],
+            }
+        ],
+    )
+    assert selected[0].content.startswith("Section 21")
+    assert selected[0].metadata["authority_status"] == "unresolved"
+    assert selected[0].metadata["authority_limitations"][0]["reason"] == (
+        "modifier_absent_from_context"
+    )
+
+
+def test_authority_record_affects_chunk_uses_identity_and_explicit_scope() -> None:
+    base = uuid.uuid4()
+    other = uuid.uuid4()
+    matching = {
+        "relationship_id": "edge-21",
+        "base_revision_id": str(base),
+        "modifier_revision_id": str(uuid.uuid4()),
+        "target_provisions": ["Section 21"],
+    }
+    affected = _chunk(revision=base, content="Section 21 — Rebate\nThe rebate is 15%.")
+    neighbor = _chunk(revision=base, content="Section 22 — Limit\nThe rebate cannot exceed tax.")
+    unrelated = _chunk(revision=other, content="Section 21 — Rebate\nThe rebate is 15%.")
+    assert authority_record_affects_chunk(matching, affected) is True
+    assert authority_record_affects_chunk(matching, neighbor) is False
+    assert authority_record_affects_chunk(matching, unrelated) is False
+    unknown_scope = {**matching, "target_provisions": []}
+    assert authority_record_affects_chunk(unknown_scope, affected) is True
+    published_only = {
+        "modifier_published_date": "2026-07-01",
+        "target_provisions": ["Section 21"],
+    }
+    assert authority_record_affects_chunk(published_only, affected) is False
+
+
+def test_modifier_chunk_with_its_own_heading_is_still_affected_by_its_record() -> None:
+    base = uuid.uuid4()
+    modifier = uuid.uuid4()
+    record = {
+        "relationship_id": "edge-21",
+        "base_revision_id": str(base),
+        "modifier_revision_id": str(modifier),
+        "target_provisions": ["Section 21 — Investment Rebate Rate"],
+    }
+    modifier_chunk = _chunk(
+        revision=modifier,
+        content=("Section 5 — Amendment of section 21\nIn section 21, for '15%' substitute '10%'."),
+    )
+    base_chunk = _chunk(
+        revision=base,
+        content="Section 21 — Investment Rebate Rate\nThe rebate is 15%.",
+    )
+    assert authority_record_affects_chunk(record, modifier_chunk) is True
+    assert authority_record_affects_chunk(record, base_chunk) is True
+
+
+def test_historical_annotation_clears_stale_unresolved_status() -> None:
+    base = uuid.uuid4()
+    modifier = uuid.uuid4()
+    records = [
+        {
+            "base_revision_id": str(base),
+            "modifier_revision_id": str(modifier),
+            "outcome": "already_in_recall",
+            "modifier_effective_from": "2025-01-01",
+            "target_provisions": ["Section 21 — Investment Rebate Rate"],
+        }
+    ]
+    chunk = _chunk(
+        revision=base,
+        records=records,
+        content="Section 21 — Investment Rebate Rate\nThe rebate is 15%.",
+    )
+    modifier_chunk = _chunk(revision=modifier, records=records, content="The rebate is 10%.")
+    today = annotate_authority_limitations(
+        [chunk, modifier_chunk], records, reference_date=date(2026, 9, 1)
+    )
+    assert today[0].metadata.get("authority_status") == "unresolved"
+    historical = remove_superseded_provisions(today, records, reference_date=date(2024, 6, 1))
+    assert "The rebate is 15%" in historical[0].content
+    assert historical[0].metadata.get("authority_status") != "unresolved"
+
+
+def test_expired_modifier_is_not_applied_after_its_effective_interval() -> None:
+    base = uuid.uuid4()
+    modifier = uuid.uuid4()
+    records = [
+        {
+            "outcome": "already_in_recall",
+            "base_revision_id": str(base),
+            "modifier_revision_id": str(modifier),
+            "modifier_effective_from": "2019-01-01",
+            "modifier_effective_to": "2021-12-31",
+            "target_provisions": ["Section 21 — Investment Rebate Rate"],
+        }
+    ]
+    base_chunk = _chunk(
+        revision=base,
+        records=records,
+        content=(
+            "Section 21 — Investment Rebate Rate\nThe rebate is 15%.\n\n"
+            "Section 22 — Rebate Limit\nThe rebate cannot exceed tax liability."
+        ),
+    )
+    modifier_chunk = _chunk(revision=modifier, records=records, content="The rebate is 10%.")
+    current = remove_superseded_provisions(
+        [base_chunk, modifier_chunk], records, reference_date=date(2024, 6, 1)
+    )
+    assert "The rebate is 15%" in current[0].content
+    assert current[0].metadata.get("authority_status") != "unresolved"
+    during = remove_superseded_provisions(
+        [base_chunk, modifier_chunk], records, reference_date=date(2020, 6, 1)
+    )
+    assert "15%" not in during[0].content

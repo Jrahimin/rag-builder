@@ -47,13 +47,16 @@ def test_projects_without_revision_use_canonical_v2_invariants() -> None:
 
 
 def test_project_behavior_uses_allowlisted_generation_model_and_translation() -> None:
+    # conftest pins development capability profile, which owns its own model allowlist;
+    # this test asserts deployment ai_policy allowlisting when no profile is active.
     settings = Settings(
+        runtime={"capability_profile_id": None},
         ai_policy={
             "allowed_generation_model_ids": [
                 "deployment-default",
                 "openai-gpt-4o-mini",
             ]
-        }
+        },
     )
     revision = _revision(
         {

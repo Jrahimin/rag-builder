@@ -107,3 +107,23 @@ async def test_hydrator_strips_translated_query_from_result_metadata() -> None:
     assert "translated_query" not in results[0].metadata
     assert results[0].metadata["translation_status"] == "applied"
     assert results[0].metadata["rrf_contributions"][0]["branch_id"] == "translated_dense:bn"
+
+
+async def test_hydrator_records_raw_indexed_chunk_hash() -> None:
+    from app.platform.domain.content_hash import content_hash
+
+    project_id = uuid.uuid4()
+    document_id = uuid.uuid4()
+    present = _chunk(project_id, document_id)
+    hydrator = ResultHydrator(AsyncMock(), project_id)
+    hydrator._chunk_repository = MagicMock()
+    hydrator._chunk_repository.map_by_ids = AsyncMock(return_value={present.id: present})
+    hydrator._document_repository = MagicMock()
+    hydrator._document_repository.map_by_ids = AsyncMock(
+        return_value={document_id: _document(project_id, document_id)}
+    )
+    results = await hydrator.hydrate([CandidateHit(present.id, 0.9, CandidateSource.HYBRID)])
+    assert results[0].metadata["indexed_chunk_hash"] == content_hash(present.content)
+    exact = await hydrator.hydrate([CandidateHit(present.id, 1.0, CandidateSource.EXACT_RECALL)])
+    assert exact[0].metadata["retrieval_source"] == CandidateSource.EXACT_RECALL.value
+    assert exact[0].metadata["indexed_chunk_hash"] == content_hash(present.content)

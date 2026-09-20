@@ -3972,12 +3972,17 @@ async def run_journey(
         baseline_values = dict(options.overrides)
         baseline_config = build_project_config(baseline_values)
         async with database.session_factory() as session:
+            from app.models.project import Project
+
+            project_row = await session.get(Project, project_id)
+            if project_row is None:
+                raise JourneyError("Temporary project disappeared before baseline activation.")
             baseline_revision = await _activate_configuration(
                 session,
                 project_id=project_id,
                 settings=settings,
                 configuration=baseline_config,
-                expected_revision_id=project.active_ai_config_revision_id,
+                expected_revision_id=project_row.active_ai_config_revision_id,
                 reason=f"{manifest.key} baseline runtime configuration",
             )
         revision_ids = await _ingest_sources(

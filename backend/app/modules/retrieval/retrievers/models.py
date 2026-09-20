@@ -18,6 +18,7 @@ class CandidateSource(StrEnum):
     KEYWORD = "keyword"
     HYBRID = "hybrid"
     RERANK = "rerank"
+    EXACT_RECALL = "exact_recall"
 
 
 @dataclass(frozen=True, slots=True)

@@ -37,7 +37,12 @@ from app.modules.retrieval.repositories.index_build_repository import IndexBuild
 from app.modules.retrieval.repositories.retrieval_chunk_repository import RetrievalChunkRepository
 from app.modules.retrieval.retrievers.base_retriever import BaseRetriever
 from app.modules.retrieval.retrievers.hybrid_retriever import HybridRetriever
-from app.modules.retrieval.retrievers.models import RetrievalContext, RetrievalFilters
+from app.modules.retrieval.retrievers.models import (
+    CandidateHit,
+    CandidateSource,
+    RetrievalContext,
+    RetrievalFilters,
+)
 from app.modules.retrieval.retrievers.result_hydrator import ResultHydrator
 from app.modules.retrieval.retrievers.semantic_retriever import SemanticRetriever
 from app.modules.retrieval.schemas.search import (
@@ -153,7 +158,10 @@ class SearchService:
             if self._pinned_index_build_id is not None
             else await self._builds.get_active()
         )
-        source_scope, source_policy_status = await self._capture_source_scope(request.as_of)
+        source_scope, source_policy_status = await self._capture_source_scope(
+            request.as_of,
+            scoped_document_id=request.document_id,
+        )
         if active_build is None:
             return self._empty_search_response(
                 request,
@@ -279,7 +287,11 @@ class SearchService:
             [],
         )
         reranked_candidate_count = len(reranked_candidates)
-        policy = apply_source_policy(reranked_candidates, mode=source_scope.effective_mode)
+        policy = apply_source_policy(
+            reranked_candidates,
+            mode=source_scope.effective_mode,
+            scoped_document_id=request.document_id,
+        )
         candidates = add_retrieval_provenance(
             policy.candidates,
             index_build_id=active_build.id,
@@ -570,9 +582,194 @@ class SearchService:
             ),
         )
 
+    @observe_stage("exact_identity_recall")
+    async def recall_indexed_identities(
+        self,
+        *,
+        chunk_ids: list[uuid.UUID],
+        query: str,
+        document_id: uuid.UUID | None = None,
+        metadata_filter: dict[str, str] | None = None,
+        as_of: datetime | None = None,
+    ) -> SearchResponse:
+        """Hydrate bounded indexed identities without ranked retrieval."""
+        started = time.perf_counter()
+        strategy = self._config.strategy
+        source_scope, source_policy_status = await self._capture_source_scope(
+            as_of,
+            scoped_document_id=document_id,
+        )
+        identities = list(dict.fromkeys(chunk_ids))[:24]
+        if not identities:
+            return self._identity_recall_response(
+                query=query,
+                as_of=as_of,
+                started=started,
+                strategy=strategy,
+                results=[],
+                source_scope=source_scope,
+                source_policy_status=source_policy_status,
+                identity_recall_status="empty_restriction",
+                skipped_reason="empty_identity_restriction",
+                rerank_status="skipped",
+            )
+        active_build = (
+            await self._builds.get_by_id(self._pinned_index_build_id)
+            if self._pinned_index_build_id is not None
+            else await self._builds.get_active()
+        )
+        if active_build is None:
+            return self._identity_recall_response(
+                query=query,
+                as_of=as_of,
+                started=started,
+                strategy=strategy,
+                results=[],
+                source_scope=source_scope,
+                source_policy_status=source_policy_status,
+                identity_recall_status="empty_corpus",
+                skipped_reason="empty_corpus",
+                rerank_status="empty_corpus",
+            )
+        allowed_keys = tuple(self._config.filterable_metadata_keys)
+        sanitized_filter = {
+            key: value for key, value in dict(metadata_filter or {}).items() if key in allowed_keys
+        }
+        membership = await RetrievalChunkRepository(
+            self._session, self._project_id
+        ).map_indexed_identities(
+            identities,
+            index_build_id=active_build.id,
+            document_id=document_id,
+            metadata_filter=sanitized_filter or None,
+            source_scope=source_scope,
+        )
+        threshold = self._config.min_ocr_confidence
+        candidates: list[CandidateHit] = []
+        for index, chunk_id in enumerate(identities):
+            metadata = membership.get(chunk_id)
+            if metadata is None:
+                continue
+            if threshold is not None and not _passes_ocr_threshold(metadata, threshold):
+                continue
+            candidates.append(
+                CandidateHit(
+                    chunk_id=chunk_id,
+                    score=1.0 - (index * 1e-6),
+                    source=CandidateSource.EXACT_RECALL,
+                    metadata=metadata,
+                )
+            )
+        policy = apply_source_policy(
+            candidates,
+            mode=source_scope.effective_mode,
+            scoped_document_id=document_id,
+        )
+        provenanced = add_retrieval_provenance(
+            policy.candidates,
+            index_build_id=active_build.id,
+            source_scope=source_scope,
+            configuration_hash=self._configuration_hash,
+            config_provenance=self._config_provenance,
+        )
+        hydrated_results = await self._hydrator.hydrate(provenanced)
+        by_id = {result.chunk_id: result for result in hydrated_results}
+        results = [by_id[item.chunk_id] for item in provenanced if item.chunk_id in by_id]
+        (
+            expansion_records,
+            expansion_status,
+            expansion_exclusions,
+        ) = await self._identity_modifier_diagnostics(
+            results,
+            source_scope=source_scope,
+            index_build_id=active_build.id,
+            as_of=as_of,
+            document_id=document_id,
+        )
+        elapsed_ms = int((time.perf_counter() - started) * 1000)
+        hydration_removed = len(provenanced) - len(hydrated_results)
+        post_rerank_removal_reasons = (
+            {
+                **policy.observed_exclusion_counts,
+                **policy.consolidation_counts,
+            }
+            if source_scope.effective_mode is SourcePolicyMode.ENFORCE
+            else {}
+        )
+        if hydration_removed:
+            post_rerank_removal_reasons["hydration_missing"] = hydration_removed
+        return SearchResponse(
+            results=results,
+            query=query,
+            top_k=max(len(identities), 1),
+            diagnostics=SearchDiagnostics(
+                strategy=strategy,
+                duration_ms=elapsed_ms,
+                rerank_requested=False,
+                rerank_status="skipped",
+                skipped_reason="exact_identity_recall",
+                as_of=as_of,
+                retrieved_candidate_count=len(results),
+                reranked_candidate_count=0,
+                post_rerank_removed_count=sum(post_rerank_removal_reasons.values()),
+                post_rerank_removal_reasons=post_rerank_removal_reasons,
+                identity_recall_status="exact",
+                embedding_identity_status="not_required",
+                modifies_expansion_status=expansion_status,
+                modifies_expansion_records=expansion_records,
+                modifies_expansion_exclusion_reasons=expansion_exclusions,
+                **self._source_diagnostics(
+                    source_scope,
+                    index_build_id=active_build.id,
+                    status=source_policy_status,
+                ),
+            ),
+        )
+
+    def _identity_recall_response(
+        self,
+        *,
+        query: str,
+        as_of: datetime | None,
+        started: float,
+        strategy: RetrievalStrategy,
+        results: list[RetrievalResult],
+        source_scope: SourceMetadataScope,
+        source_policy_status: str,
+        identity_recall_status: str,
+        skipped_reason: str,
+        rerank_status: str,
+        index_build_id: uuid.UUID | None = None,
+    ) -> SearchResponse:
+        elapsed_ms = int((time.perf_counter() - started) * 1000)
+        return SearchResponse(
+            results=results,
+            query=query,
+            top_k=1,
+            diagnostics=SearchDiagnostics(
+                strategy=strategy,
+                duration_ms=elapsed_ms,
+                rerank_requested=False,
+                rerank_status=rerank_status,
+                skipped_reason=skipped_reason,
+                as_of=as_of,
+                identity_recall_status=identity_recall_status,
+                embedding_identity_status=(
+                    "empty_corpus" if identity_recall_status == "empty_corpus" else "not_required"
+                ),
+                **self._source_diagnostics(
+                    source_scope,
+                    index_build_id=index_build_id,
+                    status=source_policy_status,
+                ),
+            ),
+        )
+
     async def _capture_source_scope(
         self,
         as_of: datetime | None,
+        *,
+        scoped_document_id: uuid.UUID | None = None,
     ) -> tuple[SourceMetadataScope, str]:
         if (
             as_of is None
@@ -626,6 +823,7 @@ class SearchService:
                 deployment_cap=deployment_cap.value,
                 as_of=as_of,
                 generation=self._pinned_source_metadata_generation,
+                scoped_document_id=scoped_document_id,
             )
         except SQLAlchemyError as exc:
             if effective_mode is SourcePolicyMode.ENFORCE:
@@ -678,6 +876,54 @@ class SearchService:
             "configuration_hash": self._configuration_hash,
             "config_provenance": dict(self._config_provenance),
         }
+
+    async def _identity_modifier_diagnostics(
+        self,
+        results: list[RetrievalResult],
+        *,
+        source_scope: SourceMetadataScope,
+        index_build_id: uuid.UUID,
+        as_of: datetime | None,
+        document_id: uuid.UUID | None = None,
+    ) -> tuple[list[dict[str, Any]], str, dict[str, int]]:
+        """Read current incoming modifiers without retrieving related chunks."""
+        if self._source_metadata is None or not results:
+            status = "disabled" if self._source_metadata is None else "no_retrieved_governed_bases"
+            return [], status, {}
+        base_revision_ids = tuple(
+            dict.fromkeys(
+                revision
+                for result in results
+                if (revision := _uuid_value(result.metadata.get("source_revision_id"))) is not None
+            )
+        )
+        if not base_revision_ids:
+            return [], "no_retrieved_governed_bases", {}
+        try:
+            records = await self._source_metadata.incoming_modifiers(
+                project_id=self._project_id,
+                base_revision_ids=base_revision_ids,
+                generation=source_scope.generation,
+                as_of=source_scope.explicit_as_of or as_of,
+                index_build_id=index_build_id,
+            )
+        except Exception:
+            logger.warning(
+                "identity_modifies_expansion_read_failed",
+                project_id=str(self._project_id),
+            )
+            return [], "unavailable", {}
+        exclusions: dict[str, int] = {}
+        diagnostics = [item.diagnostic() for item in records]
+        for item in records:
+            if item.outcome.value == "expanded":
+                continue
+            exclusions[item.outcome.value] = exclusions.get(item.outcome.value, 0) + 1
+        if document_id is not None:
+            return diagnostics, "suppressed_document_scope", exclusions
+        if not records:
+            return [], "no_relationships", {}
+        return diagnostics, "observe", exclusions
 
     def _empty_search_response(
         self,
@@ -955,3 +1201,24 @@ def _query_variant_trace(variant: object, *, include_text: bool) -> dict[str, An
         "translation_model": getattr(variant, "translation_model", None),
         "translation_prompt_version": getattr(variant, "translation_prompt_version", None),
     }
+
+
+def _passes_ocr_threshold(metadata: dict[str, Any], threshold: float) -> bool:
+    raw = metadata.get("ocr_confidence")
+    if raw is None:
+        return True
+    try:
+        return float(raw) >= threshold
+    except (TypeError, ValueError):
+        return True
+
+
+def _uuid_value(value: object) -> uuid.UUID | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, uuid.UUID):
+        return value
+    try:
+        return uuid.UUID(str(value))
+    except (TypeError, ValueError):
+        return None

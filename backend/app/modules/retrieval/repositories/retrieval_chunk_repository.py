@@ -8,6 +8,7 @@ from typing import Any
 from sqlalchemy import and_, func, or_, select, tuple_
 
 from app.models.chunk_keyword_index import ChunkKeywordIndex
+from app.models.document import Document
 from app.models.document_chunk import DocumentChunk
 from app.modules.retrieval.adjacent_selection import (
     ADJACENT_LIMIT,
@@ -17,6 +18,12 @@ from app.modules.retrieval.adjacent_selection import (
     page_value,
     select_adjacent_ids,
 )
+from app.modules.retrieval.source_policy import (
+    SOURCE_METADATA_COLUMNS,
+    SourceMetadataScope,
+    source_metadata_from_row,
+)
+from app.platform.persistence.filters import not_deleted_filter
 from app.platform.persistence.project_scoped_repository import ProjectScopedRepository
 
 
@@ -77,6 +84,62 @@ class RetrievalChunkRepository(ProjectScopedRepository[DocumentChunk]):
         result = await self._session.execute(stmt)
         rows = list(result.scalars().all())
         return {row.id: row for row in rows}
+
+    async def map_indexed_identities(
+        self,
+        chunk_ids: list[uuid.UUID],
+        *,
+        index_build_id: uuid.UUID,
+        document_id: uuid.UUID | None = None,
+        metadata_filter: dict[str, str] | None = None,
+        source_scope: SourceMetadataScope | None = None,
+    ) -> dict[uuid.UUID, dict[str, Any]]:
+        """Return active-index membership metadata for explicit chunk identities.
+
+        An empty identity list is a restriction: it never scans the corpus.
+        """
+        if not chunk_ids:
+            return {}
+        limited = list(dict.fromkeys(chunk_ids))[:24]
+        source_columns = (
+            [source_scope.selectable.c[name] for name in SOURCE_METADATA_COLUMNS]
+            if source_scope is not None and source_scope.selectable is not None
+            else []
+        )
+        stmt = (
+            select(self.model.id, ChunkKeywordIndex.metadata_snapshot, *source_columns)
+            .join(
+                ChunkKeywordIndex,
+                (ChunkKeywordIndex.chunk_id == self.model.id)
+                & (ChunkKeywordIndex.project_id == self.model.project_id),
+            )
+            .join(Document, Document.id == self.model.document_id)
+            .where(
+                self.model.project_id == self._project_id,
+                Document.project_id == self._project_id,
+                self.model.id.in_(limited),
+                ChunkKeywordIndex.project_id == self._project_id,
+                ChunkKeywordIndex.index_build_id == index_build_id,
+                not_deleted_filter(Document),
+            )
+        )
+        if source_scope is not None and source_scope.selectable is not None:
+            stmt = stmt.join(
+                source_scope.selectable,
+                source_scope.selectable.c.source_document_id == self.model.document_id,
+            )
+        if document_id is not None:
+            stmt = stmt.where(self.model.document_id == document_id)
+        if metadata_filter:
+            for key, value in metadata_filter.items():
+                stmt = stmt.where(ChunkKeywordIndex.metadata_snapshot[key].astext == value)
+        result = await self._session.execute(stmt)
+        found: dict[uuid.UUID, dict[str, Any]] = {}
+        for row in result.all():
+            metadata = dict(row.metadata_snapshot or {})
+            metadata.update(source_metadata_from_row(row))
+            found[row.id] = metadata
+        return found
 
     async def _indexed_chunk_refs(
         self, chunk_ids: list[uuid.UUID], *, index_build_id: uuid.UUID

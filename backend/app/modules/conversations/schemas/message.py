@@ -67,6 +67,7 @@ class CitationSnapshot(BaseModel):
     authority_status: str | None = None
     authority_limitations: list[dict[str, Any]] = Field(default_factory=list)
     relationship_recall_provenance: list[dict[str, Any]] = Field(default_factory=list)
+    authority_dependencies: list[dict[str, Any]] = Field(default_factory=list)
     config_snapshot_id: uuid.UUID | None = None
     configuration_hash: str | None = None
     config_provenance: dict[str, Any] = Field(default_factory=dict)
@@ -75,6 +76,19 @@ class CitationSnapshot(BaseModel):
     web_title: str | None = None
     web_retrieved_at: datetime | None = None
     web_provider: str | None = None
+    evidence_provenance_version: str | None = None
+    indexed_chunk_hash: str | None = None
+    evidence_source_chunk_hash: str | None = None
+    evidence_corroboration_method: str | None = None
+    evidence_source_envelope: str | None = None
+    evidence_scope_document_id: uuid.UUID | None = None
+    evidence_scope_metadata_filter: dict[str, str] | None = None
+    evidence_scope_as_of: datetime | None = None
+    evidence_scope_snapshot_origin: str | None = None
+    originating_assistant_message_id: uuid.UUID | None = None
+    coverage_origin_message_id: uuid.UUID | None = None
+    coverage_status: str | None = None
+    coverage_partial: bool | None = None
 
     @model_validator(mode="after")
     def validate_source_identity(self) -> CitationSnapshot:

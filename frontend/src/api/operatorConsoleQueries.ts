@@ -425,7 +425,7 @@ export function useStreamMessage(projectId: string, conversationId: string) {
       onProgress?: (message: string) => void;
       signal?: AbortSignal;
     }) => {
-      await operatorApiClient.streamMessage(
+      const streamed = await operatorApiClient.streamMessage(
         projectId,
         conversationId,
         content,
@@ -439,7 +439,14 @@ export function useStreamMessage(projectId: string, conversationId: string) {
       const user = [...page.items].reverse().find((message) => message.role === "user");
       if (!assistant || !user)
         throw new Error("The streamed response was not saved by the backend.");
-      return { user_message: user, assistant_message: assistant };
+      return {
+        user_message: user,
+        assistant_message: assistant,
+        timing: {
+          ...streamed.timing,
+          persistedMessageFetchedAt: performance.now(),
+        },
+      };
     },
     onSuccess: async () => {
       await Promise.all([

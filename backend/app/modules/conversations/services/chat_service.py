@@ -6,10 +6,11 @@ import asyncio
 import re
 import time
 import uuid
-from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
-from dataclasses import dataclass, replace
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
+from contextlib import aclosing
+from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime
-from typing import Any
+from typing import Any, cast
 
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -37,6 +38,8 @@ from app.modules.conversations.context_builder import (
 from app.modules.conversations.current_authority import cited_authority_summary
 from app.modules.conversations.grounded_context import (
     assess_and_select_knowledge,
+    reconstruct_reused_evidence,
+    reused_evidence_decision,
     select_exact_recalled_knowledge,
 )
 from app.modules.conversations.grounding_service import (
@@ -79,11 +82,18 @@ from app.modules.conversations.schemas.message import (
 )
 from app.modules.conversations.services.evidence_repair_service import repair_knowledge_evidence
 from app.modules.conversations.services.rewrite_retrieval import (
+    citation_scopes_conflict,
+    citations_have_exact_reuse_provenance,
+    preceding_assistant,
+    request_scope_conflicts,
     retained_rewrite_question,
     retrieve_rewrite_context,
     rewrite_citation_ids,
     rewrite_followup_mode,
+    saved_evidence_scope,
+    try_presentation_preflight,
     used_citation_items,
+    used_citations_include_web,
 )
 from app.modules.conversations.services.web_evidence_review import (
     review_web_evidence,
@@ -190,6 +200,10 @@ class _PreparedTurn:
     resolver_usage: ChatUsage | None = None
     resolver_latency_ms: int = 0
     preparation_error: ProviderError | None = None
+    evidence_scope: dict[str, Any] = field(default_factory=dict)
+    originating_assistant_message_id: uuid.UUID | None = None
+    inherited_coverage: dict[str, Any] | None = None
+    response_policy: dict[str, Any] = field(default_factory=dict)
 
 
 class ChatService:
@@ -250,6 +264,14 @@ class ChatService:
         )
 
     async def send_message(
+        self,
+        conversation_id: uuid.UUID,
+        request: MessageSendRequest,
+    ) -> ChatTurnResponse:
+        with self._work.attached():
+            return await self._deliver_send_message(conversation_id, request)
+
+    async def _deliver_send_message(
         self,
         conversation_id: uuid.UUID,
         request: MessageSendRequest,
@@ -363,11 +385,12 @@ class ChatService:
 
         generation_started = time.perf_counter()
         try:
-            completion = await prepared.llm.generate(
-                prepared.messages,
-                temperature=prepared.temperature,
-                max_tokens=self._llm_max_tokens(),
-            )
+            with self._work.stage("answer_generation"):
+                completion = await prepared.llm.generate(
+                    prepared.messages,
+                    temperature=prepared.temperature,
+                    max_tokens=self._llm_max_tokens(),
+                )
         except ProviderError as exc:
             await self._record_failed_execution(
                 conversation=conversation,
@@ -426,6 +449,25 @@ class ChatService:
         should_cancel: ShouldCancelFn | None = None,
     ) -> AsyncIterator[str | dict[str, Any]]:
         """Yield SSE payload fragments: token strings, then final citations dict."""
+        with self._work.attached():
+            async with aclosing(
+                cast(
+                    AsyncGenerator[str | dict[str, Any], None],
+                    self._deliver_stream_message(
+                        conversation_id, request, should_cancel=should_cancel
+                    ),
+                )
+            ) as delivery:
+                async for item in delivery:
+                    yield item
+
+    async def _deliver_stream_message(
+        self,
+        conversation_id: uuid.UUID,
+        request: MessageSendRequest,
+        *,
+        should_cancel: ShouldCancelFn | None = None,
+    ) -> AsyncIterator[str | dict[str, Any]]:
         conversation = await self._require_mutable_conversation(conversation_id)
         started = time.perf_counter()
 
@@ -449,7 +491,7 @@ class ChatService:
                 await asyncio.wait({preparation}, timeout=1)
                 if should_cancel is not None and await should_cancel():
                     return
-                next_stage, next_message = _preparation_progress(self._work.counts)
+                next_stage, next_message = _preparation_progress(self._work)
                 if next_stage != progress_stage:
                     progress_stage = next_stage
                     yield {
@@ -465,7 +507,11 @@ class ChatService:
         await self._raise_preparation_failure(
             conversation, prepared, request.content, started=started, streamed=True
         )
-        yield {"event": "progress", "stage": "generating_answer", "message": "Writing answer"}
+        yield {
+            "event": "progress",
+            "stage": "generating_answer",
+            "message": "Preparing your answer",
+        }
 
         if should_cancel is not None and await should_cancel():
             return
@@ -548,14 +594,20 @@ class ChatService:
         content_parts: list[str] = []
         finish_reason: str | None = None
         final_usage: ChatUsage | None = None
+        generation_span = self._work.begin_span("answer_generation")
+        generation_outcome = "completed"
+        generation_error: BaseException | None = None
+        cancelled_by_client = False
+        answer_stream = prepared.llm.stream(
+            prepared.messages,
+            temperature=prepared.temperature,
+            max_tokens=self._llm_max_tokens(),
+        )
 
         try:
-            async for chunk in prepared.llm.stream(
-                prepared.messages,
-                temperature=prepared.temperature,
-                max_tokens=self._llm_max_tokens(),
-            ):
+            async for chunk in answer_stream:
                 if should_cancel is not None and await should_cancel():
+                    cancelled_by_client = True
                     break
                 if chunk.delta:
                     content_parts.append(chunk.delta)
@@ -565,6 +617,11 @@ class ChatService:
                 if chunk.usage is not None:
                     final_usage = chunk.usage
         except ProviderError as exc:
+            generation_outcome = "failed"
+            generation_error = exc
+            self._work.finish_span(
+                generation_span, outcome=generation_outcome, error=generation_error
+            )
             await self._record_failed_execution(
                 conversation=conversation,
                 prepared=prepared,
@@ -577,8 +634,20 @@ class ChatService:
             )
             self._log_provider_failure(conversation_id, exc)
             raise self._provider_unavailable(exc) from exc
+        except (asyncio.CancelledError, GeneratorExit) as exc:
+            self._work.finish_span(generation_span, outcome="cancelled", error=exc)
+            raise
+        else:
+            if cancelled_by_client or (should_cancel is not None and await should_cancel()):
+                cancelled_by_client = True
+                generation_outcome = "cancelled"
+            self._work.finish_span(
+                generation_span, outcome=generation_outcome, error=generation_error
+            )
+        finally:
+            await answer_stream.aclose()
 
-        if should_cancel is not None and await should_cancel():
+        if cancelled_by_client or (should_cancel is not None and await should_cancel()):
             return
 
         generation_ms = int((time.perf_counter() - generation_started) * 1000)
@@ -642,7 +711,13 @@ class ChatService:
             for message in loaded
             if message.role is MessageRole.ASSISTANT
         }
+        previous_assistant_row = next(
+            (message for message in reversed(loaded) if message.role is MessageRole.ASSISTANT),
+            None,
+        )
         # Capture ORM-backed fields before closing the read transaction.
+        # rollback() expires identity-mapped rows; later exact-recall must not
+        # lazy-load message_metadata (MissingGreenlet outside a greenlet).
         generation_history = [
             PromptHistoryMessage(role=message.role, content=message.content) for message in loaded
         ]
@@ -651,6 +726,16 @@ class ChatService:
             for message in loaded
             if _is_resolver_history_row(message)
         ]
+        assistant_metadata_by_id = {
+            str(message.id): dict(message.message_metadata or {})
+            for message in loaded
+            if message.role is MessageRole.ASSISTANT
+        }
+        previous_assistant_metadata = (
+            dict(previous_assistant_row.message_metadata or {})
+            if previous_assistant_row is not None
+            else {}
+        )
         current_message_id = user_message.id
         current_content = request.content
         non_knowledge_response = _non_knowledge_response(current_content)
@@ -695,6 +780,7 @@ class ChatService:
             reference_time=turn_resolution_mod.utc_reference_datetime(),
             domain_instructions=self._domain_instructions,
         )
+        preflight = None
         if non_knowledge_response is not None:
             resolved = bypass_resolution(payload, reason="casual_turn")
         elif not bounded_history and not (
@@ -703,17 +789,26 @@ class ChatService:
         ):
             resolved = bypass_resolution(payload, reason="no_usable_history")
         else:
-            resolved = await TurnResolver(
-                llm,
-                timeout_seconds=min(
-                    RESOLUTION_TIMEOUT_SECONDS,
-                    self._llm_config.request_timeout_seconds,
-                ),
-                max_output_tokens=min(
-                    RESOLUTION_MAX_OUTPUT_TOKENS,
-                    self._llm_max_tokens(),
-                ),
-            ).resolve(payload)
+            preflight = try_presentation_preflight(
+                payload,
+                citations_by_message=citation_chunks,
+            )
+            if preflight is not None:
+                resolved = preflight
+            else:
+                self._work.counts["resolver_calls"] += 1
+                with self._work.stage("turn_resolution"):
+                    resolved = await TurnResolver(
+                        llm,
+                        timeout_seconds=min(
+                            RESOLUTION_TIMEOUT_SECONDS,
+                            self._llm_config.request_timeout_seconds,
+                        ),
+                        max_output_tokens=min(
+                            RESOLUTION_MAX_OUTPUT_TOKENS,
+                            self._llm_max_tokens(),
+                        ),
+                    ).resolve(payload)
 
         self._work.timings["resolution"] += round((time.perf_counter() - resolution_started) * 1000)
         diagnostics = {
@@ -730,6 +825,10 @@ class ChatService:
 
         retrieval_query = resolved.retrieval.query
         followup_mode = FollowupMode.NOT_APPLICABLE
+        can_exact = False
+        reuse_failure: str | None = None
+        used_prior_citations: list[dict[str, Any]] = []
+        originating_assistant_id: str | None = None
         retrieval_started = time.perf_counter()
         if non_knowledge_response is not None or clarification_response is not None:
             status = (
@@ -748,19 +847,22 @@ class ChatService:
                 resolved.resolution.relation,
                 resolved.resolution.followup_mode,
             )
-            if followup_mode is FollowupMode.NOT_APPLICABLE and any(
-                item.role == "assistant" for item in bounded_history
-            ):
-                followup_mode = rewrite_followup_mode(
-                    current_content,
-                    TurnOutcome.RESOLVED,
-                    TurnRelation.FOLLOW_UP,
-                )
-            retained_question = retained_rewrite_question(bounded_history)
+            retained_question = retained_rewrite_question(bounded_history, assistant_metadata_by_id)
             if followup_mode is FollowupMode.PRESENTATION_ONLY and retained_question is not None:
                 # Evidence relevance is evaluated against the retained factual topic,
                 # while generation still receives the current presentation request.
                 retrieval_query = retained_question
+                diagnostics["retained_factual_question"] = retained_question
+            previous = preceding_assistant(bounded_history)
+            previous_citations = (
+                citation_chunks.get(previous.id, []) if previous is not None else []
+            )
+            used_prior_citations = (
+                used_citation_items(previous.content, previous_citations)
+                if previous is not None
+                else []
+            )
+            originating_assistant_id = str(previous.id) if previous is not None else None
             seeds = rewrite_citation_ids(
                 current_content,
                 resolved.resolution.outcome,
@@ -769,24 +871,63 @@ class ChatService:
                 citation_chunks,
                 mode=followup_mode,
             )
+            mixed_web = bool(
+                previous is not None
+                and used_citations_include_web(previous.content, previous_citations)
+            )
+            saved_scope = saved_evidence_scope(used_prior_citations)
+            scope_conflict = request_scope_conflicts(
+                request_filters, saved_scope
+            ) or citation_scopes_conflict(used_prior_citations)
+            mixed_blocks_indexed_reuse = mixed_web and (
+                self._chat_config.response_mode is not ResponseMode.INDEXED_AND_WEB
+            )
+            provenance_ready = citations_have_exact_reuse_provenance(used_prior_citations)
+            if preflight is not None and followup_mode is FollowupMode.PRESENTATION_ONLY:
+                if mixed_blocks_indexed_reuse:
+                    reuse_failure = "mixed_web"
+                elif scope_conflict:
+                    reuse_failure = "request_scope_changed"
+                elif getattr(self._retrieval, "supports_exact_recall", False) is not True:
+                    reuse_failure = "exact_recall_unsupported"
+                elif seeds and not provenance_ready:
+                    reuse_failure = "missing_provenance"
+            can_exact = (
+                preflight is not None
+                and followup_mode is FollowupMode.PRESENTATION_ONLY
+                and bool(seeds)
+                and getattr(self._retrieval, "supports_exact_recall", False) is True
+                and not scope_conflict
+                and not mixed_blocks_indexed_reuse
+                and provenance_ready
+            )
             if seeds:
                 self._work.counts["cited_recall_requests"] += 1
-            retrieval_result = await retrieve_rewrite_context(
-                self._retrieval,
-                seeds=seeds,
-                mode=followup_mode,
-                request={
-                    "query": retrieval_query,
-                    "top_k": self._retrieval_config.default_top_k,
-                    "document_id": resolved.retrieval.document_id,
-                    "metadata_filter": resolved.retrieval.metadata_filter or None,
-                    "as_of": (
-                        request.as_of
-                        if followup_mode is FollowupMode.PRESENTATION_ONLY
-                        else resolved.retrieval.as_of
-                    ),
-                },
-            )
+            retrieval_stage = "finding_cited_passages" if seeds else "finding_relevant_sources"
+            with self._work.stage(retrieval_stage):
+                retrieval_result = await retrieve_rewrite_context(
+                    self._retrieval,
+                    seeds=seeds,
+                    mode=followup_mode,
+                    prefer_exact=can_exact,
+                    request={
+                        "query": retrieval_query,
+                        "top_k": self._retrieval_config.default_top_k,
+                        "document_id": resolved.retrieval.document_id,
+                        "metadata_filter": resolved.retrieval.metadata_filter or None,
+                        "as_of": resolved.retrieval.as_of,
+                    },
+                )
+        if reuse_failure:
+            retrieval_result.diagnostics["presentation_reuse"] = {
+                "status": "fallback",
+                "reuse_failure_category": reuse_failure,
+                "scope": "scoped_ranked_recall",
+                "passage_count": 0,
+                "originating_assistant_message_id": originating_assistant_id,
+                "routing_origin": "deterministic",
+                "new_coverage_review": False,
+            }
         chunks = retrieval_result.chunks
         retrieval_ms = int((time.perf_counter() - retrieval_started) * 1000)
         self._work.timings["initial_retrieval"] += retrieval_ms
@@ -797,6 +938,7 @@ class ChatService:
         scope_current_authority = _scope_current_authority_status(
             request,
             retrieval_result.diagnostics,
+            document_id=resolved.retrieval.document_id,
         )
         query_embedder = getattr(self._retrieval, "query_embedder", None)
         grounding = (
@@ -813,161 +955,304 @@ class ChatService:
             evidence_approach=self._evidence_approach,
             question=retrieval_query,
         )
-        self._work.counts["source_version_checks"] += 1
-        evidence, knowledge_selected = await assess_and_select_knowledge(
-            grounding=grounding,
-            context_builder=context_builder,
-            chat_config=self._chat_config,
-            question=retrieval_query,
-            chunks=chunks,
-            rerank_status=rerank_status,
-            retrieval_config=self._retrieval_config,
-            expansion_records=expansion_records,
-        )
+        presentation_reused = False
         repair_usage: ChatUsage | None = None
         presentation_only = followup_mode is FollowupMode.PRESENTATION_ONLY
-        rewrite_recall = retrieval_result.diagnostics.get("rewrite_recall")
-        exact_presentation_recall = (
-            presentation_only
-            and isinstance(rewrite_recall, dict)
-            and rewrite_recall.get("status") == "cited_passages"
-            and rewrite_recall.get("missing_seed_count") == 0
+        knowledge_selected: list[ContextChunk] = []
+        evidence = EvidenceDecision(sufficient=False)
+        authority_date = (resolved.retrieval.as_of or payload.reference_time).date()
+        origin_metadata = (
+            assistant_metadata_by_id.get(originating_assistant_id, previous_assistant_metadata)
+            if originating_assistant_id is not None
+            else previous_assistant_metadata
         )
-        if exact_presentation_recall:
-            # Re-evaluate authority and context budget, but do not make a
-            # presentation request win a second lexical relevance contest.
-            knowledge_selected = select_exact_recalled_knowledge(
-                context_builder=context_builder,
-                chunks=chunks,
-                expansion_records=expansion_records,
-            )
-            if knowledge_selected:
-                evidence = replace(
-                    evidence,
-                    sufficient=True,
-                    reason=None,
-                    winning_chunk_id=knowledge_selected[0].chunk_id,
+        inherited = _inherited_coverage_diagnostics(
+            originating_message_id=originating_assistant_id,
+            knowledge_repair=dict(origin_metadata.get("knowledge_repair") or {}),
+            evidence_summary=dict(origin_metadata.get("evidence_summary") or {}),
+            previous_inherited=dict(origin_metadata.get("inherited_coverage") or {}),
+        )
+        if can_exact:
+            self._work.counts["source_version_checks"] += 1
+            with self._work.stage("checking_source_versions"):
+                units, reuse_diag = reconstruct_reused_evidence(
+                    chunks=chunks,
+                    citations=used_prior_citations,
+                    expansion_records=expansion_records,
+                    context_builder=context_builder,
+                    current_configuration_hash=str(
+                        retrieval_result.diagnostics.get("configuration_hash") or ""
+                    )
+                    or None,
+                    current_config_snapshot_id=self._config_snapshot_id,
+                    reference_date=authority_date,
                 )
+            if units:
+                presentation_reused = True
+                knowledge_selected = list[ContextChunk](units)
+                evidence = reused_evidence_decision(units)
                 retrieval_result.diagnostics["presentation_reuse"] = {
+                    **reuse_diag,
                     "status": "reused",
                     "scope": "current_exact_citations",
-                    "passage_count": len(knowledge_selected),
+                    "passage_count": len(units),
+                    "originating_assistant_message_id": originating_assistant_id,
+                    "routing_origin": "deterministic",
+                    "inherited_coverage": inherited,
+                    "new_coverage_review": False,
                 }
+                retrieval_result.diagnostics["knowledge_repair"] = {
+                    "status": "not_needed",
+                    "reason": "presentation_only_reuses_active_cited_evidence",
+                    "scope": "current_recalled_passages",
+                }
+                if inherited is not None:
+                    retrieval_result.diagnostics["inherited_coverage"] = inherited
+                    inherited_partial = inherited.get("partial_answer")
+                    partial_answer = (
+                        inherited_partial if isinstance(inherited_partial, dict) else None
+                    )
+                    missing_inputs = tuple(
+                        str(item) for item in (inherited.get("missing_inputs") or [])
+                    )
+                    retrieval_result.diagnostics["answerable_scope"] = {
+                        "complete": (
+                            not inherited.get("coverage_partial")
+                            and inherited.get("coverage") == "complete"
+                        ),
+                        "partial": bool(inherited.get("coverage_partial")),
+                        "unresolved_facets": list(
+                            (partial_answer or {}).get("pending")
+                            or (partial_answer or {}).get("exclusions")
+                            or []
+                        ),
+                        "missing_inputs": list(missing_inputs),
+                        "supported_requirement_ids": list(
+                            (partial_answer or {}).get("requirement_ids") or []
+                        ),
+                    }
             else:
-                evidence = replace(
-                    evidence,
-                    sufficient=False,
-                    reason=(
-                        InsufficientEvidenceReason.UNRESOLVED_AUTHORITY
-                        if any(
-                            chunk.metadata.get("authority_status") == "unresolved"
-                            for chunk in chunks
-                        )
-                        else InsufficientEvidenceReason.CONTEXT_SELECTION_EMPTY
-                    ),
+                with self._work.stage("finding_cited_passages"):
+                    fallback = await retrieve_rewrite_context(
+                        self._retrieval,
+                        seeds=rewrite_citation_ids(
+                            current_content,
+                            resolved.resolution.outcome,
+                            resolved.resolution.relation,
+                            bounded_history,
+                            citation_chunks,
+                            mode=followup_mode,
+                        ),
+                        mode=followup_mode,
+                        prefer_exact=False,
+                        request={
+                            "query": retrieval_query,
+                            "top_k": self._retrieval_config.default_top_k,
+                            "document_id": resolved.retrieval.document_id,
+                            "metadata_filter": resolved.retrieval.metadata_filter or None,
+                            "as_of": resolved.retrieval.as_of,
+                        },
+                    )
+                fallback.diagnostics["presentation_reuse"] = {
+                    **reuse_diag,
+                    "status": "fallback",
+                    "scope": "scoped_ranked_recall",
+                    "passage_count": 0,
+                    "originating_assistant_message_id": originating_assistant_id,
+                    "routing_origin": "deterministic",
+                    "new_coverage_review": False,
+                }
+                retrieval_result = fallback
+                chunks = retrieval_result.chunks
+                expansion_records = list(
+                    retrieval_result.diagnostics.get("modifies_expansion_records") or []
                 )
-        comparison_review = (
-            not presentation_only and evidence.sufficient and comparison_requested(retrieval_query)
-        )
-        compliance_review = (
-            not presentation_only
-            and self._evidence_approach == "authoritative"
-            and evidence.sufficient
-            and compliance_overview_requested(retrieval_query)
-        )
-        calculation_review = (
-            not presentation_only
-            and evidence.sufficient
-            and _requires_calculation_coverage(retrieval_query, chunks)
-        )
-        applicability_review = (
-            not presentation_only
-            and self._evidence_approach == "authoritative"
-            and evidence.sufficient
-            and _requires_current_rule_coverage(retrieval_query, chunks)
-        )
-        relevance_repair = (
-            not presentation_only
-            and evidence.reason is InsufficientEvidenceReason.BELOW_RELEVANCE_THRESHOLD
-            and evidence.best_score is not None
-            and evidence.best_score >= self._chat_config.minimum_reranker_evidence_score
-            and rerank_status == "applied"
-        )
-        if (
-            evidence.reason is InsufficientEvidenceReason.UNRESOLVED_AUTHORITY
-            or calculation_review
-            or applicability_review
-            or relevance_repair
-            or comparison_review
-            or compliance_review
-        ) and scope_current_authority is None:
-            # Similarity to a worked example does not prove that its category,
-            # period or complete rule schedule applies to a new calculation.
-            # An unsuccessful review must not fall back to those original hits.
-            if calculation_review or applicability_review or comparison_review or compliance_review:
-                evidence = replace(
-                    evidence,
-                    sufficient=False,
-                    reason=InsufficientEvidenceReason.UNRESOLVED_AUTHORITY,
+                rerank_status = str(retrieval_result.diagnostics.get("rerank_status") or "") or None
+        if not presentation_reused:
+            self._work.counts["source_version_checks"] += 1
+            with self._work.stage("checking_source_versions"):
+                evidence, knowledge_selected = await assess_and_select_knowledge(
+                    grounding=grounding,
+                    context_builder=context_builder,
+                    chat_config=self._chat_config,
+                    question=retrieval_query,
+                    chunks=chunks,
+                    rerank_status=rerank_status,
+                    retrieval_config=self._retrieval_config,
+                    expansion_records=expansion_records,
+                    reference_date=authority_date,
                 )
-            await self._release_read_transaction()
-            repaired = await repair_knowledge_evidence(
-                inputs=resolved.retrieval.model_copy(update={"query": retrieval_query}),
-                initial=retrieval_result,
-                selected=knowledge_selected,
-                retrieval=self._retrieval,
-                llm=llm,
-                grounding=grounding,
-                chat_config=self._chat_config,
-                retrieval_config=self._retrieval_config,
-                max_output_tokens=self._llm_max_tokens(),
-                release_read_transaction=self._release_read_transaction,
-                timeout_seconds=self._llm_config.evidence_review_timeout_seconds,
-                domain_instructions=self._domain_instructions,
-                initial_decision=evidence,
-                evidence_approach=self._evidence_approach,
+            rewrite_recall = retrieval_result.diagnostics.get("rewrite_recall")
+            if (
+                presentation_only
+                and isinstance(rewrite_recall, dict)
+                and rewrite_recall.get("status") == "cited_passages"
+                and rewrite_recall.get("missing_seed_count") == 0
+            ):
+                recalled = select_exact_recalled_knowledge(
+                    context_builder=context_builder,
+                    chunks=chunks,
+                    expansion_records=expansion_records,
+                    reference_date=authority_date,
+                )
+                if recalled:
+                    knowledge_selected = recalled
+                    evidence = replace(
+                        evidence,
+                        sufficient=True,
+                        reason=None,
+                        winning_chunk_id=knowledge_selected[0].chunk_id,
+                    )
+                    retrieval_result.diagnostics.setdefault(
+                        "knowledge_repair",
+                        {
+                            "status": "not_needed",
+                            "reason": "presentation_only_reuses_active_cited_evidence",
+                            "scope": "current_recalled_passages",
+                        },
+                    )
+            comparison_review = (
+                not presentation_only
+                and evidence.sufficient
+                and comparison_requested(retrieval_query)
             )
-            repair_usage = repaired.usage
-            preparation_error = repaired.failure
-            repair_diagnostics = dict(repaired.diagnostics)
-            repair_diagnostics["trigger"] = (
-                "calculation_completeness"
-                if calculation_review
-                else "compliance_overview"
-                if compliance_review
-                else "comparison_coverage"
-                if comparison_review
-                else "current_rule_applicability"
-                if applicability_review
-                else "relevance_recovery"
-                if relevance_repair
-                else "unresolved_authority"
+            compliance_review = (
+                not presentation_only
+                and self._evidence_approach == "authoritative"
+                and evidence.sufficient
+                and compliance_overview_requested(retrieval_query)
             )
-            if not self._store_candidate_trace:
-                repair_diagnostics["branches"] = [
-                    {key: value for key, value in branch.items() if key != "retrieval"}
-                    for branch in repair_diagnostics.get("branches", [])
-                ]
-            retrieval_result.diagnostics["knowledge_repair"] = repair_diagnostics
-            if repaired.decision is not None:
-                missing_inputs = repaired.missing_inputs
-                partial_answer = repaired.partial_answer
-                evidence = repaired.decision
-                knowledge_selected = repaired.selected
-                chunks = [
-                    *chunks,
-                    *[
-                        c
-                        for c in repaired.selected
-                        if c.chunk_id not in {x.chunk_id for x in chunks}
-                    ],
-                ]
-        elif exact_presentation_recall and evidence.sufficient:
-            retrieval_result.diagnostics["knowledge_repair"] = {
-                "status": "not_needed",
-                "reason": "presentation_only_reuses_active_cited_evidence",
-                "scope": "current_recalled_passages",
-            }
+            calculation_review = (
+                not presentation_only
+                and evidence.sufficient
+                and _requires_calculation_coverage(retrieval_query, chunks)
+            )
+            applicability_review = (
+                not presentation_only
+                and self._evidence_approach == "authoritative"
+                and evidence.sufficient
+                and _requires_current_rule_coverage(retrieval_query, chunks)
+            )
+            relevance_repair = (
+                not presentation_only
+                and evidence.reason is InsufficientEvidenceReason.BELOW_RELEVANCE_THRESHOLD
+                and evidence.best_score is not None
+                and evidence.best_score >= self._chat_config.minimum_reranker_evidence_score
+                and rerank_status == "applied"
+            )
+            reuse_scope_revalidation = bool(
+                presentation_only
+                and not presentation_reused
+                and isinstance(inherited, dict)
+                and (
+                    inherited.get("coverage_partial")
+                    or inherited.get("missing_inputs")
+                    or inherited.get("partial_answer")
+                )
+                and isinstance(retrieval_result.diagnostics.get("presentation_reuse"), dict)
+                and retrieval_result.diagnostics["presentation_reuse"].get("status") == "fallback"
+            )
+            if (
+                evidence.reason is InsufficientEvidenceReason.UNRESOLVED_AUTHORITY
+                or calculation_review
+                or applicability_review
+                or relevance_repair
+                or comparison_review
+                or compliance_review
+                or reuse_scope_revalidation
+            ) and scope_current_authority is None:
+                # Similarity to a worked example does not prove that its category,
+                # period or complete rule schedule applies to a new calculation.
+                # An unsuccessful review must not fall back to those original hits.
+                if (
+                    calculation_review
+                    or applicability_review
+                    or comparison_review
+                    or compliance_review
+                    or reuse_scope_revalidation
+                ):
+                    evidence = replace(
+                        evidence,
+                        sufficient=False,
+                        reason=InsufficientEvidenceReason.UNRESOLVED_AUTHORITY,
+                    )
+                await self._release_read_transaction()
+                repair_stage = (
+                    "checking_source_applicability"
+                    if applicability_review
+                    else "checking_missing_details"
+                )
+                with self._work.stage(repair_stage):
+                    repaired = await repair_knowledge_evidence(
+                        inputs=resolved.retrieval.model_copy(update={"query": retrieval_query}),
+                        initial=retrieval_result,
+                        selected=knowledge_selected,
+                        retrieval=self._retrieval,
+                        llm=llm,
+                        grounding=grounding,
+                        chat_config=self._chat_config,
+                        retrieval_config=self._retrieval_config,
+                        max_output_tokens=self._llm_max_tokens(),
+                        release_read_transaction=self._release_read_transaction,
+                        timeout_seconds=self._llm_config.evidence_review_timeout_seconds,
+                        domain_instructions=self._domain_instructions,
+                        initial_decision=evidence,
+                        required_coverage=inherited if reuse_scope_revalidation else None,
+                        evidence_approach=self._evidence_approach,
+                    )
+                repair_usage = repaired.usage
+                preparation_error = repaired.failure
+                repair_diagnostics = dict(repaired.diagnostics)
+                if reuse_scope_revalidation:
+                    retrieval_result.diagnostics["presentation_reuse"]["new_coverage_review"] = (
+                        repair_diagnostics.get("status") != "snapshot_unavailable"
+                    )
+                repair_diagnostics["trigger"] = (
+                    "calculation_completeness"
+                    if calculation_review
+                    else "presentation_reuse_scope_revalidation"
+                    if reuse_scope_revalidation
+                    else "compliance_overview"
+                    if compliance_review
+                    else "comparison_coverage"
+                    if comparison_review
+                    else "current_rule_applicability"
+                    if applicability_review
+                    else "relevance_recovery"
+                    if relevance_repair
+                    else "unresolved_authority"
+                )
+                if not self._store_candidate_trace:
+                    repair_diagnostics["branches"] = [
+                        {key: value for key, value in branch.items() if key != "retrieval"}
+                        for branch in repair_diagnostics.get("branches", [])
+                    ]
+                retrieval_result.diagnostics["knowledge_repair"] = repair_diagnostics
+                if repaired.decision is not None:
+                    retained_missing_inputs = (
+                        tuple(str(item) for item in (inherited or {}).get("missing_inputs") or [])
+                        if reuse_scope_revalidation
+                        else ()
+                    )
+                    missing_inputs = tuple(
+                        dict.fromkeys([*repaired.missing_inputs, *retained_missing_inputs])
+                    )
+                    partial_answer = repaired.partial_answer
+                    evidence = repaired.decision
+                    knowledge_selected = repaired.selected
+                    chunks = [
+                        *chunks,
+                        *[
+                            c
+                            for c in repaired.selected
+                            if c.chunk_id not in {x.chunk_id for x in chunks}
+                        ],
+                    ]
+                if repaired.answerable_scope:
+                    answerable_scope = dict(repaired.answerable_scope)
+                    if reuse_scope_revalidation and missing_inputs:
+                        answerable_scope["missing_inputs"] = list(missing_inputs)
+                    retrieval_result.diagnostics["answerable_scope"] = answerable_scope
         retrieval_ms = int((time.perf_counter() - retrieval_started) * 1000)
         self._work.timings["coverage_and_recovery"] += round(
             (time.perf_counter() - coverage_started) * 1000
@@ -1038,13 +1323,14 @@ class ChatService:
                     retrieval_query,
                     web_result.evidence,
                 )
-                accepted_evidence, scope_review, web_review_usage = await review_web_evidence(
-                    llm=llm,
-                    query=retrieval_query,
-                    evidence=accepted_evidence,
-                    domain_instructions=self._domain_instructions,
-                    reference_date=(resolved.retrieval.as_of or payload.reference_time).date(),
-                )
+                with self._work.stage("web_evidence_review"):
+                    accepted_evidence, scope_review, web_review_usage = await review_web_evidence(
+                        llm=llm,
+                        query=retrieval_query,
+                        evidence=accepted_evidence,
+                        domain_instructions=self._domain_instructions,
+                        reference_date=(resolved.retrieval.as_of or payload.reference_time).date(),
+                    )
                 web_chunks = _web_context_chunks(accepted_evidence, web_result.provider)
                 discovered_source_count = (
                     len(web_result.discovered_sources)
@@ -1081,6 +1367,12 @@ class ChatService:
                 }
 
         knowledge_usable = not grounding.blocks_generation(evidence)
+        indexed_policy = {
+            "sufficient": evidence.sufficient,
+            "blocks_generation": not knowledge_usable,
+            "reason": evidence.reason.value if evidence.reason is not None else None,
+            "knowledge_usable": knowledge_usable,
+        }
         if non_knowledge_response is not None or clarification_response is not None:
             selected: list[ContextChunk] = []
         elif mode is ResponseMode.INDEXED_ONLY:
@@ -1104,20 +1396,21 @@ class ChatService:
         web_diagnostics["fallback_used"] = web_fallback_used
 
         response_language = resolve_response_language(current_content, prompt_history)
-        messages = self._prompt_builder.build(
-            template=template,
-            context_chunks=selected,
-            history=prompt_history,
-            user_question=current_content,
-            domain_instructions=self._domain_instructions,
-            prompt_profile=self._prompt_profile,
-            interpretation=resolved.interpretation,
-            reference_date=(resolved.retrieval.as_of or payload.reference_time).date(),
-            missing_inputs=missing_inputs if knowledge_usable else (),
-            partial_answer=partial_answer if knowledge_usable else None,
-            response_language=response_language,
-            presentation_only=presentation_only,
-        )
+        with self._work.stage("preparing_answer"):
+            messages = self._prompt_builder.build(
+                template=template,
+                context_chunks=selected,
+                history=prompt_history,
+                user_question=current_content,
+                domain_instructions=self._domain_instructions,
+                prompt_profile=self._prompt_profile,
+                interpretation=resolved.interpretation,
+                reference_date=(resolved.retrieval.as_of or payload.reference_time).date(),
+                missing_inputs=missing_inputs if knowledge_usable else (),
+                partial_answer=partial_answer if knowledge_usable else None,
+                response_language=response_language,
+                presentation_only=presentation_only,
+            )
         budget = prompt_budget(
             messages,
             model=llm.model_name,
@@ -1191,6 +1484,37 @@ class ChatService:
             ),
             resolver_latency_ms=resolved.latency_ms,
             preparation_error=preparation_error,
+            evidence_scope={
+                "document_id": resolved.retrieval.document_id,
+                "metadata_filter": dict(resolved.retrieval.metadata_filter or {}),
+                "as_of": (
+                    resolved.retrieval.as_of.isoformat() if resolved.retrieval.as_of else None
+                ),
+                "snapshot_origin": (
+                    resolved.snapshot.origin.value if resolved.snapshot.origin is not None else None
+                ),
+            },
+            originating_assistant_message_id=_optional_uuid_or_none(originating_assistant_id),
+            inherited_coverage=(
+                dict(retrieval_result.diagnostics["inherited_coverage"])
+                if isinstance(retrieval_result.diagnostics.get("inherited_coverage"), dict)
+                else None
+            ),
+            response_policy=_assemble_response_policy(
+                mode=mode,
+                gate_mode=self._chat_config.evidence_gate_mode,
+                indexed_policy=indexed_policy,
+                partial_answer=partial_answer if knowledge_usable else None,
+                repair=retrieval_result.diagnostics.get("knowledge_repair"),
+                answerable_scope=retrieval_result.diagnostics.get("answerable_scope"),
+                web=web_diagnostics,
+                web_requested=web_requested,
+                scoped_request=scoped_request,
+                unresolved_authority=(
+                    evidence.reason is InsufficientEvidenceReason.UNRESOLVED_AUTHORITY
+                ),
+                scope_current_authority=scope_current_authority is not None,
+            ),
         )
 
     async def _persist_assistant_turn(
@@ -1225,12 +1549,16 @@ class ChatService:
                 claims_status="not_applicable",
             )
         else:
-            grounding = await prepared.grounding.map_claims(
-                content,
-                prepared.selected,
-                user_input=user_content_for_title,
-                coverage=prepared.retrieval_diagnostics.get("knowledge_repair"),
-            )
+            with self._work.stage("claim_verification"):
+                grounding = await prepared.grounding.map_claims(
+                    content,
+                    prepared.selected,
+                    user_input=user_content_for_title,
+                    coverage=(
+                        prepared.inherited_coverage
+                        or prepared.retrieval_diagnostics.get("knowledge_repair")
+                    ),
+                )
             if reason_value is not None:
                 grounding = type(grounding)(claims=[], grounded=False, citation_coverage=1.0)
             elif non_knowledge_turn:
@@ -1245,7 +1573,6 @@ class ChatService:
                     citation_coverage=grounding.citation_coverage,
                 )
         verification_ms = round((time.perf_counter() - verification_started) * 1000)
-        self._work.timings["claim_verification"] += verification_ms
         self._work.timings["generation"] = generation_ms
         total_ms += verification_ms
         metadata = self._build_metadata(
@@ -1283,7 +1610,13 @@ class ChatService:
             if reason_value is not None or non_knowledge_turn or clarification_turn
             else self._citations_for(
                 prepared.selected,
+                recalled_chunks=prepared.chunks,
                 prompt_version=prepared.prompt_version,
+                evidence_scope=prepared.evidence_scope,
+                originating_assistant_message_id=prepared.originating_assistant_message_id,
+                inherited_coverage=prepared.inherited_coverage,
+                knowledge_repair=prepared.retrieval_diagnostics.get("knowledge_repair"),
+                expansion_records=prepared.retrieval_diagnostics.get("modifies_expansion_records"),
             )
         )
         candidate_diagnostics = evidence_gate["candidate_wise"]
@@ -1347,9 +1680,12 @@ class ChatService:
             metadata["rewrite_recall"] = prepared.retrieval_diagnostics["rewrite_recall"]
         if prepared.retrieval_diagnostics.get("presentation_reuse"):
             metadata["presentation_reuse"] = prepared.retrieval_diagnostics["presentation_reuse"]
+        if prepared.retrieval_diagnostics.get("inherited_coverage"):
+            metadata["inherited_coverage"] = prepared.retrieval_diagnostics["inherited_coverage"]
         metadata.update(
             {
                 "response_mode": self._chat_config.response_mode.value,
+                "response_policy": prepared.response_policy,
                 "source_provenance": (
                     SourceProvenance.NONE.value
                     if clarification_turn
@@ -1425,13 +1761,21 @@ class ChatService:
         presentation_reuse = prepared.retrieval_diagnostics.get("presentation_reuse")
         reused_cited_passages = (
             int(presentation_reuse.get("passage_count") or 0)
-            if isinstance(presentation_reuse, dict)
+            if isinstance(presentation_reuse, dict) and presentation_reuse.get("status") == "reused"
             else 0
         )
         ordinarily_admitted_passages = (
             sum(a.passed for a in prepared.evidence.candidate_assessments)
             if prepared.evidence.candidate_assessments
             else len(prepared.evidence.admitted_units)
+        )
+        inherited_coverage = prepared.retrieval_diagnostics.get("inherited_coverage")
+        inherited_partial = isinstance(inherited_coverage, dict) and (
+            inherited_coverage.get("coverage_partial") is True
+            or inherited_coverage.get("coverage") == "partial"
+        )
+        repair_partial = bool(
+            (prepared.retrieval_diagnostics.get("knowledge_repair") or {}).get("partial_answer")
         )
         metadata["evidence_summary"] = {
             "candidates": prepared.retrieval_diagnostics.get("retrieved_candidate_count")
@@ -1444,18 +1788,18 @@ class ChatService:
             "cited_documents": len({c.document_id for c in cited_chunks}),
             "reviewed_works": reviewed_work_count(prepared.selected),
             "coverage": "partial"
-            if (prepared.retrieval_diagnostics.get("knowledge_repair") or {}).get("partial_answer")
+            if repair_partial or (reused_cited_passages and inherited_partial)
             else "incomplete"
             if not prepared.evidence.sufficient
             else "complete"
-            if validated_coverage
+            if validated_coverage and not reused_cited_passages
             else "not_assessed",
             "coverage_method": (
                 "validated_authoritative_dependencies"
                 if self._evidence_approach == "authoritative"
                 else "validated_requirements"
             )
-            if validated_coverage
+            if validated_coverage and not reused_cited_passages
             else "current_exact_citation_recall"
             if reused_cited_passages
             else "ordinary_admission",
@@ -1471,12 +1815,16 @@ class ChatService:
             "unsupported_factual_claims": unsupported_claims,
             "input_provenance": {
                 "unresolved_inputs": (
-                    (prepared.retrieval_diagnostics.get("knowledge_repair") or {})
-                    .get("coverage", {})
-                    .get("missing_inputs", [])
-                )
-                if validated_coverage
-                else [],
+                    list(inherited_coverage.get("missing_inputs") or [])
+                    if reused_cited_passages and isinstance(inherited_coverage, dict)
+                    else (
+                        (prepared.retrieval_diagnostics.get("knowledge_repair") or {})
+                        .get("coverage", {})
+                        .get("missing_inputs", [])
+                        if validated_coverage
+                        else []
+                    )
+                ),
                 "supplied_values": "current_user_message_and_validated_conversation_context",
                 "authorized_assumptions": "saved_project_domain_policy",
                 "config_snapshot_id": str(self._config_snapshot_id)
@@ -1586,6 +1934,7 @@ class ChatService:
         metadata.update(
             {
                 "response_mode": self._chat_config.response_mode.value,
+                "response_policy": prepared.response_policy,
                 "source_provenance": prepared.source_provenance.value,
                 "web_search": prepared.web_search_diagnostics,
                 "execution_status": "failed",
@@ -1665,9 +2014,32 @@ class ChatService:
         selected: list[ContextChunk],
         *,
         prompt_version: str,
+        evidence_scope: dict[str, Any] | None = None,
+        originating_assistant_message_id: uuid.UUID | None = None,
+        inherited_coverage: dict[str, Any] | None = None,
+        knowledge_repair: dict[str, Any] | None = None,
+        expansion_records: list[dict[str, Any]] | None = None,
+        recalled_chunks: list[ContextChunk] | None = None,
     ) -> list[dict]:
         if not self._chat_config.include_citations:
             return []
+        repair = knowledge_repair or {}
+        inherited = inherited_coverage or {}
+        coverage_raw = repair.get("coverage")
+        coverage: dict[str, Any] = coverage_raw if isinstance(coverage_raw, dict) else {}
+        new_review = bool(repair.get("partial_answer") or coverage.get("quotes_validated"))
+        coverage_status: str | None
+        coverage_partial: bool | None
+        if new_review:
+            coverage_status = "partial" if repair.get("partial_answer") else "complete"
+            coverage_partial = bool(repair.get("partial_answer"))
+            coverage_origin = None
+        else:
+            status_raw = inherited.get("coverage_status") or inherited.get("coverage")
+            coverage_status = str(status_raw) if status_raw else None
+            partial_raw = inherited.get("coverage_partial")
+            coverage_partial = partial_raw if isinstance(partial_raw, bool) else None
+            coverage_origin = _optional_uuid_or_none(inherited.get("coverage_origin_message_id"))
         return build_citation_snapshots(
             selected,
             config=self._chat_config,
@@ -1675,6 +2047,17 @@ class ChatService:
             config_snapshot_id=self._config_snapshot_id,
             config_provenance=self._config_provenance,
             prompt_version=prompt_version,
+            evidence_scope=evidence_scope,
+            originating_assistant_message_id=originating_assistant_message_id,
+            coverage_origin_message_id=(
+                None
+                if new_review or not inherited
+                else (coverage_origin or originating_assistant_message_id)
+            ),
+            coverage_status=str(coverage_status) if coverage_status else None,
+            coverage_partial=coverage_partial if isinstance(coverage_partial, bool) else None,
+            expansion_records=expansion_records,
+            recalled_chunks=recalled_chunks,
         )
 
     def _insufficient_content(self, prepared: _PreparedTurn, question: str) -> str:
@@ -2350,6 +2733,8 @@ def _effective_scope_modifier_records(records: object) -> list[dict[str, Any]]:
 def _scope_current_authority_status(
     request: MessageSendRequest,
     diagnostics: dict[str, Any],
+    *,
+    document_id: uuid.UUID | None = None,
 ) -> dict[str, Any] | None:
     """Detect when a hard-scope request excludes its effective modifier.
 
@@ -2358,7 +2743,8 @@ def _scope_current_authority_status(
     and at least one effective modifier record exists triggers a structured notice
     (not a refusal); generation proceeds from admitted scoped evidence.
     """
-    if request.document_id is None:
+    scoped_document = document_id if document_id is not None else request.document_id
+    if scoped_document is None:
         return None
     if diagnostics.get("modifies_expansion_status") != "suppressed_document_scope":
         return None
@@ -2396,22 +2782,39 @@ def _combined_auxiliary_usage(
     )
 
 
-def _preparation_progress(counts: Mapping[str, int]) -> tuple[str, str]:
-    """Describe long preparation work without exposing prompts or source text."""
-    llm_calls = counts.get("llm_calls", 0)
-    rerank_calls = counts.get("rerank_calls", 0)
-    if llm_calls >= 3:
-        return "checking_recovered_evidence", "Checking recovered evidence"
-    if rerank_calls >= 2:
-        return "searching_missing_evidence", "Searching for missing evidence"
-    if llm_calls >= 2:
-        return "checking_support", "Checking support"
-    if counts.get("source_version_checks", 0):
-        return "checking_source_versions", "Checking source versions"
-    if counts.get("cited_recall_requests", 0):
+_PROGRESS_PRIORITY: tuple[tuple[str, tuple[str, str]], ...] = (
+    ("claim_verification", ("verifying_citations", "Verifying citations")),
+    ("answer_generation", ("generating_answer", "Preparing your answer")),
+    ("preparing_answer", ("generating_answer", "Preparing your answer")),
+    ("web_evidence_review", ("checking_source_applicability", "Checking source applicability")),
+    (
+        "checking_source_applicability",
+        ("checking_source_applicability", "Checking source applicability"),
+    ),
+    ("scenario_input_review", ("checking_missing_details", "Checking missing details")),
+    ("coverage_review", ("checking_missing_details", "Checking missing details")),
+    ("selector_retry", ("checking_missing_details", "Checking missing details")),
+    ("structured_response_retry", ("checking_missing_details", "Checking missing details")),
+    ("recovery_planning", ("checking_missing_details", "Checking missing details")),
+    ("checking_missing_details", ("checking_missing_details", "Checking missing details")),
+    ("checking_source_versions", ("checking_source_versions", "Checking source versions")),
+    ("finding_cited_passages", ("finding_cited_passages", "Finding cited passages")),
+    ("finding_relevant_sources", ("finding_relevant_sources", "Finding relevant sources")),
+    ("ranked_retrieval", ("finding_relevant_sources", "Finding relevant sources")),
+    ("reranking", ("finding_relevant_sources", "Finding relevant sources")),
+    ("retrieval", ("finding_relevant_sources", "Finding relevant sources")),
+    ("turn_resolution", ("understanding_request", "Understanding request")),
+)
+
+
+def _preparation_progress(work: RequestWork) -> tuple[str, str]:
+    """Describe long preparation work from active phases, not LLM/reranker counts."""
+    active = work.active_purposes()
+    for purpose, label in _PROGRESS_PRIORITY:
+        if purpose in active:
+            return label
+    if work.counts.get("cited_recall_requests"):
         return "finding_cited_passages", "Finding cited passages"
-    if counts.get("embedding_calls", 0) or rerank_calls:
-        return "finding_passages", "Finding relevant passages"
     return "understanding_request", "Understanding request"
 
 
@@ -2517,8 +2920,114 @@ def _compact_resolution_summary(metadata: dict[str, Any]) -> dict[str, Any] | No
         "failure_field",
         "bypass_reason",
         "latency_ms",
+        "routing_origin",
+        "retained_factual_question",
     )
     return {key: recorded[key] for key in keys if key in recorded}
+
+
+def _assemble_response_policy(
+    *,
+    mode: ResponseMode,
+    gate_mode: EvidenceGateMode,
+    indexed_policy: dict[str, Any],
+    partial_answer: dict[str, Any] | None,
+    repair: object,
+    answerable_scope: object,
+    web: dict[str, Any],
+    web_requested: bool,
+    scoped_request: bool,
+    unresolved_authority: bool,
+    scope_current_authority: bool,
+) -> dict[str, Any]:
+    """Separate indexed routing policy from validated answerable scope."""
+    repair_payload = repair if isinstance(repair, dict) else {}
+    coverage_payload = repair_payload.get("coverage")
+    coverage = coverage_payload if isinstance(coverage_payload, dict) else {}
+    scope = answerable_scope if isinstance(answerable_scope, dict) else {}
+    complete = bool(scope.get("complete") or coverage.get("full_coverage_validated"))
+    partial = bool(partial_answer) or bool(
+        scope.get("partial") or coverage.get("partial_scope_validated")
+    )
+    unresolved = list(
+        scope.get("unresolved_facets")
+        or (partial_answer or {}).get("pending")
+        or coverage.get("missing")
+        or []
+    )
+    return {
+        "response_mode": mode.value,
+        "gate_mode": gate_mode.value,
+        "indexed_policy": dict(indexed_policy),
+        "answerable_scope": {
+            "complete": complete,
+            "partial": partial and not complete,
+            "unresolved_facets": [] if complete else unresolved,
+            "missing_inputs": list(
+                scope.get("missing_inputs") or coverage.get("missing_inputs") or []
+            ),
+            "supported_requirement_ids": list(
+                scope.get("supported_requirement_ids")
+                or (partial_answer or {}).get("requirement_ids")
+                or []
+            ),
+        },
+        "web": {
+            "requested": web_requested,
+            "status": web.get("status"),
+            "fallback_used": bool(web.get("fallback_used")),
+        },
+        "scoped_request": scoped_request,
+        "unresolved_authority": unresolved_authority,
+        "scope_excludes_effective_modifier": scope_current_authority,
+    }
+
+
+def _inherited_coverage_diagnostics(
+    *,
+    originating_message_id: str | None,
+    knowledge_repair: dict[str, Any],
+    evidence_summary: dict[str, Any],
+    previous_inherited: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    """Copy prior validated partial-scope diagnostics without treating them as a new review."""
+    if not originating_message_id:
+        return None
+    prior = previous_inherited if isinstance(previous_inherited, dict) else {}
+    coverage_payload = knowledge_repair.get("coverage")
+    new_review = bool(
+        knowledge_repair.get("partial_answer")
+        or (isinstance(coverage_payload, dict) and coverage_payload.get("quotes_validated"))
+    )
+    if prior and not new_review:
+        envelope = dict(prior)
+        envelope["originating_assistant_message_id"] = originating_message_id
+        envelope["new_review"] = False
+        if not envelope.get("coverage_origin_message_id"):
+            envelope["coverage_origin_message_id"] = originating_message_id
+        return envelope
+    coverage = evidence_summary.get("coverage")
+    partial_answer = knowledge_repair.get("partial_answer")
+    missing_inputs = knowledge_repair.get("missing_inputs")
+    if missing_inputs is None:
+        provenance = evidence_summary.get("input_provenance")
+        missing_inputs = (
+            provenance.get("unresolved_inputs") if isinstance(provenance, dict) else None
+        )
+    if coverage is None and partial_answer is None and not missing_inputs:
+        return None
+    origin = str(prior.get("coverage_origin_message_id") or originating_message_id)
+    return {
+        "originating_assistant_message_id": originating_message_id,
+        "coverage_origin_message_id": origin,
+        "coverage": coverage,
+        "coverage_status": coverage,
+        "coverage_partial": coverage == "partial" or bool(partial_answer),
+        "partial_answer": partial_answer,
+        "missing_inputs": missing_inputs or [],
+        "coverage_method": evidence_summary.get("coverage_method"),
+        "new_review": False,
+    }
 
 
 def _optional_str(value: object) -> str | None:

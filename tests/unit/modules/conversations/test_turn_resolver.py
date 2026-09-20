@@ -14,10 +14,16 @@ from app.modules.conversations.prompts.turn_resolution import (
     build_turn_resolution_messages,
 )
 from app.modules.conversations.turn_resolution import (
+    FollowupMode,
     TurnOutcome,
+    TurnRelation,
     TurnResolutionInput,
 )
-from app.modules.conversations.turn_resolver import TurnResolver
+from app.modules.conversations.turn_resolver import (
+    TurnResolver,
+    bypass_resolution,
+    presentation_followup_resolution,
+)
 from app.platform.providers.contracts.llm import (
     ChatCompletionResult,
     ChatMessage,
@@ -393,3 +399,27 @@ async def test_actual_resolver_snapshot_diagnostics_are_scored_by_journey(first_
         metadata={"turn_resolution": result.diagnostics},
         prior_turn_messages={},
     )
+
+
+def test_presentation_followup_resolution_is_not_a_standalone_bypass():
+    payload = _payload()
+    result = presentation_followup_resolution(
+        payload,
+        reason="deterministic_presentation_rewrite",
+        inherited_as_of=datetime(2025, 6, 1, tzinfo=UTC),
+        inherited_snapshot_origin="user_literal",
+    )
+    assert result.resolution.outcome is TurnOutcome.RESOLVED
+    assert result.resolution.relation is TurnRelation.FOLLOW_UP
+    assert result.resolution.followup_mode is FollowupMode.PRESENTATION_ONLY
+    assert result.diagnostics["routing_origin"] == "deterministic"
+    assert result.retrieval.suppress_web is True
+    assert result.retrieval.as_of == datetime(2025, 6, 1, tzinfo=UTC)
+    assert result.attempted is False
+
+
+def test_bypass_resolution_records_fallback_routing_origin():
+    result = bypass_resolution(_payload(), reason="no_usable_history")
+    assert result.diagnostics["routing_origin"] == "fallback"
+    assert result.resolution.outcome is TurnOutcome.STANDALONE
+    assert result.attempted is False

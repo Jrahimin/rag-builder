@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 
 import httpx
 
@@ -134,7 +134,7 @@ class OllamaChatProvider(BaseLLMProvider):
         *,
         temperature: float | None = None,
         max_tokens: int,
-    ) -> AsyncIterator[ChatCompletionChunk]:
+    ) -> AsyncGenerator[ChatCompletionChunk, None]:
         url = f"{self._base_url}/api/chat"
         body: dict[str, object] = {
             "model": self._model,

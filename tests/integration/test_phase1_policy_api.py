@@ -53,12 +53,13 @@ async def test_project_config_revision_history_and_optimistic_concurrency(
     project = await _project(db_client)
     project_id = str(project["id"])
     assert project["ownership_locked"] is True
+    bootstrap_revision_id = str(project["active_ai_config_revision_id"])
 
     first = await _revision(
         db_client,
         project_id,
         policy_label="phase1-v1",
-        expected=None,
+        expected=bootstrap_revision_id,
     )
     stale = await db_client.post(
         f"/api/v1/operator/projects/{project_id}/ai-config/revisions",
@@ -92,7 +93,7 @@ async def test_existing_conversation_keeps_immutable_snapshot_after_policy_chang
         db_client,
         project_id,
         policy_label="snapshot-v1",
-        expected=None,
+        expected=str(project["active_ai_config_revision_id"]),
     )
     created = await db_client.post(
         f"/api/v1/projects/{project_id}/conversations",

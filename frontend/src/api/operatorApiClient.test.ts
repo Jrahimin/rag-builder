@@ -52,31 +52,91 @@ test("rejects a clean stream EOF without a terminal event", async () => {
       }),
     ),
   );
+  let timing: { doneReceivedAt?: number; streamClosedAt?: number; firstAnswerTokenAt?: number } =
+    {};
   await expect(
-    operatorApiClient.streamMessage("project-1", "conversation-1", "question", vi.fn()),
+    operatorApiClient.streamMessage(
+      "project-1",
+      "conversation-1",
+      "question",
+      vi.fn(),
+      undefined,
+      undefined,
+      undefined,
+      (next) => {
+        timing = next;
+      },
+    ),
   ).rejects.toMatchObject({ code: "stream_incomplete" });
+  expect(timing.firstAnswerTokenAt).toBeDefined();
+  expect(timing.doneReceivedAt).toBeUndefined();
+  expect(timing.streamClosedAt).toBeDefined();
 });
 
 test("accepts a stream only after its terminal event", async () => {
   vi.stubGlobal(
     "fetch",
-    vi.fn().mockResolvedValue(
-      new Response(
-        'data: {"event":"token","delta":"answer"}\n\n' +
-          'data: {"event":"done","grounded":true}\n\n',
-        { status: 200, headers: { "Content-Type": "text/event-stream" } },
+    vi
+      .fn()
+      .mockResolvedValue(
+        new Response(
+          'data: {"event":"token","delta":"answer"}\n\n' +
+            'data: {"event":"done","grounded":true}\n\n',
+          { status: 200, headers: { "Content-Type": "text/event-stream" } },
+        ),
       ),
-    ),
   );
   const onDelta = vi.fn();
-  await expect(
-    operatorApiClient.streamMessage("project-1", "conversation-1", "question", onDelta),
-  ).resolves.toEqual({ content: "answer" });
+  const result = await operatorApiClient.streamMessage(
+    "project-1",
+    "conversation-1",
+    "question",
+    onDelta,
+  );
+  expect(result.content).toBe("answer");
   expect(onDelta).toHaveBeenCalledWith("answer");
+  expect(result.timing.firstAnswerTokenAt).toBeGreaterThanOrEqual(result.timing.requestStartedAt);
+  expect(result.timing.doneReceivedAt).toBeGreaterThanOrEqual(result.timing.firstAnswerTokenAt!);
+  expect(result.timing.streamClosedAt).toBeGreaterThanOrEqual(result.timing.doneReceivedAt!);
+  expect(result.timing.persistedMessageFetchedAt).toBeUndefined();
 });
 
-test("normalizes cancellation while the response body is being read", async () => {
+test("records token, done, and EOF marks without treating whitespace as an answer token", async () => {
+  const encoder = new TextEncoder();
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(encoder.encode('data: {"event":"token","delta":"  "}\n\n'));
+      setTimeout(() => {
+        controller.enqueue(encoder.encode('data: {"event":"token","delta":"answer"}\n\n'));
+      }, 20);
+      setTimeout(() => {
+        controller.enqueue(encoder.encode('data: {"event":"done","grounded":true}\n\n'));
+        controller.close();
+      }, 40);
+    },
+  });
+  vi.stubGlobal(
+    "fetch",
+    vi
+      .fn()
+      .mockResolvedValue(
+        new Response(body, { status: 200, headers: { "Content-Type": "text/event-stream" } }),
+      ),
+  );
+  const result = await operatorApiClient.streamMessage(
+    "project-1",
+    "conversation-1",
+    "question",
+    vi.fn(),
+  );
+  expect(result.timing.firstAnswerTokenAt).toBeGreaterThan(result.timing.responseHeadersAt!);
+  expect(result.timing.doneReceivedAt).toBeGreaterThan(result.timing.firstAnswerTokenAt!);
+  expect(result.timing.streamClosedAt).toBeGreaterThanOrEqual(result.timing.doneReceivedAt!);
+});
+
+test("keeps cancellation and premature EOF distinct from a completed stream", async () => {
   const abort = new AbortController();
+  let timing: { doneReceivedAt?: number; streamClosedAt?: number } = {};
   const body = new ReadableStream<Uint8Array>({
     start(controller) {
       abort.signal.addEventListener("abort", () => {
@@ -86,9 +146,11 @@ test("normalizes cancellation while the response body is being read", async () =
   });
   vi.stubGlobal(
     "fetch",
-    vi.fn().mockResolvedValue(
-      new Response(body, { status: 200, headers: { "Content-Type": "text/event-stream" } }),
-    ),
+    vi
+      .fn()
+      .mockResolvedValue(
+        new Response(body, { status: 200, headers: { "Content-Type": "text/event-stream" } }),
+      ),
   );
 
   const pending = operatorApiClient.streamMessage(
@@ -99,10 +161,15 @@ test("normalizes cancellation while the response body is being read", async () =
     undefined,
     undefined,
     abort.signal,
+    (next) => {
+      timing = next;
+    },
   );
   abort.abort();
 
   await expect(pending).rejects.toMatchObject({ code: "stream_cancelled", status: 499 });
+  expect(timing.doneReceivedAt).toBeUndefined();
+  expect(timing.streamClosedAt).toBeDefined();
 });
 
 test("forwards OCR language on document reprocess", async () => {

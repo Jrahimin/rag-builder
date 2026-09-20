@@ -12,6 +12,7 @@ from redis.asyncio import Redis
 from redis.exceptions import RedisError
 
 from app.platform.providers.errors import ProviderError
+from app.platform.providers.request_work import current_request_work
 
 _ACQUIRE = """
 local now = tonumber(ARGV[4])
@@ -28,19 +29,14 @@ async def recovery_slot(redis_dsn: str, *, limit: int = 12) -> AsyncIterator[Non
     """A crash-expiring lease; lifetime exceeds the enclosing 120-second repair deadline."""
     token = uuid.uuid4().hex
     key = "ape:rag:recovery-capacity:v1"
+    work = current_request_work()
     async with Redis.from_url(redis_dsn, socket_connect_timeout=3, socket_timeout=3) as redis:
         try:
-            while True:
-                # Redis 3 (supported by the local Windows setup) forbids TIME followed
-                # by writes inside Lua. Read server time first; admission remains atomic.
-                seconds, micros = await redis.time()
-                now = seconds * 1000 + micros // 1000
-                acquired = await cast(
-                    Awaitable[Any], redis.eval(_ACQUIRE, 1, key, limit, 180_000, token, now)
-                )
-                if acquired:
-                    break
-                await asyncio.sleep(0.1)
+            if work is None:
+                await _acquire_lease(redis, key, token, limit)
+            else:
+                async with work.wait("deployment_recovery_lease"):
+                    await _acquire_lease(redis, key, token, limit)
         except RedisError as exc:
             raise ProviderError(
                 "Recovery capacity unavailable",
@@ -53,3 +49,17 @@ async def recovery_slot(redis_dsn: str, *, limit: int = 12) -> AsyncIterator[Non
             # Expiry is the backstop after process/connection failure.
             with suppress(RedisError):
                 await redis.zrem(key, token)
+
+
+async def _acquire_lease(redis: Redis, key: str, token: str, limit: int) -> None:
+    while True:
+        # Redis 3 (supported by the local Windows setup) forbids TIME followed
+        # by writes inside Lua. Read server time first; admission remains atomic.
+        seconds, micros = await redis.time()
+        now = seconds * 1000 + micros // 1000
+        acquired = await cast(
+            Awaitable[Any], redis.eval(_ACQUIRE, 1, key, limit, 180_000, token, now)
+        )
+        if acquired:
+            return
+        await asyncio.sleep(0.1)

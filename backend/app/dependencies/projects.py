@@ -90,7 +90,11 @@ def get_project_service(
         organization_id=auth_org.organization_id,
         is_platform_admin=auth_org.is_platform_admin,
         audit=DatabaseAuditRecorder(session),
-        actor_id=(str(auth_org.api_key_id) if auth_org.api_key_id is not None else None),
+        actor_id=(
+            "platform_admin"
+            if auth_org.is_platform_admin
+            else str(auth_org.api_key_id or "auth-bypassed")
+        ),
     )
 
 

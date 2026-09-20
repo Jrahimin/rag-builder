@@ -43,6 +43,7 @@ import {
   type Project,
   type SearchResponse,
   type SourceState,
+  type StreamDeliveryTiming,
 } from "../../api/operatorApiClient";
 import {
   useCreateConversation,
@@ -116,7 +117,9 @@ type MessageRun = {
   turn: ChatTurn;
   expected: string;
   passed: boolean;
+  usefulPartial?: boolean;
   elapsedMs: number;
+  deliveryTiming?: StreamDeliveryTiming;
 };
 
 function errorFacts(error: unknown) {
@@ -2180,34 +2183,56 @@ function MessagesTab({
       setProgressMessage("Understanding request");
       progressStartedAt.current = performance.now();
       setProgressElapsedMs(0);
-      const turn =
-        delivery === "stream"
-          ? await (() => {
-              const controller = new AbortController();
-              streamAbort.current = controller;
-              return stream.mutateAsync({
-                content: submittedContent,
-                onDelta: (delta) => setStreamedContent((current) => current + delta),
-                onProgress: setProgressMessage,
-                signal: controller.signal,
-              });
-            })()
-          : await send.mutateAsync({ content: submittedContent });
+      let turn: ChatTurn;
+      let deliveryTiming: StreamDeliveryTiming | undefined;
+      if (delivery === "stream") {
+        const controller = new AbortController();
+        streamAbort.current = controller;
+        const streamed = await stream.mutateAsync({
+          content: submittedContent,
+          onDelta: (delta) => setStreamedContent((current) => current + delta),
+          onProgress: setProgressMessage,
+          signal: controller.signal,
+        });
+        turn = {
+          user_message: streamed.user_message,
+          assistant_message: streamed.assistant_message,
+        };
+        deliveryTiming = streamed.timing;
+      } else {
+        turn = await send.mutateAsync({ content: submittedContent });
+      }
       const assistant = turn.assistant_message;
       const refusal = Boolean(assistant.insufficient_evidence_reason);
       const hasCitations = Boolean(assistant.citations?.length);
       const expectedMatches =
         !expected.trim() ||
         assistant.content.toLocaleLowerCase().includes(expected.trim().toLocaleLowerCase());
+      const repair = assistant.metadata?.knowledge_repair as Record<string, unknown> | undefined;
+      const inherited = assistant.metadata?.inherited_coverage as
+        Record<string, unknown> | undefined;
+      const partialAnswer =
+        assistant.metadata?.partial_answer ?? repair?.partial_answer ?? inherited?.partial_answer;
+      const usefulPartial =
+        expectedMatches &&
+        !refusal &&
+        assistant.grounded === true &&
+        hasCitations &&
+        Boolean(partialAnswer);
       const passed =
         expectedMatches &&
         !refusal &&
         assistant.grounded === true &&
         hasCitations &&
-        !assistant.metadata?.partial_answer &&
-        !(assistant.metadata?.knowledge_repair as Record<string, unknown> | undefined)
-          ?.partial_answer;
-      const next = { turn, expected, passed, elapsedMs: Math.round(performance.now() - started) };
+        !partialAnswer;
+      const next = {
+        turn,
+        expected,
+        passed,
+        usefulPartial,
+        elapsedMs: Math.round(performance.now() - started),
+        deliveryTiming,
+      };
       setLastRun(next);
       setSelectedAssistantId(turn.assistant_message.id);
       setActiveCitation(0);
@@ -2221,7 +2246,9 @@ function MessagesTab({
         conversationId,
         detail: refusal
           ? `Answer withheld: ${assistant.insufficient_evidence_reason}`
-          : `${assistant.citations?.length ?? 0} citations; ${next.elapsedMs} ms.`,
+          : usefulPartial
+            ? `Useful partial answer (not complete); ${assistant.citations?.length ?? 0} citations; ${next.elapsedMs} ms.`
+            : `${assistant.citations?.length ?? 0} citations; ${next.elapsedMs} ms.`,
         tab: "messages",
       });
     } catch (error) {
@@ -2787,6 +2814,37 @@ const VERIFICATION_REASON_LABELS: Record<string, string> = {
     "This coverage statement is not present in the structured verdict.",
 };
 
+function deliveryTimingLabel(
+  run: MessageRun | null,
+  serverProcessingMs: number | null,
+  isLatestRun: boolean,
+): string {
+  const timing = isLatestRun ? run?.deliveryTiming : undefined;
+  if (timing) {
+    const elapsed = (mark?: number) =>
+      mark == null ? null : Math.round(mark - timing.requestStartedAt);
+    const parts: string[] = [];
+    if (serverProcessingMs != null) {
+      parts.push(`${serverProcessingMs} ms server processing`);
+    }
+    const firstToken = elapsed(timing.firstAnswerTokenAt);
+    if (firstToken != null) parts.push(`${firstToken} ms to first answer token`);
+    const streamCompleted = elapsed(timing.doneReceivedAt ?? timing.streamClosedAt);
+    if (streamCompleted != null) parts.push(`${streamCompleted} ms to stream completion`);
+    if (timing.persistedMessageFetchedAt != null && timing.streamClosedAt != null) {
+      parts.push(
+        `${Math.round(timing.persistedMessageFetchedAt - timing.streamClosedAt)} ms message refresh`,
+      );
+    }
+    return parts.length ? parts.join(" · ") : "Timing unavailable";
+  }
+  if (isLatestRun && run) {
+    return `${run.elapsedMs} ms client round trip${serverProcessingMs == null ? "" : ` · ${serverProcessingMs} ms server processing`}`;
+  }
+  if (serverProcessingMs == null) return "Timing unavailable";
+  return `${serverProcessingMs} ms server processing · client round trip was not persisted`;
+}
+
 export function MessageInspector({
   message,
   run,
@@ -2824,14 +2882,12 @@ export function MessageInspector({
   const lifecycle = message.metadata?.lifecycle as Record<string, unknown> | undefined;
   const serverProcessingMs =
     typeof lifecycle?.processing_ms === "number" ? lifecycle.processing_ms : null;
-  const timingLabel =
-    isLatestRun && run
-      ? `${run.elapsedMs} ms client round trip${serverProcessingMs == null ? "" : ` · ${serverProcessingMs} ms server processing`}`
-      : serverProcessingMs == null
-        ? "Timing unavailable"
-        : `${serverProcessingMs} ms server processing · client round trip was not persisted`;
+  const timingLabel = deliveryTimingLabel(run, serverProcessingMs, isLatestRun);
   const repair = message.metadata?.knowledge_repair as Record<string, unknown> | undefined;
-  const partial = repair?.partial_answer as Record<string, unknown> | undefined;
+  const inherited = message.metadata?.inherited_coverage as Record<string, unknown> | undefined;
+  const partial = (message.metadata?.partial_answer ??
+    repair?.partial_answer ??
+    inherited?.partial_answer) as Record<string, unknown> | undefined;
   const coverage = repair?.coverage as Record<string, unknown> | undefined;
   const requirementProgress = repair?.requirement_progress as Record<string, unknown> | undefined;
   const recoveryAttempts = Array.isArray(requirementProgress?.attempts)
@@ -2839,14 +2895,17 @@ export function MessageInspector({
         (item): item is Record<string, unknown> => typeof item === "object" && item !== null,
       )
     : [];
-  const missing = Array.isArray(coverage?.missing)
-    ? coverage.missing.filter((item): item is string => typeof item === "string")
+  const partialMissing = partial?.pending ?? partial?.exclusions;
+  const missingSource = Array.isArray(coverage?.missing) ? coverage.missing : partialMissing;
+  const missing = Array.isArray(missingSource)
+    ? missingSource.filter((item): item is string => typeof item === "string")
     : [];
   const claims = message.claims ?? [];
   const factualClaims = claims.filter((claim) => claim.claim_kind !== "coverage_scope");
   const coverageClaims = claims.filter((claim) => claim.claim_kind === "coverage_scope");
   const supportedFactual = factualClaims.filter((claim) => claim.verification === "supported");
   const failedClaims = claims.filter((claim) => claim.verification !== "supported");
+  const usefulPartial = Boolean(partial && !refusal && groundingPassed && expectedMatches);
   if (
     message.metadata?.non_knowledge_turn === true &&
     !refusal &&
@@ -2900,11 +2959,13 @@ export function MessageInspector({
           <strong>
             {message.insufficient_evidence_reason
               ? "Task unanswered / insufficient evidence"
-              : message.citations?.length
-                ? groundingPassed
-                  ? "Answer with citations"
-                  : "Cited answer — grounding incomplete"
-                : "Answer is not verifiably grounded"}
+              : usefulPartial
+                ? "Useful partial answer — not a complete-answer pass"
+                : message.citations?.length
+                  ? groundingPassed
+                    ? "Answer with citations"
+                    : "Cited answer — grounding incomplete"
+                  : "Answer is not verifiably grounded"}
           </strong>
           <span>
             {timingLabel}

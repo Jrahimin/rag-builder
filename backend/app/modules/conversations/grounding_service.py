@@ -60,16 +60,17 @@ _SPAN_BOUNDARY_PATTERN = regex.compile(
 )
 _INSUFFICIENCY_MARKER = "not enough indexed evidence"
 _COVERAGE_SCOPE_PATTERN = regex.compile(
-    r"(?:available (?:materials|provisions) do not establish|"
+    r"(?:available (?:materials|provisions) (?:do not|did not) establish|"
     r"not enough indexed evidence|"
-    r"reviewed (?:evidence|materials|sources) do(?:es)? not|"
-    r"this answer does not (?:cover|establish)|"
-    r"selected (?:evidence|passages|materials) do(?:es)? not|"
+    r"reviewed (?:evidence|materials|sources) (?:do(?:es)?|did) not|"
+    r"this answer (?:does|did) not (?:cover|establish)|"
+    r"selected (?:evidence|passages|materials) (?:do(?:es)?|did) not|"
     r"(?:supplied|provided) (?:source(?:s)?|evidence|passages|materials) "
-    r"do(?:es)? not (?:establish|provide|cover)|"
+    r"(?:do(?:es)?|did) not (?:establish|provide|cover)|"
     r"not established from the (?:available|selected|reviewed)|"
     r"outside the (?:reviewed|selected) evidence|"
-    r"available (?:sources|passages|excerpts|citations) do(?:es)? not (?:establish|show|confirm)|"
+    r"available (?:sources|passages|excerpts|citations) "
+    r"(?:do(?:es)?|did) not (?:establish|show|confirm)|"
     r"উপলব্ধ (?:উপাদান|প্রমাণ)[^\n]{0,40}প্রতিষ্ঠিত হ[য়য়] না|"
     r"উপলভ্য (?:উদ্ধৃতি\p{Bengali}*|সূত্র\p{Bengali}*|প্রমাণ\p{Bengali}*)"
     r"[^\n]{0,100}(?:নিশ্চিতভাবে বলা যা(?:য়|য়) না|প্রতিষ্ঠিত হ(?:য়|য়) না)|"
@@ -140,6 +141,35 @@ _CALCULATION_PATTERNS = (
 )
 _CALCULATION_OPERATOR_PATTERN = regex.compile(
     r"[%＝=×]|[x*]\s*\d|\d\s*%",  # noqa: RUF001
+    regex.IGNORECASE,
+)
+_MIXED_LIMITATION_CONNECTOR = regex.compile(
+    r"(?:,|;)\s*(?=so\b|therefore\b|thus\b|consequently\b)|"
+    r"\s+(?=তাই|অতএব|সুতরাং)",
+    regex.IGNORECASE,
+)
+_DUTY_MARKER_PATTERN = regex.compile(
+    r"\b(?:must|shall|required to|does not|cannot|is not|are not)\b|করিতে হইবে",
+    regex.IGNORECASE,
+)
+_NECESSARY_CONDITION_PATTERN = regex.compile(
+    r"\bnot\b.{0,120}\bunless\b|"
+    r"\bonly if\b|"
+    r"\bonly when\b|"
+    r"\bis required (?:in order )?to\b|"
+    r"\brequired for\b.{0,80}\bto be valid\b",
+    regex.IGNORECASE,
+)
+_REQUIRED_FOR_VALIDITY_PATTERN = regex.compile(
+    r"\brequired\b.{0,80}\bvalid\b|"
+    r"\bmust\b.{0,80}\bto be valid\b",
+    regex.IGNORECASE,
+)
+_BARE_SUFFICIENT_CONDITION_PATTERN = regex.compile(
+    r"\b(?:is|are)\s+valid\s+if\b|"
+    r"\bguarantees?\b|"
+    r"\bsuffices?\b|"
+    r"\bis enough to\b",
     regex.IGNORECASE,
 )
 _ENGLISH_STOPWORDS = {
@@ -899,7 +929,7 @@ class GroundingService:
 
         claims: list[AnswerClaim] = []
         for draft in drafts:
-            kind = draft.kind_hint or _claim_kind(draft.assertion, user_input)
+            kind = draft.kind_hint or _claim_kind(draft.assertion, user_input, display=draft.text)
             supporting_spans: dict[uuid.UUID, _SelectedSpan] = {}
             verification_method: str | None = None
             verification_reason: str | None = None
@@ -972,11 +1002,7 @@ class GroundingService:
                     regex.IGNORECASE,
                 ) and (
                     _amount_set(draft.assertion)
-                    - (
-                        _amount_set(full_evidence)
-                        | _spelled_number_values(full_evidence)
-                        | {number for number, _ in _duration_quantities(full_evidence)}
-                    )
+                    - _explained_quantity_values(draft.assertion, full_evidence)
                 ):
                     # A newly calculated quantity is not proven by topic similarity.
                     verification = ClaimVerification.UNVERIFIED
@@ -1028,10 +1054,7 @@ class GroundingService:
                     entailment_guard = _bounded_entailment_guard(
                         draft.assertion, " ".join(scored_texts)
                     )
-                    if (
-                        verification is ClaimVerification.SUPPORTED
-                        and entailment_guard is not None
-                    ):
+                    if verification is ClaimVerification.SUPPORTED and entailment_guard is not None:
                         verification = entailment_guard
                         verification_method = "bounded_entailment"
                         verification_reason = (
@@ -1713,16 +1736,27 @@ def _duration_quantities(text: str) -> set[tuple[int, str]]:
     # Legal prose commonly spells out durations while answers use digits.
     words = _quantity_number_words()
     alternatives = "|".join(regex.escape(word) for word in sorted(words, key=len, reverse=True))
+    unit_tail = (
+        r"(?:(?:business|working|calendar)\s+days?\b|days?\b|weeks?\b|months?\b|years?\b|"
+        r"কর্মদিবস|দিন|সপ্তাহ|মাস|বছর|বৎসর|বত্সর)"
+    )
     text = regex.sub(
-        rf"\b({alternatives})(?=(?:\s+(?:days?\b|weeks?\b|months?\b|years?\b)|\s*(?:দিন|সপ্তাহ|মাস|বছর|বৎসর|বত্সর)))",
+        rf"\b({alternatives})(?=(?:\s+{unit_tail}|\s*(?:কর্মদিবস|দিন|সপ্তাহ|মাস|বছর|বৎসর|বত্সর)))",
         lambda match: str(words[match.group().lower()]),
         text,
         flags=regex.IGNORECASE,
     )
     units = {
+        "business day": "business_day",
+        "business days": "business_day",
+        "working day": "business_day",
+        "working days": "business_day",
+        "calendar day": "day",
+        "calendar days": "day",
         "day": "day",
         "days": "day",
         "দিন": "day",
+        "কর্মদিবস": "business_day",
         "week": "week",
         "weeks": "week",
         "সপ্তাহ": "week",
@@ -1738,7 +1772,7 @@ def _duration_quantities(text: str) -> set[tuple[int, str]]:
     return {
         (int(number), units[unit.lower()])
         for number, unit in regex.findall(
-            r"(?<![\d.,])\b(\d+)\s*(days?\b|weeks?\b|months?\b|years?\b|দিন|সপ্তাহ|মাস|বছর|বৎসর|বত্সর)",
+            rf"(?<![\d.,])\b(\d+)\s*({unit_tail})",
             text,
             regex.IGNORECASE,
         )
@@ -1768,6 +1802,27 @@ def _normalize_page_citations(answer: str, chunks: list[ContextChunk]) -> str:
         return " ".join(f"[{index}]" for index in dict.fromkeys(indexes))
 
     return regex.sub(r"\[([^\[\]\n]+)\]", normalize, answer)
+
+
+def _split_mixed_limitation_assertion(segment: str) -> list[str]:
+    """Split a coverage limitation from a grammatically separate factual conclusion."""
+    plain = _plain_claim_text(segment)
+    if not _COVERAGE_SCOPE_PATTERN.search(plain):
+        return [segment]
+    match = _MIXED_LIMITATION_CONNECTOR.search(segment)
+    if match is None:
+        return [segment]
+    left = segment[: match.start()].strip()
+    right = segment[match.end() :].strip()
+    if not left or not right:
+        return [segment]
+    citations = " ".join(
+        f"[{value}]" for value in dict.fromkeys(_CITATION_PATTERN.findall(segment))
+    )
+    left = _CITATION_PATTERN.sub("", left).strip()
+    if citations and not _CITATION_PATTERN.search(right):
+        right = f"{right} {citations}".strip()
+    return [left, right]
 
 
 def _answer_segments(answer: str) -> list[str]:
@@ -1824,7 +1879,7 @@ def _answer_segments(answer: str) -> list[str]:
                 paragraph_segments[-1] = f"{paragraph_segments[-1]} {leading.group(1).strip()}"
                 segment = leading.group(2).strip()
             if segment and not regex.fullmatch(r"[|\s]+", segment):
-                paragraph_segments.append(segment)
+                paragraph_segments.extend(_split_mixed_limitation_assertion(segment))
         if paragraph_segments:
             final_citations = _CITATION_PATTERN.findall(paragraph_segments[-1])
             if final_citations:
@@ -2057,9 +2112,9 @@ def _is_quantity_setup_segment(text: str) -> bool:
     )
 
 
-def _claim_kind(text: str, user_input: str) -> str:
+def _claim_kind(text: str, user_input: str, *, display: str | None = None) -> str:
     """Inspection categories do not exempt any assertion from source verification."""
-    if _coverage_kind_hint(text, display=text) == "coverage_scope":
+    if _coverage_kind_hint(text, display=display or text) == "coverage_scope":
         return "coverage_scope"
     plain = _plain_claim_text(text).casefold()
     if _CALCULATION_OPERATOR_PATTERN.search(plain):
@@ -2299,11 +2354,8 @@ def _coverage_kind_hint(text: str, *, display: str | None = None) -> str | None:
         return None
     if _COVERAGE_SCOPE_PATTERN.search(shown) or _WHOLE_CORPUS_ABSENCE_PATTERN.search(shown):
         return "coverage_scope"
-    if regex.search(
-        r"\b(?:must|shall|required to|does not|cannot|is not|are not)\b|করিতে হইবে",
-        shown,
-        regex.IGNORECASE,
-    ):
+    if _DUTY_MARKER_PATTERN.search(shown):
+        # A scope heading or inherited preamble cannot exempt a statutory duty.
         return None
     return "coverage_scope"
 
@@ -2372,6 +2424,18 @@ def _normalize_coverage(coverage: dict[str, Any] | None) -> dict[str, Any]:
             ),
             "full_coverage_validated": nested.get("full_coverage_validated"),
             "partial_scope_validated": nested.get("partial_scope_validated"),
+        }
+    inherited_partial = coverage.get("coverage_partial") is True or nested == "partial"
+    if inherited_partial or isinstance(partial, dict):
+        pending = []
+        if isinstance(partial, dict):
+            pending = list(partial.get("pending") or partial.get("exclusions") or [])
+        return {
+            "missing": pending,
+            "missing_inputs": list(coverage.get("missing_inputs") or []),
+            "partial_answer": partial if isinstance(partial, dict) else None,
+            "full_coverage_validated": False,
+            "partial_scope_validated": True,
         }
     return coverage
 
@@ -2454,9 +2518,7 @@ def _coverage_facets(text: str) -> set[str]:
         "penalty": ("penalty", "sanction", "fine", "জরিমানা", "দণ্ড"),
         "applicability": ("applicability", "applies to", "scope", "প্রযোজ্য", "প্রযোজ্যতা"),
     }
-    return {
-        facet for facet, values in aliases.items() if any(value in folded for value in values)
-    }
+    return {facet for facet, values in aliases.items() if any(value in folded for value in values)}
 
 
 def _is_markdown_table_row(text: str) -> bool:
@@ -2666,6 +2728,112 @@ def _durations_equivalent(left: tuple[int, str], right: tuple[int, str]) -> bool
     return False
 
 
+def _explained_quantity_values(claim: str, evidence: str) -> set[float]:
+    """Numbers in the claim that evidence already accounts for, including equivalent durations."""
+    values = set(_amount_set(evidence))
+    values.update(float(value) for value in _spelled_number_values(evidence))
+    evidence_durations = _duration_quantities(evidence)
+    values.update(float(number) for number, _ in evidence_durations)
+    for duration in _duration_quantities(claim):
+        if any(_durations_equivalent(duration, other) for other in evidence_durations):
+            values.add(float(duration[0]))
+    return values
+
+
+def _is_necessary_condition(text: str) -> bool:
+    return bool(_NECESSARY_CONDITION_PATTERN.search(text))
+
+
+def _is_required_for_validity(text: str) -> bool:
+    if _is_bare_sufficient_condition(text):
+        return False
+    return bool(_REQUIRED_FOR_VALIDITY_PATTERN.search(text))
+
+
+_CLAUSE_NEGATION = regex.compile(
+    r"\b(?:no|not|never|cannot|can't|doesn't|does not|isn't|is not|without)\b|"
+    r"(?<![\p{L}\p{M}])(?:না|নয়|নয়|নাই|ব্যতীত)(?![\p{L}\p{M}])",
+    regex.IGNORECASE,
+)
+
+
+def _negated_term_anchors(text: str) -> frozenset[str]:
+    """Return the first meaningful term governed by each explicit negation."""
+    anchors: set[str] = set()
+    for match in _CLAUSE_NEGATION.finditer(text):
+        tail = text[match.end() :]
+        tokens = regex.findall(r"[\p{L}\p{M}\p{N}]+", tail)
+        for token in tokens:
+            folded = token.casefold()
+            if folded not in {"a", "an", "the", "is", "are", "be", "being", "to"}:
+                anchors.add(folded)
+                break
+    return frozenset(anchors)
+
+
+def _necessary_condition_polarity(
+    text: str,
+) -> tuple[bool, bool, frozenset[str]] | None:
+    """Return bounded proposition, necessity, and condition negation structure.
+
+    ``not P unless Q`` and ``P only if Q`` both encode positive ``P`` with
+    necessary condition ``Q``.  Keeping the two clause polarities separate stops
+    a negation moved from the proposition to the condition from looking aligned.
+    """
+    unless = regex.search(r"(?P<main>.+?)\bunless\b(?P<condition>.+)", text, regex.IGNORECASE)
+    if unless is not None and _CLAUSE_NEGATION.search(unless.group("main")):
+        # Remove the conventional negation in "not P unless Q". Any remaining
+        # explicit negation still changes the main proposition's polarity.
+        logical_main = _CLAUSE_NEGATION.sub(" ", unless.group("main"), count=1)
+        return (
+            bool(_CLAUSE_NEGATION.search(logical_main)),
+            False,
+            _negated_term_anchors(unless.group("condition")),
+        )
+
+    only = regex.search(
+        r"(?P<main>.+?)\bonly\s+(?:if|when)\b(?P<condition>.+)",
+        text,
+        regex.IGNORECASE,
+    )
+    if only is not None:
+        return (
+            bool(_CLAUSE_NEGATION.search(only.group("main"))),
+            False,
+            _negated_term_anchors(only.group("condition")),
+        )
+
+    required = regex.search(
+        r"(?P<condition>.+?)\b(?P<operator>is\s+not\s+required|is\s+required|"
+        r"required|must\s+not|must)\b.{0,20}?\b(?:for|in order for)\b"
+        r"(?P<main>.+?)\bto be valid\b",
+        text,
+        regex.IGNORECASE,
+    )
+    if required is not None:
+        return (
+            bool(_CLAUSE_NEGATION.search(required.group("main"))),
+            bool(_CLAUSE_NEGATION.search(required.group("operator"))),
+            _negated_term_anchors(required.group("condition")),
+        )
+    return None
+
+
+def _suppress_negation_mismatch(claim: str, evidence: str) -> bool:
+    """Keep aligned only-if/unless paraphrases; still reject polarity reversals."""
+    claim_polarity = _necessary_condition_polarity(claim)
+    evidence_polarity = _necessary_condition_polarity(evidence)
+    if claim_polarity is not None and evidence_polarity is not None:
+        return claim_polarity == evidence_polarity
+    return False
+
+
+def _is_bare_sufficient_condition(text: str) -> bool:
+    if _is_necessary_condition(text):
+        return False
+    return bool(_BARE_SUFFICIENT_CONDITION_PATTERN.search(text))
+
+
 def _bounded_entailment_guard(claim: str, evidence: str) -> ClaimVerification | None:
     """Reject a few high-risk contradictions that semantic similarity cannot resolve."""
     claim_plain = _plain_claim_text(claim).casefold()
@@ -2673,12 +2841,31 @@ def _bounded_entailment_guard(claim: str, evidence: str) -> ClaimVerification | 
     if not evidence_plain:
         # Similarity located a topic but could not align a clause safely.
         return None
+    if (
+        not _is_necessary_condition(claim_plain)
+        and _is_necessary_condition(evidence_plain)
+        and regex.search(r"\b(?:without|always)\b", claim_plain, regex.IGNORECASE)
+    ):
+        return ClaimVerification.UNSUPPORTED
+    claim_condition = _necessary_condition_polarity(claim_plain)
+    evidence_condition = _necessary_condition_polarity(evidence_plain)
+    if _is_necessary_condition(claim_plain) and _is_necessary_condition(evidence_plain):
+        if claim_condition is None or evidence_condition is None:
+            # The bounded grammar cannot safely compare the proposition and its
+            # condition. Lexical similarity must not decide this construction.
+            return ClaimVerification.UNVERIFIED
+        if claim_condition != evidence_condition:
+            return ClaimVerification.UNSUPPORTED
+    if _is_bare_sufficient_condition(claim_plain) and _is_necessary_condition(evidence_plain):
+        # "A is not valid unless B" does not establish that B alone guarantees A.
+        return ClaimVerification.UNVERIFIED
     negative = regex.compile(
-        r"\b(?:no|not|never|cannot|can't|doesn't|does not|isn't|is not|exempt)\b|"
-        r"(?<![\p{L}\p{M}])(?:না|নয়|নয়|নাই|ব্যতীত)(?![\p{L}\p{M}])",
+        rf"{_CLAUSE_NEGATION.pattern}|\bexempt\b",
         regex.IGNORECASE,
     )
-    if bool(negative.search(claim_plain)) != bool(negative.search(evidence_plain)):
+    if not _suppress_negation_mismatch(claim_plain, evidence_plain) and bool(
+        negative.search(claim_plain)
+    ) != bool(negative.search(evidence_plain)):
         return ClaimVerification.UNSUPPORTED
     comparison = regex.compile(
         r"\b(?:more than|less than|at least|at most|exceed(?:s|ing)?|under|over)\b|"
@@ -2686,12 +2873,32 @@ def _bounded_entailment_guard(claim: str, evidence: str) -> ClaimVerification | 
         regex.IGNORECASE,
     )
     if comparison.search(claim_plain) and comparison.search(evidence_plain):
+        claim_durations = _duration_quantities(claim_plain)
+        evidence_durations = _duration_quantities(evidence_plain)
         claim_values = _digit_tokens(claim_plain) | {
             str(value) for value in _spelled_number_values(claim_plain)
         }
         evidence_values = _digit_tokens(evidence_plain) | {
             str(value) for value in _spelled_number_values(evidence_plain)
         }
+        if claim_durations and evidence_durations:
+            matched_claim: set[str] = set()
+            matched_evidence: set[str] = set()
+            for duration in claim_durations:
+                match = next(
+                    (
+                        other
+                        for other in evidence_durations
+                        if _durations_equivalent(duration, other)
+                    ),
+                    None,
+                )
+                if match is None:
+                    return ClaimVerification.UNSUPPORTED
+                matched_claim.add(str(duration[0]))
+                matched_evidence.add(str(match[0]))
+            claim_values -= matched_claim
+            evidence_values -= matched_evidence
         if claim_values and evidence_values and claim_values.isdisjoint(evidence_values):
             return ClaimVerification.UNSUPPORTED
     return None
@@ -2713,9 +2920,7 @@ def _aligned_entailment_clause(claim: str, evidence: str) -> str:
     if len(clauses) <= 1:
         return clauses[0] if clauses else evidence.strip()
     claim_tokens = _significant_tokens(claim)
-    ranked = [
-        (_coverage(claim_tokens, _significant_tokens(clause)), clause) for clause in clauses
-    ]
+    ranked = [(_coverage(claim_tokens, _significant_tokens(clause)), clause) for clause in clauses]
     score, clause = max(ranked, key=lambda item: item[0])
     return clause if score >= 0.2 else ""
 

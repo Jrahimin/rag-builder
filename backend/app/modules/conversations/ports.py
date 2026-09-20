@@ -191,3 +191,19 @@ class RetrievalPort(Protocol):
         adjacent_to: list[uuid.UUID] | None = None,
         cited_chunk_ids: list[uuid.UUID] | None = None,
     ) -> ContextRetrievalResult: ...
+
+
+class ExactRecallRetrievalPort(Protocol):
+    """Optional exact-identity recall. Retrieve-only adapters remain valid."""
+
+    supports_exact_recall: bool
+
+    async def retrieve_exact(
+        self,
+        *,
+        chunk_ids: list[uuid.UUID],
+        query: str = "",
+        document_id: uuid.UUID | None = None,
+        metadata_filter: dict[str, str] | None = None,
+        as_of: datetime | None = None,
+    ) -> ContextRetrievalResult: ...

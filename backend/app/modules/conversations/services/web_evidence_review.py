@@ -98,6 +98,7 @@ async def review_web_evidence(
                 ],
                 schema=_WebReview,
                 max_tokens=3072,
+                call_purpose="web_evidence_review",
             )
             usage = result.usage or usage
             if result.finish_reason not in {None, "stop", "completed", "end_turn"}:

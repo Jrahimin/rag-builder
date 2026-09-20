@@ -640,3 +640,40 @@ async def test_observe_uses_ranked_candidates_when_nothing_is_admitted() -> None
     assert [item.chunk_id for item in selected] == [chunk.chunk_id]
     assert GroundingService(config).blocks_generation(evidence) is False
     assert evidence.winning_chunk_id == chunk.chunk_id
+
+
+def test_stage3_does_not_change_strict_or_balanced_admission() -> None:
+    chunks = [
+        _candidate(_STRICT_EVIDENCE, semantic_score=0.41),
+        _candidate(_NEAR_MISS_EVIDENCE),
+        _candidate(_UNRELATED_EVIDENCE, reranker_score=0.92, semantic_score=0.10),
+    ]
+    strict = _service(grounding_mode=GroundingMode.STRICT).assess(
+        _NEAR_MISS_QUERY,
+        chunks,
+        rerank_status="applied",
+    )
+    balanced = _service(grounding_mode=GroundingMode.BALANCED).assess(
+        _NEAR_MISS_QUERY,
+        chunks,
+        rerank_status="applied",
+    )
+    strict_ids = {unit.chunk_id for unit in strict.admitted_units}
+    assert strict_ids == {chunks[0].chunk_id}
+    assert {unit.chunk_id for unit in balanced.admitted_units} == strict_ids
+    assert strict.sufficient is True
+    assert balanced.sufficient is True
+
+
+async def test_final_claim_verification_still_runs_after_strict_admission() -> None:
+    chunk = _candidate(_STRICT_EVIDENCE, semantic_score=0.41)
+    service = _service(grounding_mode=GroundingMode.STRICT)
+    decision = service.assess(_NEAR_MISS_QUERY, [chunk], rerank_status="applied")
+    assert decision.sufficient is True
+    result = await service.map_claims(
+        "The historical rebate available to individuals was fifteen percent. [1]",
+        [chunk],
+    )
+    assert result.claims
+    assert result.claims[0]["verification"] in {"supported", "unverified", "unsupported"}
+    assert result.claims[0]["verification"] == "supported"

@@ -12,7 +12,7 @@ from app.modules.knowledge.source_metadata_read import _canonical_source_scope
 from tests.integration.test_phase3_source_retrieval import (
     _COOKIES,
     _CSRF,
-    _project,
+    _project_id,
     _revision,
     _upload,
 )
@@ -23,7 +23,7 @@ pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 async def test_replaces_beats_old_active_content_and_survives_metadata_correction(
     db_client: AsyncClient, integration_connection: AsyncConnection
 ):
-    project = await _project(db_client)
+    project = await _project_id(db_client)
     old = await _upload(db_client, project, "edition-old.txt", "old rule")
     new = await _upload(db_client, project, "edition-new.txt", "new rule")
     previous = await _revision(db_client, project, old, {"effective_from": "2020-01-01"})
@@ -84,7 +84,7 @@ async def test_replaces_beats_old_active_content_and_survives_metadata_correctio
 
 
 async def test_multi_target_amendment_edit_replacement_and_cycle_rejection(db_client: AsyncClient):
-    project = await _project(db_client)
+    project = await _project_id(db_client)
     a = await _upload(db_client, project, "act-bn.txt", "Bangla base")
     b = await _upload(db_client, project, "act-en.txt", "English base")
     finance = await _upload(db_client, project, "finance.txt", "Amendment")
@@ -213,7 +213,7 @@ async def test_multi_target_amendment_edit_replacement_and_cycle_rejection(db_cl
 async def test_relationship_targets_reject_self_history_cross_project_and_duplicate_history(
     db_client: AsyncClient,
 ):
-    project = await _project(db_client)
+    project = await _project_id(db_client)
     a = await _upload(db_client, project, "base.txt", "base")
     b = await _upload(db_client, project, "amend.txt", "amendment")
     state = (await db_client.get(f"/api/v1/projects/{project}/sources")).json()["data"]
@@ -250,7 +250,7 @@ async def test_relationship_targets_reject_self_history_cross_project_and_duplic
         )
         assert response.status_code == 400, response.text
         assert response.json()["error"]["code"] == code
-    other_project = await _project(db_client)
+    other_project = await _project_id(db_client)
     other = await _upload(db_client, other_project, "other.txt", "other")
     response = await db_client.post(
         f"/api/v1/projects/{other_project}/sources/documents/{other}/revisions",
@@ -268,7 +268,7 @@ async def test_relationship_targets_reject_self_history_cross_project_and_duplic
 async def test_deleted_targets_are_hidden_from_current_choices_but_remain_in_history(
     db_client: AsyncClient, integration_connection: AsyncConnection
 ):
-    project = await _project(db_client)
+    project = await _project_id(db_client)
     base = await _upload(db_client, project, "base.txt", "base")
     amendment = await _upload(db_client, project, "amendment.txt", "amendment")
     url = f"/api/v1/projects/{project}/sources"
