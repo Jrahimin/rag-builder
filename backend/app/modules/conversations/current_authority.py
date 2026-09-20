@@ -385,13 +385,32 @@ def _explicitly_disjoint_provisions(content: str, scopes: object) -> bool:
         number = "".join(str(int(c)) if c.isdecimal() else c.casefold() for c in number)
         return kind, number
 
-    lines = content.strip().splitlines()
-    if not lines or not _PROVISION_HEADING.fullmatch(lines[0].strip()):
-        return False
-    if any(regex.match(r"^\s*\p{Number}+[.)]\s", line) for line in lines[1:]):
+    non_empty = [line.strip() for line in content.strip().splitlines() if line.strip()]
+    if not non_empty:
         return False
     targets = [key(scope) if isinstance(scope, str) else None for scope in scopes]
     if None in targets:
         return False
-    headings = [key(line) for line in lines if _PROVISION_HEADING.fullmatch(line.strip())]
+    headings = [key(line) for line in non_empty if _PROVISION_HEADING.fullmatch(line)]
+    if not headings:
+        return False
+    first_provision_idx = next(
+        i for i, line in enumerate(non_empty) if _PROVISION_HEADING.fullmatch(line)
+    )
+    # Preceding lines before the first provision heading must not be numbered subsections
+    if any(regex.match(r"^\s*\p{Number}+[.)]\s", line) for line in non_empty[:first_provision_idx]):
+        return False
+    # If the first provision heading is not the first non-empty line, only allow it if
+    # leading lines are higher-level structural headers or titles (e.g. Chapter, Act title).
+    if first_provision_idx > 0:
+        for line in non_empty[:first_provision_idx]:
+            if not regex.match(
+                r"^(?:#{1,6}\s+|(?:chapter|part|act|title|অধ্যায়|ভাগ|আইন)\b|"
+                r"[A-Za-z\s]+(?:act|code|law|ordinance|statute|regulation)\b)",
+                line,
+                regex.IGNORECASE,
+            ):
+                return False
+    # Substantive lines inside the provision may contain numbered lists, which should
+    # not invalidate disjointness.
     return bool(headings) and None not in headings and set(headings).isdisjoint(targets)

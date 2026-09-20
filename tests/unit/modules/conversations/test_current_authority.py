@@ -22,6 +22,11 @@ pytestmark = pytest.mark.unit
     "content,unresolved",
     [
         ("Section 78 — Rebate\nCurrent rebate rule.", False),
+        (
+            "Income Tax Act 2023\n\nChapter 3 — Rebates\n\n"
+            "Section 78 — Rebate\nCurrent rebate rule.",
+            False,
+        ),
         ("Section 106 — Administration\nAdministrative rule.", True),
         ("Section 106(1) — Administration\nAdministrative rule.", True),
         ("Continuation without a heading.", True),

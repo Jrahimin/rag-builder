@@ -24,6 +24,9 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession, create_async_engine
 
 os.environ["APE_APP__ENV"] = "testing"
+os.environ["APE_RUNTIME__CAPABILITY_PROFILE_ID"] = "development"
+os.environ.setdefault("APE_DATABASE__USER", "postgres")
+os.environ.setdefault("APE_DATABASE__PASSWORD", "password")
 os.environ.setdefault("APE_DATABASE__NAME", "ape_test")
 os.environ.setdefault("APE_TEST_DATABASE__NAME", "ape_test")
 os.environ.setdefault("APE_TEST_DATABASE__ALLOW_MIGRATIONS", "true")
