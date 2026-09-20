@@ -35,7 +35,10 @@ class KnowledgeRetrievalSourceMetadataAdapter:
     ) -> SourceMetadataScope:
         cap = SourcePolicyDeploymentCap(deployment_cap)
         effective_mode = cap_source_policy_mode(configured_mode, cap)
-        enforce_join = effective_mode is SourcePolicyMode.ENFORCE and scoped_document_id is None
+        # A document filter narrows where we search; it does not make an otherwise
+        # draft, expired, future, retired, or replaced source applicable.  Keep the
+        # same policy join for scoped and unscoped retrieval (including exact recall).
+        enforce_join = effective_mode is SourcePolicyMode.ENFORCE
         captured = await self._reader.capture(
             project_id=project_id,
             generation=generation,

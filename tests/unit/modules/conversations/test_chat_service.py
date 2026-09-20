@@ -3536,6 +3536,47 @@ async def test_applicability_update_does_not_use_deterministic_exact_reuse(
     assert retrieval.retrieve_calls
 
 
+@pytest.mark.parametrize(
+    ("question", "relation"),
+    [
+        ("Summarize penalties", "topic_change"),
+        ("Rewrite it for minors", "follow_up"),
+        ("Summarize it for partnerships", "follow_up"),
+    ],
+)
+async def test_short_fact_or_population_change_uses_resolver_and_ranked_retrieval(
+    session,
+    conversation_repository,
+    message_repository,
+    conversation,
+    question: str,
+    relation: str,
+):
+    cited_chunk = _reusable_chunk()
+    prior_user, prior_assistant = _history_messages(
+        conversation,
+        user_content="What is the refund period?",
+        assistant_content="A request may be made within 30 days. [1]",
+    )
+    prior_assistant.citations = [_reusable_citation(cited_chunk)]
+    message_repository.list_recent_for_conversation.return_value = [prior_user, prior_assistant]
+    retrieval = ExactRecallRetrieval(cited_chunk)
+    llm = ScriptedResolutionLLM(
+        _resolved_payload(relation=relation, effective_question=question),
+        answer="The selected evidence supports this answer. [1]",
+    )
+    service = _service(session, conversation_repository, message_repository, llm)
+    service._retrieval = retrieval
+
+    await service.send_message(conversation.id, MessageSendRequest(content=question))
+
+    assert llm.resolver_calls == 1
+    assert not retrieval.exact_calls
+    assert len(retrieval.retrieve_calls) == 1
+    assert retrieval.retrieve_calls[0]["query"] == question
+    assert "cited_chunk_ids" not in retrieval.retrieve_calls[0]
+
+
 async def test_ordinary_followup_does_not_seed_cited_retrieval(
     session,
     conversation_repository,
@@ -4371,6 +4412,28 @@ def test_preparation_progress_uses_active_phases_not_llm_counts():
         )
 
 
+async def test_stream_wrapper_awaits_nested_delivery_cleanup_in_owner_task():
+    from app.platform.providers.request_work import RequestWork, current_request_work
+
+    service = object.__new__(ChatService)
+    service._work = RequestWork(uuid.uuid4())
+    cleanup: list[tuple[object, object]] = []
+
+    async def delivery(*_args, **_kwargs):
+        try:
+            yield "token"
+        finally:
+            cleanup.append((asyncio.current_task(), current_request_work()))
+
+    service._deliver_stream_message = delivery
+    stream = service.stream_message(uuid.uuid4(), None)
+    assert await anext(stream) == "token"
+    owner = asyncio.current_task()
+    await stream.aclose()
+
+    assert cleanup == [(owner, service._work)]
+
+
 @pytest.mark.parametrize(
     ("question", "calculation"),
     [
@@ -4516,6 +4579,9 @@ async def test_rewrite_carries_validated_partial_scope_into_generation_and_polic
     assert turn.assistant_message.metadata["inherited_coverage"][
         "coverage_origin_message_id"
     ] == str(prior_assistant.id)
+    assert turn.assistant_message.metadata["turn_resolution"]["retained_factual_question"] == (
+        "What AGM and filing rules apply?"
+    )
     prompt = "\n".join(message.content for message in llm.generation_prompts[0])
     assert "filing deadline" in prompt
     assert "company type" in prompt
@@ -4544,6 +4610,147 @@ async def test_rewrite_carries_validated_partial_scope_into_generation_and_polic
     assert (
         second.assistant_message.metadata["response_policy"]["answerable_scope"]["partial"] is True
     )
+    assert second.assistant_message.metadata["turn_resolution"]["retained_factual_question"] == (
+        "What AGM and filing rules apply?"
+    )
+
+
+async def test_invalidated_rewrite_revalidates_and_preserves_partial_scope(
+    session,
+    conversation_repository,
+    message_repository,
+    conversation,
+):
+    cited_chunk = _reusable_chunk("Private companies must hold an AGM.")
+    prior_user, prior_assistant = _history_messages(
+        conversation,
+        user_content="What AGM and filing rules apply?",
+        assistant_content="Private companies must hold an AGM. [1]",
+    )
+    prior_assistant.citations = [_reusable_citation(cited_chunk)]
+    prior_assistant.message_metadata = {
+        "knowledge_repair": {
+            "status": "partial_answer",
+            "partial_answer": {
+                "scope": "AGM duty",
+                "requirement_ids": ["R1"],
+                "exclusions": ["filing deadline"],
+            },
+            "missing_inputs": ["company type"],
+            "coverage": {"quotes_validated": True, "partial_scope_validated": True},
+        },
+        "evidence_summary": {"coverage": "partial"},
+    }
+    message_repository.list_recent_for_conversation.return_value = [prior_user, prior_assistant]
+
+    class RepairableRecall(ExactRecallRetrieval):
+        async def retrieve(self, **kwargs: object) -> ContextRetrievalResult:
+            result = await super().retrieve(**kwargs)
+            return ContextRetrievalResult(
+                chunks=result.chunks,
+                diagnostics={
+                    **self._identity_diagnostics(kwargs, len(result.chunks)),
+                    "index_build_id": cited_chunk.metadata["index_build_id"],
+                    "source_metadata_generation": cited_chunk.metadata[
+                        "source_metadata_generation"
+                    ],
+                },
+            )
+
+    class ScopeReviewLLM(ScriptedResolutionLLM):
+        review_stage = 0
+        review_payload: dict[str, object] | None = None
+
+        async def generate(self, messages, *, temperature, max_tokens):
+            if self.review_stage == 0:
+                self.review_stage = 1
+                self.generate_calls += 1
+                self.review_payload = json.loads(messages[-1].content)
+                plan = {
+                    "queries": [{"query": "filing deadline", "requirement_ids": ["R2"]}],
+                    "requirements": [
+                        {"requirement_id": "R1", "description": "AGM duty"},
+                        {"requirement_id": "R2", "description": "filing deadline"},
+                    ],
+                    "coverage": {
+                        "complete": False,
+                        "missing": ["filing deadline"],
+                        "checks": [
+                            {
+                                "requirement_id": "R1",
+                                "description": "AGM duty",
+                                "supported": True,
+                                "evidence": [{"chunk_id": "E1", "quote": cited_chunk.content}],
+                            },
+                            {
+                                "requirement_id": "R2",
+                                "description": "filing deadline",
+                                "supported": False,
+                                "evidence": [],
+                            },
+                        ],
+                        "partial_answer": {
+                            "scope": "AGM duty",
+                            "requirement_ids": ["R1"],
+                            "exclusions": ["filing deadline"],
+                        },
+                    },
+                }
+                return ChatCompletionResult(
+                    content=json.dumps(plan),
+                    provider="echo",
+                    model="test",
+                    finish_reason="stop",
+                    usage=ChatUsage(3, 5),
+                    provider_version="1",
+                )
+            if self.review_stage == 1:
+                self.review_stage = 2
+                self.generate_calls += 1
+                delta = {
+                    "complete": False,
+                    "missing": ["filing deadline"],
+                    "checks": [
+                        {
+                            "requirement_id": "R2",
+                            "description": "filing deadline",
+                            "supported": False,
+                            "evidence": [],
+                        }
+                    ],
+                    "partial_answer": {
+                        "scope": "AGM duty",
+                        "requirement_ids": ["R1"],
+                        "exclusions": ["filing deadline"],
+                    },
+                }
+                return ChatCompletionResult(
+                    content=json.dumps(delta),
+                    provider="echo",
+                    model="test",
+                    finish_reason="stop",
+                    usage=ChatUsage(3, 5),
+                    provider_version="1",
+                )
+            return await super().generate(messages, temperature=temperature, max_tokens=max_tokens)
+
+    retrieval = RepairableRecall(cited_chunk, configuration_hash="z" * 64)
+    llm = ScopeReviewLLM({}, answer="Private companies must hold an AGM. [1]")
+    service = _service(session, conversation_repository, message_repository, llm)
+    service._retrieval = retrieval
+
+    turn = await service.send_message(
+        conversation.id, MessageSendRequest(content="Make it shorter.")
+    )
+
+    metadata = turn.assistant_message.metadata
+    assert metadata["presentation_reuse"]["status"] == "fallback"
+    assert metadata["presentation_reuse"]["new_coverage_review"] is True
+    assert llm.review_payload is not None
+    assert "prior_validated_scope_constraints" in llm.review_payload
+    assert metadata["response_policy"]["answerable_scope"]["partial"] is True
+    assert "filing deadline" in metadata["response_policy"]["answerable_scope"]["unresolved_facets"]
+    assert "company type" in metadata["response_policy"]["answerable_scope"]["missing_inputs"]
 
 
 async def test_search_adapter_exact_recall_rejects_changed_modifier_scope(

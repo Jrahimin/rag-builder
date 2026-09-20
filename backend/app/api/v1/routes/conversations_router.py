@@ -5,8 +5,9 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
-from collections.abc import AsyncIterator
-from contextlib import suppress
+from collections.abc import AsyncGenerator, AsyncIterator
+from contextlib import aclosing, suppress
+from typing import cast
 
 import structlog
 from fastapi import APIRouter, Depends, Query, Request, status
@@ -34,39 +35,62 @@ router = APIRouter()
 logger = structlog.get_logger(__name__)
 
 
-async def _next_sse_event(events: AsyncIterator[str]) -> str:
-    """Wrap ``anext`` so ``asyncio.create_task`` receives a coroutine, not an awaitable."""
-    return await anext(events)
+_SSE_STREAM_END = object()
+
+
+async def _produce_sse_events(
+    events: AsyncIterator[str], queue: asyncio.Queue[str | object]
+) -> None:
+    """Advance and close one upstream stream in one task for its whole lifecycle."""
+    try:
+        async for event in events:
+            await queue.put(event)
+    finally:
+        try:
+            close = getattr(events, "aclose", None)
+            if close is not None:
+                with suppress(asyncio.CancelledError):
+                    await close()
+        finally:
+            await queue.put(_SSE_STREAM_END)
 
 
 async def _with_sse_heartbeats(
     events: AsyncIterator[str], *, interval: float = 15.0
 ) -> AsyncIterator[str]:
     """Keep proxies reading while the next event waits on retrieval or a provider."""
-    pending: asyncio.Task[str] | None = None
+    queue: asyncio.Queue[str | object] = asyncio.Queue(maxsize=1)
+    producer = asyncio.create_task(_produce_sse_events(events, queue))
+    pending: asyncio.Task[str | object] | None = None
     try:
         yield ": connected\n\n"
         while True:
             if pending is None:
-                pending = asyncio.create_task(_next_sse_event(events))
+                pending = asyncio.create_task(queue.get())
             done, _ = await asyncio.wait({pending}, timeout=interval)
             if not done:
                 yield ": keep-alive\n\n"
                 continue
-            try:
-                event = pending.result()
-            except StopAsyncIteration:
-                return
+            event = pending.result()
             pending = None
+            if event is _SSE_STREAM_END:
+                await producer
+                return
+            if not isinstance(event, str):
+                raise TypeError("SSE producer emitted a non-string event")
             yield event
     finally:
         if pending is not None:
             pending.cancel()
             await asyncio.gather(pending, return_exceptions=True)
-        close = getattr(events, "aclose", None)
-        if close is not None:
-            with suppress(asyncio.CancelledError):
-                await close()
+        # Free a producer blocked on the bounded queue before cancellation. The
+        # producer remains the sole owner of upstream advancement and closure.
+        while not queue.empty():
+            with suppress(asyncio.QueueEmpty):
+                queue.get_nowait()
+        if not producer.done():
+            producer.cancel()
+        await asyncio.gather(producer, return_exceptions=True)
 
 
 def _message_response(message: object, conversation: object) -> MessageResponse:
@@ -271,18 +295,24 @@ async def stream_message(
 
     async def event_generator() -> AsyncIterator[str]:
         try:
-            async for item in service.stream_message(
-                conversation_id,
-                body,
-                should_cancel=request.is_disconnected,
-            ):
-                if await request.is_disconnected():
-                    break
-                if isinstance(item, str):
-                    payload = json.dumps({"event": "token", "delta": item})
-                else:
-                    payload = json.dumps(item)
-                yield f"data: {payload}\n\n"
+            async with aclosing(
+                cast(
+                    AsyncGenerator[str | dict[str, object], None],
+                    service.stream_message(
+                        conversation_id,
+                        body,
+                        should_cancel=request.is_disconnected,
+                    ),
+                )
+            ) as service_stream:
+                async for item in service_stream:
+                    if await request.is_disconnected():
+                        break
+                    if isinstance(item, str):
+                        payload = json.dumps({"event": "token", "delta": item})
+                    else:
+                        payload = json.dumps(item)
+                    yield f"data: {payload}\n\n"
         except asyncio.CancelledError:
             raise
         except Exception as exc:

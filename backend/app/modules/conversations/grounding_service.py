@@ -2750,13 +2750,82 @@ def _is_required_for_validity(text: str) -> bool:
     return bool(_REQUIRED_FOR_VALIDITY_PATTERN.search(text))
 
 
+_CLAUSE_NEGATION = regex.compile(
+    r"\b(?:no|not|never|cannot|can't|doesn't|does not|isn't|is not|without)\b|"
+    r"(?<![\p{L}\p{M}])(?:না|নয়|নয়|নাই|ব্যতীত)(?![\p{L}\p{M}])",
+    regex.IGNORECASE,
+)
+
+
+def _negated_term_anchors(text: str) -> frozenset[str]:
+    """Return the first meaningful term governed by each explicit negation."""
+    anchors: set[str] = set()
+    for match in _CLAUSE_NEGATION.finditer(text):
+        tail = text[match.end() :]
+        tokens = regex.findall(r"[\p{L}\p{M}\p{N}]+", tail)
+        for token in tokens:
+            folded = token.casefold()
+            if folded not in {"a", "an", "the", "is", "are", "be", "being", "to"}:
+                anchors.add(folded)
+                break
+    return frozenset(anchors)
+
+
+def _necessary_condition_polarity(
+    text: str,
+) -> tuple[bool, bool, frozenset[str]] | None:
+    """Return bounded proposition, necessity, and condition negation structure.
+
+    ``not P unless Q`` and ``P only if Q`` both encode positive ``P`` with
+    necessary condition ``Q``.  Keeping the two clause polarities separate stops
+    a negation moved from the proposition to the condition from looking aligned.
+    """
+    unless = regex.search(r"(?P<main>.+?)\bunless\b(?P<condition>.+)", text, regex.IGNORECASE)
+    if unless is not None and _CLAUSE_NEGATION.search(unless.group("main")):
+        # Remove the conventional negation in "not P unless Q". Any remaining
+        # explicit negation still changes the main proposition's polarity.
+        logical_main = _CLAUSE_NEGATION.sub(" ", unless.group("main"), count=1)
+        return (
+            bool(_CLAUSE_NEGATION.search(logical_main)),
+            False,
+            _negated_term_anchors(unless.group("condition")),
+        )
+
+    only = regex.search(
+        r"(?P<main>.+?)\bonly\s+(?:if|when)\b(?P<condition>.+)",
+        text,
+        regex.IGNORECASE,
+    )
+    if only is not None:
+        return (
+            bool(_CLAUSE_NEGATION.search(only.group("main"))),
+            False,
+            _negated_term_anchors(only.group("condition")),
+        )
+
+    required = regex.search(
+        r"(?P<condition>.+?)\b(?P<operator>is\s+not\s+required|is\s+required|"
+        r"required|must\s+not|must)\b.{0,20}?\b(?:for|in order for)\b"
+        r"(?P<main>.+?)\bto be valid\b",
+        text,
+        regex.IGNORECASE,
+    )
+    if required is not None:
+        return (
+            bool(_CLAUSE_NEGATION.search(required.group("main"))),
+            bool(_CLAUSE_NEGATION.search(required.group("operator"))),
+            _negated_term_anchors(required.group("condition")),
+        )
+    return None
+
+
 def _suppress_negation_mismatch(claim: str, evidence: str) -> bool:
     """Keep aligned only-if/unless paraphrases; still reject polarity reversals."""
-    if regex.search(r"\bwithout\b|\balways\b", claim, regex.IGNORECASE):
-        return False
-    if _is_necessary_condition(claim) and _is_necessary_condition(evidence):
-        return True
-    return _is_necessary_condition(evidence) and _is_required_for_validity(claim)
+    claim_polarity = _necessary_condition_polarity(claim)
+    evidence_polarity = _necessary_condition_polarity(evidence)
+    if claim_polarity is not None and evidence_polarity is not None:
+        return claim_polarity == evidence_polarity
+    return False
 
 
 def _is_bare_sufficient_condition(text: str) -> bool:
@@ -2772,12 +2841,26 @@ def _bounded_entailment_guard(claim: str, evidence: str) -> ClaimVerification | 
     if not evidence_plain:
         # Similarity located a topic but could not align a clause safely.
         return None
+    if (
+        not _is_necessary_condition(claim_plain)
+        and _is_necessary_condition(evidence_plain)
+        and regex.search(r"\b(?:without|always)\b", claim_plain, regex.IGNORECASE)
+    ):
+        return ClaimVerification.UNSUPPORTED
+    claim_condition = _necessary_condition_polarity(claim_plain)
+    evidence_condition = _necessary_condition_polarity(evidence_plain)
+    if _is_necessary_condition(claim_plain) and _is_necessary_condition(evidence_plain):
+        if claim_condition is None or evidence_condition is None:
+            # The bounded grammar cannot safely compare the proposition and its
+            # condition. Lexical similarity must not decide this construction.
+            return ClaimVerification.UNVERIFIED
+        if claim_condition != evidence_condition:
+            return ClaimVerification.UNSUPPORTED
     if _is_bare_sufficient_condition(claim_plain) and _is_necessary_condition(evidence_plain):
         # "A is not valid unless B" does not establish that B alone guarantees A.
         return ClaimVerification.UNVERIFIED
     negative = regex.compile(
-        r"\b(?:no|not|never|cannot|can't|doesn't|does not|isn't|is not|exempt)\b|"
-        r"(?<![\p{L}\p{M}])(?:না|নয়|নয়|নাই|ব্যতীত)(?![\p{L}\p{M}])",
+        rf"{_CLAUSE_NEGATION.pattern}|\bexempt\b",
         regex.IGNORECASE,
     )
     if not _suppress_negation_mismatch(claim_plain, evidence_plain) and bool(

@@ -117,6 +117,7 @@ type MessageRun = {
   turn: ChatTurn;
   expected: string;
   passed: boolean;
+  usefulPartial?: boolean;
   elapsedMs: number;
   deliveryTiming?: StreamDeliveryTiming;
 };
@@ -2207,18 +2208,28 @@ function MessagesTab({
       const expectedMatches =
         !expected.trim() ||
         assistant.content.toLocaleLowerCase().includes(expected.trim().toLocaleLowerCase());
+      const repair = assistant.metadata?.knowledge_repair as Record<string, unknown> | undefined;
+      const inherited = assistant.metadata?.inherited_coverage as
+        Record<string, unknown> | undefined;
+      const partialAnswer =
+        assistant.metadata?.partial_answer ?? repair?.partial_answer ?? inherited?.partial_answer;
+      const usefulPartial =
+        expectedMatches &&
+        !refusal &&
+        assistant.grounded === true &&
+        hasCitations &&
+        Boolean(partialAnswer);
       const passed =
         expectedMatches &&
         !refusal &&
         assistant.grounded === true &&
         hasCitations &&
-        !assistant.metadata?.partial_answer &&
-        !(assistant.metadata?.knowledge_repair as Record<string, unknown> | undefined)
-          ?.partial_answer;
+        !partialAnswer;
       const next = {
         turn,
         expected,
         passed,
+        usefulPartial,
         elapsedMs: Math.round(performance.now() - started),
         deliveryTiming,
       };
@@ -2235,7 +2246,9 @@ function MessagesTab({
         conversationId,
         detail: refusal
           ? `Answer withheld: ${assistant.insufficient_evidence_reason}`
-          : `${assistant.citations?.length ?? 0} citations; ${next.elapsedMs} ms.`,
+          : usefulPartial
+            ? `Useful partial answer (not complete); ${assistant.citations?.length ?? 0} citations; ${next.elapsedMs} ms.`
+            : `${assistant.citations?.length ?? 0} citations; ${next.elapsedMs} ms.`,
         tab: "messages",
       });
     } catch (error) {
@@ -2871,7 +2884,10 @@ export function MessageInspector({
     typeof lifecycle?.processing_ms === "number" ? lifecycle.processing_ms : null;
   const timingLabel = deliveryTimingLabel(run, serverProcessingMs, isLatestRun);
   const repair = message.metadata?.knowledge_repair as Record<string, unknown> | undefined;
-  const partial = repair?.partial_answer as Record<string, unknown> | undefined;
+  const inherited = message.metadata?.inherited_coverage as Record<string, unknown> | undefined;
+  const partial = (message.metadata?.partial_answer ??
+    repair?.partial_answer ??
+    inherited?.partial_answer) as Record<string, unknown> | undefined;
   const coverage = repair?.coverage as Record<string, unknown> | undefined;
   const requirementProgress = repair?.requirement_progress as Record<string, unknown> | undefined;
   const recoveryAttempts = Array.isArray(requirementProgress?.attempts)
@@ -2879,14 +2895,17 @@ export function MessageInspector({
         (item): item is Record<string, unknown> => typeof item === "object" && item !== null,
       )
     : [];
-  const missing = Array.isArray(coverage?.missing)
-    ? coverage.missing.filter((item): item is string => typeof item === "string")
+  const partialMissing = partial?.pending ?? partial?.exclusions;
+  const missingSource = Array.isArray(coverage?.missing) ? coverage.missing : partialMissing;
+  const missing = Array.isArray(missingSource)
+    ? missingSource.filter((item): item is string => typeof item === "string")
     : [];
   const claims = message.claims ?? [];
   const factualClaims = claims.filter((claim) => claim.claim_kind !== "coverage_scope");
   const coverageClaims = claims.filter((claim) => claim.claim_kind === "coverage_scope");
   const supportedFactual = factualClaims.filter((claim) => claim.verification === "supported");
   const failedClaims = claims.filter((claim) => claim.verification !== "supported");
+  const usefulPartial = Boolean(partial && !refusal && groundingPassed && expectedMatches);
   if (
     message.metadata?.non_knowledge_turn === true &&
     !refusal &&
@@ -2940,11 +2959,13 @@ export function MessageInspector({
           <strong>
             {message.insufficient_evidence_reason
               ? "Task unanswered / insufficient evidence"
-              : message.citations?.length
-                ? groundingPassed
-                  ? "Answer with citations"
-                  : "Cited answer — grounding incomplete"
-                : "Answer is not verifiably grounded"}
+              : usefulPartial
+                ? "Useful partial answer — not a complete-answer pass"
+                : message.citations?.length
+                  ? groundingPassed
+                    ? "Answer with citations"
+                    : "Cited answer — grounding incomplete"
+                  : "Answer is not verifiably grounded"}
           </strong>
           <span>
             {timingLabel}

@@ -1985,6 +1985,24 @@ async def test_necessary_condition_paraphrase_is_not_a_negation_contradiction() 
     assert result.claims[0]["verification_method"] != "bounded_entailment"
 
 
+@pytest.mark.parametrize(
+    "claim",
+    [
+        "The certificate is valid only if the prescribed fee is not paid.",
+        "The certificate is not valid only if the prescribed fee is paid.",
+        "The certificate is not valid only if the prescribed fee is not paid.",
+    ],
+)
+async def test_necessary_condition_compares_main_and_condition_polarity(claim: str) -> None:
+    evidence = "The certificate is not valid unless the prescribed fee is paid."
+    result = await GroundingService(
+        ChatConfig(minimum_claim_token_coverage=0.3),
+        embedder=_cluster_embedder({claim: "certificate", evidence: "certificate"}),
+    ).map_claims(f"{claim} [1]", [_chunk(content=evidence)])
+    assert result.claims[0]["verification"] == "unsupported"
+    assert result.claims[0]["verification_method"] == "bounded_entailment"
+
+
 async def test_required_for_validity_paraphrase_is_not_a_negation_contradiction() -> None:
     claim = "Payment of the fee is required for the certificate to be valid."
     evidence = "The certificate is not valid unless the fee is paid."
@@ -1993,6 +2011,34 @@ async def test_required_for_validity_paraphrase_is_not_a_negation_contradiction(
     )
     assert result.claims[0]["verification"] == "supported"
     assert result.claims[0]["verification_method"] != "bounded_entailment"
+
+
+async def test_negated_required_for_validity_is_not_supported_by_positive_requirement() -> None:
+    claim = "Payment of the fee is not required for the certificate to be valid."
+    evidence = "Payment of the fee is required for the certificate to be valid."
+    result = await GroundingService(ChatConfig(minimum_claim_token_coverage=0.3)).map_claims(
+        f"{claim} [1]", [_chunk(content=evidence)]
+    )
+    assert result.claims[0]["verification"] != "supported"
+    assert result.claims[0]["verification_method"] == "bounded_entailment"
+
+
+async def test_compound_condition_tracks_which_predicate_is_negated() -> None:
+    claim = "The certificate is valid only if the fee is not paid and the form is signed."
+    evidence = "The certificate is valid only if the fee is paid and the form is not signed."
+    result = await GroundingService(ChatConfig(minimum_claim_token_coverage=0.3)).map_claims(
+        f"{claim} [1]", [_chunk(content=evidence)]
+    )
+    assert result.claims[0]["verification"] != "supported"
+    assert result.claims[0]["verification_method"] == "bounded_entailment"
+
+
+async def test_faithful_without_modifier_is_not_a_false_contradiction() -> None:
+    statement = "The certificate is valid only if the fee is paid without delay."
+    result = await GroundingService(ChatConfig(minimum_claim_token_coverage=0.3)).map_claims(
+        f"{statement} [1]", [_chunk(content=statement)]
+    )
+    assert result.claims[0]["verification"] == "supported"
 
 
 async def test_unless_clause_does_not_establish_that_the_condition_alone_suffices() -> None:

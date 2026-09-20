@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import uuid
 
 import pytest
 
 from app.api.v1.routes.conversations_router import _sse_error_message, _with_sse_heartbeats
 from app.core.exceptions import BadRequestError, ServiceUnavailableError
 from app.platform.providers.errors import ProviderError
+from app.platform.providers.request_work import RequestWork, current_request_work
 
 pytestmark = pytest.mark.unit
 
@@ -77,3 +79,24 @@ async def test_heartbeat_disconnect_cancels_and_closes_upstream():
     await anext(stream)
     await stream.aclose()
     assert closed.is_set()
+
+
+async def test_heartbeat_uses_one_producer_task_for_every_upstream_advance():
+    owners: list[asyncio.Task[object] | None] = []
+    observed_work: list[RequestWork | None] = []
+    work = RequestWork(uuid.uuid4())
+
+    async def events():
+        with work.attached():
+            for value in ("one", "two", "three"):
+                owners.append(asyncio.current_task())
+                observed_work.append(current_request_work())
+                yield value
+                await asyncio.sleep(0)
+
+    received = [item async for item in _with_sse_heartbeats(events(), interval=0.01)]
+
+    assert received == [": connected\n\n", "one", "two", "three"]
+    assert owners[0] is not None
+    assert all(owner is owners[0] for owner in owners)
+    assert observed_work == [work, work, work]

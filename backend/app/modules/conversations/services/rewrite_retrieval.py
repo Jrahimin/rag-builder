@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 import uuid
 from datetime import UTC, datetime
 from typing import Any
@@ -130,8 +131,10 @@ def rewrite_followup_mode(
     if presentation_action and added_facts:
         return FollowupMode.ADDS_FACTS
     if presentation_action and _residual_factual_request(question):
-        if resolved_mode is FollowupMode.PRESENTATION_ONLY:
-            return FollowupMode.NOT_APPLICABLE
+        # Unknown audience/topic/applicability wording is not eligible for the
+        # deterministic shortcut.  Once the resolver has considered conversation
+        # context, however, preserve its decision instead of applying this weaker
+        # lexical heuristic a second time.
         return resolved_mode
     if presentation_action and (_REFERENCE.search(question) or len(question.split()) <= 12):
         return FollowupMode.PRESENTATION_ONLY
@@ -148,15 +151,37 @@ def _residual_factual_request(question: str) -> bool:
     remainder = _KEEP_ORIGINAL.sub(" ", remainder)
     remainder = _FORMAT_INSTRUCTION.sub(" ", remainder)
     remainder = re.sub(r"[^\w\u0980-\u09FF]+", " ", remainder, flags=re.UNICODE)
-    tokens = [token for token in remainder.split() if token.casefold() not in _FILLER_TOKENS]
-    return len(tokens) >= 2
+    tokens = [
+        token
+        for token in remainder.split()
+        if token.casefold() not in _FILLER_TOKENS
+        and any(unicodedata.category(char)[0] in {"L", "N"} for char in token)
+    ]
+    # Shortness is not evidence that facts are unchanged: a single word can name
+    # a new topic ("penalties") or population ("partnerships" / "minors").
+    return bool(tokens)
 
 
-def retained_rewrite_question(history: list[HistoryMessage]) -> str | None:
+def retained_rewrite_question(
+    history: list[HistoryMessage],
+    assistant_metadata_by_id: dict[str, dict[str, Any]] | None = None,
+) -> str | None:
     """Find the latest factual user topic across chains of presentation-only rewrites."""
-    for item in reversed(history):
+    metadata = assistant_metadata_by_id or {}
+    for index in range(len(history) - 1, -1, -1):
+        item = history[index]
         if item.role != "user":
             continue
+        following = history[index + 1] if index + 1 < len(history) else None
+        if following is not None and following.role == "assistant":
+            recorded = metadata.get(str(following.id), {}).get("turn_resolution")
+            if isinstance(recorded, dict) and recorded.get("followup_mode") == (
+                FollowupMode.PRESENTATION_ONLY.value
+            ):
+                retained = recorded.get("retained_factual_question")
+                if isinstance(retained, str) and retained.strip():
+                    return retained.strip()
+                continue
         mode = rewrite_followup_mode(
             item.content,
             TurnOutcome.RESOLVED,

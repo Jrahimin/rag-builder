@@ -30,6 +30,7 @@ from app.modules.retrieval.multilingual.planner import (
 from app.modules.retrieval.retrievers.models import CandidateHit, CandidateSource
 from app.modules.retrieval.schemas.search import RetrievalResult, SearchRequest
 from app.modules.retrieval.services.search_service import SearchService
+from app.modules.retrieval.source_policy import SourceMetadataScope
 from app.platform.config.project_ai import SourcePolicyMode
 from app.platform.domain.evidence_contracts import QueryVariant, QueryVariantKind
 from app.platform.domain.language_detection import detect_query_language_profile
@@ -888,6 +889,50 @@ async def test_identity_recall_uses_indexed_lookup_without_ranked_retriever() ->
     assert response.diagnostics.skipped_reason == "exact_identity_recall"
     repository.return_value.map_indexed_identities.assert_awaited_once()
     assert repository.return_value.map_indexed_identities.await_args.args[0] == [chunk_id]
+
+
+async def test_scoped_identity_recall_does_not_revive_policy_excluded_source() -> None:
+    document_id = uuid.uuid4()
+    chunk_id = uuid.uuid4()
+    source_metadata = MagicMock()
+    source_metadata.capture = AsyncMock(
+        return_value=SourceMetadataScope(
+            selectable=MagicMock(),
+            generation=2,
+            configured_mode=SourcePolicyMode.ENFORCE,
+            effective_mode=SourcePolicyMode.ENFORCE,
+            deployment_cap="enforce",
+            reference_date="2026-09-20",
+            explicit_as_of=None,
+            exclusion_counts={"draft": 1},
+        )
+    )
+    service = _search_service(
+        source_metadata=source_metadata,
+        configured_source_policy_mode=SourcePolicyMode.ENFORCE,
+    )
+    retriever = _ready_search(service)
+    service._hydrator.hydrate.return_value = []
+    with patch(
+        "app.modules.retrieval.services.search_service.RetrievalChunkRepository"
+    ) as repository:
+        repository.return_value.map_indexed_identities = AsyncMock(
+            return_value={
+                chunk_id: {
+                    "source_document_id": str(document_id),
+                    "source_policy_applicable": False,
+                    "source_policy_exclusion_reason": "draft",
+                }
+            }
+        )
+        response = await service.recall_indexed_identities(
+            chunk_ids=[chunk_id], query="draft rule", document_id=document_id
+        )
+
+    retriever.retrieve.assert_not_called()
+    assert response.results == []
+    assert response.diagnostics.post_rerank_removal_reasons == {"draft": 1}
+    assert service._hydrator.hydrate.await_args.args[0] == []
 
 
 async def test_identity_recall_loads_current_modifier_metadata_without_ranked_search() -> None:

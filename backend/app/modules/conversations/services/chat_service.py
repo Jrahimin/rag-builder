@@ -6,10 +6,11 @@ import asyncio
 import re
 import time
 import uuid
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
+from contextlib import aclosing
 from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime
-from typing import Any
+from typing import Any, cast
 
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -449,10 +450,16 @@ class ChatService:
     ) -> AsyncIterator[str | dict[str, Any]]:
         """Yield SSE payload fragments: token strings, then final citations dict."""
         with self._work.attached():
-            async for item in self._deliver_stream_message(
-                conversation_id, request, should_cancel=should_cancel
-            ):
-                yield item
+            async with aclosing(
+                cast(
+                    AsyncGenerator[str | dict[str, Any], None],
+                    self._deliver_stream_message(
+                        conversation_id, request, should_cancel=should_cancel
+                    ),
+                )
+            ) as delivery:
+                async for item in delivery:
+                    yield item
 
     async def _deliver_stream_message(
         self,
@@ -840,19 +847,12 @@ class ChatService:
                 resolved.resolution.relation,
                 resolved.resolution.followup_mode,
             )
-            if followup_mode is FollowupMode.NOT_APPLICABLE and any(
-                item.role == "assistant" for item in bounded_history
-            ):
-                followup_mode = rewrite_followup_mode(
-                    current_content,
-                    TurnOutcome.RESOLVED,
-                    TurnRelation.FOLLOW_UP,
-                )
-            retained_question = retained_rewrite_question(bounded_history)
+            retained_question = retained_rewrite_question(bounded_history, assistant_metadata_by_id)
             if followup_mode is FollowupMode.PRESENTATION_ONLY and retained_question is not None:
                 # Evidence relevance is evaluated against the retained factual topic,
                 # while generation still receives the current presentation request.
                 retrieval_query = retained_question
+                diagnostics["retained_factual_question"] = retained_question
             previous = preceding_assistant(bounded_history)
             previous_citations = (
                 citation_chunks.get(previous.id, []) if previous is not None else []
@@ -961,6 +961,17 @@ class ChatService:
         knowledge_selected: list[ContextChunk] = []
         evidence = EvidenceDecision(sufficient=False)
         authority_date = (resolved.retrieval.as_of or payload.reference_time).date()
+        origin_metadata = (
+            assistant_metadata_by_id.get(originating_assistant_id, previous_assistant_metadata)
+            if originating_assistant_id is not None
+            else previous_assistant_metadata
+        )
+        inherited = _inherited_coverage_diagnostics(
+            originating_message_id=originating_assistant_id,
+            knowledge_repair=dict(origin_metadata.get("knowledge_repair") or {}),
+            evidence_summary=dict(origin_metadata.get("evidence_summary") or {}),
+            previous_inherited=dict(origin_metadata.get("inherited_coverage") or {}),
+        )
         if can_exact:
             self._work.counts["source_version_checks"] += 1
             with self._work.stage("checking_source_versions"):
@@ -976,17 +987,6 @@ class ChatService:
                     current_config_snapshot_id=self._config_snapshot_id,
                     reference_date=authority_date,
                 )
-            origin_metadata = (
-                assistant_metadata_by_id.get(originating_assistant_id, previous_assistant_metadata)
-                if originating_assistant_id is not None
-                else previous_assistant_metadata
-            )
-            inherited = _inherited_coverage_diagnostics(
-                originating_message_id=originating_assistant_id,
-                knowledge_repair=dict(origin_metadata.get("knowledge_repair") or {}),
-                evidence_summary=dict(origin_metadata.get("evidence_summary") or {}),
-                previous_inherited=dict(origin_metadata.get("inherited_coverage") or {}),
-            )
             if units:
                 presentation_reused = True
                 knowledge_selected = list[ContextChunk](units)
@@ -1060,7 +1060,7 @@ class ChatService:
                     "passage_count": 0,
                     "originating_assistant_message_id": originating_assistant_id,
                     "routing_origin": "deterministic",
-                    "new_coverage_review": True,
+                    "new_coverage_review": False,
                 }
                 retrieval_result = fallback
                 chunks = retrieval_result.chunks
@@ -1140,6 +1140,18 @@ class ChatService:
                 and evidence.best_score >= self._chat_config.minimum_reranker_evidence_score
                 and rerank_status == "applied"
             )
+            reuse_scope_revalidation = bool(
+                presentation_only
+                and not presentation_reused
+                and isinstance(inherited, dict)
+                and (
+                    inherited.get("coverage_partial")
+                    or inherited.get("missing_inputs")
+                    or inherited.get("partial_answer")
+                )
+                and isinstance(retrieval_result.diagnostics.get("presentation_reuse"), dict)
+                and retrieval_result.diagnostics["presentation_reuse"].get("status") == "fallback"
+            )
             if (
                 evidence.reason is InsufficientEvidenceReason.UNRESOLVED_AUTHORITY
                 or calculation_review
@@ -1147,6 +1159,7 @@ class ChatService:
                 or relevance_repair
                 or comparison_review
                 or compliance_review
+                or reuse_scope_revalidation
             ) and scope_current_authority is None:
                 # Similarity to a worked example does not prove that its category,
                 # period or complete rule schedule applies to a new calculation.
@@ -1156,6 +1169,7 @@ class ChatService:
                     or applicability_review
                     or comparison_review
                     or compliance_review
+                    or reuse_scope_revalidation
                 ):
                     evidence = replace(
                         evidence,
@@ -1183,14 +1197,21 @@ class ChatService:
                         timeout_seconds=self._llm_config.evidence_review_timeout_seconds,
                         domain_instructions=self._domain_instructions,
                         initial_decision=evidence,
+                        required_coverage=inherited if reuse_scope_revalidation else None,
                         evidence_approach=self._evidence_approach,
                     )
                 repair_usage = repaired.usage
                 preparation_error = repaired.failure
                 repair_diagnostics = dict(repaired.diagnostics)
+                if reuse_scope_revalidation:
+                    retrieval_result.diagnostics["presentation_reuse"]["new_coverage_review"] = (
+                        repair_diagnostics.get("status") != "snapshot_unavailable"
+                    )
                 repair_diagnostics["trigger"] = (
                     "calculation_completeness"
                     if calculation_review
+                    else "presentation_reuse_scope_revalidation"
+                    if reuse_scope_revalidation
                     else "compliance_overview"
                     if compliance_review
                     else "comparison_coverage"
@@ -1208,7 +1229,14 @@ class ChatService:
                     ]
                 retrieval_result.diagnostics["knowledge_repair"] = repair_diagnostics
                 if repaired.decision is not None:
-                    missing_inputs = repaired.missing_inputs
+                    retained_missing_inputs = (
+                        tuple(str(item) for item in (inherited or {}).get("missing_inputs") or [])
+                        if reuse_scope_revalidation
+                        else ()
+                    )
+                    missing_inputs = tuple(
+                        dict.fromkeys([*repaired.missing_inputs, *retained_missing_inputs])
+                    )
                     partial_answer = repaired.partial_answer
                     evidence = repaired.decision
                     knowledge_selected = repaired.selected
@@ -1221,7 +1249,10 @@ class ChatService:
                         ],
                     ]
                 if repaired.answerable_scope:
-                    retrieval_result.diagnostics["answerable_scope"] = repaired.answerable_scope
+                    answerable_scope = dict(repaired.answerable_scope)
+                    if reuse_scope_revalidation and missing_inputs:
+                        answerable_scope["missing_inputs"] = list(missing_inputs)
+                    retrieval_result.diagnostics["answerable_scope"] = answerable_scope
         retrieval_ms = int((time.perf_counter() - retrieval_started) * 1000)
         self._work.timings["coverage_and_recovery"] += round(
             (time.perf_counter() - coverage_started) * 1000
@@ -2890,6 +2921,7 @@ def _compact_resolution_summary(metadata: dict[str, Any]) -> dict[str, Any] | No
         "bypass_reason",
         "latency_ms",
         "routing_origin",
+        "retained_factual_question",
     )
     return {key: recorded[key] for key in keys if key in recorded}
 

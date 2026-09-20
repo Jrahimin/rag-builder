@@ -204,6 +204,136 @@ test("labels persisted server processing separately from unavailable client roun
   expect(screen.getByText(/client round trip was not persisted/)).toBeInTheDocument();
 });
 
+test("reports grounded partial output as useful without counting it as complete", () => {
+  const message: Message = {
+    id: "cccccccc-cccc-cccc-cccc-cccccccccccc",
+    project_id: projectFixture.id,
+    conversation_id: conversationFixture.id,
+    role: "assistant",
+    content: "The filing duty is supported. [1]",
+    finish_reason: "stop",
+    input_tokens: 1,
+    output_tokens: 1,
+    prompt_version: "v17",
+    embedding_set_version: 1,
+    provider: "test",
+    model: "test",
+    metadata: {
+      knowledge_repair: {
+        partial_answer: { scope: ["filing duty"], pending: ["penalty schedule"] },
+        coverage: { missing: ["penalty schedule"] },
+      },
+    },
+    source_provenance: "knowledge",
+    citations: [
+      {
+        source_kind: "knowledge",
+        chunk_id: "77777777-7777-7777-7777-777777777777",
+        document_id: documentFixture.id,
+        project_id: projectFixture.id,
+        filename: documentFixture.filename,
+        chunk_index: 0,
+        page_number: 1,
+        char_start: 0,
+        char_end: 29,
+        score: 1,
+        chunk_hash: "d".repeat(64),
+        excerpt: "The filing duty is supported.",
+      },
+    ],
+    claims: [],
+    grounded: true,
+    insufficient_evidence_reason: null,
+    created_at: now,
+    updated_at: now,
+  };
+
+  renderOperatorComponent(
+    <MessageInspector
+      message={message}
+      run={{
+        turn: { user_message: { ...message, role: "user" }, assistant_message: message },
+        expected: "filing duty",
+        passed: false,
+        usefulPartial: true,
+        elapsedMs: 100,
+      }}
+    />,
+  );
+
+  expect(screen.getByText("Partial answer")).toBeInTheDocument();
+  expect(
+    screen.getByText("Useful partial answer — not a complete-answer pass"),
+  ).toBeInTheDocument();
+  expect(screen.getByText("penalty schedule")).toBeInTheDocument();
+});
+
+test("reports an inherited rewrite scope as useful partial", () => {
+  const message: Message = {
+    id: "dddddddd-dddd-dddd-dddd-dddddddddddd",
+    project_id: projectFixture.id,
+    conversation_id: conversationFixture.id,
+    role: "assistant",
+    content: "The filing duty is supported. [1]",
+    finish_reason: "stop",
+    input_tokens: 1,
+    output_tokens: 1,
+    prompt_version: "v17",
+    embedding_set_version: 1,
+    provider: "test",
+    model: "test",
+    metadata: {
+      knowledge_repair: { status: "not_needed" },
+      inherited_coverage: {
+        coverage: "partial",
+        coverage_partial: true,
+        partial_answer: { scope: "filing duty", exclusions: ["penalty schedule"] },
+      },
+    },
+    source_provenance: "knowledge",
+    citations: [
+      {
+        source_kind: "knowledge",
+        chunk_id: "77777777-7777-7777-7777-777777777777",
+        document_id: documentFixture.id,
+        project_id: projectFixture.id,
+        filename: documentFixture.filename,
+        chunk_index: 0,
+        page_number: 1,
+        char_start: 0,
+        char_end: 29,
+        score: 1,
+        chunk_hash: "d".repeat(64),
+        excerpt: "The filing duty is supported.",
+      },
+    ],
+    claims: [],
+    grounded: true,
+    insufficient_evidence_reason: null,
+    created_at: now,
+    updated_at: now,
+  };
+
+  renderOperatorComponent(
+    <MessageInspector
+      message={message}
+      run={{
+        turn: { user_message: { ...message, role: "user" }, assistant_message: message },
+        expected: "filing duty",
+        passed: false,
+        usefulPartial: true,
+        elapsedMs: 100,
+      }}
+    />,
+  );
+
+  expect(screen.getByText("Partial answer")).toBeInTheDocument();
+  expect(
+    screen.getByText("Useful partial answer — not a complete-answer pass"),
+  ).toBeInTheDocument();
+  expect(screen.getByText("penalty schedule")).toBeInTheDocument();
+});
+
 test("distinguishes server processing, first token, stream completion, and message refresh", () => {
   const message: Message = {
     id: "cccccccc-cccc-cccc-cccc-cccccccccccc",

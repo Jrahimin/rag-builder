@@ -2690,6 +2690,75 @@ def test_unmatched_delta_missing_blocks_complete_verdict():
     assert verdict.validates([], [known, later], {"R1", "R2"}) is False
 
 
+def test_delta_omission_does_not_delete_a_retained_gap_or_disagree_with_snapshot():
+    from app.modules.conversations.services.evidence_coverage import CoverageDelta
+    from app.modules.conversations.services.evidence_repair_service import (
+        EvidenceRequirement,
+        _TurnProofMap,
+    )
+
+    first = chunk("The filing duty applies.")
+    second = chunk("The appeal duty applies.")
+    proof = _TurnProofMap(
+        [
+            EvidenceRequirement(requirement_id="R1", description="Filing duty"),
+            EvidenceRequirement(requirement_id="R2", description="Appeal duty"),
+        ]
+    )
+    proof.accept_check(_supported_check("R1", first, "Filing duty"), [first, second], [])
+    initial = CoverageDelta.model_validate(
+        {
+            "complete": False,
+            "missing": ["penalty schedule"],
+            "checks": [
+                {
+                    "requirement_id": "R2",
+                    "description": "Appeal duty",
+                    "supported": False,
+                    "evidence": [],
+                }
+            ],
+        }
+    )
+    proof.merge_delta(initial, {"R2"}, [first, second], [])
+
+    later = CoverageDelta.model_validate(
+        {
+            "complete": True,
+            "missing": [],
+            "checks": [
+                {
+                    "requirement_id": "R2",
+                    "description": "Appeal duty",
+                    "supported": True,
+                    "evidence": [{"chunk_id": str(second.chunk_id), "quote": second.content}],
+                }
+            ],
+        }
+    )
+    merged = proof.merge_delta(later, {"R2"}, [first, second], [])
+    snapshot = proof.snapshot_verdict()
+
+    assert merged.complete is snapshot.complete is False
+    assert merged.missing == snapshot.missing == ["penalty schedule"]
+
+
+def test_similar_gap_label_is_not_closed_by_fuzzy_overlap_alone():
+    from app.modules.conversations.services.evidence_repair_service import (
+        EvidenceRequirement,
+        _TurnProofMap,
+    )
+
+    source = chunk("The annual filing duty applies.")
+    proof = _TurnProofMap(
+        [EvidenceRequirement(requirement_id="R1", description="Annual filing duty")]
+    )
+    proof.remember_gaps(["annual filing penalty duty"])
+    proof.accept_check(_supported_check("R1", source, "Annual filing duty"), [source], [])
+
+    assert proof.snapshot_verdict().missing == ["annual filing penalty duty"]
+
+
 def _supported_check(requirement_id: str, source: ContextChunk, description: str = "") -> object:
     from app.modules.conversations.services.evidence_coverage import _Check
 

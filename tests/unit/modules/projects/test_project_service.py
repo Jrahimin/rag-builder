@@ -78,6 +78,24 @@ async def test_create_persists_and_commits(
     session.commit.assert_awaited_once()
 
 
+@pytest.mark.parametrize("actor_id", ["system", "admin-1", "rag-journey"])
+async def test_create_initializes_the_same_factual_revision_for_every_actor(
+    actor_id: str, session: AsyncMock, repository: AsyncMock
+) -> None:
+    repository.exists_by_name.return_value = False
+    repository.flush = AsyncMock()
+    service = ProjectService(session=session, repository=repository, actor_id=actor_id)
+
+    project = await service.create(ProjectCreate(name=f"Project {actor_id}"))
+
+    revision = session.add.call_args.args[0]
+    assert revision.revision_number == 1
+    assert revision.created_by == actor_id
+    assert revision.source == "project_creation"
+    assert revision.configuration["behavior"]["evidence_approach"] == "factual"
+    assert project.active_ai_config_revision_id == revision.id
+
+
 async def test_create_duplicate_name_raises_conflict(
     service: ProjectService, repository: AsyncMock
 ) -> None:

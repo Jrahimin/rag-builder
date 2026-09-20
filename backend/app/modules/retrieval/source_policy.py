@@ -210,35 +210,9 @@ def _candidates_for_enforcement(
     *,
     scoped_document_id: uuid.UUID | None,
 ) -> list[CandidateHit]:
-    """Keep hard document scope searchable under current-replacement enforcement."""
-    if scoped_document_id is None:
-        return candidates
-    scope_key = str(scoped_document_id)
-    adjusted: list[CandidateHit] = []
-    for candidate in candidates:
-        if (
-            candidate.metadata.get("source_policy_applicable") is False
-            and _candidate_document_id(candidate.metadata) == scope_key
-        ):
-            metadata = {
-                key: value
-                for key, value in candidate.metadata.items()
-                if key != "source_policy_exclusion_reason"
-            }
-            adjusted.append(
-                replace(candidate, metadata={**metadata, "source_policy_applicable": True})
-            )
-            continue
-        adjusted.append(candidate)
-    return adjusted
-
-
-def _candidate_document_id(metadata: dict[str, Any]) -> str | None:
-    for key in ("source_document_id", "document_id"):
-        value = metadata.get(key)
-        if value is not None:
-            return str(value)
-    return None
+    """Return candidates unchanged; document scope is orthogonal to applicability."""
+    del scoped_document_id
+    return candidates
 
 
 def add_retrieval_provenance(

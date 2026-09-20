@@ -277,13 +277,29 @@ class _TurnProofMap:
             self._validated_partial = partial
 
     def _gap_resolved(self, label: str) -> bool:
+        normalized = " ".join(label.casefold().split())
         for facet in self._facets.values():
             if not facet.valid:
                 continue
-            description = facet.description or facet.requirement_id
-            if label == description or _requirement_labels_match(label, description):
+            identities = {facet.requirement_id, facet.description or facet.requirement_id}
+            if normalized in {" ".join(item.casefold().split()) for item in identities}:
                 return True
         return False
+
+    def _reconciled_gaps(self, reported: list[str]) -> list[str]:
+        """Merge canonical, retained, and newly reported gaps without omission closure."""
+        unresolved = [
+            self._facets[item.requirement_id].description or item.requirement_id
+            for item in self.requirements
+            if not self._facets[item.requirement_id].valid
+        ]
+        missing: list[str] = []
+        for raw in [*unresolved, *self._retained_gaps, *reported]:
+            label = str(raw).strip()
+            if not label or label in missing or self._gap_resolved(label):
+                continue
+            missing.append(label)
+        return missing
 
     def new_affecting_records(
         self, records: list[dict[str, Any]], chunks: list[ContextChunk]
@@ -452,29 +468,13 @@ class _TurnProofMap:
         for req_id in pending:
             if req_id not in returned:
                 self._mark_invalid(req_id)
-        unresolved = [
-            self._facets[item.requirement_id].description or item.requirement_id
-            for item in self.requirements
-            if not self._facets[item.requirement_id].valid
-        ]
-        missing: list[str] = []
-        for item in delta.missing:
-            if item in missing:
-                continue
-            missing.append(item)
-        for label in unresolved:
-            if label in missing or any(
-                _requirement_labels_match(label, existing) for existing in missing
-            ):
-                continue
-            missing.append(label)
+        self.remember_gaps(list(delta.missing))
+        missing = self._reconciled_gaps(list(delta.missing))
         partial = delta.partial_answer
         if partial is not None and missing:
             exclusions = list(partial.exclusions)
             for label in missing:
-                if label in exclusions or any(
-                    _requirement_labels_match(label, existing) for existing in exclusions
-                ):
+                if label in exclusions:
                     continue
                 exclusions.append(label)
             if exclusions != list(partial.exclusions):
@@ -531,20 +531,7 @@ class _TurnProofMap:
 
     def snapshot_verdict(self) -> CoverageVerdict:
         """Canonical verdict from retained proof; extra reviewer gaps stay incomplete."""
-        unresolved = [
-            self._facets[item.requirement_id].description or item.requirement_id
-            for item in self.requirements
-            if not self._facets[item.requirement_id].valid
-        ]
-        missing: list[str] = list(unresolved)
-        for gap in self._retained_gaps:
-            if gap in missing or any(
-                _requirement_labels_match(gap, existing) for existing in missing
-            ):
-                continue
-            if self._gap_resolved(gap):
-                continue
-            missing.append(gap)
+        missing = self._reconciled_gaps([])
         partial = None if not missing else self._validated_partial
         return self.canonical_verdict(
             missing=missing,
@@ -1201,6 +1188,7 @@ async def repair_knowledge_evidence(
     release_read_transaction: Callable[[], Awaitable[None]] | None = None,
     domain_instructions: str = "",
     initial_decision: EvidenceDecision | None = None,
+    required_coverage: dict[str, Any] | None = None,
     evidence_approach: str = "authoritative",
     timeout_seconds: float = REPAIR_TIMEOUT_SECONDS,
 ) -> EvidenceRepairResult:
@@ -1239,6 +1227,8 @@ async def repair_knowledge_evidence(
     started = monotonic()
     diagnostics["timeout_seconds"] = timeout_seconds
     diagnostics["phase"] = "planning"
+    if required_coverage:
+        diagnostics["required_coverage_revalidation"] = True
     partial_checkpoint: EvidenceRepairResult | None = None
     reference_date = (
         inputs.as_of.date().isoformat()
@@ -1302,6 +1292,11 @@ async def repair_knowledge_evidence(
                         content=json.dumps(
                             {
                                 "question": inputs.query,
+                                **(
+                                    {"prior_validated_scope_constraints": required_coverage}
+                                    if required_coverage
+                                    else {}
+                                ),
                                 # Unresolved excerpts can contain obsolete/proposed
                                 # numbers. Plan dependencies from the question, not
                                 # those numbers; source identity only guides discovery.

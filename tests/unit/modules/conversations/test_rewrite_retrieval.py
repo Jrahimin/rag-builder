@@ -127,6 +127,9 @@ def test_rewrite_recall_requires_explicit_fact_preserving_followup(question, rel
         ("Do these rules still apply?", FollowupMode.NOT_APPLICABLE),
         ("Does this currently apply?", FollowupMode.NOT_APPLICABLE),
         ("What are the filing penalties?", FollowupMode.NOT_APPLICABLE),
+        ("Summarize penalties", FollowupMode.NOT_APPLICABLE),
+        ("Rewrite it for minors", FollowupMode.NOT_APPLICABLE),
+        ("Summarize it for partnerships", FollowupMode.NOT_APPLICABLE),
     ],
 )
 def test_rewrite_followup_mode_distinguishes_presentation_from_added_facts(question, mode):
@@ -267,6 +270,25 @@ def test_chained_rewrite_keeps_the_last_factual_user_topic():
         HistoryMessage(id=uuid.uuid4(), role="assistant", content="Existing or future goods."),
     ]
     assert retained_rewrite_question(history) == "What goods may be sold?"
+
+
+def test_chained_rewrite_uses_saved_resolver_lineage_for_ambiguous_transform():
+    simplified_answer = uuid.uuid4()
+    history = [
+        HistoryMessage(id=uuid.uuid4(), role="user", content="What goods may be sold?"),
+        HistoryMessage(id=uuid.uuid4(), role="assistant", content="Existing or future goods."),
+        HistoryMessage(id=uuid.uuid4(), role="user", content="Explain that simply."),
+        HistoryMessage(id=simplified_answer, role="assistant", content="Goods now or later."),
+    ]
+    metadata = {
+        str(simplified_answer): {
+            "turn_resolution": {
+                "followup_mode": "presentation_only",
+                "retained_factual_question": "What goods may be sold?",
+            }
+        }
+    }
+    assert retained_rewrite_question(history, metadata) == "What goods may be sold?"
 
 
 @pytest.mark.parametrize("empty", [False, True])
@@ -507,6 +529,35 @@ def test_preflight_rejects_unknown_and_added_fact_wording():
     assert try_presentation_preflight(current_fees, citations_by_message=citations) is None
     assert try_presentation_preflight(still_apply, citations_by_message=citations) is None
     assert try_presentation_preflight(bangla_fees, citations_by_message=citations) is None
+
+
+@pytest.mark.parametrize(
+    "question",
+    ["Summarize penalties", "Rewrite it for minors", "Summarize it for partnerships"],
+)
+def test_preflight_routes_single_token_fact_or_population_changes_to_resolver(question):
+    payload, citations, _ = _preflight_payload(question)
+    assert try_presentation_preflight(payload, citations_by_message=citations) is None
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "Explain that simply.",
+        "Make it three bullets.",
+        "Translate the previous answer into Bangla. Keep the same facts.",
+    ],
+)
+def test_resolver_approved_ambiguous_or_clear_transformations_remain_presentation_only(question):
+    assert (
+        rewrite_followup_mode(
+            question,
+            TurnOutcome.RESOLVED,
+            TurnRelation.FOLLOW_UP,
+            FollowupMode.PRESENTATION_ONLY,
+        )
+        is FollowupMode.PRESENTATION_ONLY
+    )
 
 
 def test_preflight_keeps_inherited_historical_scope_and_exits_changed_scope():
