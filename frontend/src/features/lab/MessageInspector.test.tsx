@@ -100,7 +100,7 @@ describe("message grounding explanation", () => {
   test("a non-knowledge flag cannot hide an actual unverified claim", () => {
     inspect({ ...message, metadata: { non_knowledge_turn: true } });
     expect(screen.queryByRole("heading", { name: "Conversational reply" })).not.toBeInTheDocument();
-    expect(screen.getByText("needs attention")).toBeInTheDocument();
+    expect(screen.getByText("Needs attention")).toBeInTheDocument();
   });
 
   test("shows the unresolved component and does not promote a legacy refusal pass", () => {
@@ -129,7 +129,7 @@ describe("message grounding explanation", () => {
       true,
     );
     expect(screen.getByRole("heading", { name: "Partial answer" })).toBeInTheDocument();
-    expect(screen.getByText("needs attention")).toBeInTheDocument();
+    expect(screen.getByText("Claims supported · partial coverage")).toBeInTheDocument();
   });
 
   test("distinguishes missing recovery telemetry from an attempted repair", () => {
@@ -154,7 +154,7 @@ describe("message grounding explanation", () => {
     inspect(message, "reliable estimate");
     expect(screen.getByRole("heading", { name: "Answer review" })).toBeInTheDocument();
     expect(screen.getByText("Cited answer — grounding incomplete")).toBeInTheDocument();
-    expect(screen.getAllByText("needs attention")).toHaveLength(1);
+    expect(screen.getAllByText("Needs attention")).toHaveLength(1);
     expect(screen.getByText(/expected words matched/)).toBeInTheDocument();
     expect(screen.getByText("0 of 1 claims supported")).toBeInTheDocument();
     expect(screen.getByText("Conditional rebate: 9,000.")).toBeInTheDocument();
@@ -227,7 +227,7 @@ describe("message grounding explanation", () => {
     expect(screen.getByRole("heading", { name: "Grounded answer" })).toBeInTheDocument();
     expect(screen.getByText(/expected words did not match/)).toBeInTheDocument();
     expect(screen.getByText(/This is separate from grounding/)).toBeInTheDocument();
-    expect(screen.getAllByText("needs attention")).toHaveLength(1);
+    expect(screen.getAllByText("Claims supported")).toHaveLength(1);
   });
 
   test("does not imply an unsupported claim when verdicts are unavailable", () => {
@@ -248,7 +248,7 @@ describe("message grounding explanation", () => {
       true,
     );
     expect(screen.getByRole("heading", { name: "Answer withheld" })).toBeInTheDocument();
-    expect(screen.getByText("needs attention")).toBeInTheDocument();
+    expect(screen.getByText("Needs attention")).toBeInTheDocument();
     expect(screen.queryByLabelText("Claim verification")).not.toBeInTheDocument();
   });
 

@@ -684,6 +684,79 @@ async def test_paragraph_final_citation_is_inherited_but_each_claim_is_verified(
     assert result.grounded is True
 
 
+def test_trailing_bullet_citation_stays_inside_its_list_item() -> None:
+    from app.modules.conversations.grounding_service import _answer_segments
+
+    segments = _answer_segments(
+        "- The board appoints the first auditor within one month. "
+        "The auditor remains in office until the first AGM. [4]\n"
+        "- At every AGM, the company appoints the next auditor. [4]\n"
+        "- Accounts are filed within 30 days. [5]"
+    )
+
+    first_auditor = next(segment for segment in segments if "first auditor" in segment)
+    first_term = next(segment for segment in segments if "remains in office" in segment)
+    accounts = next(segment for segment in segments if "Accounts are filed" in segment)
+    assert _citation_indexes(first_auditor) == [4]
+    assert _citation_indexes(first_term) == [4]
+    assert _citation_indexes(accounts) == [5]
+
+
+def test_supplied_answer_keeps_first_auditor_and_daily_fine_citations() -> None:
+    from app.modules.conversations.grounding_service import _answer_segments
+
+    answer = (
+        "## 3. Audit and appointment of auditors\n\n"
+        "- The board must appoint the company's first auditor or auditors within one month "
+        "of the company's registration. The auditor remains in office until the first AGM. [4]\n"
+        "- At every AGM, the company must appoint one or more auditors to hold office until "
+        "the end of the next AGM. [4]\n\n"
+        "## 5. Consequences of non-compliance\n\n"
+        "- Failure by the company to comply with the annual accounts filing requirement may "
+        "result in a fine of up to Tk 100 for each day the default continues. An officer who "
+        "knowingly and intentionally authorises the default may also face the same daily "
+        "fine. [5]\n"
+        "- A director who fails to take all reasonable steps may be liable to a fine of up to "
+        "Tk 5,000 for each offence. [1]"
+    )
+
+    segments = _answer_segments(answer)
+
+    first_auditor = next(segment for segment in segments if "first auditor" in segment)
+    daily_fine = next(segment for segment in segments if "Tk 100" in segment)
+    officer_fine = next(segment for segment in segments if "same daily fine" in segment)
+    assert _citation_indexes(first_auditor) == [4]
+    assert _citation_indexes(daily_fine) == [5]
+    assert _citation_indexes(officer_fine) == [5]
+
+
+def test_list_preamble_context_is_carried_to_sentence_fragments() -> None:
+    from app.modules.conversations.grounding_service import (
+        _answer_segments,
+        _contextualized_assertion,
+        _verification_context,
+    )
+
+    segments = _answer_segments(
+        "At every AGM, the board must present:\n"
+        "- a balance sheet; and\n"
+        "- a profit-and-loss account. [1]"
+    )
+    balance_index = next(index for index, item in enumerate(segments) if "balance sheet" in item)
+    assertion = _contextualized_assertion(
+        segments[balance_index], _verification_context(segments, balance_index)
+    )
+
+    assert "At every AGM, the board must present:" in assertion
+    assert "a balance sheet" in assertion
+
+
+def _citation_indexes(segment: str) -> list[int]:
+    import re
+
+    return [int(value) for value in re.findall(r"\[(\d+)\]", segment)]
+
+
 async def test_polarity_only_answer_has_no_verifiable_claims() -> None:
     service = GroundingService(ChatConfig(minimum_claim_token_coverage=0.3))
     result = await service.map_claims(
@@ -1931,6 +2004,180 @@ async def test_did_not_establish_limitation_matches_validated_coverage() -> None
     )
     assert result.claims[0]["claim_kind"] == "coverage_scope"
     assert result.claims[0]["verification"] == "supported"
+
+
+async def test_supplied_pure_limitations_are_not_misclassified_as_legal_denials() -> None:
+    answer = (
+        "The materials reviewed do not establish the current requirements for RJSC annual "
+        "returns, AGM minutes and record retention, accounting-book retention, corporate "
+        "income-tax returns for a non-operating company, VAT/BIN registration or returns, "
+        "trade licences, premises permissions, sector-specific licences, or the full penalty "
+        "and enforcement rules for those matters. "
+        "Therefore, I cannot responsibly state from these materials that those obligations "
+        "are either required or not required. "
+        "Those points should be verified with the Registrar of Joint Stock Companies and "
+        "Firms (RJSC), the National Board of Revenue, and the relevant local or sector authority."
+    )
+    result = await GroundingService(ChatConfig()).map_claims(
+        answer,
+        [_chunk(content="Private companies must hold an annual general meeting.")],
+        coverage={
+            "coverage": {
+                "missing": [
+                    "RJSC annual returns, AGM minutes and record retention",
+                    "VAT/BIN registration or returns and licensing requirements",
+                ],
+                "partial_scope_validated": True,
+            }
+        },
+    )
+
+    assert result.claims
+    assert {claim["claim_kind"] for claim in result.claims} == {"coverage_scope"}
+    assert all(claim["verification"] == "supported" for claim in result.claims)
+
+
+async def test_mixed_limitation_does_not_hide_fabricated_amount_or_duty() -> None:
+    result = await GroundingService(ChatConfig(minimum_claim_token_coverage=0.3)).map_claims(
+        "The materials reviewed do not establish the filing fee, but the filing fee is "
+        "Tk 10,000 and the company must pay it. [1]",
+        [_chunk(content="The filing fee is Tk 5,000.")],
+        coverage={
+            "coverage": {
+                "missing": ["filing fee"],
+                "partial_scope_validated": True,
+            }
+        },
+    )
+
+    limitation = next(claim for claim in result.claims if claim["claim_kind"] == "coverage_scope")
+    factual = next(claim for claim in result.claims if "10,000" in claim["text"])
+    assert limitation["verification"] == "supported"
+    assert factual["claim_kind"] == "source_assertion"
+    assert factual["verification"] == "unsupported"
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        (
+            "The materials reviewed do not establish the filing fee but the company must pay "
+            "Tk 10,000. [1]"
+        ),
+        (
+            "The materials reviewed do not establish the filing fee, and the company must pay "
+            "Tk 10,000. [1]"
+        ),
+    ],
+)
+async def test_unpunctuated_and_and_joined_limitations_keep_factual_obligation(answer: str) -> None:
+    result = await GroundingService(ChatConfig(minimum_claim_token_coverage=0.3)).map_claims(
+        answer,
+        [_chunk(content="The filing fee is Tk 5,000.")],
+        coverage={"missing": ["filing fee"], "partial_scope_validated": True},
+    )
+
+    assert any(claim["claim_kind"] == "coverage_scope" for claim in result.claims)
+    obligation = next(claim for claim in result.claims if "10,000" in claim["text"])
+    assert obligation["claim_kind"] == "source_assertion"
+    assert obligation["verification"] == "unsupported"
+
+
+async def test_bangla_mixed_limitation_keeps_factual_obligation() -> None:
+    result = await GroundingService(ChatConfig()).map_claims(
+        "পর্যালোচিত প্রমাণে দাখিল ফি প্রতিষ্ঠিত হয় না কিন্তু কোম্পানিকে ১০,০০০ টাকা পরিশোধ করিতে হইবে। [1]",  # noqa: RUF001
+        [_chunk(content="দাখিল ফি ৫,০০০ টাকা।")],  # noqa: RUF001
+        coverage={"missing": ["দাখিল ফি"], "partial_scope_validated": True},
+    )
+
+    limitation = next(claim for claim in result.claims if claim["claim_kind"] == "coverage_scope")
+    obligation = next(
+        claim
+        for claim in result.claims
+        if "১০,০০০" in claim["text"]  # noqa: RUF001
+    )
+    assert limitation["verification"] == "supported"
+    assert obligation["claim_kind"] == "source_assertion"
+    assert obligation["verification"] != "supported"
+
+
+async def test_factual_obligation_plus_verification_advice_is_not_discarded() -> None:
+    result = await GroundingService(ChatConfig(minimum_claim_token_coverage=0.3)).map_claims(
+        "The company must file the annual return within 21 days [1], and those points should "
+        "be verified with RJSC.",
+        [_chunk(content="The company must file the annual return within 21 days.")],
+    )
+
+    assert result.claims
+    assert any("must file" in claim["text"] for claim in result.claims)
+
+
+@pytest.mark.parametrize(
+    ("claim", "evidence", "expected"),
+    [
+        (
+            "The filing fee is Tk 5,000. [1]",
+            "The filing fee is Tk 1,000, and the daily fine is Tk 5,000.",
+            "unsupported",
+        ),
+        (
+            "The filing fee is Tk 1,000. [1]",
+            "The filing fee is Tk 1,000, and the daily fine is Tk 5,000.",
+            "supported",
+        ),
+        (
+            "The filing deadline is 90 days. [1]",
+            "The filing deadline is 30 days, and the appeal deadline is 90 days.",
+            "unsupported",
+        ),
+        (
+            "The filing deadline is 30 days. [1]",
+            "The filing deadline is 30 days, and the appeal deadline is 90 days.",
+            "supported",
+        ),
+    ],
+)
+async def test_quantities_are_bound_to_the_relevant_duty_clause(
+    claim: str, evidence: str, expected: str
+) -> None:
+    result = await GroundingService(ChatConfig(minimum_claim_token_coverage=0.3)).map_claims(
+        claim, [_chunk(content=evidence)]
+    )
+
+    assert result.claims[0]["verification"] == expected
+
+
+@pytest.mark.parametrize(("days", "expected"), [(30, "supported"), (90, "unsupported")])
+async def test_bilingual_duration_is_bound_to_filing_not_appeal(days: int, expected: str) -> None:
+    claim = f"The filing deadline is {days} days."
+    evidence = "রিটার্ন ৩০ দিনের মধ্যে দাখিল করতে হবে এবং আপিলের সময়সীমা ৯০ দিন।"
+    result = await GroundingService(
+        ChatConfig(minimum_claim_semantic_score=0.7),
+        embedder=_cluster_embedder({claim: "filing", evidence: "filing"}),
+    ).map_claims(f"{claim} [1]", [_chunk(content=evidence)])
+
+    assert result.claims[0]["verification"] == expected
+
+
+def test_markdown_ownership_keeps_wrapped_nested_and_numbered_items_isolated() -> None:
+    from app.modules.conversations.grounding_service import _answer_segments
+
+    segments = _answer_segments(
+        "1. First duty wraps onto\n   its continuation. [1]\n"
+        "   - Nested uncited duty\n"
+        "2) Second duty. [2]\n\n"
+        "Ordinary uncited paragraph.\n\n"
+        "| Item | Rule |\n| --- | --- |\n| Filing | Required. [3] |"
+    )
+
+    first = next(item for item in segments if "First duty" in item)
+    nested = next(item for item in segments if "Nested uncited" in item)
+    second = next(item for item in segments if "Second duty" in item)
+    paragraph = next(item for item in segments if "Ordinary uncited" in item)
+    assert "continuation" in first and _citation_indexes(first) == [1]
+    assert _citation_indexes(nested) == []
+    assert _citation_indexes(second) == [2]
+    assert _citation_indexes(paragraph) == []
 
 
 async def test_comparative_week_and_day_durations_are_not_contradictions() -> None:

@@ -313,6 +313,10 @@ def presentation_followup_resolution(
             or retrieval.as_of
             or payload.request_filters.as_of
         ),
+        requested_source_scope=retrieval.requested_source_scope,
+        effective_source_scope=retrieval.effective_source_scope,
+        source_scope_origin=retrieval.source_scope_origin,
+        source_scope_reason=retrieval.source_scope_reason,
     )
     return ResolvedTurn(
         resolution=resolution,
@@ -463,6 +467,10 @@ def _diagnostics(
         "snapshot": snapshot.model_dump(mode="json"),
         "query_changed": query_changed,
         "filter_changed": retrieval.as_of != payload.request_filters.as_of,
+        "requested_source_scope": retrieval.requested_source_scope.value,
+        "effective_source_scope": retrieval.effective_source_scope.value,
+        "source_scope_origin": retrieval.source_scope_origin,
+        "source_scope_reason": retrieval.source_scope_reason,
         "attempted": attempted,
         "latency_ms": latency_ms,
         "routing_origin": routing_origin,

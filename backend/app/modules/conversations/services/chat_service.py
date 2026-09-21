@@ -80,6 +80,7 @@ from app.modules.conversations.schemas.message import (
     MessageResponse,
     MessageSendRequest,
     SourceProvenance,
+    SourceScope,
 )
 from app.modules.conversations.services.evidence_repair_service import repair_knowledge_evidence
 from app.modules.conversations.services.rewrite_retrieval import (
@@ -757,6 +758,7 @@ class ChatService:
             document_id=request.document_id,
             metadata_filter=dict(request.metadata_filter or {}),
             as_of=request.as_of,
+            source_scope=request.source_scope,
         )
         await self._release_read_transaction()
 
@@ -882,6 +884,7 @@ class ChatService:
             ) or citation_scopes_conflict(used_prior_citations)
             mixed_blocks_indexed_reuse = mixed_web and (
                 self._chat_config.response_mode is not ResponseMode.INDEXED_AND_WEB
+                or resolved.retrieval.effective_source_scope is SourceScope.INDEXED_ONLY
             )
             provenance_ready = citations_have_exact_reuse_provenance(used_prior_citations)
             if preflight is not None and followup_mode is FollowupMode.PRESENTATION_ONLY:
@@ -1112,28 +1115,34 @@ class ChatService:
                             "scope": "current_recalled_passages",
                         },
                     )
-            comparison_review = (
-                not presentation_only
-                and evidence.sufficient
-                and comparison_requested(retrieval_query)
-            )
-            compliance_review = (
+            bounded_recovery_enabled = self._chat_config.bounded_recovery_enabled
+            comparison_route = not presentation_only and comparison_requested(retrieval_query)
+            compliance_route = (
                 not presentation_only
                 and self._evidence_approach == "authoritative"
-                and evidence.sufficient
                 and compliance_overview_requested(retrieval_query)
             )
-            calculation_review = (
+            calculation_task = _requires_calculation_coverage(retrieval_query, chunks)
+            calculation_route = (
                 not presentation_only
-                and evidence.sufficient
-                and _requires_calculation_coverage(retrieval_query, chunks)
+                and calculation_task
+                and (bounded_recovery_enabled or _has_governed_calculation_source(chunks))
             )
-            applicability_review = (
+            applicability_task = _requires_current_rule_coverage(retrieval_query, chunks)
+            applicability_route = (
                 not presentation_only
                 and self._evidence_approach == "authoritative"
-                and evidence.sufficient
-                and _requires_current_rule_coverage(retrieval_query, chunks)
+                and applicability_task
+                and (bounded_recovery_enabled or _has_governed_current_rule_source(chunks))
             )
+            # Route selection describes the user's task, not whether the first
+            # retrieval already happened to pass the evidence gate. This keeps
+            # insufficient broad/current/calculation turns on the broad budget.
+            review_eligible = evidence.sufficient or bounded_recovery_enabled
+            comparison_review = comparison_route and review_eligible
+            compliance_review = compliance_route and review_eligible
+            calculation_review = calculation_route and review_eligible
+            applicability_review = applicability_route and review_eligible
             relevance_repair = (
                 not presentation_only
                 and evidence.reason is InsufficientEvidenceReason.BELOW_RELEVANCE_THRESHOLD
@@ -1153,6 +1162,19 @@ class ChatService:
                 and isinstance(retrieval_result.diagnostics.get("presentation_reuse"), dict)
                 and retrieval_result.diagnostics["presentation_reuse"].get("status") == "fallback"
             )
+            bounded_recovery_profile = _bounded_recovery_profile(
+                enabled=bounded_recovery_enabled,
+                blocks_generation=grounding.blocks_generation(evidence),
+                broad_task=bool(
+                    comparison_route
+                    or compliance_route
+                    or calculation_route
+                    or applicability_route
+                    or reuse_scope_revalidation
+                ),
+                presentation_only=presentation_only,
+            )
+            focused_recovery = bounded_recovery_profile == "focused"
             if (
                 evidence.reason is InsufficientEvidenceReason.UNRESOLVED_AUTHORITY
                 or calculation_review
@@ -1161,6 +1183,7 @@ class ChatService:
                 or comparison_review
                 or compliance_review
                 or reuse_scope_revalidation
+                or focused_recovery
             ) and scope_current_authority is None:
                 # Similarity to a worked example does not prove that its category,
                 # period or complete rule schedule applies to a new calculation.
@@ -1184,6 +1207,34 @@ class ChatService:
                     else "checking_missing_details"
                 )
                 with self._work.stage(repair_stage):
+                    bounded_recovery = self._chat_config.bounded_recovery_enabled
+                    broad_recovery = bool(
+                        calculation_review
+                        or applicability_review
+                        or comparison_review
+                        or compliance_review
+                        or reuse_scope_revalidation
+                    )
+                    if bounded_recovery:
+                        broad_recovery = bounded_recovery_profile == "broad"
+                    if bounded_recovery and broad_recovery:
+                        repair_timeout_seconds = self._chat_config.broad_recovery_timeout_seconds
+                        max_initial_queries = self._chat_config.broad_recovery_max_queries
+                        max_followup_queries = self._chat_config.broad_recovery_followup_max_queries
+                        max_followup_rounds = self._chat_config.broad_recovery_max_followup_rounds
+                        recovery_profile = "broad"
+                    elif bounded_recovery:
+                        repair_timeout_seconds = self._chat_config.focused_recovery_timeout_seconds
+                        max_initial_queries = self._chat_config.focused_recovery_max_queries
+                        max_followup_queries = 0
+                        max_followup_rounds = 0
+                        recovery_profile = "focused"
+                    else:
+                        repair_timeout_seconds = self._llm_config.evidence_review_timeout_seconds
+                        max_initial_queries = 8
+                        max_followup_queries = 2
+                        max_followup_rounds = 2
+                        recovery_profile = "legacy"
                     repaired = await repair_knowledge_evidence(
                         inputs=resolved.retrieval.model_copy(update={"query": retrieval_query}),
                         initial=retrieval_result,
@@ -1195,7 +1246,11 @@ class ChatService:
                         retrieval_config=self._retrieval_config,
                         max_output_tokens=self._llm_max_tokens(),
                         release_read_transaction=self._release_read_transaction,
-                        timeout_seconds=self._llm_config.evidence_review_timeout_seconds,
+                        timeout_seconds=repair_timeout_seconds,
+                        max_initial_queries=max_initial_queries,
+                        max_followup_queries=max_followup_queries,
+                        max_followup_rounds=max_followup_rounds,
+                        recovery_profile=recovery_profile,
                         domain_instructions=self._domain_instructions,
                         initial_decision=evidence,
                         required_coverage=inherited if reuse_scope_revalidation else None,
@@ -1221,6 +1276,8 @@ class ChatService:
                     if applicability_review
                     else "relevance_recovery"
                     if relevance_repair
+                    else "focused_lookup"
+                    if focused_recovery
                     else "unresolved_authority"
                 )
                 if not self._store_candidate_trace:
@@ -1494,6 +1551,10 @@ class ChatService:
                 "snapshot_origin": (
                     resolved.snapshot.origin.value if resolved.snapshot.origin is not None else None
                 ),
+                "requested_source_scope": resolved.retrieval.requested_source_scope.value,
+                "effective_source_scope": resolved.retrieval.effective_source_scope.value,
+                "source_scope_origin": resolved.retrieval.source_scope_origin,
+                "source_scope_reason": resolved.retrieval.source_scope_reason,
             },
             originating_assistant_message_id=_optional_uuid_or_none(originating_assistant_id),
             inherited_coverage=(
@@ -1692,6 +1753,13 @@ class ChatService:
                     if clarification_turn
                     else prepared.source_provenance.value
                 ),
+                "source_scope": {
+                    "requested": prepared.evidence_scope.get("requested_source_scope"),
+                    "effective": prepared.evidence_scope.get("effective_source_scope"),
+                    "origin": prepared.evidence_scope.get("source_scope_origin"),
+                    "reason": prepared.evidence_scope.get("source_scope_reason"),
+                },
+                "verification_version": "claim-verification-v2",
                 "web_search": prepared.web_search_diagnostics,
                 "non_knowledge_turn": non_knowledge_turn,
                 "citation_coverage": grounding.citation_coverage,
@@ -2162,7 +2230,10 @@ class ChatService:
         return self._llm_config.temperature
 
     def _provider_unavailable(self, exc: ProviderError) -> ServiceUnavailableError:
-        if exc.context.get("reason") == "evidence_review_timeout":
+        if exc.context.get("reason") in {
+            "evidence_review_timeout",
+            "recovery_deadline_exceeded",
+        }:
             return ServiceUnavailableError(
                 message="Evidence review reached its time limit before an answer could be "
                 "verified. Try one part of the question at a time.",
@@ -3100,12 +3171,8 @@ def _optional_int(value: object) -> int | None:
 
 
 def _requires_calculation_coverage(question: str, chunks: list[ContextChunk]) -> bool:
-    governed = any(
-        c.metadata.get("source_role") in {"primary", "supporting"}
-        and c.metadata.get("source_lifecycle_status") in {"active", "retired"}
-        for c in chunks
-    )
-    return governed and bool(
+    del chunks
+    return bool(
         re.search(
             r"\b(?:calculat(?:e|ed|ing|ion|ions)|recalculat(?:e|ion)|"
             r"comput(?:e|ing|ation)|breakdown)\b|\bhow much\b|হিসাব|হিসেব|গণনা|পরিগণনা",
@@ -3115,6 +3182,31 @@ def _requires_calculation_coverage(question: str, chunks: list[ContextChunk]) ->
     )
 
 
+def _has_governed_calculation_source(chunks: list[ContextChunk]) -> bool:
+    return any(
+        chunk.metadata.get("source_role") in {"primary", "supporting"}
+        and chunk.metadata.get("source_lifecycle_status") in {"active", "retired"}
+        for chunk in chunks
+    )
+
+
+def _bounded_recovery_profile(
+    *,
+    enabled: bool,
+    blocks_generation: bool,
+    broad_task: bool,
+    presentation_only: bool,
+) -> str | None:
+    """Choose a bounded budget from task shape before considering sufficiency."""
+    if not enabled:
+        return None
+    if broad_task:
+        return "broad"
+    if blocks_generation and not presentation_only:
+        return "focused"
+    return None
+
+
 def _requires_current_rule_coverage(question: str, chunks: list[ContextChunk]) -> bool:
     """Current governed facts need scope proof even when similarity admission passes.
 
@@ -3122,11 +3214,25 @@ def _requires_current_rule_coverage(question: str, chunks: list[ContextChunk]) -
     bypass applicability review merely because no governing source was selected.
     This also runs when conversation interpretation falls back to the raw question.
     """
-    governed = any(
-        c.metadata.get("source_role") in {"primary", "supporting", "reference"}
-        and c.metadata.get("source_lifecycle_status") in {"active", "retired"}
-        for c in chunks
+    del chunks
+    temporal = re.search(
+        r"\b(?:current|currently|latest|today|now)\b|বর্তমান|সর্বশেষ|এখন",
+        question,
+        re.I,
     )
-    return governed and bool(
-        re.search(r"\b(?:current|currently|latest|today|now)\b|বর্তমান|সর্বশেষ|এখন", question, re.I)
+    governed_fact = re.search(
+        r"\b(?:rate|rule|requirement|deadline|tax|fee|penalty|duty|applicab|guidance|"
+        r"refund|filing|return)\w*\b|হার|বিধান|নিয়ম|নিয়ম|সময়সীমা|সময়সীমা|কর|ফি|"
+        r"জরিমানা|দায়িত্ব|দায়িত্ব|প্রযোজ্য|রিটার্ন|দাখিল",
+        question,
+        re.I,
+    )
+    return bool(temporal and governed_fact)
+
+
+def _has_governed_current_rule_source(chunks: list[ContextChunk]) -> bool:
+    return any(
+        chunk.metadata.get("source_role") in {"primary", "supporting", "reference"}
+        and chunk.metadata.get("source_lifecycle_status") in {"active", "retired"}
+        for chunk in chunks
     )

@@ -31,7 +31,10 @@ from app.modules.conversations.schemas.message import MessageSendRequest
 from app.modules.conversations.services.chat_service import (
     ChatService,
     _assemble_response_policy,
+    _bounded_recovery_profile,
     _coverage_verification_failed,
+    _requires_calculation_coverage,
+    _requires_current_rule_coverage,
     _scope_current_authority_status,
 )
 from app.platform.domain.content_hash import content_hash
@@ -57,6 +60,50 @@ from app.platform.providers.implementations.echo_chat import EchoLLMProvider
 from app.platform.providers.request_work import current_request_work
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.mark.parametrize(
+    ("question", "detector"),
+    [
+        ("Calculate the tax payable for this period.", _requires_calculation_coverage),
+        ("What is the current tax rate?", _requires_current_rule_coverage),
+    ],
+)
+def test_empty_retrieval_task_detection_keeps_broad_recovery_budget(question, detector) -> None:
+    broad_task = detector(question, [])
+    assert broad_task is True
+    assert (
+        _bounded_recovery_profile(
+            enabled=True,
+            blocks_generation=True,
+            broad_task=broad_task,
+            presentation_only=False,
+        )
+        == "broad"
+    )
+
+
+def test_focused_and_supported_controls_do_not_take_broad_budget() -> None:
+    assert _requires_current_rule_coverage("Explain this source.", []) is False
+    assert _requires_calculation_coverage("Find the filing rule.", []) is False
+    assert (
+        _bounded_recovery_profile(
+            enabled=True,
+            blocks_generation=True,
+            broad_task=False,
+            presentation_only=False,
+        )
+        == "focused"
+    )
+    assert (
+        _bounded_recovery_profile(
+            enabled=True,
+            blocks_generation=False,
+            broad_task=False,
+            presentation_only=False,
+        )
+        is None
+    )
 
 
 def test_exact_recalled_selection_keeps_authority_redaction() -> None:
@@ -1466,6 +1513,67 @@ async def test_indexed_then_web_uses_web_only_after_knowledge_gate_fails(
     assert trace["web_url"] == "https://example.test/refunds"
     assert "chunk_id" not in trace
     assert "document_id" not in trace
+
+
+@pytest.mark.parametrize(
+    "message_request",
+    [
+        MessageSendRequest(
+            content="What is the capital of Japan?",
+            source_scope="indexed_only",
+        ),
+        MessageSendRequest(
+            content="What is the capital of Japan? Use only the uploaded documents."
+        ),
+        MessageSendRequest(
+            content="Do not guess, answer only from the active corpus. What is Japan's capital?"
+        ),
+        MessageSendRequest(
+            content="Do not guess and use only the uploaded documents. What is Japan's capital?"
+        ),
+    ],
+)
+@pytest.mark.parametrize("streamed", [False, True])
+async def test_corpus_only_scope_suppresses_configured_web_fallback(
+    session: AsyncMock,
+    conversation_repository: AsyncMock,
+    message_repository: AsyncMock,
+    conversation: Conversation,
+    message_request: MessageSendRequest,
+    streamed: bool,
+) -> None:
+    web = FakeWebSearch()
+    service = _service(
+        session,
+        conversation_repository,
+        message_repository,
+        CitedLLM("Tokyo is the capital of Japan [1]."),
+        chat_config=ChatConfig(response_mode=ResponseMode.INDEXED_THEN_WEB),
+    )
+    service._retrieval = EmptyRetrieval()
+    service._web_search = web
+
+    if streamed:
+        events = [event async for event in service.stream_message(conversation.id, message_request)]
+        assert events
+        assistant = message_repository.add.call_args_list[-1].args[0]
+        source_provenance = events[-1]["source_provenance"]
+        metadata = assistant.message_metadata
+    else:
+        turn = await service.send_message(conversation.id, message_request)
+        assistant = turn.assistant_message
+        source_provenance = assistant.source_provenance
+        metadata = assistant.metadata
+
+    assert not web.calls
+    assert source_provenance == "none"
+    assert metadata["web_search"]["status"] == "suppressed_scoped_request"
+    assert metadata["source_scope"]["effective"] == "indexed_only"
+    assert metadata["source_scope"]["origin"] in {
+        "request",
+        "user_message",
+    }
+    assert metadata["verification_version"] == "claim-verification-v2"
 
 
 @pytest.mark.parametrize("mode", [EvidenceGateMode.ENFORCE, EvidenceGateMode.OBSERVE])

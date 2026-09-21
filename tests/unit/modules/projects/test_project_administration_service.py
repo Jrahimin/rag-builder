@@ -162,7 +162,17 @@ async def test_partial_custom_write_materializes_complete_bundle_and_stays_indep
         reason="Tune one execution control",
     )
 
-    expected = {**execution_values(RAG_EXECUTION_PROFILES["standard"]), "retrieval_top_k": 7}
+    expected = {
+        **execution_values(RAG_EXECUTION_PROFILES["standard"]),
+        "retrieval_top_k": 7,
+        "bounded_recovery_enabled": False,
+        "focused_recovery_timeout_seconds": 15.0,
+        "broad_recovery_timeout_seconds": 30.0,
+        "focused_recovery_max_queries": 2,
+        "broad_recovery_max_queries": 4,
+        "broad_recovery_followup_max_queries": 2,
+        "broad_recovery_max_followup_rounds": 1,
+    }
     assert revision.configuration["execution"] == {"profile_id": "custom", **expected}
     record = ConfigRevisionRecord(
         id=revision.id,

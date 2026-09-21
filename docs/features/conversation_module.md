@@ -47,6 +47,8 @@ POST /messages
   → enforce: insufficient score skips LLM and persists stable reason
   → observe: same admission and selected units as enforce; veto disabled
     (zero admissions still generate from ranked candidates)
+  → resolve request/message source scope; indexed_only centrally suppresses web and web reuse
+  → incomplete evidence may enter one shared-deadline focused or broad recovery budget
   → response_mode selects indexed-only, conditional web fallback, or combined evidence
   → sufficient evidence: canonical grounding prompt + optional interpretation → LLM
   → Tx2: persist assistant (+ claims, citations, notices, metadata, auto-title) → commit
@@ -72,7 +74,17 @@ reranker bar), `grounding_mode` (`strict` default or `balanced`),
 `lexical_corroboration_floor_score`, `lexical_corroboration_coverage`,
 `cross_language_semantic_evidence_score_threshold`,
 `minimum_claim_token_coverage`, `store_candidate_trace` (debug; default off), and
-`include_citations`. Candidate-wise admission is the only reranked path; when no
+`include_citations`. Optional bounded recovery is controlled by
+`bounded_recovery_enabled`: focused lookup uses 15 seconds and up to two initial queries with no
+follow-up; broad coverage/current-rule/calculation work uses 30 seconds, up to four initial and two
+follow-up queries, and one follow-up round. These values are configurable through the corresponding
+`APE_CHAT__*_RECOVERY_*` variables. Disabled retains the legacy recovery limits.
+The same seven controls are revisioned per Project under canonical V2 execution policy; resolution
+records each origin, hashes the effective values, and copies them into the immutable conversation
+snapshot. Older snapshots that lack the fields replay with bounded recovery disabled and the
+documented default budgets.
+Candidate-wise
+admission is the only reranked path; when no
 reranker applied, the no-reranker fallback uses whole-chunk cosine plus the
 cross-language bar and returns the same per-candidate `EvidenceUnit`s.
 `strict` still requires an independent semantic, lexical, or cross-language signal on top of
@@ -99,7 +111,9 @@ Credentials, base URL, and provider backend remain deployment-owned.
   traces are stored on chat messages only when `APE_CHAT__STORE_CANDIDATE_TRACE=true`. Translated query
   text stays in diagnostics only; citations and evidence excerpts remain original chunk text.
   `source_provenance` and `web_search` record the selected source family, fallback use, provider,
-  status, and fail-closed errors. Structured `notices` (scope caveat, web evidence used,
+  status, and fail-closed errors. `source_scope` records the requested/effective scope and its
+  origin/reason; `verification_version` prevents historical verification results from being silently
+  reinterpreted. Structured `notices` (scope caveat, web evidence used,
   insufficient evidence) are system-rendered metadata, never LLM text or citations. Web citations store URL, title, retrieval time, and provider
   separately from Knowledge document/chunk locations.
 
@@ -165,13 +179,23 @@ cosine plus lexical rescue. Reranker provider failure stays fail-open to fused o
 seconds. `APE_CHAT__EVIDENCE_GATE_MODE=enforce` blocks generation on a failed score. `observe`
 records that decision without blocking. Empty retrieval still refuses.
 
-Web-enabled modes never search for document-, metadata-, or `as_of`-scoped requests. Provider
+Web-enabled modes never search for document-, metadata-, `as_of`-, or corpus-only scoped requests.
+The message request can explicitly set `source_scope=indexed_only`; clear English/Bangla corpus-only
+wording has the same one-turn effect. Provider
 timeouts, failures, and empty results do not permit model-memory fallback. Clear social turns are
 handled without an awkward knowledge refusal. Referential follow-ups run one
 bounded turn-resolution step first; retrieval uses the effective question while
 the original message stays the generation user turn. Request filters remain
 per-request and non-sticky. Adopted prior results are scenario inputs, not
 proof that the previous answer was correct.
+
+When bounded recovery is enabled, one monotonic deadline covers planning, queue waits, retrieval,
+structured-output retries, review, and the permitted follow-up. Deadline expiry can restore an
+already validated partial checkpoint, while client cancellation propagates and stops the turn.
+Diagnostics distinguish deadline expiry, provider failure, no-new-evidence stops, attempted and
+unattempted requirements, and actual source provenance. A nested provider timeout retains its
+provider identity, error code, and safe context even when a validated partial checkpoint is restored;
+it is not reported as expiry of the recovery-owned deadline.
 
 The OpenAI adapter requests both Responses web result objects and consulted source URLs. It treats
 consulted URLs as discovery only and admits text exclusively from a result object conservatively

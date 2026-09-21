@@ -135,6 +135,10 @@ must remain incomplete. For example, evidence for preparing audited accounts can
 support that limited rule even if auditor appointment or retention is not established.
 Never apply this separation to interacting calculation dependencies or omit a
 condition that could change whether the stated rule applies.
+Do not require proof that no hypothetical exception exists. A known exception,
+effective date, or conflicting amendment must be resolved only when it could change
+the conclusion. A missing tax rule does not invalidate an independently supported AGM
+obligation, and a missing filing deadline does not erase a supported filing duty.
 For a compliance overview, verify entity-type exclusions and commencement conditions
 for each proposed duty. A general opening subsection does not establish applicability
 when the provision continues beyond the supplied extract. Request adjacent context

@@ -57,6 +57,10 @@ not facts the corpus must independently prove. An explicitly already-taxable amo
 needs no salary exemption or gross-to-net transformation. Do not introduce such a
 requirement merely because it appeared in a search query. Mark an unnecessary query
 supported using source ranges for the governing rule that actually applies to the input.
+Do not require proof that no hypothetical exemption exists. Resolve a known relevant
+exception only when it could change the conclusion. Judge independently answerable
+obligations separately: a missing tax rule does not erase a supported meeting duty, and
+a missing deadline does not erase a supported filing obligation.
 A location does not imply a location-specific rule exists: an evidenced nationwide rule
 can govern that location. Verify the current rule's scope instead of demanding an older
 location-dependent framework. A trusted Project policy may authorize a

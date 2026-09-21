@@ -521,7 +521,11 @@ async def test_timeout_keeps_only_previously_validated_partial_proof(stage):
         return
     assert result.failure is None
     assert result.diagnostics["status"] == "partial_answer"
-    assert result.diagnostics["requirement_progress"]["stop_reason"] == "evidence_review_timeout"
+    expected_stop = "recovery_deadline_exceeded" if stage == "deadline" else "provider_timeout"
+    assert result.diagnostics["requirement_progress"]["stop_reason"] == expected_stop
+    if stage == "coverage_review":
+        assert result.diagnostics["provider"] == "fake"
+        assert result.diagnostics["error_code"] == "provider_timeout_error"
     assert result.diagnostics["coverage"]["partial_scope_validated"] is True
     assert result.diagnostics["coverage"]["full_coverage_validated"] is False
     assert [(c.chunk_id, c.content) for c in result.selected] == [(known.chunk_id, known.content)]
@@ -545,9 +549,97 @@ async def test_overall_review_deadline_cannot_promote_unreviewed_evidence():
     assert result.decision is None
     assert isinstance(result.failure, ProviderTimeoutError)
     assert result.diagnostics["phase"] == "coverage_review"
-    assert result.diagnostics["failure_reason"] == "timeout"
-    assert result.diagnostics["stop_reason"] == "evidence_review_timeout"
+    assert result.diagnostics["failure_reason"] == "deadline_exceeded"
+    assert result.diagnostics["stop_reason"] == "recovery_deadline_exceeded"
+    assert result.failure.context["reason"] == "recovery_deadline_exceeded"
     assert result.diagnostics["timeout_seconds"] == 0.3
+
+
+async def test_nested_bare_timeout_is_provider_failure_not_owned_deadline():
+    result, _, _ = await run_repair(
+        [([chunk("An admitted rule awaiting review.")], {})],
+        queries=["rule"],
+        verification_error=TimeoutError(),
+        timeout_seconds=300,
+    )
+
+    assert isinstance(result.failure, ProviderTimeoutError)
+    assert result.failure.context["reason"] == "nested_provider_timeout"
+    assert result.diagnostics["failure_reason"] == "provider_timeout"
+    assert result.diagnostics["stop_reason"] == "provider_timeout"
+    assert result.diagnostics["error_code"] == "provider_timeout_error"
+
+
+async def test_zero_followup_allowance_stops_before_adjacent_or_planner_execution():
+    source = chunk("The annual return duty is not established by this passage.")
+    incomplete = {
+        "complete": False,
+        "missing": ["Annual return filing duty"],
+        "checks": [
+            {
+                "requirement_id": "R1",
+                "description": "Annual return filing duty",
+                "supported": False,
+                "evidence": [],
+            }
+        ],
+    }
+    result, retrieval, _ = await run_repair(
+        [([source], {})],
+        queries=["annual return duty"],
+        requirements=[{"requirement_id": "R1", "description": "Annual return filing duty"}],
+        coverage=incomplete,
+        adjacent=True,
+        max_followup_queries=0,
+        max_followup_rounds=1,
+    )
+
+    assert retrieval.retrieve.await_count == 1
+    assert result.diagnostics["requirement_progress"]["stop_reason"] == (
+        "followup_query_allowance_exhausted"
+    )
+
+
+async def test_planner_receives_actual_initial_and_combined_followup_allowance():
+    calls = []
+    source = chunk("The filing duty is established.")
+    await run_repair(
+        [([source], {})],
+        queries=["filing duty"],
+        calls=calls,
+        max_initial_queries=3,
+        max_followup_queries=1,
+        max_followup_rounds=1,
+    )
+
+    system_prompt = calls[0].args[0][0].content
+    assert "at most 3 initial search queries" in system_prompt
+    assert "at most 1 continuation queries across 1 follow-up rounds" in system_prompt
+
+
+async def test_focused_budget_limits_initial_queries_and_disables_followup():
+    incomplete = {"complete": False, "missing": ["governing rule"], "checks": []}
+    result, retrieval, _ = await run_repair(
+        [([chunk("First candidate")], {}), ([chunk("Second candidate")], {})],
+        queries=["route one", "route two", "route three", "route four"],
+        coverage=incomplete,
+        max_initial_queries=2,
+        max_followup_queries=0,
+        max_followup_rounds=0,
+        recovery_profile="focused",
+        timeout_seconds=15,
+    )
+
+    assert retrieval.retrieve.await_count == 2
+    assert result.diagnostics["recovery_budget"] == {
+        "profile": "focused",
+        "timeout_seconds": 15,
+        "max_initial_queries": 2,
+        "max_followup_queries": 0,
+        "max_followup_rounds": 0,
+        "deadline_kind": "shared_monotonic",
+    }
+    assert result.diagnostics["requirement_progress"]["stop_reason"] == ("repair_followup_limit")
 
 
 @pytest.mark.parametrize("final_finish", ["stop", "length"])
@@ -974,6 +1066,10 @@ async def run_repair(
     evidence_approach="authoritative",
     initial_decision=None,
     plan_coverage=None,
+    max_initial_queries=8,
+    max_followup_queries=2,
+    max_followup_rounds=2,
+    recovery_profile="legacy",
 ):
     config = config or ChatConfig()
     queries = (
@@ -1142,6 +1238,10 @@ async def run_repair(
         timeout_seconds=timeout_seconds,
         evidence_approach=evidence_approach,
         initial_decision=initial_decision,
+        max_initial_queries=max_initial_queries,
+        max_followup_queries=max_followup_queries,
+        max_followup_rounds=max_followup_rounds,
+        recovery_profile=recovery_profile,
     )
     if calls is not None:
         calls.extend(llm.generate.call_args_list)
@@ -2014,6 +2114,48 @@ def test_search_plan_does_not_override_required_origin_using_description_words()
     assert ownership["official confirmation"] == ["R2"]
 
 
+def test_search_plan_orders_material_requirements_before_query_truncation():
+    from app.modules.conversations.services.evidence_repair_service import (
+        _prepare_search_plan,
+        _SearchPlan,
+    )
+
+    plan = _SearchPlan.model_validate(
+        {
+            "requirements": [
+                {
+                    "requirement_id": "R3",
+                    "description": "secondary detail",
+                    "origin": "explicit_user_request",
+                    "materiality": "secondary_detail",
+                },
+                {
+                    "requirement_id": "R2",
+                    "description": "central duty",
+                    "origin": "explicit_user_request",
+                    "materiality": "central_rule",
+                },
+                {
+                    "requirement_id": "R1",
+                    "description": "governing applicability",
+                    "origin": "necessary_applicability",
+                    "materiality": "governing_applicability",
+                },
+            ],
+            "queries": [
+                {"query": "secondary", "requirement_ids": ["R3"]},
+                {"query": "central", "requirement_ids": ["R2"]},
+                {"query": "governing", "requirement_ids": ["R1"]},
+            ],
+        }
+    )
+
+    requirements, queries, _ = _prepare_search_plan(plan)
+
+    assert [item.requirement_id for item in requirements] == ["R1", "R2", "R3"]
+    assert queries == ["governing", "central", "secondary"]
+
+
 def test_legacy_unbound_query_is_not_assigned_to_a_requirement_by_position():
     from app.modules.conversations.services.evidence_repair_service import (
         _prepare_search_plan,
@@ -2116,6 +2258,66 @@ async def test_second_focused_pass_is_bounded_and_can_resolve_remaining_gap():
     assert result.diagnostics["status"] == "recovered"
     assert retrieval.retrieve.await_count == 3
     assert result.diagnostics["focused_queries"] == ["first alternative", "second alternative"]
+
+
+async def test_legacy_followup_allowance_is_per_round_not_shared_total():
+    example = chunk("Worked example")
+    rule = chunk("Complete governing rule")
+    incomplete = {"complete": False, "missing": ["governing rule"], "checks": []}
+    result, retrieval, _ = await run_repair(
+        [([example], {}), ([], {}), ([], {}), ([], {}), ([rule], {})],
+        queries=["initial search"],
+        coverage=incomplete,
+        followup_queries=["first a", "first b"],
+        final_coverage=incomplete,
+        second_followup_queries=["second a", "second b"],
+        second_final_coverage={
+            "complete": True,
+            "missing": [],
+            "checks": [
+                {
+                    "query_index": i,
+                    "supported": True,
+                    "evidence": [{"chunk_id": str(rule.chunk_id), "start_line": 1, "end_line": 1}],
+                }
+                for i in range(5)
+            ],
+        },
+        max_followup_queries=2,
+        max_followup_rounds=2,
+        recovery_profile="legacy",
+    )
+
+    assert result.diagnostics["status"] == "recovered"
+    assert retrieval.retrieve.await_count == 5
+    assert result.diagnostics["focused_queries"] == [
+        "first a",
+        "first b",
+        "second a",
+        "second b",
+    ]
+
+
+async def test_bounded_followup_allowance_is_shared_across_rounds():
+    example = chunk("Worked example")
+    incomplete = {"complete": False, "missing": ["governing rule"], "checks": []}
+    result, retrieval, _ = await run_repair(
+        [([example], {}), ([], {}), ([], {})],
+        queries=["initial search"],
+        coverage=incomplete,
+        followup_queries=["first a", "first b"],
+        final_coverage=incomplete,
+        second_followup_queries=["second a", "second b"],
+        max_followup_queries=2,
+        max_followup_rounds=2,
+        recovery_profile="broad",
+    )
+
+    assert retrieval.retrieve.await_count == 3
+    assert result.diagnostics["focused_queries"] == ["first a", "first b"]
+    assert result.diagnostics["requirement_progress"]["stop_reason"] == (
+        "followup_query_allowance_exhausted"
+    )
 
 
 @pytest.mark.parametrize("start,end", [(0, 1), (2, 1), (1, 99)])

@@ -65,6 +65,7 @@ export type SearchResponse = components["schemas"]["SearchResponse"];
 export type Conversation = components["schemas"]["ConversationResponse"];
 export type Message = components["schemas"]["MessageResponse"];
 export type ChatTurn = components["schemas"]["ChatTurnResponse"];
+export type SourceScope = components["schemas"]["SourceScope"];
 export type StreamMessageResult = {
   content: string;
   timing: StreamDeliveryTiming;
@@ -629,11 +630,22 @@ export const operatorApiClient = {
     request<MessagePage>(
       `${apiRoot}/projects/${projectId}/conversations/${conversationId}/messages${query({ limit, offset })}`,
     ),
-  sendMessage: (projectId: string, conversationId: string, content: string, documentId?: string) =>
+  sendMessage: (
+    projectId: string,
+    conversationId: string,
+    content: string,
+    documentId?: string,
+    sourceScope?: SourceScope,
+  ) =>
     request<ChatTurn>(`${apiRoot}/projects/${projectId}/conversations/${conversationId}/messages`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ content, document_id: documentId ?? null, metadata_filter: {} }),
+      body: JSON.stringify({
+        content,
+        document_id: documentId ?? null,
+        metadata_filter: {},
+        source_scope: sourceScope ?? "project_default",
+      }),
     }),
   streamMessage: async (
     projectId: string,
@@ -644,6 +656,7 @@ export const operatorApiClient = {
     onProgress?: (message: string) => void,
     signal?: AbortSignal,
     onTiming?: (timing: StreamDeliveryTiming) => void,
+    sourceScope?: SourceScope,
   ): Promise<StreamMessageResult> => {
     const timing: StreamDeliveryTiming = { requestStartedAt: performance.now() };
     const send = () =>
@@ -655,7 +668,12 @@ export const operatorApiClient = {
           "Content-Type": "application/json",
           ...getCsrfHeader(),
         },
-        body: JSON.stringify({ content, document_id: documentId ?? null, metadata_filter: {} }),
+        body: JSON.stringify({
+          content,
+          document_id: documentId ?? null,
+          metadata_filter: {},
+          source_scope: sourceScope ?? "project_default",
+        }),
         signal,
       });
 

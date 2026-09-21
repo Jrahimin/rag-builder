@@ -301,6 +301,87 @@ def test_request_filters_are_authoritative_and_not_sticky():
         assert inputs.as_of == current.as_of
 
 
+@pytest.mark.parametrize(
+    "message",
+    [
+        "Answer only from the active corpus.",
+        "Use only the uploaded documents for this answer.",
+        "Do not guess, answer only from the active corpus.",
+        "Do not guess and use only the uploaded documents.",
+        "শুধু সক্রিয় কর্পাস থেকে উত্তর দিন।",
+        "শুধুমাত্র আপলোড করা নথি ব্যবহার করে উত্তর দিন।",
+    ],
+)
+def test_explicit_message_source_restrictions_suppress_web_for_one_turn(message: str):
+    inputs = effective_retrieval_inputs(
+        original_message=message,
+        resolution=_resolution(),
+        request_filters=RequestFilters(),
+        snapshot=EffectiveSnapshot(),
+    )
+
+    assert inputs.suppress_web is True
+    assert inputs.requested_source_scope == "project_default"
+    assert inputs.effective_source_scope == "indexed_only"
+    assert inputs.source_scope_origin == "user_message"
+
+
+def test_negated_message_source_restriction_keeps_project_default():
+    inputs = effective_retrieval_inputs(
+        original_message="Do not limit yourself to the corpus; use current web sources too.",
+        resolution=_resolution(),
+        request_filters=RequestFilters(),
+        snapshot=EffectiveSnapshot(),
+    )
+
+    assert inputs.suppress_web is False
+    assert inputs.effective_source_scope == "project_default"
+
+
+def test_unrelated_negation_does_not_cancel_later_source_clause():
+    inputs = effective_retrieval_inputs(
+        original_message="Do not guess; answer only from the active corpus.",
+        resolution=_resolution(),
+        request_filters=RequestFilters(),
+        snapshot=EffectiveSnapshot(),
+    )
+
+    assert inputs.suppress_web is True
+    assert inputs.source_scope_origin == "user_message"
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "Do not limit yourself to the corpus; use current web sources too.",
+        "শুধু কর্পাস থেকে উত্তর দেবেন না; প্রয়োজনে ওয়েব ব্যবহার করুন।",
+    ],
+)
+def test_real_source_scope_negation_is_not_a_restriction(message: str):
+    inputs = effective_retrieval_inputs(
+        original_message=message,
+        resolution=_resolution(),
+        request_filters=RequestFilters(),
+        snapshot=EffectiveSnapshot(),
+    )
+
+    assert inputs.suppress_web is False
+
+
+def test_api_indexed_only_scope_cannot_be_relaxed_by_message_text():
+    inputs = effective_retrieval_inputs(
+        original_message="Do not limit yourself to the corpus.",
+        resolution=_resolution(),
+        request_filters=RequestFilters(source_scope="indexed_only"),
+        snapshot=EffectiveSnapshot(),
+    )
+
+    assert inputs.suppress_web is True
+    assert inputs.requested_source_scope == "indexed_only"
+    assert inputs.effective_source_scope == "indexed_only"
+    assert inputs.source_scope_origin == "request"
+
+
 def test_ordinary_temporal_words_are_not_scenario_quantities():
     payload = _payload("What was the rate before that?")
     validated = validate_turn_resolution(

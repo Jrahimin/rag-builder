@@ -2439,7 +2439,7 @@ function MessagesTab({
                   <article className="message-card message-card--assistant message-card--streaming">
                     <div>
                       <strong>Answer in progress</strong>
-                      <span className="lab-streaming-status">Streaming</span>
+                      <span className="lab-streaming-status">Verification pending</span>
                     </div>
                     <div role="status">
                       <MessageContent
@@ -2921,6 +2921,15 @@ export function MessageInspector({
   const supportedFactual = factualClaims.filter((claim) => claim.verification === "supported");
   const failedClaims = claims.filter((claim) => claim.verification !== "supported");
   const usefulPartial = Boolean(partial && !refusal && groundingPassed && expectedMatches);
+  const verificationLabel = refusal
+    ? "Needs attention"
+    : groundingPassed && partial
+      ? "Claims supported · partial coverage"
+      : groundingPassed && ["web", "knowledge_and_web"].includes(message.source_provenance)
+        ? "Claims supported · web sources"
+        : groundingPassed
+          ? "Claims supported"
+          : "Needs attention";
   if (
     message.metadata?.non_knowledge_turn === true &&
     !refusal &&
@@ -2967,6 +2976,7 @@ export function MessageInspector({
               ? "passed"
               : "needs_attention"
           }
+          label={verificationLabel}
         />
       </div>
       {isLatestRun && run && (

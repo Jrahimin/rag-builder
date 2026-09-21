@@ -61,6 +61,8 @@ _SPAN_BOUNDARY_PATTERN = regex.compile(
 _INSUFFICIENCY_MARKER = "not enough indexed evidence"
 _COVERAGE_SCOPE_PATTERN = regex.compile(
     r"(?:available (?:materials|provisions) (?:do not|did not) establish|"
+    r"the materials reviewed (?:do not|did not) establish|"
+    r"(?:i|we) cannot responsibly state from (?:these|the) materials|"
     r"not enough indexed evidence|"
     r"reviewed (?:evidence|materials|sources) (?:do(?:es)?|did) not|"
     r"this answer (?:does|did) not (?:cover|establish)|"
@@ -93,7 +95,7 @@ _WHOLE_CORPUS_ABSENCE_PATTERN = regex.compile(
 _MAX_CITATION_INHERITANCE_STRUCTURAL_GAP = 1
 _MAX_CITATION_INHERITANCE_LIST_GAP = 8
 _BENGALI_DIGIT_FOLD = str.maketrans("০১২৩৪৫৬৭৮৯", "0123456789")
-_MARKDOWN_LIST_ITEM_PATTERN = regex.compile(r"^[-*+]\s+\S")
+_MARKDOWN_LIST_ITEM_PATTERN = regex.compile(r"^\s*(?:[-*+]|\p{Number}+[.)])\s+\S")
 _QUANTITY_SETUP_PATTERN = regex.compile(
     r"^(?:[-*+]\s+)?.+[:：]\s*(?:[A-Za-z]{1,6}\s+)*[\d,.]+\s*"  # noqa: RUF001
     r"(?:[A-Za-z\p{Bengali}]{0,12})?\s*$"
@@ -144,8 +146,18 @@ _CALCULATION_OPERATOR_PATTERN = regex.compile(
     regex.IGNORECASE,
 )
 _MIXED_LIMITATION_CONNECTOR = regex.compile(
-    r"(?:,|;)\s*(?=so\b|therefore\b|thus\b|consequently\b)|"
-    r"\s+(?=তাই|অতএব|সুতরাং)",
+    r"(?:,|;)\s*(?=(?:so|therefore|thus|consequently|but|however|yet|and)\b)|"
+    r"\s+(?=(?:but|however|yet)\b)|"
+    r"\s+(?=তাই|অতএব|সুতরাং|কিন্তু|তবে)",
+    regex.IGNORECASE,
+)
+_EVIDENCE_FOLLOWUP_PATTERN = regex.compile(
+    r"^(?:(?:those|these|the) (?:points?|matters?|requirements?) )?"
+    r"(?:should|must) be verified with\b.+$|"
+    r"^(?:verify|confirm|check) (?:this|these|those) "
+    r"(?:points?|matters?|requirements?) with\b.+$|"
+    r"^(?:(?:এই|এসব|ঐ|উক্ত)\s+)?(?:বিষয়|বিষয়|দিক|তথ্য|প্রয়োজনীয়তা|প্রয়োজনীয়তা)"
+    r"\p{Bengali}*[^,;।]{0,120}(?:যাচাই|নিশ্চিত) কর(?:া|তে) (?:উচিত|হবে)[।.!]?$",
     regex.IGNORECASE,
 )
 _DUTY_MARKER_PATTERN = regex.compile(
@@ -892,7 +904,8 @@ class GroundingService:
                 or _is_structural_segment(claim_text)
                 or _is_quantity_setup_segment(segment)
                 or _is_short_stance_segment(claim_text)
-                or _is_insufficiency_statement(claim_text)
+                or _is_evidence_followup_statement(claim_text)
+                or (_is_insufficiency_statement(claim_text) and not coverage)
             ):
                 continue
             context = _verification_context(segments, index - 1)
@@ -955,7 +968,10 @@ class GroundingService:
                 span_texts = [span.text for span in selected_spans.values()]
                 evidence_texts = [chunk.content for _, chunk in draft.evidence_chunks]
                 full_evidence = " ".join(evidence_texts)
-                duration_evidence = " ".join(span_texts or evidence_texts)
+                quantity_evidence = " ".join(
+                    _quantity_aligned_evidence(draft.assertion, span_texts or evidence_texts)
+                )
+                duration_evidence = quantity_evidence
                 neighbor = _nearest_matching_cited_calculation(segments, draft.index - 1)
                 adjacent_texts = (segments[neighbor],) if neighbor is not None else ()
                 derived = _derived_calculation_verification(
@@ -977,9 +993,10 @@ class GroundingService:
                     draft.assertion,
                     regex.IGNORECASE,
                 )
-                if _missing_duration(
-                    draft.assertion, duration_evidence
-                ) and _duration_context_related(draft.assertion, duration_evidence):
+                if _missing_duration(draft.assertion, duration_evidence) and (
+                    _duration_context_related(draft.assertion, duration_evidence)
+                    or _quantity_scope_conflict(draft.assertion, full_evidence)
+                ):
                     verification = ClaimVerification.UNSUPPORTED
                     verification_method = "duration"
                     verification_reason = ClaimVerificationReason.DURATION_MISMATCH
@@ -990,6 +1007,20 @@ class GroundingService:
                 elif derived is not None:
                     verification = derived
                     verification_method = "arithmetic"
+                elif regex.search(
+                    r"(?:\b(?:BDT|Tk|fee|fine|amount|payable)\b|৳)",
+                    draft.assertion,
+                    regex.IGNORECASE,
+                ) and any(
+                    not _amounts_include(
+                        _currency_amounts(quantity_evidence) | _currency_amounts(user_input), amount
+                    )
+                    for amount in _currency_amounts(draft.assertion)
+                ):
+                    # Topic similarity cannot authenticate an invented monetary
+                    # amount. User-supplied operands remain valid calculation input.
+                    verification = ClaimVerification.UNSUPPORTED
+                    verification_reason = ClaimVerificationReason.UNVERIFIED_AMOUNT
                 elif regex.search(r"\d[^\n]*(?:[\u00d7\u00f7=]|\s[x*]\s)[^\n]*\d", draft.assertion):
                     # Similarity cannot certify calculation syntax the arithmetic verifier
                     # does not understand (e.g. a sum, nested formula or a contested total).
@@ -1012,7 +1043,7 @@ class GroundingService:
                     draft.assertion,
                     regex.IGNORECASE,
                 ) and any(
-                    not _amounts_include(_money_amounts(full_evidence), amount)
+                    not _amounts_include(_money_amounts(quantity_evidence), amount)
                     for amount in _money_amounts(draft.assertion)
                 ):
                     verification = ClaimVerification.UNVERIFIED
@@ -1825,20 +1856,48 @@ def _split_mixed_limitation_assertion(segment: str) -> list[str]:
     return [left, right]
 
 
+class _AnswerSegment(str):
+    """A string claim carrying private Markdown ownership metadata."""
+
+    block_id: int
+    block_kind: str
+
+    def __new__(cls, value: str, *, block_id: int, block_kind: str) -> _AnswerSegment:
+        instance = str.__new__(cls, value)
+        instance.block_id = block_id
+        instance.block_kind = block_kind
+        return instance
+
+
 def _answer_segments(answer: str) -> list[str]:
     """Split claims and safely inherit nearby citations.
 
     Inheritance only supplies candidate evidence.  Every sentence is still
     verified independently by ``map_claims`` before it can be grounded.
     """
-    # A table is not a prose paragraph: its final citation belongs to that row,
-    # not every earlier uncited sentence in the table. Keep the header row as
-    # verification context; map_claims skips it as a factual claim.
+    # Build real Markdown ownership blocks before sentence splitting. A wrapped
+    # list item remains one block, while sibling/nested/numbered items, table
+    # rows, and blank-line-separated paragraphs own their citations separately.
     lines = answer.splitlines()
-    normalized_lines: list[str] = []
+    blocks: list[tuple[str, str]] = []
+    pending: list[str] = []
+    pending_kind = "paragraph"
+
+    def flush() -> None:
+        nonlocal pending, pending_kind
+        if pending:
+            blocks.append((pending_kind, " ".join(part.strip() for part in pending).strip()))
+            pending = []
+            pending_kind = "paragraph"
+
     for index, line in enumerate(lines):
+        stripped = line.strip()
+        if not stripped:
+            flush()
+            continue
         is_divider = "|" in line and _MARKDOWN_TABLE_DIVIDER_PATTERN.fullmatch(line.strip())
         if is_divider:
+            flush()
             continue
         is_header = (
             "|" in line
@@ -1846,15 +1905,26 @@ def _answer_segments(answer: str) -> list[str]:
             and "|" in lines[index + 1]
             and _MARKDOWN_TABLE_DIVIDER_PATTERN.fullmatch(lines[index + 1].strip())
         )
-        if line.strip().startswith("|") and line.strip().endswith("|"):
-            normalized_lines.extend(
-                ["", f"{_TABLE_HEADER_SENTINEL}{line}" if is_header else line, ""]
-            )
+        if stripped.startswith("|") and stripped.endswith("|"):
+            flush()
+            blocks.append(("table", f"{_TABLE_HEADER_SENTINEL}{line}" if is_header else line))
+        elif _starts_markdown_list_item(line):
+            flush()
+            pending_kind = "list"
+            pending = [line]
+        elif _MARKDOWN_HEADING_PATTERN.fullmatch(stripped):
+            flush()
+            blocks.append(("heading", stripped))
+        elif pending_kind == "list":
+            # CommonMark permits lazy (unindented) continuation lines. They
+            # remain owned by the current item until a blank or another marker.
+            pending.append(line)
         else:
-            normalized_lines.append(line)
-    answer = "\n".join(normalized_lines)
+            pending.append(line)
+    flush()
+
     segments: list[str] = []
-    for paragraph in regex.split(r"\n\s*\n", answer):
+    for block_id, (block_kind, paragraph) in enumerate(blocks):
         stripped_paragraph = paragraph.strip()
         if stripped_paragraph.startswith(_TABLE_HEADER_SENTINEL) or _is_markdown_table_row(
             stripped_paragraph
@@ -1862,12 +1932,16 @@ def _answer_segments(answer: str) -> list[str]:
             # A row is one structural assertion. Sentence punctuation inside a
             # cell must not detach an authority, condition, or citation from the
             # duty named in another cell.
-            segments.append(stripped_paragraph)
+            segments.append(
+                _AnswerSegment(stripped_paragraph, block_id=block_id, block_kind=block_kind)
+            )
             continue
         if _MARKDOWN_HEADING_PATTERN.fullmatch(paragraph.strip()):
             # Do not split a numbered heading at "1." and turn its remaining
             # title into an unsupported factual sentence.
-            segments.append(paragraph.strip())
+            segments.append(
+                _AnswerSegment(paragraph.strip(), block_id=block_id, block_kind=block_kind)
+            )
             continue
         paragraph_segments: list[str] = []
         for raw_segment in _SEGMENT_PATTERN.split(paragraph):
@@ -1888,8 +1962,15 @@ def _answer_segments(answer: str) -> list[str]:
                     segment if _CITATION_PATTERN.search(segment) else f"{segment} {inherited}"
                     for segment in paragraph_segments
                 ]
-            segments.extend(paragraph_segments)
+            segments.extend(
+                _AnswerSegment(item, block_id=block_id, block_kind=block_kind)
+                for item in paragraph_segments
+            )
     return _inherit_bounded_block_citations(segments)
+
+
+def _starts_markdown_list_item(text: str) -> bool:
+    return bool(regex.match(r"^\s*(?:[-*+]|\p{Number}+[.)])\s+\S", text))
 
 
 def _inherit_bounded_block_citations(segments: list[str]) -> list[str]:
@@ -1915,9 +1996,15 @@ def _inherit_bounded_block_citations(segments: list[str]) -> list[str]:
         after = _nearest_cited_factual_segment(segments, index, direction=1)
         shared: set[str] = set()
         if before is not None and after is not None:
-            shared = set(_CITATION_PATTERN.findall(segments[before])) & set(
-                _CITATION_PATTERN.findall(segments[after])
+            same_owner = (
+                getattr(segment, "block_id", None)
+                == getattr(segments[before], "block_id", None)
+                == getattr(segments[after], "block_id", None)
             )
+            if same_owner or _CALCULATION_OPERATOR_PATTERN.search(_plain_claim_text(segment)):
+                shared = set(_CITATION_PATTERN.findall(segments[before])) & set(
+                    _CITATION_PATTERN.findall(segments[after])
+                )
         if not shared:
             neighbor = _nearest_matching_cited_calculation(segments, index)
             if neighbor is None:
@@ -1927,7 +2014,11 @@ def _inherit_bounded_block_citations(segments: list[str]) -> list[str]:
             shared = set(_CITATION_PATTERN.findall(segments[neighbor]))
         if shared:
             citations = " ".join(f"[{value}]" for value in sorted(shared))
-            inherited[index] = f"{segment} {citations}"
+            inherited[index] = _AnswerSegment(
+                f"{segment} {citations}",
+                block_id=getattr(segment, "block_id", index),
+                block_kind=getattr(segment, "block_kind", "paragraph"),
+            )
     return inherited
 
 
@@ -2063,6 +2154,7 @@ def _is_non_factual_segment(text: str) -> bool:
         or _is_quantity_setup_segment(text)
         or _is_short_stance_segment(text)
         or _is_insufficiency_statement(text)
+        or _is_evidence_followup_statement(text)
     )
 
 
@@ -2198,6 +2290,17 @@ def _money_amounts(text: str) -> set[float]:
     return {amount for amount in _amount_set(text) if amount >= 100}
 
 
+def _currency_amounts(text: str) -> set[float]:
+    folded = _fold_indic_digits(text)
+    matches = regex.findall(
+        rf"(?:\b(?:BDT|Tk)\b|৳)\s*(?P<prefix>{_NUMBER})|"
+        rf"(?P<suffix>{_NUMBER})\s*(?:\b(?:BDT|Tk)\b|৳)",
+        folded,
+        regex.IGNORECASE,
+    )
+    return {_parse_amount(prefix or suffix) for prefix, suffix in matches if (prefix or suffix)}
+
+
 def _amounts_include(amounts: set[float], value: float) -> bool:
     tolerance = _amount_tolerance(value)
     return any(abs(value - other) <= tolerance for other in amounts)
@@ -2331,9 +2434,13 @@ def _derived_amount_pair_verification(
 
 
 def _is_insufficiency_statement(text: str) -> bool:
-    """Prompted refusals are not factual claims about the corpus."""
-    folded = text.casefold()
-    return _INSUFFICIENCY_MARKER in folded
+    """A bare refusal without a coverage verdict is not a verifiable claim."""
+    return _INSUFFICIENCY_MARKER in _plain_claim_text(text).casefold()
+
+
+def _is_evidence_followup_statement(text: str) -> bool:
+    """Operational verification advice is not a factual corpus assertion."""
+    return bool(_EVIDENCE_FOLLOWUP_PATTERN.fullmatch(_plain_claim_text(text).strip()))
 
 
 def _coverage_kind_hint(text: str, *, display: str | None = None) -> str | None:
@@ -2390,6 +2497,14 @@ def _coverage_scope_verification(
             ClaimVerificationReason.COVERAGE_VERDICT_UNAVAILABLE,
         )
     if _coverage_topic_supported(text, coverage) or _coverage_topic_supported(shown, coverage):
+        return ClaimVerification.SUPPORTED, ClaimVerificationReason.MATCHES_COVERAGE_VERDICT
+    if regex.search(
+        r"cannot responsibly state from (?:these|the) materials\b",
+        _plain_claim_text(shown),
+        regex.IGNORECASE,
+    ) and (coverage.get("partial_scope_validated") is True or _coverage_topics(coverage)):
+        # This sentence refers back to the immediately preceding enumerated
+        # coverage gap. It is a limitation, not a denial of the underlying duty.
         return ClaimVerification.SUPPORTED, ClaimVerificationReason.MATCHES_COVERAGE_VERDICT
     if _COVERAGE_SCOPE_PATTERN.search(_plain_claim_text(shown)) or _COVERAGE_SCOPE_PATTERN.search(
         _plain_claim_text(text)
@@ -2902,6 +3017,95 @@ def _bounded_entailment_guard(claim: str, evidence: str) -> ClaimVerification | 
         if claim_values and evidence_values and claim_values.isdisjoint(evidence_values):
             return ClaimVerification.UNSUPPORTED
     return None
+
+
+def _quantity_aligned_evidence(claim: str, evidence_texts: list[str]) -> list[str]:
+    """Select clauses that bind a number to the same duty as the claim.
+
+    Equal numbers are not interchangeable proof: an appeal period cannot prove
+    a filing period, and a daily fine cannot prove a filing fee. Canonical
+    bilingual subjects provide the same guard for English/Bangla evidence.
+    """
+    claim_subjects = _quantity_subjects(claim)
+    claim_tokens = _significant_tokens(claim)
+    selected: list[str] = []
+    for evidence in evidence_texts:
+        clauses = [
+            piece.strip()
+            for piece in regex.split(
+                r"\n+|(?<=[.!?।॥。;])\s+|\s*;\s*|"
+                r",\s*(?=(?:and|but|while|whereas)\b)|"
+                r"\s+(?:and|but|while|whereas|এবং|কিন্তু|অথচ)\s+",
+                evidence,
+                flags=regex.IGNORECASE,
+            )
+            if piece.strip()
+        ]
+        if not clauses:
+            continue
+        if not claim_subjects:
+            selected.extend(
+                clause for clause in clauses if _duration_context_related(claim, clause)
+            )
+            continue
+        ranked: list[tuple[float, int, str]] = []
+        for position, clause in enumerate(clauses):
+            clause_subjects = _quantity_subjects(clause)
+            if claim_subjects and clause_subjects and claim_subjects.isdisjoint(clause_subjects):
+                continue
+            subject_score = len(claim_subjects & clause_subjects)
+            lexical_score = _coverage(claim_tokens, _significant_tokens(clause))
+            ranked.append((subject_score * 2 + lexical_score, -position, clause))
+        if not ranked:
+            continue
+        score, _position, clause = max(ranked)
+        if score >= (1.0 if claim_subjects else 0.2):
+            selected.append(clause)
+    return selected
+
+
+def _quantity_scope_conflict(claim: str, evidence: str) -> bool:
+    claim_subjects = _quantity_subjects(claim)
+    if not claim_subjects:
+        return False
+    relevant_clauses = [
+        clause
+        for clause in regex.split(
+            r"\n+|(?<=[.!?।॥。;])\s+|\s*;\s*|"
+            r",\s*(?=(?:and|but|while|whereas)\b)|"
+            r"\s+(?:and|but|while|whereas|এবং|কিন্তু|অথচ)\s+",
+            evidence,
+            flags=regex.IGNORECASE,
+        )
+        if _duration_quantities(clause)
+    ]
+    return bool(relevant_clauses) and all(
+        bool(subjects := _quantity_subjects(clause)) and claim_subjects.isdisjoint(subjects)
+        for clause in relevant_clauses
+    )
+
+
+def _quantity_subjects(text: str) -> set[str]:
+    folded = _plain_claim_text(text).casefold()
+    aliases = {
+        "filing": (
+            "filing",
+            "file the",
+            "filed",
+            "return submission",
+            "দাখিল",
+            "জমা",
+        ),
+        "appeal": ("appeal", "আপিল"),
+        "fee": ("fee", "ফি"),
+        "penalty": ("fine", "penalty", "sanction", "জরিমানা", "দণ্ড"),
+        "daily": ("daily", "per day", "each day", "প্রতিদিন", "দৈনিক", "প্রতি দিন"),
+        "retention": ("retention", "retain", "keep records", "সংরক্ষণ"),
+        "tax": ("tax", "কর"),
+    }
+    return {
+        subject for subject, values in aliases.items() if any(value in folded for value in values)
+    }
 
 
 def _aligned_entailment_clause(claim: str, evidence: str) -> str:

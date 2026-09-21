@@ -109,6 +109,13 @@ class ProjectChatPolicy(BaseModel):
     minimum_reranker_evidence_score: float | None = Field(default=None, ge=0.0, le=1.0)
     high_confidence_reranker_evidence_score: float | None = Field(default=None, ge=0.0, le=1.0)
     grounding_mode: GroundingMode | None = None
+    bounded_recovery_enabled: bool | None = None
+    focused_recovery_timeout_seconds: float | None = Field(default=None, ge=1.0, le=120.0)
+    broad_recovery_timeout_seconds: float | None = Field(default=None, ge=1.0, le=300.0)
+    focused_recovery_max_queries: int | None = Field(default=None, ge=1, le=8)
+    broad_recovery_max_queries: int | None = Field(default=None, ge=1, le=12)
+    broad_recovery_followup_max_queries: int | None = Field(default=None, ge=0, le=8)
+    broad_recovery_max_followup_rounds: int | None = Field(default=None, ge=0, le=3)
 
 
 class ProjectWebSearchPolicy(BaseModel):
@@ -196,6 +203,13 @@ class ProjectExecutionV2(BaseModel):
     max_context_chunks: int | None = Field(default=None, ge=1, le=50)
     context_char_budget: int | None = Field(default=None, ge=500, le=200_000)
     max_history_messages: int | None = Field(default=None, ge=0, le=200)
+    bounded_recovery_enabled: bool | None = None
+    focused_recovery_timeout_seconds: float | None = Field(default=None, ge=1.0, le=120.0)
+    broad_recovery_timeout_seconds: float | None = Field(default=None, ge=1.0, le=300.0)
+    focused_recovery_max_queries: int | None = Field(default=None, ge=1, le=8)
+    broad_recovery_max_queries: int | None = Field(default=None, ge=1, le=12)
+    broad_recovery_followup_max_queries: int | None = Field(default=None, ge=0, le=8)
+    broad_recovery_max_followup_rounds: int | None = Field(default=None, ge=0, le=3)
 
     @model_validator(mode="before")
     @classmethod
@@ -284,6 +298,15 @@ class EffectiveChatPolicy(BaseModel):
     high_confidence_reranker_evidence_score: float = 0.70
     high_confidence_band_enabled: bool = False
     grounding_mode: GroundingMode = GroundingMode.STRICT
+    # Defaults keep immutable snapshots created before bounded recovery existed
+    # behaviorally identical when they are replayed.
+    bounded_recovery_enabled: bool = False
+    focused_recovery_timeout_seconds: float = 15.0
+    broad_recovery_timeout_seconds: float = 30.0
+    focused_recovery_max_queries: int = 2
+    broad_recovery_max_queries: int = 4
+    broad_recovery_followup_max_queries: int = 2
+    broad_recovery_max_followup_rounds: int = 1
 
 
 class EffectiveWebSearchPolicy(BaseModel):
@@ -534,6 +557,13 @@ def _v2_as_legacy_policy(
                 max_context_chunks=execution.max_context_chunks,
                 context_char_budget=execution.context_char_budget,
                 max_history_messages=execution.max_history_messages,
+                bounded_recovery_enabled=execution.bounded_recovery_enabled,
+                focused_recovery_timeout_seconds=execution.focused_recovery_timeout_seconds,
+                broad_recovery_timeout_seconds=execution.broad_recovery_timeout_seconds,
+                focused_recovery_max_queries=execution.focused_recovery_max_queries,
+                broad_recovery_max_queries=execution.broad_recovery_max_queries,
+                broad_recovery_followup_max_queries=(execution.broad_recovery_followup_max_queries),
+                broad_recovery_max_followup_rounds=(execution.broad_recovery_max_followup_rounds),
             ),
             domain_instructions=behavior.domain_instructions,
         ),
@@ -851,6 +881,41 @@ def resolve_project_ai_config(
                 project.chat.grounding_mode,
                 settings.chat.grounding_mode,
             ),
+            bounded_recovery_enabled=inherited(
+                "chat.bounded_recovery_enabled",
+                project.chat.bounded_recovery_enabled,
+                settings.chat.bounded_recovery_enabled,
+            ),
+            focused_recovery_timeout_seconds=inherited(
+                "chat.focused_recovery_timeout_seconds",
+                project.chat.focused_recovery_timeout_seconds,
+                settings.chat.focused_recovery_timeout_seconds,
+            ),
+            broad_recovery_timeout_seconds=inherited(
+                "chat.broad_recovery_timeout_seconds",
+                project.chat.broad_recovery_timeout_seconds,
+                settings.chat.broad_recovery_timeout_seconds,
+            ),
+            focused_recovery_max_queries=inherited(
+                "chat.focused_recovery_max_queries",
+                project.chat.focused_recovery_max_queries,
+                settings.chat.focused_recovery_max_queries,
+            ),
+            broad_recovery_max_queries=inherited(
+                "chat.broad_recovery_max_queries",
+                project.chat.broad_recovery_max_queries,
+                settings.chat.broad_recovery_max_queries,
+            ),
+            broad_recovery_followup_max_queries=inherited(
+                "chat.broad_recovery_followup_max_queries",
+                project.chat.broad_recovery_followup_max_queries,
+                settings.chat.broad_recovery_followup_max_queries,
+            ),
+            broad_recovery_max_followup_rounds=inherited(
+                "chat.broad_recovery_max_followup_rounds",
+                project.chat.broad_recovery_max_followup_rounds,
+                settings.chat.broad_recovery_max_followup_rounds,
+            ),
         ),
         web_search=EffectiveWebSearchPolicy(
             enabled=inherited(
@@ -919,6 +984,13 @@ def resolve_project_ai_config(
             "max_context_chunks": "chat.max_context_chunks",
             "context_char_budget": "chat.context_char_budget",
             "max_history_messages": "chat.max_history_messages",
+            "bounded_recovery_enabled": "chat.bounded_recovery_enabled",
+            "focused_recovery_timeout_seconds": "chat.focused_recovery_timeout_seconds",
+            "broad_recovery_timeout_seconds": "chat.broad_recovery_timeout_seconds",
+            "focused_recovery_max_queries": "chat.focused_recovery_max_queries",
+            "broad_recovery_max_queries": "chat.broad_recovery_max_queries",
+            "broad_recovery_followup_max_queries": ("chat.broad_recovery_followup_max_queries"),
+            "broad_recovery_max_followup_rounds": "chat.broad_recovery_max_followup_rounds",
         }
         profile_layer = (
             "custom_profile"
@@ -1247,6 +1319,21 @@ def apply_effective_ai_config(
                     ),
                     "high_confidence_band_enabled": effective.chat.high_confidence_band_enabled,
                     "grounding_mode": effective.chat.grounding_mode,
+                    "bounded_recovery_enabled": effective.chat.bounded_recovery_enabled,
+                    "focused_recovery_timeout_seconds": (
+                        effective.chat.focused_recovery_timeout_seconds
+                    ),
+                    "broad_recovery_timeout_seconds": (
+                        effective.chat.broad_recovery_timeout_seconds
+                    ),
+                    "focused_recovery_max_queries": effective.chat.focused_recovery_max_queries,
+                    "broad_recovery_max_queries": effective.chat.broad_recovery_max_queries,
+                    "broad_recovery_followup_max_queries": (
+                        effective.chat.broad_recovery_followup_max_queries
+                    ),
+                    "broad_recovery_max_followup_rounds": (
+                        effective.chat.broad_recovery_max_followup_rounds
+                    ),
                 }
             ),
         }
@@ -1353,6 +1440,13 @@ def materialize_execution_values(effective: EffectiveProjectAIConfig) -> dict[st
         "max_context_chunks": effective.chat.max_context_chunks,
         "context_char_budget": effective.chat.context_char_budget,
         "max_history_messages": effective.chat.max_history_messages,
+        "bounded_recovery_enabled": effective.chat.bounded_recovery_enabled,
+        "focused_recovery_timeout_seconds": effective.chat.focused_recovery_timeout_seconds,
+        "broad_recovery_timeout_seconds": effective.chat.broad_recovery_timeout_seconds,
+        "focused_recovery_max_queries": effective.chat.focused_recovery_max_queries,
+        "broad_recovery_max_queries": effective.chat.broad_recovery_max_queries,
+        "broad_recovery_followup_max_queries": (effective.chat.broad_recovery_followup_max_queries),
+        "broad_recovery_max_followup_rounds": (effective.chat.broad_recovery_max_followup_rounds),
     }
 
 
@@ -1418,6 +1512,21 @@ def _build_structured_origins(
         "chat.max_context_chunks": "project.v2.execution.max_context_chunks",
         "chat.context_char_budget": "project.v2.execution.context_char_budget",
         "chat.max_history_messages": "project.v2.execution.max_history_messages",
+        "chat.bounded_recovery_enabled": "project.v2.execution.bounded_recovery_enabled",
+        "chat.focused_recovery_timeout_seconds": (
+            "project.v2.execution.focused_recovery_timeout_seconds"
+        ),
+        "chat.broad_recovery_timeout_seconds": (
+            "project.v2.execution.broad_recovery_timeout_seconds"
+        ),
+        "chat.focused_recovery_max_queries": ("project.v2.execution.focused_recovery_max_queries"),
+        "chat.broad_recovery_max_queries": "project.v2.execution.broad_recovery_max_queries",
+        "chat.broad_recovery_followup_max_queries": (
+            "project.v2.execution.broad_recovery_followup_max_queries"
+        ),
+        "chat.broad_recovery_max_followup_rounds": (
+            "project.v2.execution.broad_recovery_max_followup_rounds"
+        ),
     }
     for path, layer in origins.items():
         catalog_path = v2_paths.get(path) if canonical_v2 else None

@@ -150,6 +150,13 @@ for _path in (
     "project.v2.execution.max_context_chunks",
     "project.v2.execution.context_char_budget",
     "project.v2.execution.max_history_messages",
+    "project.v2.execution.bounded_recovery_enabled",
+    "project.v2.execution.focused_recovery_timeout_seconds",
+    "project.v2.execution.broad_recovery_timeout_seconds",
+    "project.v2.execution.focused_recovery_max_queries",
+    "project.v2.execution.broad_recovery_max_queries",
+    "project.v2.execution.broad_recovery_followup_max_queries",
+    "project.v2.execution.broad_recovery_max_followup_rounds",
 ):
     _entry(
         _path,

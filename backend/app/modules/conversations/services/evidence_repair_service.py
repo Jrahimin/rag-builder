@@ -97,6 +97,9 @@ class EvidenceRequirement(BaseModel):
     origin: Literal[
         "explicit_user_request", "necessary_applicability", "optional_corroboration"
     ] = "necessary_applicability"
+    materiality: Literal[
+        "governing_applicability", "central_rule", "adjacent_rule", "secondary_detail"
+    ] = "central_rule"
 
 
 class _SearchQuery(BaseModel):
@@ -145,6 +148,7 @@ def _prepare_search_plan(
         for requirement in plan.requirements
         if not _optional_requirement(requirement, user_question)
     ]
+    requirements.sort(key=_requirement_priority)
     allowed = {requirement.requirement_id for requirement in requirements}
     optional = {
         requirement.requirement_id
@@ -176,7 +180,32 @@ def _prepare_search_plan(
         keys[key] = query
         queries.append(query)
         ownership[query] = ids
+    rank_by_id = {
+        requirement.requirement_id: _requirement_priority(requirement)
+        for requirement in requirements
+    }
+    original_position = {query: index for index, query in enumerate(queries)}
+    queries.sort(
+        key=lambda query: (
+            min(
+                (rank_by_id[item] for item in ownership[query] if item in rank_by_id),
+                default=(9, 9),
+            ),
+            original_position[query],
+        )
+    )
     return requirements, queries, ownership
+
+
+def _requirement_priority(requirement: EvidenceRequirement) -> tuple[int, int]:
+    """Order material work before applying a bounded query allowance."""
+    materiality = {
+        "governing_applicability": 0,
+        "central_rule": 1,
+        "adjacent_rule": 2,
+        "secondary_detail": 3,
+    }[requirement.materiality]
+    return materiality, 0
 
 
 def _optional_requirement(requirement: EvidenceRequirement, user_question: str) -> bool:
@@ -1323,6 +1352,10 @@ async def repair_knowledge_evidence(
     required_coverage: dict[str, Any] | None = None,
     evidence_approach: str = "authoritative",
     timeout_seconds: float = REPAIR_TIMEOUT_SECONDS,
+    max_initial_queries: int = MAX_REPAIR_DEPENDENCIES,
+    max_followup_queries: int = 2,
+    max_followup_rounds: int = MAX_REPAIR_FOLLOWUPS,
+    recovery_profile: str = "legacy",
 ) -> EvidenceRepairResult:
     """Never mix active snapshots, relax filters, or promote unknown authority.
 
@@ -1358,6 +1391,14 @@ async def repair_knowledge_evidence(
     result = EvidenceRepairResult([], None, diagnostics)
     started = monotonic()
     diagnostics["timeout_seconds"] = timeout_seconds
+    diagnostics["recovery_budget"] = {
+        "profile": recovery_profile,
+        "timeout_seconds": timeout_seconds,
+        "max_initial_queries": max_initial_queries,
+        "max_followup_queries": max_followup_queries,
+        "max_followup_rounds": max_followup_rounds,
+        "deadline_kind": "shared_monotonic",
+    }
     diagnostics["phase"] = "planning"
     if required_coverage:
         diagnostics["required_coverage_revalidation"] = True
@@ -1382,14 +1423,24 @@ async def repair_knowledge_evidence(
         trusted_context += f"Trusted Project domain instructions:\n{domain_instructions.strip()}\n"
     if not authoritative_compatibility:
         trusted_context += f"Evidence approach: {evidence_approach}\n"
+    trusted_context += (
+        "Bounded recovery allowance: produce at most "
+        f"{max_initial_queries} initial search queries and at most "
+        f"{max_followup_queries} continuation queries across "
+        f"{max_followup_rounds} follow-up rounds. "
+        "Assign requirement materiality and order governing applicability and central rules "
+        "before adjacent rules and secondary details. Preserve every required item even when "
+        "its query will fall outside the allowance.\n"
+    )
     snapshot = tuple(
         initial.diagnostics.get(k) for k in ("index_build_id", "source_metadata_generation")
     )
     if any(value is None for value in snapshot):
         diagnostics["status"] = "snapshot_unavailable"
         return result
+    timeout_context = asyncio.timeout(timeout_seconds)
     try:
-        async with asyncio.timeout(timeout_seconds):
+        async with timeout_context:
             # An attempted call with missing usage (including a timeout) is
             # unknown cost, not a free operation in the combined turn usage.
             result.usage = ChatUsage(None, None)
@@ -1562,6 +1613,10 @@ async def repair_knowledge_evidence(
             requirements, queries, query_requirement_ids = _prepare_search_plan(
                 plan, inputs.query, proven_ids=proof_map.proven_ids()
             )
+            queries = queries[:max_initial_queries]
+            query_requirement_ids = {
+                query: query_requirement_ids.get(query, []) for query in queries
+            }
             diagnostics["proof_map"] = proof_map.diagnostics()
             planned_invalid = any(not query or len(query) > 500 for query in planned_queries)
             remaining_invalid = any(not query or len(query) > 500 for query in queries)
@@ -1601,10 +1656,16 @@ async def repair_knowledge_evidence(
             pending_routes = dict.fromkeys(pending_queries, "search")
             adjacent_requests: dict[str, list[uuid.UUID]] = {}
             attempted_adjacent: set[tuple[str, uuid.UUID]] = set()
+            remaining_followup_queries = max_followup_queries
             reviewed_evidence: set[str] = set()
             last_verdict: CoverageVerdict | None = None
             last_partial_scope_validated = False
-            for round_index in range(1 + MAX_REPAIR_FOLLOWUPS):
+            for round_index in range(1 + max_followup_rounds):
+                if recovery_profile == "legacy" and round_index > 0:
+                    # The disabled/legacy contract is two continuation queries
+                    # per round. Shared-total accounting is opt-in with the
+                    # bounded focused/broad profiles only.
+                    remaining_followup_queries = max_followup_queries
                 diagnostics["phase"] = "retrieval"
                 batch_retrieve = getattr(retrieval, "retrieve_batch", None)
                 requests: list[dict[str, Any]] = [
@@ -2282,7 +2343,7 @@ async def repair_knowledge_evidence(
                     ranges_valid
                     and bool(verdict.missing)
                     and bool(missing_core_ids - focused_already)
-                    and round_index < MAX_REPAIR_FOLLOWUPS
+                    and round_index < max_followup_rounds
                 )
                 if (
                     partial_scope_validated
@@ -2292,10 +2353,10 @@ async def repair_knowledge_evidence(
                     _store_partial_answer(diagnostics, verdict)
                     break
                 diagnostics["status"] = "coverage_incomplete"
-                if round_index == MAX_REPAIR_FOLLOWUPS or verdict.complete or not verdict.missing:
+                if round_index == max_followup_rounds or verdict.complete or not verdict.missing:
                     diagnostics["requirement_progress"]["stop_reason"] = (
                         "repair_followup_limit"
-                        if round_index == MAX_REPAIR_FOLLOWUPS
+                        if round_index == max_followup_rounds
                         else "coverage_validation_failed"
                     )
                     _mark_unattempted_budget(diagnostics["requirement_progress"])
@@ -2343,7 +2404,8 @@ async def repair_knowledge_evidence(
                 # source policy, reranking and admission; they inherit no scores.
                 adjacent_requests = {}
                 if (
-                    round_index < MAX_REPAIR_FOLLOWUPS
+                    round_index < max_followup_rounds
+                    and remaining_followup_queries > 0
                     and getattr(retrieval, "supports_adjacent_retrieval", False) is True
                 ):
                     for check in verdict.checks:
@@ -2399,10 +2461,11 @@ async def repair_knowledge_evidence(
                             attempted_adjacent.update(
                                 (requirement_key, anchor) for anchor in anchors
                             )
-                        if len(adjacent_requests) == 2:
+                        if len(adjacent_requests) >= remaining_followup_queries:
                             break
                 if adjacent_requests:
-                    pending_queries = list(adjacent_requests)
+                    pending_queries = list(adjacent_requests)[:remaining_followup_queries]
+                    remaining_followup_queries -= len(pending_queries)
                     queries.extend(pending_queries)
                     pending_routes = dict.fromkeys(pending_queries, "adjacent")
                     diagnostics.setdefault("adjacent_queries", []).extend(pending_queries)
@@ -2411,6 +2474,20 @@ async def repair_knowledge_evidence(
                 if not untried_missing and partial_scope_validated:
                     _store_partial_answer(diagnostics, verdict)
                     break
+                if remaining_followup_queries <= 0:
+                    diagnostics["requirement_progress"] = {
+                        **(diagnostics.get("requirement_progress") or {}),
+                        "stop_reason": "followup_query_allowance_exhausted",
+                    }
+                    _mark_unattempted_budget(diagnostics["requirement_progress"])
+                    if partial_checkpoint is not None:
+                        _restore_partial_checkpoint(
+                            result,
+                            diagnostics,
+                            partial_checkpoint,
+                            stop_reason="followup_query_allowance_exhausted",
+                        )
+                    return result
                 if release_read_transaction is not None:
                     await release_read_transaction()
                 previous_usage = result.usage
@@ -2492,7 +2569,7 @@ async def repair_knowledge_evidence(
                         continue
                     pending_queries.append(query)
                     query_requirement_ids[query] = bound_ids
-                pending_queries = pending_queries[:2]
+                pending_queries = pending_queries[:remaining_followup_queries]
                 if not pending_queries or any(not q or len(q) > 500 for q in pending_queries):
                     diagnostics["requirement_progress"] = {
                         **(diagnostics.get("requirement_progress") or {}),
@@ -2511,6 +2588,7 @@ async def repair_knowledge_evidence(
                         )
                     return result
                 queries.extend(pending_queries)
+                remaining_followup_queries -= len(pending_queries)
                 pending_routes = dict.fromkeys(pending_queries, "focused")
                 diagnostics.setdefault("focused_queries", []).extend(pending_queries)
             # Discovery context can contain old/future tables and unrelated examples.
@@ -2527,51 +2605,74 @@ async def repair_knowledge_evidence(
                 )
             return result
     except (ProviderError, TimeoutError, ValidationError) as exc:
-        timed_out = isinstance(exc, (TimeoutError, ProviderTimeoutError))
-        if timed_out:
-            diagnostics["stop_reason"] = "evidence_review_timeout"
+        deadline_expired = isinstance(exc, TimeoutError) and timeout_context.expired()
+        bare_provider_timeout = isinstance(exc, TimeoutError) and not deadline_expired
+        provider_timed_out = isinstance(exc, ProviderTimeoutError) or bare_provider_timeout
+        provider_error = (
+            ProviderTimeoutError(
+                "Evidence provider operation timed out.",
+                provider_name=llm.provider_name,
+                context={"reason": "nested_provider_timeout"},
+            )
+            if bare_provider_timeout
+            else exc
+        )
+        if deadline_expired:
+            diagnostics["stop_reason"] = "recovery_deadline_exceeded"
             diagnostics["requirement_progress"] = {
                 **(diagnostics.get("requirement_progress") or {}),
-                "stop_reason": "evidence_review_timeout",
+                "stop_reason": "recovery_deadline_exceeded",
             }
+        elif provider_timed_out:
+            diagnostics["stop_reason"] = "provider_timeout"
+        if isinstance(provider_error, ProviderError):
+            diagnostics["provider"] = provider_error.provider_name
+            diagnostics["error_code"] = provider_error.code
+            diagnostics["provider_context"] = dict(provider_error.context)
         if partial_checkpoint is not None:
             _restore_partial_checkpoint(
                 result,
                 diagnostics,
                 partial_checkpoint,
                 stop_reason=(
-                    "evidence_review_timeout"
-                    if timed_out
+                    "recovery_deadline_exceeded"
+                    if deadline_expired
+                    else "provider_timeout"
+                    if provider_timed_out
                     else "invalid_later_review"
                     if isinstance(exc, ValidationError)
                     else "later_review_provider_error"
                 ),
             )
             return result
-        if isinstance(exc, ProviderError):
-            result.failure = exc
+        if isinstance(provider_error, ProviderError):
+            result.failure = provider_error
         elif isinstance(exc, TimeoutError):
             result.failure = ProviderTimeoutError(
                 "Evidence review exceeded its time limit.",
                 provider_name=llm.provider_name,
-                context={"reason": "evidence_review_timeout"},
+                context={"reason": "recovery_deadline_exceeded"},
             )
         diagnostics["status"] = "repair_unavailable"
         diagnostics["failure_reason"] = (
-            "timeout"
-            if timed_out
+            "deadline_exceeded"
+            if deadline_expired
+            else "provider_timeout"
+            if provider_timed_out
             else "invalid_model_response"
             if isinstance(exc, ValidationError)
             else "provider_error"
         )
-        if isinstance(exc, ProviderError):
-            diagnostics["provider"] = exc.provider_name
-            diagnostics["error_code"] = exc.code
-            if exc.provider_name == "retrieval" or exc.context.get("reason") in {
+        if isinstance(provider_error, ProviderError):
+            diagnostics["provider"] = provider_error.provider_name
+            diagnostics["error_code"] = provider_error.code
+            if provider_error.provider_name == "retrieval" or provider_error.context.get(
+                "reason"
+            ) in {
                 "prompt_budget_exceeded",
                 "embedding_identity_mismatch",
             }:
-                diagnostics["failure_detail"] = exc.context.get("reason")
+                diagnostics["failure_detail"] = provider_error.context.get("reason")
         elif isinstance(exc, ValidationError):
             diagnostics["validation_errors"] = [
                 {"type": error["type"], "loc": list(error["loc"])}
@@ -2580,12 +2681,12 @@ async def repair_knowledge_evidence(
             diagnostics["failure_stage"] = str(diagnostics.get("phase") or "coverage_review")
             request_work = _request_work(llm)
             if request_work is not None and request_work.validation_retries:
-                diagnostics["validation_failure"] = dict(
-                    request_work.validation_retries[-1]
-                )
+                diagnostics["validation_failure"] = dict(request_work.validation_retries[-1])
         return result
     finally:
-        diagnostics["elapsed_ms"] = round((monotonic() - started) * 1000)
+        elapsed = monotonic() - started
+        diagnostics["elapsed_seconds"] = round(elapsed, 3)
+        diagnostics["elapsed_ms"] = round(elapsed * 1000)
 
 
 def _unique_authority_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:

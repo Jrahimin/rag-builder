@@ -18,6 +18,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
+from app.modules.conversations.schemas.message import SourceScope
+
 TURN_RESOLUTION_VERSION = "v1"
 RESOLUTION_HISTORY_MESSAGE_CAP = 8
 RESOLUTION_HISTORY_CHAR_BUDGET = 16_000
@@ -519,6 +521,7 @@ class RequestFilters(BaseModel):
     document_id: uuid.UUID | None = None
     metadata_filter: dict[str, str] = Field(default_factory=dict)
     as_of: datetime | None = None
+    source_scope: SourceScope = SourceScope.PROJECT_DEFAULT
 
 
 class ReferenceBinding(BaseModel):
@@ -663,6 +666,10 @@ class EffectiveRetrievalInputs(BaseModel):
     metadata_filter: dict[str, str] = Field(default_factory=dict)
     as_of: datetime | None = None
     suppress_web: bool = False
+    requested_source_scope: SourceScope = SourceScope.PROJECT_DEFAULT
+    effective_source_scope: SourceScope = SourceScope.PROJECT_DEFAULT
+    source_scope_origin: str = "project_default"
+    source_scope_reason: str = "project_response_mode"
 
 
 def parse_iso_calendar_date(value: str) -> date:
@@ -880,6 +887,22 @@ def effective_retrieval_inputs(
     as_of = request_filters.as_of
     if as_of is None and snapshot.as_of is not None and not snapshot.clarify:
         as_of = snapshot.as_of
+    message_restriction = _message_requests_indexed_only(original_message)
+    api_restriction = request_filters.source_scope is SourceScope.INDEXED_ONLY
+    effective_scope = (
+        SourceScope.INDEXED_ONLY
+        if api_restriction or message_restriction
+        else SourceScope.PROJECT_DEFAULT
+    )
+    if api_restriction:
+        source_scope_origin = "request"
+        source_scope_reason = "api_indexed_only"
+    elif message_restriction:
+        source_scope_origin = "user_message"
+        source_scope_reason = "explicit_corpus_only_instruction"
+    else:
+        source_scope_origin = "project_default"
+        source_scope_reason = "project_response_mode"
     return EffectiveRetrievalInputs(
         query=query,
         document_id=request_filters.document_id,
@@ -890,7 +913,62 @@ def effective_retrieval_inputs(
             or request_filters.document_id
             or request_filters.metadata_filter
             or request_filters.as_of
+            or effective_scope is SourceScope.INDEXED_ONLY
         ),
+        requested_source_scope=request_filters.source_scope,
+        effective_source_scope=effective_scope,
+        source_scope_origin=source_scope_origin,
+        source_scope_reason=source_scope_reason,
+    )
+
+
+_INDEXED_ONLY_PATTERNS = (
+    re.compile(
+        r"\b(?:only|solely|exclusively)\s+(?:answer\s+)?(?:using|from|with)\s+"
+        r"(?:the\s+)?(?:active\s+)?(?:corpus|knowledge\s+base|uploaded\s+documents?|"
+        r"indexed\s+(?:documents?|sources?))\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\buse\s+only\s+(?:the\s+)?(?:active\s+)?(?:corpus|knowledge\s+base|"
+        r"uploaded\s+documents?|indexed\s+(?:documents?|sources?))\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\blimit\s+(?:the\s+answer|yourself|this\s+answer)?\s*to\s+(?:the\s+)?"
+        r"(?:active\s+)?(?:corpus|knowledge\s+base|uploaded\s+documents?|"
+        r"indexed\s+(?:documents?|sources?))\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"(?:শুধু|শুধুমাত্র|কেবল)\s+(?:সক্রিয়\s+)?(?:কর্পাস|আপলোড\s+করা\s+নথি|"
+        r"ইনডেক্স(?:কৃত)?\s+(?:নথি|সূত্র))\s+(?:থেকে|ব্যবহার\s+করে)",
+        re.IGNORECASE,
+    ),
+)
+_SOURCE_SCOPE_NEGATION = re.compile(
+    r"\b(?:do\s+not|don't|dont|not)\b[^.!?\n]{0,80}"
+    r"\b(?:limit|only|solely|exclusively|corpus|uploaded\s+documents?)\b|"
+    r"(?:শুধু|শুধুমাত্র|কেবল)[^।.!?\n]{0,60}(?:নয়|নয়|না)",
+    re.IGNORECASE,
+)
+
+
+def _message_requests_indexed_only(message: str) -> bool:
+    """Recognize explicit per-turn source limits without another model call."""
+    # Negation is clause-local. In ``Do not guess; answer only from the active
+    # corpus`` the first clause is an instruction against guessing, not a
+    # negation of the independent source restriction in the second clause.
+    clauses = re.split(
+        r"[;,.!?।\n]+|\s+\band\b\s+|\s+(?:এবং|কিন্তু|তবে)\s+",
+        message,
+        flags=re.IGNORECASE,
+    )
+    return any(
+        any(pattern.search(clause) for pattern in _INDEXED_ONLY_PATTERNS)
+        and not _SOURCE_SCOPE_NEGATION.search(clause)
+        for clause in clauses
+        if clause.strip()
     )
 
 

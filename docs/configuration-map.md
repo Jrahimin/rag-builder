@@ -263,6 +263,10 @@ write queues processing or rebuild work by itself.
 | `APE_CHAT__EVIDENCE_GATE_MODE` | `enforce` | Evidence-admission rollout/emergency posture. |
 | `APE_CHAT__GROUNDING_MODE` | `strict` | Product grounding assurance; `balanced` high band is calibration-gated and currently off. |
 | `APE_CHAT__STORE_CANDIDATE_TRACE` | `false` | Debug-only per-candidate traces on chat messages. |
+| `APE_CHAT__BOUNDED_RECOVERY_ENABLED` | `false` | Opt in to focused/broad shared-deadline recovery; disabled retains legacy behavior. |
+| `APE_CHAT__FOCUSED_RECOVERY_TIMEOUT_SECONDS` / `APE_CHAT__FOCUSED_RECOVERY_MAX_QUERIES` | `15` / `2` | Focused insufficient-evidence budget; no follow-up round. |
+| `APE_CHAT__BROAD_RECOVERY_TIMEOUT_SECONDS` / `APE_CHAT__BROAD_RECOVERY_MAX_QUERIES` | `30` / `4` | Broad legal/current-rule/calculation recovery budget. |
+| `APE_CHAT__BROAD_RECOVERY_FOLLOWUP_MAX_QUERIES` / `APE_CHAT__BROAD_RECOVERY_MAX_FOLLOWUP_ROUNDS` | `2` / `1` | Bound broad recovery continuation. |
 
 ## Safety and reproducibility
 

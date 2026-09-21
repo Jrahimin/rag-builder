@@ -11,6 +11,7 @@ from app.core.exceptions import BadRequestError
 from app.platform.config.profiles import RAG_EXECUTION_PROFILES, execution_values
 from app.platform.config.project_ai import (
     ConfigRevisionRecord,
+    EffectiveProjectAIConfig,
     apply_effective_ai_config,
     resolve_project_ai_config,
     stable_hash,
@@ -157,3 +158,46 @@ def test_effective_snapshot_preserves_phase1_grounding_defaults() -> None:
     assert effective.chat.grounding_mode.value == "strict"
     assert effective.chat.high_confidence_band_enabled is False
     assert not hasattr(effective.chat, "candidate_wise_grounding_enabled")
+
+
+def test_bounded_recovery_is_project_scoped_and_applied_to_runtime() -> None:
+    settings = Settings(chat={"bounded_recovery_enabled": False})
+    enabled = resolve_project_ai_config(
+        settings,
+        _revision(
+            {
+                "execution": {
+                    **execution_values(RAG_EXECUTION_PROFILES["standard"]),
+                    "profile_id": "custom",
+                    "bounded_recovery_enabled": True,
+                    "broad_recovery_max_queries": 7,
+                }
+            }
+        ),
+    )
+    disabled = resolve_project_ai_config(settings, _revision({}))
+
+    assert enabled.configuration.chat.bounded_recovery_enabled is True
+    assert enabled.configuration.chat.broad_recovery_max_queries == 7
+    assert enabled.origins["chat.bounded_recovery_enabled"] == "project"
+    assert apply_effective_ai_config(settings, enabled).chat.bounded_recovery_enabled is True
+    assert disabled.configuration.chat.bounded_recovery_enabled is False
+
+
+def test_legacy_effective_snapshot_replays_with_bounded_recovery_disabled() -> None:
+    payload = resolve_project_ai_config(Settings(), None).configuration.model_dump(mode="json")
+    for field in (
+        "bounded_recovery_enabled",
+        "focused_recovery_timeout_seconds",
+        "broad_recovery_timeout_seconds",
+        "focused_recovery_max_queries",
+        "broad_recovery_max_queries",
+        "broad_recovery_followup_max_queries",
+        "broad_recovery_max_followup_rounds",
+    ):
+        payload["chat"].pop(field)
+
+    replayed = EffectiveProjectAIConfig.model_validate(payload)
+
+    assert replayed.chat.bounded_recovery_enabled is False
+    assert replayed.chat.broad_recovery_max_queries == 4

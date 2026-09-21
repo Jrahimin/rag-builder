@@ -841,6 +841,15 @@ class ChatConfig(BaseModel):
     # Persist per-candidate retrieval/admission traces on chat messages. Eval rows
     # always keep the detail; production chat stays compact unless this is on.
     store_candidate_trace: bool = False
+    # Opt-in bounded recovery policy. Disabled preserves the legacy 300-second,
+    # two-follow-up behavior for existing deployments and immutable snapshots.
+    bounded_recovery_enabled: bool = False
+    focused_recovery_timeout_seconds: float = Field(default=15.0, ge=1.0, le=120.0)
+    broad_recovery_timeout_seconds: float = Field(default=30.0, ge=1.0, le=180.0)
+    focused_recovery_max_queries: int = Field(default=2, ge=1, le=8)
+    broad_recovery_max_queries: int = Field(default=4, ge=1, le=8)
+    broad_recovery_followup_max_queries: int = Field(default=2, ge=0, le=4)
+    broad_recovery_max_followup_rounds: int = Field(default=1, ge=0, le=2)
     minimum_evidence_score: float | None = Field(default=None, deprecated=True)
     minimum_query_token_coverage: float | None = Field(default=None, deprecated=True)
     minimum_claim_token_coverage: float = Field(default=0.35, ge=0.0, le=1.0)

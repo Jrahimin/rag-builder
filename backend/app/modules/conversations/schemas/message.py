@@ -28,6 +28,13 @@ class SourceProvenance(StrEnum):
     NONE = "none"
 
 
+class SourceScope(StrEnum):
+    """Caller-selected source boundary for one message turn."""
+
+    PROJECT_DEFAULT = "project_default"
+    INDEXED_ONLY = "indexed_only"
+
+
 class CitationSnapshot(BaseModel):
     """Durable citation stored on assistant messages."""
 
@@ -327,6 +334,7 @@ class MessageSendRequest(BaseModel):
     document_id: uuid.UUID | None = None
     metadata_filter: dict[str, str] = Field(default_factory=dict)
     as_of: datetime | None = None
+    source_scope: SourceScope = SourceScope.PROJECT_DEFAULT
 
 
 class ChatTurnResponse(BaseModel):

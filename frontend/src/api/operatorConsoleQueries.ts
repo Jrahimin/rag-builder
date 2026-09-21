@@ -396,8 +396,16 @@ export function useMessages(projectId: string, conversationId: string) {
 export function useSendMessage(projectId: string, conversationId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ content, documentId }: { content: string; documentId?: string }) =>
-      operatorApiClient.sendMessage(projectId, conversationId, content, documentId),
+    mutationFn: ({
+      content,
+      documentId,
+      sourceScope,
+    }: {
+      content: string;
+      documentId?: string;
+      sourceScope?: "project_default" | "indexed_only";
+    }) =>
+      operatorApiClient.sendMessage(projectId, conversationId, content, documentId, sourceScope),
     onSuccess: async () => {
       await Promise.all([
         queryClient.invalidateQueries({
@@ -418,12 +426,14 @@ export function useStreamMessage(projectId: string, conversationId: string) {
       onDelta,
       onProgress,
       signal,
+      sourceScope,
     }: {
       content: string;
       documentId?: string;
       onDelta: (delta: string) => void;
       onProgress?: (message: string) => void;
       signal?: AbortSignal;
+      sourceScope?: "project_default" | "indexed_only";
     }) => {
       const streamed = await operatorApiClient.streamMessage(
         projectId,
@@ -433,6 +443,8 @@ export function useStreamMessage(projectId: string, conversationId: string) {
         documentId,
         onProgress,
         signal,
+        undefined,
+        sourceScope,
       );
       const page = await operatorApiClient.getMessages(projectId, conversationId);
       const assistant = [...page.items].reverse().find((message) => message.role === "assistant");

@@ -1643,10 +1643,7 @@ export interface components {
          */
         AnswerClaim: {
             arithmetic_verification?: components["schemas"]["ClaimVerification"] | null;
-            /**
-             * Assertion Text
-             * @description Contextualized text used for verification when it differs from display text.
-             */
+            /** Assertion Text */
             assertion_text?: string | null;
             /**
              * Authority Status
@@ -2689,6 +2686,10 @@ export interface components {
          * @description Durable citation stored on assistant messages.
          */
         CitationSnapshot: {
+            /** Authority Dependencies */
+            authority_dependencies?: {
+                [key: string]: unknown;
+            }[];
             /** Authority Limitations */
             authority_limitations?: {
                 [key: string]: unknown;
@@ -2713,14 +2714,38 @@ export interface components {
             config_snapshot_id?: string | null;
             /** Configuration Hash */
             configuration_hash?: string | null;
+            /** Coverage Origin Message Id */
+            coverage_origin_message_id?: string | null;
+            /** Coverage Partial */
+            coverage_partial?: boolean | null;
+            /** Coverage Status */
+            coverage_status?: string | null;
             /** Document Id */
             document_id?: string | null;
             /** Evidence Chunk Char End */
             evidence_chunk_char_end?: number | null;
             /** Evidence Chunk Char Start */
             evidence_chunk_char_start?: number | null;
+            /** Evidence Corroboration Method */
+            evidence_corroboration_method?: string | null;
+            /** Evidence Provenance Version */
+            evidence_provenance_version?: string | null;
             /** Evidence Query Variant Id */
             evidence_query_variant_id?: string | null;
+            /** Evidence Scope As Of */
+            evidence_scope_as_of?: string | null;
+            /** Evidence Scope Document Id */
+            evidence_scope_document_id?: string | null;
+            /** Evidence Scope Metadata Filter */
+            evidence_scope_metadata_filter?: {
+                [key: string]: string;
+            } | null;
+            /** Evidence Scope Snapshot Origin */
+            evidence_scope_snapshot_origin?: string | null;
+            /** Evidence Source Chunk Hash */
+            evidence_source_chunk_hash?: string | null;
+            /** Evidence Source Envelope */
+            evidence_source_envelope?: string | null;
             /** Evidence Span Derivation */
             evidence_span_derivation?: string | null;
             /** Evidence Span Hash */
@@ -2733,6 +2758,10 @@ export interface components {
             filename: string;
             /** Index Build Id */
             index_build_id?: string | null;
+            /** Indexed Chunk Hash */
+            indexed_chunk_hash?: string | null;
+            /** Originating Assistant Message Id */
+            originating_assistant_message_id?: string | null;
             /** Page Number */
             page_number?: number | null;
             /** Processing Version */
@@ -3154,6 +3183,31 @@ export interface components {
         DocumentStatus: "uploaded" | "queued" | "parsing" | "chunking" | "chunked" | "failed" | "embedding" | "embedded" | "indexing" | "ready" | "deleting" | "purging";
         /** EffectiveChatPolicy */
         EffectiveChatPolicy: {
+            /**
+             * Bounded Recovery Enabled
+             * @default false
+             */
+            bounded_recovery_enabled: boolean;
+            /**
+             * Broad Recovery Followup Max Queries
+             * @default 2
+             */
+            broad_recovery_followup_max_queries: number;
+            /**
+             * Broad Recovery Max Followup Rounds
+             * @default 1
+             */
+            broad_recovery_max_followup_rounds: number;
+            /**
+             * Broad Recovery Max Queries
+             * @default 4
+             */
+            broad_recovery_max_queries: number;
+            /**
+             * Broad Recovery Timeout Seconds
+             * @default 30
+             */
+            broad_recovery_timeout_seconds: number;
             /** Citation Excerpt Max Chars */
             citation_excerpt_max_chars: number;
             /** Context Char Budget */
@@ -3165,6 +3219,16 @@ export interface components {
             cross_language_semantic_evidence_score_threshold: number;
             /** @default enforce */
             evidence_gate_mode: components["schemas"]["EvidenceGateMode"];
+            /**
+             * Focused Recovery Max Queries
+             * @default 2
+             */
+            focused_recovery_max_queries: number;
+            /**
+             * Focused Recovery Timeout Seconds
+             * @default 15
+             */
+            focused_recovery_timeout_seconds: number;
             /** @default strict */
             grounding_mode: components["schemas"]["GroundingMode"];
             /**
@@ -4240,6 +4304,8 @@ export interface components {
             metadata_filter?: {
                 [key: string]: string;
             };
+            /** @default project_default */
+            source_scope: components["schemas"]["SourceScope"];
         };
         /** MetricsSnapshot */
         MetricsSnapshot: {
@@ -4589,10 +4655,24 @@ export interface components {
          * @description RAG profile selection plus explicit values used only by Custom.
          */
         ProjectExecutionV2: {
+            /** Bounded Recovery Enabled */
+            bounded_recovery_enabled?: boolean | null;
+            /** Broad Recovery Followup Max Queries */
+            broad_recovery_followup_max_queries?: number | null;
+            /** Broad Recovery Max Followup Rounds */
+            broad_recovery_max_followup_rounds?: number | null;
+            /** Broad Recovery Max Queries */
+            broad_recovery_max_queries?: number | null;
+            /** Broad Recovery Timeout Seconds */
+            broad_recovery_timeout_seconds?: number | null;
             /** Context Char Budget */
             context_char_budget?: number | null;
             /** Deduplicate By Content Hash */
             deduplicate_by_content_hash?: boolean | null;
+            /** Focused Recovery Max Queries */
+            focused_recovery_max_queries?: number | null;
+            /** Focused Recovery Timeout Seconds */
+            focused_recovery_timeout_seconds?: number | null;
             /** Hnsw Ef Search */
             hnsw_ef_search?: number | null;
             /** Keyword Candidate Top K */
@@ -5053,6 +5133,8 @@ export interface components {
             };
             /** Executed Branches */
             executed_branches?: string[];
+            /** Identity Recall Status */
+            identity_recall_status?: string | null;
             /** Index Build Id */
             index_build_id?: string | null;
             /** Language Routing Status */
@@ -5476,6 +5558,12 @@ export interface components {
          * @enum {string}
          */
         SourceRole: "unspecified" | "primary" | "supporting" | "reference";
+        /**
+         * SourceScope
+         * @description Caller-selected source boundary for one message turn.
+         * @enum {string}
+         */
+        SourceScope: "project_default" | "indexed_only";
         /** SourceStateResponse */
         SourceStateResponse: {
             /** Current Generation */

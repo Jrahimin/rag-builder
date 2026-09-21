@@ -321,6 +321,17 @@
               }
             ]
           },
+          "assertion_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assertion Text"
+          },
           "authority_status": {
             "default": "not_assessed",
             "title": "Authority Status",
@@ -362,6 +373,28 @@
           },
           "verification": {
             "$ref": "#/components/schemas/ClaimVerification"
+          },
+          "verification_method": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Verification Method"
+          },
+          "verification_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Verification Reason"
           }
         },
         "required": [
@@ -3658,6 +3691,14 @@
       "CitationSnapshot": {
         "description": "Durable citation stored on assistant messages.",
         "properties": {
+          "authority_dependencies": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Authority Dependencies",
+            "type": "array"
+          },
           "authority_limitations": {
             "items": {
               "additionalProperties": true,
@@ -3761,6 +3802,40 @@
             ],
             "title": "Configuration Hash"
           },
+          "coverage_origin_message_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Coverage Origin Message Id"
+          },
+          "coverage_partial": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Coverage Partial"
+          },
+          "coverage_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Coverage Status"
+          },
           "document_id": {
             "anyOf": [
               {
@@ -3795,6 +3870,28 @@
             ],
             "title": "Evidence Chunk Char Start"
           },
+          "evidence_corroboration_method": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence Corroboration Method"
+          },
+          "evidence_provenance_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence Provenance Version"
+          },
           "evidence_query_variant_id": {
             "anyOf": [
               {
@@ -3805,6 +3902,77 @@
               }
             ],
             "title": "Evidence Query Variant Id"
+          },
+          "evidence_scope_as_of": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence Scope As Of"
+          },
+          "evidence_scope_document_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence Scope Document Id"
+          },
+          "evidence_scope_metadata_filter": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence Scope Metadata Filter"
+          },
+          "evidence_scope_snapshot_origin": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence Scope Snapshot Origin"
+          },
+          "evidence_source_chunk_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence Source Chunk Hash"
+          },
+          "evidence_source_envelope": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence Source Envelope"
           },
           "evidence_span_derivation": {
             "anyOf": [
@@ -3865,6 +4033,29 @@
               }
             ],
             "title": "Index Build Id"
+          },
+          "indexed_chunk_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Indexed Chunk Hash"
+          },
+          "originating_assistant_message_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Originating Assistant Message Id"
           },
           "page_number": {
             "anyOf": [
@@ -5267,6 +5458,31 @@
       },
       "EffectiveChatPolicy": {
         "properties": {
+          "bounded_recovery_enabled": {
+            "default": false,
+            "title": "Bounded Recovery Enabled",
+            "type": "boolean"
+          },
+          "broad_recovery_followup_max_queries": {
+            "default": 2,
+            "title": "Broad Recovery Followup Max Queries",
+            "type": "integer"
+          },
+          "broad_recovery_max_followup_rounds": {
+            "default": 1,
+            "title": "Broad Recovery Max Followup Rounds",
+            "type": "integer"
+          },
+          "broad_recovery_max_queries": {
+            "default": 4,
+            "title": "Broad Recovery Max Queries",
+            "type": "integer"
+          },
+          "broad_recovery_timeout_seconds": {
+            "default": 30.0,
+            "title": "Broad Recovery Timeout Seconds",
+            "type": "number"
+          },
           "citation_excerpt_max_chars": {
             "title": "Citation Excerpt Max Chars",
             "type": "integer"
@@ -5283,6 +5499,16 @@
           "evidence_gate_mode": {
             "$ref": "#/components/schemas/EvidenceGateMode",
             "default": "enforce"
+          },
+          "focused_recovery_max_queries": {
+            "default": 2,
+            "title": "Focused Recovery Max Queries",
+            "type": "integer"
+          },
+          "focused_recovery_timeout_seconds": {
+            "default": 15.0,
+            "title": "Focused Recovery Timeout Seconds",
+            "type": "number"
           },
           "grounding_mode": {
             "$ref": "#/components/schemas/GroundingMode",
@@ -8198,6 +8424,10 @@
             },
             "title": "Metadata Filter",
             "type": "object"
+          },
+          "source_scope": {
+            "$ref": "#/components/schemas/SourceScope",
+            "default": "project_default"
           }
         },
         "required": [
@@ -9146,6 +9376,69 @@
         "additionalProperties": false,
         "description": "RAG profile selection plus explicit values used only by Custom.",
         "properties": {
+          "bounded_recovery_enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bounded Recovery Enabled"
+          },
+          "broad_recovery_followup_max_queries": {
+            "anyOf": [
+              {
+                "maximum": 8.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Broad Recovery Followup Max Queries"
+          },
+          "broad_recovery_max_followup_rounds": {
+            "anyOf": [
+              {
+                "maximum": 3.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Broad Recovery Max Followup Rounds"
+          },
+          "broad_recovery_max_queries": {
+            "anyOf": [
+              {
+                "maximum": 12.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Broad Recovery Max Queries"
+          },
+          "broad_recovery_timeout_seconds": {
+            "anyOf": [
+              {
+                "maximum": 300.0,
+                "minimum": 1.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Broad Recovery Timeout Seconds"
+          },
           "context_char_budget": {
             "anyOf": [
               {
@@ -9169,6 +9462,32 @@
               }
             ],
             "title": "Deduplicate By Content Hash"
+          },
+          "focused_recovery_max_queries": {
+            "anyOf": [
+              {
+                "maximum": 8.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Focused Recovery Max Queries"
+          },
+          "focused_recovery_timeout_seconds": {
+            "anyOf": [
+              {
+                "maximum": 120.0,
+                "minimum": 1.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Focused Recovery Timeout Seconds"
           },
           "hnsw_ef_search": {
             "anyOf": [
@@ -10530,6 +10849,17 @@
             "title": "Executed Branches",
             "type": "array"
           },
+          "identity_recall_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Identity Recall Status"
+          },
           "index_build_id": {
             "anyOf": [
               {
@@ -11589,6 +11919,15 @@
           "reference"
         ],
         "title": "SourceRole",
+        "type": "string"
+      },
+      "SourceScope": {
+        "description": "Caller-selected source boundary for one message turn.",
+        "enum": [
+          "project_default",
+          "indexed_only"
+        ],
+        "title": "SourceScope",
         "type": "string"
       },
       "SourceStateResponse": {

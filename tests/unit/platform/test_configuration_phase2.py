@@ -165,7 +165,16 @@ def test_every_preset_field_ignores_conflicting_raw_execution_settings() -> None
             settings,
             _revision({"execution": {"profile_id": profile_id}}),
         )
-        assert materialize_execution_values(resolution.configuration) == execution_values(profile)
+        assert materialize_execution_values(resolution.configuration) == {
+            **execution_values(profile),
+            "bounded_recovery_enabled": False,
+            "focused_recovery_timeout_seconds": 15.0,
+            "broad_recovery_timeout_seconds": 30.0,
+            "focused_recovery_max_queries": 2,
+            "broad_recovery_max_queries": 4,
+            "broad_recovery_followup_max_queries": 2,
+            "broad_recovery_max_followup_rounds": 1,
+        }
         assert (
             resolution.configuration.retrieval.rerank_candidate_window
             == profile.rerank_candidate_window

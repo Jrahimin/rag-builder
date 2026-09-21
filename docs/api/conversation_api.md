@@ -73,12 +73,15 @@ Send a user message; returns grounded assistant answer + citations. Returns **20
 {
   "content": "What is the refund policy?",
   "document_id": null,
-  "metadata_filter": {}
+  "metadata_filter": {},
+  "source_scope": "project_default"
 }
 ```
 
 `metadata_filter` values must be strings. `document_id`, `metadata_filter`, and
-`as_of` are per-request. Omitted filters are not inherited from earlier turns.
+`as_of` are per-request. `source_scope` is `project_default` (the compatible
+default) or `indexed_only`. Omitted filters and one-turn source restrictions are
+not inherited from earlier turns.
 
 When the conversation has usable history, chat may run one bounded turn-resolution
 call before retrieval. The original `content` remains the stored user message and
@@ -146,6 +149,13 @@ evidence.
     "metadata": {
       "response_mode": "indexed_only",
       "source_provenance": "knowledge",
+      "source_scope": {
+        "requested": "project_default",
+        "effective": "project_default",
+        "origin": "project_default",
+        "reason": "project_response_mode"
+      },
+      "verification_version": "claim-verification-v2",
       "web_search": {"status": "not_requested", "fallback_used": false},
       "retrieval_time_ms": 120,
       "generation_time_ms": 800,
@@ -178,7 +188,11 @@ Resolved Project `response_mode` semantics:
 - `indexed_and_web`: both paths run and the v5 source-aware prompt receives separately labeled
   evidence. Conflicts must be exposed and cited from both sides.
 
-Web access is suppressed whenever `document_id`, `metadata_filter`, or `as_of` scopes the request.
+Web access is suppressed whenever `document_id`, `metadata_filter`, `as_of`, or an effective
+`indexed_only` source scope restricts the request. Clear corpus-only wording in English or Bangla
+is resolved deterministically for that turn; negated wording does not create a restriction, and an
+API `indexed_only` restriction cannot be relaxed by message text. Prior web citations are not reused
+as indexed evidence.
 Provider failure or empty web results fail closed. `source_provenance` is always one of
 `knowledge`, `web`, `knowledge_and_web`, or `none`. Web citations use `source_kind=web` and provide
 `web_url`, `web_title`, `web_retrieved_at`, and `web_provider`; Knowledge location fields are null.
