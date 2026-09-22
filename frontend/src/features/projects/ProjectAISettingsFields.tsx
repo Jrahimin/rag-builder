@@ -28,6 +28,7 @@ export type ProjectConfigForm = {
   profileId: string;
   customBaseProfileId: string | null;
   execution: Record<string, unknown>;
+  recovery: Record<string, unknown>;
   behavior: ProjectBehaviorForm;
   reason: string;
 };
@@ -36,6 +37,7 @@ export const emptyProjectConfigForm: ProjectConfigForm = {
   profileId: "inherit",
   customBaseProfileId: null,
   execution: {},
+  recovery: {},
   behavior: {
     evidenceApproach: { source: "global", value: "authoritative" },
     generationModelId: { source: "global", value: "" },
@@ -49,6 +51,20 @@ export const emptyProjectConfigForm: ProjectConfigForm = {
 
 function hasValue(value: object | undefined, key: string) {
   return value !== undefined && Object.prototype.hasOwnProperty.call(value, key);
+}
+
+const RECOVERY_EXECUTION_KEYS = new Set([
+  "bounded_recovery_enabled",
+  "focused_recovery_timeout_seconds",
+  "broad_recovery_timeout_seconds",
+  "focused_recovery_max_queries",
+  "broad_recovery_max_queries",
+  "broad_recovery_followup_max_queries",
+  "broad_recovery_max_followup_rounds",
+]);
+
+function isRecoveryExecutionKey(key: string) {
+  return RECOVERY_EXECUTION_KEYS.has(key);
 }
 
 function sourceFor(value: object | undefined, key: string): SettingSource {
@@ -99,7 +115,9 @@ function deploymentExecution(effective?: EffectiveProjectAIConfig | null) {
 
 function explicitProfileId(stored: ProjectAIConfig) {
   const execution = (stored.execution ?? {}) as Record<string, unknown>;
-  const hasExecutionValues = Object.keys(execution).some((key) => key !== "profile_id");
+  const hasExecutionValues = Object.keys(execution).some(
+    (key) => key !== "profile_id" && !isRecoveryExecutionKey(key),
+  );
   return stored.execution?.profile_id ?? (hasExecutionValues ? "custom" : "inherit");
 }
 
@@ -125,7 +143,12 @@ export function configFormFromEffective(
   const profileId = explicitProfileId(stored);
   const profile = config.rag_profiles?.find((item) => item.id === profileId);
   const storedExecution = Object.fromEntries(
-    Object.entries(stored.execution ?? {}).filter(([key]) => key !== "profile_id"),
+    Object.entries(stored.execution ?? {}).filter(
+      ([key]) => key !== "profile_id" && !isRecoveryExecutionKey(key),
+    ),
+  );
+  const recovery = Object.fromEntries(
+    Object.entries(stored.execution ?? {}).filter(([key]) => isRecoveryExecutionKey(key)),
   );
   const resolvedExecution = effectiveExecution(config);
   const execution =
@@ -138,6 +161,7 @@ export function configFormFromEffective(
     profileId,
     customBaseProfileId: null,
     execution,
+    recovery,
     behavior: {
       evidenceApproach: {
         source: sourceFor(behavior, "evidence_approach"),
@@ -212,6 +236,7 @@ export function buildSparseProjectConfig(form: ProjectConfigForm): ProjectAIConf
   const execution: Record<string, unknown> = {};
   if (form.profileId !== "inherit") execution.profile_id = form.profileId;
   if (form.profileId === "custom") Object.assign(execution, form.execution);
+  Object.assign(execution, form.recovery);
   return { behavior, execution } as ProjectAIConfig;
 }
 
@@ -614,6 +639,36 @@ export function ProjectAISettingsFields({
   };
 
   const globalConfig = effective?.deployment_configuration ?? effective?.configuration;
+  const globalRecoveryEnabled =
+    globalConfig?.chat.bounded_recovery_enabled === false ? false : true;
+  const recoveryEnabled =
+    form.recovery.bounded_recovery_enabled === false
+      ? false
+      : form.recovery.bounded_recovery_enabled === true
+        ? true
+        : globalRecoveryEnabled;
+  const recoverySource: SettingSource = hasValue(form.recovery, "bounded_recovery_enabled")
+    ? "project"
+    : "global";
+  const changeRecoveryEnabled = (value: boolean) => {
+    setForm((current) => ({
+      ...current,
+      recovery: { ...current.recovery, bounded_recovery_enabled: value },
+    }));
+  };
+  const useGlobalRecovery = () => {
+    setForm((current) => {
+      const { bounded_recovery_enabled: _removed, ...recovery } = current.recovery;
+      return { ...current, recovery };
+    });
+  };
+  const chooseRecoveryEnabled = (value: boolean) => {
+    if (value === globalRecoveryEnabled) {
+      useGlobalRecovery();
+      return;
+    }
+    changeRecoveryEnabled(value);
+  };
   const globalModelId =
     globalConfig?.llm.generation_model_id ?? form.behavior.generationModelId.value;
   const globalModel = allowedGenerationModels.find((model) => model.id === globalModelId);
@@ -851,6 +906,42 @@ export function ProjectAISettingsFields({
               Retrieval profiles can be customized after the Project is created.
             </p>
           )}
+        </div>
+      </section>
+
+      <section
+        className="ai-config-section ai-config-section--behavior"
+        aria-labelledby="evidence-recovery-heading"
+      >
+        <header className="ai-config-section__header">
+          <div>
+            <p className="eyebrow">Evidence recovery</p>
+            <h3 id="evidence-recovery-heading">Time-limited evidence repair</h3>
+            <p className="profile-lane__lede">
+              Separate from retrieval profiles. Recovery searches only for evidence missing from an
+              otherwise grounded answer and keeps a validated partial answer when its budget ends.
+            </p>
+          </div>
+          <span className="section-state">
+            {recoverySource === "global" ? "Follows Global" : "Project setting"}
+          </span>
+        </header>
+        <div className="behavior-grid">
+          <BehaviorSetting
+            label="Bounded evidence recovery"
+            hint="On uses short, task-aware recovery budgets instead of the legacy 300-second repair path. It does not relax grounding or citation requirements."
+            source={recoverySource}
+            onUseGlobal={useGlobalRecovery}
+          >
+            <select
+              aria-label="Bounded evidence recovery"
+              value={recoveryEnabled ? "true" : "false"}
+              onChange={(event) => chooseRecoveryEnabled(event.target.value === "true")}
+            >
+              <option value="true">On</option>
+              <option value="false">Off</option>
+            </select>
+          </BehaviorSetting>
         </div>
       </section>
 

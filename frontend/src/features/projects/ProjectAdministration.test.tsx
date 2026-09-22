@@ -207,6 +207,7 @@ function effectiveConfig(activeRevisionId: string | null): EffectiveProjectAICon
       max_context_chunks: baseExecution.max_context_chunks,
       context_char_budget: baseExecution.context_char_budget,
       max_history_messages: baseExecution.max_history_messages,
+      bounded_recovery_enabled: true,
       include_citations: true,
       citation_excerpt_max_chars: 500,
       evidence_gate_mode: "enforce",
@@ -460,6 +461,30 @@ test("behavior changes do not change the selected RAG profile", async () => {
   });
 });
 
+test("bounded recovery is a Project setting without changing the selected RAG profile", async () => {
+  mockProjectShell();
+  const create = setupAI(effectiveConfig(null));
+  renderOperatorComponent(
+    <OperatorConsoleApp />,
+    `/projects?project=${projectFixture.id}&section=ai-config`,
+  );
+
+  const standard = await screen.findByRole("radio", { name: "Standard RAG profile" });
+  await userEvent.click(standard);
+  await userEvent.selectOptions(screen.getByLabelText("Bounded evidence recovery"), "false");
+
+  expect(standard).toBeChecked();
+  expect(screen.getByRole("button", { name: "Bounded evidence recovery: Use Global" })).toBeInTheDocument();
+  expect(screen.queryByText(/Custom · based on/)).not.toBeInTheDocument();
+  await saveRevision();
+
+  await waitFor(() => expect(create).toHaveBeenCalledTimes(1));
+  expect(create.mock.calls[0]?.[1]).toMatchObject({
+    behavior: {},
+    execution: { profile_id: "standard", bounded_recovery_enabled: false },
+  });
+});
+
 test("selecting the Global behavior option restores Global source", async () => {
   mockProjectShell();
   const create = setupAI(effectiveConfig(null));
@@ -501,7 +526,7 @@ test("clearing domain instructions back to Global restores Global source", async
   expect(
     screen.queryByRole("button", { name: "Domain instructions: Use Global" }),
   ).not.toBeInTheDocument();
-  expect(screen.getByText("Follows Global")).toBeInTheDocument();
+  expect(screen.getAllByText("Follows Global")).not.toHaveLength(0);
   expect(screen.queryByText("Unsaved")).not.toBeInTheDocument();
 });
 

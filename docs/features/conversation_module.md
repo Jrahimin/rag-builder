@@ -74,11 +74,12 @@ reranker bar), `grounding_mode` (`strict` default or `balanced`),
 `lexical_corroboration_floor_score`, `lexical_corroboration_coverage`,
 `cross_language_semantic_evidence_score_threshold`,
 `minimum_claim_token_coverage`, `store_candidate_trace` (debug; default off), and
-`include_citations`. Optional bounded recovery is controlled by
-`bounded_recovery_enabled`: focused lookup uses 15 seconds and up to two initial queries with no
+`include_citations`. Bounded recovery is controlled by
+`bounded_recovery_enabled` (enabled by default): focused lookup uses 15 seconds and up to two initial queries with no
 follow-up; broad coverage/current-rule/calculation work uses 30 seconds, up to four initial and two
 follow-up queries, and one follow-up round. These values are configurable through the corresponding
-`APE_CHAT__*_RECOVERY_*` variables. Disabled retains the legacy recovery limits.
+`APE_CHAT__*_RECOVERY_*` variables or the Project AI configuration screen. Disabled retains the legacy recovery limits;
+immutable snapshots created before this policy remain disabled when replayed.
 The same seven controls are revisioned per Project under canonical V2 execution policy; resolution
 records each origin, hashes the effective values, and copies them into the immutable conversation
 snapshot. Older snapshots that lack the fields replay with bounded recovery disabled and the

@@ -841,9 +841,9 @@ class ChatConfig(BaseModel):
     # Persist per-candidate retrieval/admission traces on chat messages. Eval rows
     # always keep the detail; production chat stays compact unless this is on.
     store_candidate_trace: bool = False
-    # Opt-in bounded recovery policy. Disabled preserves the legacy 300-second,
-    # two-follow-up behavior for existing deployments and immutable snapshots.
-    bounded_recovery_enabled: bool = False
+    # Default to bounded recovery so incomplete-evidence repair has a predictable
+    # latency budget. Existing immutable snapshots retain their recorded policy.
+    bounded_recovery_enabled: bool = True
     focused_recovery_timeout_seconds: float = Field(default=15.0, ge=1.0, le=120.0)
     broad_recovery_timeout_seconds: float = Field(default=30.0, ge=1.0, le=180.0)
     focused_recovery_max_queries: int = Field(default=2, ge=1, le=8)

@@ -67,7 +67,7 @@ _COVERAGE_SCOPE_PATTERN = regex.compile(
     r"reviewed (?:evidence|materials|sources) (?:do(?:es)?|did) not|"
     r"this answer (?:does|did) not (?:cover|establish)|"
     r"selected (?:evidence|passages|materials) (?:do(?:es)?|did) not|"
-    r"(?:supplied|provided) (?:source(?:s)?|evidence|passages|materials) "
+    r"(?:supplied|provided) (?:source(?:s)?|evidence|passages|materials|provisions) "
     r"(?:do(?:es)?|did) not (?:establish|provide|cover)|"
     r"not established from the (?:available|selected|reviewed)|"
     r"outside the (?:reviewed|selected) evidence|"
@@ -78,6 +78,16 @@ _COVERAGE_SCOPE_PATTERN = regex.compile(
     r"[^\n]{0,100}(?:নিশ্চিতভাবে বলা যা(?:য়|য়) না|প্রতিষ্ঠিত হ(?:য়|য়) না)|"
     r"পর্যালোচিত (?:প্রমাণ|উপাদান|সূত্র)[^\n]{0,40}না|"
     r"যথেষ্ট সূচকীকৃত প্রমাণ নাই)",
+    regex.IGNORECASE,
+)
+_COVERAGE_CONTINUATION_PATTERN = regex.compile(
+    r"^(?:they|these|those|the same (?:sources|materials|provisions)) "
+    r"(?:also )?(?:do(?:es)?|did) not (?:establish|provide|cover|show|confirm)\b",
+    regex.IGNORECASE,
+)
+_COVERAGE_SUMMARY_PATTERN = regex.compile(
+    r"^(?:therefore,?\s+)?this is (?:a )?(?:supported|evidence-based) "
+    r"(?:baseline |partial )?(?:overview|answer),? not (?:a )?complete\b",
     regex.IGNORECASE,
 )
 _WHOLE_CORPUS_ABSENCE_PATTERN = regex.compile(
@@ -911,6 +921,10 @@ class GroundingService:
             context = _verification_context(segments, index - 1)
             assertion = _contextualized_assertion(claim_text, context)
             kind_hint = _coverage_kind_hint(assertion, display=claim_text)
+            if kind_hint is None and _is_bounded_coverage_continuation(
+                segments, index - 1, claim_text
+            ):
+                kind_hint = "coverage_scope"
             evidence_chunks = [
                 (citation_index, chunks[citation_index - 1])
                 for citation_index in dict.fromkeys(citation_indexes)
@@ -968,8 +982,11 @@ class GroundingService:
                 span_texts = [span.text for span in selected_spans.values()]
                 evidence_texts = [chunk.content for _, chunk in draft.evidence_chunks]
                 full_evidence = " ".join(evidence_texts)
+                # Quantity binding needs all cited clauses.  The single semantic
+                # locator span may omit a neighbouring deadline, exception, or
+                # sanction clause from the same bounded source passage.
                 quantity_evidence = " ".join(
-                    _quantity_aligned_evidence(draft.assertion, span_texts or evidence_texts)
+                    _quantity_aligned_evidence(draft.assertion, evidence_texts)
                 )
                 duration_evidence = quantity_evidence
                 neighbor = _nearest_matching_cited_calculation(segments, draft.index - 1)
@@ -1013,7 +1030,13 @@ class GroundingService:
                     regex.IGNORECASE,
                 ) and any(
                     not _amounts_include(
-                        _currency_amounts(quantity_evidence) | _currency_amounts(user_input), amount
+                        _currency_amounts(quantity_evidence)
+                        | (
+                            _currency_amounts(user_input)
+                            if kind in {"scenario_input", "arithmetic"}
+                            else set()
+                        ),
+                        amount,
                     )
                     for amount in _currency_amounts(draft.assertion)
                 ):
@@ -2467,6 +2490,35 @@ def _coverage_kind_hint(text: str, *, display: str | None = None) -> str | None:
     return "coverage_scope"
 
 
+def _is_bounded_coverage_continuation(
+    segments: list[str], index: int, display: str
+) -> bool:
+    """Recognize meta-level continuation only inside one limitation paragraph.
+
+    Pronouns such as ``They`` are never sufficient by themselves.  The preceding
+    sentence must belong to the same Markdown block and already be an explicit
+    evidence-coverage limitation.  This keeps a legal conclusion in another
+    paragraph or list item fully verifiable.
+    """
+    plain = _plain_claim_text(display).strip()
+    if not (
+        _COVERAGE_CONTINUATION_PATTERN.search(plain)
+        or _COVERAGE_SUMMARY_PATTERN.search(plain)
+    ):
+        return False
+    if index <= 0:
+        return False
+    current = segments[index]
+    previous = segments[index - 1]
+    if getattr(current, "block_id", None) != getattr(previous, "block_id", None):
+        return False
+    previous_plain = _plain_claim_text(previous)
+    return bool(
+        _COVERAGE_SCOPE_PATTERN.search(previous_plain)
+        or _COVERAGE_CONTINUATION_PATTERN.search(previous_plain)
+    )
+
+
 def _coverage_scope_verification(
     text: str,
     coverage: dict[str, Any] | None,
@@ -2497,6 +2549,11 @@ def _coverage_scope_verification(
             ClaimVerificationReason.COVERAGE_VERDICT_UNAVAILABLE,
         )
     if _coverage_topic_supported(text, coverage) or _coverage_topic_supported(shown, coverage):
+        return ClaimVerification.SUPPORTED, ClaimVerificationReason.MATCHES_COVERAGE_VERDICT
+    if _COVERAGE_SUMMARY_PATTERN.search(_plain_claim_text(shown)) and (
+        coverage.get("partial_scope_validated") is True
+        or coverage.get("full_coverage_validated") is True
+    ):
         return ClaimVerification.SUPPORTED, ClaimVerificationReason.MATCHES_COVERAGE_VERDICT
     if regex.search(
         r"cannot responsibly state from (?:these|the) materials\b",
@@ -3028,6 +3085,7 @@ def _quantity_aligned_evidence(claim: str, evidence_texts: list[str]) -> list[st
     """
     claim_subjects = _quantity_subjects(claim)
     claim_tokens = _significant_tokens(claim)
+    claim_durations = _duration_quantities(claim)
     selected: list[str] = []
     for evidence in evidence_texts:
         clauses = [
@@ -3043,6 +3101,9 @@ def _quantity_aligned_evidence(claim: str, evidence_texts: list[str]) -> list[st
         ]
         if not clauses:
             continue
+        evidence_has_subject_anchor = any(
+            bool(claim_subjects & _quantity_subjects(clause)) for clause in clauses
+        )
         if not claim_subjects:
             selected.extend(
                 clause for clause in clauses if _duration_context_related(claim, clause)
@@ -3053,14 +3114,39 @@ def _quantity_aligned_evidence(claim: str, evidence_texts: list[str]) -> list[st
             clause_subjects = _quantity_subjects(clause)
             if claim_subjects and clause_subjects and claim_subjects.isdisjoint(clause_subjects):
                 continue
+            specific_claim_subjects = claim_subjects & _SPECIFIC_QUANTITY_SUBJECTS
+            if specific_claim_subjects and not specific_claim_subjects & clause_subjects:
+                clause_durations = _duration_quantities(clause)
+                carries_claim_duration = any(
+                    _durations_equivalent(left, right)
+                    for left in claim_durations
+                    for right in clause_durations
+                )
+                if clause_subjects or not (evidence_has_subject_anchor and carries_claim_duration):
+                    continue
             subject_score = len(claim_subjects & clause_subjects)
             lexical_score = _coverage(claim_tokens, _significant_tokens(clause))
+            if (
+                not clause_subjects
+                and evidence_has_subject_anchor
+                and any(
+                    _durations_equivalent(left, right)
+                    for left in claim_durations
+                    for right in _duration_quantities(clause)
+                )
+            ):
+                subject_score = 1
             ranked.append((subject_score * 2 + lexical_score, -position, clause))
         if not ranked:
             continue
-        score, _position, clause = max(ranked)
-        if score >= (1.0 if claim_subjects else 0.2):
-            selected.append(clause)
+        # A compound assertion may bind a duty, deadline and sanction to
+        # separate clauses.  Retain every subject-aligned clause rather than
+        # allowing one best locator span to hide the others.
+        selected.extend(
+            clause
+            for score, _position, clause in ranked
+            if score >= (1.0 if claim_subjects else 0.2)
+        )
     return selected
 
 
@@ -3085,6 +3171,29 @@ def _quantity_scope_conflict(claim: str, evidence: str) -> bool:
     )
 
 
+_SPECIFIC_QUANTITY_SUBJECTS = frozenset(
+    {
+        "first_agm",
+        "successive_agm",
+        "agm_extension",
+        "first_auditor",
+        "auditor_term",
+        "registered_office_change",
+    }
+)
+
+
+def _has_bounded_alias(text: str, alias: str) -> bool:
+    return bool(
+        regex.search(
+            rf"(?<![\p{{L}}\p{{M}}\p{{N}}_]){regex.escape(alias)}"
+            rf"(?![\p{{L}}\p{{M}}\p{{N}}_])",
+            text,
+            regex.IGNORECASE,
+        )
+    )
+
+
 def _quantity_subjects(text: str) -> set[str]:
     folded = _plain_claim_text(text).casefold()
     aliases = {
@@ -3096,15 +3205,63 @@ def _quantity_subjects(text: str) -> set[str]:
             "দাখিল",
             "জমা",
         ),
-        "appeal": ("appeal", "আপিল"),
+        "appeal": ("appeal", "appeal's", "আপিল", "আপিলের"),
         "fee": ("fee", "ফি"),
         "penalty": ("fine", "penalty", "sanction", "জরিমানা", "দণ্ড"),
         "daily": ("daily", "per day", "each day", "প্রতিদিন", "দৈনিক", "প্রতি দিন"),
-        "retention": ("retention", "retain", "keep records", "সংরক্ষণ"),
-        "tax": ("tax", "কর"),
+        "retention": (
+            "retention",
+            "retain",
+            "retained",
+            "preserve",
+            "preserved",
+            "keep records",
+            "সংরক্ষণ",
+        ),
+        "tax": (
+            "tax",
+            "income tax",
+            "tax return",
+            "taxpayer",
+            "আয়কর",
+            "আয়কর",
+            "কর",
+            "করদাতা",
+            "কর রিটার্ন",
+        ),
+        "agm": ("agm", "annual general meeting", "বার্ষিক সাধারণ সভা"),
+        "first_agm": (
+            "first agm",
+            "first annual general meeting",
+            "প্রথম বার্ষিক সাধারণ সভা",
+        ),
+        "successive_agm": (
+            "successive agm",
+            "successive annual general meeting",
+            "between successive",
+            "দুই সভার ব্যবধান",
+            "পরবর্তী বার্ষিক সাধারণ সভা",
+        ),
+        "agm_extension": ("agm extension", "extension by the registrar", "সময় বর্ধিত"),
+        "auditor": ("auditor", "auditors", "নিরীক্ষক", "নিরীত্মগক"),
+        "first_auditor": ("first auditor", "প্রথম নিরীক্ষক", "প্রথম নিরীত্মগক"),
+        "auditor_term": (
+            "next agm",
+            "end of the next agm",
+            "পরবর্তী বার্ষিক সাধারণ সভার সমাপ্তি",
+        ),
+        "registered_office": ("registered office", "নিবন্ধিকৃত কার্যালয়", "নিবন্ধিকৃত কার্যালয়"),
+        "registered_office_change": (
+            "change in its location",
+            "change of registered office",
+            "কার্যালয়ের স্থান পরিবর্তন",
+            "কার্যালয়ের স্থান পরিবর্তন",
+        ),
     }
     return {
-        subject for subject, values in aliases.items() if any(value in folded for value in values)
+        subject
+        for subject, values in aliases.items()
+        if any(_has_bounded_alias(folded, value) for value in values)
     }
 
 

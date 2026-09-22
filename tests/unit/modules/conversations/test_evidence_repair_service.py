@@ -2156,6 +2156,36 @@ def test_search_plan_orders_material_requirements_before_query_truncation():
     assert queries == ["governing", "central", "secondary"]
 
 
+def test_search_plan_schema_requires_materiality_but_normalizes_legacy_payloads():
+    from app.modules.conversations.services.evidence_repair_service import _SearchPlan
+
+    schema = _SearchPlan.model_json_schema()
+    requirement_schema = schema["$defs"]["EvidenceRequirement"]
+    assert "materiality" in requirement_schema["required"]
+
+    legacy = _SearchPlan.model_validate(
+        {
+            "requirements": [
+                {
+                    "requirement_id": "R1",
+                    "description": "Applicability condition",
+                    "origin": "necessary_applicability",
+                },
+                {
+                    "requirement_id": "R2",
+                    "description": "Requested filing duty",
+                    "origin": "explicit_user_request",
+                },
+            ],
+            "queries": [],
+        }
+    )
+    assert [item.materiality for item in legacy.requirements] == [
+        "central_rule",
+        "central_rule",
+    ]
+
+
 def test_legacy_unbound_query_is_not_assigned_to_a_requirement_by_position():
     from app.modules.conversations.services.evidence_repair_service import (
         _prepare_search_plan,
@@ -2787,6 +2817,85 @@ async def test_authoritative_partial_initial_proof_filters_proven_queries():
     assert len(calls) == 2
     assert result.diagnostics["status"] == "recovered"
     assert {item.chunk_id for item in result.selected} == {selected[0].chunk_id, later.chunk_id}
+
+
+async def test_authoritative_initial_partial_proof_survives_later_deadline():
+    known = chunk("Private companies must hold an annual general meeting.")
+    later = chunk("An unrelated discovery passage.")
+    config = ChatConfig()
+    grounding = GroundingService(config)
+    decision = grounding.assess(
+        "What are the AGM and filing duties?", [known], rerank_status="off"
+    )
+    selected = list(decision.admitted_units) or [known]
+
+    async def delay_coverage(messages):
+        if "Check whether supplied evidence" in messages[0].content:
+            await asyncio.sleep(0.05)
+
+    result, retrieval, _ = await run_repair(
+        [([later], {})],
+        queries=[{"query": "annual return filing", "requirement_ids": ["R1"]}],
+        requirements=[
+            {
+                "requirement_id": "R1",
+                "description": "Annual return filing duty",
+                "materiality": "central_rule",
+            },
+            {
+                "requirement_id": "R2",
+                "description": "AGM duty",
+                "materiality": "central_rule",
+            },
+        ],
+        selected_context=selected,
+        initial_decision=decision,
+        plan_coverage={
+            "complete": False,
+            "missing": ["Annual return filing duty"],
+            "checks": [
+                {
+                    "requirement_id": "R1",
+                    "description": "Annual return filing duty",
+                    "supported": False,
+                    "evidence": [],
+                },
+                {
+                    "requirement_id": "R2",
+                    "description": "AGM duty",
+                    "supported": True,
+                    "evidence": [
+                        {
+                            "chunk_id": str(selected[0].chunk_id),
+                            "start_line": 1,
+                            "end_line": 1,
+                        }
+                    ],
+                },
+            ],
+            "partial_answer": {
+                "scope": "AGM duty",
+                "requirement_ids": ["R2"],
+                "exclusions": ["Annual return filing duty"],
+            },
+        },
+        generation_hook=delay_coverage,
+        timeout_seconds=0.02,
+        user_query="What are the AGM and filing duties?",
+        recovery_profile="broad",
+        max_initial_queries=4,
+        max_followup_queries=2,
+        max_followup_rounds=1,
+    )
+
+    assert retrieval.retrieve.await_count == 1
+    assert result.diagnostics["status"] == "partial_answer"
+    assert result.diagnostics["initial_partial_checkpoint"] == "validated"
+    assert result.diagnostics["requirement_progress"]["stop_reason"] == (
+        "recovery_deadline_exceeded"
+    )
+    assert result.decision is not None and result.decision.sufficient
+    assert [item.chunk_id for item in result.selected] == [selected[0].chunk_id]
 
 
 async def test_delta_review_keeps_valid_facet_and_unresolved_obligation():

@@ -184,6 +184,12 @@ def test_bounded_recovery_is_project_scoped_and_applied_to_runtime() -> None:
     assert disabled.configuration.chat.bounded_recovery_enabled is False
 
 
+def test_bounded_recovery_is_enabled_by_default_for_new_resolution() -> None:
+    resolution = resolve_project_ai_config(Settings(), _revision({}))
+
+    assert resolution.configuration.chat.bounded_recovery_enabled is True
+
+
 def test_legacy_effective_snapshot_replays_with_bounded_recovery_disabled() -> None:
     payload = resolve_project_ai_config(Settings(), None).configuration.model_dump(mode="json")
     for field in (

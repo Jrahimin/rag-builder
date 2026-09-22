@@ -99,7 +99,20 @@ class EvidenceRequirement(BaseModel):
     ] = "necessary_applicability"
     materiality: Literal[
         "governing_applicability", "central_rule", "adjacent_rule", "secondary_detail"
-    ] = "central_rule"
+    ]
+
+    @model_validator(mode="before")
+    @classmethod
+    def accept_pre_materiality_plans(cls, value: Any) -> Any:
+        """Keep stored/test plans readable while making materiality required on the wire."""
+        if not isinstance(value, dict) or value.get("materiality"):
+            return value
+        compatible = dict(value)
+        origin = compatible.get("origin", "necessary_applicability")
+        compatible["materiality"] = {
+            "optional_corroboration": "secondary_detail",
+        }.get(origin, "central_rule")
+        return compatible
 
 
 class _SearchQuery(BaseModel):
@@ -1608,6 +1621,42 @@ async def repair_knowledge_evidence(
                     }
                     selected = [c for c in selected if str(c.chunk_id) in confirmed]
                     diagnostics["initial_coverage_status"] = "partial"
+                    initial_verdict = proof_map.canonical_verdict(
+                        missing=list(plan.coverage.missing),
+                        gap_kinds=list(plan.coverage.gap_kinds),
+                        partial_answer=plan.coverage.partial_answer,
+                    )
+                    initial_partial_valid = initial_verdict.partial_validates(
+                        selected, requirement_ids
+                    )
+                    if initial_partial_valid:
+                        diagnostics["coverage"] = {
+                            **_coverage_diagnostics(initial_verdict, False),
+                            "gap_kinds": initial_verdict.gap_kinds
+                            or ["source_rule"] * len(initial_verdict.missing),
+                            "source_ranges_validated": True,
+                            "partial_scope_validated": True,
+                        }
+                        _store_partial_answer(diagnostics, initial_verdict)
+                        diagnostics["requirement_progress"] = _requirement_progress(
+                            initial_verdict,
+                            focused_ids=[],
+                            adjacent_queries=[],
+                            attempts=[],
+                            stop_reason=None,
+                        )
+                        checkpoint = EvidenceRepairResult([], None, deepcopy(diagnostics))
+                        _handoff_reviewed_proof(
+                            checkpoint,
+                            initial_verdict,
+                            selected,
+                            [],
+                            requirement_ids,
+                            [initial_decision] if initial_decision is not None else [],
+                        )
+                        if checkpoint.decision is not None:
+                            partial_checkpoint = checkpoint
+                            diagnostics["initial_partial_checkpoint"] = "validated"
                 else:
                     diagnostics["initial_coverage_status"] = "invalid"
             requirements, queries, query_requirement_ids = _prepare_search_plan(

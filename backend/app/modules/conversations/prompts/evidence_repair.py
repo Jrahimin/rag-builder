@@ -4,7 +4,8 @@ EVIDENCE_REPAIR_VERSION = "v26"
 EVIDENCE_REPAIR_PROMPT = """Plan focused knowledge-base searches to repair an incomplete answer.
 Return only JSON with queries, requirements, and coverage:
 {"queries":[{"query":"short query","requirement_ids":["R1"]}],"requirements":[
-{"requirement_id":"R1","description":"needed fact or rule","origin":"explicit_user_request"}],
+{"requirement_id":"R1","description":"needed fact or rule","origin":"explicit_user_request",
+"materiality":"central_rule"}],
 "coverage":{"complete":false,"missing":["missing fact or rule"],"checks":[
 {"requirement_id":"R1","description":"needed fact or rule","supported":false,
 "needs_adjacent_context":false,"evidence":[]}]}}.
@@ -53,6 +54,11 @@ one all-or-nothing check. Use the eight-query budget for distinct missing concep
 first. Prefer the source language when known; add an alternate-language route only
 when it adds discovery value and budget remains. Do not combine languages or several
 independent topics into one query. A simple question needs one or two routes.
+Set materiality explicitly on every requirement: governing_applicability, central_rule,
+adjacent_rule, or secondary_detail. Do not bundle a core duty with its deadline,
+authority, form, consequence, exception, or completion procedure when either facet can
+be answered independently. If admitted evidence proves an independently useful subset,
+return a partial_answer scope with its proven requirement_ids and explicit exclusions.
 For named-source comparisons, preserve requested work names in focused searches.
 The rule-specific instructions below apply only when governing rules or calculations
 are necessary. Independent historical accounts do not need to agree to support a comparison.

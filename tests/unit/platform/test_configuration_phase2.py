@@ -167,7 +167,7 @@ def test_every_preset_field_ignores_conflicting_raw_execution_settings() -> None
         )
         assert materialize_execution_values(resolution.configuration) == {
             **execution_values(profile),
-            "bounded_recovery_enabled": False,
+            "bounded_recovery_enabled": True,
             "focused_recovery_timeout_seconds": 15.0,
             "broad_recovery_timeout_seconds": 30.0,
             "focused_recovery_max_queries": 2,

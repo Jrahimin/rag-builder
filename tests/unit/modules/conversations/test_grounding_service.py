@@ -1336,6 +1336,57 @@ async def test_supplied_source_limitation_uses_validated_scope_not_citation_simi
     assert claim["verification"] == ("supported" if validated else "unverified")
 
 
+async def test_live_partial_answer_limitation_paragraph_uses_coverage_verdict() -> None:
+    answer = (
+        "The supplied provisions do not establish whether Bangladesh law gives a dormant "
+        "company a separate compliance status or exempts it from the obligations above. "
+        "They also do not establish the requirements or deadlines for RJSC annual returns, "
+        "income-tax returns, or VAT/BIN returns. Therefore, this is a supported baseline "
+        "overview, not a complete dormant-company compliance checklist."
+    )
+    result = await GroundingService(ChatConfig()).map_claims(
+        answer,
+        [_chunk(content="Private companies must hold an annual general meeting.")],
+        coverage={
+            "coverage": {
+                "missing": [
+                    "dormant company separate legal status or exemption",
+                    "RJSC annual return requirements and deadlines",
+                    "income-tax return requirements and deadlines",
+                    "VAT/BIN return requirements and deadlines",
+                ],
+                "partial_scope_validated": True,
+                "full_coverage_validated": False,
+            }
+        },
+    )
+
+    assert len(result.claims) == 3
+    assert {claim["claim_kind"] for claim in result.claims} == {"coverage_scope"}
+    assert all(claim["verification"] == "supported" for claim in result.claims)
+
+
+async def test_coverage_pronoun_in_new_paragraph_is_not_exempted() -> None:
+    answer = (
+        "The supplied provisions do not establish annual return filing procedures.\n\n"
+        "They also do not establish that companies are exempt from annual returns."
+    )
+    result = await GroundingService(ChatConfig()).map_claims(
+        answer,
+        [_chunk(content="Companies must file an annual return.")],
+        coverage={
+            "coverage": {
+                "missing": ["annual return filing procedures"],
+                "partial_scope_validated": True,
+            }
+        },
+    )
+
+    assert result.claims[0]["claim_kind"] == "coverage_scope"
+    assert result.claims[1]["claim_kind"] == "source_assertion"
+    assert result.claims[1]["verification"] != "supported"
+
+
 async def test_equivalent_week_and_day_durations_are_not_contradictions() -> None:
     result = await GroundingService(ChatConfig(minimum_claim_token_coverage=0.3)).map_claims(
         "Notice must be given within 21 days. [1]",
@@ -1343,6 +1394,43 @@ async def test_equivalent_week_and_day_durations_are_not_contradictions() -> Non
     )
     assert result.claims[0]["verification"] == "supported"
     assert result.claims[0]["verification_reason"] != "duration_mismatch"
+
+
+def test_quantity_subjects_use_token_boundaries_for_bangla_tax() -> None:
+    from app.modules.conversations.grounding_service import _quantity_subjects
+
+    assert "tax" not in _quantity_subjects("কোম্পানী সভা করিবে")
+    assert "tax" in _quantity_subjects("কোম্পানী আয়কর রিটার্ন দাখিল করিবে")
+
+
+def test_cross_language_agm_duration_selects_the_bound_clause() -> None:
+    from app.modules.conversations.grounding_service import _quantity_aligned_evidence
+
+    evidence = (
+        "প্রথম বার্ষিক সাধারণ সভা আঠারো মাসের মধ্যে করিতে হইবে। "
+        "পরবর্তী দুই সভার ব্যবধান পনের মাসের বেশি হইবে না।"
+    )
+    first = _quantity_aligned_evidence(
+        "The first annual general meeting must be held within 18 months.", [evidence]
+    )
+    successive = _quantity_aligned_evidence(
+        "No more than 15 months may pass between successive annual general meetings.",
+        [evidence],
+    )
+
+    assert first and all("আঠারো" in clause for clause in first)
+    assert successive and all("পনের" in clause for clause in successive)
+
+
+async def test_user_question_cannot_authenticate_a_statutory_fine() -> None:
+    result = await GroundingService(ChatConfig(minimum_claim_token_coverage=0.2)).map_claims(
+        "Failure attracts a daily fine of Tk 200. [1]",
+        [_chunk(content="Failure may result in a daily fine.")],
+        user_input="Is the statutory fine Tk 200?",
+    )
+
+    assert result.claims[0]["verification"] == "unsupported"
+    assert result.claims[0]["verification_reason"] == "unverified_amount"
 
 
 async def test_nearby_but_changed_day_deadline_is_rejected() -> None:
