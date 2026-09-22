@@ -1070,6 +1070,7 @@ async def run_repair(
     max_followup_queries=2,
     max_followup_rounds=2,
     recovery_profile="legacy",
+    allow_admitted_timeout_fallback=False,
 ):
     config = config or ChatConfig()
     queries = (
@@ -1242,6 +1243,7 @@ async def run_repair(
         max_followup_queries=max_followup_queries,
         max_followup_rounds=max_followup_rounds,
         recovery_profile=recovery_profile,
+        allow_admitted_timeout_fallback=allow_admitted_timeout_fallback,
     )
     if calls is not None:
         calls.extend(llm.generate.call_args_list)
@@ -2896,6 +2898,55 @@ async def test_authoritative_initial_partial_proof_survives_later_deadline():
     )
     assert result.decision is not None and result.decision.sufficient
     assert [item.chunk_id for item in result.selected] == [selected[0].chunk_id]
+
+
+async def test_bounded_compliance_planning_deadline_uses_admitted_evidence_fallback():
+    known = chunk(
+        "A private company must hold an annual general meeting and retain its statutory records."
+    )
+    config = ChatConfig()
+    grounding = GroundingService(config)
+    decision = grounding.assess(
+        "What annual compliance obligations does a private company have?",
+        [known],
+        rerank_status="off",
+    )
+    assert decision.sufficient
+    selected = list(decision.admitted_units)
+
+    async def block_planning(messages):
+        if "Plan focused knowledge-base searches" in messages[0].content:
+            await asyncio.Event().wait()
+
+    result, retrieval, _ = await run_repair(
+        [([known], {})],
+        selected_context=selected,
+        initial_decision=decision,
+        generation_hook=block_planning,
+        timeout_seconds=0.02,
+        user_query="What annual compliance obligations does a private company have?",
+        recovery_profile="broad",
+        max_initial_queries=4,
+        max_followup_queries=2,
+        max_followup_rounds=1,
+        allow_admitted_timeout_fallback=True,
+    )
+
+    assert retrieval.retrieve.await_count == 0
+    assert result.failure is None
+    assert result.diagnostics["status"] == "partial_answer"
+    assert result.diagnostics["admitted_evidence_timeout_fallback"] is True
+    assert result.diagnostics["coverage"]["partial_scope_validated"] is False
+    assert result.diagnostics["coverage"]["admitted_evidence_fallback"] is True
+    assert result.diagnostics["requirement_progress"]["stop_reason"] == (
+        "recovery_deadline_admitted_evidence_fallback"
+    )
+    assert result.decision is not None and result.decision.sufficient
+    assert list(result.decision.admitted_units) == selected
+    assert result.selected == selected
+    assert result.partial_answer is not None
+    assert result.answerable_scope is not None
+    assert result.answerable_scope["partial"] is True
 
 
 async def test_delta_review_keeps_valid_facet_and_unresolved_obligation():

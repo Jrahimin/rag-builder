@@ -2192,7 +2192,11 @@ async def test_validated_partial_cannot_alter_indexed_web_policy(
                     }
                 ),
             ),
-            replace(answer, content=json.dumps({"queries": []})),
+            *(
+                [replace(answer, content=json.dumps({"queries": []}))]
+                if mode is ResponseMode.INDEXED_ONLY
+                else []
+            ),
             answer,
         ]
     )
@@ -2226,6 +2230,82 @@ async def test_validated_partial_cannot_alter_indexed_web_policy(
     assert policy["answerable_scope"]["partial"] is True
     assert metadata["knowledge_repair"]["status"] == "partial_answer"
     assert "independently supported" in content or "45 days" in content
+
+
+async def test_compliance_review_deadline_returns_grounded_partial_answer(
+    session,
+    conversation_repository,
+    message_repository,
+    conversation,
+) -> None:
+    source = ContextChunk(
+        chunk_id=uuid.uuid4(),
+        document_id=uuid.uuid4(),
+        chunk_index=0,
+        content=(
+            "A private company must hold an annual general meeting and maintain its "
+            "statutory company records after incorporation even before operations begin."
+        ),
+        score=0.98,
+        filename="companies-act.md",
+        chunk_hash="company-compliance",
+        semantic_score=0.98,
+        metadata={"source_role": "primary", "source_lifecycle_status": "active"},
+    )
+    retrieval = AsyncMock()
+    retrieval.query_embedder = None
+    retrieval.retrieve.return_value = ContextRetrievalResult(
+        chunks=[source],
+        diagnostics={
+            "index_build_id": str(uuid.uuid4()),
+            "source_metadata_generation": 24,
+            "rerank_status": "off",
+        },
+    )
+    llm = CitedLLM("The company must maintain statutory records after incorporation. [1]")
+    answer = await llm.generate([], temperature=None, max_tokens=100)
+
+    async def timeout_planning(messages, *, temperature, max_tokens):
+        del temperature, max_tokens
+        if messages and "Plan focused knowledge-base searches" in messages[0].content:
+            await asyncio.Event().wait()
+        return answer
+
+    llm.generate = AsyncMock(side_effect=timeout_planning)
+    service = _service(
+        session,
+        conversation_repository,
+        message_repository,
+        llm,
+        chat_config=ChatConfig(
+            bounded_recovery_enabled=True,
+            broad_recovery_timeout_seconds=1.0,
+            response_mode=ResponseMode.INDEXED_ONLY,
+            system_prompt_version="v5",
+        ),
+    )
+    service._retrieval = retrieval
+
+    turn = await service.send_message(
+        conversation.id,
+        MessageSendRequest(
+            content=(
+                "What legal, regulatory, tax, and annual compliance obligations does a "
+                "non-operating private company have?"
+            )
+        ),
+    )
+
+    assert turn.assistant_message.finish_reason == "stop"
+    assert turn.assistant_message.insufficient_evidence_reason is None
+    assert turn.assistant_message.content.endswith("[1]")
+    repair = turn.assistant_message.metadata["knowledge_repair"]
+    assert repair["status"] == "partial_answer"
+    assert repair["admitted_evidence_timeout_fallback"] is True
+    assert repair["coverage"]["partial_scope_validated"] is False
+    assert (
+        turn.assistant_message.metadata["response_policy"]["answerable_scope"]["partial"] is True
+    )
 
 
 async def test_modifies_expansion_survives_combined_rerank_and_skips_web(

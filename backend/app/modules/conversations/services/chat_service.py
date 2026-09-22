@@ -1133,7 +1133,13 @@ class ChatService:
                 not presentation_only
                 and self._evidence_approach == "authoritative"
                 and applicability_task
-                and (bounded_recovery_enabled or _has_governed_current_rule_source(chunks))
+                and (
+                    _has_governed_current_rule_source(chunks)
+                    or (
+                        bounded_recovery_enabled
+                        and self._chat_config.response_mode is ResponseMode.INDEXED_ONLY
+                    )
+                )
             )
             # Route selection describes the user's task, not whether the first
             # retrieval already happened to pass the evidence gate. This keeps
@@ -1185,6 +1191,7 @@ class ChatService:
                 or reuse_scope_revalidation
                 or focused_recovery
             ) and scope_current_authority is None:
+                pre_review_evidence = evidence
                 # Similarity to a worked example does not prove that its category,
                 # period or complete rule schedule applies to a new calculation.
                 # An unsuccessful review must not fall back to those original hits.
@@ -1252,9 +1259,16 @@ class ChatService:
                         max_followup_rounds=max_followup_rounds,
                         recovery_profile=recovery_profile,
                         domain_instructions=self._domain_instructions,
-                        initial_decision=evidence,
+                        initial_decision=(
+                            pre_review_evidence if compliance_review else evidence
+                        ),
                         required_coverage=inherited if reuse_scope_revalidation else None,
                         evidence_approach=self._evidence_approach,
+                        allow_admitted_timeout_fallback=bool(
+                            bounded_recovery
+                            and compliance_review
+                            and pre_review_evidence.sufficient
+                        ),
                     )
                 repair_usage = repaired.usage
                 preparation_error = repaired.failure

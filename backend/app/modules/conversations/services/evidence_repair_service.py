@@ -1369,6 +1369,7 @@ async def repair_knowledge_evidence(
     max_followup_queries: int = 2,
     max_followup_rounds: int = MAX_REPAIR_FOLLOWUPS,
     recovery_profile: str = "legacy",
+    allow_admitted_timeout_fallback: bool = False,
 ) -> EvidenceRepairResult:
     """Never mix active snapshots, relax filters, or promote unknown authority.
 
@@ -1389,7 +1390,7 @@ async def repair_knowledge_evidence(
         AUTHORITATIVE_FOCUSED_PROMPT if authoritative_compatibility else FOCUSED_REPAIR_PROMPT
     )
     diagnostics: dict[str, Any] = {
-        "version": "v22-stable-owned-partial-obligations"
+        "version": "v23-bounded-compliance-timeout-fallback"
         if authoritative_compatibility
         else EVIDENCE_REPAIR_VERSION,
         "coverage_protocol": "authoritative_compatibility"
@@ -1416,6 +1417,17 @@ async def repair_knowledge_evidence(
     if required_coverage:
         diagnostics["required_coverage_revalidation"] = True
     partial_checkpoint: EvidenceRepairResult | None = None
+    admitted_timeout_fallback: list[ContextChunk] = []
+    if allow_admitted_timeout_fallback and initial_decision is not None:
+        admitted_units = {
+            (unit.chunk_id, unit.content) for unit in initial_decision.admitted_units
+        }
+        admitted_timeout_fallback = [
+            chunk
+            for chunk in selected
+            if chunk.metadata.get("authority_status") != "unresolved"
+            and (chunk.chunk_id, chunk.content) in admitted_units
+        ]
     reference_date = (
         inputs.as_of.date().isoformat()
         if inputs.as_of
@@ -2694,6 +2706,19 @@ async def repair_knowledge_evidence(
                 ),
             )
             return result
+        if (
+            deadline_expired
+            and initial_decision is not None
+            and initial_decision.sufficient
+            and admitted_timeout_fallback
+        ):
+            _restore_admitted_timeout_fallback(
+                result,
+                diagnostics,
+                initial_decision,
+                admitted_timeout_fallback,
+            )
+            return result
         if isinstance(provider_error, ProviderError):
             result.failure = provider_error
         elif isinstance(exc, TimeoutError):
@@ -2818,6 +2843,74 @@ def _restore_partial_checkpoint(
     result.partial_answer = deepcopy(checkpoint.partial_answer)
     result.missing_inputs = checkpoint.missing_inputs
     result.answerable_scope = deepcopy(checkpoint.answerable_scope)
+
+
+def _restore_admitted_timeout_fallback(
+    result: EvidenceRepairResult,
+    diagnostics: dict[str, Any],
+    decision: EvidenceDecision,
+    selected: list[ContextChunk],
+) -> None:
+    """Return grounded initial evidence when a bounded checklist review runs out of time.
+
+    This is intentionally narrower than an exact coverage checkpoint: it is allowed only
+    for callers that classify completeness as useful but non-atomic. The answer prompt and
+    final claim verifier still restrict output to facts supported by these admitted units.
+    """
+    pending = (
+        "Complete coverage of every requested obligation, authority, filing or record, "
+        "deadline, and non-compliance consequence was not verified within the review budget."
+    )
+    partial = {
+        "scope": "Facts directly supported by the initially admitted evidence",
+        "requirement_ids": [],
+        "exclusions": [
+            "Any requested compliance facet not directly established by the cited evidence."
+        ],
+        "pending": [pending],
+        "gap_kinds": ["source_rule"],
+        "supported_proof": [],
+    }
+    diagnostics["coverage"] = {
+        "complete": False,
+        "missing": [pending],
+        "missing_inputs": [],
+        "quotes_validated": False,
+        "source_ranges_validated": False,
+        "full_coverage_validated": False,
+        "partial_scope_validated": False,
+        "admitted_evidence_fallback": True,
+        "checks": [],
+    }
+    diagnostics["partial_answer"] = partial
+    diagnostics["requirement_progress"] = {
+        **(diagnostics.get("requirement_progress") or {}),
+        "stop_reason": "recovery_deadline_admitted_evidence_fallback",
+    }
+    diagnostics["status"] = "partial_answer"
+    diagnostics["admitted_evidence_timeout_fallback"] = True
+    diagnostics["proof_chunk_ids"] = [str(chunk.chunk_id) for chunk in selected]
+    result.selected = list(selected)
+    selected_keys = {(chunk.chunk_id, chunk.content) for chunk in selected}
+    result.decision = replace(
+        decision,
+        sufficient=True,
+        reason=None,
+        winning_chunk_id=selected[0].chunk_id,
+        admitted_units=tuple(
+            unit
+            for unit in decision.admitted_units
+            if (unit.chunk_id, unit.content) in selected_keys
+        ),
+    )
+    result.partial_answer = partial
+    result.answerable_scope = _answerable_scope(
+        complete=False,
+        partial=partial,
+        missing=(pending,),
+        missing_inputs=(),
+        supported_requirement_ids=[],
+    )
 
 
 def _handoff_reviewed_proof(
