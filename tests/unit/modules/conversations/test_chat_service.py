@@ -2303,9 +2303,7 @@ async def test_compliance_review_deadline_returns_grounded_partial_answer(
     assert repair["status"] == "partial_answer"
     assert repair["admitted_evidence_timeout_fallback"] is True
     assert repair["coverage"]["partial_scope_validated"] is False
-    assert (
-        turn.assistant_message.metadata["response_policy"]["answerable_scope"]["partial"] is True
-    )
+    assert turn.assistant_message.metadata["response_policy"]["answerable_scope"]["partial"] is True
 
 
 async def test_modifies_expansion_survives_combined_rerank_and_skips_web(

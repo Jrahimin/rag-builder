@@ -32,6 +32,8 @@ pnpm dev
 
 The repository gate is `make quality`. It runs format, lint, typecheck, migration check, unit tests, integration tests, evaluation smoke, and frontend quality. It does not run the Docker image build.
 
+Once per clone: `python -m pre_commit install` so `git commit` runs Ruff format/lint from `.pre-commit-config.yaml`. That is the cheap gate CI also starts with (`make format-check`).
+
 Focused commands: `make format-check`, `make lint`, `make typecheck`, `make test-unit`, `make test-integration`, `make migration-check`, `make migration-drift-check`, `make eval-smoke`, `make frontend-quality`, `make frontend-build`.
 
 Local migrations: `make migrate-local` (`cd backend && python -m alembic upgrade head`).

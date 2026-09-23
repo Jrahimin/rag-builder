@@ -1259,9 +1259,7 @@ class ChatService:
                         max_followup_rounds=max_followup_rounds,
                         recovery_profile=recovery_profile,
                         domain_instructions=self._domain_instructions,
-                        initial_decision=(
-                            pre_review_evidence if compliance_review else evidence
-                        ),
+                        initial_decision=(pre_review_evidence if compliance_review else evidence),
                         required_coverage=inherited if reuse_scope_revalidation else None,
                         evidence_approach=self._evidence_approach,
                         allow_admitted_timeout_fallback=bool(

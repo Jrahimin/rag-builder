@@ -1419,9 +1419,7 @@ async def repair_knowledge_evidence(
     partial_checkpoint: EvidenceRepairResult | None = None
     admitted_timeout_fallback: list[ContextChunk] = []
     if allow_admitted_timeout_fallback and initial_decision is not None:
-        admitted_units = {
-            (unit.chunk_id, unit.content) for unit in initial_decision.admitted_units
-        }
+        admitted_units = {(unit.chunk_id, unit.content) for unit in initial_decision.admitted_units}
         admitted_timeout_fallback = [
             chunk
             for chunk in selected

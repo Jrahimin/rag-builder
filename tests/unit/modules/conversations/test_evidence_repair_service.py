@@ -2826,9 +2826,7 @@ async def test_authoritative_initial_partial_proof_survives_later_deadline():
     later = chunk("An unrelated discovery passage.")
     config = ChatConfig()
     grounding = GroundingService(config)
-    decision = grounding.assess(
-        "What are the AGM and filing duties?", [known], rerank_status="off"
-    )
+    decision = grounding.assess("What are the AGM and filing duties?", [known], rerank_status="off")
     selected = list(decision.admitted_units) or [known]
 
     async def delay_coverage(messages):

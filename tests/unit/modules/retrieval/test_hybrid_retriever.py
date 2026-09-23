@@ -245,9 +245,7 @@ async def test_rerank_provider_work_is_recorded_once() -> None:
     assert len(rerank_calls) == 1
     assert snapshot["counts"]["rerank_calls"] == 1
     assert snapshot["calls_by_purpose"]["reranking"] == 1
-    assert any(
-        span.get("provider_call_indexes") == [0] for span in snapshot["spans"]["items"]
-    )
+    assert any(span.get("provider_call_indexes") == [0] for span in snapshot["spans"]["items"])
 
 
 async def test_reranker_receives_and_returns_the_full_bounded_window() -> None:

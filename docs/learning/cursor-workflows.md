@@ -49,7 +49,7 @@ A prompt cannot retarget a pinned agent. If a trace is Fast, Medium, or Composer
 | Eval smoke / rag-journey | `/cur-rag-eval` |
 | Write-up a failure, no fix | `/cur-investigate` |
 
-`/cur-dev` writes `artifacts/cursor-runs/<date>-<slug>.md` and, on `main`, opens a feature branch. Close with `/cur-ship`. Hooks ask before `git commit`, `git push`, and `gh pr merge`.
+`/cur-dev` writes `artifacts/cursor-runs/<date>-<slug>.md` and, on `main`, opens a feature branch. Close with `/cur-ship`. Hooks ask before `git commit`, `git push`, and `gh pr merge`. After a clone, run `python -m pre_commit install` so local commits hit the same Ruff format check that failed recent `main` CI.
 
 ## Local app
 
