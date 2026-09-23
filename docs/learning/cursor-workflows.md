@@ -145,8 +145,9 @@ Picker: **Grok 4.7 High**. No URL needed if `gh` can see the repo.
 
 ```text
 /cur-ci Fix the latest failing run on this branch.
-Do not push or rerun remote jobs.
 ```
+
+That commits the fix and pushes the feature branch so CI starts again. It does not push `main`. Add `do not push` to stop before the remote.
 
 ### Browser QA
 

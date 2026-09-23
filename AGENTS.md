@@ -40,7 +40,7 @@ Local migrations: `make migrate-local` (`cd backend && python -m alembic upgrade
 
 ## CI
 
-Workflow: `.github/workflows/ci.yml`, on pull requests and pushes to `main`.
+Workflow: `.github/workflows/ci.yml`, on pull requests and pushes to `main`. Repair overrides: `.github/ci-repair.md`.
 
 - `quality`: Ubuntu, pgvector/pgvector `0.8.1-pg16`, Redis 7, Python 3.12, pnpm 9.15.4, Node 22. Applies `make migrate-local`, `make migration-drift-check`, and `make quality`. Sets auth off, hash embeddings, and the echo LLM.
 - `docker-builds`: `docker compose config` and `docker compose build backend frontend`, plus loopback port checks.
