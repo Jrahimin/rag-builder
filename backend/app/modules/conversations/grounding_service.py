@@ -2490,9 +2490,7 @@ def _coverage_kind_hint(text: str, *, display: str | None = None) -> str | None:
     return "coverage_scope"
 
 
-def _is_bounded_coverage_continuation(
-    segments: list[str], index: int, display: str
-) -> bool:
+def _is_bounded_coverage_continuation(segments: list[str], index: int, display: str) -> bool:
     """Recognize meta-level continuation only inside one limitation paragraph.
 
     Pronouns such as ``They`` are never sufficient by themselves.  The preceding
@@ -2502,8 +2500,7 @@ def _is_bounded_coverage_continuation(
     """
     plain = _plain_claim_text(display).strip()
     if not (
-        _COVERAGE_CONTINUATION_PATTERN.search(plain)
-        or _COVERAGE_SUMMARY_PATTERN.search(plain)
+        _COVERAGE_CONTINUATION_PATTERN.search(plain) or _COVERAGE_SUMMARY_PATTERN.search(plain)
     ):
         return False
     if index <= 0:

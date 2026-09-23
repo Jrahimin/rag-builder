@@ -1407,8 +1407,7 @@ def test_cross_language_agm_duration_selects_the_bound_clause() -> None:
     from app.modules.conversations.grounding_service import _quantity_aligned_evidence
 
     evidence = (
-        "প্রথম বার্ষিক সাধারণ সভা আঠারো মাসের মধ্যে করিতে হইবে। "
-        "পরবর্তী দুই সভার ব্যবধান পনের মাসের বেশি হইবে না।"
+        "প্রথম বার্ষিক সাধারণ সভা আঠারো মাসের মধ্যে করিতে হইবে। পরবর্তী দুই সভার ব্যবধান পনের মাসের বেশি হইবে না।"
     )
     first = _quantity_aligned_evidence(
         "The first annual general meeting must be held within 18 months.", [evidence]
