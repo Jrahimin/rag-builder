@@ -474,7 +474,9 @@ test("bounded recovery is a Project setting without changing the selected RAG pr
   await userEvent.selectOptions(screen.getByLabelText("Bounded evidence recovery"), "false");
 
   expect(standard).toBeChecked();
-  expect(screen.getByRole("button", { name: "Bounded evidence recovery: Use Global" })).toBeInTheDocument();
+  expect(
+    screen.getByRole("button", { name: "Bounded evidence recovery: Use Global" }),
+  ).toBeInTheDocument();
   expect(screen.queryByText(/Custom · based on/)).not.toBeInTheDocument();
   await saveRevision();
 
