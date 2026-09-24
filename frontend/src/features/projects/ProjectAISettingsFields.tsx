@@ -656,15 +656,16 @@ export function ProjectAISettingsFields({
       recovery: { ...current.recovery, bounded_recovery_enabled: value },
     }));
   };
-  const useGlobalRecovery = () => {
+  const resetRecoveryToGlobal = () => {
     setForm((current) => {
-      const { bounded_recovery_enabled: _removed, ...recovery } = current.recovery;
+      const recovery = { ...current.recovery };
+      delete recovery.bounded_recovery_enabled;
       return { ...current, recovery };
     });
   };
   const chooseRecoveryEnabled = (value: boolean) => {
     if (value === globalRecoveryEnabled) {
-      useGlobalRecovery();
+      resetRecoveryToGlobal();
       return;
     }
     changeRecoveryEnabled(value);
@@ -931,7 +932,7 @@ export function ProjectAISettingsFields({
             label="Bounded evidence recovery"
             hint="On uses short, task-aware recovery budgets instead of the legacy 300-second repair path. It does not relax grounding or citation requirements."
             source={recoverySource}
-            onUseGlobal={useGlobalRecovery}
+            onUseGlobal={resetRecoveryToGlobal}
           >
             <select
               aria-label="Bounded evidence recovery"

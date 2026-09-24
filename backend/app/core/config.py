@@ -612,7 +612,7 @@ class LLMBackend(StrEnum):
 class LLMConfig(BaseModel):
     """Chat/generation provider. Hosted profiles require OpenAI; local tests use echo.
 
-    ``hosted_managed`` generation is ``gpt-5.6-luna``. Query translation uses a
+    ``hosted_managed`` generation is ``gpt-6-luna``. Query translation uses a
     separate nano model and does not inherit this field.
     """
 
@@ -624,11 +624,11 @@ class LLMConfig(BaseModel):
     max_tokens: int = Field(default=8192, ge=1, le=128_000)
     # Deployment safety budget; override per actual model capability when smaller.
     context_window_tokens: int = Field(default=128_000, ge=1024)
-    # Official model capacity, verified 2026-09-08:
-    # https://developers.openai.com/api/docs/models/gpt-5.6-luna
+    # Official model capacity, verified 2026-09-25:
+    # https://developers.openai.com/api/docs/models/gpt-6-luna
     # Explicit deployment mappings can replace this default for restricted endpoints.
     model_context_windows: dict[str, Annotated[int, Field(ge=1024)]] = Field(
-        default_factory=lambda: {"gpt-5.6-luna": 1_050_000}
+        default_factory=lambda: {"gpt-6-luna": 1_050_000, "gpt-5.6-luna": 1_050_000}
     )
     request_timeout_seconds: float = Field(default=120.0, ge=1.0, le=600.0)
     # One evidence review includes planning, retrieval and bounded follow-up calls.

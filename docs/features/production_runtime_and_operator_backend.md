@@ -13,7 +13,7 @@ console UI described in [Operator Console MVP](operator_console.md).
 
 | Profile | LLM | Embeddings | Intended route |
 | --- | --- | --- | --- |
-| `hosted_managed` | `openai` (`gpt-5.6-luna`) | `cohere` (`embed-v4.0`) | Preferred dedicated hosted stack; shared `APE_COHERE__API_KEY` |
+| `hosted_managed` | `openai` (`gpt-6-luna`) | `cohere` (`embed-v4.0`) | Preferred dedicated hosted stack; shared `APE_COHERE__API_KEY` |
 | `hosted_openai` | `openai` | `openai` | Deprecated compatibility; OpenAI embeddings; must not require Cohere |
 | `private_ollama` | `ollama` | `ollama` | Private Ollama-compatible model endpoint |
 

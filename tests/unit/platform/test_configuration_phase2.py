@@ -289,7 +289,7 @@ def test_explicit_hosted_profile_accepts_exact_index_and_calibration_wiring(
 ) -> None:
     settings = Settings(
         runtime={"capability_profile_id": "hosted-managed"},
-        llm={"backend": "openai", "model": "gpt-5.6-luna"},
+        llm={"backend": "openai", "model": "gpt-6-luna"},
         embedding={"backend": "cohere", "model": "embed-v4.0", "dimensions": 1024},
         retrieval={"embedding_set_version": 3, "reranker_backend": "cohere"},
         ocr={

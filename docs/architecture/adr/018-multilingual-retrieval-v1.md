@@ -1,6 +1,6 @@
 # ADR-018: Multilingual Retrieval Version 1
 
-**Status:** Accepted  
+**Status:** Accepted
 **Date:** 2026-08-18
 
 ## Context
@@ -45,7 +45,7 @@ The preferred production profile is `hosted_managed`:
 - Reranker: Cohere `rerank-v4.0-pro` after RRF. Platform default mode is Always. Projects may
   inherit or opt down to Cross-language or Off. Cross-language skips the paid call when inventory
   says query and corpus share a language. Missing key or API failure degrades to RRF + cosine.
-- Generation: OpenAI `gpt-5.6-luna`. Conditional query translation remains at most one
+- Generation: OpenAI `gpt-6-luna`. Conditional query translation remains at most one
   `gpt-5-nano` rewrite; the original query always runs.
 - `embedding_set_version=3` for this stack. Never mix OpenAI and Cohere vectors in one active
   set. Cutover uses the existing immutable rebuild → validate → activate path. Query embeddings

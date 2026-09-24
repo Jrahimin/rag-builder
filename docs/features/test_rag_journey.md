@@ -440,7 +440,7 @@ effective date, hard scope, provision authority, citation, provenance,
 grounding, refusal, and false-accept protections.
 
 `hosted_managed` examples currently use Cohere `embed-v4.0` / `rerank-v4.0-pro`,
-OpenAI `gpt-5.6-luna`, and `gpt-5-nano` translation. Reranker unavailability
+OpenAI `gpt-6-luna`, and `gpt-5-nano` translation. Reranker unavailability
 falls back to fused order; empty nano translations persist as failed/skipped
 diagnostics rather than as a reason to raise token budgets further without
 measuring `finish_reason` / reasoning tokens.

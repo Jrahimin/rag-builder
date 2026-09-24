@@ -20,7 +20,7 @@ Complete and approve this record per deployment. Commercial policy is input, not
 
 | Capability | Certified hosted | Certified private | Not certified |
 | --- | --- | --- | --- |
-| LLM | OpenAI `gpt-5.6-luna` | Ollama route | other adapters |
+| LLM | OpenAI `gpt-6-luna` | Ollama route | other adapters |
 | Embeddings | Cohere `embed-v4.0` (`hosted_managed`); OpenAI route (`hosted_openai`) | Ollama route | hash/fake in production, other adapters |
 | Reranker | Cohere `rerank-v4.0-pro` with Always default; degrade to RRF+cosine | same degrade path | toggle without evaluation |
 | OCR | Google Vision when enabled (`hosted_managed`) | Paddle when explicitly enabled | noop when enabled |
@@ -58,4 +58,3 @@ embedding credentials are no longer available.
 
 No licensing, SLO, pricing, quota, retention, support tier, region, or cost-rate commitment
 is created here. Record approved values in the customer operating agreement.
-

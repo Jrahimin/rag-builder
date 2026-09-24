@@ -27,6 +27,13 @@ GENERATION_MODEL_REGISTRY: dict[str, GenerationModelDefinition] = {
         model=None,
         implementation="deployment_owned",
     ),
+    "openai-gpt-6-luna": GenerationModelDefinition(
+        id="openai-gpt-6-luna",
+        provider=LLMBackend.OPENAI,
+        model="gpt-6-luna",
+        implementation="openai_responses",
+        supports_temperature=False,
+    ),
     "openai-gpt-5.6-luna": GenerationModelDefinition(
         id="openai-gpt-5.6-luna",
         provider=LLMBackend.OPENAI,

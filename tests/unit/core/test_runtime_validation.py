@@ -239,7 +239,7 @@ def test_expected_hosted_production_effective_configuration_resolves_exactly() -
         ),
         llm=LLMConfig(
             backend=LLMBackend.OPENAI,
-            model="gpt-5.6-luna",
+            model="gpt-6-luna",
             openai_api_key="llm-secret",
         ),
         cohere=CohereConfig(api_key="cohere-secret"),
@@ -251,17 +251,17 @@ def test_expected_hosted_production_effective_configuration_resolves_exactly() -
         ),
         query_translation={"enabled": False},
         ai_policy={
-            "default_generation_model_id": "openai-gpt-5.6-luna",
-            "allowed_generation_model_ids": ["openai-gpt-5.6-luna"],
+            "default_generation_model_id": "openai-gpt-6-luna",
+            "allowed_generation_model_ids": ["openai-gpt-6-luna"],
         },
     )
 
     validate_runtime_config(settings)
     effective = resolve_project_ai_config(settings, None)
 
-    assert effective.configuration.llm.generation_model_id == "openai-gpt-5.6-luna"
+    assert effective.configuration.llm.generation_model_id == "openai-gpt-6-luna"
     assert effective.configuration.llm.provider == "openai"
-    assert effective.configuration.llm.model == "gpt-5.6-luna"
+    assert effective.configuration.llm.model == "gpt-6-luna"
     assert effective.configuration.retrieval.strategy == "hybrid"
     assert effective.configuration.retrieval.rerank_mode == "always"
     assert effective.configuration.retrieval.reranker_backend == "cohere"

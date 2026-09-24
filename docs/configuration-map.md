@@ -101,7 +101,7 @@ APE_STORAGE__BACKEND=minio
 
 # Hosted AI providers
 APE_LLM__BACKEND=openai
-APE_LLM__MODEL=gpt-5.6-luna
+APE_LLM__MODEL=gpt-6-luna
 APE_LLM__OPENAI_API_KEY=<openai-api-key>
 APE_COHERE__API_KEY=<cohere-api-key>
 

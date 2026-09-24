@@ -15,7 +15,7 @@ Certified production profiles:
 
 | Runtime profile | LLM | Embeddings |
 | --- | --- | --- |
-| `hosted_managed` (preferred) | OpenAI `gpt-5.6-luna` | Cohere `embed-v4.0` |
+| `hosted_managed` (preferred) | OpenAI `gpt-6-luna` | Cohere `embed-v4.0` |
 | `hosted_openai` (deprecated compatibility) | OpenAI-compatible route through the `openai` adapter | `openai` |
 | `private_ollama` | `ollama` | `ollama` |
 
