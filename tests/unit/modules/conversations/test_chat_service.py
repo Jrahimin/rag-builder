@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 import uuid
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -35,8 +37,11 @@ from app.modules.conversations.services.chat_service import (
     _coverage_verification_failed,
     _requires_calculation_coverage,
     _requires_current_rule_coverage,
+    _reviewed_web_fallback_eligible,
     _scope_current_authority_status,
 )
+from app.modules.conversations.services.evidence_repair_service import EvidenceRepairResult
+from app.modules.conversations.services.web_evidence_review import scoped_web_query
 from app.platform.domain.content_hash import content_hash
 from app.platform.domain.evidence_contracts import (
     RERANKER_RELEVANCE_CALIBRATION_ID,
@@ -138,6 +143,8 @@ def test_exact_recalled_selection_keeps_authority_redaction() -> None:
                 "modifier_revision_id": "modifier-revision",
                 "relationship_type": "modifies",
                 "outcome": "expanded",
+                "provision_effect": "replaces",
+                "replacement_scope_verified": True,
                 "target_provisions": ["Section 1"],
             }
         ],
@@ -1515,6 +1522,419 @@ async def test_indexed_then_web_uses_web_only_after_knowledge_gate_fails(
     assert "document_id" not in trace
 
 
+async def test_persisted_web_diagnostics_keep_partial_scope_review_nested(
+    session,
+    conversation_repository,
+    message_repository,
+    conversation,
+    monkeypatch,
+) -> None:
+    conversation.system_prompt_version = "v5"
+    evidence = WebSearchEvidence(
+        evidence_id="web-partial",
+        title="Current refund guidance",
+        url="https://example.test/refunds",
+        content="Current web guidance allows refunds within 30 days.",
+        retrieved_at=datetime.now(UTC),
+        citation_verified=True,
+    )
+    service = _service(
+        session,
+        conversation_repository,
+        message_repository,
+        CitedLLM("Current web guidance allows refunds within 30 days [1]."),
+        chat_config=ChatConfig(
+            response_mode=ResponseMode.INDEXED_THEN_WEB,
+            system_prompt_version="v5",
+        ),
+    )
+    service._retrieval = EmptyRetrieval()
+    service._web_search = FakeWebSearch([evidence])
+
+    async def partial_review(**kwargs):
+        return (
+            kwargs["evidence"],
+            {
+                "status": "reviewed_partial",
+                "accepted_indexes": [0],
+                "invalid_proof_count": 1,
+            },
+            ChatUsage(4, 2),
+        )
+
+    monkeypatch.setattr(
+        "app.modules.conversations.services.chat_service.review_web_evidence",
+        AsyncMock(side_effect=partial_review),
+    )
+
+    turn = await service.send_message(
+        conversation.id,
+        MessageSendRequest(content="What is the current refund guidance?"),
+    )
+
+    web_diagnostics = turn.assistant_message.metadata["web_search"]
+    assert turn.assistant_message.source_provenance == "web"
+    assert web_diagnostics["status"] == "evidence_accepted"
+    assert web_diagnostics["scope_review"]["status"] == "reviewed_partial"
+    assert web_diagnostics["scope_review"]["invalid_proof_count"] == 1
+
+
+async def test_web_search_timeout_uses_search_timeout_status(
+    session,
+    conversation_repository,
+    message_repository,
+    conversation,
+) -> None:
+    service = _service(
+        session,
+        conversation_repository,
+        message_repository,
+        CitedLLM("No answer."),
+        chat_config=ChatConfig(
+            response_mode=ResponseMode.INDEXED_THEN_WEB,
+            system_prompt_version="v5",
+        ),
+    )
+    service._retrieval = EmptyRetrieval()
+    web = AsyncMock()
+    web.search.side_effect = TimeoutError
+    service._web_search = web
+
+    turn = await service.send_message(
+        conversation.id,
+        MessageSendRequest(content="What is the current refund guidance?"),
+    )
+
+    assert turn.assistant_message.metadata["web_search"]["status"] == "search_timeout"
+    assert "Web search reached its time limit" in turn.assistant_message.content
+    assert "web_search" in turn.assistant_message.metadata["lifecycle"]["stages_ms"]
+
+
+async def test_bounded_deadline_can_use_reviewed_web_for_unscoped_factual_question(
+    session,
+    conversation_repository,
+    message_repository,
+    conversation,
+    monkeypatch,
+) -> None:
+    conversation.system_prompt_version = "v5"
+    web = FakeWebSearch()
+    service = _service(
+        session,
+        conversation_repository,
+        message_repository,
+        CitedLLM("Current web guidance allows refunds within 30 days [1]."),
+        chat_config=ChatConfig(
+            response_mode=ResponseMode.INDEXED_THEN_WEB,
+            bounded_recovery_enabled=True,
+            system_prompt_version="v5",
+        ),
+    )
+    service._retrieval = UnresolvedRuleRetrieval()
+    service._web_search = web
+    monkeypatch.setattr(
+        "app.modules.conversations.services.chat_service.repair_knowledge_evidence",
+        AsyncMock(
+            return_value=EvidenceRepairResult(
+                [],
+                None,
+                {"status": "repair_unavailable", "stop_reason": "recovery_deadline_exceeded"},
+                failure=ProviderTimeoutError(
+                    "Recovery deadline exceeded",
+                    provider_name="echo",
+                    context={"reason": "recovery_deadline_exceeded"},
+                ),
+            )
+        ),
+    )
+
+    turn = await service.send_message(
+        conversation.id,
+        MessageSendRequest(content="What is the refund policy?"),
+    )
+
+    assert len(web.calls) == 1
+    assert turn.assistant_message.finish_reason != "error"
+    assert turn.assistant_message.source_provenance == "web"
+    assert turn.assistant_message.metadata["knowledge_repair"]["fallback_route"] == (
+        "web_after_recovery_deadline"
+    )
+    assert turn.assistant_message.metadata["web_search"]["status"] == "evidence_accepted"
+
+
+async def test_scoped_bounded_recovery_deadline_persists_insufficient_evidence_without_web(
+    session,
+    conversation_repository,
+    message_repository,
+    conversation,
+    monkeypatch,
+) -> None:
+    web = FakeWebSearch()
+    service = _service(
+        session,
+        conversation_repository,
+        message_repository,
+        CitedLLM("Tokyo is the capital of Japan [1]."),
+        chat_config=ChatConfig(
+            response_mode=ResponseMode.INDEXED_THEN_WEB,
+            bounded_recovery_enabled=True,
+        ),
+    )
+    service._retrieval = EmptyRetrieval()
+    service._web_search = web
+    repair = AsyncMock(
+        return_value=EvidenceRepairResult(
+            [],
+            None,
+            {"status": "repair_unavailable", "stop_reason": "recovery_deadline_exceeded"},
+            failure=ProviderTimeoutError(
+                "Recovery deadline exceeded",
+                provider_name="echo",
+                context={"reason": "recovery_deadline_exceeded"},
+            ),
+        )
+    )
+    monkeypatch.setattr(
+        "app.modules.conversations.services.chat_service.repair_knowledge_evidence", repair
+    )
+
+    turn = await service.send_message(
+        conversation.id,
+        MessageSendRequest(content="What is the capital of Japan?", source_scope="indexed_only"),
+    )
+
+    assistant = turn.assistant_message
+    assert repair.await_count == 1
+    assert assistant.finish_reason == "insufficient_evidence"
+    assert assistant.insufficient_evidence_reason == "unresolved_authority"
+    assert assistant.metadata["web_search"]["status"] == "suppressed_scoped_request"
+    assert assistant.metadata["source_scope"]["effective"] == "indexed_only"
+    assert assistant.metadata["knowledge_repair"]["fallback_route"] == (
+        "insufficient_evidence_after_recovery_deadline"
+    )
+    assert not web.calls
+    assert message_repository.add.call_args_list[-1].args[0].finish_reason == (
+        "insufficient_evidence"
+    )
+
+
+@pytest.mark.parametrize(
+    ("question", "expected_trigger"),
+    [
+        ("What is the current refund policy?", "focused_lookup"),
+        ("Calculate the tax payable for this period.", "calculation_completeness"),
+    ],
+)
+async def test_current_and_calculation_deadline_guards_suppress_web_fallback(
+    session,
+    conversation_repository,
+    message_repository,
+    conversation,
+    monkeypatch,
+    question: str,
+    expected_trigger: str,
+) -> None:
+    web = FakeWebSearch()
+    service = _service(
+        session,
+        conversation_repository,
+        message_repository,
+        CitedLLM("A refund may be requested within 30 days [1]."),
+        chat_config=ChatConfig(
+            response_mode=ResponseMode.INDEXED_THEN_WEB,
+            bounded_recovery_enabled=True,
+        ),
+    )
+    service._retrieval = UnresolvedRuleRetrieval()
+    service._web_search = web
+    repair = AsyncMock(
+        return_value=EvidenceRepairResult(
+            [],
+            None,
+            {"status": "repair_unavailable", "stop_reason": "recovery_deadline_exceeded"},
+            failure=ProviderTimeoutError(
+                "Recovery deadline exceeded",
+                provider_name="echo",
+                context={"reason": "recovery_deadline_exceeded"},
+            ),
+        )
+    )
+    monkeypatch.setattr(
+        "app.modules.conversations.services.chat_service.repair_knowledge_evidence", repair
+    )
+
+    turn = await service.send_message(conversation.id, MessageSendRequest(content=question))
+
+    assistant = turn.assistant_message
+    assert repair.await_count == 1
+    assert assistant.finish_reason == "insufficient_evidence"
+    assert assistant.metadata["knowledge_repair"]["trigger"] == expected_trigger
+    assert assistant.metadata["knowledge_repair"]["fallback_route"] == (
+        "insufficient_evidence_after_recovery_deadline"
+    )
+    assert assistant.metadata["web_search"]["status"] == "suppressed_unresolved_authority"
+    assert not web.calls
+
+
+async def test_provider_timeout_during_bounded_recovery_still_persists_failure(
+    session,
+    conversation_repository,
+    message_repository,
+    conversation,
+    monkeypatch,
+) -> None:
+    service = _service(
+        session,
+        conversation_repository,
+        message_repository,
+        CitedLLM("Tokyo is the capital of Japan [1]."),
+        chat_config=ChatConfig(
+            response_mode=ResponseMode.INDEXED_THEN_WEB,
+            bounded_recovery_enabled=True,
+        ),
+    )
+    service._retrieval = EmptyRetrieval()
+    web = FakeWebSearch()
+    service._web_search = web
+    repair = AsyncMock(
+        return_value=EvidenceRepairResult(
+            [],
+            None,
+            {"status": "repair_unavailable", "stop_reason": "provider_timeout"},
+            failure=ProviderTimeoutError(
+                "Provider request timed out",
+                provider_name="echo",
+                context={"reason": "provider_timeout"},
+            ),
+        )
+    )
+    monkeypatch.setattr(
+        "app.modules.conversations.services.chat_service.repair_knowledge_evidence", repair
+    )
+
+    with pytest.raises(ServiceUnavailableError):
+        await service.send_message(
+            conversation.id,
+            MessageSendRequest(content="What is the capital of Japan?"),
+        )
+
+    assistant = message_repository.add.call_args_list[-1].args[0]
+    assert repair.await_count == 1
+    assert assistant.finish_reason == "error"
+    assert assistant.message_metadata["execution_status"] == "failed"
+    assert assistant.message_metadata["execution_error_code"] == "provider_timeout_error"
+    assert not web.calls
+
+
+@pytest.mark.parametrize("mode", [ResponseMode.INDEXED_THEN_WEB, ResponseMode.INDEXED_AND_WEB])
+@pytest.mark.parametrize("elapsed_before_web", [0.0, 55.0])
+@pytest.mark.parametrize("completed_review", [False, True])
+async def test_broad_compliance_with_no_safe_indexed_proof_attempts_recovery_before_web(
+    session,
+    conversation_repository,
+    message_repository,
+    conversation,
+    monkeypatch,
+    mode: ResponseMode,
+    elapsed_before_web: float,
+    completed_review: bool,
+) -> None:
+    offset = [0.0]
+    real_counter = time.perf_counter
+    monkeypatch.setattr(
+        "app.modules.conversations.services.chat_service.time",
+        SimpleNamespace(perf_counter=lambda: real_counter() + offset[0]),
+    )
+    conversation.system_prompt_version = "v5"
+    web = FakeWebSearch(
+        [
+            WebSearchEvidence(
+                evidence_id="company-agm",
+                title="Company meeting rule",
+                url="https://example.test/company-agm",
+                content="Companies must hold an annual general meeting every year.",
+                retrieved_at=datetime.now(UTC),
+                citation_verified=True,
+            )
+        ]
+    )
+    service = _service(
+        session,
+        conversation_repository,
+        message_repository,
+        CitedLLM("Companies must hold an annual general meeting every year [1]."),
+        chat_config=ChatConfig(
+            response_mode=mode,
+            bounded_recovery_enabled=True,
+            system_prompt_version="v5",
+        ),
+    )
+    service._retrieval = UnresolvedRuleRetrieval()
+    service._web_search = web
+
+    async def consume_recovery_budget(**kwargs):
+        offset[0] += elapsed_before_web
+        return EvidenceRepairResult(
+            [],
+            None,
+            {
+                "status": "coverage_incomplete" if completed_review else "repair_unavailable",
+                "stop_reason": None if completed_review else "recovery_deadline_exceeded",
+            },
+            failure=None
+            if completed_review
+            else ProviderTimeoutError(
+                "Recovery deadline exceeded",
+                provider_name="echo",
+                context={"reason": "recovery_deadline_exceeded"},
+            ),
+        )
+
+    repair = AsyncMock(side_effect=consume_recovery_budget)
+    monkeypatch.setattr(
+        "app.modules.conversations.services.chat_service.repair_knowledge_evidence", repair
+    )
+
+    turn = await service.send_message(
+        conversation.id,
+        MessageSendRequest(content="What annual compliance obligations apply to a company?"),
+    )
+
+    repair.assert_awaited_once()
+    assert len(web.calls) == 1
+    assert turn.assistant_message.metadata["knowledge_repair"]["fallback_route"] == (
+        "web_after_incomplete_review" if completed_review else "web_after_recovery_deadline"
+    )
+    scope = turn.assistant_message.metadata["response_policy"]["answerable_scope"]
+    assert scope["complete"] is False
+    assert scope["partial"] is True
+    assert scope["unresolved_facets"]
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"calculation_task": True},
+        {"applicability_task": True},
+        {"scoped_request": True},
+        {"scope_current_authority": True},
+    ],
+)
+def test_recovery_deadline_web_fallback_keeps_safety_guards(overrides: dict[str, bool]) -> None:
+    guard_values = {
+        "calculation_task": False,
+        "applicability_task": False,
+        "scoped_request": False,
+        "scope_current_authority": False,
+    }
+    guard_values.update(overrides)
+    assert not _reviewed_web_fallback_eligible(
+        mode=ResponseMode.INDEXED_THEN_WEB,
+        provider_available=True,
+        **guard_values,
+    )
+
+
 @pytest.mark.parametrize(
     "message_request",
     [
@@ -2232,7 +2652,7 @@ async def test_validated_partial_cannot_alter_indexed_web_policy(
     assert "independently supported" in content or "45 days" in content
 
 
-async def test_compliance_review_deadline_returns_grounded_partial_answer(
+async def test_authoritative_compliance_deadline_does_not_promote_unreviewed_evidence(
     session,
     conversation_repository,
     message_repository,
@@ -2296,14 +2716,12 @@ async def test_compliance_review_deadline_returns_grounded_partial_answer(
         ),
     )
 
-    assert turn.assistant_message.finish_reason == "stop"
-    assert turn.assistant_message.insufficient_evidence_reason is None
-    assert turn.assistant_message.content.endswith("[1]")
+    assert turn.assistant_message.finish_reason == "insufficient_evidence"
+    assert turn.assistant_message.grounded is False
     repair = turn.assistant_message.metadata["knowledge_repair"]
-    assert repair["status"] == "partial_answer"
-    assert repair["admitted_evidence_timeout_fallback"] is True
-    assert repair["coverage"]["partial_scope_validated"] is False
-    assert turn.assistant_message.metadata["response_policy"]["answerable_scope"]["partial"] is True
+    assert not repair.get("admitted_evidence_timeout_fallback")
+    assert repair["stop_reason"] == "recovery_deadline_exceeded"
+    assert llm.generate.await_count == 1
 
 
 async def test_modifies_expansion_survives_combined_rerank_and_skips_web(
@@ -4673,6 +5091,62 @@ def test_invalid_coverage_response_is_not_reported_as_missing_law(
     assert "amendment evidence" not in content and "সংশোধনের নির্দিষ্ট প্রমাণ" not in content
 
 
+@pytest.mark.parametrize("question", ["What filings are required?", "কী দাখিল করতে হবে?"])
+def test_web_provider_failure_takes_precedence_over_authority_refusal(question: str) -> None:
+    from app.modules.conversations.schemas.message import InsufficientEvidenceReason
+
+    service = MagicMock()
+    prepared = MagicMock()
+    prepared.web_search_diagnostics = {"status": "failed"}
+    prepared.evidence.reason = InsufficientEvidenceReason.UNRESOLVED_AUTHORITY
+
+    content = ChatService._insufficient_content(service, prepared, question)
+
+    assert "temporarily unavailable" in content or "সাময়িকভাবে অনুপলব্ধ" in content
+    assert "amendment evidence" not in content and "সংশোধনের নির্দিষ্ট প্রমাণ" not in content
+
+
+@pytest.mark.parametrize(
+    "status",
+    [
+        "review_timeout",
+        "review_provider_failed",
+        "review_invalid_response",
+        "review_incomplete",
+        "invalid_proof",
+    ],
+)
+def test_web_review_failure_is_reported_as_verification_failure(status: str) -> None:
+    from app.modules.conversations.schemas.message import InsufficientEvidenceReason
+
+    service = MagicMock()
+    prepared = MagicMock()
+    prepared.web_search_diagnostics = {"status": status}
+    prepared.evidence.reason = InsufficientEvidenceReason.UNRESOLVED_AUTHORITY
+
+    content = ChatService._insufficient_content(service, prepared, "What filings are required?")
+
+    assert "verification did not complete" in content
+    assert "amendment evidence" not in content
+
+
+def test_web_query_keeps_scope_across_paragraphs_after_answer_style_instructions() -> None:
+    query = scoped_web_query(
+        "company filing deadlines",
+        "This project supports compliance research for small businesses.\n\n"
+        "Answer in concise bullet points.\n"
+        "Jurisdiction: Bangladesh. Assessment year: 2026-27.\n"
+        "Prefer official sources for current filing deadlines.",
+        date(2026, 9, 25),
+    )
+
+    assert "This project supports compliance research for small businesses." in query
+    assert "Bangladesh" in query
+    assert "2026-27" in query
+    assert "official sources" in query
+    assert "concise bullet points" not in query
+
+
 def test_invalid_coverage_response_preserves_requirements_in_response_policy() -> None:
     repair = {
         "status": "repair_unavailable",
@@ -5156,6 +5630,8 @@ def _governed_base_and_modifier() -> tuple[ContextChunk, ContextChunk, dict[str,
         "outcome": "expanded",
         "base_revision_id": str(base_revision),
         "modifier_revision_id": str(modifier_revision),
+        "provision_effect": "replaces",
+        "replacement_scope_verified": True,
         "target_provisions": ["Section 21 — Investment Rebate Rate"],
         "modifier_effective_from": "2020-01-01",
     }

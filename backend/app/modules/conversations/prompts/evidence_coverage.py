@@ -11,7 +11,7 @@ Keep genuine unresolved factual gaps in missing.
 Return only JSON with exactly this schema:
 {"complete":false,"missing":["short missing requirement"],"checks":[
 {"requirement_id":"R1","description":"required fact or rule","supported":false,
-"needs_adjacent_context":false,"evidence":[
+"answerable_scope":"","needs_adjacent_context":false,"evidence":[
 {"chunk_id":"provided ID","start_line":1,"end_line":3}]}]}
 Each source_lines record carries original start_line/end_line selectors beside its text.
 Copy those numeric selectors from the SAME provided chunk, never the record's position.
@@ -125,6 +125,12 @@ requirements. Return checks for those IDs only. Keep each original
 requirement_id and its meaning; never rename an obligation or drop an unresolved
 requested ID from missing/exclusions. Retained_supported items are already
 validated: do not reopen them unless the supplied evidence contradicts them.
+The checks array is a delta, but partial_answer describes the WHOLE answerable
+scope after merging. Include retained_supported IDs alongside newly proven IDs
+when their rules remain independently useful. Their validated evidence remains
+available to generation even though it is not repeated in this review context.
+Do not exclude a retained duty merely because another duty or its penalty is
+unresolved. Keep interacting calculations and applicability dependencies together.
 Do not claim whole-question completion from a subset review.
 """
 
@@ -132,10 +138,19 @@ PARTIAL_COVERAGE_PROMPT = """
 Keep all unresolved gaps in missing. Omit gap_kinds and missing_inputs: the caller
 defaults gaps to missing source rules and separately reviews personal inputs when
 all governing rules are proven. Do not remove a gap merely because it may be personal.
-When whole-question coverage is incomplete, you may also return an optional
+When whole-question coverage is incomplete but a useful independently supported rule
+can be explained, return a
 partial_answer object: {"scope":"precise independently answerable work",
 "requirement_ids":["R1"],"exclusions":["each supplied component left unresolved"]}.
 Otherwise omit partial_answer. Never mark complete true for a partial answer.
+For EVERY supported check that can be explained independently, set answerable_scope
+ to the precise proven duty or rule, excluding unresolved details. The caller retains
+ these explicitly reviewed scopes even if omitted from partial_answer.requirement_ids.
+ A proven filing duty remains answerable when its deadline or penalty is missing.
+ Include all such duties across the requested topics, not just one source or authority.
+ Leave answerable_scope empty for a dependent calculation, unresolved applicability,
+ or incomplete governing provision. A supported formula alone cannot authorize a
+ final total whose other inputs or interactions are unresolved.
 Review separability: include EVERY rule dependency needed for the limited scope,
 including transformations, applicability, limits and interactions. All selected IDs
 must be supported checks with exact evidence. If an unresolved component can change

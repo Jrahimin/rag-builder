@@ -42,7 +42,7 @@ def remove_superseded_provisions(
     *,
     reference_date: date | None = None,
 ) -> list[ContextChunk]:
-    """Redact only explicitly scoped base provisions with a recalled modifier.
+    """Redact only verified replacements of explicitly scoped base provisions.
 
     ``expansion_records`` should come from the top-level retrieval diagnostics
     (``SearchDiagnostics.modifies_expansion_records`` or the equivalent dict
@@ -50,6 +50,12 @@ def remove_superseded_provisions(
     falls back to reading the list from the first chunk that carries it
     (legacy path; kept so callers that have not yet been migrated continue to
     work but no new callers should rely on it).
+
+    A MODIFIES edge identifies a relationship, not its operation. It may add a
+    subsection or change one phrase while leaving the rest of a provision in
+    force. Only a separately verified ``provision_effect=replaces`` record may
+    remove the entire headed provision. Existing metadata does not emit that
+    proof, so its text is retained and marked unresolved for review.
 
     Unscoped relationships and headings that cannot be resolved exactly are
     intentionally left untouched.  This is fail-closed for authority metadata:
@@ -66,6 +72,8 @@ def remove_superseded_provisions(
     }
     scopes_by_base: dict[str, set[str]] = {}
     for record in expansion_records:
+        if not _verified_whole_provision_replacement(record):
+            continue
         if str(record.get("outcome")) not in _ENFORCEABLE_OUTCOMES:
             continue
         if not record_applies_on(record, reference_date=reference_date):
@@ -109,6 +117,14 @@ def remove_superseded_provisions(
             )
         )
     return annotate_authority_limitations(output, expansion_records, reference_date=reference_date)
+
+
+def _verified_whole_provision_replacement(record: dict[str, object]) -> bool:
+    """Require an explicit reviewed operation before deleting base text."""
+    return (
+        record.get("provision_effect") == "replaces"
+        and record.get("replacement_scope_verified") is True
+    )
 
 
 def authority_record_affects_chunk(record: dict[str, object], chunk: ContextChunk) -> bool:
@@ -185,7 +201,10 @@ def cited_authority_summary(
         outcomes = {str(record.get("outcome") or "") for record in cited_records}
         missing_scope = any(
             str(record.get("outcome") or "") in _RESOLVED_OUTCOMES
-            and not record.get("target_provisions")
+            and (
+                not record.get("target_provisions")
+                or not _verified_whole_provision_replacement(record)
+            )
             for record in cited_records
         )
         status = (
@@ -256,6 +275,8 @@ def annotate_authority_limitations(
                 reason = "missing_provision_scope"
             elif str(record.get("modifier_revision_id") or "") not in present:
                 reason = "modifier_absent_from_context"
+            elif not _verified_whole_provision_replacement(record):
+                reason = "amendment_effect_unverified"
             else:
                 reason = "provision_scope_not_resolved"
             limitations.append(
@@ -297,11 +318,19 @@ def _redact_exact_provisions(content: str, scopes: set[str]) -> tuple[str, set[s
         index for index, line in enumerate(lines) if _PROVISION_HEADING.fullmatch(line.strip())
     ]
     normalized_scopes = {_normalize_heading(scope): scope for scope in scopes}
+    identity_scopes = {
+        identity: scope
+        for scope in scopes
+        if (identity := _labelled_provision_identity(scope)) is not None
+    }
     ranges: list[tuple[int, int]] = []
     resolved: set[str] = set()
     for position, line_index in enumerate(headings):
         normalized = _normalize_heading(lines[line_index])
         scope = normalized_scopes.get(normalized)
+        if scope is None:
+            identity = _labelled_provision_identity(lines[line_index])
+            scope = identity_scopes.get(identity) if identity is not None else None
         if scope is None:
             continue
         end = headings[position + 1] if position + 1 < len(headings) else len(lines)
@@ -315,6 +344,32 @@ def _redact_exact_provisions(content: str, scopes: set[str]) -> tuple[str, set[s
 
 def _normalize_heading(value: str) -> str:
     return " ".join(value.casefold().strip().split())
+
+
+def _labelled_provision_identity(value: str) -> tuple[str, str] | None:
+    """Match a numbered labelled heading despite a differing title or punctuation."""
+    match = regex.match(
+        r"^(section|article|rule|regulation|§|ধারা|বিধি)\s+"
+        r"(\p{Number}+[A-Za-z]?)(?![\p{Number}A-Za-z/\-\u2013])",
+        value.strip(),
+        regex.IGNORECASE,
+    )
+    if match is None:
+        return None
+    # Approximate identity is only safe for a whole, singular provision.
+    # Subsections and lists must use the exact-heading path above.
+    tail = value.strip()[match.end() :].lstrip()
+    if regex.match(
+        r"^(?:\(|[,/]|\.\s*\p{Number}|[-\u2013]\s*\p{Number}|"
+        r"(?:and|to|through)\s+(?:(?:section|article|rule|regulation)\s+)?\p{Number})",
+        tail,
+        regex.IGNORECASE,
+    ):
+        return None
+    kind, number = match.groups()
+    kind = {"§": "section", "ধারা": "section", "বিধি": "rule"}.get(kind, kind.casefold())
+    number = "".join(str(int(char)) if char.isdecimal() else char.casefold() for char in number)
+    return kind, number
 
 
 def parse_record_date(value: object) -> date | None:

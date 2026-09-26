@@ -306,6 +306,7 @@ def test_request_filters_are_authoritative_and_not_sticky():
     [
         "Answer only from the active corpus.",
         "Use only the uploaded documents for this answer.",
+        "Using only indexed project documents, explain the filing rule.",
         "Do not guess, answer only from the active corpus.",
         "Do not guess and use only the uploaded documents.",
         "শুধু সক্রিয় কর্পাস থেকে উত্তর দিন।",

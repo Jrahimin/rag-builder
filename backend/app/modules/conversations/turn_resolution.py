@@ -924,6 +924,12 @@ def effective_retrieval_inputs(
 
 _INDEXED_ONLY_PATTERNS = (
     re.compile(
+        r"\busing\s+only\s+(?:the\s+)?(?:active\s+)?(?:project\s+)?"
+        r"(?:corpus|knowledge\s+base|uploaded\s+documents?|"
+        r"indexed\s+(?:project\s+)?(?:documents?|sources?))\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
         r"\b(?:only|solely|exclusively)\s+(?:answer\s+)?(?:using|from|with)\s+"
         r"(?:the\s+)?(?:active\s+)?(?:corpus|knowledge\s+base|uploaded\s+documents?|"
         r"indexed\s+(?:documents?|sources?))\b",

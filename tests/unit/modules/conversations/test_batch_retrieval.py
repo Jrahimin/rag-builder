@@ -143,7 +143,7 @@ async def test_batch_owns_sessions_bounds_parallelism_and_preserves_order(monkey
     )
     results = await adapter.retrieve_batch([{"query": str(i)} for i in range(8)], snapshot=snapshot)
     assert [r.diagnostics["query"] for r in results] == list(map(str, range(8)))
-    assert maximum == 3
+    assert maximum == 4
     assert len(set(opened)) == 8 and set(opened) == set(closed)
 
 
@@ -189,7 +189,7 @@ async def test_batch_records_separate_waits_and_cancels_siblings(monkeypatch):
         [{"query": str(index)} for index in range(6)], snapshot=snapshot
     )
     assert [result.diagnostics["query"] for result in results] == list(map(str, range(6)))
-    assert maximum == 3
+    assert maximum == 4
     snapshot_payload = work.snapshot()
     wait_names = {span["name"] for span in snapshot_payload["spans"]["items"]}
     assert {

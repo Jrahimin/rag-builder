@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from datetime import date
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -43,12 +44,47 @@ class _WebReview(BaseModel):
 
 
 def scoped_web_query(query: str, domain_instructions: str, reference_date: date) -> str:
-    if not domain_instructions.strip():
-        return query
+    """Pass concise project scope to search without forwarding answer policy."""
+    paragraphs = [
+        paragraph.strip()
+        for paragraph in re.split(r"\n\s*\n", domain_instructions.strip())
+        if paragraph.strip()
+    ]
+    scope_parts: list[str] = []
+    if paragraphs:
+        first = paragraphs[0]
+        # The opening paragraph is the project scope unless it begins as an
+        # answer-writing directive. Explicit labels below remain authoritative.
+        style_opening = re.match(
+            r"^(?:answer|respond|write|format|keep|provide|show|organize|cite|"
+            r"do\s+not|please)\b",
+            first,
+            re.I,
+        )
+        if not style_opening and len(first) <= 600:
+            scope_parts.append(first)
+    labelled_scope = re.compile(
+        r"^(?:project\s+scope|scope|jurisdiction|country|region|"
+        r"assessment\s+year|financial\s+year|fiscal\s+year|"
+        r"income\s+year|tax\s+year|period|as\s+of|effective\s+date|"
+        r"source\s+preferences?|preferred\s+sources?)\s*[:\uFF1A-]",
+        re.I,
+    )
+    source_preference = re.compile(
+        r"^(?:prefer|use|prioritize)\s+(?:official|primary|government|"
+        r"statutory)\s+sources?\b",
+        re.I,
+    )
+    for line in domain_instructions.splitlines():
+        line = line.strip(" -\t")
+        if line and (labelled_scope.match(line) or source_preference.match(line)):
+            scope_parts.append(line)
+    scope = " ".join(dict.fromkeys(scope_parts))[:1200]
+    prefix = f"Question: {query}\nReference date: {reference_date.isoformat()}"
+    if not scope:
+        return prefix
     return (
-        f"Question: {query}\nReference date: {reference_date.isoformat()}\n"
-        f"Project scope and defaults (explicit question scope takes precedence):\n"
-        f"{domain_instructions.strip()}"
+        f"{prefix}\nProject scope and defaults (explicit question scope takes precedence):\n{scope}"
     )
 
 
@@ -59,6 +95,7 @@ async def review_web_evidence(
     evidence: list[WebSearchEvidence],
     domain_instructions: str,
     reference_date: date,
+    timeout_seconds: float = 30,
 ) -> tuple[list[WebSearchEvidence], dict[str, object], ChatUsage | None]:
     diagnostics: dict[str, object] = {"version": WEB_REVIEW_VERSION, "status": "no_candidates"}
     if not evidence:
@@ -66,7 +103,7 @@ async def review_web_evidence(
     bounded = evidence[:12]
     usage = ChatUsage(None, None)
     try:
-        async with asyncio.timeout(30):
+        async with asyncio.timeout(timeout_seconds):
             result = await _validated_completion(
                 llm,
                 [
@@ -106,19 +143,33 @@ async def review_web_evidence(
                 return [], diagnostics, usage
             verdict = _WebReview.model_validate_json(result.content)
             indexes: set[int] = set()
+            invalid_proof_count = 0
             for proof in verdict.accepted:
                 if proof.source_index >= len(bounded) or not _contains_quote(
                     _quote_tokens(bounded[proof.source_index].content[:6000]), proof.quote
                 ):
-                    diagnostics["status"] = "invalid_proof"
-                    return [], diagnostics, usage
+                    invalid_proof_count += 1
+                    continue
                 indexes.add(proof.source_index)
             diagnostics.update(
-                status="reviewed",
+                status=(
+                    "reviewed_partial"
+                    if indexes and invalid_proof_count
+                    else "invalid_proof"
+                    if invalid_proof_count
+                    else "reviewed"
+                ),
                 accepted_indexes=sorted(indexes),
+                invalid_proof_count=invalid_proof_count,
                 rejected_scope_count=len(evidence) - len(indexes),
             )
             return [item for i, item in enumerate(bounded) if i in indexes], diagnostics, usage
-    except (ProviderError, TimeoutError, ValidationError):
-        diagnostics["status"] = "review_unavailable"
+    except TimeoutError:
+        diagnostics["status"] = "review_timeout"
+        return [], diagnostics, usage
+    except ProviderError as exc:
+        diagnostics.update(status="review_provider_failed", error_code=exc.code)
+        return [], diagnostics, usage
+    except ValidationError:
+        diagnostics["status"] = "review_invalid_response"
         return [], diagnostics, usage

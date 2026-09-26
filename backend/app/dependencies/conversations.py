@@ -116,7 +116,9 @@ class SearchServiceRetrievalAdapter:
                 await embedder.embed_texts(queries, purpose=EmbeddingPurpose.QUERY)
                 embedder.work.counts["recovery_query_embedding_batches"] += 1
         branch_factory, session_factory = self._branch_factory, self._session_factory
-        limiter = asyncio.Semaphore(3)
+        # Eight bounded overview searches complete in two waves. The shared
+        # process and deployment limits still constrain aggregate concurrency.
+        limiter = asyncio.Semaphore(4)
 
         async def branch(request: dict[str, Any]) -> ContextRetrievalResult:
             async with (

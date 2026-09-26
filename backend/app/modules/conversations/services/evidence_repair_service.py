@@ -152,7 +152,11 @@ class _SearchPlan(BaseModel):
 
 
 def _prepare_search_plan(
-    plan: _SearchPlan, user_question: str = "", proven_ids: set[str] | None = None
+    plan: _SearchPlan,
+    user_question: str = "",
+    proven_ids: set[str] | None = None,
+    *,
+    balanced_overview: bool = False,
 ) -> tuple[list[EvidenceRequirement], list[str], dict[str, list[str]]]:
     """Drop optional work and return deduplicated executable routes with ownership."""
     proven = proven_ids or set()
@@ -207,6 +211,14 @@ def _prepare_search_plan(
             original_position[query],
         )
     )
+    if balanced_overview:
+        # Complete the principal requested topics before spending discovery slots
+        # on separate conditional regimes. Applicability still gates proof review;
+        # prioritizing discovery never marks an unverified duty as supported.
+        central = [
+            q for q in queries if min((rank_by_id[i][0] for i in ownership[q]), default=9) == 1
+        ]
+        queries = central + [q for q in queries if q not in central]
     return requirements, queries, ownership
 
 
@@ -689,13 +701,19 @@ def _source_hints(
             {
                 "title": chunk.filename,
                 "source": {
-                    key: chunk.metadata[key]
-                    for key in (
-                        _SOURCE_CONTEXT_KEYS
-                        if include_work_metadata
-                        else _AUTHORITATIVE_SOURCE_CONTEXT_KEYS
-                    )
-                    if key in chunk.metadata and key != "authority_limitations"
+                    "language": chunk.metadata.get("chunk_language")
+                    or chunk.metadata.get("document_language")
+                    or chunk.metadata.get("language"),
+                    **{
+                        key: chunk.metadata[key]
+                        for key in (
+                            _SOURCE_CONTEXT_KEYS
+                            if include_work_metadata
+                            else _AUTHORITATIVE_SOURCE_CONTEXT_KEYS
+                        )
+                        if key in chunk.metadata
+                        and key not in {"authority_limitations", "language"}
+                    },
                 },
             }
         )
@@ -726,23 +744,26 @@ def _search_language_instruction(
             if languages
             else ""
         )
-    for role in ("primary", "supporting"):
-        for hint in sorted(
-            hints,
-            key=lambda item: str(item["source"].get("source_effective_from") or ""),
-            reverse=True,
-        ):
-            source = hint["source"]
-            language = source.get("language")
-            if source.get("source_role") == role and language in DEFAULT_SUPPORTED_TARGET_LANGUAGES:
-                return (
-                    f"\nCurrent governing sources use language code {language}. "
-                    "Prioritize one short source-language query per distinct necessary concept. "
-                    "Use an alternate-language route only when it adds discovery value after "
-                    "the distinct concepts fit within the eight-query limit. "
-                    "Omit document titles; source identity and period are checked separately.\n"
-                )
-    return ""
+    languages = sorted(
+        {
+            str(h["source"]["language"])
+            for h in hints
+            if h["source"].get("language") in DEFAULT_SUPPORTED_TARGET_LANGUAGES
+        }
+    )
+    if not languages:
+        return ""
+    return (
+        f"\nRetrieved source languages: {', '.join(languages)}. "
+        "Write the query concepts in the language of the relevant source, even when the user "
+        "asks in a different language or the document title is translated. "
+        "Choose one short source-language query per distinct necessary concept, "
+        "using the source relevant to that concept. Recency alone does not make "
+        "a source govern a different subject or establish the language of that subject. "
+        "Preserve explicitly requested Act or work names when they distinguish the topic; "
+        "omit unrelated publication boilerplate. Use another language only when it adds "
+        "discovery value within the configured query allowance.\n"
+    )
 
 
 def _discovery_excerpts(
@@ -1078,12 +1099,113 @@ async def _validated_completion(
     source_ids: dict[str, str] | None = None,
     truncation_retry_tokens: int | None = None,
     call_purpose: str | None = None,
+    parallel_requirements: bool = False,
 ) -> ChatCompletionResult:
     """Validate provider-neutral JSON, allowing one format-only retry.
 
     Do not salvage partial objects or truncated output. A single enclosing Markdown
     fence is presentation only; schema and later exact-quote validation still apply.
     """
+    if parallel_requirements and schema is CoverageVerdict and len(messages) == 2:
+        payload = json.loads(messages[1].content)
+        requirements = payload.get("requirements") or []
+        if len(requirements) >= 6:
+            # Independent overview duties share all source/authority context but
+            # partition output work. Calculations and applicability are excluded
+            # by the caller; they require a single interacting-rule verdict.
+            midpoint = (len(requirements) + 1) // 2
+            partitions = [requirements[:midpoint], requirements[midpoint:]]
+            partition_messages = [
+                [
+                    replace(
+                        messages[0],
+                        content=messages[0].content
+                        + "\nReview only this partition's requirement IDs. Other requested "
+                        "duties are reviewed separately against the SAME evidence. Do not add "
+                        "checks or gaps for other duties. Keep descriptions and answerable_scope "
+                        "to 12 words each, and at most one concise missing item per requirement. "
+                        "Mark complete only for this partition; the caller checks the union.",
+                    ),
+                    replace(
+                        messages[1],
+                        content=json.dumps(
+                            {**payload, "requirements": partition},
+                            ensure_ascii=False,
+                        ),
+                    ),
+                ]
+                for partition in partitions
+            ]
+            tasks = [
+                asyncio.create_task(
+                    _validated_completion(
+                        llm,
+                        partition,
+                        schema=schema,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                        proof_context=proof_context,
+                        source_ids=source_ids,
+                        truncation_retry_tokens=truncation_retry_tokens,
+                        call_purpose=call_purpose,
+                    )
+                )
+                for partition in partition_messages
+            ]
+            try:
+                completions = await asyncio.gather(*tasks)
+            except BaseException:
+                for task in tasks:
+                    task.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
+                raise
+            verdicts = [CoverageVerdict.model_validate_json(item.content) for item in completions]
+            for index, (partition, verdict) in enumerate(zip(partitions, verdicts, strict=True)):
+                expected = {item["requirement_id"] for item in partition}
+                actual = [check.requirement_id for check in verdict.checks]
+                if set(actual) != expected or len(actual) != len(expected):
+                    # A malformed identity cannot prove its duty, but must not
+                    # discard independently reviewed duties in the other partition.
+                    # Keep only unique exact IDs; never guess an ID from description.
+                    checks = []
+                    gaps = list(verdict.missing)
+                    for requirement in partition:
+                        identity = requirement["requirement_id"]
+                        matching = [c for c in verdict.checks if c.requirement_id == identity]
+                        if len(matching) == 1:
+                            checks.append(matching[0])
+                        else:
+                            description = requirement.get("description") or identity
+                            checks.append(
+                                _Check(
+                                    requirement_id=identity,
+                                    description=description,
+                                    supported=False,
+                                    evidence=[],
+                                )
+                            )
+                            gaps.append(
+                                f"{description}: no uniquely identified review was returned."
+                            )
+                    if not gaps:
+                        gaps.append(
+                            "The review included unassigned duties; full coverage is unverified."
+                        )
+                    verdicts[index] = CoverageVerdict(
+                        complete=False,
+                        missing=list(dict.fromkeys(gaps))[:12],
+                        checks=checks,
+                    )
+            missing = list(dict.fromkeys(item for verdict in verdicts for item in verdict.missing))
+            merged = CoverageVerdict(
+                complete=all(verdict.complete for verdict in verdicts),
+                missing=missing,
+                checks=[check for verdict in verdicts for check in verdict.checks],
+            )
+            # Each scope is independently reviewed, not inferred from support.
+            merged.retain_answerable_scopes()
+            usage = _add_usage(completions[0].usage, completions[1].usage)
+            return replace(completions[0], content=merged.model_dump_json(), usage=usage)
     work = _request_work(llm)
     if work is not None and call_purpose in _PURPOSE_COUNTERS:
         work.counts[_PURPOSE_COUNTERS[call_purpose]] += 1
@@ -1370,6 +1492,7 @@ async def repair_knowledge_evidence(
     max_followup_rounds: int = MAX_REPAIR_FOLLOWUPS,
     recovery_profile: str = "legacy",
     allow_admitted_timeout_fallback: bool = False,
+    parallel_overview_review: bool = False,
 ) -> EvidenceRepairResult:
     """Never mix active snapshots, relax filters, or promote unknown authority.
 
@@ -1390,7 +1513,7 @@ async def repair_knowledge_evidence(
         AUTHORITATIVE_FOCUSED_PROMPT if authoritative_compatibility else FOCUSED_REPAIR_PROMPT
     )
     diagnostics: dict[str, Any] = {
-        "version": "v23-bounded-compliance-timeout-fallback"
+        "version": "v27-focused-overview-context"
         if authoritative_compatibility
         else EVIDENCE_REPAIR_VERSION,
         "coverage_protocol": "authoritative_compatibility"
@@ -1426,6 +1549,26 @@ async def repair_knowledge_evidence(
             if chunk.metadata.get("authority_status") != "unresolved"
             and (chunk.chunk_id, chunk.content) in admitted_units
         ]
+    if timeout_seconds <= 0:
+        diagnostics["stop_reason"] = "recovery_deadline_exceeded"
+        diagnostics["failure_reason"] = "deadline_exceeded"
+        diagnostics["requirement_progress"] = {"stop_reason": "recovery_deadline_exceeded"}
+        if (
+            initial_decision is not None
+            and initial_decision.sufficient
+            and admitted_timeout_fallback
+        ):
+            _restore_admitted_timeout_fallback(
+                result, diagnostics, initial_decision, admitted_timeout_fallback
+            )
+        else:
+            diagnostics["status"] = "repair_unavailable"
+            result.failure = ProviderTimeoutError(
+                "Evidence review exceeded its time limit.",
+                provider_name=llm.provider_name,
+                context={"reason": "recovery_deadline_exceeded"},
+            )
+        return result
     reference_date = (
         inputs.as_of.date().isoformat()
         if inputs.as_of
@@ -1636,6 +1779,7 @@ async def repair_knowledge_evidence(
                         gap_kinds=list(plan.coverage.gap_kinds),
                         partial_answer=plan.coverage.partial_answer,
                     )
+                    initial_verdict.retain_answerable_scopes()
                     initial_partial_valid = initial_verdict.partial_validates(
                         selected, requirement_ids
                     )
@@ -1670,7 +1814,10 @@ async def repair_knowledge_evidence(
                 else:
                     diagnostics["initial_coverage_status"] = "invalid"
             requirements, queries, query_requirement_ids = _prepare_search_plan(
-                plan, inputs.query, proven_ids=proof_map.proven_ids()
+                plan,
+                inputs.query,
+                proven_ids=proof_map.proven_ids(),
+                balanced_overview=recovery_profile == "broad",
             )
             queries = queries[:max_initial_queries]
             query_requirement_ids = {
@@ -1907,7 +2054,16 @@ async def repair_knowledge_evidence(
                     # Keep the existing admitted span when an ID is rediscovered.
                     existing = {c.chunk_id: c for c in reversed(ordered)}
                     heads = [existing[g[0].chunk_id] for g in groups if g]
-                    ordered = [*heads, *ordered]
+                    # Preserve discovery breadth beyond the first hit. Initial
+                    # broad-query hits otherwise crowd out the second governing
+                    # passage of each focused duty (e.g. duty versus deadline).
+                    focused = [
+                        existing[group[i].chunk_id]
+                        for i in range(REPAIR_CHUNKS_PER_DEPENDENCY)
+                        for group in groups
+                        if len(group) > i
+                    ]
+                    ordered = [*heads, *focused, *ordered]
                 # Two searches can admit different spans of the same chunk. Use
                 # one intact admitted span; never merge them or compare the first
                 # span with a later duplicate's content in the mutation guard.
@@ -2126,6 +2282,7 @@ async def repair_knowledge_evidence(
                     proof_context=review_context if requirement_ids else None,
                     source_ids=source_ids,
                     call_purpose="coverage_review",
+                    parallel_requirements=parallel_overview_review and not delta_review,
                 )
                 verification_usage = verification.usage or ChatUsage(None, None)
                 result.usage = ChatUsage(
@@ -2314,6 +2471,7 @@ async def repair_knowledge_evidence(
                 full_coverage_validated = ranges_valid and verdict.validates(
                     groups, budgeted, requirement_ids
                 )
+                verdict.retain_answerable_scopes()
                 partial_scope_validated = ranges_valid and verdict.partial_validates(
                     budgeted, requirement_ids
                 )
@@ -2363,6 +2521,13 @@ async def repair_knowledge_evidence(
                     if checkpoint.decision is not None:
                         partial_checkpoint = checkpoint
                 if full_coverage_validated:
+                    break
+                # A follow-up needs retrieval and another coverage review. Do not
+                # spend the last seconds starting work that cannot finish while a
+                # validated, useful partial answer is ready for generation.
+                if partial_scope_validated and timeout_seconds - (monotonic() - started) < 12:
+                    diagnostics["stop_reason"] = "insufficient_followup_budget"
+                    _store_partial_answer(diagnostics, verdict)
                     break
                 # A rule can be supported while its applicability still needs
                 # the adjoining heading. Honor the explicit continuation flag
@@ -2849,18 +3014,19 @@ def _restore_admitted_timeout_fallback(
     decision: EvidenceDecision,
     selected: list[ContextChunk],
 ) -> None:
-    """Return grounded initial evidence when a bounded checklist review runs out of time.
+    """Return admitted evidence when a bounded checklist review runs out of time.
 
     This is intentionally narrower than an exact coverage checkpoint: it is allowed only
     for callers that classify completeness as useful but non-atomic. The answer prompt and
     final claim verifier still restrict output to facts supported by these admitted units.
     """
     pending = (
-        "Complete coverage of every requested obligation, authority, filing or record, "
-        "deadline, and non-compliance consequence was not verified within the review budget."
+        "Complete coverage of every requested requirement and applicable source "
+        "was not verified within the review budget."
     )
     partial = {
-        "scope": "Facts directly supported by the initially admitted evidence",
+        "scope": "Facts directly supported by the admitted, source-reconciled evidence",
+        "review_status": "admitted_only",
         "requirement_ids": [],
         "exclusions": [
             "Any requested compliance facet not directly established by the cited evidence."
@@ -3039,7 +3205,10 @@ def _store_partial_answer(diagnostics: dict[str, Any], verdict: CoverageVerdict)
         return
     diagnostics["partial_answer"] = verdict.partial_answer.model_dump()
     diagnostics["partial_answer"]["scope"] = [
-        {"requirement_id": check.requirement_id, "description": check.description}
+        {
+            "requirement_id": check.requirement_id,
+            "description": (check.answerable_scope or check.description),
+        }
         for check in verdict.checks
         if check.requirement_id in verdict.partial_answer.requirement_ids
     ]
@@ -3048,7 +3217,7 @@ def _store_partial_answer(diagnostics: dict[str, Any], verdict: CoverageVerdict)
     diagnostics["partial_answer"]["supported_proof"] = [
         {
             "requirement_id": check.requirement_id,
-            "description": check.description,
+            "description": (check.answerable_scope or check.description),
             "source_ids": [item.chunk_id for item in check.evidence],
         }
         for check in verdict.checks

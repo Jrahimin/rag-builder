@@ -939,6 +939,18 @@ class ChatService:
         partial_answer: dict[str, Any] | None = None
         preparation_error: ProviderError | None = None
         coverage_started = time.perf_counter()
+        # These stages run sequentially. Their configured budgets must add up:
+        # taking the maximum let local recovery consume the web review allowance
+        # and misreported local deadline exhaustion as a web provider outage.
+        evidence_deadline = (
+            coverage_started
+            + max(
+                self._chat_config.broad_recovery_timeout_seconds,
+                self._chat_config.focused_recovery_timeout_seconds,
+            )
+            + self._web_search_config.request_timeout_seconds
+            + 20
+        )
         scope_current_authority = _scope_current_authority_status(
             request,
             retrieval_result.diagnostics,
@@ -1072,6 +1084,9 @@ class ChatService:
                     retrieval_result.diagnostics.get("modifies_expansion_records") or []
                 )
                 rerank_status = str(retrieval_result.diagnostics.get("rerank_status") or "") or None
+        reviewed_web_fallback_allowed = False
+        calculation_task = False
+        applicability_task = False
         if not presentation_reused:
             self._work.counts["source_version_checks"] += 1
             with self._work.stage("checking_source_versions"):
@@ -1181,6 +1196,8 @@ class ChatService:
                 presentation_only=presentation_only,
             )
             focused_recovery = bounded_recovery_profile == "focused"
+            # An empty initial selection can still be recovered by a focused
+            # query. Keep that opportunity before considering web fallback.
             if (
                 evidence.reason is InsufficientEvidenceReason.UNRESOLVED_AUTHORITY
                 or calculation_review
@@ -1242,6 +1259,10 @@ class ChatService:
                         max_followup_queries = 2
                         max_followup_rounds = 2
                         recovery_profile = "legacy"
+                    repair_timeout_seconds = min(
+                        repair_timeout_seconds,
+                        max(0.0, evidence_deadline - time.perf_counter() - 10),
+                    )
                     repaired = await repair_knowledge_evidence(
                         inputs=resolved.retrieval.model_copy(update={"query": retrieval_query}),
                         initial=retrieval_result,
@@ -1262,15 +1283,78 @@ class ChatService:
                         initial_decision=(pre_review_evidence if compliance_review else evidence),
                         required_coverage=inherited if reuse_scope_revalidation else None,
                         evidence_approach=self._evidence_approach,
-                        allow_admitted_timeout_fallback=bool(
+                        parallel_overview_review=bool(
                             bounded_recovery
                             and compliance_review
-                            and pre_review_evidence.sufficient
+                            and not calculation_route
+                            and not applicability_route
+                            and not reuse_scope_revalidation
+                        ),
+                        allow_admitted_timeout_fallback=bool(
+                            bounded_recovery
+                            and comparison_review
+                            and self._evidence_approach != "authoritative"
+                            and not calculation_route
+                            and not applicability_route
+                            and not reuse_scope_revalidation
                         ),
                     )
                 repair_usage = repaired.usage
                 preparation_error = repaired.failure
                 repair_diagnostics = dict(repaired.diagnostics)
+                # A local recovery deadline without validated proof is an
+                # evidence limitation, not a provider outage. Preserve other
+                # provider failures and keep the evidence gate closed.
+                deadline_without_proof = bool(
+                    bounded_recovery
+                    and repair_diagnostics.get("stop_reason") == "recovery_deadline_exceeded"
+                    and repaired.decision is None
+                    and repaired.failure is not None
+                    and repaired.failure.context.get("reason") == "recovery_deadline_exceeded"
+                )
+                if deadline_without_proof:
+                    preparation_error = None
+                    evidence = replace(
+                        evidence,
+                        sufficient=False,
+                        reason=InsufficientEvidenceReason.UNRESOLVED_AUTHORITY,
+                    )
+                    if _reviewed_web_fallback_eligible(
+                        mode=self._chat_config.response_mode,
+                        provider_available=self._web_search is not None,
+                        calculation_task=calculation_task,
+                        applicability_task=applicability_task,
+                        scoped_request=resolved.retrieval.suppress_web,
+                        scope_current_authority=scope_current_authority is not None,
+                    ):
+                        reviewed_web_fallback_allowed = True
+                        repair_diagnostics["fallback_route"] = "web_after_recovery_deadline"
+                    else:
+                        repair_diagnostics["fallback_route"] = (
+                            "insufficient_evidence_after_recovery_deadline"
+                        )
+                # A completed but incomplete review is also a legitimate web
+                # fallback condition. Previously only a timeout opened this route,
+                # so finishing local review faster could make the result worse.
+                if (
+                    repaired.decision is None
+                    and repaired.failure is None
+                    and repair_diagnostics.get("status")
+                    in {
+                        "coverage_incomplete",
+                        "dependency_unresolved",
+                    }
+                    and _reviewed_web_fallback_eligible(
+                        mode=self._chat_config.response_mode,
+                        provider_available=self._web_search is not None,
+                        calculation_task=calculation_task,
+                        applicability_task=applicability_task,
+                        scoped_request=resolved.retrieval.suppress_web,
+                        scope_current_authority=scope_current_authority is not None,
+                    )
+                ):
+                    reviewed_web_fallback_allowed = True
+                    repair_diagnostics["fallback_route"] = "web_after_incomplete_review"
                 if reuse_scope_revalidation:
                     retrieval_result.diagnostics["presentation_reuse"]["new_coverage_review"] = (
                         repair_diagnostics.get("status") != "snapshot_unavailable"
@@ -1358,7 +1442,11 @@ class ChatService:
                 "status": "suppressed_scoped_request",
                 "fallback_used": False,
             }
-        elif web_requested and evidence.reason is InsufficientEvidenceReason.UNRESOLVED_AUTHORITY:
+        elif (
+            web_requested
+            and evidence.reason is InsufficientEvidenceReason.UNRESOLVED_AUTHORITY
+            and not reviewed_web_fallback_allowed
+        ):
             # Web snippet relevance cannot establish commencement, amendment
             # precedence or all dependencies of a governed calculation. Until
             # web evidence supports that contract, never bypass a failed review.
@@ -1385,22 +1473,47 @@ class ChatService:
                     self._domain_instructions,
                     (resolved.retrieval.as_of or payload.reference_time).date(),
                 )
-                web_result = await web_search.search(
-                    web_query,
-                    max_results=self._web_search_config.max_results,
+                search_budget = min(
+                    self._web_search_config.request_timeout_seconds,
+                    evidence_deadline - time.perf_counter() - 20,
                 )
+                if partial_answer is not None:
+                    # Supplementing already reviewed useful work must not add a
+                    # full provider timeout before we can deliver that work.
+                    search_budget = min(search_budget, 15.0)
+                if search_budget <= 0:
+                    raise TimeoutError
+                with self._work.stage("web_search"):
+                    async with asyncio.timeout(search_budget):
+                        web_result = await web_search.search(
+                            web_query,
+                            max_results=self._web_search_config.max_results,
+                        )
                 accepted_evidence, acceptance = _accepted_web_evidence(
                     retrieval_query,
                     web_result.evidence,
                 )
                 with self._work.stage("web_evidence_review"):
-                    accepted_evidence, scope_review, web_review_usage = await review_web_evidence(
-                        llm=llm,
-                        query=retrieval_query,
-                        evidence=accepted_evidence,
-                        domain_instructions=self._domain_instructions,
-                        reference_date=(resolved.retrieval.as_of or payload.reference_time).date(),
-                    )
+                    scope_review: dict[str, object]
+                    review_budget = min(20.0, evidence_deadline - time.perf_counter())
+                    if review_budget <= 0:
+                        accepted_evidence = []
+                        scope_review = {"status": "review_timeout"}
+                    else:
+                        (
+                            accepted_evidence,
+                            scope_review,
+                            web_review_usage,
+                        ) = await review_web_evidence(
+                            llm=llm,
+                            query=retrieval_query,
+                            evidence=accepted_evidence,
+                            domain_instructions=self._domain_instructions,
+                            reference_date=(
+                                resolved.retrieval.as_of or payload.reference_time
+                            ).date(),
+                            timeout_seconds=review_budget,
+                        )
                 web_chunks = _web_context_chunks(accepted_evidence, web_result.provider)
                 discovered_source_count = (
                     len(web_result.discovered_sources)
@@ -1413,6 +1526,14 @@ class ChatService:
                     terminal_status = "sources_found_no_extractable_evidence"
                 elif web_chunks:
                     terminal_status = "evidence_accepted"
+                elif scope_review.get("status") in {
+                    "review_timeout",
+                    "review_provider_failed",
+                    "review_invalid_response",
+                    "review_incomplete",
+                    "invalid_proof",
+                }:
+                    terminal_status = str(scope_review["status"])
                 else:
                     terminal_status = "evidence_extracted_irrelevant"
                 web_diagnostics = {
@@ -1426,6 +1547,12 @@ class ChatService:
                     "acceptance": acceptance,
                     "scope_review": scope_review,
                     "fallback_used": (mode is ResponseMode.INDEXED_THEN_WEB and bool(web_chunks)),
+                }
+            except TimeoutError:
+                web_diagnostics = {
+                    "status": "search_timeout",
+                    "fallback_used": False,
+                    "retryable": True,
                 }
             except ProviderError as exc:
                 web_diagnostics = {
@@ -1448,7 +1575,12 @@ class ChatService:
         elif mode is ResponseMode.INDEXED_ONLY:
             selected = knowledge_selected if knowledge_usable else []
         elif mode is ResponseMode.INDEXED_THEN_WEB:
-            selected = knowledge_selected if knowledge_usable else web_chunks
+            if knowledge_usable and web_chunks and partial_answer is not None:
+                selected = _balanced_evidence(
+                    knowledge_selected, web_chunks, self._context_builder, self._chat_config
+                )
+            else:
+                selected = knowledge_selected if knowledge_usable else web_chunks
         else:
             selected = _balanced_evidence(
                 knowledge_selected if knowledge_usable else [],
@@ -1463,9 +1595,21 @@ class ChatService:
             and not knowledge_usable
             and source_provenance is SourceProvenance.WEB
         )
+        web_only_answer = source_provenance is SourceProvenance.WEB
         web_diagnostics["fallback_used"] = web_fallback_used
-
         response_language = resolve_response_language(current_content, prompt_history)
+        if web_only_answer and compliance_overview_requested(retrieval_query):
+            # Search admission proves relevant cited passages, not that every
+            # requested obligation or exception was located.
+            partial_answer = _web_overview_partial_answer(response_language)
+            retrieval_result.diagnostics["answerable_scope"] = {
+                "complete": False,
+                "partial": True,
+                "unresolved_facets": partial_answer["pending"],
+                "missing_inputs": [],
+                "supported_requirement_ids": [],
+            }
+
         with self._work.stage("preparing_answer"):
             messages = self._prompt_builder.build(
                 template=template,
@@ -1477,7 +1621,7 @@ class ChatService:
                 interpretation=resolved.interpretation,
                 reference_date=(resolved.retrieval.as_of or payload.reference_time).date(),
                 missing_inputs=missing_inputs if knowledge_usable else (),
-                partial_answer=partial_answer if knowledge_usable else None,
+                partial_answer=partial_answer if knowledge_usable or web_only_answer else None,
                 response_language=response_language,
                 presentation_only=presentation_only,
             )
@@ -1578,8 +1722,12 @@ class ChatService:
                 mode=mode,
                 gate_mode=self._chat_config.evidence_gate_mode,
                 indexed_policy=indexed_policy,
-                partial_answer=partial_answer if knowledge_usable else None,
-                repair=retrieval_result.diagnostics.get("knowledge_repair"),
+                partial_answer=partial_answer if knowledge_usable or web_only_answer else None,
+                repair=(
+                    None
+                    if web_only_answer
+                    else retrieval_result.diagnostics.get("knowledge_repair")
+                ),
                 answerable_scope=retrieval_result.diagnostics.get("answerable_scope"),
                 web=web_diagnostics,
                 web_requested=web_requested,
@@ -2155,8 +2303,42 @@ class ChatService:
     def _insufficient_content(self, prepared: _PreparedTurn, question: str) -> str:
         status = str(prepared.web_search_diagnostics.get("status") or "")
         bangla = detect_language(question).primary_language == "bn"
+        if status == "search_timeout":
+            return (
+                "ওয়েব অনুসন্ধানের সময়সীমা শেষ হয়েছে, তাই যথেষ্ট সূত্র যাচাই করা যায়নি। আবার চেষ্টা করুন।"
+                if bangla
+                else "Web search reached its time limit before enough sources could be verified. "
+                "Please try again."
+            )
+        if status in {"failed", "provider_unavailable"}:
+            if bangla:
+                return "উপলব্ধ সূত্র দিয়ে এই উত্তরটি যাচাই করা যায়নি, এবং web search এখন সাময়িকভাবে অনুপলব্ধ।"
+            return (
+                "I couldn't verify this answer from the available sources, and web search "
+                "is temporarily unavailable."
+            )
+        if status in {
+            "review_timeout",
+            "review_provider_failed",
+            "review_invalid_response",
+            "review_incomplete",
+            "invalid_proof",
+        }:
+            return (
+                "ওয়েব সূত্র যাচাইয়ের ধাপটি সম্পন্ন হয়নি। অনুগ্রহ করে আবার চেষ্টা করুন।"
+                if bangla
+                else "Web source verification did not complete. Please try again."
+            )
+        repair = prepared.retrieval_diagnostics.get("knowledge_repair") or {}
+        if repair.get("fallback_route") == "insufficient_evidence_after_recovery_deadline":
+            return (
+                "সূত্র যাচাইয়ের সময়সীমা শেষ হয়েছে, তাই এই উত্তরটির জন্য যথেষ্ট প্রমাণ "
+                "যাচাই করতে পারিনি। প্রশ্নটি আরও নির্দিষ্ট করে আবার চেষ্টা করুন।"
+                if bangla
+                else "Source review reached its time limit before I could verify enough "
+                "evidence for this answer. Please try a more specific question."
+            )
         if prepared.evidence.reason is InsufficientEvidenceReason.UNRESOLVED_AUTHORITY:
-            repair = prepared.retrieval_diagnostics.get("knowledge_repair") or {}
             if repair.get("status") == "incomplete_plan" or (
                 repair.get("status") == "repair_unavailable"
                 and repair.get("failure_reason") == "invalid_model_response"
@@ -2202,13 +2384,6 @@ class ChatService:
                 "amendment effect could not be established. A final calculation using those "
                 "rules would be unreliable. The applicable provisions and amendment evidence "
                 "are still needed."
-            )
-        if status in {"failed", "provider_unavailable"}:
-            if bangla:
-                return "উপলভ্য knowledge base-এ যথেষ্ট তথ্য পাইনি, এবং web search এখন সাময়িকভাবে অনুপলভ্য।"
-            return (
-                "I couldn\u2019t find enough information in the available knowledge base, and web "
-                "search is temporarily unavailable."
             )
         if status in {
             "no_sources",
@@ -2882,6 +3057,7 @@ _PROGRESS_PRIORITY: tuple[tuple[str, tuple[str, str]], ...] = (
     ("answer_generation", ("generating_answer", "Preparing your answer")),
     ("preparing_answer", ("generating_answer", "Preparing your answer")),
     ("web_evidence_review", ("checking_source_applicability", "Checking source applicability")),
+    ("web_search", ("finding_relevant_sources", "Searching web sources")),
     (
         "checking_source_applicability",
         ("checking_source_applicability", "Checking source applicability"),
@@ -3081,6 +3257,45 @@ def _assemble_response_policy(
         "scoped_request": scoped_request,
         "unresolved_authority": unresolved_authority,
         "scope_excludes_effective_modifier": scope_current_authority,
+    }
+
+
+def _reviewed_web_fallback_eligible(
+    *,
+    mode: ResponseMode,
+    provider_available: bool,
+    calculation_task: bool,
+    applicability_task: bool,
+    scoped_request: bool,
+    scope_current_authority: bool,
+) -> bool:
+    """Apply the same scope and task guards to recovery-triggered web fallback."""
+    return (
+        mode in {ResponseMode.INDEXED_THEN_WEB, ResponseMode.INDEXED_AND_WEB}
+        and provider_available
+        and not calculation_task
+        and not applicability_task
+        and not scoped_request
+        and not scope_current_authority
+    )
+
+
+def _web_overview_partial_answer(language: str = "en") -> dict[str, Any]:
+    if language == "bn":
+        scope = "উদ্ধৃত ওয়েব সূত্রে সরাসরি সমর্থিত তথ্য"
+        exclusion = "উদ্ধৃত সূত্রে সমর্থনহীন প্রশ্নের অংশ।"
+        pending = "প্রশ্নের সব অংশের জন্য সূত্রের পূর্ণতা যাচাই করা হয়নি।"
+    else:
+        scope = "Facts directly supported by the cited web passages"
+        exclusion = "Parts of the question that the cited passages do not establish."
+        pending = "Source coverage for every part of the question has not been verified."
+    return {
+        "scope": scope,
+        "requirement_ids": [],
+        "exclusions": [exclusion],
+        "pending": [pending],
+        "gap_kinds": ["source_rule"],
+        "supported_proof": [],
     }
 
 

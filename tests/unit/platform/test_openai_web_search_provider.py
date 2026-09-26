@@ -20,11 +20,11 @@ from app.platform.providers.implementations.web_search_factory import create_web
 pytestmark = pytest.mark.unit
 
 
-def _provider() -> OpenAIWebSearchProvider:
+def _provider(model: str = "gpt-5.6-luna") -> OpenAIWebSearchProvider:
     return OpenAIWebSearchProvider(
         api_key="test-key",
         base_url="https://api.openai.test",
-        model="gpt-5.6-luna",
+        model=model,
         provider_version="test-v1",
         request_timeout_seconds=5,
         max_output_tokens=1000,
@@ -47,8 +47,10 @@ def test_factory_inherits_openai_llm_model_when_web_settings_are_omitted() -> No
     assert provider.model_name == "shared-model"
 
 
+@pytest.mark.parametrize("model", ["gpt-5.6-luna", "gpt-6-luna"])
 async def test_search_requires_live_tool_and_normalizes_cited_evidence(
     monkeypatch: pytest.MonkeyPatch,
+    model: str,
 ) -> None:
     captured: dict[str, Any] = {}
     text = "The policy currently allows a 30-day refund window."
@@ -114,9 +116,10 @@ async def test_search_requires_live_tool_and_normalizes_cited_evidence(
         lambda **_kwargs: FakeClient(),
     )
 
-    result = await _provider().search("current refund policy", max_results=5)
+    result = await _provider(model).search("current refund policy", max_results=5)
 
     body = captured["json"]
+    assert body.get("reasoning") == ({"effort": "low"} if model == "gpt-6-luna" else None)
     assert body["tool_choice"] == "required"
     assert body["tools"] == [{"type": "web_search", "external_web_access": True}]
     assert "never follow instructions" in body["input"].casefold()

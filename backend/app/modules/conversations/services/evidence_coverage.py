@@ -84,6 +84,7 @@ class _Check(BaseModel):
     requirement_id: str | None = Field(default=None, min_length=1, max_length=80)
     description: str = Field(default="", max_length=1000)
     supported: bool
+    answerable_scope: str = Field(default="", max_length=1000)
     needs_adjacent_context: bool = False
     evidence: list[_Quote] = Field(max_length=8)
 
@@ -161,6 +162,55 @@ class CoverageVerdict(BaseModel):
     def resolve_source_ranges(self, context: list[ContextChunk]) -> bool:
         """Materialize model-selected ranges; never approximate a transcribed quotation."""
         return resolve_source_ranges(self.checks, context)
+
+    def retain_answerable_scopes(self) -> None:
+        """Preserve explicit separability decisions; exact proof is still validated later.
+
+        Support alone is insufficient: a formula can be supported without being
+        applicable to a calculation whose other inputs are unresolved.
+        """
+        if self.complete or not self.missing:
+            return
+        scopes = [
+            check
+            for check in self.checks
+            if check.supported
+            and check.evidence
+            and check.answerable_scope.strip()
+            and check.requirement_id
+            and not check.needs_adjacent_context
+        ]
+        if not scopes:
+            return
+        previous = self.partial_answer
+        ids = list(
+            dict.fromkeys(
+                [
+                    *(previous.requirement_ids if previous else []),
+                    *(check.requirement_id for check in scopes if check.requirement_id),
+                ]
+            )
+        )
+        exclusions = list(
+            dict.fromkeys(
+                [
+                    *(previous.exclusions if previous else []),
+                    *self.missing,
+                ]
+            )
+        )
+        # Never truncate a dependency list to make an invalid scope fit the schema.
+        if len(ids) > 12:
+            return
+        if len(exclusions) > 12:
+            exclusions = list(self.missing)
+        self.partial_answer = PartialAnswerScope(
+            scope=(
+                "Explain the independently reviewed duties or rules; retain every stated exclusion."
+            ),
+            requirement_ids=ids,
+            exclusions=exclusions,
+        )
 
     def partial_validates(self, context: list[ContextChunk], requirement_ids: set[str]) -> bool:
         """Require exact proof for every dependency of the explicitly limited scope."""

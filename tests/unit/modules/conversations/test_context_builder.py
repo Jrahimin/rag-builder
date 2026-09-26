@@ -679,6 +679,8 @@ def test_reconstruct_reuses_governed_base_when_recorded_modifier_is_recalled() -
         "outcome": "expanded",
         "base_revision_id": str(base_revision),
         "modifier_revision_id": str(modifier_revision),
+        "provision_effect": "replaces",
+        "replacement_scope_verified": True,
         "target_provisions": ["Section 21 — Investment Rebate Rate"],
         "modifier_effective_from": "2020-01-01",
         "modifier_recalled": True,
@@ -774,6 +776,8 @@ def test_reconstruct_reuses_cited_modifier_after_identity_recall() -> None:
         "outcome": "expanded",
         "base_revision_id": str(base_revision),
         "modifier_revision_id": str(modifier_revision),
+        "provision_effect": "replaces",
+        "replacement_scope_verified": True,
         "target_provisions": ["Section 21 — Investment Rebate Rate"],
         "modifier_effective_from": "2020-01-01",
     }

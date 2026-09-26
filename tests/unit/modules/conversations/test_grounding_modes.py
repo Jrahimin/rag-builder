@@ -533,6 +533,8 @@ def _authority_chunks() -> tuple[ContextChunk, ContextChunk, list[dict[str, obje
             "outcome": "already_in_recall",
             "base_revision_id": str(base_revision),
             "modifier_revision_id": str(modifier_revision),
+            "provision_effect": "replaces",
+            "replacement_scope_verified": True,
             "target_provisions": ["Section 21 — Investment Rebate Rate"],
         }
     ]
