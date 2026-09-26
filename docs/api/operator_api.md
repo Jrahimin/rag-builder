@@ -93,6 +93,10 @@ revision selects a model the deployment no longer permits. The revision-history 
 remains readable so an operator can identify the stored selection. The console can
 create a new revision inheriting the deployment model while copying the stored behavior
 and complete Custom execution bundle; the expected-active-revision check still applies.
+When upgrading a V2 Custom revision from before bounded recovery was introduced, the
+repair supplies defaults only for those seven later-added recovery fields. Existing
+stored values are preserved, and other missing execution fields are returned in the
+`project_custom_execution_incomplete_for_repair` error context.
 
 The console bases an edit on the stored active sparse revision and merges the rendered changes into
 that payload, preserving stored fields that are not shown in the current form. If the active

@@ -119,11 +119,34 @@ class ProjectAdministrationService:
                         resolve_project_ai_config(self._settings, None).configuration
                     )
                 )
-                if not required.issubset(base):
+                missing = required - set(base)
+                # Bounded recovery was added after some V2 Custom revisions had
+                # already been saved. Those revisions cannot contain these keys;
+                # use the original behavior-preserving defaults when upgrading
+                # them, while retaining every value that was actually stored.
+                legacy_recovery_defaults = {
+                    "bounded_recovery_enabled": False,
+                    "focused_recovery_timeout_seconds": 15.0,
+                    "broad_recovery_timeout_seconds": 30.0,
+                    "focused_recovery_max_queries": 2,
+                    "broad_recovery_max_queries": 4,
+                    "broad_recovery_followup_max_queries": 2,
+                    "broad_recovery_max_followup_rounds": 1,
+                }
+                unsupported_missing = missing - set(legacy_recovery_defaults)
+                if unsupported_missing:
                     raise ConflictError(
                         message="The stored Custom execution is incomplete for model repair.",
                         code="project_custom_execution_incomplete_for_repair",
+                        context={"missing_fields": sorted(unsupported_missing)},
                     ) from exc
+                base.update(
+                    {
+                        field: value
+                        for field, value in legacy_recovery_defaults.items()
+                        if field in missing
+                    }
+                )
             # These ``None`` ENV values mean "no threshold". Persist their
             # deterministic no-filter equivalent for Custom rather than leave
             # an absent value to inherit from a future deployment profile.

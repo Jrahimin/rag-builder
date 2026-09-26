@@ -24,7 +24,11 @@ unchanged. Web search inherits the resolved LLM model unless it has its own over
 The read-only Operator Configuration page shows the canonical deployment capability
 and the legacy runtime alias separately. When a stored Project revision selects a
 disallowed generation model, the AI editor can create an append-only repair revision
-that inherits the deployment model and preserves the stored execution settings.
+that inherits the deployment model and preserves the stored execution settings. For
+V2 Custom revisions created before bounded-recovery settings were introduced, the
+repair fills only those newly added fields with their behavior-preserving defaults;
+all values already stored in the revision take precedence. Missing older execution
+fields outside this compatibility set remain an error and are reported for diagnosis.
 
 Production also requires Taskiq, the durable dispatcher, hybrid retrieval with the
 rerank stage enabled, MinIO/S3-compatible storage, authentication, and non-default database, Redis, and
