@@ -9,7 +9,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
-from app.core.exceptions import ConflictError, NotFoundError
+from app.core.exceptions import BadRequestError, ConflictError, NotFoundError
 from app.models.conversation import Conversation
 from app.models.document import Document
 from app.models.generation import Generation
@@ -96,12 +96,34 @@ class ProjectAdministrationService:
         selection = configuration.execution.profile_id or "inherit"
         if selection == "custom":
             active = await self._repository.get_active()
-            base = materialize_execution_values(
-                resolve_project_ai_config(
-                    self._settings,
-                    _record(active) if isinstance(active, ProjectAIConfigRevision) else None,
-                ).configuration
-            )
+            try:
+                base = materialize_execution_values(
+                    resolve_project_ai_config(
+                        self._settings,
+                        _record(active) if isinstance(active, ProjectAIConfigRevision) else None,
+                    ).configuration
+                )
+            except BadRequestError as exc:
+                if (
+                    exc.code != "generation_model_not_allowed"
+                    or not isinstance(active, ProjectAIConfigRevision)
+                    or active.schema_version != 2
+                ):
+                    raise
+                stored_execution = ProjectAIConfig.model_validate(active.configuration).execution
+                if stored_execution.profile_id != "custom":
+                    raise
+                base = stored_execution.model_dump(exclude={"profile_id"}, exclude_none=True)
+                required = set(
+                    materialize_execution_values(
+                        resolve_project_ai_config(self._settings, None).configuration
+                    )
+                )
+                if not required.issubset(base):
+                    raise ConflictError(
+                        message="The stored Custom execution is incomplete for model repair.",
+                        code="project_custom_execution_incomplete_for_repair",
+                    ) from exc
             # These ``None`` ENV values mean "no threshold". Persist their
             # deterministic no-filter equivalent for Custom rather than leave
             # an absent value to inherit from a future deployment profile.

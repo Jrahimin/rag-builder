@@ -7,9 +7,11 @@ import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } fro
 import { useSearchParams } from "react-router-dom";
 import {
   operatorApiClient,
+  OperatorApiError,
   type EffectiveProjectAIConfig,
   type Organization,
   type Project,
+  type ProjectAIConfig,
   type ProjectAIConfigRevision,
   type ProjectOwnershipPreflight,
   type SourceRevision,
@@ -940,11 +942,17 @@ function ProjectConfig({ project }: { project: Project }) {
   const [baseline, setBaseline] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [resolutionErrorCode, setResolutionErrorCode] = useState("");
   const load = useCallback(async () => {
-    const [config, revisions] = await Promise.all([
+    const [configResult, historyResult] = await Promise.allSettled([
       operatorApiClient.getProjectAIConfig(project.id),
       operatorApiClient.getProjectAIConfigHistory(project.id),
     ]);
+    if (historyResult.status === "rejected") throw historyResult.reason;
+    const revisions = historyResult.value;
+    setHistory(revisions);
+    if (configResult.status === "rejected") throw configResult.reason;
+    const config = configResult.value;
     const activeRevision = revisions.find((revision) => revision.id === config.active_revision_id);
     if (config.active_revision_id && !activeRevision) {
       throw new Error("The active AI configuration revision is unavailable. Reload and try again.");
@@ -952,20 +960,68 @@ function ProjectConfig({ project }: { project: Project }) {
     const stored = activeRevision?.configuration ?? {};
     const nextForm = configFormFromEffective(config, stored);
     setEffective(config);
-    setHistory(revisions);
+    setResolutionErrorCode("");
+    setError("");
     setForm(nextForm);
     setBaseline(JSON.stringify(buildSparseProjectConfig(nextForm)));
   }, [project.id]);
   useEffect(() => {
     setError("");
-    void load().catch((caught: Error) => setError(caught.message));
+    void load().catch((caught: Error) => {
+      setError(caught.message);
+      setResolutionErrorCode(caught instanceof OperatorApiError ? caught.code : "");
+    });
   }, [load]);
   if (!effective && !error) return <LoadingState label="Resolving Project AI configuration" />;
   if (error && !effective) {
+    const latest = history[0];
+    const canRepair = resolutionErrorCode === "generation_model_not_allowed" && Boolean(latest);
+    const repairModel = async () => {
+      if (!latest) return;
+      setBusy(true);
+      setError("");
+      try {
+        const behavior = { translation_policy: "inherit" as const, ...latest.configuration.behavior };
+        delete behavior.generation_model_id;
+        const configuration: ProjectAIConfig = { ...latest.configuration, behavior };
+        await operatorApiClient.createProjectAIConfig(
+          project.id,
+          configuration,
+          latest.id,
+          "Use deployment generation model after allowlist update",
+        );
+        await load();
+      } catch (caught) {
+        setError((caught as Error).message);
+      } finally {
+        setBusy(false);
+      }
+    };
     return (
-      <div className="failure-box" role="alert">
-        {error}
-      </div>
+      <section className="panel">
+        <div className="failure-box" role="alert">
+          {error}
+        </div>
+        {canRepair && latest && (
+          <div className="progressive-form__commit">
+            <h3>Repair generation model selection</h3>
+            <p className="muted-copy">
+              Revision {latest.revision_number} selects{" "}
+              {latest.configuration.behavior?.generation_model_id ?? "an inherited model"}.
+              Create a new revision that inherits the deployment model and keeps the stored
+              behavior and retrieval settings.
+            </p>
+            <button
+              className="button button--primary"
+              type="button"
+              disabled={busy}
+              onClick={() => void repairModel()}
+            >
+              Use deployment generation model
+            </button>
+          </div>
+        )}
+      </section>
     );
   }
 

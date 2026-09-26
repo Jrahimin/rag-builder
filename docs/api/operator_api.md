@@ -87,6 +87,13 @@ audit reason. Restore creates a new revision by copying the selected historical 
 mutates or reactivates an old row in place. A stale expected pointer returns
 `project_config_revision_conflict`.
 
+The effective configuration endpoint resolves the Project model against the current
+deployment allowlist. It returns `generation_model_not_allowed` when an older active
+revision selects a model the deployment no longer permits. The revision-history endpoint
+remains readable so an operator can identify the stored selection. The console can
+create a new revision inheriting the deployment model while copying the stored behavior
+and complete Custom execution bundle; the expected-active-revision check still applies.
+
 The console bases an edit on the stored active sparse revision and merges the rendered changes into
 that payload, preserving stored fields that are not shown in the current form. If the active
 revision is not present in the fetched history, the console refuses to save rather than posting a

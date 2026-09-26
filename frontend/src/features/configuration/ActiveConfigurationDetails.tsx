@@ -17,7 +17,8 @@ export function ActiveConfigurationDetails() {
     return <ErrorState error={configuration.error} retry={() => void configuration.refetch()} />;
   const config = configuration.data;
   const rows = [
-    ["Runtime profile", config.runtime_profile],
+    ["Deployment capability", config.deployment_profile_id],
+    ["Runtime alias", config.runtime_profile],
     ["Default RAG profile", config.default_rag_profile_id],
     ["Environment", config.environment],
     ["Application version", config.application_version],

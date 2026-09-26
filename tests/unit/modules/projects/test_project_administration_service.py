@@ -187,6 +187,59 @@ async def test_partial_custom_write_materializes_complete_bundle_and_stays_indep
     assert materialize_execution_values(after_global_change.configuration) == expected
 
 
+async def test_model_repair_preserves_complete_custom_execution() -> None:
+    session = AsyncMock()
+    repository = AsyncMock()
+    repository.add = MagicMock()
+    repository.next_revision_number.return_value = 2
+    project = _project(locked=True)
+    execution = materialize_execution_values(
+        resolve_project_ai_config(Settings(), None).configuration
+    )
+    for field in ("score_threshold", "rerank_score_threshold", "min_ocr_confidence"):
+        if execution[field] is None:
+            execution[field] = 0.0
+    active = ProjectAIConfigRevision(
+        id=uuid.uuid4(),
+        project_id=project.id,
+        revision_number=1,
+        schema_version=2,
+        configuration_hash="a" * 64,
+        configuration={
+            "behavior": {
+                "generation_model_id": "openai-gpt-5.6-luna",
+                "domain_instructions": "Keep the tax instructions.",
+            },
+            "execution": {"profile_id": "custom", **execution},
+        },
+        created_by="operator-1",
+        source="operator_write",
+        reason="Original settings",
+    )
+    project.active_ai_config_revision_id = active.id
+    repository.lock_project.return_value = project
+    repository.get_active.return_value = active
+    service = _service(session, repository, MagicMock(), project.id)
+
+    repaired = await service.create_revision(
+        ProjectAIConfig.model_validate(
+            {
+                "behavior": {"domain_instructions": "Keep the tax instructions."},
+                "execution": {"profile_id": "custom", **execution},
+            }
+        ),
+        expected_active_revision_id=active.id,
+        reason="Use deployment generation model after allowlist update",
+    )
+
+    assert repaired.configuration["behavior"]["domain_instructions"] == (
+        "Keep the tax instructions."
+    )
+    assert "generation_model_id" not in repaired.configuration["behavior"]
+    assert repaired.configuration["execution"] == {"profile_id": "custom", **execution}
+    assert project.active_ai_config_revision_id == repaired.id
+
+
 async def test_config_revision_uses_optimistic_concurrency() -> None:
     session = AsyncMock()
     repository = AsyncMock()

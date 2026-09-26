@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, vi } from "vitest";
 import {
   operatorApiClient,
+  OperatorApiError,
   type EffectiveProjectAIConfig,
   type Organization,
   type ProjectAIConfigRevision,
@@ -596,6 +597,45 @@ test("one-model generation UI has no redundant selector", async () => {
   expect(
     screen.queryByRole("button", { name: "Generation model: Use Global" }),
   ).not.toBeInTheDocument();
+});
+
+test("repairs a disallowed model without changing stored Project settings", async () => {
+  mockProjectShell();
+  const stored = revisionFor({
+    behavior: {
+      generation_model_id: "openai-gpt-5.6-luna",
+      domain_instructions: "Preserve tax guidance.",
+      translation_policy: "inherit",
+    },
+    execution: { profile_id: "custom", ...baseExecution },
+  });
+  const create = setupAI(effectiveConfig(stored.id), stored);
+  vi.mocked(operatorApiClient.getProjectAIConfig).mockRejectedValue(
+    new OperatorApiError(
+      "The generation model is not enabled for this deployment.",
+      400,
+      "generation_model_not_allowed",
+    ),
+  );
+  renderOperatorComponent(
+    <OperatorConsoleApp />,
+    `/projects?project=${projectFixture.id}&section=ai-config`,
+  );
+
+  await userEvent.click(
+    await screen.findByRole("button", { name: "Use deployment generation model" }),
+  );
+
+  await waitFor(() => expect(create).toHaveBeenCalledTimes(1));
+  expect(create).toHaveBeenCalledWith(
+    projectFixture.id,
+    {
+      behavior: { domain_instructions: "Preserve tax guidance.", translation_policy: "inherit" },
+      execution: stored.configuration.execution,
+    },
+    stored.id,
+    "Use deployment generation model after allowlist update",
+  );
 });
 
 test("sparse payload contains only explicitly overridden behavior", async () => {

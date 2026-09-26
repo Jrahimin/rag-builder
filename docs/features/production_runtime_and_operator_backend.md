@@ -17,6 +17,15 @@ console UI described in [Operator Console MVP](operator_console.md).
 | `hosted_openai` | `openai` | `openai` | Deprecated compatibility; OpenAI embeddings; must not require Cohere |
 | `private_ollama` | `ollama` | `ollama` | Private Ollama-compatible model endpoint |
 
+When `APE_LLM__MODEL` is omitted, the `hosted-managed` capability (or legacy
+`hosted_managed` runtime profile) selects `gpt-6-luna`. An explicit model value
+remains authoritative. The development and compatibility profile defaults stay
+unchanged. Web search inherits the resolved LLM model unless it has its own override.
+The read-only Operator Configuration page shows the canonical deployment capability
+and the legacy runtime alias separately. When a stored Project revision selects a
+disallowed generation model, the AI editor can create an append-only repair revision
+that inherits the deployment model and preserves the stored execution settings.
+
 Production also requires Taskiq, the durable dispatcher, hybrid retrieval with the
 rerank stage enabled, MinIO/S3-compatible storage, authentication, and non-default database, Redis, and
 storage credentials. On `hosted_managed` the rerank occupant is Cohere `rerank-v4.0-pro`; missing

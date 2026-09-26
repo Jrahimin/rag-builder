@@ -1065,6 +1065,16 @@ class Settings(BaseSettings):
     ai_policy: AIConfigPolicy = Field(default_factory=AIConfigPolicy)
     auth: AuthConfig = Field(default_factory=AuthConfig)
 
+    @model_validator(mode="after")
+    def _resolve_hosted_managed_llm_default(self) -> Settings:
+        """Keep the provider fallback aligned with the hosted capability profile."""
+        profile_id = self.runtime.capability_profile_id or self.runtime.profile.value.replace(
+            "_", "-"
+        )
+        if profile_id == "hosted-managed" and "model" not in self.llm.model_fields_set:
+            self.llm = self.llm.model_copy(update={"model": "gpt-6-luna"})
+        return self
+
     def resolved_cohere_api_key(self) -> str:
         """Canonical shared Cohere key, then legacy reranker-only key."""
         canonical = (self.cohere.api_key or "").strip()

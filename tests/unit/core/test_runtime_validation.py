@@ -74,6 +74,29 @@ def test_development_preserves_fake_provider_defaults() -> None:
     validate_runtime_config(Settings())
 
 
+@pytest.mark.parametrize(
+    "runtime",
+    [
+        RuntimeConfig(profile=RuntimeProfile.HOSTED_MANAGED),
+        RuntimeConfig(capability_profile_id="hosted-managed"),
+    ],
+)
+def test_hosted_managed_omitted_llm_model_uses_gpt_6_luna(runtime: RuntimeConfig) -> None:
+    settings = Settings(runtime=runtime, llm=LLMConfig(backend=LLMBackend.OPENAI))
+
+    assert settings.llm.model == "gpt-6-luna"
+    assert settings.resolved_web_search_model() == "gpt-6-luna"
+
+
+def test_explicit_llm_model_is_not_replaced_by_hosted_default() -> None:
+    settings = Settings(
+        runtime=RuntimeConfig(capability_profile_id="hosted-managed"),
+        llm=LLMConfig(backend=LLMBackend.OPENAI, model="gpt-5.6-luna"),
+    )
+
+    assert settings.llm.model == "gpt-5.6-luna"
+
+
 def test_certified_hosted_profile_is_accepted() -> None:
     validate_runtime_config(_production_settings())
 
@@ -239,7 +262,6 @@ def test_expected_hosted_production_effective_configuration_resolves_exactly() -
         ),
         llm=LLMConfig(
             backend=LLMBackend.OPENAI,
-            model="gpt-6-luna",
             openai_api_key="llm-secret",
         ),
         cohere=CohereConfig(api_key="cohere-secret"),
