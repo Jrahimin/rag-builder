@@ -8,7 +8,7 @@ import time
 import uuid
 from collections import Counter
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Iterator
-from contextlib import asynccontextmanager, contextmanager
+from contextlib import asynccontextmanager, contextmanager, nullcontext
 from contextvars import ContextVar, Token
 from functools import wraps
 from typing import Any, TypeVar, cast
@@ -423,10 +423,17 @@ class ObservedLLM(BaseLLMProvider):
     ) -> AsyncGenerator[ChatCompletionChunk, None]:
         self._check_budget(messages, max_tokens)
         call, started = self._open_call()
+        upstream = self.provider.stream(messages, temperature=temperature, max_tokens=max_tokens)
+        purpose = call.get("purpose")
         try:
-            async for chunk in self.provider.stream(
-                messages, temperature=temperature, max_tokens=max_tokens
-            ):
+            while True:
+                # Bind only while advancing the provider, never across a yield to
+                # the transport (which may resume/finalize in another task).
+                with self.work.purpose(str(purpose)) if purpose else nullcontext():
+                    try:
+                        chunk = await anext(upstream)
+                    except StopAsyncIteration:
+                        break
                 if chunk.usage is not None:
                     call.update(
                         input_tokens=chunk.usage.input_tokens,
@@ -440,6 +447,7 @@ class ObservedLLM(BaseLLMProvider):
             raise
         finally:
             call["duration_ms"] = round((time.perf_counter() - started) * 1000)
+            await upstream.aclose()
 
     def _open_call(self) -> tuple[dict[str, Any], float]:
         call: dict[str, Any] = {

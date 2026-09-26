@@ -22,6 +22,74 @@ from app.platform.providers.contracts.embedding import (
 pytestmark = pytest.mark.unit
 
 
+async def test_citation_range_separator_is_not_a_factual_claim() -> None:
+    result = await GroundingService(ChatConfig()).map_claims(
+        "[1]\u2013[2]", [_chunk(content="First source."), _chunk(content="Second source.")]
+    )
+    assert not result.claims
+
+
+def test_bangla_penalty_inflections_retain_currency_without_accepting_filing_fee():
+    from app.modules.conversations.grounding_service import (
+        _currency_amounts,
+        _quantity_aligned_evidence,
+    )
+
+    evidence = ["প্রতিদিনের জন্য অনধিক একশত টাকা অর্থদণ্ডে দণ্ডনীয় হইবে।"]
+    fine = "The fine is Tk 100 per day."
+    assert _currency_amounts(" ".join(_quantity_aligned_evidence(fine, evidence))) == {100.0}
+    assert not _quantity_aligned_evidence("The filing fee is Tk 100.", evidence)
+
+
+@pytest.mark.parametrize(
+    "source", ["একশত টাকা", "এক শত টাকা", "১০০ টাকা", "one hundred taka", "100 taka", "Tk 100"]
+)
+def test_currency_spellings_match_complete_amount(source: str) -> None:
+    from app.modules.conversations.grounding_service import _currency_amounts
+
+    assert _currency_amounts(source) == {100.0}
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "one hundred fifty taka",
+        "one hundred and fifty taka",
+        "one thousand one hundred taka",
+    ],
+)
+def test_currency_spellings_do_not_truncate_compound_amounts(source: str) -> None:
+    from app.modules.conversations.grounding_service import _currency_amounts
+
+    assert not _currency_amounts(source)
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        ("১ (এক) হাজার টাকা", {1000.0}),
+        ("৫০ (পঞ্চাশ) টাকা", {50.0}),
+        ("৫০ (পঞ্চাশ) হাজার টাকা", {50000.0}),
+        ("৫০০ (পাঁচশত) টাকা", {500.0}),
+        ("Tk 1 thousand", {1000.0}),
+        ("৫০ (ষাট) টাকা", set()),
+    ],
+)
+def test_numeric_currency_scale_and_parenthetical_spellout(source, expected):
+    from app.modules.conversations.grounding_service import _currency_amounts
+
+    assert _currency_amounts(source) == expected
+
+
+@pytest.mark.parametrize("amount", [100, 200])
+async def test_currency_translation_does_not_accept_changed_fine(amount: int) -> None:
+    result = await GroundingService(ChatConfig()).map_claims(
+        f"The fine is Tk {amount} per day. [1]",
+        [_chunk(content="The fine is one hundred taka per day.")],
+    )
+    assert result.claims[0]["verification"] == ("supported" if amount == 100 else "unsupported")
+
+
 @pytest.mark.parametrize("marker", ["[1, page 7]", "[1, p. 7]", "[১, পৃষ্ঠা ৭]"])  # noqa: RUF001
 async def test_page_qualified_citation_requires_matching_indexed_page(marker: str) -> None:
     chunk = replace(_chunk(content="The filing deadline is 21 days."), page_number=7)
@@ -1464,6 +1532,59 @@ async def test_negative_exception_in_another_clause_does_not_reverse_positive_ru
     assert result.claims[0]["verification"] == "supported"
 
 
+async def test_conditional_exception_in_same_sentence_does_not_reverse_agm_deadline() -> None:
+    claim = "The first annual general meeting may be held within 18 months of incorporation."
+    evidence = (
+        "The first annual general meeting of a company may be held within a period of "
+        "18 months from the date of its incorporation and if such general meeting is held "
+        "within that period, it shall not be necessary to hold another meeting that year."
+    )
+    result = await GroundingService(ChatConfig(minimum_claim_token_coverage=0.3)).map_claims(
+        f"{claim} [1]", [_chunk(content=evidence)]
+    )
+    assert result.claims[0]["verification"] == "supported"
+
+
+async def test_and_if_continuation_keeps_its_second_condition_required() -> None:
+    evidence = "The return is accepted if the signature is valid and if the filing is not overdue."
+    result = await GroundingService(ChatConfig(minimum_claim_token_coverage=0.3)).map_claims(
+        "The return is accepted if the signature is valid. [1]", [_chunk(content=evidence)]
+    )
+    assert result.claims[0]["verification"] != "supported"
+
+
+@pytest.mark.parametrize(
+    "claim",
+    [
+        "The return is accepted if the signature is valid. [1]",
+        "The return is accepted if the filing is timely. [1]",
+    ],
+)
+async def test_and_if_shared_consequent_requires_both_conditions(claim: str) -> None:
+    evidence = "The return is accepted if the signature is valid and if the filing is timely."
+    result = await GroundingService(ChatConfig(minimum_claim_token_coverage=0.3)).map_claims(
+        claim, [_chunk(content=evidence)]
+    )
+    assert result.claims[0]["verification"] != "supported"
+
+
+async def test_and_if_shared_consequent_accepts_both_conditions() -> None:
+    evidence = "The return is accepted if the signature is valid and if the filing is timely."
+    result = await GroundingService(ChatConfig(minimum_claim_token_coverage=0.3)).map_claims(
+        "The return is accepted if the signature is valid and the filing is timely. [1]",
+        [_chunk(content=evidence)],
+    )
+    assert result.claims[0]["verification"] == "supported"
+
+
+async def test_and_if_continuation_preserves_bangla_condition() -> None:
+    evidence = "স্বাক্ষর বৈধ এবং দাখিল বিলম্বিত না হলে রিটার্ন গ্রহণ করা হবে।"
+    result = await GroundingService(ChatConfig(minimum_claim_token_coverage=0.3)).map_claims(
+        "স্বাক্ষর বৈধ হলে রিটার্ন গ্রহণ করা হবে। [1]", [_chunk(content=evidence)]
+    )
+    assert result.claims[0]["verification"] != "supported"
+
+
 async def test_semantic_similarity_cannot_change_comparative_member_count() -> None:
     claim = "The certificate is required when membership exceeds 51."
     evidence = "সদস্য সংখ্যা পঞ্চাশের অধিক হইলে সার্টিফিকেট সংযুক্ত করিতে হইবে।"
@@ -2448,3 +2569,145 @@ async def test_necessary_condition_does_not_support_reversed_or_sufficient_claim
         embedder=_cluster_embedder({claim: "certificate", evidence: "certificate"}),
     ).map_claims(f"{claim} [1]", [_chunk(content=evidence)])
     assert result.claims[0]["verification"] == expected
+
+
+def test_provision_identifiers_are_not_monetary_amounts() -> None:
+    from app.modules.conversations.grounding_service import _money_amounts
+
+    assert _money_amounts("Section 170(2): file after nine months.") == set()
+    assert _money_amounts("ধারা ১৭০(২): জরিমানা Tk 1,000.") == {1000}
+    assert _money_amounts("Section 266: fine payable Tk 500.") == {500}
+
+
+@pytest.mark.parametrize(
+    ("source", "amounts"),
+    [
+        ("পাঁচ হাজার টাকা অর্থদণ্ডে", {5000}),
+        ("দুইশত পঞ্চাশ টাকা অর্থদণ্ডে", {250}),
+        ("দশ হাজার টাকা", {10000}),
+        ("এক হাজার পাঁচশত টাকা", set()),
+    ],
+)
+def test_bengali_complete_currency_expressions(source, amounts) -> None:
+    from app.modules.conversations.grounding_service import _currency_amounts
+
+    assert _currency_amounts(source) == amounts
+
+
+def test_cross_language_quantity_alignment_retains_unknown_subject_evidence() -> None:
+    from app.modules.conversations.grounding_service import _quantity_aligned_evidence
+
+    evidence = ["আটাশ দিনের মধ্যে অবস্থান সম্পর্কে নোটিশ প্রদান করিবে।"]
+    assert _quantity_aligned_evidence("Notify its address within 28 days.", evidence) == evidence
+
+
+def test_bengali_daily_fine_alignment_keeps_the_penalty_clause() -> None:
+    from app.modules.conversations.grounding_service import _quantity_aligned_evidence
+
+    evidence = ["প্রত্যেক দিনের জন্য দুইশত টাকা অর্থদণ্ডে দণ্ডনীয় হইবে।"]
+    assert _quantity_aligned_evidence("It may be fined Tk 200 for each day.", evidence)
+
+
+def test_record_and_annual_list_durations_keep_bangla_subject_clauses():
+    from app.modules.conversations.grounding_service import (
+        _duration_quantities,
+        _quantity_aligned_evidence,
+    )
+
+    records = (
+        "হিসাব-বহি অন্য স্থানে অনধিক ছয় মাসের জন্য রাখা যাইবে এবং সিদ্ধান্তের সাত দিনের মধ্যে নোটিশ দাখিল করিবে।"
+    )
+    aligned = _quantity_aligned_evidence(
+        "Keep accounting books elsewhere for six months and notify within seven days.", [records]
+    )
+    assert {(6, "month"), (7, "day")} <= _duration_quantities(" ".join(aligned))
+    annual = "নিগমিত হওয়ার আঠার মাসের মধ্যে একটি তালিকা প্রণয়ন করিবে।"
+    assert _quantity_aligned_evidence("Prepare the annual member list within 18 months.", [annual])
+
+
+def test_statute_year_is_not_money_but_currency_value_is_preserved():
+    from app.modules.conversations.grounding_service import _money_amounts
+
+    assert _money_amounts("Companies Act 1994, s. 181: fine Tk 5000 after default") == {5000}
+    assert _money_amounts("A fine of Tk 1994 is payable.") == {1994}
+
+
+def test_admitted_overview_scope_only_certifies_the_execution_limitation():
+    from app.modules.conversations.grounding_service import _coverage_scope_verification
+
+    coverage = {
+        "coverage": {
+            "partial_scope_validated": False,
+            "full_coverage_validated": False,
+            "admitted_evidence_fallback": True,
+        }
+    }
+    limitation = "This is a limited source-based overview; complete coverage has not been verified."
+    assert _coverage_scope_verification(limitation, coverage)[0] == "supported"
+    assert _coverage_scope_verification(limitation, None)[0] == "unverified"
+    assert (
+        _coverage_scope_verification(
+            "The reviewed sources do not establish any AGM duty.", coverage
+        )[0]
+        == "unverified"
+    )
+
+
+def test_record_location_and_retention_keep_quantity_bearing_clauses():
+    from app.modules.conversations.grounding_service import (
+        _duration_quantities,
+        _quantity_aligned_evidence,
+    )
+
+    source = (
+        "হিসাব-বহি অন্য যে কোন স্থানে অনধিক ছয় মাসের জন্য রাখা যাইবে এবং সাত দিনের মধ্যে নোটিশ দাখিল করিবে।\n"
+        "পূর্বের অন্যুন বার বৎসর সময়কালের সকল হিসাব-বহি এবং সংশ্লিষ্ট ভাউচার সংরক্ষণ করিবে।"
+    )
+    location = _quantity_aligned_evidence(
+        "Keep them at an alternative location for six months and give notice within seven days.",
+        [source],
+    )
+    retention = _quantity_aligned_evidence("Records must be retained for 12 years.", [source])
+    assert {(6, "month"), (7, "day")} <= _duration_quantities(" ".join(location))
+    assert (12, "year") in _duration_quantities(" ".join(retention))
+    assert (11, "year") not in _duration_quantities(" ".join(retention))
+
+
+def test_inherited_document_heading_cannot_win_claim_locator_over_rule_text():
+    from dataclasses import replace
+
+    from app.modules.conversations.grounding_service import (
+        _best_evidence_spans,
+        _claim_candidate_spans,
+    )
+
+    title = "Income Tax Act 2023 — official consolidated statutory text"
+    section = "Section 166 — Returns"
+    body = "Every company must file a return."
+    source = replace(
+        _chunk(content=f"{title}\n\n{section}\n\n{body}"),
+        metadata={"heading_path": [title, section]},
+    )
+    candidates = _claim_candidate_spans(source)
+    assert title not in [span.text for span in candidates]
+    assert section not in [span.text for span in candidates]
+    assert source.content in [span.text for span in candidates]
+    claim = "A company must file an income tax return."
+    scores = {(claim, title): 0.99, (claim, body): 0.9}
+    selected = _best_evidence_spans(claim, [(1, source)], scores, {source.chunk_id: candidates})
+    assert selected[source.chunk_id].text == body
+    assert (
+        source.content[selected[source.chunk_id].char_start : selected[source.chunk_id].char_end]
+        == body
+    )
+
+
+@pytest.mark.parametrize("has_verdict", [True, False])
+async def test_reviewed_provisions_limitation_requires_matching_verdict(has_verdict: bool) -> None:
+    result = await GroundingService(ChatConfig()).map_claims(
+        "The reviewed provisions do not establish the annual return filing penalty.",
+        [_chunk(content="The annual return must be filed within 21 days.")],
+        coverage={"missing": ["Annual return filing penalty"]} if has_verdict else None,
+    )
+    assert result.claims[0]["claim_kind"] == "coverage_scope"
+    assert result.claims[0]["verification"] == ("supported" if has_verdict else "unverified")

@@ -193,7 +193,30 @@ Web access is suppressed whenever `document_id`, `metadata_filter`, `as_of`, or 
 is resolved deterministically for that turn; negated wording does not create a restriction, and an
 API `indexed_only` restriction cannot be relaxed by message text. Prior web citations are not reused
 as indexed evidence.
-Provider failure or empty web results fail closed. `source_provenance` is always one of
+Provider failure or empty web results fail closed. A broad compliance check first gets bounded
+recovery; if that recovery reaches its deadline or completes with incomplete coverage without
+validated proof, an unscoped,
+non-calculation turn in a web-enabled mode may use reviewed web evidence. Scoped requests,
+calculations, and current-rule applicability checks remain guarded. A local recovery deadline with
+no validated proof completes as a persisted `insufficient_evidence` response; a genuine provider
+failure remains a failed execution and may return 503. Diagnostics record
+`knowledge_repair.fallback_route`. The web search query includes the resolved question and
+reference date, with selected Project scope context when available. Search and review budget expiry
+are reported as `search_timeout` and `review_timeout`. Recovery, search and review have
+sequential bounded allowances; local recovery cannot consume the reserved 20-second web review
+allowance. The total evidence ceiling starts after initial retrieval and adds the larger configured
+recovery allowance, web-search timeout and review allowance. Search itself is capped at its
+configured timeout. A search timeout is described as a time limit, not provider unavailability;
+web review failures yield an insufficient-evidence response that identifies the verification failure.
+If some candidate quotes are invalid but another is verified exactly, only independently
+verified sources are admitted; `web_search.scope_review.status` is `reviewed_partial` while the
+outer `web_search.status` is `evidence_accepted` when at least one source is admitted. An incoming MODIFIES
+relationship does not by itself prove whole-provision replacement: affected base text remains
+unresolved unless diagnostics contain both `provision_effect=replaces` and
+`replacement_scope_verified=true`.
+Broad web-only overviews in either web-enabled mode carry an explicit partial-coverage notice because
+relevant cited passages do not establish that every requested obligation was found.
+`source_provenance` is always one of
 `knowledge`, `web`, `knowledge_and_web`, or `none`. Web citations use `source_kind=web` and provide
 `web_url`, `web_title`, `web_retrieved_at`, and `web_provider`; Knowledge location fields are null.
 
@@ -216,3 +239,99 @@ Clarification streams the same `done` shape with `finish_reason=clarification`
 and `grounded=null`.
 
 Client disconnect cancels generation best-effort; user message from Tx1 is retained. No assistant row is written when the client disconnects before completion.
+
+
+Operational note (2026-09-26): reviewed partial answers allow at most 15 seconds for optional web supplementation. `lifecycle.stages_ms.web_search` and the matching span expose its time separately. A failed supplement preserves the independently reviewed local answer and its missing coverage; it does not promote unreviewed snippets. Broad recovery balances central duties and applicability checks within the existing configurable query count. No response-schema fields were added.
+
+
+### Partial review continuity and provision locators
+
+A delta coverage review evaluates only changed or unresolved requirements, but its
+partial answer scope spans the whole turn. It can retain previously validated duties
+alongside newly proven duties; final handoff still verifies all selected source quotes
+and authority dependencies. Interacting calculation dependencies remain inseparable.
+Generation copies provision identifiers from the governing heading rather than an
+incidental cross-reference. The monetary claim guard excludes explicit section/article
+locators, while still checking currency amounts. This does not independently certify
+a legal reference; source applicability and claim verification remain required.
+
+For imported statutes, preserve exact provision numbers in source headings so
+continuation chunks retain their parent provision. Corrected representations use
+new source revisions and normal indexing rather than mutating historical chunks.
+Latency depends on the project recovery budget and provider timings; recovery timeouts
+are not an end-to-end response SLA.
+
+
+### Reviewed scope and bounded synthesis
+
+Coverage checks may carry an explicit `answerable_scope`: the precise duty or rule
+that the reviewer judges independently useful. The handoff merges these scopes into
+the partial-answer IDs, then requires exact source proof for every selected ID.
+`supported` alone does not authorize a partial calculation; unresolved governing
+continuations cannot authorize a scope. Missing rules and exclusions remain visible.
+A validated partial answer is handed off when less than 12 seconds remain in the
+recovery budget, instead of beginning retrieval plus another review that is unlikely
+to finish. This is a recovery scheduling policy, not a guaranteed request SLA.
+
+`indexed_then_web` falls back when indexed evidence blocks generation; a useful
+validated indexed partial answer does not automatically pay for another web review.
+`indexed_and_web` retains its explicit combined-source behavior.
+
+For OpenAI GPT-6 Luna, internal JSON review purposes use JSON mode, with application
+schema validation and exact-source checks still required. JSON mode guarantees
+syntax, not schema correctness. Luna request-scoped reasoning is bounded to low for
+internal reviews and final source-based synthesis; requests outside these known
+purposes keep provider defaults. Final responses remain ordinary prose/Markdown.
+Bengali currency and duration checks recognize complete spelled monetary values,
+records/notices/member-list subjects and legal locators without equating fines to
+fees or one duty's deadline to another's.
+
+Independent authoritative overviews with six or more requirements split the first
+coverage review into two concurrent requirement partitions. Both receive identical
+source text, source-version limitations and the original question. Each partition
+must use its assigned IDs; unknown or duplicate identities cannot prove a duty.
+Missing or ambiguous IDs become explicit unverified gaps, preserving independently
+reviewed exact-ID checks instead of reporting a provider outage. The union still
+undergoes exact proof and scope validation. Cancellation stops both calls. This reduces serial output latency
+at the cost of sending the shared input twice. Calculations, current-applicability
+and inherited-scope revalidation retain a single interacting-rule review.
+
+Authoritative compliance answers do not use unreviewed admitted-evidence fallback:
+browser QA showed that this could apply a valid rule to the wrong company category.
+Only validated complete or independently reviewed partial proof can open that gate.
+Streaming propagates the same provider-call purpose as regular requests only while
+advancing the provider, without leaking context across transport yields.
+
+Broad recovery budgets focused query results round-robin before unreviewed initial
+broad hits, so a duty's second governing passage is not crowded out by generic
+context. Existing proof is revalidated against the final evidence packet. Broad
+answers prefer individually cited short sentences over compound table rows and
+keep reviewed coverage limitations separate from legal assertions.
+
+Batched recovery permits up to four concurrent searches per request (eight searches
+in two waves), retaining separate database sessions, pinned snapshot validation,
+ordered results, cancellation cleanup and the existing shared process/deployment
+limits. This is a latency optimization, not an increase to query or evidence budgets.
+
+For ordinary present-day overviews, review can establish a continuing duty from the
+operative text of an active primary official consolidated statute without demanding
+a separate commencement date for each unchanged section. Null effective-date metadata
+alone is not a temporal conflict. Historical/future questions, period-specific rates,
+textual commencement conditions and identified amendments/conflicts still require
+applicable temporal proof; source labels never substitute for operative rule text.
+
+Claim locator selection excludes isolated headings identified by the parser's
+heading_path when body text exists. The full passage still retains its governing
+headings and exact offsets. This prevents a matching document title from displacing
+the operative clause. Quantity binding recognizes record/voucher and alternative
+storage-location phrases across English and Bengali without changing durations.
+
+Generation includes a compact fixed citation index in supplied passage order. Source
+labels in that index remain untrusted data; platform instructions follow it. Models
+must not renumber markers by order of appearance or create a competing bibliography.
+Citation validation still checks the resulting claims against the actual indexed
+passages; prompt instructions do not count as proof of citation correctness.
+
+Evidence-limit statements referring to reviewed provisions are classified as coverage
+statements and still require a matching structured coverage verdict. They cannot
+establish that a legal duty or sanction does not exist.

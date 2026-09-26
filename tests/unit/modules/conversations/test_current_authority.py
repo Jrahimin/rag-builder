@@ -73,6 +73,8 @@ def test_exact_modified_provision_is_removed_but_neighboring_rules_remain() -> N
             "outcome": "already_in_recall",
             "base_revision_id": str(base),
             "modifier_revision_id": str(modifier),
+            "provision_effect": "replaces",
+            "replacement_scope_verified": True,
             "target_provisions": ["Section 21 — Investment Rebate Rate"],
         }
     ]
@@ -95,6 +97,34 @@ def test_exact_modified_provision_is_removed_but_neighboring_rules_remain() -> N
     assert safe[0].metadata["authority_redacted_provisions"] == [
         "Section 21 — Investment Rebate Rate"
     ]
+
+
+def test_modifies_without_verified_replace_preserves_text_and_marks_uncertainty() -> None:
+    base = uuid.uuid4()
+    modifier = uuid.uuid4()
+    records = [
+        {
+            "relationship_type": "modifies",
+            "outcome": "already_in_recall",
+            "base_revision_id": str(base),
+            "modifier_revision_id": str(modifier),
+            "target_provisions": ["Section 21 — Investment Rebate Rate"],
+        }
+    ]
+    base_chunk = _chunk(
+        revision=base,
+        records=records,
+        content="Section 21 — Investment Rebate Rate\nThe rebate is 15%.",
+    )
+    modifier_chunk = _chunk(revision=modifier, records=records, content="The rate changes to 10%.")
+
+    selected = remove_superseded_provisions([base_chunk, modifier_chunk], records)
+
+    assert "The rebate is 15%" in selected[0].content
+    assert selected[0].metadata["authority_status"] == "unresolved"
+    assert selected[0].metadata["authority_limitations"][0]["reason"] == (
+        "amendment_effect_unverified"
+    )
 
 
 def test_unscoped_or_unresolved_relationship_never_suppresses_whole_document() -> None:
@@ -123,6 +153,8 @@ def test_exact_bangla_modified_provision_is_removed_without_suppressing_neighbor
             "outcome": "already_in_recall",
             "base_revision_id": str(base),
             "modifier_revision_id": str(modifier),
+            "provision_effect": "replaces",
+            "replacement_scope_verified": True,
             "target_provisions": [heading],
         }
     ]
@@ -143,6 +175,76 @@ def test_exact_bangla_modified_provision_is_removed_without_suppressing_neighbor
     assert "১৫%" not in safe[0].content
     assert "রিবেট করের বেশি নয়" in safe[0].content
     assert safe[0].metadata["authority_redacted_provisions"] == [heading]
+
+
+def _verified_replace_record(base: uuid.UUID, modifier: uuid.UUID, scope: str) -> dict:
+    return {
+        "relationship_type": "modifies",
+        "outcome": "already_in_recall",
+        "base_revision_id": str(base),
+        "modifier_revision_id": str(modifier),
+        "provision_effect": "replaces",
+        "replacement_scope_verified": True,
+        "target_provisions": [scope],
+    }
+
+
+def test_verified_heading_identity_ignores_title_and_punctuation_changes() -> None:
+    base, modifier = uuid.uuid4(), uuid.uuid4()
+    scope = "Section 23 — Original title"
+    record = _verified_replace_record(base, modifier, scope)
+    base_chunk = _chunk(
+        revision=base,
+        records=[record],
+        content="Section 23. Revised title!\nThe replaced rule text.",
+    )
+    modifier_chunk = _chunk(revision=modifier, records=[record], content="Replacement text.")
+
+    selected = remove_superseded_provisions([base_chunk, modifier_chunk], [record])
+
+    assert [chunk.chunk_id for chunk in selected] == [modifier_chunk.chunk_id]
+
+
+def test_verified_subsection_replacement_does_not_erase_sibling_subsection() -> None:
+    base, modifier = uuid.uuid4(), uuid.uuid4()
+    scope = "Section 4(1) — Eligibility"
+    record = _verified_replace_record(base, modifier, scope)
+    base_chunk = _chunk(
+        revision=base,
+        records=[record],
+        content=(
+            "Section 4(1) — Eligibility\nOld eligibility text.\n\n"
+            "Section 4(2) — Documentation\nKeep the document requirement."
+        ),
+    )
+    modifier_chunk = _chunk(revision=modifier, records=[record], content="Eligibility replaced.")
+
+    selected = remove_superseded_provisions([base_chunk, modifier_chunk], [record])
+
+    assert len(selected) == 2
+    assert "Old eligibility text." not in selected[0].content
+    assert "Keep the document requirement." in selected[0].content
+
+
+@pytest.mark.parametrize(
+    "scope",
+    [
+        "Section 4(1)\u2013(3) — Eligibility range",
+        "Sections 4(1), 4(2) — Eligibility list",
+        "4",
+    ],
+)
+def test_ambiguous_range_list_or_bare_numeric_scope_does_not_redact(scope: str) -> None:
+    base, modifier = uuid.uuid4(), uuid.uuid4()
+    record = _verified_replace_record(base, modifier, scope)
+    original = "Section 4(1) — Eligibility\nKeep the provision text."
+    base_chunk = _chunk(revision=base, records=[record], content=original)
+    modifier_chunk = _chunk(revision=modifier, records=[record], content="Modifier text.")
+
+    selected = remove_superseded_provisions([base_chunk, modifier_chunk], [record])
+
+    assert selected[0].content == original
+    assert selected[0].metadata["authority_status"] == "unresolved"
 
 
 def test_scope_is_not_applied_when_modifier_is_absent_from_recall() -> None:
@@ -415,6 +517,8 @@ def test_older_modifier_publication_still_redacts_explicit_provision() -> None:
             "modifier_revision_id": str(modifier),
             "modifier_published_date": "2020-01-01",
             "modifier_effective_from": "2020-01-01",
+            "provision_effect": "replaces",
+            "replacement_scope_verified": True,
             "target_provisions": ["Section 21 — Investment Rebate Rate"],
         }
     ]
@@ -469,6 +573,8 @@ def test_future_as_of_still_redacts_a_commenced_modifier() -> None:
             "base_revision_id": str(base),
             "modifier_revision_id": str(modifier),
             "modifier_effective_from": "2026-10-01",
+            "provision_effect": "replaces",
+            "replacement_scope_verified": True,
             "target_provisions": ["Section 21 — Investment Rebate Rate"],
         }
     ]
@@ -593,6 +699,8 @@ def test_expired_modifier_is_not_applied_after_its_effective_interval() -> None:
             "modifier_revision_id": str(modifier),
             "modifier_effective_from": "2019-01-01",
             "modifier_effective_to": "2021-12-31",
+            "provision_effect": "replaces",
+            "replacement_scope_verified": True,
             "target_provisions": ["Section 21 — Investment Rebate Rate"],
         }
     ]

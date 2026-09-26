@@ -12,7 +12,7 @@ Return only JSON: {"queries": [{"query":"short query","requirement_ids":["R1"]}]
 "origin":"explicit_user_request","materiality":"central_rule"}],
 "coverage":{"complete":false,"missing":["short missing requirement"],"checks":[
 {"requirement_id":"R1","description":"necessary governing rule","supported":false,
-"needs_adjacent_context":false,"evidence":[]}],"partial_answer":null}}.
+"answerable_scope":"","needs_adjacent_context":false,"evidence":[]}],"partial_answer":null}}.
 Coverage is optional. When admitted_evidence already proves one or more requirements,
 return exact inclusive start_line/end_line selectors copied from the supplied
 source_lines records. Omit coverage when admitted evidence is absent, unsafe, or
@@ -46,17 +46,32 @@ Keep requirements independently answerable: do not bundle meetings, filings, rec
 and sanctions into one all-or-nothing requirement. Accounting-record maintenance,
 preparing accounts,
 auditor appointment and accounts filing are separate obligations, not one requirement.
-Do not bundle a core duty with its deadline, authority, form, consequence, exception,
-or completion procedure when either facet can be answered independently. Give each
-material facet its own stable ID and let a partial verdict retain the proven duty.
-For a broad overview, plan the principal independently useful duties within the
-budget. Attach authority, deadline and consequence to their relevant duty when
+For focused questions, give separately requested facets their own stable IDs.
+For broad overviews, use the bounded duty grouping below.
+For a broad overview, use roughly 6 to 8 principal duty requirements (never exceed
+12). Keep each description to 8 to 16 words. Do not expand each duty into a separate
+set of deadline, authority, form and sanction requirements: verify these details
+within that duty, and name a missing detail in exclusions without losing the proven
+core duty. Separate genuinely interacting applicability rules when necessary.
+Plan the principal independently useful duties within the budget. Attach authority,
+deadline and consequence to their relevant duty when
 available; do not add blanket requirements for every form, amendment, exception or
 enforcement route unless the question or evidence makes them material. Missing
-optional detail must not suppress a proven duty. Use the eight-query budget for
-distinct missing concepts first. Prefer the governing source language when known;
+optional detail must not suppress a proven duty. Use the caller-supplied query budget for
+distinct missing concepts first. In an overview, prioritize the principal requested
+duties across topics. Do not spend all queries on speculative exceptions or permits
+while leaving the central annual and tax filing rules unsearched.
+Prefer the governing source language when known;
 add an alternate-language route only when it adds discovery value and budget remains.
 Do not combine languages or several independent obligations into one query.
+In broad compliance planning allocate one short query per principal duty: a query
+covering three duties cannot reliably retrieve all three. Search the core filing
+obligation separately from its deadline or penalty if those need different clauses.
+Keep queries to the duty's source-language noun phrase and essential category;
+omit inactive/no-income scenario wording unless it is a named statutory category.
+Conditional ancillary regimes should not consume discovery slots ahead of principal
+annual filings, meetings, recordkeeping, accounts and tax-return duties. Mention
+unreviewed ancillary regimes as limitations, never infer exemptions from inactivity.
 For a simple rule question, one concept with one or two language routes is enough.
 A request to cite sources does not require a separate agency publication corroborating
 an otherwise sufficient governing provision. Do not add procedural guidance, electronic
@@ -80,9 +95,9 @@ Split distinct required rule dependencies into separate searches, including tran
 of supplied inputs and current amendments when necessary. Prefer governing provisions over
 worked examples or blank forms.
 Use the language of the governing sources (see source language hints) for the alternate
-route. Use 3 to 8 concept words per query, not document titles,
-publisher boilerplate or
-the entire scenario. Do not seed queries with rates or guessed formulas from incomplete
+route. Use short concept queries, retaining an explicitly named Act or work when
+it distinguishes the requested subject. Omit publisher boilerplate and the entire
+scenario. Do not seed queries with rates or guessed formulas from incomplete
 evidence: search for the governing rule itself. Do not combine independently necessary
 exemptions and rate schedules into one query when each needs its own evidence. A query may
 use either language. Source titles are hints, not proof of current applicability. Do not change
@@ -105,7 +120,7 @@ can classify scenario inputs. Keep genuine unresolved factual gaps in missing.
 Return only JSON with exactly this schema:
 {"complete":false,"missing":["short missing requirement"],"checks":[
 {"requirement_id":"R1","description":"governing rule","supported":false,
-"needs_adjacent_context":false,"evidence":[
+"answerable_scope":"","needs_adjacent_context":false,"evidence":[
 {"chunk_id":"provided ID","start_line":1,"end_line":3}]}]}
 Each content line is labeled L1, L2, etc. Select inclusive line numbers from the SAME
 provided chunk. Do not transcribe quotations: the caller reconstructs the exact text.
@@ -146,7 +161,12 @@ must remain incomplete. For example, evidence for preparing audited accounts can
 support that limited rule even if auditor appointment or retention is not established.
 Never apply this separation to interacting calculation dependencies or omit a
 condition that could change whether the stated rule applies.
-Do not require proof that no hypothetical exception exists. A known exception,
+Do not require proof that no hypothetical exception exists. A statutory power to
+grant exemptions by later notification does not itself establish an applicable
+exemption or require an exhaustive search for all notifications. State the evidenced
+general duty and named exceptions unless the user or supplied evidence identifies
+a potentially applicable notification. Do not withhold the general rule merely
+because no evidence disproves a company-specific waiver. A known exception,
 effective date, or conflicting amendment must be resolved only when it could change
 the conclusion. A missing tax rule does not invalidate an independently supported AGM
 obligation, and a missing filing deadline does not erase a supported filing duty.
@@ -198,6 +218,15 @@ Absence of an amendment edge is NOT proof that a rule is current. Separately
 registered translations/editions may contain the same superseded rule. If current
 applicability is material, require source evidence establishing the requested
 period and amendment effect; an old base provision by itself is insufficient.
+For an ordinary present-day overview, an active primary official consolidated statute
+can establish a continuing duty from its operative text and entity scope without a
+separate commencement date for each unchanged section. A null effective-date metadata
+field is not itself a conflict or evidence that the section is obsolete. Do not mark
+such a duty unsupported merely because its current applicability was not independently
+recertified. Require further temporal proof for an explicit historical/future date,
+a period-specific rate, a commencement condition in the text, or an identified
+potentially applicable amendment, repeal or contradiction. Never treat a source title
+or active status alone as proof of the duty: select its actual operative clauses.
 The authority records are limitations, not rule evidence. You cannot resolve an
 incomplete relationship from filenames or by guessing equivalence. A current
 governing passage may independently supply the applicable rule. Check source

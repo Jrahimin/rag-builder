@@ -389,3 +389,35 @@ async def test_snapshot_aggregates_tokens_and_calls_by_purpose():
     tokens = snapshot["tokens_by_purpose"]["turn_resolution"]
     assert tokens["input"] is None or tokens["input"] >= 0
     assert tokens["output"] is None or tokens["output"] >= 0
+
+
+@pytest.mark.asyncio
+async def test_stream_provider_gets_unbound_purpose_without_leaking_across_yield():
+    from app.platform.providers.contracts.llm import ChatCompletionChunk
+    from app.platform.providers.implementations.echo_chat import EchoLLMProvider
+    from app.platform.providers.request_work import ObservedLLM, current_request_purpose
+
+    seen = []
+    closed = []
+
+    async def upstream(*args, **kwargs):
+        try:
+            seen.append(current_request_purpose())
+            yield ChatCompletionChunk(delta="answer")
+            seen.append(current_request_purpose())
+        finally:
+            closed.append(True)
+
+    provider = EchoLLMProvider(model="echo", provider_version="1")
+    provider.stream = upstream
+    work = RequestWork(uuid.uuid4())
+    span = work.begin_span("answer_generation")
+    stream = ObservedLLM(provider, work).stream([], max_tokens=100)
+    assert (await anext(stream)).delta == "answer"
+    assert current_request_purpose() is None
+    with pytest.raises(StopAsyncIteration):
+        await anext(stream)
+    work.finish_span(span)
+    assert seen == ["answer_generation", "answer_generation"]
+    assert closed == [True]
+    assert current_request_purpose() is None

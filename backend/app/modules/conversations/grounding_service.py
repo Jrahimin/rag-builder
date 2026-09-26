@@ -63,8 +63,8 @@ _COVERAGE_SCOPE_PATTERN = regex.compile(
     r"(?:available (?:materials|provisions) (?:do not|did not) establish|"
     r"the materials reviewed (?:do not|did not) establish|"
     r"(?:i|we) cannot responsibly state from (?:these|the) materials|"
-    r"not enough indexed evidence|"
-    r"reviewed (?:evidence|materials|sources) (?:do(?:es)?|did) not|"
+    r"not enough indexed evidence|complete coverage has not been verified|"
+    r"reviewed (?:evidence|materials|sources|provisions) (?:do(?:es)?|did) not|"
     r"this answer (?:does|did) not (?:cover|establish)|"
     r"selected (?:evidence|passages|materials) (?:do(?:es)?|did) not|"
     r"(?:supplied|provided) (?:source(?:s)?|evidence|passages|materials|provisions) "
@@ -910,6 +910,7 @@ class GroundingService:
             claim_text = _CITATION_PATTERN.sub("", segment).strip()
             if (
                 not claim_text
+                or not regex.search(r"[\p{L}\p{N}]", claim_text)
                 or _is_leading_table_header(segments, index - 1)
                 or _is_structural_segment(claim_text)
                 or _is_quantity_setup_segment(segment)
@@ -948,7 +949,7 @@ class GroundingService:
             if kind_hint != "coverage_scope":
                 keys = {claim_text, assertion} - {""}
                 for _, chunk in evidence_chunks:
-                    spans_by_chunk.setdefault(chunk.chunk_id, _candidate_spans(chunk.content))
+                    spans_by_chunk.setdefault(chunk.chunk_id, _claim_candidate_spans(chunk))
                     for span in _spans_for_embedding(assertion, claim_text, chunk, spans_by_chunk):
                         for key in keys:
                             semantic_pairs.append((key, span.text))
@@ -1066,7 +1067,10 @@ class GroundingService:
                     draft.assertion,
                     regex.IGNORECASE,
                 ) and any(
-                    not _amounts_include(_money_amounts(quantity_evidence), amount)
+                    not _amounts_include(
+                        _money_amounts(quantity_evidence) | _currency_amounts(quantity_evidence),
+                        amount,
+                    )
                     for amount in _money_amounts(draft.assertion)
                 ):
                     verification = ClaimVerification.UNVERIFIED
@@ -1741,6 +1745,8 @@ def _quantity_number_words() -> dict[str, int]:
         "উনিশ": 19,
         "বিশ": 20,
         "একুশ": 21,
+        "আটাশ": 28,
+        "আঠাশ": 28,
         "ত্রিশ": 30,
         "চল্লিশ": 40,
         "পঁয়তাল্লিশ": 45,
@@ -2310,18 +2316,96 @@ def _amount_set(text: str) -> set[float]:
 
 def _money_amounts(text: str) -> set[float]:
     """Amounts large enough to be scenario money, not days or bare percents."""
-    return {amount for amount in _amount_set(text) if amount >= 100}
+    # Provision identifiers are locators, not monetary operands. Keep explicit
+    # currency expressions untouched so an unsupported fine still fails review.
+    without_locators = regex.sub(
+        r"\b(?:sections?|articles?|chapters?|s\.)\s*\d+[a-z]?(?:\(\d+\))*"
+        r"|(?:ধারা|অনুচ্ছেদ)\s*\d+[ক-হ]?(?:\(\d+\))*",
+        "",
+        text,
+        flags=regex.IGNORECASE,
+    )
+    without_locators = regex.sub(
+        r"\b(?:Act|Ordinance|Rules|Regulations|Code)\s*,?\s*(?:18|19|20)\d{2}\b",
+        "",
+        without_locators,
+        flags=regex.IGNORECASE,
+    )
+    return {amount for amount in _amount_set(without_locators) if amount >= 100}
 
 
 def _currency_amounts(text: str) -> set[float]:
     folded = _fold_indic_digits(text)
-    matches = regex.findall(
-        rf"(?:\b(?:BDT|Tk)\b|৳)\s*(?P<prefix>{_NUMBER})|"
-        rf"(?P<suffix>{_NUMBER})\s*(?:\b(?:BDT|Tk)\b|৳)",
+    currency = r"(?:\b(?:BDT|Tk|taka)\b|৳|টাকা(?:র)?)"
+    values: set[float] = set()
+    # Only complete currency expressions qualify. Do not pull a small component
+    # out of a compound amount (e.g. "one hundred fifty taka"). Semantic claim
+    # verification still establishes what the amount applies to.
+    words = _quantity_number_words()
+    words.pop("বার", None)
+    for word, number in list(words.items()):
+        if 1 <= number <= 9:
+            if word.isascii():
+                words[f"{word} hundred"] = number * 100
+            else:
+                for suffix in ("শত", "শো"):
+                    words[word + suffix] = number * 100
+                    words[word + " " + suffix] = number * 100
+    # Bengali statutes also spell composite hundreds and scaled amounts.
+    # Match the complete expression, never just its trailing small component.
+    small_words = [
+        (word, value) for word, value in words.items() if not word.isascii() and value < 100
+    ]
+    for hundred, value in list(words.items()):
+        if not hundred.isascii() and value >= 100:
+            for tail, remainder in small_words:
+                words[f"{hundred} {tail}"] = value + remainder
+    scales = {
+        "hundred": 100,
+        "thousand": 1000,
+        "million": 1000000,
+        "billion": 1000000000,
+        "lakh": 100000,
+        "crore": 10000000,
+        "শত": 100,
+        "হাজার": 1000,
+        "লক্ষ": 100000,
+        "লাখ": 100000,
+        "কোটি": 10000000,
+    }
+    scale_pattern = "|".join(scales)
+    numeric = (
+        rf"(?P<number>{_NUMBER})(?:\s*\((?P<spelling>[\p{{L}}\p{{M}} -]+)\))?"
+        rf"(?:\s+(?P<scale>{scale_pattern})(?![\p{{L}}\p{{M}}]))?"
+    )
+    for pattern in (rf"{currency}\s*{numeric}", rf"{numeric}\s*{currency}"):
+        for match in regex.finditer(pattern, folded, regex.IGNORECASE):
+            amount = _parse_amount(match.group("number"))
+            spelling = match.group("spelling")
+            if spelling and words.get(spelling.strip().lower()) != amount:
+                continue  # Do not silently resolve conflicting or unknown spell-outs.
+            values.add(amount * scales.get((match.group("scale") or "").lower(), 1))
+    alternatives = "|".join(regex.escape(word) for word in sorted(words, key=len, reverse=True))
+    for match in regex.finditer(
+        rf"(?<![\p{{L}}\p{{M}}\d])(?P<words>{alternatives})"
+        rf"(?:\s+(?P<scale>{scale_pattern}))?\s+{currency}",
         folded,
         regex.IGNORECASE,
-    )
-    return {_parse_amount(prefix or suffix) for prefix, suffix in matches if (prefix or suffix)}
+    ):
+        before = folded[: match.start()].rstrip()
+        # A preceding numeric/scaled component makes this an unsupported compound.
+        if regex.search(
+            r"(?:\d|hundred|thousand|million|billion|lakh|crore|শত|শো|হাজার|লক্ষ|লাখ|কোটি)"
+            r"(?:\s+and)?$",
+            before,
+            regex.IGNORECASE,
+        ):
+            continue
+        values.add(
+            float(words[match.group("words").lower()])
+            * scales.get((match.group("scale") or "").lower(), 1)
+        )
+    return values
 
 
 def _amounts_include(amounts: set[float], value: float) -> bool:
@@ -2537,6 +2621,14 @@ def _coverage_scope_verification(
             ClaimVerification.UNVERIFIED,
             ClaimVerificationReason.COVERAGE_VERDICT_UNAVAILABLE,
         )
+    if coverage.get("admitted_evidence_fallback") is True and regex.fullmatch(
+        r"This is a limited source-based overview; complete coverage has not been verified\.?",
+        _plain_claim_text(text).strip(),
+        flags=regex.IGNORECASE,
+    ):
+        # This is a known execution limitation, not an assertion that a legal
+        # duty is absent. Specific missing-topic claims still require review.
+        return ClaimVerification.SUPPORTED, ClaimVerificationReason.MATCHES_COVERAGE_VERDICT
     if (
         coverage.get("partial_scope_validated") is False
         and coverage.get("full_coverage_validated") is not True
@@ -2593,6 +2685,7 @@ def _normalize_coverage(coverage: dict[str, Any] | None) -> dict[str, Any]:
             ),
             "full_coverage_validated": nested.get("full_coverage_validated"),
             "partial_scope_validated": nested.get("partial_scope_validated"),
+            "admitted_evidence_fallback": nested.get("admitted_evidence_fallback"),
         }
     inherited_partial = coverage.get("coverage_partial") is True or nested == "partial"
     if inherited_partial or isinstance(partial, dict):
@@ -2728,6 +2821,21 @@ def _contextualized_assertion(display: str, context: str) -> str:
     return f"{context} {plain}"
 
 
+def _claim_candidate_spans(chunk: ContextChunk) -> list[_SelectedSpan]:
+    """Keep headings as context, not a standalone witness for a body claim."""
+    spans = _candidate_spans(chunk.content)
+    headings = chunk.metadata.get("heading_path")
+    if not isinstance(headings, list):
+        return spans
+    labels = {str(label).strip() for label in headings if str(label).strip()}
+    body = [span for span in spans if span.derivation != "chunk" and span.text not in labels]
+    if not body:
+        return spans
+    # The complete passage retains governing headings, conditions and exact offsets.
+    # Only isolated metadata headings are excluded from locator competition.
+    return [span for span in spans if span.derivation == "chunk" or span.text not in labels]
+
+
 def _candidate_spans(content: str) -> list[_SelectedSpan]:
     spans: list[_SelectedSpan] = []
     last = 0
@@ -2839,7 +2947,7 @@ def _spans_for_embedding(
     chunk: ContextChunk,
     spans_by_chunk: dict[uuid.UUID, list[_SelectedSpan]],
 ) -> list[_SelectedSpan]:
-    spans = spans_by_chunk.setdefault(chunk.chunk_id, _candidate_spans(chunk.content))
+    spans = spans_by_chunk.setdefault(chunk.chunk_id, _claim_candidate_spans(chunk))
     same_script = _uses_lexical_verification(assertion, [chunk.content])
     return _prefilter_spans(spans, assertion, display, limit=8 if same_script else 20)
 
@@ -2856,7 +2964,7 @@ def _best_evidence_spans(
     claim_tokens = _significant_tokens(assertion)
     keys = {assertion, display} - {""}
     for _, chunk in evidence_chunks:
-        candidates = spans_by_chunk.get(chunk.chunk_id) or _candidate_spans(chunk.content)
+        candidates = spans_by_chunk.get(chunk.chunk_id) or _claim_candidate_spans(chunk)
         if not candidates:
             continue
 
@@ -2901,6 +3009,7 @@ def _explained_quantity_values(claim: str, evidence: str) -> set[float]:
     """Numbers in the claim that evidence already accounts for, including equivalent durations."""
     values = set(_amount_set(evidence))
     values.update(float(value) for value in _spelled_number_values(evidence))
+    values.update(_currency_amounts(evidence))
     evidence_durations = _duration_quantities(evidence)
     values.update(float(number) for number, _ in evidence_durations)
     for duration in _duration_quantities(claim):
@@ -3010,6 +3119,10 @@ def _bounded_entailment_guard(claim: str, evidence: str) -> ClaimVerification | 
     if not evidence_plain:
         # Similarity located a topic but could not align a clause safely.
         return None
+    if _omits_joint_if_condition(claim_plain, evidence_plain):
+        # A source requiring A and B does not establish the broader claim that
+        # A alone (or B alone) is enough. Similarity can hide the omitted term.
+        return ClaimVerification.UNVERIFIED
     if (
         not _is_necessary_condition(claim_plain)
         and _is_necessary_condition(evidence_plain)
@@ -3073,6 +3186,27 @@ def _bounded_entailment_guard(claim: str, evidence: str) -> ClaimVerification | 
     return None
 
 
+def _omits_joint_if_condition(claim: str, evidence: str) -> bool:
+    """Guard a bounded English construction with multiple shared prerequisites."""
+    conditions = [
+        match.group("condition")
+        for match in regex.finditer(
+            r"\bif\s+(?P<condition>[^,.;!?]+?)(?=\s+and\s+if\s+|[,.;!?]|$)",
+            evidence,
+            regex.IGNORECASE,
+        )
+    ]
+    if len(conditions) < 2 or " and if " not in evidence:
+        return False
+    claim_terms = _significant_tokens(claim)
+    if regex.search(r"\b(?:or|either)\b", claim, regex.IGNORECASE):
+        return True
+    return any(
+        bool(required := _significant_tokens(condition)) and not required <= claim_terms
+        for condition in conditions
+    )
+
+
 def _quantity_aligned_evidence(claim: str, evidence_texts: list[str]) -> list[str]:
     """Select clauses that bind a number to the same duty as the claim.
 
@@ -3081,6 +3215,10 @@ def _quantity_aligned_evidence(claim: str, evidence_texts: list[str]) -> list[st
     bilingual subjects provide the same guard for English/Bangla evidence.
     """
     claim_subjects = _quantity_subjects(claim)
+    if not claim_subjects and not _uses_lexical_verification(claim, evidence_texts):
+        # Cross-language lexical overlap cannot choose a clause. Leave that choice
+        # to semantic verification instead of manufacturing an empty quantity source.
+        return evidence_texts
     claim_tokens = _significant_tokens(claim)
     claim_durations = _duration_quantities(claim)
     selected: list[str] = []
@@ -3202,10 +3340,58 @@ def _quantity_subjects(text: str) -> set[str]:
             "দাখিল",
             "জমা",
         ),
+        "accounting_records": (
+            "accounting books",
+            "accounting records",
+            "records",
+            "vouchers",
+            "books",
+            "হিসাব-বহি",
+            "হিসাব-বহিসমূহে",
+            "হিসাব-বহিতে",
+        ),
+        "records_location": (
+            "alternative location",
+            "other location",
+            "elsewhere",
+            "অন্য যে কোন স্থানে",
+            "অন্য স্থানে",
+        ),
+        "annual_return": (
+            "annual return",
+            "member list",
+            "member-list",
+            "annual member list",
+            "বার্ষিক তালিকা",
+            "তালিকা",
+            "বিবরণী",
+        ),
+        "notice": ("notify", "notified", "notice", "নোটিশ"),
         "appeal": ("appeal", "appeal's", "আপিল", "আপিলের"),
         "fee": ("fee", "ফি"),
-        "penalty": ("fine", "penalty", "sanction", "জরিমানা", "দণ্ড"),
-        "daily": ("daily", "per day", "each day", "প্রতিদিন", "দৈনিক", "প্রতি দিন"),
+        "penalty": (
+            "fine",
+            "fined",
+            "penalty",
+            "sanction",
+            "জরিমানা",
+            "দণ্ড",
+            "অর্থদণ্ড",
+            "অর্থদণ্ডে",
+            "দণ্ডনীয়",
+            "দণ্ডনীয়",
+        ),
+        "daily": (
+            "daily",
+            "per day",
+            "each day",
+            "প্রতিদিন",
+            "প্রতিদিনের",
+            "দৈনিক",
+            "প্রতি দিন",
+            "প্রত্যেক দিনের",
+            "প্রত্যহ",
+        ),
         "retention": (
             "retention",
             "retain",
@@ -3247,7 +3433,15 @@ def _quantity_subjects(text: str) -> set[str]:
             "end of the next agm",
             "পরবর্তী বার্ষিক সাধারণ সভার সমাপ্তি",
         ),
-        "registered_office": ("registered office", "নিবন্ধিকৃত কার্যালয়", "নিবন্ধিকৃত কার্যালয়"),
+        "registered_office": (
+            "registered office",
+            "নিবন্ধিকৃত কার্যালয়",
+            "নিবন্ধিকৃত কার্যালয়",
+            "নিবন্ধিকৃত কার্যালয়ে",
+            "নিবন্ধিকৃত কার্যালয়ে",
+            "নিবন্ধিকৃত কার্যালয়ের",
+            "নিবন্ধিকৃত কার্যালয়ের",
+        ),
         "registered_office_change": (
             "change in its location",
             "change of registered office",
@@ -3270,11 +3464,32 @@ def _aligned_entailment_clause(claim: str, evidence: str) -> str:
     lexical alignment is uncertain, so the guard abstains rather than applying an
     exception or prohibition from a different sentence to the claim.
     """
-    clauses = [
+    sentences = [
         piece.strip()
         for piece in regex.split(r"\n+|(?<=[.!?।॥。;])\s+|\s*;\s*", evidence)
         if piece.strip()
     ]
+    clauses: list[str] = []
+    independent_continuation = regex.compile(
+        r"\s+and\s+(?=if\s+[^,.;!?।॥。]+,\s*"
+        r"(?:it|they|he|she|the\s+\w+)\s+"
+        r"(?:shall|must|will|may|is|are)\b)",
+        regex.IGNORECASE,
+    )
+    for sentence in sentences:
+        match = independent_continuation.search(sentence)
+        if match is None:
+            clauses.append(sentence)
+            continue
+        first = sentence[: match.start()]
+        # A preceding if/when/unless still governs the shared consequent.
+        # Split only when the first half already makes an independent assertion.
+        if regex.search(r"\b(?:if|when|unless)\b", first, regex.IGNORECASE) or not regex.search(
+            r"\b(?:shall|must|will|may|is|are)\b", first, regex.IGNORECASE
+        ):
+            clauses.append(sentence)
+            continue
+        clauses.extend((first.strip(), sentence[match.start() + len(" and ") :].strip()))
     if len(clauses) <= 1:
         return clauses[0] if clauses else evidence.strip()
     claim_tokens = _significant_tokens(claim)

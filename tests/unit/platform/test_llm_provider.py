@@ -287,3 +287,35 @@ async def test_openai_generate_reads_content_parts(monkeypatch: pytest.MonkeyPat
         max_tokens=32,
     )
     assert result.content == "উৎসে কর"
+
+
+@pytest.mark.parametrize(
+    "purpose",
+    [
+        "recovery_planning",
+        "coverage_review",
+        "web_evidence_review",
+        "structured_response_retry",
+        "answer_generation",
+    ],
+)
+def test_luna_reasoning_is_bounded_but_json_mode_is_internal_only(purpose):
+    import uuid
+
+    from app.platform.providers.request_work import RequestWork
+
+    provider = OpenAIChatProvider(api_key="test-key", model="gpt-6-luna", provider_version="test")
+    work = RequestWork(uuid.uuid4())
+    messages = [ChatMessage(role=ChatRole.USER, content="Check the supplied source")]
+    with work.stage(purpose):
+        body = provider._body(messages, max_tokens=4096, stream=False)
+    if purpose == "answer_generation":
+        assert body["reasoning_effort"] == "low"
+        assert "response_format" not in body
+    else:
+        assert body["reasoning_effort"] == "low"
+        assert body["response_format"] == {"type": "json_object"}
+    assert "reasoning_effort" not in provider._body(messages, max_tokens=4096, stream=False)
+    assert "response_format" not in provider._body(messages, max_tokens=4096, stream=False)
+    with work.stage(purpose):
+        assert "response_format" not in provider._body(messages, max_tokens=4096, stream=True)

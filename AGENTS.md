@@ -26,7 +26,7 @@ pnpm install --frozen-lockfile
 pnpm dev
 ```
 
-`python -m app` reads `backend/.env` and serves `APE_SERVER__PORT` (default 8000). `python worker.py` starts `taskiq worker app.worker.entrypoint:broker`.
+`python -m app` reads `backend/.env` and serves `APE_SERVER__PORT` (default 8000). This checkout's current local `.env` selects 8088; check the effective value before diagnosing a connection failure. `python worker.py` starts `taskiq worker app.worker.entrypoint:broker`.
 
 ## Checks
 
@@ -53,12 +53,16 @@ Host processes above:
 
 - Operator console: `http://127.0.0.1:5173/operator/`
 - Test Lab: `http://127.0.0.1:5173/operator/lab`
-- API: `http://127.0.0.1:8000` (`/health/live`, `/health/ready`)
-- Vite base `/operator/`. `/api` and `/health` proxy to `http://localhost:8000`.
+- API: `http://127.0.0.1:<APE_SERVER__PORT>` (`/health/live`, `/health/ready`); the default port is 8000.
+- Vite base `/operator/`. `/api` and `/health` proxy to `VITE_API_PROXY_TARGET`, defaulting to `http://localhost:8000` in `frontend/vite.config.ts`. Set the target to the effective backend address before starting `pnpm dev` when the ports differ, for example `$env:VITE_API_PROXY_TARGET = "http://localhost:8088"` in that frontend PowerShell session.
+
+For local UI or API QA, check both the backend's direct `/health/live` and Vite's proxied `/health/live`, then confirm the browser is signed in and the intended project is selected. A successful direct check alone does not prove Vite is targeting that backend. The browser may show rendered results without exposing raw network response bodies; report that evidence limit rather than inferring an API response from the page.
+
+If Git reports dubious ownership under the Windows sandbox account, use a one-command exception such as `git -c safe.directory=E:/python-projects/rag-builder status --short` after confirming the workspace path. Do not add a global `safe.directory` entry for this diagnostic.
 
 Compose `make up` publishes the console on `http://127.0.0.1:3010/operator/` and the API on `http://127.0.0.1:8010`.
 
-`AuthConfig.enabled` defaults to false. This repo has no QA password. Use the existing browser session and confirm the project before interacting. Hosted authentication is described in `.cursor/rules/project-context.mdc`.
+`AuthConfig.enabled` defaults to false, but the current local `backend/.env` enables authentication. This repo has no QA password. Use the existing browser session and confirm the project before interacting. Hosted authentication is described in `.cursor/rules/project-context.mdc`.
 
 ## Constraints
 

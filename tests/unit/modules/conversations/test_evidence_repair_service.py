@@ -521,7 +521,9 @@ async def test_timeout_keeps_only_previously_validated_partial_proof(stage):
         return
     assert result.failure is None
     assert result.diagnostics["status"] == "partial_answer"
-    expected_stop = "recovery_deadline_exceeded" if stage == "deadline" else "provider_timeout"
+    expected_stop = "validated_partial_scope" if stage == "deadline" else "provider_timeout"
+    if stage == "deadline":
+        assert result.diagnostics["stop_reason"] == "insufficient_followup_budget"
     assert result.diagnostics["requirement_progress"]["stop_reason"] == expected_stop
     if stage == "coverage_review":
         assert result.diagnostics["provider"] == "fake"
@@ -530,7 +532,10 @@ async def test_timeout_keeps_only_previously_validated_partial_proof(stage):
     assert result.diagnostics["coverage"]["full_coverage_validated"] is False
     assert [(c.chunk_id, c.content) for c in result.selected] == [(known.chunk_id, known.content)]
     assert result.partial_answer["pending"] == ["Annual return filing duty"]
-    assert result.usage == ChatUsage(None, None)
+    if stage == "deadline":
+        assert result.usage.input_tokens is not None
+    else:
+        assert result.usage == ChatUsage(None, None)
     assert result.diagnostics["elapsed_ms"] >= 0
 
 
@@ -886,7 +891,7 @@ def test_source_hints_retain_languages_after_repeated_top_source():
     assert [hint["source"]["language"] for hint in hints] == ["en", "bn"]
 
 
-def test_concept_language_prefers_current_governing_source_over_old_edition():
+def test_concept_language_does_not_infer_governing_work_from_recency():
     hints = _source_hints(
         [
             chunk("old", language="en", source_role="primary", source_effective_from="2023-01-01"),
@@ -895,7 +900,10 @@ def test_concept_language_prefers_current_governing_source_over_old_edition():
             ),
         ]
     )
-    assert "language code bn" in _search_language_instruction(hints)
+    instruction = _search_language_instruction(hints)
+    assert "Retrieved source languages: bn, en" in instruction
+    assert "Recency alone does not" in instruction
+    assert "Preserve explicitly requested Act" in instruction
 
 
 def test_discovery_prioritizes_reviewed_gaps_without_starving_other_topics():
@@ -1250,6 +1258,21 @@ async def run_repair(
     return result, retrieval, inputs
 
 
+async def test_expired_recovery_budget_does_not_call_provider_or_retrieval():
+    calls = []
+    result, retrieval, _ = await run_repair(
+        [([chunk("A rule that must not trigger a provider call.")], {})],
+        queries=["rule"],
+        timeout_seconds=0,
+        calls=calls,
+    )
+
+    assert result.diagnostics["timeout_seconds"] == 0
+    assert result.diagnostics["stop_reason"] == "recovery_deadline_exceeded"
+    assert retrieval.retrieve.await_count == 0
+    assert calls == []
+
+
 async def test_four_dependencies_preserve_source_authority_in_coverage_input():
     calls = []
     sources = [
@@ -1422,14 +1445,15 @@ async def test_final_budget_must_retain_every_dependency():
 
 async def test_broad_recovery_reserves_budget_for_focused_dependencies():
     focused = [chunk(f"Governing duty {i} applies.") for i in range(4)]
+    secondary = [chunk(f"Duty {i} has a separate deadline.") for i in range(4)]
     initial = [chunk(f"Broad introductory context {i}.") for i in range(4)]
     requirements = [{"requirement_id": f"R{i}", "description": f"Duty {i}"} for i in range(4)]
     result, _, _ = await run_repair(
-        [([source], {}) for source in focused],
+        [([source, second], {}) for source, second in zip(focused, secondary, strict=True)],
         queries=[f"duty {i}" for i in range(4)],
         requirements=requirements,
         selected_context=initial,
-        config=ChatConfig(max_context_chunks=4),
+        config=ChatConfig(max_context_chunks=8),
         coverage={
             "complete": True,
             "missing": [],
@@ -1437,14 +1461,17 @@ async def test_broad_recovery_reserves_budget_for_focused_dependencies():
                 {
                     "requirement_id": f"R{i}",
                     "supported": True,
-                    "evidence": [{"chunk_id": str(source.chunk_id), "quote": source.content}],
+                    "evidence": [
+                        {"chunk_id": str(source.chunk_id), "quote": source.content},
+                        {"chunk_id": str(secondary[i].chunk_id), "quote": secondary[i].content},
+                    ],
                 }
                 for i, source in enumerate(focused)
             ],
         },
     )
     assert result.diagnostics["status"] == "recovered"
-    assert {c.chunk_id for c in result.selected} == {c.chunk_id for c in focused}
+    assert {c.chunk_id for c in result.selected} == {c.chunk_id for c in [*focused, *secondary]}
 
 
 async def test_narrowed_partial_duty_keeps_unresolved_details_explicit():
@@ -2156,6 +2183,9 @@ def test_search_plan_orders_material_requirements_before_query_truncation():
 
     assert [item.requirement_id for item in requirements] == ["R1", "R2", "R3"]
     assert queries == ["governing", "central", "secondary"]
+
+    _, balanced, _ = _prepare_search_plan(plan, balanced_overview=True)
+    assert balanced == ["central", "governing", "secondary"]
 
 
 def test_search_plan_schema_requires_materiality_but_normalizes_legacy_payloads():
@@ -3701,3 +3731,175 @@ def test_selector_repair_matches_legacy_checks_by_query_index():
     assert parsed.checks[0].evidence[0].start_line == original_first.start_line
     assert parsed.checks[1].evidence[0].chunk_id == "cccc"
     assert parsed.checks[1].evidence[0].start_line == 1
+
+
+def test_explicit_answerable_scope_survives_omission_from_partial_list():
+    source = chunk("Every company must file a return.")
+    verdict = CoverageVerdict.model_validate(
+        {
+            "complete": False,
+            "missing": ["Deadline unavailable"],
+            "checks": [
+                {
+                    "requirement_id": "R1",
+                    "description": "Filing and deadline",
+                    "supported": True,
+                    "answerable_scope": "Company return filing duty",
+                    "evidence": [{"chunk_id": str(source.chunk_id), "quote": source.content}],
+                }
+            ],
+        }
+    )
+    verdict.retain_answerable_scopes()
+    assert verdict.partial_answer.requirement_ids == ["R1"]
+    assert verdict.partial_answer.exclusions == ["Deadline unavailable"]
+    assert verdict.partial_validates([source], {"R1"})
+    assert not verdict.partial_validates([replace(source, content="Different rule")], {"R1"})
+
+
+def test_supported_formula_does_not_imply_independently_answerable_scope():
+    source = chunk("Apply the rate to taxable income.")
+    verdict = CoverageVerdict.model_validate(
+        {
+            "complete": False,
+            "missing": ["Gross-to-net transformation"],
+            "checks": [
+                {
+                    "requirement_id": "R1",
+                    "supported": True,
+                    "evidence": [{"chunk_id": str(source.chunk_id), "quote": source.content}],
+                }
+            ],
+        }
+    )
+    verdict.retain_answerable_scopes()
+    assert verdict.partial_answer is None
+    assert not verdict.partial_validates([source], {"R1"})
+
+
+def test_unfinished_continuation_cannot_authorize_answerable_scope():
+    source = chunk("Subject to the following exceptions")
+    verdict = CoverageVerdict.model_validate(
+        {
+            "complete": False,
+            "missing": ["Exceptions continuation"],
+            "checks": [
+                {
+                    "requirement_id": "R1",
+                    "supported": True,
+                    "answerable_scope": "Rule",
+                    "needs_adjacent_context": True,
+                    "evidence": [{"chunk_id": str(source.chunk_id), "quote": source.content}],
+                }
+            ],
+        }
+    )
+    verdict.retain_answerable_scopes()
+    assert verdict.partial_answer is None
+
+
+def test_source_hints_use_indexed_chunk_language_before_document_language():
+    hints = _source_hints([chunk("Text", chunk_language="bn", document_language="en")])
+    assert hints[0]["source"]["language"] == "bn"
+    assert "bn" in _search_language_instruction(hints)
+
+
+@pytest.mark.parametrize("wrong_identity", [False, True])
+async def test_parallel_overview_review_preserves_full_context_and_exact_identities(wrong_identity):
+    from app.platform.providers.contracts.llm import ChatMessage, ChatRole
+
+    source = chunk("Every company must keep records.")
+    seen = []
+    both_entered = asyncio.Event()
+
+    async def respond(messages, **kwargs):
+        payload = json.loads(messages[1].content)
+        seen.append(payload)
+        if len(seen) == 2:
+            both_entered.set()
+        await asyncio.wait_for(both_entered.wait(), 1)
+        checks = [
+            {
+                "requirement_id": item["requirement_id"],
+                "supported": True,
+                "evidence": [{"chunk_id": str(source.chunk_id), "quote": source.content}],
+            }
+            for item in payload["requirements"]
+        ]
+        if wrong_identity:
+            checks[0]["requirement_id"] = "unknown"
+        return ChatCompletionResult(
+            content=json.dumps({"complete": True, "missing": [], "checks": checks}),
+            provider="fake",
+            model="test",
+            provider_version="1",
+            finish_reason="stop",
+            usage=ChatUsage(10, 20),
+        )
+
+    llm = AsyncMock()
+    llm.provider_name = "fake"
+    llm.generate.side_effect = respond
+    payload = {
+        "requirements": [{"requirement_id": f"R{i}"} for i in range(6)],
+        "context": [{"content": source.content}],
+        "authority_limitations": ["same amendment"],
+        "original_question": "List independent company duties",
+    }
+    messages = [
+        ChatMessage(ChatRole.SYSTEM, "Review"),
+        ChatMessage(ChatRole.USER, json.dumps(payload)),
+    ]
+    result = await _validated_completion(
+        llm, messages, schema=CoverageVerdict, max_tokens=1024, parallel_requirements=True
+    )
+    verdict = CoverageVerdict.model_validate_json(result.content)
+    assert {c.requirement_id for c in verdict.checks} == {f"R{i}" for i in range(6)}
+    if wrong_identity:
+        assert not verdict.complete
+        assert not verdict.validates([], [source], {f"R{i}" for i in range(6)})
+        assert {c.requirement_id for c in verdict.checks if not c.supported} == {"R0", "R3"}
+        assert all(not c.evidence for c in verdict.checks if not c.supported)
+    else:
+        assert verdict.validates([], [source], {f"R{i}" for i in range(6)})
+    assert result.usage == ChatUsage(20, 40)
+    assert len(seen) == 2
+    assert all(item["context"] == payload["context"] for item in seen)
+    assert all(item["authority_limitations"] == payload["authority_limitations"] for item in seen)
+
+
+async def test_parallel_overview_deadline_cancels_both_provider_calls():
+    from app.platform.providers.contracts.llm import ChatMessage, ChatRole
+
+    entered = []
+    stopped = []
+    both_entered = asyncio.Event()
+
+    async def block(messages, **kwargs):
+        entered.append(True)
+        if len(entered) == 2:
+            both_entered.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            stopped.append(True)
+
+    llm = AsyncMock()
+    llm.generate.side_effect = block
+    messages = [
+        ChatMessage(ChatRole.SYSTEM, "Review"),
+        ChatMessage(
+            ChatRole.USER,
+            json.dumps({"requirements": [{"requirement_id": f"R{i}"} for i in range(6)]}),
+        ),
+    ]
+    task = asyncio.create_task(
+        _validated_completion(
+            llm, messages, schema=CoverageVerdict, max_tokens=1024, parallel_requirements=True
+        )
+    )
+    await asyncio.wait_for(both_entered.wait(), 1)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert len(stopped) == 2

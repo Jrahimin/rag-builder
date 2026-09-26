@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-GROUNDED_PROMPT_VERSION = "v18"
+GROUNDED_PROMPT_VERSION = "v22"
 """Provenance identifier stamped on messages and citations.  Change only via git."""
 
 
@@ -43,7 +43,20 @@ _CANONICAL_TEMPLATE = PromptTemplate(
         "Use the evidenced period label; add a calendar date range only when the sources "
         "establish that mapping. For each floor/cap, check the whole cited paragraph: "
         "report category exceptions (including new entrants) even if the computed result "
-        "exceeds both alternatives."
+        "exceeds both alternatives. Cite factual opening summaries too; later table citations "
+        "do not cover an uncited opening sentence. Keep each claim focused and cite its "
+        "governing clause, including qualifications relevant to the user (such as a missed "
+        "meeting when stating a meeting-based filing deadline)."
+        " Copy provision identifiers only from the governing heading or clause. A cross-reference "
+        "inside a clause does not identify that clause. If its identifier is absent, cite the "
+        "source without guessing a section number. Apply category-specific penalty caps only "
+        "to the taxpayer category named in that same provision. Cover every independently "
+        "supported duty in the supplied answerable scope, keeping each item concise. For broad "
+        "overviews, prefer concise numbered items (roughly 350-500 words). Each item names "
+        "the duty, authority, deadline, consequence and provision where evidenced. Use "
+        "short sentences, each with its own citation, rather than multi-sentence table "
+        "rows. Start directly with the duties; avoid an uncited factual introduction. "
+        "Keep evidence limitations separate from factual sentences."
         " For a rule/rate-only question, answer the rule and its limits; do not calculate "
         "using amounts from an earlier turn unless the current question requests that application."
     ),
