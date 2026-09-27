@@ -2126,22 +2126,32 @@ async def test_repaired_evidence_reaches_generation_without_old_rule_or_web(
                 content=json.dumps(
                     {
                         "complete": coverage_complete and not missing_inputs,
-                        "missing": missing_inputs if coverage_complete else [],
+                        "missing": (
+                            missing_inputs
+                            if coverage_complete and missing_inputs
+                            else []
+                            if coverage_complete
+                            else ["Current refund entitlement"]
+                        ),
                         "checks": [
                             {
                                 "query_index": 0,
-                                "supported": True,
+                                "supported": coverage_complete,
+                                "fulfillment": "full" if coverage_complete else "none",
                                 "evidence": [
                                     {
                                         "chunk_id": str(current.chunk_id),
                                         "quote": current.content,
                                     }
-                                ],
+                                ]
+                                if coverage_complete
+                                else [],
                             }
                         ],
                     }
                 ),
             ),
+            *([replace(answer, content='{"queries":[]}')] if not coverage_complete else []),
             *(
                 [
                     replace(
@@ -2188,7 +2198,7 @@ async def test_repaired_evidence_reaches_generation_without_old_rule_or_web(
         assert (
             turn.assistant_message.metadata["knowledge_repair"]["status"] == "coverage_incomplete"
         )
-        assert llm.generate.await_count == 2
+        assert llm.generate.await_count == 3
         return
     assert turn.assistant_message.citations[0].chunk_id == current.chunk_id
     assert turn.assistant_message.input_tokens == 30
@@ -2590,12 +2600,14 @@ async def test_validated_partial_cannot_alter_indexed_web_policy(
                                 "requirement_id": "R1",
                                 "description": "Filing duty",
                                 "supported": False,
+                                "fulfillment": "none",
                                 "evidence": [],
                             },
                             {
                                 "requirement_id": "R2",
                                 "description": "Refund period",
                                 "supported": True,
+                                "fulfillment": "full",
                                 "evidence": [
                                     {
                                         "chunk_id": str(current.chunk_id),
@@ -5371,12 +5383,14 @@ async def test_invalidated_rewrite_revalidates_and_preserves_partial_scope(
                                 "requirement_id": "R1",
                                 "description": "AGM duty",
                                 "supported": True,
+                                "fulfillment": "full",
                                 "evidence": [{"chunk_id": "E1", "quote": cited_chunk.content}],
                             },
                             {
                                 "requirement_id": "R2",
                                 "description": "filing deadline",
                                 "supported": False,
+                                "fulfillment": "none",
                                 "evidence": [],
                             },
                         ],
