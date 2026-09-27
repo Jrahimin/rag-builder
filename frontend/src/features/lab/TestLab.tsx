@@ -2635,7 +2635,18 @@ function citationLocation(citation: MessageCitation): string {
   const textLike = /\.(?:md|markdown|txt|csv|tsv|json|html?)$/i.test(citation.filename);
   if (citation.page_number != null && !textLike) parts.push(`Page ${citation.page_number}`);
   if (citation.char_start != null && citation.char_end != null) {
-    parts.push(`characters ${citation.char_start}–${citation.char_end}`);
+    parts.push(
+      `${citation.evidence_source_envelope === "reconstructed_context" ? "document envelope" : "characters"} ${citation.char_start}–${citation.char_end}`,
+    );
+  }
+  if (
+    citation.evidence_chunk_char_start != null &&
+    citation.evidence_chunk_char_end != null &&
+    citation.evidence_chunk_char_end > citation.evidence_chunk_char_start
+  ) {
+    parts.push(
+      `evidence characters ${citation.evidence_chunk_char_start}–${citation.evidence_chunk_char_end}`,
+    );
   }
   parts.push(`chunk ${citation.chunk_index ?? "—"}`);
   return parts.join(" · ");
@@ -2904,9 +2915,13 @@ export function MessageInspector({
     repair?.partial_answer ??
     inherited?.partial_answer) as Record<string, unknown> | undefined;
   const coverage = repair?.coverage as Record<string, unknown> | undefined;
-  const requirementProgress = repair?.requirement_progress as Record<string, unknown> | undefined;
-  const recoveryAttempts = Array.isArray(requirementProgress?.attempts)
-    ? requirementProgress.attempts.filter(
+  const requirementProgress = (repair?.requirement_progress ??
+    (Array.isArray(repair?.requirement_attempts)
+      ? { stop_reason: repair?.stop_reason }
+      : undefined)) as Record<string, unknown> | undefined;
+  const attemptRecords = repair?.requirement_attempts ?? requirementProgress?.attempts;
+  const recoveryAttempts = Array.isArray(attemptRecords)
+    ? attemptRecords.filter(
         (item): item is Record<string, unknown> => typeof item === "object" && item !== null,
       )
     : [];
@@ -3203,10 +3218,22 @@ export function MessageInspector({
       ) : citations.length ? (
         <ol className="citation-list" aria-label={`${citations.length} citations`}>
           {citations.map((citation, index) => {
-            const spanLength =
-              citation.char_start != null && citation.char_end != null
-                ? Math.max(0, citation.char_end - citation.char_start)
+            const localEvidenceLength =
+              citation.evidence_chunk_char_start != null &&
+              citation.evidence_chunk_char_end != null &&
+              citation.evidence_chunk_char_start >= 0 &&
+              citation.evidence_chunk_char_end > citation.evidence_chunk_char_start
+                ? citation.evidence_chunk_char_end - citation.evidence_chunk_char_start
                 : null;
+            const spanLength =
+              localEvidenceLength != null
+                ? localEvidenceLength
+                : citation.evidence_source_envelope !== "reconstructed_context" &&
+                    citation.char_start != null &&
+                    citation.char_end != null &&
+                    citation.char_end > citation.char_start
+                  ? citation.char_end - citation.char_start
+                  : null;
             const clippedPreview = Boolean(
               citation.excerpt && spanLength != null && citation.excerpt.length < spanLength,
             );
@@ -3258,6 +3285,8 @@ export function MessageInspector({
                       characters.
                     </small>
                   )}
+                  {citation.evidence_source_envelope === "reconstructed_context" &&
+                    spanLength == null && <small>Evidence length unknown.</small>}
                 </button>
                 {citation.chunk_id ? (
                   <>

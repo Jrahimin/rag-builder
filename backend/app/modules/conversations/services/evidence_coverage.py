@@ -84,6 +84,10 @@ class _Check(BaseModel):
     requirement_id: str | None = Field(default=None, min_length=1, max_length=80)
     description: str = Field(default="", max_length=1000)
     supported: bool
+    # None represents legacy metadata; only a fresh explicit "full" can certify
+    # that proof answers the original requirement in the active review.
+    fulfillment: Literal["full", "partial", "none"] | None = None
+    unresolved_facets: list[str] = Field(default_factory=list, max_length=12)
     answerable_scope: str = Field(default="", max_length=1000)
     needs_adjacent_context: bool = False
     evidence: list[_Quote] = Field(max_length=8)
@@ -149,7 +153,10 @@ class CoverageVerdict(BaseModel):
         if self.complete and (
             self.missing
             or not self.checks
-            or any(not c.supported or not c.evidence for c in self.checks)
+            or any(
+                not c.supported or not c.evidence or c.needs_adjacent_context for c in self.checks
+            )
+            or any(c.fulfillment not in (None, "full") for c in self.checks)
         ):
             raise PydanticCustomError(
                 "coverage_inconsistent_completion",
@@ -178,6 +185,7 @@ class CoverageVerdict(BaseModel):
             and check.evidence
             and check.answerable_scope.strip()
             and check.requirement_id
+            and check.fulfillment != "none"
             and not check.needs_adjacent_context
         ]
         if not scopes:
@@ -219,6 +227,8 @@ class CoverageVerdict(BaseModel):
             return False
         ids = partial.requirement_ids
         checks = [check for check in self.checks if check.requirement_id in ids]
+        if any(check.fulfillment == "none" or check.needs_adjacent_context for check in checks):
+            return False
         if len(ids) != len(set(ids)) or not set(ids).issubset(requirement_ids):
             return False
         # Also reject missing/duplicated original checks: a scoped review cannot
@@ -247,7 +257,12 @@ class CoverageVerdict(BaseModel):
             return False
         sources = {str(c.chunk_id): _quote_tokens(c.content) for c in context}
         for check in self.checks:
-            if not check.supported or not check.evidence:
+            if (
+                not check.supported
+                or not check.evidence
+                or check.needs_adjacent_context
+                or (check.fulfillment == "full" and check.unresolved_facets)
+            ):
                 return False
             for item in check.evidence:
                 if (

@@ -67,8 +67,10 @@ _COVERAGE_SCOPE_PATTERN = regex.compile(
     r"reviewed (?:evidence|materials|sources|provisions) (?:do(?:es)?|did) not|"
     r"this answer (?:does|did) not (?:cover|establish)|"
     r"selected (?:evidence|passages|materials) (?:do(?:es)?|did) not|"
-    r"(?:supplied|provided) (?:source(?:s)?|evidence|passages|materials|provisions) "
+    r"(?:supplied|provided|these) (?:source(?:s)?|evidence|passages|materials|provisions) "
     r"(?:do(?:es)?|did) not (?:establish|provide|cover)|"
+    r"(?:the|this|that|cited)(?: cited)? (?:provision|source|passage|rule) "
+    r"(?:do(?:es)?|did) not (?:establish|show|confirm)|"
     r"not established from the (?:available|selected|reviewed)|"
     r"outside the (?:reviewed|selected) evidence|"
     r"available (?:sources|passages|excerpts|citations) "
@@ -166,8 +168,26 @@ _EVIDENCE_FOLLOWUP_PATTERN = regex.compile(
     r"(?:should|must) be verified with\b.+$|"
     r"^(?:verify|confirm|check) (?:this|these|those) "
     r"(?:points?|matters?|requirements?) with\b.+$|"
+    r"^(?:those|these) (?:matters?|points?|requirements?) need to be checked "
+    r"against (?:the )?(?:applicable )?(?:provisions?|official guidance)\b.*$|"
     r"^(?:(?:এই|এসব|ঐ|উক্ত)\s+)?(?:বিষয়|বিষয়|দিক|তথ্য|প্রয়োজনীয়তা|প্রয়োজনীয়তা)"
     r"\p{Bengali}*[^,;।]{0,120}(?:যাচাই|নিশ্চিত) কর(?:া|তে) (?:উচিত|হবে)[।.!]?$",
+    regex.IGNORECASE,
+)
+_FOLLOWUP_CONCLUSION_CONNECTOR = regex.compile(
+    r"(?:,|;|:)\s*(?=(?:therefore|so|thus|consequently|and|since|because|the|a|an|companies?)\b)|"
+    r"\s+(?=(?:because|since|therefore|thus|consequently|and)\b)",
+    regex.IGNORECASE,
+)
+_LEGAL_CONCLUSION_PATTERN = regex.compile(
+    r"\b(?:exempt|exemption|unnecessary|not required|need not|does not need to|"
+    r"must|shall|required to|liable|not liable)\b|"
+    r"\b(?:file|filing|register|registration|pay|taxable|deadline|due|date)\b",
+    regex.IGNORECASE,
+)
+_INDEPENDENT_FOLLOWUP_ASSERTION_PATTERN = regex.compile(
+    r"\b(?:is|are|was|were|must|shall|may|can|does|do|will|applies?|"
+    r"requires?|exempts?)\b",
     regex.IGNORECASE,
 )
 _DUTY_MARKER_PATTERN = regex.compile(
@@ -921,6 +941,9 @@ class GroundingService:
                 continue
             context = _verification_context(segments, index - 1)
             assertion = _contextualized_assertion(claim_text, context)
+            continuation = _preceding_continuation_context(segments, index - 1)
+            if continuation:
+                assertion = f"{continuation} {assertion}"
             kind_hint = _coverage_kind_hint(assertion, display=claim_text)
             if kind_hint is None and _is_bounded_coverage_continuation(
                 segments, index - 1, claim_text
@@ -1109,8 +1132,18 @@ class GroundingService:
                         verification_reason = (
                             ClaimVerificationReason.UNRELATED_OR_INSUFFICIENT_EVIDENCE
                         )
+                    entailment_evidence = (
+                        full_evidence
+                        if regex.search(
+                            r"\bfirst\s+(?:annual\s+general\s+meeting|agm)\b",
+                            draft.assertion,
+                            regex.IGNORECASE,
+                        )
+                        and regex.search(r"\b(?:extend|extension)\b", draft.assertion)
+                        else " ".join(scored_texts)
+                    )
                     entailment_guard = _bounded_entailment_guard(
-                        draft.assertion, " ".join(scored_texts)
+                        draft.assertion, entailment_evidence
                     )
                     if verification is ClaimVerification.SUPPORTED and entailment_guard is not None:
                         verification = entailment_guard
@@ -1885,6 +1918,32 @@ def _split_mixed_limitation_assertion(segment: str) -> list[str]:
     return [left, right]
 
 
+def _split_mixed_followup_assertion(segment: str) -> list[str]:
+    """Keep operational advice separate from a following legal conclusion."""
+    plain = _plain_claim_text(segment)
+    if not _EVIDENCE_FOLLOWUP_PATTERN.match(plain):
+        return [segment]
+    for match in _FOLLOWUP_CONCLUSION_CONNECTOR.finditer(segment):
+        left = _CITATION_PATTERN.sub("", segment[: match.start()]).strip()
+        right = segment[match.end() :].strip()
+        if (
+            not left
+            or not right
+            or not _LEGAL_CONCLUSION_PATTERN.search(right)
+            or not _INDEPENDENT_FOLLOWUP_ASSERTION_PATTERN.search(right)
+        ):
+            continue
+        if not _is_evidence_followup_statement(left):
+            continue
+        citations = " ".join(
+            f"[{value}]" for value in dict.fromkeys(_CITATION_PATTERN.findall(segment))
+        )
+        if citations and not _CITATION_PATTERN.search(right):
+            right = f"{right} {citations}"
+        return [left, right]
+    return [segment]
+
+
 class _AnswerSegment(str):
     """A string claim carrying private Markdown ownership metadata."""
 
@@ -1982,15 +2041,21 @@ def _answer_segments(answer: str) -> list[str]:
                 paragraph_segments[-1] = f"{paragraph_segments[-1]} {leading.group(1).strip()}"
                 segment = leading.group(2).strip()
             if segment and not regex.fullmatch(r"[|\s]+", segment):
-                paragraph_segments.extend(_split_mixed_limitation_assertion(segment))
+                for part in _split_mixed_limitation_assertion(segment):
+                    paragraph_segments.extend(_split_mixed_followup_assertion(part))
         if paragraph_segments:
-            final_citations = _CITATION_PATTERN.findall(paragraph_segments[-1])
-            if final_citations:
-                inherited = " ".join(f"[{value}]" for value in dict.fromkeys(final_citations))
-                paragraph_segments = [
-                    segment if _CITATION_PATTERN.search(segment) else f"{segment} {inherited}"
-                    for segment in paragraph_segments
-                ]
+            # A cited run may be followed by an uncited limitation in the same
+            # paragraph. Bind each run backward to its own closing citation;
+            # do not borrow an earlier citation for the uncited trailing text.
+            run_start = 0
+            for position, segment in enumerate(paragraph_segments):
+                citations = _CITATION_PATTERN.findall(segment)
+                if not citations:
+                    continue
+                inherited = " ".join(f"[{value}]" for value in dict.fromkeys(citations))
+                for pending_index in range(run_start, position):
+                    paragraph_segments[pending_index] += f" {inherited}"
+                run_start = position + 1
             segments.extend(
                 _AnswerSegment(item, block_id=block_id, block_kind=block_kind)
                 for item in paragraph_segments
@@ -2547,7 +2612,17 @@ def _is_insufficiency_statement(text: str) -> bool:
 
 def _is_evidence_followup_statement(text: str) -> bool:
     """Operational verification advice is not a factual corpus assertion."""
-    return bool(_EVIDENCE_FOLLOWUP_PATTERN.fullmatch(_plain_claim_text(text).strip()))
+    plain = _plain_claim_text(text).strip()
+    if regex.search(
+        r"(?:,|;)\s*(?:therefore|so|thus|consequently)\b|"
+        r"\b(?:is|are)\s+(?:unnecessary|not required|exempt)\b|"
+        r"\b(?:exempt|exemption|need not|does not need to)\b|"
+        r"\b(?:must|shall)\s+(?:not\s+)?(?:register|file|pay|hold)\b",
+        plain,
+        regex.IGNORECASE,
+    ):
+        return False
+    return bool(_EVIDENCE_FOLLOWUP_PATTERN.fullmatch(plain))
 
 
 def _coverage_kind_hint(text: str, *, display: str | None = None) -> str | None:
@@ -2583,8 +2658,13 @@ def _is_bounded_coverage_continuation(segments: list[str], index: int, display: 
     paragraph or list item fully verifiable.
     """
     plain = _plain_claim_text(display).strip()
+    source_antecedent = regex.search(
+        r"^it does not(?:,? by itself,?)? establish\b", plain, regex.IGNORECASE
+    )
     if not (
-        _COVERAGE_CONTINUATION_PATTERN.search(plain) or _COVERAGE_SUMMARY_PATTERN.search(plain)
+        _COVERAGE_CONTINUATION_PATTERN.search(plain)
+        or _COVERAGE_SUMMARY_PATTERN.search(plain)
+        or source_antecedent
     ):
         return False
     if index <= 0:
@@ -2594,6 +2674,14 @@ def _is_bounded_coverage_continuation(segments: list[str], index: int, display: 
     if getattr(current, "block_id", None) != getattr(previous, "block_id", None):
         return False
     previous_plain = _plain_claim_text(previous)
+    if source_antecedent:
+        return bool(
+            regex.search(
+                r"\b(?:that|this|the) (?:provision|source|passage|evidence|rule)\b",
+                previous_plain,
+                regex.IGNORECASE,
+            )
+        )
     return bool(
         _COVERAGE_SCOPE_PATTERN.search(previous_plain)
         or _COVERAGE_CONTINUATION_PATTERN.search(previous_plain)
@@ -2750,6 +2838,12 @@ def _coverage_concepts(text: str) -> set[str]:
     folded = _plain_claim_text(text).casefold()
     aliases = {
         "annual_return": ("annual return", "annual list", "বার্ষিক রিটার্ন", "বার্ষিক তালিকা"),
+        "tax_liability": (
+            "tax payable",
+            "taxable income",
+            "tax liability",
+            "liability without operations or income",
+        ),
         "auditor_appointment": (
             "auditor appointment",
             "appointment of auditor",
@@ -3115,10 +3209,51 @@ def _is_bare_sufficient_condition(text: str) -> bool:
 def _bounded_entailment_guard(claim: str, evidence: str) -> ClaimVerification | None:
     """Reject a few high-risk contradictions that semantic similarity cannot resolve."""
     claim_plain = _plain_claim_text(claim).casefold()
-    evidence_plain = _aligned_entailment_clause(claim_plain, _plain_claim_text(evidence).casefold())
+    whole_evidence = _plain_claim_text(evidence).casefold()
+    extension_claim = bool(regex.search(r"\b(?:extend|extension)\b|সময়\s+বৃদ্ধি", claim_plain))
+    first_exclusion_pattern = (
+        r"প্রথম\s+বার্ষিক\s+সাধারণ\s+সভা(?:র\s+ক্ষেত্র)?\s+ব্যতীত|"
+        r"except\s+(?:for\s+)?the\s+first\s+(?:annual\s+general\s+meeting|agm)|"
+        r"(?:not|other\s+than)\s+the\s+first\s+(?:annual\s+general\s+meeting|agm)"
+    )
+    # The exclusion may be in a different language from the answer. Scope it
+    # to the extension clause before ordinary lexical clause alignment.
+    extension_source = regex.search(
+        rf"(?=[^।.]*{first_exclusion_pattern})[^।.]*", whole_evidence, regex.IGNORECASE
+    )
+    first_excluded = bool(extension_source and extension_claim)
+    first_claim = bool(
+        regex.search(
+            r"\bfirst\s+(?:annual\s+general\s+meeting|agm)\b|প্রথম\s+বার্ষিক\s+সাধারণ\s+সভা",
+            claim_plain,
+        )
+    )
+    claim_excludes_first = bool(
+        regex.search(
+            r"\bfirst\s+(?:annual\s+general\s+meeting|agm)\s+"
+            r"(?:(?:is|was)\s+(?:excluded|excepted|ineligible)|"
+            r"(?:cannot|can't|may\s+not|must\s+not|does\s+not)\s+"
+            r"(?:receive|obtain|qualify\s+for))\b|"
+            r"\bextension\s+(?:does\s+not|cannot|may\s+not|must\s+not)\s+"
+            r"apply\s+to\s+the\s+first\s+(?:annual\s+general\s+meeting|agm)\b|"
+            r"\b(?:not|except|excluding)\s+the\s+first\s+"
+            r"(?:annual\s+general\s+meeting|agm)\b",
+            claim_plain,
+        )
+    )
+    if first_excluded and first_claim and claim_excludes_first:
+        return None
+    if first_excluded and first_claim:
+        return ClaimVerification.UNSUPPORTED
+    evidence_plain = _aligned_entailment_clause(claim_plain, whole_evidence)
     if not evidence_plain:
         # Similarity located a topic but could not align a clause safely.
         return None
+    # "Except the first AGM" limits which meeting may be extended. It is not
+    # negation of the duration or of the Registrar's power for later meetings.
+    first_excluded = bool(regex.search(first_exclusion_pattern, evidence_plain, regex.IGNORECASE))
+    if first_excluded and extension_claim and first_claim and not claim_excludes_first:
+        return ClaimVerification.UNSUPPORTED
     if _omits_joint_if_condition(claim_plain, evidence_plain):
         # A source requiring A and B does not establish the broader claim that
         # A alone (or B alone) is enough. Similarity can hide the omitted term.
@@ -3145,9 +3280,31 @@ def _bounded_entailment_guard(claim: str, evidence: str) -> ClaimVerification | 
         rf"{_CLAUSE_NEGATION.pattern}|\bexempt\b",
         regex.IGNORECASE,
     )
+    predicate_evidence = (
+        regex.sub(
+            r"প্রথম\s+বার্ষিক\s+সাধারণ\s+সভা(?:র\s+ক্ষেত্র)?\s+ব্যতীত|"
+            r"except\s+(?:for\s+)?the\s+first\s+(?:annual\s+general\s+meeting|agm)|"
+            r"(?:not|other\s+than)\s+the\s+first\s+(?:annual\s+general\s+meeting|agm)",
+            " ",
+            evidence_plain,
+            flags=regex.IGNORECASE,
+        )
+        if first_excluded
+        else evidence_plain
+    )
+    predicate_claim = (
+        regex.sub(
+            r"\b(?:not|except|excluding)\s+the\s+first\s+(?:annual\s+general\s+meeting|agm)",
+            " ",
+            claim_plain,
+            flags=regex.IGNORECASE,
+        )
+        if first_excluded and extension_claim
+        else claim_plain
+    )
     if not _suppress_negation_mismatch(claim_plain, evidence_plain) and bool(
-        negative.search(claim_plain)
-    ) != bool(negative.search(evidence_plain)):
+        negative.search(predicate_claim)
+    ) != bool(negative.search(predicate_evidence)):
         return ClaimVerification.UNSUPPORTED
     comparison = regex.compile(
         r"\b(?:more than|less than|at least|at most|exceed(?:s|ing)?|under|over)\b|"
@@ -3476,7 +3633,18 @@ def _aligned_entailment_clause(claim: str, evidence: str) -> str:
         r"(?:shall|must|will|may|is|are)\b)",
         regex.IGNORECASE,
     )
+    bangla_independent = regex.compile(r"\s+এবং\s+(?=যদি\s+)")
     for sentence in sentences:
+        bangla_match = bangla_independent.search(sentence)
+        if bangla_match is not None:
+            first = sentence[: bangla_match.start()]
+            # A completed permission/duty stands independently of the following
+            # "and if ... then ... not" consequence. A shared consequent does not.
+            if regex.search(r"(?:পারিবে|করিবে|হইবে|যাইবে)[।.!?]?\s*$", first) and not regex.search(
+                r"\bযদি\b", first
+            ):
+                clauses.extend((first.strip(), sentence[bangla_match.end() :].strip()))
+                continue
         match = independent_continuation.search(sentence)
         if match is None:
             clauses.append(sentence)
@@ -3496,6 +3664,25 @@ def _aligned_entailment_clause(claim: str, evidence: str) -> str:
     ranked = [(_coverage(claim_tokens, _significant_tokens(clause)), clause) for clause in clauses]
     score, clause = max(ranked, key=lambda item: item[0])
     return clause if score >= 0.2 else ""
+
+
+def _preceding_continuation_context(segments: list[str], index: int) -> str:
+    """Resolve an answer continuation within its own Markdown block."""
+    if index <= 0 or index >= len(segments):
+        return ""
+    current, preceding = segments[index], segments[index - 1]
+    if not regex.match(r"^the extension\b", _plain_claim_text(current), regex.IGNORECASE):
+        return ""
+    if not isinstance(current, _AnswerSegment) or not isinstance(preceding, _AnswerSegment):
+        return ""
+    if current.block_id != preceding.block_id or current.block_kind != preceding.block_kind:
+        return ""
+    antecedent = _plain_claim_text(preceding).strip()
+    if regex.search(r"\b(?:extend|extension)\b", antecedent, regex.IGNORECASE) and regex.search(
+        r"\b(?:may|must|shall|can|is|are|does)\b", antecedent, regex.IGNORECASE
+    ):
+        return antecedent
+    return ""
 
 
 def _missing_duration(claim: str, evidence: str) -> bool:

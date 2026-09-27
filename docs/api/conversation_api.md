@@ -335,3 +335,51 @@ passages; prompt instructions do not count as proof of citation correctness.
 Evidence-limit statements referring to reviewed provisions are classified as coverage
 statements and still require a matching structured coverage verdict. They cannot
 establish that a legal duty or sanction does not exist.
+
+
+### Conditional detail and recovery diagnostics (September 2026)
+
+Authoritative planning treats requested details qualified by "if available" or
+"only if supported" as optional corroboration unless an identified exception or
+conflict affects the principal rule. Missing optional detail must not block an
+independently evidenced answer. Period applicability and actual conflicting
+amendments still require proof. Coverage and generation distinguish ordinary due
+dates from conditional late-filing windows and category-specific exceptions.
+Canonical generation prompt provenance is `v24`; authoritative recovery provenance
+is `v28-conditional-facets-and-recovery-progress`.
+
+`metadata.knowledge_repair.requirement_progress.attempts` preserves executed
+search attempts even when coverage review times out or a provider fails. The Test
+Lab also reads `requirement_attempts` for older saved messages whose progress
+summary was incomplete. An executed search is not proof that its result was
+reviewed or that the answer is grounded.
+
+Within a paragraph or list item, citations bind backward to the preceding uncited
+sentence run, stopping at the previous explicit citation. A later uncited limitation
+does not erase that association. Citations do not cross paragraphs or list items,
+and each inherited claim still undergoes normal evidence verification. Wording such
+as "these passages do not establish" is evaluated against structured coverage gaps;
+it is not automatically accepted as a verified factual claim.
+
+The additive `metadata.knowledge_repair.coverage.checks` diagnostics now include
+`fulfillment` (`full`, `partial`, `none`, or null for legacy records),
+`unresolved_facets`, and the reviewed `answerable_scope` alongside `supported`
+and exact source ranges. `full_coverage_validated` requires full fulfillment for
+every required check. `metadata.knowledge_repair.answerable_scope.reviewed_scopes`
+lists the established proposition, proof chunk IDs and exclusions passed to
+generation for complete and partial coverage. A partially fulfilled check keeps
+its cited source available while its requirement stays open for discovery and
+appears in unresolved coverage gaps.
+Full fulfillment is downgraded when the selected quotation does not establish a
+requested period, company category, or conditional window; a nonempty
+`unresolved_facets` list cannot certify complete coverage. Input-only gap review
+is reserved for checks with fully resolved source obligations.
+
+`metadata.knowledge_repair.discovery_query_normalization` records each original
+query, executable query, reason, and owning requirement IDs. `review_inputs`
+records supplied chunk/evidence-unit IDs and branch candidates; any exhausted
+identity correction appears in `review_protocol_errors` with affected IDs.
+These fields are diagnostics in existing metadata, so the public message schema
+and stored citation coordinates are unchanged. Test Lab displays reconstructed
+document envelopes separately from evidence-unit character ranges and reports
+unknown evidence length when local offsets are unavailable.

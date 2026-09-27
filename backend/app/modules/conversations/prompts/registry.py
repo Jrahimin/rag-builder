@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-GROUNDED_PROMPT_VERSION = "v22"
+GROUNDED_PROMPT_VERSION = "v24"
 """Provenance identifier stamped on messages and citations.  Change only via git."""
 
 
@@ -47,6 +47,10 @@ _CANONICAL_TEMPLATE = PromptTemplate(
         "do not cover an uncited opening sentence. Keep each claim focused and cite its "
         "governing clause, including qualifications relevant to the user (such as a missed "
         "meeting when stating a meeting-based filing deadline)."
+        " Distinguish an ordinary due date from a last date permitted for late filing, "
+        "a portal submission window, or a category-specific exception. Preserve any "
+        "additional tax, charge or eligibility condition stated with that date; never "
+        "present conditional permission as an unconditional deadline."
         " Copy provision identifiers only from the governing heading or clause. A cross-reference "
         "inside a clause does not identify that clause. If its identifier is absent, cite the "
         "source without guessing a section number. Apply category-specific penalty caps only "

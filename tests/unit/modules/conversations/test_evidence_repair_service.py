@@ -558,6 +558,11 @@ async def test_overall_review_deadline_cannot_promote_unreviewed_evidence():
     assert result.diagnostics["stop_reason"] == "recovery_deadline_exceeded"
     assert result.failure.context["reason"] == "recovery_deadline_exceeded"
     assert result.diagnostics["timeout_seconds"] == 0.3
+    attempts = result.diagnostics["requirement_progress"]["attempts"]
+    assert len(attempts) == 1
+    assert attempts[0]["status"] == "executed"
+    assert attempts[0]["query"] == "rule"
+    assert attempts == result.diagnostics["requirement_attempts"]
 
 
 async def test_nested_bare_timeout_is_provider_failure_not_owned_deadline():
@@ -829,6 +834,7 @@ async def test_complete_initial_requirement_proof_skips_all_retrieval(compact_la
                 {
                     "requirement_id": "premiere",
                     "supported": True,
+                    "fulfillment": "full",
                     "evidence": [
                         {
                             "chunk_id": "E1" if compact_labels else str(selected[0].chunk_id),
@@ -1095,6 +1101,11 @@ async def run_repair(
             else {"query": item, "requirement_ids": all_requirement_ids}
             for item in queries
         ]
+    if plan_coverage is not None:
+        plan_coverage = json.loads(json.dumps(plan_coverage))
+        for check in plan_coverage.get("checks", []):
+            check.setdefault("fulfillment", "full" if check.get("supported") else "none")
+            check.setdefault("unresolved_facets", [])
     llm = AsyncMock()
     plan = ChatCompletionResult(
         content=json.dumps(
@@ -1128,6 +1139,13 @@ async def run_repair(
         }
     )
 
+    def fresh_review(payload):
+        reviewed = json.loads(json.dumps(payload))
+        for check in reviewed.get("checks", []):
+            check.setdefault("fulfillment", "full" if check.get("supported") else "none")
+            check.setdefault("unresolved_facets", [])
+        return reviewed
+
     def bound_followups(items, current_verdict):
         if not requirements or not items:
             return items or []
@@ -1156,7 +1174,7 @@ async def run_repair(
         verification_error
         or replace(
             plan,
-            content=json.dumps(verdict),
+            content=json.dumps(fresh_review(verdict)),
             finish_reason=verification_finish,
         ),
     ]
@@ -1168,14 +1186,18 @@ async def run_repair(
             content=json.dumps({"queries": bound_followups(followup_queries, verdict)}),
             usage=ChatUsage(0, 0),
         ),
-        final_verification_error or replace(plan, content=json.dumps(final_coverage or verdict)),
+        final_verification_error
+        or replace(plan, content=json.dumps(fresh_review(final_coverage or verdict))),
         replace(
             plan,
             content=json.dumps(
                 {"queries": bound_followups(second_followup_queries, final_coverage or verdict)}
             ),
         ),
-        replace(plan, content=json.dumps(second_final_coverage or final_coverage or verdict)),
+        replace(
+            plan,
+            content=json.dumps(fresh_review(second_final_coverage or final_coverage or verdict)),
+        ),
     ]
     retrieval = AsyncMock()
     if adjacent or late_adjacent:
@@ -2043,6 +2065,35 @@ def test_search_plan_binds_queries_and_drops_optional_corroboration_work():
     assert ownership == {"annual return deadline": ["R1"]}
 
 
+def test_initial_query_normalization_preserves_year_and_collapsed_ownership() -> None:
+    from app.modules.conversations.services.evidence_repair_service import (
+        _normalize_discovery_query,
+        _prepare_search_plan,
+        _SearchPlan,
+    )
+
+    plan = _SearchPlan.model_validate(
+        {
+            "requirements": [
+                {"requirement_id": "R1", "description": "AGM duty"},
+                {"requirement_id": "R2", "description": "AGM timing"},
+            ],
+            "queries": [
+                {"query": "কোম্পানী আইন ১৯৯৪ ধারা ৩৬ বার্ষিক সাধারণ সভা", "requirement_ids": ["R1"]},
+                {"query": "কোম্পানী আইন ১৯৯৪ বার্ষিক সাধারণ সভা", "requirement_ids": ["R2"]},
+            ],
+        }
+    )
+    _, queries, ownership = _prepare_search_plan(plan, "When is the AGM?")
+    assert queries == ["কোম্পানী আইন ১৯৯৪ বার্ষিক সাধারণ সভা"]
+    assert ownership[queries[0]] == ["R1", "R2"]
+    assert _normalize_discovery_query(plan.queries[0].query, "When is the AGM?")[1] == (
+        "model_added_provision_anchor_removed"
+    )
+    _, anchored, _ = _prepare_search_plan(plan, "What does section 36 require?")
+    assert "ধারা ৩৬" in anchored[0]
+
+
 def test_search_plan_keeps_mixed_ownership_until_every_owned_requirement_is_proven():
     from app.modules.conversations.services.evidence_repair_service import (
         _prepare_search_plan,
@@ -2506,9 +2557,9 @@ async def test_adjacent_recovery_keeps_scope_and_rechecks_original_requirements(
         calls=calls,
     )
     assert result.diagnostics["status"] == "recovered"
-    # All-supported/incomplete reviews also classify the unresolved input gap.
-    # Neither path needs another search-planning call for deterministic neighbours.
-    assert len(calls) == 3 + int(anchor_supported)
+    # An unfinished continuation cannot qualify for input-gap review even when
+    # its narrower passage has source support. Neighbour retrieval remains bounded.
+    assert len(calls) == 3
     request = retrieval.retrieve.call_args_list[1].kwargs
     assert request["adjacent_to"] == [continuation.chunk_id]
     assert request["query"] == "Governing heading and scope for this continuation"
@@ -2685,6 +2736,7 @@ async def test_authoritative_initial_complete_proof_skips_retrieval_without_extr
                 "requirement_id": "agm",
                 "description": "AGM duty",
                 "supported": True,
+                "fulfillment": "full",
                 "evidence": [
                     {
                         "chunk_id": str(selected[0].chunk_id),
@@ -2753,6 +2805,7 @@ async def test_all_proven_filtered_queries_handoff_instead_of_invalid_plan():
                     "requirement_id": "agm",
                     "description": "AGM duty",
                     "supported": True,
+                    "fulfillment": "full",
                     "evidence": [
                         {
                             "chunk_id": str(selected[0].chunk_id),
@@ -3070,6 +3123,7 @@ def test_unmatched_delta_missing_blocks_complete_verdict():
                     "requirement_id": "R2",
                     "description": "Filing duty",
                     "supported": True,
+                    "fulfillment": "full",
                     "evidence": [{"chunk_id": str(later.chunk_id), "quote": later.content}],
                 }
             ],
@@ -3080,6 +3134,256 @@ def test_unmatched_delta_missing_blocks_complete_verdict():
     assert "penalty schedule for late filing" in verdict.missing
     assert proof.proven_ids() == {"R1", "R2"}
     assert verdict.validates([], [known, later], {"R1", "R2"}) is False
+
+
+def test_partial_proof_retains_source_without_closing_requirement_or_discovery() -> None:
+    from app.modules.conversations.services.evidence_coverage import CoverageDelta, _Check
+    from app.modules.conversations.services.evidence_repair_service import (
+        EvidenceRequirement,
+        _prepare_search_plan,
+        _SearchPlan,
+        _TurnProofMap,
+    )
+
+    source = chunk("The ordinary filing window is six months after the income year.")
+    proof = _TurnProofMap(
+        [EvidenceRequirement(requirement_id="deadline", description="2025-26 filing deadline")]
+    )
+    partial = _Check.model_validate(
+        {
+            "requirement_id": "deadline",
+            "description": "2025-26 filing deadline",
+            "supported": True,
+            "fulfillment": "partial",
+            "unresolved_facets": ["2025-26 year-specific deadline"],
+            "answerable_scope": "General ordinary filing window",
+            "evidence": [{"chunk_id": str(source.chunk_id), "quote": source.content}],
+        }
+    )
+    proof.accept_check(partial, [source], [])
+    proof.remember_gaps(["2025-26 filing deadline"])
+    initial = proof.snapshot_verdict()
+    assert proof._facets["deadline"].valid
+    assert proof.proven_ids() == set()
+    assert proof.unresolved_ids() == {"deadline"}
+    assert not initial.complete
+    assert "2025-26 filing deadline" in initial.missing
+    assert initial.checks[0].supported and initial.checks[0].fulfillment == "partial"
+    plan = _SearchPlan.model_validate(
+        {
+            "queries": [{"query": "2025-26 filing deadline", "requirement_ids": ["deadline"]}],
+            "requirements": [
+                {"requirement_id": "deadline", "description": "2025-26 filing deadline"}
+            ],
+        }
+    )
+    assert _prepare_search_plan(plan, proven_ids=proof.proven_ids())[1] == [
+        "2025-26 filing deadline"
+    ]
+    later = proof.merge_delta(
+        CoverageDelta.model_validate(
+            {"complete": False, "missing": [], "checks": [partial.model_dump()]}
+        ),
+        {"deadline"},
+        [source],
+        [],
+    )
+    assert not later.complete and not proof.snapshot_verdict().complete
+    assert "2025-26 filing deadline" in later.missing
+
+
+def test_mixed_full_and_partial_proof_keeps_partial_in_delta_and_focused_recovery() -> None:
+    from app.modules.conversations.services.evidence_coverage import _Check
+    from app.modules.conversations.services.evidence_repair_service import (
+        EvidenceRequirement,
+        _TurnProofMap,
+        _unsupported_requirement_keys,
+    )
+
+    filing = chunk("Companies must file an annual return.")
+    ordinary = chunk("The ordinary filing window is six months after the income year.")
+    proof = _TurnProofMap(
+        [
+            EvidenceRequirement(requirement_id="filing", description="Filing duty"),
+            EvidenceRequirement(requirement_id="deadline", description="2025-26 filing deadline"),
+        ]
+    )
+    proof.accept_check(_supported_check("filing", filing), [filing, ordinary], [])
+    proof.accept_check(
+        _Check.model_validate(
+            {
+                "requirement_id": "deadline",
+                "description": "2025-26 filing deadline",
+                "supported": True,
+                "fulfillment": "partial",
+                "unresolved_facets": ["year-specific deadline"],
+                "answerable_scope": "Ordinary window only",
+                "evidence": [{"chunk_id": str(ordinary.chunk_id), "quote": ordinary.content}],
+            }
+        ),
+        [filing, ordinary],
+        [],
+    )
+    assert proof.proven_ids() == {"filing"}
+    assert proof.invalidate_changed([filing, ordinary], [], discovered=[ordinary]) == {"deadline"}
+    snapshot = proof.snapshot_verdict()
+    assert snapshot.checks[1].supported and snapshot.checks[1].fulfillment == "partial"
+    assert _unsupported_requirement_keys(snapshot, {"filing", "deadline"}) == {"deadline"}
+    changed = replace(ordinary, content="The ordinary filing window changed.")
+    assert proof.invalidate_changed([filing, changed], [], discovered=[changed]) == {"deadline"}
+    assert not proof._facets["deadline"].valid
+
+
+@pytest.mark.parametrize(
+    ("requirement", "proof", "missing_scope"),
+    [
+        (
+            "2025-26 filing deadline for first-time companies",
+            "The ordinary filing window is six months after the income year.",
+            True,
+        ),
+        (
+            "2025-26 filing deadline for first-time companies",
+            "For 2025-26 first-time companies, the filing deadline is 30 June 2027.",
+            False,
+        ),
+        (
+            "Conditional filing window for private companies",
+            "Companies have an ordinary six-month filing window.",
+            True,
+        ),
+        (
+            "Conditional filing window for private companies",
+            "The conditional filing window for private companies ends 30 June.",
+            False,
+        ),
+    ],
+)
+def test_full_fulfillment_needs_selected_proof_for_requested_scope(
+    requirement: str, proof: str, missing_scope: bool
+) -> None:
+    from app.modules.conversations.services.evidence_repair_service import (
+        EvidenceRequirement,
+        _guard_review_fulfillment,
+    )
+
+    source = chunk(proof)
+    review = CoverageVerdict.model_validate(
+        {
+            "complete": True,
+            "missing": [],
+            "checks": [
+                {
+                    "requirement_id": "scope",
+                    "description": requirement,
+                    "supported": True,
+                    "fulfillment": "full",
+                    "evidence": [{"chunk_id": str(source.chunk_id), "quote": proof}],
+                }
+            ],
+        }
+    )
+    guarded = _guard_review_fulfillment(
+        review, [EvidenceRequirement(requirement_id="scope", description=requirement)], [source]
+    )
+    assert guarded.complete is not missing_scope
+    assert guarded.checks[0].fulfillment == ("partial" if missing_scope else "full")
+    assert bool(guarded.missing) is missing_scope
+
+
+def test_full_label_with_unresolved_facet_cannot_complete() -> None:
+    source = chunk("The ordinary filing window is six months after the income year.")
+    verdict = CoverageVerdict.model_validate(
+        {
+            "complete": True,
+            "missing": [],
+            "checks": [
+                {
+                    "requirement_id": "deadline",
+                    "supported": True,
+                    "fulfillment": "full",
+                    "unresolved_facets": ["year-specific deadline"],
+                    "evidence": [{"chunk_id": str(source.chunk_id), "quote": source.content}],
+                }
+            ],
+        }
+    )
+    assert not verdict.validates([], [source], {"deadline"})
+
+
+def test_named_year_in_question_survives_broad_deadline_plan_label() -> None:
+    from app.modules.conversations.services.evidence_repair_service import (
+        EvidenceRequirement,
+        _guard_review_fulfillment,
+    )
+
+    source = chunk("The ordinary filing window is six months after the income year.")
+    review = CoverageVerdict.model_validate(
+        {
+            "complete": True,
+            "missing": [],
+            "checks": [
+                {
+                    "requirement_id": "deadline",
+                    "supported": True,
+                    "fulfillment": "full",
+                    "evidence": [{"chunk_id": str(source.chunk_id), "quote": source.content}],
+                }
+            ],
+        }
+    )
+    guarded = _guard_review_fulfillment(
+        review,
+        [EvidenceRequirement(requirement_id="deadline", description="Filing deadline")],
+        [source],
+        "What is the filing deadline for 2025-26?",
+    )
+    assert not guarded.complete
+    assert guarded.checks[0].fulfillment == "partial"
+    assert "requested period 2025-26" in guarded.checks[0].unresolved_facets
+
+
+async def test_partial_initial_planning_proof_keeps_its_discovery_route() -> None:
+    known = chunk("The ordinary filing window is six months after the income year.")
+    decision = GroundingService(ChatConfig()).assess(
+        "What is the 2025-26 filing deadline?", [known], rerank_status="off"
+    )
+    selected = list(decision.admitted_units) or [known]
+    result, retrieval, _ = await run_repair(
+        [([known], {})],
+        queries=[{"query": "2025-26 filing deadline", "requirement_ids": ["deadline"]}],
+        requirements=[{"requirement_id": "deadline", "description": "2025-26 filing deadline"}],
+        selected_context=selected,
+        initial_decision=decision,
+        plan_coverage={
+            "complete": False,
+            "missing": ["2025-26 filing deadline"],
+            "checks": [
+                {
+                    "requirement_id": "deadline",
+                    "description": "2025-26 filing deadline",
+                    "supported": True,
+                    "fulfillment": "partial",
+                    "unresolved_facets": ["2025-26 year-specific deadline"],
+                    "answerable_scope": "General ordinary filing window",
+                    "evidence": [
+                        {"chunk_id": str(selected[0].chunk_id), "start_line": 1, "end_line": 1}
+                    ],
+                }
+            ],
+            "partial_answer": {
+                "scope": "General ordinary filing window",
+                "requirement_ids": ["deadline"],
+                "exclusions": ["2025-26 filing deadline"],
+            },
+        },
+        max_followup_rounds=0,
+        user_query="What is the 2025-26 filing deadline?",
+    )
+    assert result.diagnostics["status"] != "coverage_inconsistent_completion"
+    assert retrieval.retrieve.await_count == 1
+    assert result.diagnostics["proof_map"]["facets"][0]["valid"] is True
+    assert "2025-26 filing deadline" in result.diagnostics["coverage"]["missing"]
 
 
 def test_delta_omission_does_not_delete_a_retained_gap_or_disagree_with_snapshot():
@@ -3123,6 +3427,7 @@ def test_delta_omission_does_not_delete_a_retained_gap_or_disagree_with_snapshot
                     "requirement_id": "R2",
                     "description": "Appeal duty",
                     "supported": True,
+                    "fulfillment": "full",
                     "evidence": [{"chunk_id": str(second.chunk_id), "quote": second.content}],
                 }
             ],
@@ -3159,6 +3464,7 @@ def _supported_check(requirement_id: str, source: ContextChunk, description: str
             "requirement_id": requirement_id,
             "description": description or requirement_id,
             "supported": True,
+            "fulfillment": "full",
             "evidence": [{"chunk_id": str(source.chunk_id), "quote": source.content}],
         }
     )
@@ -3563,6 +3869,152 @@ async def test_selector_only_retry_repairs_isolated_range_without_full_review():
     assert parsed["complete"] is True
 
 
+async def test_selector_and_identity_failures_share_one_full_protocol_retry() -> None:
+    from app.platform.providers.contracts.llm import ChatMessage, ChatRole
+
+    source = chunk("Catalogue\n\nThe filing rule applies.")
+    bad = {
+        "complete": True,
+        "missing": [],
+        "checks": [
+            {
+                "requirement_id": "R1",
+                "supported": True,
+                "evidence": [{"chunk_id": "E1", "start_line": 2, "end_line": 2}],
+            },
+            {
+                "requirement_id": "R1",
+                "supported": True,
+                "fulfillment": "full",
+                "evidence": [{"chunk_id": "E1", "start_line": 3, "end_line": 3}],
+            },
+            {
+                "requirement_id": "foreign",
+                "supported": True,
+                "fulfillment": "full",
+                "evidence": [{"chunk_id": "E1", "start_line": 3, "end_line": 3}],
+            },
+        ],
+    }
+    corrected = {
+        "complete": True,
+        "missing": [],
+        "checks": [
+            {
+                "requirement_id": identity,
+                "supported": True,
+                "fulfillment": "full",
+                "evidence": [{"chunk_id": "E1", "start_line": 3, "end_line": 3}],
+            }
+            for identity in ("R1", "R2")
+        ],
+    }
+    first = ChatCompletionResult(
+        content=json.dumps(bad),
+        provider="fake",
+        model="test",
+        finish_reason="stop",
+        usage=ChatUsage(1, 1),
+        provider_version="1",
+    )
+    llm = AsyncMock()
+    llm.generate.side_effect = [first, replace(first, content=json.dumps(corrected))]
+    response = await _validated_completion(
+        llm,
+        [ChatMessage(ChatRole.SYSTEM, "Review"), ChatMessage(ChatRole.USER, "{}")],
+        schema=CoverageVerdict,
+        max_tokens=1024,
+        proof_context=[source],
+        source_ids={"E1": str(source.chunk_id)},
+        expected_requirement_ids={"R1", "R2"},
+        require_fulfillment=True,
+    )
+    assert llm.generate.await_count == 2
+    retry_messages = llm.generate.call_args_list[1].args[0]
+    assert "Return a complete JSON object" in retry_messages[-1].content
+    assert all(
+        marker in retry_messages[-1].content
+        for marker in ("blank_range", "foreign", "R2", "missing explicit fulfillment")
+    )
+    assert {
+        check.requirement_id
+        for check in CoverageVerdict.model_validate_json(response.content).checks
+    } == {
+        "R1",
+        "R2",
+    }
+
+
+async def test_combined_protocol_retry_keeps_valid_checks_in_other_partition() -> None:
+    from app.platform.providers.contracts.llm import ChatMessage, ChatRole
+
+    source = chunk("Catalogue\n\nEvery company must keep records.")
+    calls: dict[str, int] = {}
+    feedback: list[str] = []
+
+    async def respond(messages, **kwargs):
+        payload = json.loads(messages[1].content)
+        ids = [item["requirement_id"] for item in payload["requirements"]]
+        key = ids[0]
+        calls[key] = calls.get(key, 0) + 1
+        if key == "R0" and len(messages) > 2:
+            feedback.append(messages[-1].content)
+        checks = [
+            {
+                "requirement_id": identity,
+                "supported": True,
+                "fulfillment": "full",
+                "evidence": [{"chunk_id": "E1", "start_line": 3, "end_line": 3}],
+            }
+            for identity in ids
+        ]
+        if key == "R0":
+            checks[1]["fulfillment"] = None
+            checks[2]["requirement_id"] = "foreign"
+            checks.append({**checks[1], "fulfillment": "full"})
+            if calls[key] == 1:
+                checks[2]["evidence"] = [{"chunk_id": "E1", "start_line": 2, "end_line": 2}]
+        return ChatCompletionResult(
+            content=json.dumps({"complete": True, "missing": [], "checks": checks}),
+            provider="fake",
+            model="test",
+            finish_reason="stop",
+            usage=ChatUsage(1, 1),
+            provider_version="1",
+        )
+
+    llm = AsyncMock()
+    llm.generate.side_effect = respond
+    payload = {"requirements": [{"requirement_id": f"R{i}"} for i in range(6)]}
+    response = await _validated_completion(
+        llm,
+        [ChatMessage(ChatRole.SYSTEM, "Review"), ChatMessage(ChatRole.USER, json.dumps(payload))],
+        schema=CoverageVerdict,
+        max_tokens=1024,
+        parallel_requirements=True,
+        proof_context=[source],
+        source_ids={"E1": str(source.chunk_id)},
+        require_fulfillment=True,
+    )
+    verdict = CoverageVerdict.model_validate_json(response.content)
+    assert calls == {"R0": 2, "R3": 1}
+    assert feedback and all(
+        marker in feedback[0]
+        for marker in ("blank_range", "foreign", "R2", "missing explicit fulfillment")
+    )
+    assert not verdict.complete
+    assert {check.requirement_id for check in verdict.checks if check.supported} == {
+        "R0",
+        "R3",
+        "R4",
+        "R5",
+    }
+    assert {check.requirement_id for check in verdict.checks if not check.supported} == {
+        "R1",
+        "R2",
+    }
+
+
 async def test_contradictory_verdict_keeps_bounded_full_retry():
     from app.platform.providers.contracts.llm import ChatMessage, ChatRole
 
@@ -3862,10 +4314,202 @@ async def test_parallel_overview_review_preserves_full_context_and_exact_identit
         assert all(not c.evidence for c in verdict.checks if not c.supported)
     else:
         assert verdict.validates([], [source], {f"R{i}" for i in range(6)})
-    assert result.usage == ChatUsage(20, 40)
-    assert len(seen) == 2
+    assert result.usage == (ChatUsage(40, 80) if wrong_identity else ChatUsage(20, 40))
+    assert len(seen) == (4 if wrong_identity else 2)
     assert all(item["context"] == payload["context"] for item in seen)
     assert all(item["authority_limitations"] == payload["authority_limitations"] for item in seen)
+
+
+async def test_partition_identity_uses_one_existing_correction_and_keeps_other_partition() -> None:
+    from app.platform.providers.contracts.llm import ChatMessage, ChatRole
+
+    source = chunk("Every company must keep records.")
+    calls: dict[str, int] = {}
+    feedback: list[str] = []
+
+    async def respond(messages, **kwargs):
+        payload = json.loads(messages[1].content)
+        ids = [item["requirement_id"] for item in payload["requirements"]]
+        key = ids[0]
+        calls[key] = calls.get(key, 0) + 1
+        if len(messages) > 2:
+            feedback.append(messages[-1].content)
+        checks = [
+            {
+                "requirement_id": item,
+                "supported": True,
+                "evidence": [{"chunk_id": str(source.chunk_id), "quote": source.content}],
+            }
+            for item in ids
+        ]
+        if key == "R0" and calls[key] == 1:
+            checks[0]["requirement_id"] = "foreign"
+        return ChatCompletionResult(
+            content=json.dumps({"complete": True, "missing": [], "checks": checks}),
+            provider="fake",
+            model="test",
+            provider_version="1",
+            finish_reason="stop",
+            usage=ChatUsage(10, 20),
+        )
+
+    llm = AsyncMock()
+    llm.provider_name = "fake"
+    llm.generate.side_effect = respond
+    payload = {"requirements": [{"requirement_id": f"R{i}"} for i in range(6)]}
+    response = await _validated_completion(
+        llm,
+        [ChatMessage(ChatRole.SYSTEM, "Review"), ChatMessage(ChatRole.USER, json.dumps(payload))],
+        schema=CoverageVerdict,
+        max_tokens=1024,
+        parallel_requirements=True,
+    )
+    verdict = CoverageVerdict.model_validate_json(response.content)
+    assert verdict.complete and {check.requirement_id for check in verdict.checks} == {
+        f"R{i}" for i in range(6)
+    }
+    assert calls == {"R0": 2, "R3": 1}
+    assert "R0" in feedback[0] and "foreign" in feedback[0]
+
+
+@pytest.mark.parametrize(
+    ("source_text", "fulfillment", "reported_complete", "expected_complete", "unresolved"),
+    [
+        (
+            "The ordinary filing window is six months after the income year.",
+            "full",
+            True,
+            False,
+            ["requested period 2025-26"],
+        ),
+        (
+            "The ordinary filing window is six months after the income year.",
+            "partial",
+            False,
+            False,
+            ["2025-26 year-specific deadline"],
+        ),
+        (
+            "For income year 2025-26, the applicable ordinary filing deadline is 30 June 2027.",
+            "full",
+            True,
+            True,
+            [],
+        ),
+    ],
+)
+async def test_reviewed_scope_handoff_keeps_proof_and_unresolved_facets(
+    source_text: str,
+    fulfillment: str,
+    reported_complete: bool,
+    expected_complete: bool,
+    unresolved: list[str],
+) -> None:
+    from app.modules.conversations.prompt_builder import PromptBuilder
+    from app.modules.conversations.prompts.registry import require_prompt_template
+
+    source = chunk(source_text)
+    review = {
+        "complete": reported_complete,
+        "missing": [] if reported_complete else unresolved,
+        "checks": [
+            {
+                "requirement_id": "deadline",
+                "description": "2025-26 filing deadline",
+                "supported": True,
+                "fulfillment": fulfillment,
+                "unresolved_facets": [] if reported_complete else unresolved,
+                "answerable_scope": "General ordinary filing window",
+                "evidence": [{"chunk_id": str(source.chunk_id), "quote": source.content}],
+            }
+        ],
+    }
+    if not reported_complete:
+        review["partial_answer"] = {
+            "scope": "General ordinary window only",
+            "requirement_ids": ["deadline"],
+            "exclusions": unresolved,
+        }
+    result, _, _ = await run_repair(
+        [([source], {})],
+        queries=["filing deadline"],
+        requirements=[{"requirement_id": "deadline", "description": "2025-26 filing deadline"}],
+        coverage=review,
+        max_followup_rounds=0,
+        user_query="What is the 2025-26 ordinary filing deadline?",
+    )
+    assert result.diagnostics["coverage"]["full_coverage_validated"] is expected_complete
+    if not expected_complete:
+        assert "input_gap_reviews" not in result.diagnostics
+    assert result.answerable_scope["reviewed_scopes"][0]["proof_ids"] == [str(source.chunk_id)]
+    assert result.answerable_scope["reviewed_scopes"][0]["exclusions"] == unresolved
+    system = (
+        PromptBuilder()
+        .build(
+            template=require_prompt_template("current"),
+            context_chunks=result.selected,
+            history=[],
+            user_question="What is the 2025-26 ordinary filing deadline?",
+            reviewed_scopes=result.answerable_scope["reviewed_scopes"],
+            partial_answer=result.partial_answer,
+        )[0]
+        .content
+    )
+    assert "Reviewed generation checklist" in system
+    assert "General ordinary filing window" in system
+    assert str(source.chunk_id) in system
+    assert '"citation_indexes": [1]' in system
+    if unresolved:
+        assert unresolved[0] in system
+
+
+def test_legacy_coverage_metadata_does_not_gain_fulfillment() -> None:
+    source = chunk("A company must maintain records.")
+    verdict = CoverageVerdict.model_validate(
+        {
+            "complete": True,
+            "missing": [],
+            "checks": [
+                {
+                    "requirement_id": "records",
+                    "supported": True,
+                    "evidence": [{"chunk_id": str(source.chunk_id), "quote": source.content}],
+                }
+            ],
+        }
+    )
+    assert verdict.checks[0].fulfillment is None
+
+
+def test_independent_records_duty_survives_missing_penalty_but_dependency_blocks() -> None:
+    source = chunk("Companies must maintain accounting records.")
+    payload = {
+        "complete": False,
+        "missing": ["Penalty for missing records"],
+        "checks": [
+            {
+                "requirement_id": "records",
+                "supported": True,
+                "fulfillment": "full",
+                "answerable_scope": "Maintain accounting records",
+                "evidence": [{"chunk_id": str(source.chunk_id), "quote": source.content}],
+            },
+            {
+                "requirement_id": "penalty",
+                "supported": False,
+                "fulfillment": "none",
+                "evidence": [],
+            },
+        ],
+    }
+    verdict = CoverageVerdict.model_validate(payload)
+    verdict.retain_answerable_scopes()
+    assert verdict.partial_answer is not None
+    assert verdict.partial_answer.requirement_ids == ["records"]
+    assert verdict.partial_validates([source], {"records", "penalty"})
+    blocked = verdict.model_copy(deep=True)
+    blocked.checks[0].needs_adjacent_context = True
+    assert not blocked.partial_validates([source], {"records", "penalty"})
 
 
 async def test_parallel_overview_deadline_cancels_both_provider_calls():
