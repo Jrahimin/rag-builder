@@ -11,7 +11,8 @@ Keep genuine unresolved factual gaps in missing.
 Return only JSON with exactly this schema:
 {"complete":false,"missing":["short missing requirement"],"checks":[
 {"requirement_id":"R1","description":"required fact or rule","supported":false,
-"answerable_scope":"","needs_adjacent_context":false,"evidence":[
+"fulfillment":"none","unresolved_facets":[],"answerable_scope":"",
+"needs_adjacent_context":false,"evidence":[
 {"chunk_id":"provided ID","start_line":1,"end_line":3}]}]}
 Each source_lines record carries original start_line/end_line selectors beside its text.
 Copy those numeric selectors from the SAME provided chunk, never the record's position.
@@ -34,6 +35,14 @@ the original question and supplied evidence establish the correction. Do not inv
 an unresolved corpus gap for a planner-only error, or add a replacement ID while
 leaving the mistaken check false. A contradicted user premise needs source proof of
 the correction. Never drop a requested topic or substitute an unevidenced claim.
+For every check return fulfillment explicitly: full only when the supplied proof
+answers the ORIGINAL requirement, partial when a narrower evidenced proposition is
+independently useful, none otherwise. Keep supported separate: true may establish a
+general rule while fulfillment is partial for a requested year-specific deadline.
+Name each missing period, taxpayer/entity category, ordinary versus conditional
+window, or applicability condition in unresolved_facets. Review source metadata and
+related passages for these facets; a valid generic quotation alone is insufficient.
+Do not clear needs_adjacent_context because a narrower proposition is supported.
 For Factual evidence, supported facts with attributed material conflicts suffice. For
 Multi-perspective evidence, evidenced disagreement satisfies comparative coverage; require
 the requested positions, not consensus. Only apply governing-rule checks below when the
@@ -147,6 +156,8 @@ For EVERY supported check that can be explained independently, set answerable_sc
  to the precise proven duty or rule, excluding unresolved details. The caller retains
  these explicitly reviewed scopes even if omitted from partial_answer.requirement_ids.
  A proven filing duty remains answerable when its deadline or penalty is missing.
+ A supported core records duty can remain answerable when its separate penalty
+ detail is unresolved; dependent calculations and applicability cannot.
  Include all such duties across the requested topics, not just one source or authority.
  Leave answerable_scope empty for a dependent calculation, unresolved applicability,
  or incomplete governing provision. A supported formula alone cannot authorize a

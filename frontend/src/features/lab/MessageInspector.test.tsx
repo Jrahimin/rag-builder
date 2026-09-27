@@ -270,3 +270,97 @@ describe("message grounding explanation", () => {
     expect(screen.queryByText("Task unanswered / insufficient evidence")).not.toBeInTheDocument();
   });
 });
+
+test("shows executed recovery searches even when a timeout skipped progress assembly", () => {
+  inspect({
+    ...message,
+    metadata: {
+      knowledge_repair: {
+        requirement_attempts: [
+          { route: "search", query: "filing deadline", status: "executed", admitted_ids: ["one"] },
+        ],
+        requirement_progress: { stop_reason: "recovery_deadline_exceeded" },
+      },
+    },
+  });
+  expect(screen.getByText(/Evidence recovery attempts \(1\)/)).toBeInTheDocument();
+  expect(screen.queryByText("No recovery query was executed.")).not.toBeInTheDocument();
+  expect(screen.getByText("filing deadline")).toBeInTheDocument();
+});
+
+test("citation preview uses reconstructed evidence offsets instead of document envelope", () => {
+  inspect({
+    ...message,
+    citations: [
+      {
+        source_kind: "knowledge",
+        filename: "Act.md",
+        chunk_id: "reconstructed",
+        excerpt: "Short preview",
+        char_start: 0,
+        char_end: 86382,
+        evidence_source_envelope: "reconstructed_context",
+        evidence_chunk_char_start: 0,
+        evidence_chunk_char_end: 1610,
+      },
+    ],
+  });
+  expect(screen.getByText(/document envelope 0–86382/)).toBeInTheDocument();
+  expect(screen.getByText(/evidence characters 0–1610/)).toBeInTheDocument();
+  expect(screen.getByText(/of 1610 source characters/)).toBeInTheDocument();
+});
+
+test("citation preview retains contiguous and legacy length fallback", () => {
+  inspect({
+    ...message,
+    citations: [
+      {
+        source_kind: "knowledge",
+        filename: "Act.md",
+        chunk_id: "contiguous",
+        excerpt: "Short",
+        char_start: 100,
+        char_end: 160,
+        evidence_source_envelope: "contiguous_span",
+      },
+    ],
+  });
+  expect(screen.getByText(/of 60 source characters/)).toBeInTheDocument();
+});
+
+test("citation preview shows unknown length for reconstructed evidence without local offsets", () => {
+  inspect({
+    ...message,
+    citations: [
+      {
+        source_kind: "knowledge",
+        filename: "Act.md",
+        chunk_id: "unknown",
+        excerpt: "Short",
+        char_start: 0,
+        char_end: 86382,
+        evidence_source_envelope: "reconstructed_context",
+      },
+    ],
+  });
+  expect(screen.getByText("Evidence length unknown.")).toBeInTheDocument();
+  expect(screen.queryByText(/of 86382 source characters/)).not.toBeInTheDocument();
+});
+
+test("citation preview retains legacy contiguous offsets without provenance fields", () => {
+  inspect({
+    ...message,
+    citations: [
+      {
+        source_kind: "knowledge",
+        filename: "Legacy.pdf",
+        chunk_id: "legacy",
+        excerpt: "Short",
+        char_start: 200,
+        char_end: 280,
+      },
+    ],
+  });
+  expect(screen.getByText(/characters 200–280/)).toBeInTheDocument();
+  expect(screen.getByText(/of 80 source characters/)).toBeInTheDocument();
+});

@@ -377,3 +377,57 @@ passages; prompt instructions do not count as proof of citation correctness.
 Evidence-limit statements referring to reviewed provisions are classified as coverage
 statements and still require a matching structured coverage verdict. They cannot
 establish that a legal duty or sanction does not exist.
+
+
+### Conditional detail and recovery diagnostics (September 2026)
+
+Authoritative planning treats requested details qualified by "if available" or
+"only if supported" as optional corroboration unless an identified exception or
+conflict affects the principal rule. Missing optional detail must not block an
+independently evidenced answer. Period applicability and actual conflicting
+amendments still require proof. Coverage and generation distinguish ordinary due
+dates from conditional late-filing windows and category-specific exceptions.
+Canonical generation prompt provenance is `v24`; authoritative recovery provenance
+is `v28-conditional-facets-and-recovery-progress`.
+
+`metadata.knowledge_repair.requirement_progress.attempts` preserves executed
+search attempts even when coverage review times out or a provider fails. The Test
+Lab also reads `requirement_attempts` for older saved messages whose progress
+summary was incomplete. An executed search is not proof that its result was
+reviewed or that the answer is grounded.
+
+Within a paragraph or list item, citations bind backward to the preceding uncited
+sentence run, stopping at the previous explicit citation. A later uncited limitation
+does not erase that association. Citations do not cross paragraphs or list items,
+and each inherited claim still undergoes normal evidence verification. Wording such
+as "these passages do not establish" is evaluated against structured coverage gaps;
+it is not automatically accepted as a verified factual claim.
+
+### Fulfillment-aware source review and citation display
+
+Fresh coverage checks report source `supported` separately from `fulfillment`
+(`full`, `partial`, or `none`) and list `unresolved_facets`. Exact quotation alone
+does not establish that a requested period, company category, ordinary deadline,
+conditional filing window, or applicability condition was answered. Complete
+coverage requires full fulfillment and valid proof for every required check.
+Legacy checks without fulfillment retain an unknown value. Independently useful
+partial scopes and their proof IDs reach generation as a reviewed checklist;
+unfinished adjacent context and dependent calculations remain blocked.
+Partially fulfilled duties keep their cited source available for an answer while
+remaining eligible for discovery and visible as unresolved coverage gaps.
+The verifier keeps checking partially answered duties in later evidence reviews.
+A generic filing interval cannot close a named-year deadline until cited proof
+establishes that period and its applicability. Grounding checks factual clauses
+that follow verification advice and matches explicit source limitations to
+reviewed coverage gaps.
+
+Initial recovery searches remove section anchors the user did not supply before
+deduplication. Diagnostics retain original and executable queries, ownership,
+review-input chunk IDs, branch candidates, and review protocol errors. A malformed
+review ID receives the existing bounded format correction; unresolved identities
+remain review-incomplete and do not alone trigger more retrieval.
+
+The Test Lab citation preview uses evidence-unit offsets when available. For
+reconstructed context, document coordinates are labelled as an envelope; missing
+local evidence offsets yield unknown evidence length. Stored coordinates and hashes
+are unchanged.
