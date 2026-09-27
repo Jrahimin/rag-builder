@@ -2829,6 +2829,55 @@ async def test_all_proven_filtered_queries_handoff_instead_of_invalid_plan():
     retrieval.retrieve_batch.assert_not_awaited()
 
 
+async def test_no_discovery_queries_preserves_validated_initial_partial_proof():
+    source = chunk("A company must file its annual accounts with the Registrar.")
+    decision = GroundingService(ChatConfig()).assess(
+        "What are the filing and audit duties?", [source], rerank_status="off"
+    )
+    selected = list(decision.admitted_units) or [source]
+    result, retrieval, _ = await run_repair(
+        [],
+        queries=[],
+        requirements=[
+            {"requirement_id": "filing", "description": "Annual accounts filing duty"},
+            {"requirement_id": "audit", "description": "Annual audit duty"},
+        ],
+        selected_context=selected,
+        initial_decision=decision,
+        plan_coverage={
+            "complete": False,
+            "missing": ["Annual audit duty"],
+            "checks": [
+                {
+                    "requirement_id": "filing",
+                    "supported": True,
+                    "evidence": [
+                        {
+                            "chunk_id": str(selected[0].chunk_id),
+                            "start_line": 1,
+                            "end_line": 1,
+                        }
+                    ],
+                },
+                {"requirement_id": "audit", "supported": False, "evidence": []},
+            ],
+            "partial_answer": {
+                "scope": "Annual accounts filing duty",
+                "requirement_ids": ["filing"],
+                "exclusions": ["Annual audit duty"],
+            },
+        },
+        user_query="What are the filing and audit duties?",
+    )
+    assert result.diagnostics["status"] == "partial_answer"
+    assert result.diagnostics["partial_checkpoint_restored"] == "no_discovery_queries"
+    assert result.diagnostics["coverage"]["complete"] is False
+    assert result.decision is not None and result.decision.sufficient
+    assert [item.chunk_id for item in result.selected] == [selected[0].chunk_id]
+    retrieval.retrieve.assert_not_awaited()
+    retrieval.retrieve_batch.assert_not_awaited()
+
+
 async def test_authoritative_partial_initial_proof_filters_proven_queries():
     known = chunk("Private companies must hold an annual general meeting.")
     later = chunk("The annual list of members is filed with the Registrar.")
@@ -3256,6 +3305,17 @@ def test_mixed_full_and_partial_proof_keeps_partial_in_delta_and_focused_recover
             "Conditional filing window for private companies",
             "The conditional filing window for private companies ends 30 June.",
             False,
+        ),
+        (
+            "Separate filing treatment for a private company",
+            "প্রাইভেট কোম্পানীর ক্ষেত্রে ব্যালান্স শীট ও লাভ-ক্ষতির হিসাবের অনুলিপি "
+            "পৃথক পৃথকভাবে রেজিষ্ট্রারের নিকট দাখিল করিতে হইবে।",
+            False,
+        ),
+        (
+            "Separate filing treatment for a private company",
+            "কোম্পানীর ব্যালান্স শীট রেজিষ্ট্রারের নিকট দাখিল করিতে হইবে।",
+            True,
         ),
     ],
 )

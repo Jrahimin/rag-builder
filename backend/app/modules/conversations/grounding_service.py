@@ -64,7 +64,8 @@ _COVERAGE_SCOPE_PATTERN = regex.compile(
     r"the materials reviewed (?:do not|did not) establish|"
     r"(?:i|we) cannot responsibly state from (?:these|the) materials|"
     r"not enough indexed evidence|complete coverage has not been verified|"
-    r"reviewed (?:evidence|materials|sources|provisions) (?:do(?:es)?|did) not|"
+    r"reviewed (?:evidence|materials|sources|provisions|passage(?:s)?) "
+    r"(?:do(?:es)?|did) not|"
     r"this answer (?:does|did) not (?:cover|establish)|"
     r"selected (?:evidence|passages|materials) (?:do(?:es)?|did) not|"
     r"(?:supplied|provided|these) (?:source(?:s)?|evidence|passages|materials|provisions) "
@@ -83,7 +84,7 @@ _COVERAGE_SCOPE_PATTERN = regex.compile(
     regex.IGNORECASE,
 )
 _COVERAGE_CONTINUATION_PATTERN = regex.compile(
-    r"^(?:they|these|those|the same (?:sources|materials|provisions)) "
+    r"^(?:it|they|these|those|the same (?:sources|materials|provisions)) "
     r"(?:also )?(?:do(?:es)?|did) not (?:establish|provide|cover|show|confirm)\b",
     regex.IGNORECASE,
 )
@@ -2658,6 +2659,8 @@ def _is_bounded_coverage_continuation(segments: list[str], index: int, display: 
     paragraph or list item fully verifiable.
     """
     plain = _plain_claim_text(display).strip()
+    if regex.search(r"\b(?:exempt|exemption|need not|does not need to)\b", plain, regex.IGNORECASE):
+        return False
     source_antecedent = regex.search(
         r"^it does not(?:,? by itself,?)? establish\b", plain, regex.IGNORECASE
     )
@@ -3200,6 +3203,59 @@ def _suppress_negation_mismatch(claim: str, evidence: str) -> bool:
     return False
 
 
+def _section_190_polarity_scope(claim: str, evidence: str) -> tuple[str, str] | None:
+    """Exclude Section 190 fallback conditions from the filing duty's polarity.
+
+    The Bangla filing sentence contains negative *conditions* (no AGM and no
+    listed officer) alongside a positive duty to file.  Compare those conditions
+    only when the English claim actually states the corresponding fallback.
+    """
+    if not (
+        "ব্যালান্স শীট" in evidence
+        and regex.search(r"রেজিষ্ট্রারের\s+নিকট\s+দাখিল", evidence)
+        and "ত্রিশদিন" in evidence
+    ):
+        return claim, evidence
+
+    no_agm = regex.compile(r"বার্ষিক\s+সাধারণ\s+সভা\s+অনুষ্ঠিত\s+হয়\s+নাই")
+    if no_agm.search(evidence):
+        evidence = no_agm.sub("বার্ষিক সাধারণ সভা অনুষ্ঠিত হয়", evidence)
+        claim = regex.sub(
+            r"\bif\s+no\s+(?:annual\s+general\s+meeting|agm)\s+is\s+held\b",
+            "if the AGM is held",
+            claim,
+            flags=regex.IGNORECASE,
+        )
+
+    no_officer = regex.compile(r"যদি\s+কোম্পানীতে\s+এইরূপ\s+পদধারী\s+কেহ\s+না\s+থাকেন")
+    if no_officer.search(evidence):
+        officer_fallback = regex.compile(
+            r"\bif\s+(?:the\s+company\s+has\s+)?"
+            r"(?:none\s+of\s+(?:those|the)|no)\s+officers?\b"
+            r"(?=\s*(?:[,;.]|$))",
+            regex.IGNORECASE,
+        )
+        officer_condition = regex.search(r"\bif\b[^.;,]{0,100}\bofficers?\b[^.;,]{0,100}", claim)
+        if (
+            "director" in claim
+            and officer_condition
+            and (
+                _CLAUSE_NEGATION.search(officer_condition.group())
+                or regex.search(r"\b(?:unwilling|unavailable)\b", officer_condition.group())
+            )
+            and not officer_fallback.search(claim)
+        ):
+            # Absence of office holders is not the same as their unwillingness,
+            # availability, or another qualified condition. Do not let matching
+            # negative words certify a condition this bounded grammar cannot compare.
+            return None
+        # An affirmative officer condition is not the statute's director fallback.
+        if not ("director" in claim and officer_condition and not officer_fallback.search(claim)):
+            evidence = no_officer.sub("যদি কোম্পানীতে এইরূপ পদধারী কেহ থাকেন", evidence)
+            claim = officer_fallback.sub("if the company has officers", claim)
+    return claim, evidence
+
+
 def _is_bare_sufficient_condition(text: str) -> bool:
     if _is_necessary_condition(text):
         return False
@@ -3302,6 +3358,10 @@ def _bounded_entailment_guard(claim: str, evidence: str) -> ClaimVerification | 
         if first_excluded and extension_claim
         else claim_plain
     )
+    scoped_predicates = _section_190_polarity_scope(predicate_claim, predicate_evidence)
+    if scoped_predicates is None:
+        return ClaimVerification.UNVERIFIED
+    predicate_claim, predicate_evidence = scoped_predicates
     if not _suppress_negation_mismatch(claim_plain, evidence_plain) and bool(
         negative.search(predicate_claim)
     ) != bool(negative.search(predicate_evidence)):

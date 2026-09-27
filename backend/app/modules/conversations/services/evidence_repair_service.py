@@ -322,7 +322,7 @@ def _unproven_requested_scope(description: str, proof: str) -> list[str]:
             gaps.append(f"requested year {year}")
     qualifiers = (
         ("first-time", ("first-time", "first time")),
-        ("private compan", ("private compan",)),
+        ("private compan", ("private compan", "প্রাইভেট কোম্পান")),
         ("public compan", ("public compan",)),
         ("without income", ("without income", "no income")),
         ("newly incorporated", ("newly incorporated",)),
@@ -2171,6 +2171,15 @@ async def repair_knowledge_evidence(
                         [],
                         requirement_ids,
                         [initial_decision] if initial_decision else [],
+                    )
+                    diagnostics["queries"] = []
+                    return result
+                if partial_checkpoint is not None:
+                    _restore_partial_checkpoint(
+                        result,
+                        diagnostics,
+                        partial_checkpoint,
+                        stop_reason="no_discovery_queries",
                     )
                     diagnostics["queries"] = []
                     return result

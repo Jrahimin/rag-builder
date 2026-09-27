@@ -1434,6 +1434,51 @@ async def test_live_partial_answer_limitation_paragraph_uses_coverage_verdict() 
     assert all(claim["verification"] == "supported" for claim in result.claims)
 
 
+async def test_reviewed_passage_and_it_continuation_use_matching_coverage_gaps() -> None:
+    answer = (
+        "The reviewed passage does not establish whether this company is required to file "
+        "a tax return or the ordinary filing deadline. "
+        "It also does not establish VAT/BIN registration conditions or trade-licence "
+        "requirements."
+    )
+    result = await GroundingService(ChatConfig()).map_claims(
+        answer,
+        [_chunk(content="A company must keep accounting records.")],
+        coverage={
+            "coverage": {
+                "missing": [
+                    "Company tax-return applicability and ordinary filing deadline",
+                    "VAT/BIN registration conditions and trade-licence requirements",
+                ],
+                "partial_scope_validated": True,
+            }
+        },
+    )
+    assert len(result.claims) == 2
+    assert {claim["claim_kind"] for claim in result.claims} == {"coverage_scope"}
+    assert all(claim["verification"] == "supported" for claim in result.claims)
+
+
+async def test_it_continuation_does_not_certify_an_exemption() -> None:
+    answer = (
+        "The reviewed evidence does not establish annual-return filing procedures. "
+        "It also does not establish that companies are exempt from annual returns."
+    )
+    result = await GroundingService(ChatConfig()).map_claims(
+        answer,
+        [_chunk(content="Companies must file an annual return.")],
+        coverage={
+            "coverage": {
+                "missing": ["Annual-return filing procedures"],
+                "partial_scope_validated": True,
+            }
+        },
+    )
+    assert result.claims[0]["claim_kind"] == "coverage_scope"
+    assert result.claims[1]["claim_kind"] == "source_assertion"
+    assert result.claims[1]["verification"] != "supported"
+
+
 async def test_coverage_pronoun_in_new_paragraph_is_not_exempted() -> None:
     answer = (
         "The supplied provisions do not establish annual return filing procedures.\n\n"
@@ -1518,6 +1563,61 @@ async def test_cross_language_similarity_cannot_reverse_negation() -> None:
     ).map_claims(f"{claim} [1]", [_chunk(content=evidence)])
     assert result.claims[0]["verification"] == "unsupported"
     assert result.claims[0]["verification_method"] == "bounded_entailment"
+
+
+@pytest.mark.parametrize(
+    ("claim", "expected"),
+    [
+        (
+            "The company must file its balance sheet and profit-and-loss account with "
+            "the Registrar within 30 days after they are presented at the AGM.",
+            None,
+        ),
+        (
+            "The copies must be signed by the managing director, managing agent, "
+            "manager, or secretary; if the company has none of those officers, "
+            "a director must sign.",
+            None,
+        ),
+        (
+            "If no AGM is held, the 30 days run from the latest date by which "
+            "the AGM should have been held.",
+            None,
+        ),
+        (
+            "The company is not required to file its balance sheet with the Registrar.",
+            "unsupported",
+        ),
+        ("A director must sign if the company has those officers.", "unsupported"),
+        (
+            "A director must sign if the company has no officers willing to sign.",
+            "unverified",
+        ),
+        (
+            "If no officers are available, a director must sign.",
+            "unverified",
+        ),
+        ("If the listed officers are unwilling, a director must sign.", "unverified"),
+        ("A director must sign if the listed officers are unavailable.", "unverified"),
+        ("If no AGM is held, the company does not need to file its balance sheet.", "unsupported"),
+    ],
+)
+def test_section_190_fallback_negation_does_not_reverse_filing_duty(
+    claim: str, expected: str | None
+) -> None:
+    from app.modules.conversations.grounding_service import _bounded_entailment_guard
+
+    section_190 = (
+        "১৯০৷ (১) কোন কোম্পানীর ব্যালান্স শীট এবং লাভ-ক্ষতি বা আয়-ব্যয়ের হিসাব উহার "
+        "বার্ষিক সাধারণ সভায় যে তারিখে উপস্থাপিত হয় সেই তারিখ হইতে ত্রিশদিনের মধ্যে, "
+        "অথবা যেক্ষেত্রে কোন বৎসরে কোম্পানীর বার্ষিক সাধারণ সভা অনুষ্ঠিত হয় নাই, "
+        "সেক্ষেত্রে উক্ত সভার সর্বশেষ নির্ধারিত তারিখ হইতে পরবর্তী ত্রিশদিনের মধ্যে, "
+        "কোম্পানীর ব্যবস্থাপনা পরিচালক, ম্যানেজিং এজেন্ট, ম্যানেজার বা সচিব অথবা, "
+        "যদি কোম্পানীতে এইরূপ পদধারী কেহ না থাকেন, তদবস্থায়, কোম্পানীর একজন "
+        "পরিচালক কর্তৃক স্বাক্ষরিত ব্যালান্স শীট এবং লাভ-ক্ষতির হিসাব এবং সংযুক্ত "
+        "দলিলের তিনটি করিয়া অনুলিপি রেজিষ্ট্রারের নিকট দাখিল করিতে হইবে।"
+    )
+    assert _bounded_entailment_guard(claim, section_190) == expected
 
 
 async def test_negative_exception_in_another_clause_does_not_reverse_positive_rule() -> None:

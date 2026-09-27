@@ -403,6 +403,23 @@ and each inherited claim still undergoes normal evidence verification. Wording s
 as "these passages do not establish" is evaluated against structured coverage gaps;
 it is not automatically accepted as a verified factual claim.
 
+Claim verification scopes the negative fallback conditions in the Bangla Companies
+Act section 190 filing sentence separately from its positive filing duty. A missing
+AGM or listed officer does not by itself contradict a cited filing deadline or
+signing requirement. Direct reversals of the duty and an affirmative-officer claim
+for the director fallback remain unsupported.
+Qualified negative officer conditions (for example, officers being unwilling or
+unavailable) remain unverified rather than being equated with having no officers.
+
+Authoritative scope review recognizes an explicit Bangla private-company category
+in quoted proof. A generic company rule still does not establish a private-only
+rule. If planning supplies no discovery queries but an initial partial answer has
+already passed exact quote, source-range and authority validation, recovery hands
+off that reviewed partial scope with its unresolved duties visible.
+Evidence-limit prose using "the reviewed passage" and a same-paragraph "it also"
+continuation is checked against structured coverage gaps. An exemption assertion
+is not accepted as such a continuation.
+
 ### Fulfillment-aware source review and citation display
 
 Fresh coverage checks report source `supported` separately from `fulfillment`

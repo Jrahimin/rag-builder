@@ -174,6 +174,19 @@ answer with `grounded=false`, empty `claims`/`citations`, `finish_reason=insuffi
 one of: `no_retrieval_results`, `below_relevance_threshold`,
 `authority_context_empty`, `context_selection_empty`, or
 `low_query_evidence_coverage`. Admission failures stay on `below_relevance_threshold`.
+Claim verification compares the main filing duty separately from the negative AGM
+and officer fallback conditions in Bangla Companies Act section 190; those conditions
+do not alone make a positive filing claim unsupported. The response fields and
+verification reason vocabulary are unchanged.
+Qualified officer-absence conditions outside the bounded comparison grammar retain
+`unverified` status; matching negative words alone does not establish the fallback.
+Authoritative coverage review accepts a quoted Bangla private-company category as
+category proof. If a plan has no discovery queries, an already validated partial
+checkpoint can still produce a cited partial answer with unresolved requirements
+reported in existing coverage diagnostics; an unvalidated plan remains blocked.
+The verifier treats explicit reviewed-passage limitations and their bounded
+same-paragraph continuations as coverage claims, validating them against the
+recorded gaps rather than requiring a legal citation for the absence statement.
 When evidence was admitted but none remained after authority redaction or context
 budgeting, the reason is `authority_context_empty` or `context_selection_empty`
 and `metadata.evidence_gate.failure_stage` is `context_selection`. `observe` mode still records that assessment on
