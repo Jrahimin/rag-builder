@@ -981,7 +981,10 @@ function ProjectConfig({ project }: { project: Project }) {
       setBusy(true);
       setError("");
       try {
-        const behavior = { translation_policy: "inherit" as const, ...latest.configuration.behavior };
+        const behavior = {
+          translation_policy: "inherit" as const,
+          ...latest.configuration.behavior,
+        };
         delete behavior.generation_model_id;
         const configuration: ProjectAIConfig = { ...latest.configuration, behavior };
         await operatorApiClient.createProjectAIConfig(
@@ -1007,9 +1010,9 @@ function ProjectConfig({ project }: { project: Project }) {
             <h3>Repair generation model selection</h3>
             <p className="muted-copy">
               Revision {latest.revision_number} selects{" "}
-              {latest.configuration.behavior?.generation_model_id ?? "an inherited model"}.
-              Create a new revision that inherits the deployment model and keeps the stored
-              behavior and retrieval settings.
+              {latest.configuration.behavior?.generation_model_id ?? "an inherited model"}. Create a
+              new revision that inherits the deployment model and keeps the stored behavior and
+              retrieval settings.
             </p>
             <button
               className="button button--primary"
