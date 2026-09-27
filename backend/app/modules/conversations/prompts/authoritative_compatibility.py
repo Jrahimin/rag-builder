@@ -12,11 +12,16 @@ Return only JSON: {"queries": [{"query":"short query","requirement_ids":["R1"]}]
 "origin":"explicit_user_request","materiality":"central_rule"}],
 "coverage":{"complete":false,"missing":["short missing requirement"],"checks":[
 {"requirement_id":"R1","description":"necessary governing rule","supported":false,
-"answerable_scope":"","needs_adjacent_context":false,"evidence":[]}],"partial_answer":null}}.
+"fulfillment":"none","unresolved_facets":[],"answerable_scope":"",
+"needs_adjacent_context":false,"evidence":[]}],"partial_answer":null}}.
 Coverage is optional. When admitted_evidence already proves one or more requirements,
 return exact inclusive start_line/end_line selectors copied from the supplied
 source_lines records. Omit coverage when admitted evidence is absent, unsafe, or
 insufficient. Invalid or omitted coverage leaves the caller to search as usual.
+When returning coverage, set fulfillment on every check: full only when proof
+answers the original requested scope, partial for an independently useful narrower
+rule, and none otherwise. List unresolved period, category, ordinary deadline,
+conditional-window, and applicability facets. A valid quote alone is not full proof.
 Do not add a separate review: this planning response is the only initial proof
 exchange. Use 1 to 8 short queries and at most 12 distinct rule requirements. Give each
 requirement a stable ID; alternate-language searches do not create new requirements.
@@ -31,6 +36,14 @@ controls whether the rule applies, central_rule for the principal requested duty
 adjacent_rule for a separately useful related obligation, and secondary_detail for
 a deadline, authority, form, procedure or consequence that is not itself the central
 question. Do not leave materiality implicit.
+For requests such as "extensions only if supported" or "consequences if available",
+the conditional detail is optional_corroboration, not a governing prerequisite,
+unless the question or supplied evidence identifies an actual applicable exception
+or conflict. Prioritize the principal requested rule. This never permits assuming
+that no extension exists, or applying undated guidance to a requested year without
+evidence of that period. If only a general guidance statement is established,
+preserve that narrowly attributed statement as partial coverage and explicitly
+exclude verification of the requested year's operative deadline.
 Requirements must be source-verifiable facts or rules only. Language, brevity,
 bullet count, table layout, and retaining citations are generation instructions,
 not evidence dependencies or missing user inputs. For a rewrite, plan only the
@@ -120,11 +133,24 @@ can classify scenario inputs. Keep genuine unresolved factual gaps in missing.
 Return only JSON with exactly this schema:
 {"complete":false,"missing":["short missing requirement"],"checks":[
 {"requirement_id":"R1","description":"governing rule","supported":false,
-"answerable_scope":"","needs_adjacent_context":false,"evidence":[
+"fulfillment":"none","unresolved_facets":[],"answerable_scope":"",
+"needs_adjacent_context":false,"evidence":[
 {"chunk_id":"provided ID","start_line":1,"end_line":3}]}]}
 Each content line is labeled L1, L2, etc. Select inclusive line numbers from the SAME
 provided chunk. Do not transcribe quotations: the caller reconstructs the exact text.
-Select all lines needed for the governing rule, its scope and conditions. Never use
+Select all lines needed for the governing rule, its scope and conditions.
+A date quoted in an FAQ is not automatically the ordinary statutory deadline.
+Distinguish ordinary filing, late filing with additional charges, first-time filing,
+and category-specific exceptions when the evidence makes those distinctions.
+Preserve those conditions in the supported description and answerable_scope.
+For every check state fulfillment explicitly as full, partial, or none. A source
+may support a general filing window while only partially fulfilling a request
+for the operative deadline in a named year or entity category. List unresolved
+period, category, ordinary-versus-conditional-window and applicability facets.
+Set full only when the original requirement's scope is established by the selected
+proof and source metadata/relationships; do not promote a valid generic quotation.
+If a passage starts mid-rule and the qualifying condition is missing, request its
+adjacent context; do not certify a general deadline from that fragment alone. Never use
 line numbers from another source or infer text between separate chunks.
 Set needs_adjacent_context when the cited lines visibly continue a governing
 rule/table whose missing heading, scope or continuation may be in a neighbouring

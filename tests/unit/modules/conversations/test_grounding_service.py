@@ -1545,6 +1545,172 @@ async def test_conditional_exception_in_same_sentence_does_not_reverse_agm_deadl
     assert result.claims[0]["verification"] == "supported"
 
 
+def test_saved_bangla_agm_permission_and_separate_consequence_align_independently() -> None:
+    from app.modules.conversations.grounding_service import (
+        _aligned_entailment_clause,
+        _bounded_entailment_guard,
+    )
+
+    passage = (
+        "তবে শর্ত থাকে যে, কোন কোম্পানী নিগমিত হওয়ার তারিখ হইতে অনধিক আঠারো মাস "
+        "সময়ের মধ্যে উহার প্রথম বার্ষিক সাধারণ সভা অনুষ্ঠান করিতে পারিবে এবং যদি "
+        "এইরূপ সাধারণ সভা উক্ত সময়ের মধ্যে অনুষ্ঠিত হয় তাহা হইলে নিগমিত হওয়ার "
+        "বৎসর বা পরবর্তী বৎসরে আর কোন সভা অনুষ্ঠান করিতে হইবে না।"
+    )
+    claim = "The first annual general meeting may be held within 18 months of incorporation."
+    aligned = _aligned_entailment_clause(claim.casefold(), passage.casefold())
+    # Cross-language lexical alignment is uncertain, so polarity abstains.
+    assert aligned == ""
+    bangla_aligned = _aligned_entailment_clause(
+        "প্রথম বার্ষিক সাধারণ সভা আঠারো মাসের মধ্যে অনুষ্ঠান করিতে পারিবে।", passage
+    )
+    assert "পারিবে" in bangla_aligned and "হইবে না" not in bangla_aligned
+    assert _bounded_entailment_guard(claim, passage) is None
+
+
+def test_agm_extension_exclusion_is_scope_not_duration_negation() -> None:
+    from app.modules.conversations.grounding_service import _bounded_entailment_guard
+
+    passage = (
+        "আরও শর্ত থাকে যে, নির্ধারিত সময় অতিবাহিত হওয়ার তারিখ হইতে ত্রিশ দিনের "
+        "মধ্যে কোন কোম্পানী রেজিষ্ট্রারের নিকট আবেদন করিলে, রেজিষ্ট্রার প্রথম "
+        "বার্ষিক সাধারণ সভা ব্যতীত অন্যান্য বার্ষিক সাধারণ সভার জন্য অনধিক নব্বই "
+        "দিন পর্যন্ত সময় বৃদ্ধি করিতে পারিবে।"
+    )
+    assert _bounded_entailment_guard("The extension may be up to 90 days.", passage) is None
+    assert (
+        _bounded_entailment_guard("The first AGM may receive the extension.", passage)
+        == "unsupported"
+    )
+
+
+def test_extension_continuation_inherits_only_same_paragraph_factual_context() -> None:
+    from app.modules.conversations.grounding_service import (
+        _answer_segments,
+        _preceding_continuation_context,
+    )
+
+    span = "The extension may last 90 days."
+    preceding = "For later AGMs, the Registrar may extend the meeting time."
+    same = _answer_segments(f"{preceding} {span}")
+    assert _preceding_continuation_context(same, 1) == preceding
+    for answer in (f"{preceding}\n\n{span}", f"{preceding}\n- {span}"):
+        separate = _answer_segments(answer)
+        assert _preceding_continuation_context(separate, 1) == ""
+
+
+def _saved_agm_passage() -> str:
+    return (
+        "৮১৷ (১) প্রত্যেক কোম্পানী উহার অন্যান্য সভা ছাড়াও প্রতি ইংরেজী পঞ্জিকা-বত্সরে "
+        "ইহার বার্ষিক সাধারণ সভা হিসাবে একটি সাধারণ সভা অনুষ্ঠান করিবে এবং উক্ত সভা "
+        "আহ্বানের নোটিশে উহাকে বার্ষিক সাধারণ সভা বলিয়া সুনির্দিষ্টভাবে উল্লেখ করিবে; "
+        "এবং কোন কোম্পানীর একটি বার্ষিক সাধারণ সভা অনুষ্ঠানের তারিখ এবং উহার পরবর্তী "
+        "বার্ষিক সাধারণ সভা অনুষ্ঠানের তারিখের ব্যবধান পনের মাসের অধিক হইবে না :\n\n"
+        "তবে শর্ত থাকে যে, কোন কোম্পানী নিগমিত হওয়ার তারিখ হইতে অনধিক আঠারো মাস "
+        "সময়ের মধ্যে উহার প্রথম বার্ষিক সাধারণ সভা অনুষ্ঠান করিতে পারিবে এবং যদি এইরূপ "
+        "সাধারণ সভা উক্ত সময়ের মধ্যে অনুষ্ঠিত হয় তাহা হইলে নিগমিত হওয়ার বৎসরে বা উহার "
+        "পরবর্তী বত্সরে উক্ত কোম্পানীর অন্য কোন বার্ষিক সাধারণ সভা অনুষ্ঠান করার প্রয়োজন "
+        "হইবে না :\n\n"
+        "আরও শর্ত থাকে যে, উপরোক্ত বার্ষিক সাধারণ সভা অনুষ্ঠানের জন্য নির্ধারিত সময় "
+        "অতিবাহিত হওয়ার তারিখ হইতে ত্রিশ দিনের মধ্যে কোন কোম্পানী রেজিষ্ট্রারের নিকট "
+        "আবেদন করিলে, রেজিষ্ট্রার প্রথম বার্ষিক সাধারণ সভার ক্ষেত্র ব্যতীত অন্যান্য "
+        "বার্ষিক সাধারণ সভা অনুষ্ঠানের সময় অনধিক নব্বই দিন অথবা যে পঞ্জিকা বৎসরের "
+        "জন্য উক্ত সাধারণ সভা অনুষ্ঠিত হওয়ার কথা সেই বত্সরের ৩১শে ডিসেম্বর পর্যন্ত্ম, "
+        "এই দুই মেয়াদের যাহা প্রথমে হয় সেই মেয়াদ পর্যন্ত বর্ধিত করিতে পারিবেন।\n\n"
+        "(২) কোন কোম্পানী উপ-ধারা (১) এর বিধান পালনে ব্যর্থ হইলে, কোম্পানীর যে কোন "
+        "সদস্যের আবেদনক্রমে, আদালত উক্ত কোম্পানীর বার্ষিক সাধারণ সভা আহ্বান করিতে "
+        "অথবা আহ্বান করার নির্দেশ দিতে পারিবে এবং আদালত উক্ত সভা আহ্বান অনুষ্ঠান ও "
+        "পরিচালনার জন্য যেরূপ সমীচীন বলিয়া বিবেচনা করিবে সেইরূপ অনুবর্তী "
+        "(consequential) ও আনুষংগিক (incidental) আদেশ প্রদান করিতে পারিবে।"
+    )
+
+
+def test_saved_agm_passage_excludes_first_extension_but_keeps_ordinary_duration() -> None:
+    from app.modules.conversations.grounding_service import (
+        _bounded_entailment_guard,
+        _missing_duration,
+    )
+
+    passage = _saved_agm_passage()
+    assert (
+        _bounded_entailment_guard("The first AGM may receive the extension.", passage)
+        == "unsupported"
+    )
+    assert _bounded_entailment_guard("The extension may be up to 90 days.", passage) is None
+    assert (
+        _bounded_entailment_guard(
+            "The extension may last up to 90 days or until 31 December, whichever comes first.",
+            passage,
+        )
+        is None
+    )
+    assert not _missing_duration("The extension may last up to 90 days.", passage)
+    assert _missing_duration("The extension may last up to 120 days.", passage)
+
+
+@pytest.mark.parametrize(
+    "claim",
+    [
+        "The first AGM is excluded from this extension power.",
+        "The extension does not apply to the first AGM.",
+        "The first AGM cannot receive an extension.",
+    ],
+)
+async def test_saved_agm_exclusion_claim_is_not_reversed_by_guard(claim: str) -> None:
+    source = _saved_agm_passage()
+    result = await GroundingService(
+        ChatConfig(minimum_claim_semantic_score=0.7),
+        embedder=_cluster_embedder({claim: "agm-exclusion", source: "agm-exclusion"}),
+    ).map_claims(f"{claim} [1]", [_chunk(content=source)])
+    assert len(result.claims) == 1
+    assert result.claims[0]["verification"] != "unsupported"
+
+
+async def test_saved_agm_first_meeting_permission_remains_unsupported() -> None:
+    claim = "The first AGM may receive the extension."
+    source = _saved_agm_passage()
+    result = await GroundingService(
+        ChatConfig(minimum_claim_semantic_score=0.7),
+        embedder=_cluster_embedder({claim: "agm-extension", source: "agm-extension"}),
+    ).map_claims(f"{claim} [1]", [_chunk(content=source)])
+    assert result.claims[0]["verification"] == "unsupported"
+
+
+async def test_extension_continuation_uses_answer_antecedent_without_changing_display() -> None:
+    source = _chunk(
+        content="For later AGMs, the Registrar may extend the meeting time up to 90 days."
+    )
+    answer = (
+        "For later AGMs, the Registrar may extend the meeting time. "
+        "The extension may last up to 90 days. [1]"
+    )
+    result = await GroundingService(ChatConfig(minimum_claim_token_coverage=0.3)).map_claims(
+        answer, [source]
+    )
+    continuation = next(
+        claim for claim in result.claims if claim["text"].startswith("The extension")
+    )
+    assert continuation["text"] == "The extension may last up to 90 days."
+    assert continuation["assertion_text"].startswith("For later AGMs, the Registrar")
+    assert len(continuation["evidence"]) == 1
+
+
+@pytest.mark.parametrize(
+    ("claim", "evidence"),
+    [
+        ("The company must file a return.", "The company must not file a return."),
+        ("The extension lasts at most 60 days.", "The extension lasts at most 90 days."),
+        ("The return is valid if signed.", "The return is valid if signed and if filed on time."),
+    ],
+)
+def test_bounded_guard_retains_reversals_durations_and_joint_conditions(
+    claim: str, evidence: str
+) -> None:
+    from app.modules.conversations.grounding_service import _bounded_entailment_guard
+
+    assert _bounded_entailment_guard(claim, evidence) is not None
+
+
 async def test_and_if_continuation_keeps_its_second_condition_required() -> None:
     evidence = "The return is accepted if the signature is valid and if the filing is not overdue."
     result = await GroundingService(ChatConfig(minimum_claim_token_coverage=0.3)).map_claims(
@@ -2199,6 +2365,142 @@ async def test_selected_evidence_therefore_conclusion_stays_ordinary_verificatio
     assert limitation["verification"] == "supported"
 
 
+@pytest.mark.parametrize(
+    "coverage",
+    [
+        {
+            "missing": ["Whether there is tax liability without operations or income"],
+            "partial_scope_validated": True,
+        },
+        {"missing": ["Unrelated AGM timing"], "partial_scope_validated": True},
+        None,
+    ],
+)
+async def test_saved_tax_liability_limitation_requires_matching_gap(coverage: dict | None) -> None:
+    answer = (
+        "That provision makes company status a filing trigger. "
+        "It does not, by itself, establish that tax is payable or that the company "
+        "has no taxable income."
+    )
+    result = await GroundingService(ChatConfig()).map_claims(
+        answer,
+        [_chunk(content="A company must file an income-tax return.")],
+        coverage=coverage,
+    )
+    limitation = next(claim for claim in result.claims if claim["text"].startswith("It does not"))
+    assert limitation["claim_kind"] == "coverage_scope"
+    assert (limitation["verification"] == "supported") == bool(
+        coverage and "tax liability" in coverage["missing"][0]
+    )
+
+
+async def test_tax_limitation_pronoun_cannot_cross_paragraph_and_advice_is_skipped() -> None:
+    coverage = {
+        "missing": ["tax liability without operations or income"],
+        "partial_scope_validated": True,
+    }
+    answer = (
+        "That provision makes company status a filing trigger.\n\n"
+        "It does not, by itself, establish that tax is payable. "
+        "Those matters need to be checked against the applicable provisions or "
+        "official guidance before setting a calendar."
+    )
+    result = await GroundingService(ChatConfig()).map_claims(
+        answer,
+        [_chunk(content="A company must file an income-tax return.")],
+        coverage=coverage,
+    )
+    pronoun = next(claim for claim in result.claims if claim["text"].startswith("It does not"))
+    assert pronoun["claim_kind"] == "source_assertion"
+    assert all("need to be checked" not in claim["text"] for claim in result.claims)
+
+
+async def test_limitation_cannot_exempt_appended_legal_conclusion() -> None:
+    answer = (
+        "That provision does not establish tax liability, therefore registration is unnecessary."
+    )
+    result = await GroundingService(ChatConfig()).map_claims(
+        answer,
+        [_chunk(content="A company must file an income-tax return.")],
+        coverage={"missing": ["tax liability"], "partial_scope_validated": True},
+    )
+    assert any(
+        claim["claim_kind"] == "source_assertion" and claim["verification"] != "supported"
+        for claim in result.claims
+    )
+
+
+async def test_operational_advice_cannot_hide_appended_registration_conclusion() -> None:
+    answer = (
+        "Those matters need to be checked against official guidance, therefore "
+        "registration is unnecessary."
+    )
+    result = await GroundingService(ChatConfig()).map_claims(
+        answer,
+        [_chunk(content="A company must file an income-tax return.")],
+        coverage={"missing": ["registration duty"], "partial_scope_validated": True},
+    )
+    assert result.claims
+    assert any(claim["verification"] != "supported" for claim in result.claims)
+
+
+@pytest.mark.parametrize(
+    "connector",
+    ["because", "and", ", therefore"],
+)
+async def test_operational_advice_cannot_hide_appended_filing_exemption(connector: str) -> None:
+    answer = (
+        "Those matters need to be checked against official guidance "
+        f"{connector} companies without income are exempt from filing returns."
+    )
+    result = await GroundingService(ChatConfig()).map_claims(
+        answer, [_chunk(content="A company must file an income-tax return.")]
+    )
+    assert len(result.claims) == 1
+    assert "exempt from filing" in result.claims[0]["text"]
+    assert result.claims[0]["verification"] != "supported"
+
+
+@pytest.mark.parametrize("connector", ["and", ":", "since"])
+async def test_advice_cannot_hide_appended_deadline_assertion(connector: str) -> None:
+    answer = (
+        "Those matters need to be checked against official guidance "
+        f"{connector} the deadline is 30 June."
+    )
+    result = await GroundingService(ChatConfig()).map_claims(
+        answer, [_chunk(content="A company must file an income-tax return.")]
+    )
+    assert len(result.claims) == 1
+    assert "deadline is 30 June" in result.claims[0]["text"]
+    assert result.claims[0]["verification"] != "supported"
+
+
+async def test_cited_provision_deadline_limit_matches_reviewed_gap() -> None:
+    coverage = {"missing": ["applicable filing deadline"], "partial_scope_validated": True}
+    result = await GroundingService(ChatConfig()).map_claims(
+        "The cited provision does not establish the applicable filing deadline.",
+        [_chunk(content="A company must file an income-tax return.")],
+        coverage=coverage,
+    )
+    assert result.claims[0]["claim_kind"] == "coverage_scope"
+    assert result.claims[0]["verification"] == "supported"
+
+
+async def test_same_block_tax_limit_matches_reviewed_gap_only() -> None:
+    coverage = {"missing": ["whether tax is payable"], "partial_scope_validated": True}
+    answer = "This provision requires filing. It does not establish whether tax is payable."
+    source = _chunk(content="This provision requires filing.")
+    same = await GroundingService(ChatConfig()).map_claims(answer, [source], coverage=coverage)
+    limitation = next(claim for claim in same.claims if claim["text"].startswith("It does not"))
+    assert limitation["claim_kind"] == "coverage_scope"
+    assert limitation["verification"] == "supported"
+    separate = await GroundingService(ChatConfig()).map_claims(
+        answer.replace(". It", ".\n\nIt"), [source], coverage=coverage
+    )
+    other = next(claim for claim in separate.claims if claim["text"].startswith("It does not"))
+    assert other["claim_kind"] == "source_assertion"
+
+
 async def test_did_not_establish_limitation_matches_validated_coverage() -> None:
     result = await GroundingService(ChatConfig()).map_claims(
         "The selected evidence did not establish the filing rule.",
@@ -2711,3 +3013,23 @@ async def test_reviewed_provisions_limitation_requires_matching_verdict(has_verd
     )
     assert result.claims[0]["claim_kind"] == "coverage_scope"
     assert result.claims[0]["verification"] == ("supported" if has_verdict else "unverified")
+
+
+def test_cited_run_before_uncited_limitation_retains_own_citations() -> None:
+    from app.modules.conversations.grounding_service import _answer_segments
+
+    segments = _answer_segments(
+        "Audited statements accompany the return. Required schedules accompany it too. [2] "
+        "These passages do not establish the filing deadline.\n\n"
+        "A different uncited paragraph."
+    )
+    assert [_citation_indexes(segment) for segment in segments] == [[2], [2], [], []]
+
+
+def test_separate_cited_runs_do_not_borrow_the_last_source() -> None:
+    from app.modules.conversations.grounding_service import _answer_segments
+
+    segments = _answer_segments(
+        "First duty. First condition. [1] Second duty. Second condition. [2]"
+    )
+    assert [_citation_indexes(segment) for segment in segments] == [[1], [1], [2], [2]]

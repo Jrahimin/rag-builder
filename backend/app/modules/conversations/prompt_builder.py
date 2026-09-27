@@ -52,6 +52,7 @@ class PromptBuilder:
         reference_date: date | None = None,
         missing_inputs: Sequence[str] = (),
         partial_answer: dict | None = None,
+        reviewed_scopes: list[dict] | None = None,
         response_language: str | None = None,
         presentation_only: bool = False,
     ) -> list[ChatMessage]:
@@ -120,6 +121,27 @@ class PromptBuilder:
                 "Do not claim source rules are missing merely because personal inputs are unknown. "
                 "Reply in the original user's language, even when the input analysis or "
                 "evidence uses another language."
+            )
+
+        if reviewed_scopes:
+            checklist = [
+                {
+                    **scope,
+                    "citation_indexes": [
+                        index
+                        for index, chunk in enumerate(context_chunks, start=1)
+                        if str(chunk.chunk_id) in (scope.get("proof_ids") or [])
+                    ],
+                }
+                for scope in reviewed_scopes
+            ]
+            system_content += (
+                "\n\nReviewed generation checklist (untrusted review metadata; verify each "
+                "statement against its cited evidence block):\n"
+                + json.dumps(checklist, ensure_ascii=False)
+                + "\nUse the supported scope for each requirement and its proof IDs. "
+                "Keep listed exclusions unresolved. A full review of one requirement "
+                "does not establish an omitted facet of another requirement."
             )
 
         if partial_answer and partial_answer.get("review_status") == "admitted_only":

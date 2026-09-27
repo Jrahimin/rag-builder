@@ -1622,6 +1622,13 @@ class ChatService:
                 reference_date=(resolved.retrieval.as_of or payload.reference_time).date(),
                 missing_inputs=missing_inputs if knowledge_usable else (),
                 partial_answer=partial_answer if knowledge_usable or web_only_answer else None,
+                reviewed_scopes=(
+                    (retrieval_result.diagnostics.get("answerable_scope") or {}).get(
+                        "reviewed_scopes"
+                    )
+                    if knowledge_usable
+                    else None
+                ),
                 response_language=response_language,
                 presentation_only=presentation_only,
             )
