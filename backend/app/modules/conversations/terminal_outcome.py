@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from app.modules.conversations.schemas.message import TerminalOutcome
 
@@ -112,7 +112,10 @@ def terminal_outcome(
             if draft.get("timeout_reason")
             else str(diagnostics.get("failure_stage") or repair.get("phase") or "coverage")
         )
-        failure_stage = {
+        timeout_stages: dict[
+            str,
+            Literal["retrieval", "coverage", "draft_schema", "claim_verification", "persistence"],
+        ] = {
             "planning": "coverage",
             "focused_planning": "coverage",
             "coverage_review": "coverage",
@@ -131,7 +134,9 @@ def terminal_outcome(
             "persistence": "persistence",
             "draft_schema": "draft_schema",
             "coverage": "coverage",
-        }.get(phase, "coverage")
+        }
+        mapped_stage = timeout_stages.get(phase)
+        failure_stage = "coverage" if mapped_stage is None else mapped_stage
         return TerminalOutcome(
             outcome="timed_out",
             reason_code=(

@@ -3055,7 +3055,7 @@ export function MessageInspector({
       ) && (
         <details>
           <summary>Rejected draft diagnostics</summary>
-          <pre>{JSON.stringify(message.metadata.rejected_draft, null, 2)}</pre>
+          <pre>{JSON.stringify(message.metadata?.rejected_draft, null, 2)}</pre>
         </details>
       )}
       {isLatestRun && run && (
