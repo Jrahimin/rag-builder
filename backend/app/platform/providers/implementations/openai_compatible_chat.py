@@ -105,8 +105,7 @@ class OpenAICompatibleChatProvider(BaseLLMProvider):
         )
         body.update(_reasoning_parameters(self._model, max_tokens))
         if capability.structured_output == "json_object" and (
-            output_contract is not None
-            or (not stream and current_request_purpose() in _JSON_REVIEW_PURPOSES)
+            output_contract is not None or current_request_purpose() in _JSON_REVIEW_PURPOSES
         ):
             body["response_format"] = {"type": "json_object"}
         elif output_contract is not None:

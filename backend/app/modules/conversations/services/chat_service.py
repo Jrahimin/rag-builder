@@ -1895,8 +1895,9 @@ class ChatService:
             reserved_output=self._llm_max_tokens(),
             evidence_text=self._prompt_builder._format_context(selected),
         )
-        if not budget["within_budget"]:
+        if not budget["within_budget"] and evidence.sufficient:
             # Preserve the exact admitted proof. Silently truncating it could drop a tax dependency.
+            # An earlier refusal already names its cause; do not replace that cause.
             evidence = replace(
                 evidence,
                 sufficient=False,
@@ -2129,32 +2130,46 @@ class ChatService:
                         grounding = reviewed
                         verification_repair = {"status": "verified_coverage_scope_fallback"}
             if grounding.grounded is False and reason_value is None and generation_ran:
+                failed_claims = [
+                    claim for claim in grounding.claims if claim.get("verification") != "supported"
+                ]
                 failed_reasons = sorted(
                     {
                         str(claim.get("verification_reason") or claim.get("verification"))
-                        for claim in grounding.claims
-                        if claim.get("verification") != "supported"
+                        for claim in failed_claims
                     }
                 )
-                prepared.retrieval_diagnostics["rejected_draft"] = {
-                    "candidate_count": len(grounding.claims),
-                    "failed_count": len(failed_reasons),
-                    "reasons": failed_reasons[:12],
-                }
-                if (
-                    "verifier_schema_invalid" in failed_reasons
-                    or "verifier_unavailable" in failed_reasons
-                ):
-                    prepared.retrieval_diagnostics["verification_failure"] = next(
-                        item for item in failed_reasons if item.startswith("verifier_")
-                    )
-                content = "The generated answer could not be verified."
-                reason_value = InsufficientEvidenceReason.CLAIM_VERIFICATION_FAILED.value
-                grounding = GroundingResult(claims=[], grounded=False, citation_coverage=0.0)
-                verification_repair = {
-                    "status": "withheld_unverified_answer",
-                    "failed_claim_reasons": failed_reasons,
-                }
+                draft_status = (prepared.retrieval_diagnostics.get("answer_draft") or {}).get(
+                    "status"
+                )
+                # Ordinary lexical misses stay visible. Withhold only a reviewed
+                # draft or a model entailment/protocol failure.
+                model_rejected = draft_status == "rendered" or any(
+                    claim.get("verification_method")
+                    in {"source_entailment", "arithmetic_and_entailment"}
+                    or str(claim.get("verification_reason") or "").startswith("verifier_")
+                    for claim in failed_claims
+                )
+                if model_rejected:
+                    prepared.retrieval_diagnostics["rejected_draft"] = {
+                        "candidate_count": len(grounding.claims),
+                        "failed_count": len(failed_reasons),
+                        "reasons": failed_reasons[:12],
+                    }
+                    if (
+                        "verifier_schema_invalid" in failed_reasons
+                        or "verifier_unavailable" in failed_reasons
+                    ):
+                        prepared.retrieval_diagnostics["verification_failure"] = next(
+                            item for item in failed_reasons if item.startswith("verifier_")
+                        )
+                    content = "The generated answer could not be verified."
+                    reason_value = InsufficientEvidenceReason.CLAIM_VERIFICATION_FAILED.value
+                    grounding = GroundingResult(claims=[], grounded=False, citation_coverage=0.0)
+                    verification_repair = {
+                        "status": "withheld_unverified_answer",
+                        "failed_claim_reasons": failed_reasons,
+                    }
             if reason_value is not None:
                 grounding = type(grounding)(claims=[], grounded=False, citation_coverage=1.0)
             elif non_knowledge_turn:
@@ -2652,7 +2667,8 @@ class ChatService:
         streamed: bool,
     ) -> None:
         """Persist a safe usage/error record without replacing the provider failure."""
-        content = self._provider_unavailable(exc).message
+        if not content.strip():
+            content = self._provider_unavailable(exc).message
         metadata = self._build_metadata(
             retrieval_ms=prepared.retrieval_ms,
             generation_ms=generation_ms,

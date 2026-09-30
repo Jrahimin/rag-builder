@@ -1032,12 +1032,17 @@ class GroundingService:
             )
         entailments = ["unverified"] * len(drafts)
         pending: list[int] = []
+        # Ordinary cited passages keep lexical and embedding checks. Model
+        # entailment is only for proof that a coverage review already approved.
+        raw_positions: set[int] = set()
         for position, draft in enumerate(drafts):
+            proof_items = cast(list[dict[str, object]], entailment_inputs[position]["proof"])
+            reviewed_proof = any("requirement_id" in item for item in proof_items)
             assertion = " ".join(_plain_claim_text(draft.assertion).split()).strip()
             exact = any(
                 assertion
                 == " ".join(_plain_claim_text(str(proof.get("quote", ""))).split()).strip()
-                for proof in cast(list[dict[str, object]], entailment_inputs[position]["proof"])
+                for proof in proof_items
             )
             if draft.kind_hint == "coverage_scope":
                 continue
@@ -1045,8 +1050,10 @@ class GroundingService:
                 # Whole-assertion identity is reusable proof; substring/embedding
                 # similarity, a category change or any additional clause is not.
                 entailments[position] = "supported"
-            else:
+            elif reviewed_proof:
                 pending.append(position)
+            else:
+                raw_positions.add(position)
         if self._entailment and pending:
             verdicts = await self._entailment.verify([entailment_inputs[i] for i in pending])
             for position, verdict in zip(pending, verdicts, strict=True):
@@ -1084,6 +1091,9 @@ class GroundingService:
                 span_texts = [span.text for span in selected_spans.values()]
                 evidence_texts = [chunk.content for _, chunk in draft.evidence_chunks]
                 full_evidence = " ".join(evidence_texts)
+                model_entailment = (
+                    self._entailment is not None and draft_position not in raw_positions
+                )
                 # Quantity binding needs all cited clauses.  The single semantic
                 # locator span may omit a neighbouring deadline, exception, or
                 # sanction clause from the same bounded source passage.
@@ -1130,7 +1140,7 @@ class GroundingService:
                     semantic_verdict = ClaimVerification(entailments[draft_position])
                     verification = (
                         derived
-                        if derived is not ClaimVerification.SUPPORTED or self._entailment is None
+                        if derived is not ClaimVerification.SUPPORTED or not model_entailment
                         else semantic_verdict
                     )
                     verification_method = "arithmetic_and_entailment"
@@ -1204,23 +1214,24 @@ class GroundingService:
                         if not uses_lexical or embedder_usable
                         else None
                     )
-                    # Embeddings only align spans. Semantic support comes from a
-                    # fresh batch entailment of this assertion against its proof.
-                    semantic = ClaimVerification(entailments[draft_position])
+                    # Embeddings only align spans. Reviewed proof takes a fresh
+                    # batch entailment; ordinary passages keep lexical/semantic checks.
+                    if model_entailment:
+                        semantic = ClaimVerification(entailments[draft_position])
                     if (
-                        self._entailment is None
+                        not model_entailment
                         and score is not None
                         and score < self._config.claim_semantic_reject_floor
                     ):
                         semantic = ClaimVerification.UNSUPPORTED
                     verification = (
                         semantic
-                        if self._entailment is not None
+                        if model_entailment
                         else _combine_claim_verification(lexical, semantic)
                     )
                     verification_method = "lexical" if uses_lexical else "semantic"
                     if (
-                        self._entailment is None
+                        not model_entailment
                         and uses_lexical
                         and lexical is ClaimVerification.UNSUPPORTED
                         and semantic is ClaimVerification.SUPPORTED
