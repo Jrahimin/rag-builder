@@ -17,12 +17,15 @@ from app.platform.providers.contracts.llm import (
     ChatCompletionResult,
     ChatMessage,
     ChatUsage,
+    StructuredOutput,
 )
 from app.platform.providers.errors import ProviderError
 
 
 class OllamaChatProvider(BaseLLMProvider):
     """Chat via Ollama's /api/chat endpoint."""
+
+    supports_output_contract = True
 
     def __init__(
         self,
@@ -57,6 +60,7 @@ class OllamaChatProvider(BaseLLMProvider):
         self,
         client: httpx.AsyncClient,
         max_tokens: int,
+        output_contract: StructuredOutput | None = None,
     ) -> None:
         if self._context_window is None:
             response = await client.post(
@@ -86,6 +90,7 @@ class OllamaChatProvider(BaseLLMProvider):
         *,
         temperature: float | None = None,
         max_tokens: int,
+        output_contract: StructuredOutput | None = None,
     ) -> ChatCompletionResult:
         url = f"{self._base_url}/api/chat"
         body: dict[str, object] = {
@@ -93,6 +98,8 @@ class OllamaChatProvider(BaseLLMProvider):
             "messages": self._ollama_messages(messages),
             "stream": False,
         }
+        if output_contract is not None:
+            body["format"] = output_contract.schema
         body["options"] = translate_generation_parameters(
             describe_llm_capability(self.provider_name, self.model_name),
             temperature=temperature,
@@ -134,6 +141,7 @@ class OllamaChatProvider(BaseLLMProvider):
         *,
         temperature: float | None = None,
         max_tokens: int,
+        output_contract: StructuredOutput | None = None,
     ) -> AsyncGenerator[ChatCompletionChunk, None]:
         url = f"{self._base_url}/api/chat"
         body: dict[str, object] = {
@@ -141,6 +149,8 @@ class OllamaChatProvider(BaseLLMProvider):
             "messages": self._ollama_messages(messages),
             "stream": True,
         }
+        if output_contract is not None:
+            body["format"] = output_contract.schema
         body["options"] = translate_generation_parameters(
             describe_llm_capability(self.provider_name, self.model_name),
             temperature=temperature,

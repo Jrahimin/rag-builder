@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import uuid
 from typing import Any
 
@@ -42,7 +43,23 @@ def build_citation_snapshots(
     for chunk in chunks:
         excerpt: str | None = None
         if max_excerpt > 0:
-            excerpt = chunk.content[:max_excerpt]
+            quotes = list(
+                dict.fromkeys(
+                    str(item["quote"])
+                    for item in chunk.metadata.get("reviewed_proof", [])
+                    if isinstance(item, dict) and item.get("quote")
+                )
+            )
+            excerpt = (
+                " … ".join(
+                    proof_preview(
+                        quote, max(1, (max_excerpt - 3 * (len(quotes) - 1)) // len(quotes))
+                    )
+                    for quote in quotes
+                )[:max_excerpt]
+                if quotes
+                else chunk.content[:max_excerpt]
+            )
         is_web = chunk.metadata.get("source_kind") == CitationSourceKind.WEB.value
         reconstructed = _reconstructed_source_envelope(chunk.metadata)
         snapshot = CitationSnapshot(
@@ -72,6 +89,9 @@ def build_citation_snapshots(
                 None if is_web else chunk.metadata.get("evidence_query_variant_id")
             ),
             excerpt=excerpt,
+            supporting_spans=chunk.metadata.get("reviewed_proof") or [],
+            structural_context=chunk.metadata.get("heading_path") or [],
+            provenance_precision=chunk.metadata.get("provenance_precision"),
             processing_version=None if is_web else chunk.metadata.get("processing_version"),
             index_build_id=None if is_web else chunk.metadata.get("index_build_id"),
             source_metadata_generation=(
@@ -217,3 +237,19 @@ def _optional_uuid(value: object) -> uuid.UUID | None:
         return uuid.UUID(str(value))
     except (TypeError, ValueError):
         return None
+
+
+def proof_preview(source: str, max_chars: int) -> str:
+    """Prefer the operative amount/duration within an exact selected proof span."""
+    if len(source) <= max_chars:
+        return source
+    folded = source.translate(str.maketrans("০১২৩৪৫৬৭৮৯", "0123456789"))
+    operative = re.search(
+        r"\b\d+(?:[,.]\d+)*\s*(?:months?|days?|years?|%|মাস|দিন|বছর)|"
+        r"[\u09E6-\u09EF0-9][\u09E6-\u09EF0-9,]*\s*টাকা|(?:আঠারো|পনেরো|পনের)\s*মাস|"
+        r"\b(?:first AGM|interval)\b",
+        folded,
+        re.I,
+    )
+    start = max(0, operative.start() - max_chars // 4) if operative else 0
+    return source[start : start + max_chars]

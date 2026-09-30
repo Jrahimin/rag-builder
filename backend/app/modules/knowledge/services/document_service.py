@@ -295,9 +295,12 @@ class DocumentService:
             limit=params.limit,
             offset=params.offset,
             document_version=document.version,
+            generation_id=document.chunk_generation_id,
         )
         total = await chunk_repository.count_by_document(
-            document_id, document_version=document.version
+            document_id,
+            document_version=document.version,
+            generation_id=document.chunk_generation_id,
         )
         return PaginatedResult(
             items=items,

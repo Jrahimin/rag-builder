@@ -367,6 +367,13 @@
             "title": "Grounded",
             "type": "boolean"
           },
+          "requirement_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Requirement Ids",
+            "type": "array"
+          },
           "text": {
             "title": "Text",
             "type": "string"
@@ -4102,6 +4109,17 @@
             ],
             "title": "Prompt Version"
           },
+          "provenance_precision": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provenance Precision"
+          },
           "relationship_recall_provenance": {
             "items": {
               "additionalProperties": true,
@@ -4269,6 +4287,21 @@
               }
             ],
             "title": "Source Type"
+          },
+          "structural_context": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Structural Context",
+            "type": "array"
+          },
+          "supporting_spans": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Supporting Spans",
+            "type": "array"
           },
           "web_provider": {
             "anyOf": [
@@ -7323,6 +7356,17 @@
           "state": {
             "$ref": "#/components/schemas/IndexBuildState"
           },
+          "structural_contract_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Structural Contract Version"
+          },
           "updated_at": {
             "format": "date-time",
             "title": "Updated At",
@@ -7391,7 +7435,11 @@
           "no_retrieval_results",
           "below_relevance_threshold",
           "context_selection_empty",
-          "unresolved_authority"
+          "unresolved_authority",
+          "claim_verification_failed",
+          "request_deadline_exceeded",
+          "recovery_deadline_exceeded",
+          "provider_timeout"
         ],
         "title": "InsufficientEvidenceReason",
         "type": "string"
@@ -8003,6 +8051,7 @@
           "evaluation.run",
           "corpus.reembed",
           "corpus.reindex",
+          "corpus.structure.v1",
           "document.delete",
           "document.purge",
           "storage.reconcile"
@@ -8345,6 +8394,16 @@
             "$ref": "#/components/schemas/SourceProvenance",
             "default": "none"
           },
+          "terminal_outcome": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TerminalOutcome"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "total_latency_ms": {
             "anyOf": [
               {
@@ -8424,6 +8483,18 @@
             },
             "title": "Metadata Filter",
             "type": "object"
+          },
+          "preview_index_build_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Preview Index Build Id"
           },
           "source_scope": {
             "$ref": "#/components/schemas/SourceScope",
@@ -10392,6 +10463,40 @@
         "title": "RecentFailure",
         "type": "object"
       },
+      "RelationshipSourceSpan": {
+        "additionalProperties": false,
+        "properties": {
+          "char_end": {
+            "exclusiveMinimum": 0.0,
+            "title": "Char End",
+            "type": "integer"
+          },
+          "char_start": {
+            "minimum": 0.0,
+            "title": "Char Start",
+            "type": "integer"
+          },
+          "chunk_id": {
+            "format": "uuid",
+            "title": "Chunk Id",
+            "type": "string"
+          },
+          "quote": {
+            "maxLength": 6000,
+            "minLength": 1,
+            "title": "Quote",
+            "type": "string"
+          }
+        },
+        "required": [
+          "chunk_id",
+          "quote",
+          "char_start",
+          "char_end"
+        ],
+        "title": "RelationshipSourceSpan",
+        "type": "object"
+      },
       "RerankMode": {
         "description": "When the multilingual reranker may run after RRF.\n\nPlatform default is ALWAYS. Canonical Projects may inherit or select\ncross-language-only; disabling the stage is reserved for compatibility,\nTest Lab, and explicit emergency paths.",
         "enum": [
@@ -10917,6 +11022,11 @@
             "default": "disabled",
             "title": "Modifies Expansion Status",
             "type": "string"
+          },
+          "normalized_scope": {
+            "additionalProperties": true,
+            "title": "Normalized Scope",
+            "type": "object"
           },
           "passage_score_method": {
             "anyOf": [
@@ -11501,8 +11611,33 @@
       "SourceRelationshipCreate": {
         "additionalProperties": false,
         "properties": {
+          "provision_effect": {
+            "default": "unknown",
+            "enum": [
+              "unknown",
+              "replaces",
+              "adds",
+              "amends",
+              "savings"
+            ],
+            "title": "Provision Effect",
+            "type": "string"
+          },
           "relationship_type": {
             "$ref": "#/components/schemas/SourceRelationshipType"
+          },
+          "replacement_scope_verified": {
+            "default": false,
+            "title": "Replacement Scope Verified",
+            "type": "boolean"
+          },
+          "supporting_spans": {
+            "items": {
+              "$ref": "#/components/schemas/RelationshipSourceSpan"
+            },
+            "maxItems": 20,
+            "title": "Supporting Spans",
+            "type": "array"
           },
           "target_provisions": {
             "items": {
@@ -11537,8 +11672,33 @@
             "title": "Id",
             "type": "string"
           },
+          "provision_effect": {
+            "default": "unknown",
+            "enum": [
+              "unknown",
+              "replaces",
+              "adds",
+              "amends",
+              "savings"
+            ],
+            "title": "Provision Effect",
+            "type": "string"
+          },
           "relationship_type": {
             "$ref": "#/components/schemas/SourceRelationshipType"
+          },
+          "replacement_scope_verified": {
+            "default": false,
+            "title": "Replacement Scope Verified",
+            "type": "boolean"
+          },
+          "supporting_spans": {
+            "items": {
+              "$ref": "#/components/schemas/RelationshipSourceSpan"
+            },
+            "maxItems": 20,
+            "title": "Supporting Spans",
+            "type": "array"
           },
           "target_provisions": {
             "items": {
@@ -11998,6 +12158,107 @@
           "effect_timing"
         ],
         "title": "StructuredOrigin",
+        "type": "object"
+      },
+      "TerminalOutcome": {
+        "additionalProperties": false,
+        "description": "Message delivery is distinct from successful factual answering.",
+        "properties": {
+          "coverage": {
+            "default": "not_assessed",
+            "enum": [
+              "complete",
+              "partial",
+              "incomplete",
+              "not_assessed"
+            ],
+            "title": "Coverage",
+            "type": "string"
+          },
+          "failure_stage": {
+            "anyOf": [
+              {
+                "enum": [
+                  "retrieval",
+                  "coverage",
+                  "draft_schema",
+                  "claim_verification",
+                  "persistence"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure Stage"
+          },
+          "next_action": {
+            "default": "none",
+            "enum": [
+              "retry",
+              "supply_input",
+              "review_source",
+              "contact_operator",
+              "none"
+            ],
+            "title": "Next Action",
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "answered",
+              "partial",
+              "needs_input",
+              "insufficient_evidence",
+              "unresolved_authority",
+              "verification_failed",
+              "timed_out"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "reason_code": {
+            "maxLength": 100,
+            "title": "Reason Code",
+            "type": "string"
+          },
+          "requested_scope": {
+            "additionalProperties": true,
+            "title": "Requested Scope",
+            "type": "object"
+          },
+          "retryable": {
+            "default": false,
+            "title": "Retryable",
+            "type": "boolean"
+          },
+          "supported_requirement_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Supported Requirement Ids",
+            "type": "array"
+          },
+          "unresolved_requirement_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Unresolved Requirement Ids",
+            "type": "array"
+          },
+          "version": {
+            "const": "answer.outcome.v1",
+            "default": "answer.outcome.v1",
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "outcome",
+          "reason_code"
+        ],
+        "title": "TerminalOutcome",
         "type": "object"
       },
       "TokenUsageMetrics": {
@@ -20007,6 +20268,76 @@
         ]
       }
     },
+    "/api/v1/projects/{project_id}/index-builds/reprocess-private": {
+      "post": {
+        "operationId": "reprocess_private_corpus_api_v1_projects__project_id__index_builds_reprocess_private_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "ape_admin_access",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Ape Admin Access"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_LifecycleJobResponse_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "AdminCookie": []
+          },
+          {
+            "OrganizationBearer": []
+          },
+          {
+            "OrganizationApiKey": []
+          }
+        ],
+        "summary": "Reprocess Private Corpus",
+        "tags": [
+          "index-builds"
+        ]
+      }
+    },
     "/api/v1/projects/{project_id}/index-builds/rollback": {
       "post": {
         "operationId": "rollback_index_build_api_v1_projects__project_id__index_builds_rollback_post",
@@ -20152,6 +20483,86 @@
           }
         ],
         "summary": "Activate Index Build",
+        "tags": [
+          "index-builds"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/index-builds/{build_id}/revalidate-private": {
+      "post": {
+        "operationId": "revalidate_private_corpus_api_v1_projects__project_id__index_builds__build_id__revalidate_private_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "build_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Build Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "ape_admin_access",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Ape Admin Access"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_LifecycleJobResponse_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "AdminCookie": []
+          },
+          {
+            "OrganizationBearer": []
+          },
+          {
+            "OrganizationApiKey": []
+          }
+        ],
+        "summary": "Revalidate Private Corpus",
         "tags": [
           "index-builds"
         ]

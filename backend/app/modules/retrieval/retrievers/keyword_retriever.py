@@ -94,13 +94,17 @@ class KeywordRetriever(BaseRetriever):
 
         scored: list[tuple[uuid.UUID, float, dict]] = []
         for row in rows:
-            score = bm25_score(
-                unique_terms,
-                term_frequencies=dict(row.term_frequencies),
-                doc_length=row.token_count,
-                avg_doc_length=avg_doc_length,
-                total_documents=total_documents,
-                document_frequencies=document_frequencies,
+            score = (
+                row.score
+                if row.score is not None
+                else bm25_score(
+                    unique_terms,
+                    term_frequencies=dict(row.term_frequencies),
+                    doc_length=row.token_count,
+                    avg_doc_length=avg_doc_length,
+                    total_documents=total_documents,
+                    document_frequencies=document_frequencies,
+                )
             )
             if score <= 0:
                 continue

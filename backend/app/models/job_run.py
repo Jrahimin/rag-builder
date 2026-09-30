@@ -34,6 +34,7 @@ class JobType(StrEnum):
     EVALUATION_RUN = "evaluation.run"
     CORPUS_REEMBED = "corpus.reembed"
     CORPUS_REINDEX = "corpus.reindex"
+    CORPUS_STRUCTURE_V1 = "corpus.structure.v1"
     DOCUMENT_DELETE = "document.delete"
     DOCUMENT_PURGE = "document.purge"
     STORAGE_RECONCILE = "storage.reconcile"

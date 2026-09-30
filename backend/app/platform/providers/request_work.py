@@ -23,8 +23,15 @@ from app.platform.providers.contracts.llm import (
     ChatCompletionChunk,
     ChatCompletionResult,
     ChatMessage,
+    StructuredOutput,
+    constrained_messages,
+    generate_structured,
 )
-from app.platform.providers.errors import ProviderError, sanitized_provider_failure_reason
+from app.platform.providers.errors import (
+    ProviderError,
+    ProviderTimeoutError,
+    sanitized_provider_failure_reason,
+)
 from app.platform.providers.prompt_budget import prompt_budget
 
 _AsyncMethod = TypeVar("_AsyncMethod", bound=Callable[..., Awaitable[Any]])
@@ -115,7 +122,10 @@ class RequestWork:
         self.counts: Counter[str] = Counter()
         self.vectors: dict[tuple[object, ...], list[float]] = {}
         self.content: dict[tuple[object, ...], object] = {}
+        self.evidence_snapshot: dict[str, Any] = {}
         self.embedding_lock = asyncio.Lock()
+        self.embedding_futures: dict[tuple[object, ...], asyncio.Future[list[float]]] = {}
+        self.deadline = self.started + 60.0
         self.calls: list[dict[str, Any]] = []
         self.validation_retries: list[dict[str, Any]] = []
         self.max_span_detail = max(1, max_span_detail)
@@ -141,6 +151,41 @@ class RequestWork:
             yield self
         finally:
             self.detach(token)
+
+    @property
+    def request_deadline(self) -> float:
+        return self.started + 60.0
+
+    @property
+    def recovery_deadline(self) -> float:
+        # 10 generation + 10 verification + 10 terminal persistence seconds.
+        return min(self.deadline - 20.0, self.request_deadline - 30.0)
+
+    def phase_deadline(self, purpose: str | None = None) -> float:
+        purpose = purpose or current_request_purpose() or self._unbound_purpose
+        if purpose in {"answer_generation", "answer_shape_correction"}:
+            return self.deadline - 10.0
+        if purpose in {
+            "recovery_planning",
+            "coverage_review",
+            "structured_response_retry",
+            "selector_retry",
+            "scenario_input_review",
+            "web_evidence_review",
+            "turn_resolution",
+        }:
+            return self.recovery_deadline
+        if purpose in {"claim_verification", "persistence"}:
+            return self.deadline
+        return min(self.deadline, self.recovery_deadline)
+
+    def phase_timeout_context(self) -> dict[str, str]:
+        return {
+            "reason": "recovery_deadline_exceeded"
+            if self.phase_deadline() == self.recovery_deadline
+            else "request_deadline_exceeded",
+            "phase": current_request_purpose() or self._unbound_purpose or "coverage",
+        }
 
     def active_purposes(self) -> set[str]:
         """Return purposes with at least one open span or purpose context on this turn."""
@@ -280,6 +325,13 @@ class RequestWork:
     def snapshot(self) -> dict[str, Any]:
         return {
             "version": "turn.v1",
+            "deadline": {
+                "request_seconds": 60,
+                "recovery_seconds": round(max(0.0, self.recovery_deadline - self.started), 3),
+                "generation_reserve_seconds": 10,
+                "verification_reserve_seconds": 10,
+                "persistence_reserve_seconds": 10,
+            },
             "processing_ms": round((time.perf_counter() - self.started) * 1000),
             "stages_ms": dict(self.timings),
             "counts": dict(self.counts),
@@ -366,6 +418,7 @@ class RequestWork:
 
 
 class ObservedLLM(BaseLLMProvider):
+    supports_output_contract = True
     """Record actual call attempts and provider-reported usage, without prompt text."""
 
     def __init__(
@@ -403,13 +456,41 @@ class ObservedLLM(BaseLLMProvider):
         return self.provider.provider_version
 
     async def generate(
-        self, messages: list[ChatMessage], *, temperature: float | None = None, max_tokens: int
+        self,
+        messages: list[ChatMessage],
+        *,
+        temperature: float | None = None,
+        max_tokens: int,
+        output_contract: StructuredOutput | None = None,
     ) -> ChatCompletionResult:
         self._check_budget(messages, max_tokens)
+        self._require_phase_budget()
         with self._call() as call:
-            result = await self.provider.generate(
-                messages, temperature=temperature, max_tokens=max_tokens
-            )
+            try:
+                async with asyncio.timeout(
+                    max(0.0, self.work.phase_deadline() - time.perf_counter())
+                ):
+                    if output_contract is not None:
+                        result = await generate_structured(
+                            self.provider,
+                            messages,
+                            output_contract=output_contract,
+                            temperature=temperature,
+                            max_tokens=max_tokens,
+                        )
+                    else:
+                        result = await self.provider.generate(
+                            messages, temperature=temperature, max_tokens=max_tokens
+                        )
+            except asyncio.CancelledError:
+                call["status"] = "cancelled"
+                raise
+            except TimeoutError as exc:
+                raise ProviderTimeoutError(
+                    "The shared request deadline was exhausted.",
+                    provider_name=self.provider_name,
+                    context=self.work.phase_timeout_context(),
+                ) from exc
             call.update(
                 status="completed",
                 input_tokens=result.usage.input_tokens,
@@ -419,11 +500,37 @@ class ObservedLLM(BaseLLMProvider):
             return result
 
     async def stream(
-        self, messages: list[ChatMessage], *, temperature: float | None = None, max_tokens: int
+        self,
+        messages: list[ChatMessage],
+        *,
+        temperature: float | None = None,
+        max_tokens: int,
+        output_contract: StructuredOutput | None = None,
     ) -> AsyncGenerator[ChatCompletionChunk, None]:
         self._check_budget(messages, max_tokens)
+        self._require_phase_budget()
         call, started = self._open_call()
-        upstream = self.provider.stream(messages, temperature=temperature, max_tokens=max_tokens)
+        if (
+            output_contract is not None
+            and getattr(self.provider, "supports_output_contract", False) is not True
+        ):
+            messages = constrained_messages(messages, output_contract)
+        if (
+            output_contract is not None
+            and getattr(self.provider, "supports_output_contract", False) is True
+        ):
+            upstream = self.provider.stream(
+                messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                output_contract=output_contract,
+            )
+        else:
+            upstream = self.provider.stream(
+                messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
         purpose = call.get("purpose")
         try:
             while True:
@@ -431,7 +538,11 @@ class ObservedLLM(BaseLLMProvider):
                 # the transport (which may resume/finalize in another task).
                 with self.work.purpose(str(purpose)) if purpose else nullcontext():
                     try:
-                        chunk = await anext(upstream)
+                        async with asyncio.timeout(
+                            max(0.0, self.work.phase_deadline() - time.perf_counter())
+                        ):
+                            self._require_phase_budget()
+                            chunk = await anext(upstream)
                     except StopAsyncIteration:
                         break
                 if chunk.usage is not None:
@@ -442,12 +553,26 @@ class ObservedLLM(BaseLLMProvider):
                     )
                 yield chunk
             call["status"] = "completed"
+        except TimeoutError as exc:
+            raise ProviderTimeoutError(
+                "The shared request deadline was exhausted.",
+                provider_name=self.provider_name,
+                context=self.work.phase_timeout_context(),
+            ) from exc
         except (asyncio.CancelledError, GeneratorExit):
             call["status"] = "cancelled"
             raise
         finally:
             call["duration_ms"] = round((time.perf_counter() - started) * 1000)
             await upstream.aclose()
+
+    def _require_phase_budget(self) -> None:
+        if self.work.phase_deadline() <= time.perf_counter():
+            raise ProviderTimeoutError(
+                "The phase deadline was exhausted before provider admission.",
+                provider_name=self.provider_name,
+                context=self.work.phase_timeout_context(),
+            )
 
     def _open_call(self) -> tuple[dict[str, Any], float]:
         call: dict[str, Any] = {
@@ -507,61 +632,92 @@ class CachedEmbeddingProvider(BaseEmbeddingProvider):
             self.dimensions,
             purpose.value,
         )
-        keys = [(*prefix, hashlib.sha256(text.encode("utf-8")).hexdigest()) for text in texts]
-        # Serialize the miss check and fill to coalesce overlapping concurrent requests.
-        # Failed/cancelled calls never populate the cache; the lock releases on cancellation.
+        keys: list[tuple[object, ...]] = [
+            (*prefix, hashlib.sha256(text.encode("utf-8")).hexdigest()) for text in texts
+        ]
+        # Register per-key ownership atomically; unrelated texts run independently.
+        owners: dict[tuple[object, ...], str] = {}
+        futures: dict[tuple[object, ...], asyncio.Future[list[float]]] = {}
         async with self.work.embedding_lock:
-            missing = {
-                key: text
-                for key, text in zip(keys, texts, strict=True)
-                if key not in self.work.vectors
-            }
-            self.work.counts["embedding_cache_hits"] += len(keys) - len(missing)
-            if missing:
-                started = time.perf_counter()
-                call: dict[str, Any] = {
-                    "kind": "embedding",
-                    "provider": self.provider_name,
-                    "model": self.model_name,
-                    "purpose": purpose.value,
-                    "texts": len(missing),
-                    "input_tokens": None,
-                    "output_tokens": None,
-                    "status": "failed",
-                    "provider_internal_retries": None,
-                }
-                self.work.counts["embedding_calls"] += 1
-                self.work.counts["embedded_texts"] += len(missing)
-                self.work.annotate_provider_call(call, purpose_field="work_purpose")
-                try:
-                    result = await self.provider.embed_texts(
-                        list(missing.values()), purpose=purpose
+            for key, text in zip(keys, texts, strict=True):
+                if key in self.work.vectors:
+                    self.work.counts["embedding_cache_hits"] += 1
+                    continue
+                future = self.work.embedding_futures.get(key)
+                if future is None:
+                    future = asyncio.get_running_loop().create_future()
+                    # Retrieve orphan exceptions if a waiter was cancelled.
+                    future.add_done_callback(
+                        lambda value: value.exception() if not value.cancelled() else None
                     )
-                    if (
-                        (result.provider, result.model, result.dimensions, result.provider_version)
-                        != (
-                            self.provider_name,
-                            self.model_name,
-                            self.dimensions,
-                            self.provider_version,
-                        )
-                        or len(result.vectors) != len(missing)
-                        or any(len(vector) != self.dimensions for vector in result.vectors)
-                    ):
-                        raise ProviderError(
-                            "Embedding result identity or vector shape mismatch",
+                    self.work.embedding_futures[key] = future
+                    owners[key] = text
+                else:
+                    self.work.counts["embedding_cache_hits"] += 1
+                futures[key] = future
+        if owners:
+            started = time.perf_counter()
+            call: dict[str, Any] = {
+                "kind": "embedding",
+                "provider": self.provider_name,
+                "model": self.model_name,
+                "purpose": purpose.value,
+                "texts": len(owners),
+                "input_tokens": None,
+                "output_tokens": None,
+                "status": "failed",
+                "provider_internal_retries": None,
+            }
+            self.work.counts["embedding_calls"] += 1
+            self.work.counts["embedded_texts"] += len(owners)
+            self.work.annotate_provider_call(call, purpose_field="work_purpose")
+            try:
+                async with asyncio.timeout(
+                    max(0.0, self.work.phase_deadline() - time.perf_counter())
+                ):
+                    if self.work.phase_deadline() <= time.perf_counter():
+                        raise ProviderTimeoutError(
+                            "Embedding phase deadline exhausted before provider admission.",
                             provider_name=self.provider_name,
-                            context={"reason": "embedding_identity_mismatch"},
+                            context=self.work.phase_timeout_context(),
                         )
-                    self.work.vectors.update(zip(missing, result.vectors, strict=True))
-                    call["status"] = "completed"
-                finally:
-                    call["duration_ms"] = round((time.perf_counter() - started) * 1000)
-                    self.work.timings[
-                        "query_embedding"
-                        if purpose is EmbeddingPurpose.QUERY
-                        else "document_embedding"
-                    ] += call["duration_ms"]
+                    result = await self.provider.embed_texts(list(owners.values()), purpose=purpose)
+                if (
+                    (result.provider, result.model, result.dimensions, result.provider_version)
+                    != (self.provider_name, self.model_name, self.dimensions, self.provider_version)
+                    or len(result.vectors) != len(owners)
+                    or any(len(vector) != self.dimensions for vector in result.vectors)
+                ):
+                    raise ProviderError(
+                        "Embedding result identity or vector shape mismatch",
+                        provider_name=self.provider_name,
+                        context={"reason": "embedding_identity_mismatch"},
+                    )
+                for key, vector in zip(owners, result.vectors, strict=True):
+                    self.work.vectors[key] = list(vector)
+                    futures[key].set_result(list(vector))
+                call["status"] = "completed"
+            except BaseException as exc:
+                if isinstance(exc, TimeoutError):
+                    exc = ProviderTimeoutError(
+                        "The shared request deadline was exhausted.",
+                        provider_name=self.provider_name,
+                        context=self.work.phase_timeout_context(),
+                    )
+                for key in owners:
+                    if not futures[key].done():
+                        futures[key].set_exception(exc)
+                raise exc
+            finally:
+                for key in owners:
+                    self.work.embedding_futures.pop(key, None)
+                call["duration_ms"] = round((time.perf_counter() - started) * 1000)
+                self.work.timings[
+                    "query_embedding" if purpose is EmbeddingPurpose.QUERY else "document_embedding"
+                ] += call["duration_ms"]
+        for key, future in futures.items():
+            if key not in self.work.vectors:
+                await asyncio.shield(future)
         return EmbeddingBatchResult(
             vectors=[list(self.work.vectors[key]) for key in keys],
             provider=self.provider_name,

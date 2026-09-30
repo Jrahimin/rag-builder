@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 import time
 import uuid
@@ -13,6 +14,7 @@ from datetime import UTC, date, datetime
 from typing import Any, cast
 
 import structlog
+from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import (
@@ -27,6 +29,7 @@ from app.core.exceptions import NotFoundError, ServiceUnavailableError
 from app.models.conversation import Conversation
 from app.models.message import Message, MessageRole
 from app.modules.conversations import turn_resolution as turn_resolution_mod
+from app.modules.conversations.answer_draft import AnswerDraft, public_draft_diagnostics
 from app.modules.conversations.citation_snapshots import build_citation_snapshots
 from app.modules.conversations.context_builder import (
     ContextBuilder,
@@ -82,6 +85,7 @@ from app.modules.conversations.schemas.message import (
     SourceProvenance,
     SourceScope,
 )
+from app.modules.conversations.services.claim_entailment_service import ClaimEntailmentService
 from app.modules.conversations.services.evidence_repair_service import repair_knowledge_evidence
 from app.modules.conversations.services.rewrite_retrieval import (
     citation_scopes_conflict,
@@ -101,6 +105,10 @@ from app.modules.conversations.services.web_evidence_review import (
     review_web_evidence,
     scoped_web_query,
 )
+from app.modules.conversations.terminal_outcome import (
+    terminal_outcome,
+    terminal_projection,
+)
 from app.modules.conversations.turn_resolution import (
     RESOLUTION_HISTORY_CHAR_BUDGET,
     RESOLUTION_HISTORY_MESSAGE_CAP,
@@ -114,6 +122,7 @@ from app.modules.conversations.turn_resolution import (
     TurnRelation,
     TurnResolutionInput,
     bound_resolution_history,
+    normalize_request_scope,
 )
 from app.modules.conversations.turn_resolver import TurnResolver, bypass_resolution
 from app.platform.domain.content_hash import content_hash
@@ -122,12 +131,12 @@ from app.platform.domain.lifecycle_service import get_or_raise, require_not_dele
 from app.platform.domain.text_tokenization import tokenize
 from app.platform.domain.transactions import commit_refresh
 from app.platform.providers.contracts.embedding import BaseEmbeddingProvider
-from app.platform.providers.contracts.llm import BaseLLMProvider, ChatMessage, ChatUsage
+from app.platform.providers.contracts.llm import BaseLLMProvider, ChatMessage, ChatRole, ChatUsage
 from app.platform.providers.contracts.web_search import (
     BaseWebSearchProvider,
     WebSearchEvidence,
 )
-from app.platform.providers.errors import ProviderError, ProviderQuotaError
+from app.platform.providers.errors import ProviderError, ProviderQuotaError, ProviderTimeoutError
 from app.platform.providers.prompt_budget import prompt_budget
 from app.platform.providers.request_work import ObservedLLM, RequestWork
 
@@ -203,6 +212,7 @@ class _PreparedTurn:
     resolver_latency_ms: int = 0
     preparation_error: ProviderError | None = None
     evidence_scope: dict[str, Any] = field(default_factory=dict)
+    generation_mode: str = "auto"
     originating_assistant_message_id: uuid.UUID | None = None
     inherited_coverage: dict[str, Any] | None = None
     response_policy: dict[str, Any] = field(default_factory=dict)
@@ -271,7 +281,44 @@ class ChatService:
         request: MessageSendRequest,
     ) -> ChatTurnResponse:
         with self._work.attached():
-            return await self._deliver_send_message(conversation_id, request)
+            self._work.evidence_snapshot.update(
+                {
+                    "preview_index_build_id": str(request.preview_index_build_id)
+                    if request.preview_index_build_id
+                    else None,
+                    "normalized_scope": normalize_request_scope(
+                        request.content,
+                        request_filters=RequestFilters(
+                            document_id=request.document_id,
+                            metadata_filter=dict(request.metadata_filter or {}),
+                            as_of=request.as_of,
+                            source_scope=request.source_scope,
+                        ),
+                    ).model_dump(mode="json"),
+                }
+            )
+            self._work.deadline = min(self._work.deadline, self._work.started + 50.0)
+            try:
+                async with asyncio.timeout(max(0.0, self._work.deadline - time.perf_counter())):
+                    return await self._deliver_send_message(conversation_id, request)
+            except (TimeoutError, ProviderTimeoutError) as exc:
+                conversation, user, assistant = await self._deadline_terminal(
+                    conversation_id,
+                    request,
+                    failure=exc if isinstance(exc, ProviderTimeoutError) else None,
+                )
+                return ChatTurnResponse(
+                    user_message=self._to_response(
+                        user,
+                        conversation_provider=conversation.provider,
+                        conversation_model=conversation.model,
+                    ),
+                    assistant_message=self._to_response(
+                        assistant,
+                        conversation_provider=conversation.provider,
+                        conversation_model=conversation.model,
+                    ),
+                )
 
     async def _deliver_send_message(
         self,
@@ -388,12 +435,22 @@ class ChatService:
         generation_started = time.perf_counter()
         try:
             with self._work.stage("answer_generation"):
-                completion = await prepared.llm.generate(
-                    prepared.messages,
-                    temperature=prepared.temperature,
-                    max_tokens=self._llm_max_tokens(),
-                )
+                if _requires_answer_draft(prepared):
+                    completion = await prepared.llm.generate_structured(
+                        prepared.messages,
+                        temperature=prepared.temperature,
+                        max_tokens=self._llm_max_tokens(),
+                        output_contract=AnswerDraft.contract(),
+                    )
+                else:
+                    completion = await prepared.llm.generate(
+                        prepared.messages,
+                        temperature=prepared.temperature,
+                        max_tokens=self._llm_max_tokens(),
+                    )
         except ProviderError as exc:
+            if exc.context.get("reason") == "request_deadline_exceeded":
+                raise
             await self._record_failed_execution(
                 conversation=conversation,
                 prepared=prepared,
@@ -452,16 +509,139 @@ class ChatService:
     ) -> AsyncIterator[str | dict[str, Any]]:
         """Yield SSE payload fragments: token strings, then final citations dict."""
         with self._work.attached():
-            async with aclosing(
-                cast(
-                    AsyncGenerator[str | dict[str, Any], None],
-                    self._deliver_stream_message(
-                        conversation_id, request, should_cancel=should_cancel
-                    ),
+            self._work.evidence_snapshot.update(
+                {
+                    "preview_index_build_id": str(request.preview_index_build_id)
+                    if request.preview_index_build_id
+                    else None,
+                    "normalized_scope": normalize_request_scope(
+                        request.content,
+                        request_filters=RequestFilters(
+                            document_id=request.document_id,
+                            metadata_filter=dict(request.metadata_filter or {}),
+                            as_of=request.as_of,
+                            source_scope=request.source_scope,
+                        ),
+                    ).model_dump(mode="json"),
+                }
+            )
+            self._work.deadline = min(self._work.deadline, self._work.started + 50.0)
+            try:
+                async with asyncio.timeout(max(0.0, self._work.deadline - time.perf_counter())):
+                    async with aclosing(
+                        cast(
+                            AsyncGenerator[str | dict[str, Any], None],
+                            self._deliver_stream_message(
+                                conversation_id, request, should_cancel=should_cancel
+                            ),
+                        )
+                    ) as delivery:
+                        async for item in delivery:
+                            yield item
+            except (TimeoutError, ProviderTimeoutError) as exc:
+                if should_cancel is not None and await should_cancel():
+                    return
+                conversation, _, assistant = await self._deadline_terminal(
+                    conversation_id,
+                    request,
+                    failure=exc if isinstance(exc, ProviderTimeoutError) else None,
                 )
-            ) as delivery:
-                async for item in delivery:
-                    yield item
+                yield assistant.content
+                yield self._done_event(assistant, conversation)
+
+    async def _deadline_terminal(
+        self,
+        conversation_id: uuid.UUID,
+        request: MessageSendRequest,
+        *,
+        failure: ProviderTimeoutError | None = None,
+    ) -> tuple[Conversation, Message, Message]:
+        """Reserve the last ten seconds for a deterministic persisted limitation."""
+        cause = (
+            failure.context.get("reason") if failure is not None else "request_deadline_exceeded"
+        )
+        if cause not in {"request_deadline_exceeded", "recovery_deadline_exceeded"}:
+            cause = "provider_timeout"
+        try:
+            async with asyncio.timeout(max(0.0, self._work.request_deadline - time.perf_counter())):
+                await self._session.rollback()
+                conversation = await self._require_mutable_conversation(conversation_id)
+                user = getattr(self, "_deadline_user_message", None)
+                if user is None:
+                    user = await self._commit_user_message(conversation, request.content)
+                else:
+                    await self._session.refresh(user)
+                phases = [
+                    span["name"]
+                    for span in self._work.snapshot()["spans"]["items"]
+                    if span.get("outcome") in {"cancelled", "failed"}
+                ]
+                failure_phase = (
+                    (failure.context.get("phase") if failure else None)
+                    or (phases[-1] if phases else None)
+                    or (self._work.evidence_snapshot.get("knowledge_repair") or {}).get("phase")
+                    or "coverage"
+                )
+                outcome = terminal_outcome(
+                    reason=cause,
+                    supported_claims=0,
+                    partial=False,
+                    missing_inputs=[],
+                    diagnostics={
+                        **self._work.evidence_snapshot,
+                        "failure_stage": failure_phase,
+                    },
+                    coverage="incomplete",
+                )
+                language = resolve_response_language(request.content, [])
+                content, finish_reason, reason, notices = terminal_projection(
+                    outcome,
+                    language=language,
+                    content="",
+                    finish_reason=cause,
+                    legacy_reason=cause,
+                    notices=list(self._work.evidence_snapshot.get("notices") or []),
+                )
+                assistant = await self._commit_assistant_message(
+                    conversation=conversation,
+                    content=content,
+                    finish_reason=finish_reason,
+                    input_tokens=None,
+                    output_tokens=None,
+                    prompt_version="deadline.terminal.v1",
+                    provider=conversation.provider or self._llm_config.backend.value,
+                    model=conversation.model or self._llm_config.model,
+                    metadata={
+                        **self._work.evidence_snapshot,
+                        "retrieval_time_ms": self._work.timings.get(
+                            "initial_retrieval", self._work.timings.get("retrieval", 0)
+                        ),
+                        "generation_time_ms": self._work.timings.get("answer_generation", 0),
+                        "total_time_ms": round((time.perf_counter() - self._work.started) * 1000),
+                        "terminal_result": "exhausted_budget",
+                        "evidence_summary": {
+                            "coverage": "incomplete",
+                            "claim_verification": "unverified",
+                        },
+                        "lifecycle": self._work.snapshot(),
+                        "terminal_outcome": outcome.model_dump(mode="json"),
+                        "notices": notices,
+                    },
+                    citations=[],
+                    claims=[],
+                    grounded=None,
+                    insufficient_evidence_reason=reason,
+                    user_content_for_title=request.content,
+                )
+                return conversation, user, assistant
+        except TimeoutError as exc:
+            raise self._provider_unavailable(
+                ProviderTimeoutError(
+                    "Persistence exceeded the shared request deadline.",
+                    provider_name="persistence",
+                    context={"reason": "request_deadline_exceeded"},
+                )
+            ) from exc
 
     async def _deliver_stream_message(
         self,
@@ -594,6 +774,9 @@ class ChatService:
 
         generation_started = time.perf_counter()
         content_parts: list[str] = []
+        # Source coverage may pass while a generated claim fails verification.
+        # Keep factual tokens private until the final claim check completes.
+        defer_partial_answer = True
         finish_reason: str | None = None
         final_usage: ChatUsage | None = None
         generation_span = self._work.begin_span("answer_generation")
@@ -604,6 +787,11 @@ class ChatService:
             prepared.messages,
             temperature=prepared.temperature,
             max_tokens=self._llm_max_tokens(),
+            **(
+                {"output_contract": AnswerDraft.contract()}
+                if _requires_answer_draft(prepared)
+                else {}
+            ),
         )
 
         try:
@@ -613,7 +801,8 @@ class ChatService:
                     break
                 if chunk.delta:
                     content_parts.append(chunk.delta)
-                    yield chunk.delta
+                    if not defer_partial_answer:
+                        yield chunk.delta
                 if chunk.finish_reason:
                     finish_reason = chunk.finish_reason
                 if chunk.usage is not None:
@@ -685,6 +874,9 @@ class ChatService:
             output_tokens_logged=output_tokens,
             generation_ran=True,
         )
+
+        if defer_partial_answer:
+            yield assistant_message.content
 
         yield self._done_event(assistant_message, conversation)
 
@@ -765,6 +957,14 @@ class ChatService:
         self._work.timings["history_loading"] += round(
             (time.perf_counter() - preparation_started) * 1000
         )
+        if request.preview_index_build_id is not None:
+            pin_preview = getattr(self._retrieval, "pin_validated_preview", None)
+            if not callable(pin_preview):
+                raise ServiceUnavailableError(
+                    message="Validated build preview is unavailable.",
+                    code="preview_build_unavailable",
+                )
+            await pin_preview(request.preview_index_build_id)
         resolution_started = time.perf_counter()
 
         bounded_history, history_truncated = bound_resolution_history(
@@ -813,9 +1013,37 @@ class ChatService:
                         ),
                     ).resolve(payload)
 
+        resolved = replace(
+            resolved,
+            retrieval=resolved.retrieval.model_copy(
+                update={
+                    "normalized_scope": normalize_request_scope(
+                        resolved.retrieval.query,
+                        reference_time=payload.reference_time,
+                        request_filters=payload.request_filters,
+                        project_defaults=self._domain_instructions,
+                    )
+                }
+            ),
+        )
         self._work.timings["resolution"] += round((time.perf_counter() - resolution_started) * 1000)
+        normalized_scope = resolved.retrieval.normalized_scope.model_copy(
+            update={
+                "exact_as_of": resolved.retrieval.as_of
+                or resolved.retrieval.normalized_scope.exact_as_of
+            }
+        )
+        resolved = replace(
+            resolved,
+            retrieval=resolved.retrieval.model_copy(update={"normalized_scope": normalized_scope}),
+        )
+        set_scope = getattr(self._retrieval, "set_request_scope", None)
+        if callable(set_scope):
+            set_scope(normalized_scope.model_dump(mode="json"))
+        self._work.evidence_snapshot["normalized_scope"] = normalized_scope.model_dump(mode="json")
         diagnostics = {
             **resolved.diagnostics,
+            "normalized_scope": normalized_scope.model_dump(mode="json"),
             "history_truncated": history_truncated,
         }
         clarification_response: str | None = None
@@ -942,25 +1170,18 @@ class ChatService:
         # These stages run sequentially. Their configured budgets must add up:
         # taking the maximum let local recovery consume the web review allowance
         # and misreported local deadline exhaustion as a web provider outage.
-        evidence_deadline = (
-            coverage_started
-            + max(
-                self._chat_config.broad_recovery_timeout_seconds,
-                self._chat_config.focused_recovery_timeout_seconds,
-            )
-            + self._web_search_config.request_timeout_seconds
-            + 20
-        )
+        evidence_deadline = self._work.recovery_deadline
+        retrieval_result.diagnostics["normalized_scope"] = diagnostics.get("normalized_scope", {})
         scope_current_authority = _scope_current_authority_status(
             request,
             retrieval_result.diagnostics,
             document_id=resolved.retrieval.document_id,
         )
         query_embedder = getattr(self._retrieval, "query_embedder", None)
-        grounding = (
-            GroundingService(self._chat_config, embedder=query_embedder)
-            if query_embedder is not None
-            else self._grounding
+        grounding = GroundingService(
+            self._chat_config,
+            embedder=query_embedder or self._grounding._embedder,
+            entailment=ClaimEntailmentService(llm),
         )
         rerank_status = str(retrieval_result.diagnostics.get("rerank_status") or "") or None
         expansion_records = list(
@@ -1084,9 +1305,9 @@ class ChatService:
                     retrieval_result.diagnostics.get("modifies_expansion_records") or []
                 )
                 rerank_status = str(retrieval_result.diagnostics.get("rerank_status") or "") or None
-        reviewed_web_fallback_allowed = False
         calculation_task = False
         applicability_task = False
+        unresolved_authority_obligation = False
         if not presentation_reused:
             self._work.counts["source_version_checks"] += 1
             with self._work.stage("checking_source_versions"):
@@ -1143,7 +1364,9 @@ class ChatService:
                 and calculation_task
                 and (bounded_recovery_enabled or _has_governed_calculation_source(chunks))
             )
-            applicability_task = _requires_current_rule_coverage(retrieval_query, chunks)
+            applicability_task = _requires_current_rule_coverage(
+                current_content, chunks
+            ) or _requires_current_rule_coverage(retrieval_query, chunks)
             applicability_route = (
                 not presentation_only
                 and self._evidence_approach == "authoritative"
@@ -1152,7 +1375,10 @@ class ChatService:
                     _has_governed_current_rule_source(chunks)
                     or (
                         bounded_recovery_enabled
-                        and self._chat_config.response_mode is ResponseMode.INDEXED_ONLY
+                        and (
+                            self._chat_config.response_mode is ResponseMode.INDEXED_ONLY
+                            or not chunks
+                        )
                     )
                 )
             )
@@ -1164,6 +1390,11 @@ class ChatService:
             compliance_review = compliance_route and review_eligible
             calculation_review = calculation_route and review_eligible
             applicability_review = applicability_route and review_eligible
+            unresolved_authority_obligation = bool(chunks) and (
+                evidence.reason is InsufficientEvidenceReason.UNRESOLVED_AUTHORITY
+                or applicability_task
+                or bool(expansion_records)
+            )
             relevance_repair = (
                 not presentation_only
                 and evidence.reason is InsufficientEvidenceReason.BELOW_RELEVANCE_THRESHOLD
@@ -1190,7 +1421,6 @@ class ChatService:
                     comparison_route
                     or compliance_route
                     or calculation_route
-                    or applicability_route
                     or reuse_scope_revalidation
                 ),
                 presentation_only=presentation_only,
@@ -1261,7 +1491,7 @@ class ChatService:
                         recovery_profile = "legacy"
                     repair_timeout_seconds = min(
                         repair_timeout_seconds,
-                        max(0.0, evidence_deadline - time.perf_counter() - 10),
+                        max(0.0, evidence_deadline - time.perf_counter()),
                     )
                     repaired = await repair_knowledge_evidence(
                         inputs=resolved.retrieval.model_copy(update={"query": retrieval_query}),
@@ -1319,6 +1549,31 @@ class ChatService:
                         sufficient=False,
                         reason=InsufficientEvidenceReason.UNRESOLVED_AUTHORITY,
                     )
+                incomplete_review = bool(
+                    repaired.decision is None
+                    and repaired.failure is None
+                    and repair_diagnostics.get("status")
+                    in {"coverage_incomplete", "dependency_unresolved"}
+                )
+                authority_review_required = (
+                    self._evidence_approach == "authoritative"
+                    or calculation_task
+                    or applicability_task
+                )
+                if (incomplete_review and authority_review_required) or (
+                    repaired.decision is None and repaired.selected
+                ):
+                    evidence = replace(
+                        evidence,
+                        sufficient=False,
+                        reason=InsufficientEvidenceReason.UNRESOLVED_AUTHORITY,
+                    )
+                unresolved_authority_obligation = (
+                    unresolved_authority_obligation
+                    or bool(repaired.selected)
+                    or (authority_review_required and (deadline_without_proof or incomplete_review))
+                )
+                if deadline_without_proof:
                     if _reviewed_web_fallback_eligible(
                         mode=self._chat_config.response_mode,
                         provider_available=self._web_search is not None,
@@ -1326,34 +1581,24 @@ class ChatService:
                         applicability_task=applicability_task,
                         scoped_request=resolved.retrieval.suppress_web,
                         scope_current_authority=scope_current_authority is not None,
+                        unresolved_authority=unresolved_authority_obligation,
                     ):
-                        reviewed_web_fallback_allowed = True
                         repair_diagnostics["fallback_route"] = "web_after_recovery_deadline"
                     else:
                         repair_diagnostics["fallback_route"] = (
                             "insufficient_evidence_after_recovery_deadline"
                         )
-                # A completed but incomplete review is also a legitimate web
-                # fallback condition. Previously only a timeout opened this route,
-                # so finishing local review faster could make the result worse.
-                if (
-                    repaired.decision is None
-                    and repaired.failure is None
-                    and repair_diagnostics.get("status")
-                    in {
-                        "coverage_incomplete",
-                        "dependency_unresolved",
-                    }
-                    and _reviewed_web_fallback_eligible(
-                        mode=self._chat_config.response_mode,
-                        provider_available=self._web_search is not None,
-                        calculation_task=calculation_task,
-                        applicability_task=applicability_task,
-                        scoped_request=resolved.retrieval.suppress_web,
-                        scope_current_authority=scope_current_authority is not None,
-                    )
+                # A completed but incomplete review may use web only when no
+                # governing applicability or recovered authority remains open.
+                if incomplete_review and _reviewed_web_fallback_eligible(
+                    mode=self._chat_config.response_mode,
+                    provider_available=self._web_search is not None,
+                    calculation_task=calculation_task,
+                    applicability_task=applicability_task,
+                    scoped_request=resolved.retrieval.suppress_web,
+                    scope_current_authority=scope_current_authority is not None,
+                    unresolved_authority=unresolved_authority_obligation,
                 ):
-                    reviewed_web_fallback_allowed = True
                     repair_diagnostics["fallback_route"] = "web_after_incomplete_review"
                 if reuse_scope_revalidation:
                     retrieval_result.diagnostics["presentation_reuse"]["new_coverage_review"] = (
@@ -1382,6 +1627,15 @@ class ChatService:
                         for branch in repair_diagnostics.get("branches", [])
                     ]
                 retrieval_result.diagnostics["knowledge_repair"] = repair_diagnostics
+                self._work.evidence_snapshot.update(
+                    {
+                        "knowledge_repair": repair_diagnostics,
+                        "index_build_id": retrieval_result.diagnostics.get("index_build_id"),
+                        "source_metadata_generation": retrieval_result.diagnostics.get(
+                            "source_metadata_generation"
+                        ),
+                    }
+                )
                 if repaired.decision is not None:
                     retained_missing_inputs = (
                         tuple(str(item) for item in (inherited or {}).get("missing_inputs") or [])
@@ -1445,7 +1699,7 @@ class ChatService:
         elif (
             web_requested
             and evidence.reason is InsufficientEvidenceReason.UNRESOLVED_AUTHORITY
-            and not reviewed_web_fallback_allowed
+            and unresolved_authority_obligation
         ):
             # Web snippet relevance cannot establish commencement, amendment
             # precedence or all dependencies of a governed calculation. Until
@@ -1475,7 +1729,7 @@ class ChatService:
                 )
                 search_budget = min(
                     self._web_search_config.request_timeout_seconds,
-                    evidence_deadline - time.perf_counter() - 20,
+                    evidence_deadline - time.perf_counter(),
                 )
                 if partial_answer is not None:
                     # Supplementing already reviewed useful work must not add a
@@ -1725,6 +1979,9 @@ class ChatService:
                 if isinstance(retrieval_result.diagnostics.get("inherited_coverage"), dict)
                 else None
             ),
+            generation_mode="structured_draft"
+            if any(c.metadata.get("reviewed_proof") for c in selected)
+            else "prose",
             response_policy=_assemble_response_policy(
                 mode=mode,
                 gate_mode=self._chat_config.evidence_gate_mode,
@@ -1768,12 +2025,26 @@ class ChatService:
         non_knowledge_turn: bool = False,
         clarification_turn: bool = False,
     ) -> Message:
+        draft = _render_structured_answer(content, prepared.selected) if generation_ran else None
+        if draft is not None and draft[1].get("reason") == "answer_draft_invalid":
+            draft = await self._correct_answer_draft(prepared, content, draft)
+        if draft is not None:
+            content, draft_metadata = draft
+            prepared.retrieval_diagnostics["answer_draft"] = draft_metadata
         verification_started = time.perf_counter()
         reason_value = str(insufficient_reason) if insufficient_reason is not None else None
-        if clarification_turn:
+        if draft is not None and draft[1].get("status") == "failed_verification":
+            reason_value = str(InsufficientEvidenceReason.CLAIM_VERIFICATION_FAILED)
+        verification_repair: dict[str, Any] | None = None
+        if (
+            clarification_turn
+            or non_knowledge_turn
+            or not generation_ran
+            or reason_value is not None
+        ):
             grounding = GroundingResult(
                 claims=[],
-                grounded=None,
+                grounded=None if clarification_turn else False,
                 citation_coverage=0.0,
                 claims_status="not_applicable",
             )
@@ -1782,12 +2053,108 @@ class ChatService:
                 grounding = await prepared.grounding.map_claims(
                     content,
                     prepared.selected,
+                    draft_segments=(prepared.retrieval_diagnostics.get("answer_draft") or {}).get(
+                        "segments"
+                    ),
                     user_input=user_content_for_title,
                     coverage=(
                         prepared.inherited_coverage
                         or prepared.retrieval_diagnostics.get("knowledge_repair")
                     ),
                 )
+            partial_scope = bool(
+                (prepared.retrieval_diagnostics.get("knowledge_repair") or {}).get("partial_answer")
+                or (prepared.inherited_coverage or {}).get("coverage_partial")
+            )
+            if grounding.grounded is False and reason_value is None and generation_ran:
+                failed = [
+                    claim for claim in grounding.claims if claim.get("verification") != "supported"
+                ]
+                if failed and all(
+                    claim.get("verification_reason") == "missing_citation" for claim in failed
+                ):
+                    coverage = prepared.inherited_coverage or prepared.retrieval_diagnostics.get(
+                        "knowledge_repair"
+                    )
+                    uncited = await prepared.grounding.map_claims(
+                        content,
+                        prepared.selected,
+                        require_citations=False,
+                        user_input=user_content_for_title,
+                        coverage=coverage,
+                    )
+                    repaired_content = _repair_missing_citation_claims(
+                        content, failed, uncited.claims
+                    )
+                    if repaired_content:
+                        reviewed = await prepared.grounding.map_claims(
+                            repaired_content,
+                            prepared.selected,
+                            user_input=user_content_for_title,
+                            coverage=coverage,
+                        )
+                        if reviewed.grounded is True:
+                            content = repaired_content
+                            grounding = reviewed
+                            verification_repair = {"status": "repaired_missing_citations"}
+            if partial_scope and grounding.grounded is False and reason_value is None:
+                pruned = _prune_unverified_partial_paragraphs(content, grounding.claims)
+                if pruned:
+                    reviewed = await prepared.grounding.map_claims(
+                        pruned,
+                        prepared.selected,
+                        user_input=user_content_for_title,
+                        coverage=(
+                            prepared.inherited_coverage
+                            or prepared.retrieval_diagnostics.get("knowledge_repair")
+                        ),
+                    )
+                    if reviewed.grounded is True:
+                        content = pruned
+                        grounding = reviewed
+                        verification_repair = {"status": "pruned_unverified_paragraphs"}
+            if grounding.grounded is False and reason_value is None and generation_ran:
+                fallback = _coverage_scope_fallback(
+                    prepared.retrieval_diagnostics.get("knowledge_repair"), prepared.selected
+                )
+                if fallback:
+                    reviewed = await prepared.grounding.map_claims(
+                        fallback,
+                        prepared.selected,
+                        user_input=user_content_for_title,
+                        coverage=prepared.retrieval_diagnostics.get("knowledge_repair"),
+                    )
+                    if reviewed.grounded is True:
+                        content = fallback
+                        grounding = reviewed
+                        verification_repair = {"status": "verified_coverage_scope_fallback"}
+            if grounding.grounded is False and reason_value is None and generation_ran:
+                failed_reasons = sorted(
+                    {
+                        str(claim.get("verification_reason") or claim.get("verification"))
+                        for claim in grounding.claims
+                        if claim.get("verification") != "supported"
+                    }
+                )
+                prepared.retrieval_diagnostics["rejected_draft"] = {
+                    "candidate_count": len(grounding.claims),
+                    "failed_count": len(failed_reasons),
+                    "reasons": failed_reasons[:12],
+                }
+                if (
+                    "verifier_schema_invalid" in failed_reasons
+                    or "verifier_unavailable" in failed_reasons
+                ):
+                    prepared.retrieval_diagnostics["verification_failure"] = next(
+                        item for item in failed_reasons if item.startswith("verifier_")
+                    )
+                content = "The generated answer could not be verified."
+                reason_value = InsufficientEvidenceReason.CLAIM_VERIFICATION_FAILED.value
+                grounding = GroundingResult(claims=[], grounded=False, citation_coverage=0.0)
+                verification_repair = {
+                    "status": "withheld_unverified_answer",
+                    "failed_claim_reasons": failed_reasons,
+                }
             if reason_value is not None:
                 grounding = type(grounding)(claims=[], grounded=False, citation_coverage=1.0)
             elif non_knowledge_turn:
@@ -1813,6 +2180,8 @@ class ChatService:
             retrieval_diagnostics=prepared.retrieval_diagnostics,
             selected_chunks=prepared.selected,
         )
+        if verification_repair is not None:
+            metadata["verification_repair"] = verification_repair
         factual_claims = [
             claim for claim in grounding.claims if claim.get("claim_kind") != "coverage_scope"
         ]
@@ -1829,14 +2198,17 @@ class ChatService:
         factual_total = len(factual_claims)
         evidence_gate = self._grounding.diagnostics(
             prepared.evidence,
-            blocked_generation=reason_value is not None,
+            blocked_generation=reason_value is not None and not generation_ran,
             generation_ran=generation_ran,
         )
         if grounding.claims_status:
             evidence_gate["claims_status"] = grounding.claims_status
         citations = (
             []
-            if reason_value is not None or non_knowledge_turn or clarification_turn
+            if reason_value is not None
+            or non_knowledge_turn
+            or clarification_turn
+            or (verification_repair or {}).get("status") == "withheld_unverified_answer"
             else self._citations_for(
                 prepared.selected,
                 recalled_chunks=prepared.chunks,
@@ -1949,7 +2321,15 @@ class ChatService:
                 "notices": [
                     n.to_dict()
                     for n in (
-                        prepared.notices
+                        (
+                            *prepared.notices,
+                            verification_failed_notice(
+                                language=detect_language(user_content_for_title).primary_language
+                                or "en"
+                            ),
+                        )
+                        if (verification_repair or {}).get("status") == "withheld_unverified_answer"
+                        else prepared.notices
                         if reason_value is None
                         else (
                             *prepared.notices,
@@ -2081,6 +2461,40 @@ class ChatService:
                 "or assumed membership.",
             },
         }
+        outcome = terminal_outcome(
+            reason=reason_value,
+            supported_claims=supported_claims,
+            partial=repair_partial or inherited_partial,
+            missing_inputs=metadata["evidence_summary"]["input_provenance"]["unresolved_inputs"],
+            diagnostics=prepared.retrieval_diagnostics,
+            coverage=metadata["evidence_summary"]["coverage"],
+            clarification=clarification_turn,
+            non_knowledge=non_knowledge_turn,
+        )
+        metadata["terminal_outcome"] = outcome.model_dump(mode="json")
+        metadata["evidence_funnel"]["outcome"] = (
+            "clarification" if clarification_turn else outcome.outcome
+        )
+        if prepared.retrieval_diagnostics.get("rejected_draft"):
+            metadata["rejected_draft"] = prepared.retrieval_diagnostics["rejected_draft"]
+        if outcome.failure_stage == "draft_schema":
+            metadata["rejected_draft"] = {
+                **metadata.get("rejected_draft", {}),
+                "candidate_count": (prepared.retrieval_diagnostics.get("answer_draft") or {}).get(
+                    "candidate_count", 0
+                ),
+                "issues": (prepared.retrieval_diagnostics.get("answer_draft") or {}).get(
+                    "issues", []
+                )[:12],
+            }
+        content, finish_reason, reason_value, metadata["notices"] = terminal_projection(
+            outcome,
+            language=prepared.response_language,
+            content=content,
+            finish_reason=finish_reason,
+            legacy_reason=reason_value,
+            notices=metadata.get("notices") or [],
+        )
         persistence_started = time.perf_counter()
         assistant_message = await self._commit_assistant_message(
             conversation=conversation,
@@ -2130,6 +2544,75 @@ class ChatService:
         logger.info("chat_complete", **log_kwargs)
         return assistant_message
 
+    async def _correct_answer_draft(
+        self, prepared: _PreparedTurn, content: str, failure: tuple[str, dict[str, Any]]
+    ) -> tuple[str, dict[str, Any]]:
+        if (
+            self._work.counts["answer_shape_corrections"]
+            or self._work.deadline - time.perf_counter() < 12
+        ):
+            return failure
+        self._work.counts["answer_shape_corrections"] += 1
+        try:
+            with self._work.stage("answer_shape_correction"):
+                async with asyncio.timeout(
+                    max(0.0, self._work.deadline - time.perf_counter() - 10)
+                ):
+                    result = await prepared.llm.generate_structured(
+                        [
+                            *prepared.messages,
+                            ChatMessage(role=ChatRole.ASSISTANT, content=content),
+                            ChatMessage(
+                                role=ChatRole.SYSTEM,
+                                content="Correct only the JSON shape of the prior draft. "
+                                "Keep the same assertions, requirement IDs and proof IDs. "
+                                "Do not add facts or change assertion scope. "
+                                "Use only immutable approved proof in this prompt. "
+                                + AnswerDraft.instructions(),
+                            ),
+                        ],
+                        output_contract=AnswerDraft.contract(),
+                        temperature=None,
+                        max_tokens=self._llm_max_tokens(),
+                    )
+            repaired = _render_structured_answer(result.content, prepared.selected)
+            if repaired is None:
+                return failure
+            if repaired[1].get("status") == "rendered":
+                try:
+                    original = json.loads(content)
+                except ValueError:
+                    original = None
+                original_segments = (
+                    original.get("segments") if isinstance(original, dict) else original
+                )
+                keys = ("text", "requirement_ids", "proof_ids")
+                original_bindings = (
+                    [tuple(item.get(key) for key in keys) for item in original_segments]
+                    if isinstance(original_segments, list)
+                    and all(isinstance(item, dict) for item in original_segments)
+                    else None
+                )
+                repaired_bindings = [
+                    tuple(item.get(key) for key in keys) for item in repaired[1]["segments"]
+                ]
+                if original_bindings is None or original_bindings != repaired_bindings:
+                    failure[1]["shape_correction"] = "rejected_assertion_or_proof_change"
+                    return failure
+            repaired[1]["shape_correction"] = "completed"
+            return repaired
+        except (ProviderTimeoutError, TimeoutError) as exc:
+            failure[1]["shape_correction"] = "failed"
+            failure[1]["timeout_reason"] = (
+                exc.context.get("reason", "provider_timeout")
+                if isinstance(exc, ProviderTimeoutError)
+                else "request_deadline_exceeded"
+            )
+            return failure
+        except ProviderError:
+            failure[1]["shape_correction"] = "failed"
+            return failure
+
     async def _raise_preparation_failure(
         self,
         conversation: Conversation,
@@ -2169,6 +2652,7 @@ class ChatService:
         streamed: bool,
     ) -> None:
         """Persist a safe usage/error record without replacing the provider failure."""
+        content = self._provider_unavailable(exc).message
         metadata = self._build_metadata(
             retrieval_ms=prepared.retrieval_ms,
             generation_ms=generation_ms,
@@ -2253,6 +2737,10 @@ class ChatService:
             "source_provenance": response.source_provenance.value,
             "web_search": response.metadata.get("web_search", {}),
             "finish_reason": response.finish_reason,
+            "terminal_outcome": response.terminal_outcome.model_dump(mode="json")
+            if response.terminal_outcome
+            else None,
+            "lifecycle": response.metadata.get("lifecycle", {}),
             "turn_resolution": _compact_resolution_summary(response.metadata),
         }
 
@@ -2478,6 +2966,7 @@ class ChatService:
         await self._session.commit()
         await self._session.refresh(user_message)
         await self._session.refresh(conversation)
+        self._deadline_user_message = user_message
         return user_message
 
     async def _commit_assistant_message(
@@ -2502,6 +2991,10 @@ class ChatService:
         provider_override = provider if provider != conversation.provider else None
         model_override = model if model != conversation.model else None
 
+        metadata = dict(metadata)
+        if "answer_draft" in metadata:
+            metadata["answer_draft"] = public_draft_diagnostics(metadata["answer_draft"])
+        metadata["lifecycle"] = {**metadata.get("lifecycle", {}), "persistence_completed": True}
         assistant = Message(
             project_id=self._project_id,
             conversation_id=conversation.id,
@@ -2705,6 +3198,8 @@ class ChatService:
             },
             "retrieval_reference_date": retrieval_diagnostics.get("reference_date"),
             "retrieval_as_of": retrieval_diagnostics.get("as_of"),
+            "normalized_scope": retrieval_diagnostics.get("normalized_scope", {}),
+            "answer_draft": public_draft_diagnostics(retrieval_diagnostics.get("answer_draft")),
             "retrieval_configuration_hash": retrieval_diagnostics.get("configuration_hash"),
         }
 
@@ -3275,6 +3770,7 @@ def _reviewed_web_fallback_eligible(
     applicability_task: bool,
     scoped_request: bool,
     scope_current_authority: bool,
+    unresolved_authority: bool = False,
 ) -> bool:
     """Apply the same scope and task guards to recovery-triggered web fallback."""
     return (
@@ -3284,6 +3780,7 @@ def _reviewed_web_fallback_eligible(
         and not applicability_task
         and not scoped_request
         and not scope_current_authority
+        and not unresolved_authority
     )
 
 
@@ -3442,26 +3939,39 @@ def _bounded_recovery_profile(
 
 
 def _requires_current_rule_coverage(question: str, chunks: list[ContextChunk]) -> bool:
-    """Current governed facts need scope proof even when similarity admission passes.
+    """Changing rules need scope proof even when the user omits "current".
 
     Include reference sources: a highly similar proposal/company rule must not
     bypass applicability review merely because no governing source was selected.
     This also runs when conversation interpretation falls back to the raw question.
     """
     del chunks
-    temporal = re.search(
-        r"\b(?:current|currently|latest|today|now)\b|বর্তমান|সর্বশেষ|এখন",
-        question,
-        re.I,
-    )
     governed_fact = re.search(
         r"\b(?:rate|rule|requirement|deadline|tax|fee|penalty|duty|applicab|guidance|"
-        r"refund|filing|return)\w*\b|হার|বিধান|নিয়ম|নিয়ম|সময়সীমা|সময়সীমা|কর|ফি|"
-        r"জরিমানা|দায়িত্ব|দায়িত্ব|প্রযোজ্য|রিটার্ন|দাখিল",
+        r"refund|filing|return|limit|threshold|exemption|slab|cap|policy)\w*\b"
+        r"|হার|বিধান|নিয়ম|নিয়ম|সময়সীমা|সময়সীমা|কর|ফি|"
+        r"জরিমানা|দায়িত্ব|দায়িত্ব|প্রযোজ্য|রিটার্ন|দাখিল|সীমা|করমুক্ত|নীতিমালা",
         question,
         re.I,
     )
-    return bool(temporal and governed_fact)
+    temporal = re.search(
+        r"\b(?:current|currently|latest|today|now|(?:19|20)\d{2})\b"
+        r"|বর্তমান|সর্বশেষ|এখন",
+        question,
+        re.I,
+    )
+    if temporal and governed_fact:
+        return True
+    # A single changing numeric/provision fact has a current default even if
+    # the request is terse or imperative. Broader policy summaries keep their
+    # existing coverage route so they do not all incur a rule review.
+    changing_fact = re.search(
+        r"\b(?:rate|limit|threshold|exemption|slab|cap|deadline|fee|penalty|duty)\w*\b"
+        r"|হার|সীমা|করমুক্ত|সময়সীমা|সময়সীমা|ফি|জরিমানা",
+        question,
+        re.I,
+    )
+    return bool(changing_fact)
 
 
 def _has_governed_current_rule_source(chunks: list[ContextChunk]) -> bool:
@@ -3470,3 +3980,145 @@ def _has_governed_current_rule_source(chunks: list[ContextChunk]) -> bool:
         and chunk.metadata.get("source_lifecycle_status") in {"active", "retired"}
         for chunk in chunks
     )
+
+
+def _prune_unverified_partial_paragraphs(content: str, claims: list[dict[str, Any]]) -> str:
+    """Keep only whole paragraphs whose claims all passed verification."""
+    invalid = [
+        str(claim.get("text") or "") for claim in claims if claim.get("verification") != "supported"
+    ]
+    if not invalid or any(not item or item not in content for item in invalid):
+        return ""
+    paragraphs = re.split(r"\n\s*\n", content)
+    retained = [
+        paragraph.strip()
+        for paragraph in paragraphs
+        if paragraph.strip() and not any(item in paragraph for item in invalid)
+    ]
+    return "\n\n".join(retained)
+
+
+def _coverage_scope_fallback(repair: dict[str, Any] | None, selected: list[ContextChunk]) -> str:
+    """Use only fully reviewed scopes, then run the normal claim verifier again."""
+    coverage = (repair or {}).get("coverage")
+    if not isinstance(coverage, dict) or coverage.get("complete") is not True:
+        return ""
+    checks = coverage.get("checks")
+    if not isinstance(checks, list) or not checks:
+        return ""
+    by_id = {str(chunk.chunk_id): index for index, chunk in enumerate(selected, start=1)}
+    paragraphs: list[str] = []
+    for check in checks:
+        if (
+            not isinstance(check, dict)
+            or check.get("supported") is not True
+            or check.get("fulfillment") != "full"
+            or check.get("unresolved_facets")
+        ):
+            return ""
+        scope = str(check.get("answerable_scope") or "").strip()
+        proof_ids = check.get("chunk_ids")
+        if not scope or not isinstance(proof_ids, list):
+            return ""
+        indexes = list(dict.fromkeys(by_id[item] for item in proof_ids if item in by_id))
+        if not indexes:
+            return ""
+        markers = " ".join(f"[{index}]" for index in indexes)
+        sentences = [item.strip() for item in re.split(r"(?<=[.!?])\s+", scope) if item.strip()]
+        paragraphs.append(" ".join(f"{item.rstrip('.!?')}. {markers}" for item in sentences))
+    return "\n\n".join(paragraphs)
+
+
+def _repair_missing_citation_claims(
+    content: str,
+    failed_claims: list[dict[str, Any]],
+    uncited_claims: list[dict[str, Any]],
+) -> str:
+    """Attach only citations independently verified against selected evidence."""
+    by_id = {claim.get("claim_id"): claim for claim in uncited_claims}
+    repaired = content
+    for failed in failed_claims:
+        match = by_id.get(failed.get("claim_id"))
+        claim_text = str(failed.get("text") or "")
+        evidence = match.get("evidence") if isinstance(match, dict) else None
+        if (
+            not claim_text
+            or content.count(claim_text) != 1
+            or not isinstance(match, dict)
+            or match.get("verification") != "supported"
+            or not isinstance(evidence, list)
+            or not evidence
+        ):
+            return ""
+        citation_index = evidence[0].get("citation_index")
+        if not isinstance(citation_index, int) or citation_index < 1:
+            return ""
+        repaired = repaired.replace(claim_text, f"{claim_text} [{citation_index}]", 1)
+    return repaired if repaired != content else ""
+
+
+def _requires_answer_draft(prepared: _PreparedTurn) -> bool:
+    return prepared.generation_mode == "structured_draft" or (
+        prepared.generation_mode == "auto"
+        and any(chunk.metadata.get("reviewed_proof") for chunk in prepared.selected)
+    )
+
+
+def _render_structured_answer(
+    content: str, chunks: list[ContextChunk]
+) -> tuple[str, dict[str, Any]] | None:
+    """Canonical schema parsing and immutable approved proof references."""
+    required = any(chunk.metadata.get("reviewed_proof") for chunk in chunks)
+    candidate = content.strip()
+    if candidate.startswith(chr(96) * 3 + "json") and candidate.endswith(chr(96) * 3):
+        candidate = candidate[7:-3].strip()
+    if not required and not candidate.startswith("{"):
+        return None
+    try:
+        draft = AnswerDraft.model_validate_json(candidate)
+    except ValidationError as exc:
+        if not required:
+            return None
+        return "The answer draft could not be verified.", {
+            "version": "answer.draft.v1",
+            "status": "failed_verification",
+            "reason": "answer_draft_invalid",
+            "issues": [
+                {"type": item["type"], "path": ".".join(str(p) for p in item["loc"])}
+                for item in exc.errors(include_input=False)[:12]
+            ],
+            "candidate_count": 0,
+        }
+    segments = [item.model_dump() for item in draft.segments]
+    indexes = {str(chunk.chunk_id): index for index, chunk in enumerate(chunks, 1)}
+    approved = {
+        (str(item.get("requirement_id")), str(chunk.chunk_id))
+        for chunk in chunks
+        for item in chunk.metadata.get("reviewed_proof", [])
+        if item.get("quote") and str(item["quote"]) in chunk.content
+    }
+    rendered = []
+    for segment in draft.segments:
+        proof, requirements = segment.proof_ids, segment.requirement_ids
+        if (
+            any(item not in indexes for item in proof)
+            or bool(proof) != bool(requirements)
+            or any(not any((item, source) in approved for source in proof) for item in requirements)
+            or any(not any((item, source) in approved for item in requirements) for source in proof)
+            or re.search(r"\[\d+\]", segment.text)
+        ):
+            return "The answer draft could not be verified.", {
+                "version": draft.version,
+                "status": "failed_verification",
+                "reason": "answer_draft_proof_invalid",
+                "candidate_count": len(segments),
+            }
+        rendered.append(
+            segment.text.strip() + "".join(f" [{indexes[item]}]" for item in dict.fromkeys(proof))
+        )
+    return "\n\n".join(rendered), {
+        "version": draft.version,
+        "status": "rendered",
+        "segments": segments,
+        "candidate_count": len(segments),
+    }

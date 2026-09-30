@@ -7,29 +7,23 @@ import uuid
 from fastapi import APIRouter, status
 
 from app.core.http.envelopes import ApiResponse
+from app.dependencies.common import DbSessionDep
 from app.dependencies.retrieval import IndexLifecycleServiceDep
 from app.modules.retrieval.schemas.index_lifecycle import (
     IndexBuildListResponse,
     IndexBuildResponse,
     LifecycleJobResponse,
 )
+from app.modules.retrieval.services.index_build_read_service import IndexBuildReadService
 
 router = APIRouter()
 
 
 @router.get("", response_model=ApiResponse[IndexBuildListResponse])
 async def list_index_builds(
-    project_id: uuid.UUID, service: IndexLifecycleServiceDep
+    project_id: uuid.UUID, session: DbSessionDep
 ) -> ApiResponse[IndexBuildListResponse]:
-    del project_id
-    builds, active_id, previous_id = await service.list()
-    return ApiResponse.ok(
-        IndexBuildListResponse(
-            items=[IndexBuildResponse.model_validate(item) for item in builds],
-            active_build_id=active_id,
-            previous_build_id=previous_id,
-        )
-    )
+    return ApiResponse.ok(await IndexBuildReadService(session, project_id).list())
 
 
 @router.post(
@@ -54,6 +48,30 @@ async def reindex_corpus(
 ) -> ApiResponse[LifecycleJobResponse]:
     del project_id
     return ApiResponse.ok(await service.enqueue_reindex())
+
+
+@router.post(
+    "/reprocess-private",
+    response_model=ApiResponse[LifecycleJobResponse],
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def reprocess_private_corpus(
+    project_id: uuid.UUID, service: IndexLifecycleServiceDep
+) -> ApiResponse[LifecycleJobResponse]:
+    del project_id
+    return ApiResponse.ok(await service.enqueue_private_reprocess())
+
+
+@router.post(
+    "/{build_id}/revalidate-private",
+    response_model=ApiResponse[LifecycleJobResponse],
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def revalidate_private_corpus(
+    project_id: uuid.UUID, build_id: uuid.UUID, service: IndexLifecycleServiceDep
+) -> ApiResponse[LifecycleJobResponse]:
+    del project_id
+    return ApiResponse.ok(await service.enqueue_private_reprocess(source_build_id=build_id))
 
 
 @router.post(

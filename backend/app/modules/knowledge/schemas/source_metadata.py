@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import date, datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -14,11 +15,22 @@ from app.models.source_metadata import (
 )
 
 
+class RelationshipSourceSpan(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    chunk_id: uuid.UUID
+    quote: str = Field(min_length=1, max_length=6000)
+    char_start: int = Field(ge=0)
+    char_end: int = Field(gt=0)
+
+
 class SourceRelationshipCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     relationship_type: SourceRelationshipType
     target_revision_id: uuid.UUID
+    provision_effect: Literal["unknown", "replaces", "adds", "amends", "savings"] = "unknown"
+    replacement_scope_verified: bool = False
+    supporting_spans: list[RelationshipSourceSpan] = Field(default_factory=list, max_length=20)
     target_provisions: list[str] = Field(default_factory=list, max_length=100)
 
     @field_validator("target_provisions")
@@ -35,6 +47,10 @@ class SourceRelationshipCreate(BaseModel):
     def validate_scope_type(self) -> SourceRelationshipCreate:
         if self.target_provisions and self.relationship_type is not SourceRelationshipType.MODIFIES:
             raise ValueError("target_provisions are supported only for modifies relationships")
+        if self.replacement_scope_verified and (
+            not self.supporting_spans or self.provision_effect == "unknown"
+        ):
+            raise ValueError("verified effects require source spans and a typed operation")
         return self
 
 
@@ -97,6 +113,9 @@ class SourceRelationshipResponse(BaseModel):
     id: uuid.UUID
     relationship_type: SourceRelationshipType
     target_revision_id: uuid.UUID
+    provision_effect: Literal["unknown", "replaces", "adds", "amends", "savings"] = "unknown"
+    replacement_scope_verified: bool = False
+    supporting_spans: list[RelationshipSourceSpan] = Field(default_factory=list, max_length=20)
     target_provisions: list[str] = Field(default_factory=list)
     created_at: datetime
 

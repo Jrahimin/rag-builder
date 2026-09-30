@@ -45,6 +45,8 @@ class IndexBuild(Base, UUIDPrimaryKeyMixin, TimestampMixin, ProjectScopedMixin):
         Index("ix_index_builds_project_state", "project_id", "state", "created_at"),
     )
 
+    structural_contract_version: Mapped[str | None] = mapped_column(String(32), nullable=True)
+
     job_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True, unique=True)
     state: Mapped[IndexBuildState] = mapped_column(
         Enum(

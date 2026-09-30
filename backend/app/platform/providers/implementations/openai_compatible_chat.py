@@ -20,6 +20,7 @@ from app.platform.providers.contracts.llm import (
     ChatMessage,
     ChatRole,
     ChatUsage,
+    StructuredOutput,
 )
 from app.platform.providers.errors import ProviderError, ProviderQuotaError
 from app.platform.providers.request_work import current_request_purpose
@@ -40,6 +41,8 @@ def _safe_error_value(value: object) -> str | None:
 
 class OpenAICompatibleChatProvider(BaseLLMProvider):
     """Chat via an OpenAI-compatible ``/v1/chat/completions`` endpoint."""
+
+    supports_output_contract = True
 
     def __init__(
         self,
@@ -82,6 +85,7 @@ class OpenAICompatibleChatProvider(BaseLLMProvider):
         *,
         temperature: float | None = None,
         max_tokens: int,
+        output_contract: StructuredOutput | None = None,
         stream: bool,
     ) -> dict[str, object]:
         body: dict[str, object] = {
@@ -100,16 +104,22 @@ class OpenAICompatibleChatProvider(BaseLLMProvider):
             )
         )
         body.update(_reasoning_parameters(self._model, max_tokens))
-        if (
-            not stream
-            and self.provider_name == "openai"
-            and self._model.strip().lower() == "gpt-6-luna"
-            and current_request_purpose() in _JSON_REVIEW_PURPOSES
+        if capability.structured_output == "json_object" and (
+            output_contract is not None
+            or (not stream and current_request_purpose() in _JSON_REVIEW_PURPOSES)
         ):
-            # These internal calls already request JSON. Provider JSON mode
-            # prevents syntax-only retries; Pydantic and quote validation still
-            # enforce the application schema and evidence contract.
             body["response_format"] = {"type": "json_object"}
+        elif output_contract is not None:
+            # Unknown compatible endpoints receive a portable schema prompt.
+            wire_messages = [{"role": _role_value(m.role), "content": m.content} for m in messages]
+            wire_messages.append(
+                {
+                    "role": "system",
+                    "content": "Return only JSON matching "
+                    + json.dumps(output_contract.schema, ensure_ascii=False),
+                }
+            )
+            body["messages"] = wire_messages
         return body
 
     async def _http_error(
@@ -168,6 +178,7 @@ class OpenAICompatibleChatProvider(BaseLLMProvider):
         *,
         temperature: float | None = None,
         max_tokens: int,
+        output_contract: StructuredOutput | None = None,
     ) -> ChatCompletionResult:
         url = f"{self._base_url}/v1/chat/completions"
         try:
@@ -180,6 +191,7 @@ class OpenAICompatibleChatProvider(BaseLLMProvider):
                         temperature=temperature,
                         max_tokens=max_tokens,
                         stream=False,
+                        output_contract=output_contract,
                     ),
                 )
                 if response.is_error:
@@ -220,6 +232,7 @@ class OpenAICompatibleChatProvider(BaseLLMProvider):
         *,
         temperature: float | None = None,
         max_tokens: int,
+        output_contract: StructuredOutput | None = None,
     ) -> AsyncGenerator[ChatCompletionChunk, None]:
         url = f"{self._base_url}/v1/chat/completions"
         client = httpx.AsyncClient(timeout=self._timeout)
@@ -233,6 +246,7 @@ class OpenAICompatibleChatProvider(BaseLLMProvider):
                     temperature=temperature,
                     max_tokens=max_tokens,
                     stream=True,
+                    output_contract=output_contract,
                 ),
             ) as response:
                 if response.is_error:
@@ -292,6 +306,7 @@ _JSON_REVIEW_PURPOSES = frozenset(
         "web_evidence_review",
         "scenario_input_review",
         "turn_resolution",
+        "claim_verification",
     }
 )
 
@@ -308,6 +323,7 @@ def _reasoning_parameters(model: str, max_tokens: int) -> dict[str, str]:
         "web_evidence_review",
         "scenario_input_review",
         "turn_resolution",
+        "claim_verification",
         "answer_generation",
     }:
         return {"reasoning_effort": "low"}

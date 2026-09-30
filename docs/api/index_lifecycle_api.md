@@ -10,6 +10,8 @@ the [Jobs API](./jobs_api.md).
 
 Lists recent immutable builds and the Project's active/previous pointer state.
 Only `validated` or `retained` builds may be activated.
+This read-only listing does not resolve the Project's current generation model;
+a stale model selection cannot prevent inspection of its existing build state.
 
 ## POST `/reembed`
 
@@ -45,3 +47,7 @@ store. The completed Job `result` includes `expected`, `actual`, `missing`,
 - `DELETE /documents/{document_id}` — durable reversible delete; returns `202`.
 - `DELETE /documents/{document_id}/purge` — durable irreversible purge; returns
   `202`.
+
+Private structural reprocessing: POST `/api/v1/projects/{project_id}/index-builds/reprocess-private`; see [private structural builds](../features/private_structural_builds.md). Migration0035 isolates chunk generations; it never automatically activates.
+
+Private structural builds use persisted `structure.v1` intent and durable `corpus.structure.v1`. POST `index-builds/{build_id}/revalidate-private` copies exact final rows and compatible vectors into a new private build; preview/replay/activation verify the structural manifest and vector input identity. Apply migration0036 before use. See [private structural acceptance](../features/private_structural_builds.md).

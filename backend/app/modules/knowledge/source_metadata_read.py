@@ -7,7 +7,8 @@ from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from typing import Any
 
-from sqlalchemy import and_, case, exists, func, literal, or_, select
+from sqlalchemy import and_, case, cast, exists, func, literal, or_, select
+from sqlalchemy.dialects.postgresql import JSONPATH
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 from sqlalchemy.sql.elements import ColumnElement
@@ -16,6 +17,7 @@ from sqlalchemy.sql.selectable import FromClause
 from app.core.exceptions import BadRequestError, NotFoundError
 from app.models.chunk_keyword_index import ChunkKeywordIndex
 from app.models.document import Document
+from app.models.document_chunk import DocumentChunk
 from app.models.project import Project
 from app.models.source_metadata import (
     SourceActivationEvent,
@@ -54,6 +56,9 @@ class KnowledgeIncomingModifier:
     base_effective_to: str | None
     outcome: str
     target_provisions: tuple[str, ...] = ()
+    provision_effect: str = "unknown"
+    replacement_scope_verified: bool = False
+    supporting_spans: tuple[dict[str, Any], ...] = ()
 
 
 class KnowledgeSourceMetadataReader:
@@ -69,6 +74,8 @@ class KnowledgeSourceMetadataReader:
         generation: int | None,
         as_of: datetime | None,
         enforce: bool,
+        period_lookup: bool = False,
+        request_scope: dict[str, Any] | None = None,
     ) -> KnowledgeSourceMetadataScope:
         current_generation = await self._session.scalar(
             select(Project.source_metadata_generation).where(
@@ -85,12 +92,21 @@ class KnowledgeSourceMetadataReader:
                 code="source_generation_invalid",
             )
 
-        reference_date = as_of.date() if as_of is not None else datetime.now(UTC).date()
+        resolved_as_of = as_of
+        if resolved_as_of is None and (request_scope or {}).get("temporal_basis") == "known_at":
+            cutoff = (request_scope or {}).get("exact_as_of")
+            if cutoff:
+                resolved_as_of = datetime.fromisoformat(str(cutoff).replace("Z", "+00:00"))
+        reference_date = (
+            resolved_as_of.date() if resolved_as_of is not None else datetime.now(UTC).date()
+        )
         base = _canonical_source_scope(
             project_id=project_id,
             generation=resolved_generation,
             reference_date=reference_date,
-            historical=as_of is not None,
+            historical=resolved_as_of is not None,
+            period_lookup=period_lookup,
+            request_scope=request_scope,
         )
         decision_rows = await self._session.execute(
             select(
@@ -106,7 +122,8 @@ class KnowledgeSourceMetadataReader:
         selectable = (
             select(*base.c)
             .where(base.c.source_policy_applicable.is_(True))
-            .subquery("canonical_source_scope_enforced")
+            .cte("canonical_source_scope_enforced")
+            .prefix_with("MATERIALIZED")
             if enforce
             else base
         )
@@ -114,7 +131,7 @@ class KnowledgeSourceMetadataReader:
             selectable=selectable,
             generation=resolved_generation,
             reference_date=reference_date,
-            explicit_as_of=as_of,
+            explicit_as_of=resolved_as_of,
             exclusion_counts=exclusion_counts,
         )
 
@@ -126,6 +143,7 @@ class KnowledgeSourceMetadataReader:
         generation: int,
         as_of: datetime | None,
         index_build_id: uuid.UUID,
+        request_scope: dict[str, Any] | None = None,
     ) -> list[KnowledgeIncomingModifier]:
         """Resolve depth-one incoming MODIFIES edges under one captured snapshot."""
         if not base_revision_ids:
@@ -138,6 +156,9 @@ class KnowledgeSourceMetadataReader:
                 select(
                     SourceRevisionRelationship.id.label("relationship_id"),
                     SourceRevisionRelationship.target_provisions.label("target_provisions"),
+                    SourceRevisionRelationship.provision_effect,
+                    SourceRevisionRelationship.replacement_scope_verified,
+                    SourceRevisionRelationship.supporting_spans,
                     SourceRevisionRelationship.project_id.label("relationship_project_id"),
                     SourceRevisionRelationship.source_revision_id.label("modifier_revision_id"),
                     base.id.label("base_revision_id"),
@@ -216,20 +237,6 @@ class KnowledgeSourceMetadataReader:
                 ),
             )
         )
-        if as_of is not None:
-            activation_candidates = activation_candidates.where(
-                activation_revision.lifecycle_status.in_(
-                    [SourceLifecycleStatus.ACTIVE, SourceLifecycleStatus.RETIRED]
-                ),
-                or_(
-                    activation_revision.effective_from.is_(None),
-                    activation_revision.effective_from <= reference_date,
-                ),
-                or_(
-                    activation_revision.effective_to.is_(None),
-                    activation_revision.effective_to >= reference_date,
-                ),
-            )
         activation_rank = activation_candidates.cte("modifier_activation_rank")
         activation_rows = await self._session.execute(
             select(
@@ -251,6 +258,24 @@ class KnowledgeSourceMetadataReader:
         )
         indexed_documents = set(indexed_rows.scalars().all())
 
+        canonical = _canonical_source_scope(
+            project_id=project_id,
+            generation=generation,
+            reference_date=reference_date,
+            historical=as_of is not None,
+            request_scope={**(request_scope or {}), "index_build_id": str(index_build_id)},
+        )
+        applicable_ids = set(
+            (
+                await self._session.execute(
+                    select(canonical.c.source_revision_id).where(
+                        canonical.c.source_policy_applicable.is_(True)
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
         records: list[KnowledgeIncomingModifier] = []
         for row in edge_rows:
             selected_revision = active_revision_by_document.get(row.modifier_document_id)
@@ -260,7 +285,10 @@ class KnowledgeSourceMetadataReader:
                 selected_revision=selected_revision,
                 indexed=row.modifier_document_id in indexed_documents,
                 reference_date=reference_date,
+                period_lookup=bool((request_scope or {}).get("requested_periods")),
             )
+            if outcome == "expanded" and row.modifier_revision_id not in applicable_ids:
+                outcome = "outside_as_of"
             records.append(
                 KnowledgeIncomingModifier(
                     relationship_id=row.relationship_id,
@@ -276,6 +304,9 @@ class KnowledgeSourceMetadataReader:
                     base_effective_to=_isoformat(row.base_effective_to),
                     outcome=outcome,
                     target_provisions=tuple(row.target_provisions or ()),
+                    provision_effect=row.provision_effect,
+                    replacement_scope_verified=row.replacement_scope_verified,
+                    supporting_spans=tuple(row.supporting_spans or ()),
                 )
             )
         return records
@@ -292,6 +323,7 @@ def _modifier_outcome(
     selected_revision: uuid.UUID | None,
     indexed: bool,
     reference_date: date,
+    period_lookup: bool = False,
 ) -> str:
     """Return the single fail-closed governance outcome for an incoming edge."""
     if not (
@@ -319,8 +351,9 @@ def _modifier_outcome(
         return "inactive"
     effective_from = row.modifier_effective_from
     effective_to = row.modifier_effective_to
-    if effective_from > reference_date or (
-        effective_to is not None and effective_to < reference_date
+    if not period_lookup and (
+        effective_from > reference_date
+        or (effective_to is not None and effective_to < reference_date)
     ):
         return "outside_as_of"
     if selected_revision is None:
@@ -338,17 +371,9 @@ def _canonical_source_scope(
     generation: int,
     reference_date: date,
     historical: bool,
+    period_lookup: bool = False,
+    request_scope: dict[str, Any] | None = None,
 ) -> FromClause:
-    revision_interval_applies = and_(
-        or_(
-            SourceMetadataRevision.effective_from.is_(None),
-            SourceMetadataRevision.effective_from <= reference_date,
-        ),
-        or_(
-            SourceMetadataRevision.effective_to.is_(None),
-            SourceMetadataRevision.effective_to >= reference_date,
-        ),
-    )
     governed_documents = (
         select(SourceActivationEvent.document_id)
         .join(
@@ -365,11 +390,6 @@ def _canonical_source_scope(
         )
         .distinct()
         .cte("governed_source_documents")
-    )
-    has_governed_revision = exists(
-        select(literal(1)).where(
-            governed_documents.c.document_id == SourceActivationEvent.document_id
-        )
     )
     activation_candidates = (
         select(
@@ -410,21 +430,8 @@ def _canonical_source_scope(
             ),
         )
     )
-    if historical:
-        activation_candidates = activation_candidates.where(
-            or_(
-                and_(
-                    SourceMetadataRevision.lifecycle_status == SourceLifecycleStatus.UNSPECIFIED,
-                    ~has_governed_revision,
-                ),
-                and_(
-                    SourceMetadataRevision.lifecycle_status.in_(
-                        [SourceLifecycleStatus.ACTIVE, SourceLifecycleStatus.RETIRED]
-                    ),
-                    revision_interval_applies,
-                ),
-            )
-        )
+    # Administrative corrections are selected at the pinned generation first.
+    # Legal intervals never resurrect obsolete metadata for the same edition.
     ranked_activations = activation_candidates.cte("ranked_source_activations")
     state = (
         select(
@@ -461,6 +468,12 @@ def _canonical_source_scope(
                     SourceRevisionRelationship.target_revision_id,
                     "target_provisions",
                     SourceRevisionRelationship.target_provisions,
+                    "provision_effect",
+                    SourceRevisionRelationship.provision_effect,
+                    "replacement_scope_verified",
+                    SourceRevisionRelationship.replacement_scope_verified,
+                    "supporting_spans",
+                    SourceRevisionRelationship.supporting_spans,
                     "direction",
                     literal("outgoing"),
                 )
@@ -486,6 +499,12 @@ def _canonical_source_scope(
                     SourceRevisionRelationship.target_revision_id,
                     "target_provisions",
                     SourceRevisionRelationship.target_provisions,
+                    "provision_effect",
+                    SourceRevisionRelationship.provision_effect,
+                    "replacement_scope_verified",
+                    SourceRevisionRelationship.replacement_scope_verified,
+                    "supporting_spans",
+                    SourceRevisionRelationship.supporting_spans,
                     "direction",
                     literal("incoming"),
                 )
@@ -510,6 +529,108 @@ def _canonical_source_scope(
         or_(state.c.effective_from.is_(None), state.c.effective_from <= reference_date),
         or_(state.c.effective_to.is_(None), state.c.effective_to >= reference_date),
     )
+    scope = request_scope or {}
+    requested = scope.get("requested_periods", [])
+    replacement_interval_applies = interval_applies
+    availability: ColumnElement[bool] = literal(True)
+    if scope.get("temporal_basis") == "known_at" and scope.get("exact_as_of"):
+        cutoff_date = datetime.fromisoformat(
+            str(scope["exact_as_of"]).replace("Z", "+00:00")
+        ).date()
+        availability = (
+            state.c.published_date <= cutoff_date
+            if scope.get("known_at_inclusive", True)
+            else state.c.published_date < cutoff_date
+        )
+    if requested and (not historical or scope.get("temporal_basis") == "known_at"):
+        # Calendar intervals are coarse recall only for legal AY/FY. When a
+        # source attests typed legal periods, those facts take precedence over
+        # the calendar publication/effective interval. No AY date is invented.
+        overlaps = [
+            and_(
+                or_(
+                    state.c.effective_from.is_(None),
+                    func.extract("year", state.c.effective_from) <= period["end_year"],
+                ),
+                or_(
+                    state.c.effective_to.is_(None),
+                    func.extract("year", state.c.effective_to) >= period["start_year"],
+                ),
+            )
+            for period in requested
+        ]
+        period_interval = or_(*overlaps)
+        replacement_interval_applies = and_(*overlaps)
+        pinned_build = scope.get("index_build_id")
+        if pinned_build:
+            facts = DocumentChunk.chunk_metadata["scope_facts"]
+            typed = facts.op("@?")(
+                cast('$[*] ? (@.kind == "period" && exists(@.legal_kind))', JSONPATH)
+            )
+            matches = [
+                facts.op("@?")(
+                    cast(
+                        '$[*] ? (@.kind == "period" && @.legal_kind == "'
+                        + str(period["kind"])
+                        + '" && ((@.start_year == '
+                        + str(int(period["start_year"]))
+                        + " && @.end_year == "
+                        + str(int(period["end_year"]))
+                        + ') || (@.period_mode == "range" && @.start_year <= '
+                        + str(int(period["start_year"]))
+                        + " && @.end_year >= "
+                        + str(int(period["end_year"]))
+                        + "))"
+                        + ")",
+                        JSONPATH,
+                    )
+                )
+                for period in requested
+            ]
+
+            def period_documents(predicate: ColumnElement[bool]) -> FromClause:
+                return (
+                    select(DocumentChunk.document_id)
+                    .join(
+                        ChunkKeywordIndex,
+                        and_(
+                            ChunkKeywordIndex.chunk_id == DocumentChunk.id,
+                            ChunkKeywordIndex.project_id == project_id,
+                            ChunkKeywordIndex.index_build_id == uuid.UUID(str(pinned_build)),
+                        ),
+                    )
+                    .where(DocumentChunk.project_id == project_id, predicate)
+                    .distinct()
+                    .cte()
+                )
+
+            typed_documents = period_documents(typed)
+            matching_documents = period_documents(or_(*matches))
+            per_period_documents = [period_documents(match) for match in matches]
+            replacing_documents = (
+                select(per_period_documents[0].c.document_id)
+                .where(
+                    *[
+                        per_period_documents[0].c.document_id.in_(select(period_set.c.document_id))
+                        for period_set in per_period_documents[1:]
+                    ]
+                )
+                .cte()
+            )
+            replacement_interval_applies = or_(
+                state.c.document_id.in_(select(replacing_documents.c.document_id)),
+                and_(
+                    ~state.c.document_id.in_(select(typed_documents.c.document_id)),
+                    replacement_interval_applies,
+                ),
+            )
+            period_interval = or_(
+                state.c.document_id.in_(select(matching_documents.c.document_id)),
+                and_(
+                    ~state.c.document_id.in_(select(typed_documents.c.document_id)), period_interval
+                ),
+            )
+        interval_applies = period_interval
     replaced_revision = aliased(SourceMetadataRevision)
     replacing_document = aliased(Document)
     applicable_replacements = (
@@ -534,7 +655,8 @@ def _canonical_source_scope(
             replacing_document.deleted_at.is_(None),
             SourceRevisionRelationship.relationship_type == SourceRelationshipType.REPLACES,
             state.c.lifecycle_status == SourceLifecycleStatus.ACTIVE,
-            interval_applies,
+            replacement_interval_applies,
+            availability,
         )
         .cte("applicable_source_replacements")
     )
@@ -596,6 +718,20 @@ def _canonical_source_scope(
     # Otherwise relevance ranking could choose the obsolete edition. The same
     # date-scoped rule applies to an explicit historical assessment date.
     applicable = and_(applicable, ~has_replacement)
+    if requested and (not historical or scope.get("temporal_basis") == "known_at"):
+        applicable = and_(
+            or_(
+                neutral,
+                and_(
+                    state.c.lifecycle_status.in_(
+                        [SourceLifecycleStatus.ACTIVE, SourceLifecycleStatus.RETIRED]
+                    ),
+                    interval_applies,
+                ),
+            ),
+            ~has_replacement,
+        )
+    applicable = and_(applicable, or_(neutral, availability))
     exclusion_reason = case(
         (applicable, None),
         (state.c.lifecycle_status == SourceLifecycleStatus.DRAFT, "draft"),
@@ -645,5 +781,6 @@ def _canonical_source_scope(
             incoming_relationships.c.source_group_id == state.c.source_group_id,
         )
         .where(Document.project_id == project_id)
-        .subquery("canonical_source_scope")
+        .cte("canonical_source_scope")
+        .prefix_with("MATERIALIZED")
     )

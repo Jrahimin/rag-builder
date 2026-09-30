@@ -12,7 +12,7 @@
   "scripts": {
     "dev": "vite",
     "api:schema": "python scripts/generate_openapi_schema.py",
-    "api:types": "openapi-typescript openapi-schema.json -o src/api/generated/openapi.ts",
+    "api:types": "openapi-typescript openapi-schema.json -o src/api/generated/openapi.ts --default-non-nullable=false",
     "api:generate": "pnpm api:schema && pnpm api:types",
     "format": "prettier --write .",
     "format:check": "prettier --check .",

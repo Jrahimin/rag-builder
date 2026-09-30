@@ -15,6 +15,7 @@ from app.platform.providers.contracts.llm import (
     ChatMessage,
     ChatRole,
     ChatUsage,
+    StructuredOutput,
 )
 
 
@@ -49,6 +50,7 @@ class EchoLLMProvider(BaseLLMProvider):
         *,
         temperature: float | None = None,
         max_tokens: int,
+        output_contract: StructuredOutput | None = None,
     ) -> ChatCompletionResult:
         validate_generation_parameters(
             describe_llm_capability(self.provider_name, self.model_name),
@@ -72,6 +74,7 @@ class EchoLLMProvider(BaseLLMProvider):
         *,
         temperature: float | None = None,
         max_tokens: int,
+        output_contract: StructuredOutput | None = None,
     ) -> AsyncGenerator[ChatCompletionChunk, None]:
         validate_generation_parameters(
             describe_llm_capability(self.provider_name, self.model_name),

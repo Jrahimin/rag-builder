@@ -421,3 +421,97 @@ async def test_stream_provider_gets_unbound_purpose_without_leaking_across_yield
     assert seen == ["answer_generation", "answer_generation"]
     assert closed == [True]
     assert current_request_purpose() is None
+
+
+@pytest.mark.asyncio
+async def test_unrelated_embedding_keys_do_not_wait_for_blocked_key():
+    provider = HashEmbeddingProvider(dimensions=8, model="hash", provider_version="1")
+    original = provider.embed_texts
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def delayed(texts, **kwargs):
+        if "slow" in texts:
+            entered.set()
+            await release.wait()
+        return await original(texts, **kwargs)
+
+    provider.embed_texts = delayed
+    cached = RequestWork(uuid.uuid4()).wrap(provider)
+    blocked = asyncio.create_task(cached.embed_texts(["slow"]))
+    await entered.wait()
+    fast = await asyncio.wait_for(cached.embed_texts(["fast"]), 1)
+    assert fast.vectors
+    release.set()
+    await blocked
+
+
+@pytest.mark.asyncio
+async def test_cancelled_duplicate_waiter_does_not_cancel_owner():
+    provider = HashEmbeddingProvider(dimensions=8, model="hash", provider_version="1")
+    original = provider.embed_texts
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def blocked(texts, **kwargs):
+        entered.set()
+        await release.wait()
+        return await original(texts, **kwargs)
+
+    provider.embed_texts = blocked
+    work = RequestWork(uuid.uuid4())
+    cached = work.wrap(provider)
+    owner = asyncio.create_task(cached.embed_texts(["same"]))
+    await entered.wait()
+    waiter = asyncio.create_task(cached.embed_texts(["same"]))
+    await asyncio.sleep(0)
+    waiter.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await waiter
+    release.set()
+    assert (await owner).vectors
+    assert not work.embedding_futures
+
+
+@pytest.mark.asyncio
+async def test_embedding_deadline_normalizes_and_clears_owned_futures():
+    from time import perf_counter
+
+    from app.platform.providers.errors import ProviderTimeoutError
+
+    provider = HashEmbeddingProvider(dimensions=8, model="hash", provider_version="1")
+
+    async def slow(*args, **kwargs):
+        await asyncio.sleep(1)
+
+    provider.embed_texts = AsyncMock(side_effect=slow)
+    work = RequestWork(uuid.uuid4())
+    work.deadline = perf_counter() + 0.01
+    with pytest.raises(ProviderTimeoutError):
+        await work.wrap(provider).embed_texts(["owned"])
+    assert not work.embedding_futures and not work.vectors
+
+
+@pytest.mark.asyncio
+async def test_stream_deadline_uses_provider_terminal_error():
+    from time import perf_counter
+
+    from app.platform.providers.contracts.llm import ChatMessage, ChatRole
+    from app.platform.providers.errors import ProviderTimeoutError
+    from app.platform.providers.implementations.echo_chat import EchoLLMProvider
+    from app.platform.providers.request_work import ObservedLLM
+
+    provider = EchoLLMProvider(model="echo", provider_version="1")
+
+    async def slow(*args, **kwargs):
+        await asyncio.sleep(1)
+        yield None
+
+    provider.stream = slow
+    work = RequestWork(uuid.uuid4())
+    work.deadline = perf_counter() + 0.01
+    with pytest.raises(ProviderTimeoutError):
+        await anext(
+            ObservedLLM(provider, work, capacity=4096).stream(
+                [ChatMessage(role=ChatRole.USER, content="hello")], max_tokens=20
+            )
+        )

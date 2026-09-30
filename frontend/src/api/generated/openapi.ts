@@ -1154,6 +1154,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{project_id}/index-builds/reprocess-private": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Reprocess Private Corpus */
+        post: operations["reprocess_private_corpus_api_v1_projects__project_id__index_builds_reprocess_private_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{project_id}/index-builds/rollback": {
         parameters: {
             query?: never;
@@ -1182,6 +1199,23 @@ export interface paths {
         put?: never;
         /** Activate Index Build */
         post: operations["activate_index_build_api_v1_projects__project_id__index_builds__build_id__activate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/index-builds/{build_id}/revalidate-private": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Revalidate Private Corpus */
+        post: operations["revalidate_private_corpus_api_v1_projects__project_id__index_builds__build_id__revalidate_private_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1649,19 +1683,21 @@ export interface components {
              * Authority Status
              * @default not_assessed
              */
-            authority_status: string;
+            authority_status?: string;
             /** Claim Id */
             claim_id: string;
             /**
              * Claim Kind
              * @default source_assertion
              */
-            claim_kind: string;
+            claim_kind?: string;
             /** Evidence */
             evidence?: components["schemas"]["ClaimEvidence"][];
             evidence_support?: components["schemas"]["ClaimVerification"] | null;
             /** Grounded */
             grounded: boolean;
+            /** Requirement Ids */
+            requirement_ids?: string[];
             /** Text */
             text: string;
             verification: components["schemas"]["ClaimVerification"];
@@ -1727,14 +1763,14 @@ export interface components {
              * Confirm Immediate Revocation
              * @default false
              */
-            confirm_immediate_revocation: boolean;
+            confirm_immediate_revocation?: boolean;
             /** Replacement Name */
             replacement_name?: string | null;
             /**
              * Revoke Old
              * @default false
              */
-            revoke_old: boolean;
+            revoke_old?: boolean;
         };
         /**
          * ApiKeySecretResponse
@@ -1788,7 +1824,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[ActiveConfiguration] */
         ApiResponse_ActiveConfiguration_: {
@@ -1800,7 +1836,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[ActiveSourceResponse] */
         ApiResponse_ActiveSourceResponse_: {
@@ -1812,7 +1848,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[AdminUserResponse] */
         ApiResponse_AdminUserResponse_: {
@@ -1824,7 +1860,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[ApiKeyResponse] */
         ApiResponse_ApiKeyResponse_: {
@@ -1836,7 +1872,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[ApiKeySecretResponse] */
         ApiResponse_ApiKeySecretResponse_: {
@@ -1848,7 +1884,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[ChatTurnResponse] */
         ApiResponse_ChatTurnResponse_: {
@@ -1860,7 +1896,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[ConversationResponse] */
         ApiResponse_ConversationResponse_: {
@@ -1872,7 +1908,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[CurrentAdminResponse] */
         ApiResponse_CurrentAdminResponse_: {
@@ -1884,7 +1920,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[DependencyOverview] */
         ApiResponse_DependencyOverview_: {
@@ -1896,7 +1932,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[DocumentResponse] */
         ApiResponse_DocumentResponse_: {
@@ -1908,7 +1944,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[EffectiveProjectAIConfigResponse] */
         ApiResponse_EffectiveProjectAIConfigResponse_: {
@@ -1920,7 +1956,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[EvaluationDatasetResponse] */
         ApiResponse_EvaluationDatasetResponse_: {
@@ -1932,7 +1968,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[EvaluationRunResponse] */
         ApiResponse_EvaluationRunResponse_: {
@@ -1944,7 +1980,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[GenerationResponse] */
         ApiResponse_GenerationResponse_: {
@@ -1956,7 +1992,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[IndexBuildListResponse] */
         ApiResponse_IndexBuildListResponse_: {
@@ -1968,7 +2004,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[IndexBuildResponse] */
         ApiResponse_IndexBuildResponse_: {
@@ -1980,7 +2016,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[JobDetailResponse] */
         ApiResponse_JobDetailResponse_: {
@@ -1992,7 +2028,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[JobResponse] */
         ApiResponse_JobResponse_: {
@@ -2004,7 +2040,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[LifecycleJobResponse] */
         ApiResponse_LifecycleJobResponse_: {
@@ -2016,7 +2052,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[LivenessStatus] */
         ApiResponse_LivenessStatus_: {
@@ -2028,7 +2064,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[MetricsSnapshot] */
         ApiResponse_MetricsSnapshot_: {
@@ -2040,7 +2076,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[NoneType] */
         ApiResponse_NoneType_: {
@@ -2053,7 +2089,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[OperatorOverview] */
         ApiResponse_OperatorOverview_: {
@@ -2065,7 +2101,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[OrganizationResponse] */
         ApiResponse_OrganizationResponse_: {
@@ -2077,7 +2113,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[PaginatedResult[AdminUserResponse]] */
         ApiResponse_PaginatedResult_AdminUserResponse__: {
@@ -2089,7 +2125,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[PaginatedResult[ApiKeyResponse]] */
         ApiResponse_PaginatedResult_ApiKeyResponse__: {
@@ -2101,7 +2137,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[PaginatedResult[ChunkResponse]] */
         ApiResponse_PaginatedResult_ChunkResponse__: {
@@ -2113,7 +2149,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[PaginatedResult[ConversationResponse]] */
         ApiResponse_PaginatedResult_ConversationResponse__: {
@@ -2125,7 +2161,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[PaginatedResult[DocumentResponse]] */
         ApiResponse_PaginatedResult_DocumentResponse__: {
@@ -2137,7 +2173,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[PaginatedResult[JobResponse]] */
         ApiResponse_PaginatedResult_JobResponse__: {
@@ -2149,7 +2185,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[PaginatedResult[MessageResponse]] */
         ApiResponse_PaginatedResult_MessageResponse__: {
@@ -2161,7 +2197,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[PaginatedResult[OrganizationResponse]] */
         ApiResponse_PaginatedResult_OrganizationResponse__: {
@@ -2173,7 +2209,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[PaginatedResult[ProjectResponse]] */
         ApiResponse_PaginatedResult_ProjectResponse__: {
@@ -2185,7 +2221,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[PaginatedResult[WebhookDeliveryResponse]] */
         ApiResponse_PaginatedResult_WebhookDeliveryResponse__: {
@@ -2197,7 +2233,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[PaginatedResult[WebhookEndpointResponse]] */
         ApiResponse_PaginatedResult_WebhookEndpointResponse__: {
@@ -2209,7 +2245,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[ProjectAIConfigRevisionResponse] */
         ApiResponse_ProjectAIConfigRevisionResponse_: {
@@ -2221,7 +2257,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[ProjectAIProfileNormalizationPreview] */
         ApiResponse_ProjectAIProfileNormalizationPreview_: {
@@ -2233,7 +2269,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[ProjectOwnershipMigrationStatus] */
         ApiResponse_ProjectOwnershipMigrationStatus_: {
@@ -2245,7 +2281,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[ProjectOwnershipPreflight] */
         ApiResponse_ProjectOwnershipPreflight_: {
@@ -2257,7 +2293,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[ProjectResponse] */
         ApiResponse_ProjectResponse_: {
@@ -2269,7 +2305,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[QualitySummary] */
         ApiResponse_QualitySummary_: {
@@ -2281,7 +2317,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[ReadinessStatus] */
         ApiResponse_ReadinessStatus_: {
@@ -2293,7 +2329,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[SearchResponse] */
         ApiResponse_SearchResponse_: {
@@ -2305,7 +2341,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[SourceActivationResponse] */
         ApiResponse_SourceActivationResponse_: {
@@ -2317,7 +2353,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[SourceRevisionCreateResponse] */
         ApiResponse_SourceRevisionCreateResponse_: {
@@ -2329,7 +2365,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[SourceRevisionResponse] */
         ApiResponse_SourceRevisionResponse_: {
@@ -2341,7 +2377,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[SourceStateResponse] */
         ApiResponse_SourceStateResponse_: {
@@ -2353,7 +2389,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[UsageReport] */
         ApiResponse_UsageReport_: {
@@ -2365,7 +2401,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[WebhookDeliveryDetailResponse] */
         ApiResponse_WebhookDeliveryDetailResponse_: {
@@ -2377,7 +2413,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[WebhookDeliveryResponse] */
         ApiResponse_WebhookDeliveryResponse_: {
@@ -2389,7 +2425,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[WebhookEndpointCreatedResponse] */
         ApiResponse_WebhookEndpointCreatedResponse_: {
@@ -2401,7 +2437,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[WebhookEndpointResponse] */
         ApiResponse_WebhookEndpointResponse_: {
@@ -2413,7 +2449,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[WorkerOverview] */
         ApiResponse_WorkerOverview_: {
@@ -2425,7 +2461,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[list[AuditEventResponse]] */
         ApiResponse_list_AuditEventResponse__: {
@@ -2438,7 +2474,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[list[EvaluationDatasetResponse]] */
         ApiResponse_list_EvaluationDatasetResponse__: {
@@ -2451,7 +2487,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[list[EvaluationRunResponse]] */
         ApiResponse_list_EvaluationRunResponse__: {
@@ -2464,7 +2500,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[list[ProjectAIConfigRevisionResponse]] */
         ApiResponse_list_ProjectAIConfigRevisionResponse__: {
@@ -2477,7 +2513,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[list[RecentFailure]] */
         ApiResponse_list_RecentFailure__: {
@@ -2490,7 +2526,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[list[SourceActivationResponse]] */
         ApiResponse_list_SourceActivationResponse__: {
@@ -2503,7 +2539,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[list[SourceRevisionResponse]] */
         ApiResponse_list_SourceRevisionResponse__: {
@@ -2516,7 +2552,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[list[dict[str, object]]] */
         ApiResponse_list_dict_str__object___: {
@@ -2531,7 +2567,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /**
          * AuditActorType
@@ -2770,6 +2806,8 @@ export interface components {
             project_id?: string | null;
             /** Prompt Version */
             prompt_version?: string | null;
+            /** Provenance Precision */
+            provenance_precision?: string | null;
             /** Relationship Recall Provenance */
             relationship_recall_provenance?: {
                 [key: string]: unknown;
@@ -2783,7 +2821,7 @@ export interface components {
             /** Source Group Id */
             source_group_id?: string | null;
             /** @default knowledge */
-            source_kind: components["schemas"]["CitationSourceKind"];
+            source_kind?: components["schemas"]["CitationSourceKind"];
             /** Source Lifecycle Status */
             source_lifecycle_status?: string | null;
             /** Source Metadata Generation */
@@ -2806,6 +2844,12 @@ export interface components {
             source_title?: string | null;
             /** Source Type */
             source_type?: string | null;
+            /** Structural Context */
+            structural_context?: string[];
+            /** Supporting Spans */
+            supporting_spans?: {
+                [key: string]: unknown;
+            }[];
             /** Web Provider */
             web_provider?: string | null;
             /** Web Retrieved At */
@@ -2849,7 +2893,7 @@ export interface components {
             /** Page Number */
             page_number?: number | null;
             /** @default knowledge */
-            source_kind: components["schemas"]["CitationSourceKind"];
+            source_kind?: components["schemas"]["CitationSourceKind"];
             /** Web Provider */
             web_provider?: string | null;
             /** Web Retrieved At */
@@ -2872,7 +2916,7 @@ export interface components {
             /** Calibration Profile Id */
             calibration_profile_id?: string | null;
             /** @default off */
-            configured_source_policy_mode: components["schemas"]["SourcePolicyMode"];
+            configured_source_policy_mode?: components["schemas"]["SourcePolicyMode"];
             /** Deployment Default Execution Profile Id */
             deployment_default_execution_profile_id?: string | null;
             /** Deployment Profile Hash */
@@ -2880,7 +2924,7 @@ export interface components {
             /** Deployment Profile Id */
             deployment_profile_id?: string | null;
             /** @default off */
-            effective_source_policy_mode: components["schemas"]["SourcePolicyMode"];
+            effective_source_policy_mode?: components["schemas"]["SourcePolicyMode"];
             /** Execution Overrides */
             execution_overrides?: {
                 [key: string]: unknown;
@@ -2915,14 +2959,14 @@ export interface components {
              * Provider Capability Version
              * @default 2026-08-16.v2
              */
-            provider_capability_version: string;
+            provider_capability_version?: string;
             /**
              * Resolution Schema Version
              * @default 1
              */
-            resolution_schema_version: number;
+            resolution_schema_version?: number;
             /** @default enforce */
-            source_policy_deployment_cap: components["schemas"]["SourcePolicyDeploymentCap"];
+            source_policy_deployment_cap?: components["schemas"]["SourcePolicyDeploymentCap"];
         };
         /** ConfigurationSnapshotSummary */
         ConfigurationSnapshotSummary: {
@@ -3084,7 +3128,7 @@ export interface components {
              * Cached
              * @default false
              */
-            cached: boolean;
+            cached?: boolean;
             /** Checked At */
             checked_at?: string | null;
             /** Detail */
@@ -3187,27 +3231,27 @@ export interface components {
              * Bounded Recovery Enabled
              * @default false
              */
-            bounded_recovery_enabled: boolean;
+            bounded_recovery_enabled?: boolean;
             /**
              * Broad Recovery Followup Max Queries
              * @default 2
              */
-            broad_recovery_followup_max_queries: number;
+            broad_recovery_followup_max_queries?: number;
             /**
              * Broad Recovery Max Followup Rounds
              * @default 1
              */
-            broad_recovery_max_followup_rounds: number;
+            broad_recovery_max_followup_rounds?: number;
             /**
              * Broad Recovery Max Queries
              * @default 4
              */
-            broad_recovery_max_queries: number;
+            broad_recovery_max_queries?: number;
             /**
              * Broad Recovery Timeout Seconds
              * @default 30
              */
-            broad_recovery_timeout_seconds: number;
+            broad_recovery_timeout_seconds?: number;
             /** Citation Excerpt Max Chars */
             citation_excerpt_max_chars: number;
             /** Context Char Budget */
@@ -3216,31 +3260,31 @@ export interface components {
              * Cross Language Semantic Evidence Score Threshold
              * @default 0.3
              */
-            cross_language_semantic_evidence_score_threshold: number;
+            cross_language_semantic_evidence_score_threshold?: number;
             /** @default enforce */
-            evidence_gate_mode: components["schemas"]["EvidenceGateMode"];
+            evidence_gate_mode?: components["schemas"]["EvidenceGateMode"];
             /**
              * Focused Recovery Max Queries
              * @default 2
              */
-            focused_recovery_max_queries: number;
+            focused_recovery_max_queries?: number;
             /**
              * Focused Recovery Timeout Seconds
              * @default 15
              */
-            focused_recovery_timeout_seconds: number;
+            focused_recovery_timeout_seconds?: number;
             /** @default strict */
-            grounding_mode: components["schemas"]["GroundingMode"];
+            grounding_mode?: components["schemas"]["GroundingMode"];
             /**
              * High Confidence Band Enabled
              * @default false
              */
-            high_confidence_band_enabled: boolean;
+            high_confidence_band_enabled?: boolean;
             /**
              * High Confidence Reranker Evidence Score
              * @default 0.7
              */
-            high_confidence_reranker_evidence_score: number;
+            high_confidence_reranker_evidence_score?: number;
             /** Include Citations */
             include_citations: boolean;
             /** Lexical Corroboration Coverage */
@@ -3255,16 +3299,16 @@ export interface components {
              * Minimum Claim Semantic Score
              * @default 0.25
              */
-            minimum_claim_semantic_score: number;
+            minimum_claim_semantic_score?: number;
             /** Minimum Claim Token Coverage */
             minimum_claim_token_coverage: number;
             /**
              * Minimum Reranker Evidence Score
              * @default 0.4
              */
-            minimum_reranker_evidence_score: number;
+            minimum_reranker_evidence_score?: number;
             /** @default indexed_only */
-            response_mode: components["schemas"]["ResponseMode"];
+            response_mode?: components["schemas"]["ResponseMode"];
         };
         /** EffectiveLLMPolicy */
         EffectiveLLMPolicy: {
@@ -3288,7 +3332,7 @@ export interface components {
              * @default authoritative
              * @enum {string}
              */
-            evidence_approach: "factual" | "authoritative" | "multi_perspective";
+            evidence_approach?: "factual" | "authoritative" | "multi_perspective";
             llm: components["schemas"]["EffectiveLLMPolicy"];
             /** Prompt Profile */
             prompt_profile: string;
@@ -3315,7 +3359,7 @@ export interface components {
              * Custom Execution
              * @default false
              */
-            custom_execution: boolean;
+            custom_execution?: boolean;
             deployment_configuration?: components["schemas"]["EffectiveProjectAIConfig"] | null;
             /** Effective Value Hash */
             effective_value_hash: string;
@@ -3336,7 +3380,7 @@ export interface components {
              * Required Index Action
              * @default none
              */
-            required_index_action: string;
+            required_index_action?: string;
             /** Resolution Fingerprint */
             resolution_fingerprint: string;
             /** Structured Origins */
@@ -3350,73 +3394,73 @@ export interface components {
              * Deduplicate By Content Hash
              * @default true
              */
-            deduplicate_by_content_hash: boolean;
+            deduplicate_by_content_hash?: boolean;
             /**
              * Hnsw Ef Search
              * @default 100
              */
-            hnsw_ef_search: number;
+            hnsw_ef_search?: number;
             /**
              * Keyword Candidate Top K
              * @default 50
              */
-            keyword_candidate_top_k: number;
+            keyword_candidate_top_k?: number;
             /**
              * Keyword Weight
              * @default 1
              */
-            keyword_weight: number;
+            keyword_weight?: number;
             /**
              * Max Chunks Per Document
              * @default 4
              */
-            max_chunks_per_document: number;
+            max_chunks_per_document?: number;
             /**
              * Max Chunks Per Section
              * @default 2
              */
-            max_chunks_per_section: number;
+            max_chunks_per_section?: number;
             /**
              * Max Related Sources
              * @default 8
              */
-            max_related_sources: number;
+            max_related_sources?: number;
             /**
              * Max Relationship Candidates
              * @default 20
              */
-            max_relationship_candidates: number;
+            max_relationship_candidates?: number;
             /** Min Ocr Confidence */
             min_ocr_confidence?: number | null;
             /** @default off */
-            modifies_expansion_mode: components["schemas"]["ModifiesExpansionMode"];
+            modifies_expansion_mode?: components["schemas"]["ModifiesExpansionMode"];
             /**
              * Passage Min Tokens
              * @default 32
              */
-            passage_min_tokens: number;
+            passage_min_tokens?: number;
             /**
              * Passage Overlap Tokens
              * @default 24
              */
-            passage_overlap_tokens: number;
+            passage_overlap_tokens?: number;
             /**
              * Passage Scoring Enabled
              * @default false
              */
-            passage_scoring_enabled: boolean;
+            passage_scoring_enabled?: boolean;
             /**
              * Passage Window Tokens
              * @default 96
              */
-            passage_window_tokens: number;
+            passage_window_tokens?: number;
             /** Query Translation Backend */
             query_translation_backend?: string | null;
             /**
              * Query Translation Enabled
              * @default false
              */
-            query_translation_enabled: boolean;
+            query_translation_enabled?: boolean;
             /** Query Translation Model */
             query_translation_model?: string | null;
             /** Query Translation Prompt Version */
@@ -3425,9 +3469,9 @@ export interface components {
              * Rerank Candidate Window
              * @default 25
              */
-            rerank_candidate_window: number;
+            rerank_candidate_window?: number;
             /** @default always */
-            rerank_mode: components["schemas"]["RerankMode"];
+            rerank_mode?: components["schemas"]["RerankMode"];
             /** Rerank Score Threshold */
             rerank_score_threshold: number | null;
             reranker_backend?: components["schemas"]["RerankerBackend"] | null;
@@ -3437,21 +3481,21 @@ export interface components {
              * Rrf K
              * @default 60
              */
-            rrf_k: number;
+            rrf_k?: number;
             /** Score Threshold */
             score_threshold?: number | null;
             /**
              * Semantic Candidate Top K
              * @default 50
              */
-            semantic_candidate_top_k: number;
+            semantic_candidate_top_k?: number;
             /** Semantic Evidence Score Threshold */
             semantic_evidence_score_threshold: number;
             /**
              * Semantic Weight
              * @default 1
              */
-            semantic_weight: number;
+            semantic_weight?: number;
             strategy: components["schemas"]["RetrievalStrategy"];
             /** Top K */
             top_k: number;
@@ -3486,7 +3530,7 @@ export interface components {
              * Expected No Answer
              * @default false
              */
-            expected_no_answer: boolean;
+            expected_no_answer?: boolean;
             /** Hard Negative Evidence Phrases */
             hard_negative_evidence_phrases?: string[];
             /** Key */
@@ -3530,7 +3574,7 @@ export interface components {
              * Schema Version
              * @default 1
              */
-            schema_version: number;
+            schema_version?: number;
             /** Version */
             version: string;
         };
@@ -3745,7 +3789,7 @@ export interface components {
              * @default caller_context
              * @constant
              */
-            context_provenance: "caller_context";
+            context_provenance?: "caller_context";
             /**
              * Created At
              * Format: date-time
@@ -3763,7 +3807,7 @@ export interface components {
              * Idempotency Replayed
              * @default false
              */
-            idempotency_replayed: boolean;
+            idempotency_replayed?: boolean;
             /** Index Build Id */
             index_build_id: string | null;
             /** Model */
@@ -3791,7 +3835,7 @@ export interface components {
              * @default none
              * @constant
              */
-            source_provenance: "none";
+            source_provenance?: "none";
             status: components["schemas"]["GenerationStatus"];
             timing: components["schemas"]["GenerationTiming"];
             /** Trace Id */
@@ -3803,7 +3847,7 @@ export interface components {
              * Web Enrichment Used
              * @default false
              */
-            web_enrichment_used: boolean;
+            web_enrichment_used?: boolean;
         };
         /**
          * GenerationRetentionMode
@@ -3928,6 +3972,8 @@ export interface components {
              */
             project_id: string;
             state: components["schemas"]["IndexBuildState"];
+            /** Structural Contract Version */
+            structural_contract_version?: string | null;
             /**
              * Updated At
              * Format: date-time
@@ -3948,7 +3994,7 @@ export interface components {
          * @description Stable reasons for a correct no-answer outcome.
          * @enum {string}
          */
-        InsufficientEvidenceReason: "no_retrieval_results" | "below_relevance_threshold" | "context_selection_empty" | "unresolved_authority";
+        InsufficientEvidenceReason: "no_retrieval_results" | "below_relevance_threshold" | "context_selection_empty" | "unresolved_authority" | "claim_verification_failed" | "request_deadline_exceeded" | "recovery_deadline_exceeded" | "provider_timeout";
         /** InvariantState */
         InvariantState: {
             /** Content Hash Deduplication */
@@ -4156,7 +4202,7 @@ export interface components {
          * JobType
          * @enum {string}
          */
-        JobType: "document.process" | "document.embed" | "document.index" | "evaluation.run" | "corpus.reembed" | "corpus.reindex" | "document.delete" | "document.purge" | "storage.reconcile";
+        JobType: "document.process" | "document.embed" | "document.index" | "evaluation.run" | "corpus.reembed" | "corpus.reindex" | "corpus.structure.v1" | "document.delete" | "document.purge" | "storage.reconcile";
         JsonValue: unknown;
         /**
          * LLMBackend
@@ -4200,7 +4246,7 @@ export interface components {
              * Status
              * @default ok
              */
-            status: string;
+            status?: string;
             /** Version */
             version: string;
         };
@@ -4274,7 +4320,8 @@ export interface components {
             /** Source Metadata Generation */
             source_metadata_generation?: number | null;
             /** @default none */
-            source_provenance: components["schemas"]["SourceProvenance"];
+            source_provenance?: components["schemas"]["SourceProvenance"];
+            terminal_outcome?: components["schemas"]["TerminalOutcome"] | null;
             /** Total Latency Ms */
             total_latency_ms?: number | null;
             /**
@@ -4304,8 +4351,10 @@ export interface components {
             metadata_filter?: {
                 [key: string]: string;
             };
+            /** Preview Index Build Id */
+            preview_index_build_id?: string | null;
             /** @default project_default */
-            source_scope: components["schemas"]["SourceScope"];
+            source_scope?: components["schemas"]["SourceScope"];
         };
         /** MetricsSnapshot */
         MetricsSnapshot: {
@@ -4636,7 +4685,7 @@ export interface components {
             grounding_assurance?: components["schemas"]["GroundingMode"] | null;
             response_mode?: components["schemas"]["ResponseMode"] | null;
             /** @default inherit */
-            translation_policy: components["schemas"]["TranslationPolicy"];
+            translation_policy?: components["schemas"]["TranslationPolicy"];
         };
         /**
          * ProjectCreate
@@ -4905,7 +4954,7 @@ export interface components {
              * Recommended
              * @default false
              */
-            recommended: boolean;
+            recommended?: boolean;
             /** Selectable */
             selectable: boolean;
             /** Values */
@@ -4959,6 +5008,20 @@ export interface components {
             /** Stage */
             stage: string;
         };
+        /** RelationshipSourceSpan */
+        RelationshipSourceSpan: {
+            /** Char End */
+            char_end: number;
+            /** Char Start */
+            char_start: number;
+            /**
+             * Chunk Id
+             * Format: uuid
+             */
+            chunk_id: string;
+            /** Quote */
+            quote: string;
+        };
         /**
          * RerankMode
          * @description When the multilingual reranker may run after RRF.
@@ -5000,7 +5063,7 @@ export interface components {
              * Branch Contributions
              * @default []
              */
-            branch_contributions: components["schemas"]["BranchContribution"][];
+            branch_contributions?: components["schemas"]["BranchContribution"][];
             /** Char End */
             char_end?: number | null;
             /** Char Start */
@@ -5045,7 +5108,7 @@ export interface components {
              * Query Variants
              * @default []
              */
-            query_variants: components["schemas"]["QueryVariant"][];
+            query_variants?: components["schemas"]["QueryVariant"][];
             /** Rank Score */
             rank_score?: number | null;
             /** Rerank Relevance Score */
@@ -5096,7 +5159,7 @@ export interface components {
              * Diversity Backfilled Count
              * @default 0
              */
-            diversity_backfilled_count: number;
+            diversity_backfilled_count?: number;
             /** Diversity Deferred Reasons */
             diversity_deferred_reasons?: {
                 [key: string]: number;
@@ -5105,7 +5168,7 @@ export interface components {
              * Duplicate Suppression Input Count
              * @default 0
              */
-            duplicate_suppression_input_count: number;
+            duplicate_suppression_input_count?: number;
             /** Duplicate Suppression Reasons */
             duplicate_suppression_reasons?: {
                 [key: string]: number;
@@ -5114,7 +5177,7 @@ export interface components {
              * Duplicate Suppression Removed Count
              * @default 0
              */
-            duplicate_suppression_removed_count: number;
+            duplicate_suppression_removed_count?: number;
             /** Duration Ms */
             duration_ms: number;
             /** Embedding Dimensions */
@@ -5143,17 +5206,17 @@ export interface components {
              * Modifies Authority Scope Status
              * @default not_applicable
              */
-            modifies_authority_scope_status: string;
+            modifies_authority_scope_status?: string;
             /**
              * Modifies Authority Unscoped Count
              * @default 0
              */
-            modifies_authority_unscoped_count: number;
+            modifies_authority_unscoped_count?: number;
             /**
              * Modifies Expansion Depth
              * @default 1
              */
-            modifies_expansion_depth: number;
+            modifies_expansion_depth?: number;
             /** Modifies Expansion Exclusion Reasons */
             modifies_expansion_exclusion_reasons?: {
                 [key: string]: number;
@@ -5166,7 +5229,11 @@ export interface components {
              * Modifies Expansion Status
              * @default disabled
              */
-            modifies_expansion_status: string;
+            modifies_expansion_status?: string;
+            /** Normalized Scope */
+            normalized_scope?: {
+                [key: string]: unknown;
+            };
             /** Passage Score Method */
             passage_score_method?: string | null;
             /** Post Rerank Removal Reasons */
@@ -5177,12 +5244,12 @@ export interface components {
              * Post Rerank Removed Count
              * @default 0
              */
-            post_rerank_removed_count: number;
+            post_rerank_removed_count?: number;
             /**
              * Post Rerank Unfilled Slots
              * @default 0
              */
-            post_rerank_unfilled_slots: number;
+            post_rerank_unfilled_slots?: number;
             /** Query Language Profile */
             query_language_profile?: string | null;
             /** Query Variants */
@@ -5195,12 +5262,12 @@ export interface components {
              * Related Source Count
              * @default 0
              */
-            related_source_count: number;
+            related_source_count?: number;
             /**
              * Relationship Candidate Count
              * @default 0
              */
-            relationship_candidate_count: number;
+            relationship_candidate_count?: number;
             /** Rerank Failure Reason */
             rerank_failure_reason?: string | null;
             /** Rerank Requested */
@@ -5211,7 +5278,7 @@ export interface components {
              * Reranked Candidate Count
              * @default 0
              */
-            reranked_candidate_count: number;
+            reranked_candidate_count?: number;
             /** Reranker Latency Ms */
             reranker_latency_ms?: number | null;
             /** Reranker Model */
@@ -5230,12 +5297,12 @@ export interface components {
              * Retrieved Candidate Count
              * @default 0
              */
-            retrieved_candidate_count: number;
+            retrieved_candidate_count?: number;
             /**
              * Romanized Or Codeswitched
              * @default false
              */
-            romanized_or_codeswitched: boolean;
+            romanized_or_codeswitched?: boolean;
             /** Selected Trace */
             selected_trace?: {
                 [key: string]: unknown;
@@ -5248,12 +5315,12 @@ export interface components {
              * Source Metadata Generation
              * @default 0
              */
-            source_metadata_generation: number;
+            source_metadata_generation?: number;
             /**
              * Source Policy Configured Mode
              * @default off
              */
-            source_policy_configured_mode: string;
+            source_policy_configured_mode?: string;
             /** Source Policy Consolidation Reasons */
             source_policy_consolidation_reasons?: {
                 [key: string]: number;
@@ -5262,12 +5329,12 @@ export interface components {
              * Source Policy Deployment Cap
              * @default enforce
              */
-            source_policy_deployment_cap: string;
+            source_policy_deployment_cap?: string;
             /**
              * Source Policy Effective Mode
              * @default off
              */
-            source_policy_effective_mode: string;
+            source_policy_effective_mode?: string;
             /** Source Policy Exclusion Reasons */
             source_policy_exclusion_reasons?: {
                 [key: string]: number;
@@ -5276,7 +5343,7 @@ export interface components {
              * Source Policy Status
              * @default off
              */
-            source_policy_status: string;
+            source_policy_status?: string;
             strategy: components["schemas"]["RetrievalStrategy"];
             /** Translated Query */
             translated_query?: string | null;
@@ -5407,7 +5474,20 @@ export interface components {
         SourceProvenance: "knowledge" | "web" | "knowledge_and_web" | "none";
         /** SourceRelationshipCreate */
         SourceRelationshipCreate: {
+            /**
+             * Provision Effect
+             * @default unknown
+             * @enum {string}
+             */
+            provision_effect?: "unknown" | "replaces" | "adds" | "amends" | "savings";
             relationship_type: components["schemas"]["SourceRelationshipType"];
+            /**
+             * Replacement Scope Verified
+             * @default false
+             */
+            replacement_scope_verified?: boolean;
+            /** Supporting Spans */
+            supporting_spans?: components["schemas"]["RelationshipSourceSpan"][];
             /** Target Provisions */
             target_provisions?: string[];
             /**
@@ -5428,7 +5508,20 @@ export interface components {
              * Format: uuid
              */
             id: string;
+            /**
+             * Provision Effect
+             * @default unknown
+             * @enum {string}
+             */
+            provision_effect?: "unknown" | "replaces" | "adds" | "amends" | "savings";
             relationship_type: components["schemas"]["SourceRelationshipType"];
+            /**
+             * Replacement Scope Verified
+             * @default false
+             */
+            replacement_scope_verified?: boolean;
+            /** Supporting Spans */
+            supporting_spans?: components["schemas"]["RelationshipSourceSpan"][];
             /** Target Provisions */
             target_provisions?: string[];
             /**
@@ -5456,20 +5549,20 @@ export interface components {
              * Activate
              * @default false
              */
-            activate: boolean;
+            activate?: boolean;
             /** Change Reason */
             change_reason?: string | null;
             /**
              * Create New Group
              * @default false
              */
-            create_new_group: boolean;
+            create_new_group?: boolean;
             /** Effective From */
             effective_from?: string | null;
             /** Effective To */
             effective_to?: string | null;
             /** @default active */
-            lifecycle_status: components["schemas"]["SourceLifecycleStatus"];
+            lifecycle_status?: components["schemas"]["SourceLifecycleStatus"];
             /** Published Date */
             published_date?: string | null;
             /** Relationships */
@@ -5478,13 +5571,13 @@ export interface components {
              * Revision Label
              * @default Revision
              */
-            revision_label: string;
+            revision_label?: string;
             /** Revision Number */
             revision_number?: number | null;
             /** Source Group Id */
             source_group_id?: string | null;
             /** @default primary */
-            source_role: components["schemas"]["SourceRole"];
+            source_role?: components["schemas"]["SourceRole"];
             /** Source Type */
             source_type?: string | null;
             /** Title */
@@ -5593,6 +5686,52 @@ export interface components {
             /** Path */
             path: string;
         };
+        /**
+         * TerminalOutcome
+         * @description Message delivery is distinct from successful factual answering.
+         */
+        TerminalOutcome: {
+            /**
+             * Coverage
+             * @default not_assessed
+             * @enum {string}
+             */
+            coverage?: "complete" | "partial" | "incomplete" | "not_assessed";
+            /** Failure Stage */
+            failure_stage?: ("retrieval" | "coverage" | "draft_schema" | "claim_verification" | "persistence") | null;
+            /**
+             * Next Action
+             * @default none
+             * @enum {string}
+             */
+            next_action?: "retry" | "supply_input" | "review_source" | "contact_operator" | "none";
+            /**
+             * Outcome
+             * @enum {string}
+             */
+            outcome: "answered" | "partial" | "needs_input" | "insufficient_evidence" | "unresolved_authority" | "verification_failed" | "timed_out";
+            /** Reason Code */
+            reason_code: string;
+            /** Requested Scope */
+            requested_scope?: {
+                [key: string]: unknown;
+            };
+            /**
+             * Retryable
+             * @default false
+             */
+            retryable?: boolean;
+            /** Supported Requirement Ids */
+            supported_requirement_ids?: string[];
+            /** Unresolved Requirement Ids */
+            unresolved_requirement_ids?: string[];
+            /**
+             * Version
+             * @default answer.outcome.v1
+             * @constant
+             */
+            version?: "answer.outcome.v1";
+        };
         /** TokenUsageMetrics */
         TokenUsageMetrics: {
             /** Input Tokens */
@@ -5700,7 +5839,7 @@ export interface components {
              * Required Index Action
              * @default none
              */
-            required_index_action: string;
+            required_index_action?: string;
         };
         /** ValidationError */
         ValidationError: {
@@ -9123,6 +9262,39 @@ export interface operations {
             };
         };
     };
+    reprocess_private_corpus_api_v1_projects__project_id__index_builds_reprocess_private_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: {
+                ape_admin_access?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_LifecycleJobResponse_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     rollback_index_build_api_v1_projects__project_id__index_builds_rollback_post: {
         parameters: {
             query?: never;
@@ -9177,6 +9349,40 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApiResponse_IndexBuildResponse_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    revalidate_private_corpus_api_v1_projects__project_id__index_builds__build_id__revalidate_private_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+                build_id: string;
+            };
+            cookie?: {
+                ape_admin_access?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_LifecycleJobResponse_"];
                 };
             };
             /** @description Validation Error */

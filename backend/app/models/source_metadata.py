@@ -178,6 +178,15 @@ class SourceRevisionRelationship(Base, UUIDPrimaryKeyMixin, ProjectScopedMixin):
         ),
         nullable=False,
     )
+    provision_effect: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="unknown", server_default="unknown"
+    )
+    replacement_scope_verified: Mapped[bool] = mapped_column(
+        nullable=False, default=False, server_default=text("false")
+    )
+    supporting_spans: Mapped[list[dict]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
     target_provisions: Mapped[list[str]] = mapped_column(
         JSONB,
         nullable=False,

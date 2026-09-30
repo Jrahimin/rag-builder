@@ -95,6 +95,12 @@ class SearchServiceRetrievalAdapter:
             return work
         return current_request_work()
 
+    def set_request_scope(self, scope: dict[str, Any]) -> None:
+        self._search_service.set_request_scope(scope)
+
+    async def pin_validated_preview(self, build_id: uuid.UUID) -> None:
+        await self._search_service.pin_validated_preview(build_id)
+
     async def retrieve_batch(
         self, requests: list[dict[str, Any]], *, snapshot: dict[str, Any]
     ) -> list[ContextRetrievalResult]:
@@ -382,6 +388,7 @@ async def get_chat_service(
             else None,
             pinned_reference_date=pinned.get("reference_date") if pinned else None,
             work=work,
+            normalized_scope=pinned.get("normalized_scope") if pinned else None,
         )
 
     retrieval = SearchServiceRetrievalAdapter(

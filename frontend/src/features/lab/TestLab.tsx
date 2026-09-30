@@ -281,9 +281,9 @@ export function TestLab() {
   useEffect(() => setSelectedDocumentId(requestedDocumentId), [requestedDocumentId]);
   useEffect(() => setLatestJobId(requestedJobId), [requestedJobId]);
 
-  const documents = useDocuments(projectId);
-  const jobs = useJobs(projectId, "", "");
-  const builds = useIndexBuilds(projectId);
+  const documents = useDocuments(projectId, tab === "documents" || tab === "journey");
+  const jobs = useJobs(projectId, "", "", tab === "documents" || tab === "journey");
+  const builds = useIndexBuilds(projectId, tab === "lifecycle" || tab === "journey");
   const selectedProject = projects.data?.items.find((project) => project.id === projectId);
   const selectedDocument = pickLabDocument(documents.data?.items ?? [], selectedDocumentId);
   const latestJob = jobs.data?.items.find((job) => job.id === latestJobId) ?? jobs.data?.items[0];
@@ -2127,6 +2127,9 @@ function MessagesTab({
   onNavigate: (tab: LabTab) => void;
   onActivity: (item: Omit<LabActivity, "id" | "timestamp">) => void;
 }) {
+  const previewBuilds = useIndexBuilds(projectId, false);
+  const [previewIndexBuildId, setPreviewIndexBuildId] = useState("");
+  useEffect(() => setPreviewIndexBuildId(""), [projectId]);
   const create = useCreateConversation(projectId);
   const conversations = useConversations(projectId);
   const messages = useMessages(projectId, conversationId);
@@ -2192,6 +2195,7 @@ function MessagesTab({
         streamAbort.current = controller;
         const streamed = await stream.mutateAsync({
           content: submittedContent,
+          previewIndexBuildId: previewIndexBuildId || undefined,
           onDelta: (delta) => setStreamedContent((current) => current + delta),
           onProgress: setProgressMessage,
           signal: controller.signal,
@@ -2202,7 +2206,10 @@ function MessagesTab({
         };
         deliveryTiming = streamed.timing;
       } else {
-        turn = await send.mutateAsync({ content: submittedContent });
+        turn = await send.mutateAsync({
+          content: submittedContent,
+          previewIndexBuildId: previewIndexBuildId || undefined,
+        });
       }
       const assistant = turn.assistant_message;
       const refusal = Boolean(assistant.insufficient_evidence_reason);
@@ -2481,6 +2488,24 @@ function MessagesTab({
                   />
                   <div className="lab-composer__toolbar">
                     <div className="lab-mode-switch" role="group" aria-label="Reply mode">
+                      <label>
+                        Index preview
+                        <select
+                          aria-label="Index preview"
+                          value={previewIndexBuildId}
+                          onChange={(event) => setPreviewIndexBuildId(event.target.value)}
+                          disabled={send.isPending || stream.isPending}
+                        >
+                          <option value="">Active build</option>
+                          {(previewBuilds.data?.items ?? [])
+                            .filter((build) => build.state === "validated" && build.validated_at)
+                            .map((build) => (
+                              <option key={build.id} value={build.id}>
+                                Validated {shortId(build.id)}
+                              </option>
+                            ))}
+                        </select>
+                      </label>
                       {(["regular", "stream"] as const).map((mode) => (
                         <button
                           key={mode}
@@ -2617,7 +2642,9 @@ type MessageCitation = NonNullable<Message["citations"]>[number];
 function isCoverageVerificationFailure(message: Message): boolean {
   const repair = message.metadata?.knowledge_repair as Record<string, unknown> | undefined;
   return Boolean(
-    repair?.status === "repair_unavailable" && repair?.failure_reason === "invalid_model_response",
+    message.insufficient_evidence_reason === "claim_verification_failed" ||
+    (repair?.status === "repair_unavailable" &&
+      repair?.failure_reason === "invalid_model_response"),
   );
 }
 
@@ -2896,6 +2923,17 @@ export function MessageInspector({
       </aside>
     );
   }
+  const terminal = message.terminal_outcome;
+  const outcomeLabels: Record<string, string> = {
+    answered: "Supported answer",
+    partial: "Partial answer",
+    needs_input: "Needs input",
+    insufficient_evidence: "Insufficient evidence",
+    unresolved_authority: "Needs source review",
+    verification_failed: "Verification failed",
+    timed_out: "Timed out",
+  };
+  const terminalLabel = terminal ? outcomeLabels[terminal.outcome] : null;
   const refusal = message.insufficient_evidence_reason;
   const verificationFailure = isCoverageVerificationFailure(message);
   const citations = message.citations ?? [];
@@ -2919,6 +2957,9 @@ export function MessageInspector({
     (Array.isArray(repair?.requirement_attempts)
       ? { stop_reason: repair?.stop_reason }
       : undefined)) as Record<string, unknown> | undefined;
+  const recoveryTimedOut =
+    repair?.stop_reason === "recovery_deadline_exceeded" ||
+    requirementProgress?.stop_reason === "recovery_deadline_exceeded";
   const attemptRecords = repair?.requirement_attempts ?? requirementProgress?.attempts;
   const recoveryAttempts = Array.isArray(attemptRecords)
     ? attemptRecords.filter(
@@ -2936,15 +2977,18 @@ export function MessageInspector({
   const supportedFactual = factualClaims.filter((claim) => claim.verification === "supported");
   const failedClaims = claims.filter((claim) => claim.verification !== "supported");
   const usefulPartial = Boolean(partial && !refusal && groundingPassed && expectedMatches);
-  const verificationLabel = refusal
-    ? "Needs attention"
-    : groundingPassed && partial
-      ? "Claims supported · partial coverage"
-      : groundingPassed && ["web", "knowledge_and_web"].includes(message.source_provenance)
-        ? "Claims supported · web sources"
-        : groundingPassed
-          ? "Claims supported"
-          : "Needs attention";
+  const verificationLabel =
+    terminalLabel ??
+    (refusal
+      ? "Needs attention"
+      : groundingPassed && partial
+        ? "Claims supported · partial coverage"
+        : groundingPassed &&
+            ["web", "knowledge_and_web"].includes(message.source_provenance ?? "none")
+          ? "Claims supported · web sources"
+          : groundingPassed
+            ? "Claims supported"
+            : "Needs attention");
   if (
     message.metadata?.non_knowledge_turn === true &&
     !refusal &&
@@ -2974,15 +3018,18 @@ export function MessageInspector({
         <div>
           <p className="eyebrow">Sources</p>
           <h3>
-            {refusal
-              ? verificationFailure
-                ? "Verification failed"
-                : "Answer withheld"
-              : partial
-                ? "Partial answer"
-                : groundingPassed
-                  ? "Grounded answer"
-                  : "Answer review"}
+            {terminalLabel ??
+              (refusal
+                ? verificationFailure
+                  ? "Verification failed"
+                  : recoveryTimedOut
+                    ? "Source review timed out"
+                    : "Answer withheld"
+                : partial
+                  ? "Partial answer"
+                  : groundingPassed
+                    ? "Grounded answer"
+                    : "Answer review")}
           </h3>
         </div>
         <StatusBadge
@@ -2994,6 +3041,23 @@ export function MessageInspector({
           label={verificationLabel}
         />
       </div>
+      {terminal && (
+        <p aria-label="Answer outcome">
+          {terminal.reason_code}
+          {terminal.failure_stage ? " · " + terminal.failure_stage : ""}
+          {" · Next: " + terminal.next_action}
+        </p>
+      )}
+      {Boolean(
+        message.metadata?.rejected_draft &&
+        typeof message.metadata.rejected_draft === "object" &&
+        !Array.isArray(message.metadata.rejected_draft),
+      ) && (
+        <details>
+          <summary>Rejected draft diagnostics</summary>
+          <pre>{JSON.stringify(message.metadata.rejected_draft, null, 2)}</pre>
+        </details>
+      )}
       {isLatestRun && run && (
         <div
           className={`lab-verification ${run.passed && !refusal && !partial ? "lab-verification--pass" : "lab-verification--warning"}`}
@@ -3002,7 +3066,9 @@ export function MessageInspector({
             {message.insufficient_evidence_reason
               ? verificationFailure
                 ? "Task unanswered / verification failed"
-                : "Task unanswered / insufficient evidence"
+                : recoveryTimedOut
+                  ? "Task unanswered / source review timed out"
+                  : "Task unanswered / insufficient evidence"
               : usefulPartial
                 ? "Useful partial answer — not a complete-answer pass"
                 : message.citations?.length
@@ -3066,6 +3132,36 @@ export function MessageInspector({
             when known, or a conservative UTF-8 byte bound, plus framing and output reserves.
           </p>
           <pre className="json-view">{JSON.stringify(message.metadata.prompt_budget, null, 2)}</pre>
+        </details>
+      )}
+      <button
+        type="button"
+        onClick={() => {
+          const exportData = {
+            version: "rag.trace.export.v1",
+            request: isLatestRun ? { content: run?.turn.user_message.content } : null,
+            response: message,
+            trace: message.metadata,
+          };
+          const blob = new Blob([JSON.stringify(exportData, null, 2)], {
+            type: "application/json",
+          });
+          const url = URL.createObjectURL(blob);
+          const link = document.createElement("a");
+          link.href = url;
+          link.download = `rag-response-${message.id}.json`;
+          link.click();
+          URL.revokeObjectURL(url);
+        }}
+      >
+        Export response and trace
+      </button>
+      {message.metadata?.normalized_scope != null && (
+        <details>
+          <summary>Requested scope</summary>
+          <pre className="json-view">
+            {JSON.stringify(message.metadata.normalized_scope, null, 2)}
+          </pre>
         </details>
       )}
       <RerankDiagnostics metadata={message.metadata} />
@@ -3246,6 +3342,17 @@ export function MessageInspector({
                     : undefined
                 }
               >
+                {citation.supporting_spans?.map((span, spanIndex) => (
+                  <blockquote key={spanIndex}>
+                    {typeof span.quote === "string" ? span.quote : ""}
+                  </blockquote>
+                ))}
+                {!!citation.structural_context?.length && (
+                  <details>
+                    <summary>Source headings and context</summary>
+                    <p>{citation.structural_context.join(" / ")}</p>
+                  </details>
+                )}
                 <button type="button" onClick={() => onCite?.(index)}>
                   <strong>
                     [{index + 1}] <Filename name={citation.web_title ?? citation.filename} />

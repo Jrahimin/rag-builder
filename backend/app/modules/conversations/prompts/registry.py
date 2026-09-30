@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-GROUNDED_PROMPT_VERSION = "v24"
+GROUNDED_PROMPT_VERSION = "v25"
 """Provenance identifier stamped on messages and citations.  Change only via git."""
 
 
