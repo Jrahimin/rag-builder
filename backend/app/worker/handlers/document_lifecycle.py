@@ -19,6 +19,7 @@ from app.modules.knowledge.repositories.source_metadata_repository import (
 )
 from app.modules.retrieval.repositories.index_build_repository import IndexBuildRepository
 from app.modules.retrieval.services.retrieval_cleanup_service import RetrievalCleanupService
+from app.platform.infra.providers.provider_work_repository import purge_project_cache
 from app.platform.jobs.contracts import JobDefinition
 from app.platform.jobs.errors import PermanentJobError
 from app.platform.providers.implementations.storage_factory import create_storage_provider
@@ -63,6 +64,7 @@ async def _execute(
         run.result = {**(run.result or {}), "document_id": str(document.id), "mode": "delete"}
         return
 
+    await purge_project_cache(session, run.project_id)
     await reporter.report("purging_relational_artifacts", 92)
     cleanup = RetrievalCleanupService(session, run.project_id)
     await cleanup.on_document_delete(document.id)

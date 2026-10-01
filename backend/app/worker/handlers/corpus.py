@@ -12,12 +12,18 @@ from app.models.index_build import IndexBuild, IndexBuildOperation, IndexBuildSt
 from app.models.job_configuration_snapshot import JobConfigurationSnapshot
 from app.models.job_run import JobRun, JobType
 from app.modules.jobs.services.job_service import JobService
+from app.modules.knowledge.services.chunking.sentence_similarity_service import (
+    SentenceSimilarityService,
+)
+from app.modules.knowledge.services.chunking_service import ChunkingService
+from app.modules.knowledge.services.private_structural_generation import PrivateStructuralGeneration
 from app.modules.retrieval.repositories.index_build_repository import IndexBuildRepository
 from app.modules.retrieval.workflows.index_build_workflow import IndexBuildWorkflow
 from app.platform.jobs.configuration import embedding_set_version_from_configuration
 from app.platform.jobs.contracts import JobConfiguration, JobDefinition
 from app.platform.jobs.errors import PermanentJobError
 from app.platform.providers.implementations.embedding_factory import create_embedding_provider
+from app.platform.providers.implementations.storage_factory import create_storage_provider
 from app.worker.broker import broker
 from app.worker.job_runtime import JobProgressReporter, run_durable_job
 
@@ -33,6 +39,14 @@ async def execute_index_build(
     operation: IndexBuildOperation,
     auto_activate_default: bool,
 ) -> IndexBuild:
+    if run.job_type is JobType.CORPUS_STRUCTURE_V1 and (
+        run.payload.get("structural_contract_version") != "structure.v1"
+        or run.payload.get("structural_reprocess") is not True
+        or run.payload.get("auto_activate") is not False
+    ):
+        raise PermanentJobError(
+            "Structural task payload is incompatible.", code="structural_worker_incompatible"
+        )
     repository = IndexBuildRepository(session, run.project_id)
     embedding_set_version = _embedding_set_version_for_build(run, settings)
     raw_build_id = run.payload.get("build_id")
@@ -48,6 +62,9 @@ async def execute_index_build(
             embedding_set_version_from_configuration(staged_configuration) or embedding_set_version
         )
         build = IndexBuild(
+            structural_contract_version="structure.v1"
+            if run.job_type is JobType.CORPUS_STRUCTURE_V1
+            else None,
             project_id=run.project_id,
             job_id=run.id,
             operation=operation,
@@ -97,10 +114,37 @@ async def execute_index_build(
         ):
             build.embedding_set_version = desired_version
 
+    if build.structural_contract_version and (
+        run.job_type is not JobType.CORPUS_STRUCTURE_V1
+        or run.payload.get("structural_contract_version") != build.structural_contract_version
+        or run.payload.get("auto_activate") is not False
+    ):
+        raise PermanentJobError(
+            "Incompatible structural worker delivery.", code="structural_worker_incompatible"
+        )
+    if settings.provider_costs.build_coalesce_seconds:
+        from app.platform.db.advisory_lock import acquire_project_stage_lock
+
+        await acquire_project_stage_lock(session, project_id=run.project_id, stage="corpus-build")
+    embedder = create_embedding_provider(settings)
+    private = (
+        PrivateStructuralGeneration(
+            session,
+            create_storage_provider(settings),
+            ChunkingService.from_settings(
+                settings, similarity_service=SentenceSimilarityService(embedder)
+            ),
+            source_build_id=_optional_uuid(run.payload.get("source_build_id")),
+        )
+        if run.payload.get("structural_reprocess")
+        else None
+    )
     workflow = IndexBuildWorkflow(
         session=session,
         project_id=run.project_id,
-        embedder=create_embedding_provider(settings),
+        embedder=embedder,
+        private_chunk_factory=private.prepare if private else None,
+        reuse_index_build_id=_optional_uuid(run.payload.get("source_build_id")),
         embedding_set_version=build.embedding_set_version,
         batch_size=settings.embedding.batch_size,
         filterable_metadata_keys=settings.retrieval.filterable_metadata_keys,
@@ -232,3 +276,17 @@ async def corpus_reembed_task(*, project_id: str, job_id: str) -> None:
 async def corpus_reindex_task(*, project_id: str, job_id: str) -> None:
     logger.info("taskiq_job_received", project_id=project_id, job_id=job_id)
     await run_corpus_reindex(project_id=project_id, job_id=job_id)
+
+
+async def run_corpus_structure_v1(*, project_id: uuid.UUID | str, job_id: uuid.UUID | str) -> None:
+    await run_durable_job(
+        project_id=project_id,
+        job_id=job_id,
+        expected_type=JobType.CORPUS_STRUCTURE_V1,
+        operation=_reindex,
+    )
+
+
+@broker.task(task_name=JobType.CORPUS_STRUCTURE_V1.value)
+async def corpus_structure_v1_task(*, project_id: str, job_id: str) -> None:
+    await run_corpus_structure_v1(project_id=project_id, job_id=job_id)

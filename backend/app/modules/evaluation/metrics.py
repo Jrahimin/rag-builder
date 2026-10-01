@@ -7,6 +7,24 @@ import statistics
 from typing import Any
 
 
+def execution_failed(result: dict[str, Any]) -> bool:
+    terminal = (result.get("execution") or {}).get("terminal") or {}
+    return terminal.get("outcome") in {"timed_out", "verification_failed"} or result.get(
+        "insufficient_evidence_reason"
+    ) in {
+        "provider_timeout",
+        "request_deadline_exceeded",
+        "recovery_deadline_exceeded",
+        "claim_verification_failed",
+        "verifier_unavailable",
+        "verifier_schema_invalid",
+    }
+
+
+def completed_abstention(result: dict[str, Any]) -> bool:
+    return result.get("insufficient_evidence_reason") is not None and not execution_failed(result)
+
+
 def compute_profile_metrics(results: list[dict[str, Any]]) -> dict[str, Any]:
     answerable = [result for result in results if not result["expected_no_answer"]]
     filtered = [result for result in answerable if result["kind"] == "metadata_filter"]
@@ -14,6 +32,7 @@ def compute_profile_metrics(results: list[dict[str, Any]]) -> dict[str, Any]:
     latencies = [float(result["latency_ms"]) for result in results]
     metrics: dict[str, Any] = {
         "case_count": float(len(results)),
+        "execution_failure_count": float(sum(execution_failed(r) for r in results)),
         "recall_at_k": _mean([float(result["recall"]) for result in answerable]),
         "recall_at_5": _mean(
             [float(result.get("recall_at_5", result["recall"])) for result in answerable]
@@ -27,9 +46,7 @@ def compute_profile_metrics(results: list[dict[str, Any]]) -> dict[str, Any]:
         "mrr": _mean([float(result["reciprocal_rank"]) for result in answerable]),
         "ndcg": _mean([float(result["ndcg"]) for result in answerable]),
         "filtered_correctness": _mean([float(result["filter_correct"]) for result in filtered]),
-        "no_result_behavior": _mean(
-            [float(result["insufficient_evidence_reason"] is not None) for result in no_answer]
-        ),
+        "no_result_behavior": _mean([float(completed_abstention(result)) for result in no_answer]),
         "false_refusal_rate": _rate(
             sum(result["insufficient_evidence_reason"] is not None for result in answerable),
             len(answerable),

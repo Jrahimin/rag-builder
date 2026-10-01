@@ -52,6 +52,7 @@ class ProviderModelCapability:
     temperature: ParameterCapability
     max_tokens: ParameterCapability
     supports_stream_usage: bool = False
+    structured_output: str = "prompt"
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -59,6 +60,7 @@ class ProviderModelCapability:
             "model": self.model,
             "capability_version": self.capability_version,
             "supports_stream_usage": self.supports_stream_usage,
+            "structured_output": self.structured_output,
             "parameters": {
                 "temperature": _parameter_dict(self.temperature),
                 "max_tokens": _parameter_dict(self.max_tokens),
@@ -114,6 +116,13 @@ def describe_llm_capability(provider: str, model: str) -> ProviderModelCapabilit
             omit_when_none=False,
         ),
         supports_stream_usage=backend is LLMBackend.OPENAI,
+        structured_output={
+            LLMBackend.OPENAI: "json_object",
+            LLMBackend.OPENAI_COMPATIBLE: "prompt",
+            LLMBackend.GEMINI: "json_schema",
+            LLMBackend.OLLAMA: "json_schema",
+            LLMBackend.ECHO: "prompt",
+        }[backend],
     )
 
 

@@ -293,3 +293,37 @@ async def test_deleted_targets_are_hidden_from_current_choices_but_remain_in_his
     )
     assert invalid.status_code == 400, invalid.text
     assert invalid.json()["error"]["code"] == "source_relationship_target_deleted"
+
+
+async def test_historical_selection_uses_corrected_metadata_without_reviving_null_dates(
+    db_client: AsyncClient, integration_connection: AsyncConnection
+):
+    project = await _project_id(db_client)
+    document = await _upload(
+        db_client, project, "correction.txt", "Rule for a declared legal edition"
+    )
+    earlier = await _revision(
+        db_client, project, document, {"effective_from": None, "title": "Before correction"}
+    )
+    before = (await db_client.get(f"/api/v1/projects/{project}/sources")).json()["data"]
+    corrected = await _revision(
+        db_client,
+        project,
+        document,
+        {"effective_from": "2026-01-01", "title": "Corrected interval"},
+    )
+    after = (await db_client.get(f"/api/v1/projects/{project}/sources")).json()["data"]
+    for generation, expected, applicable in [
+        (before["generation"], earlier["id"], True),
+        (after["generation"], corrected["id"], False),
+    ]:
+        scope = _canonical_source_scope(
+            project_id=uuid.UUID(project),
+            generation=generation,
+            reference_date=date(2025, 1, 1),
+            historical=True,
+        )
+        rows = (await integration_connection.execute(select(scope))).mappings().all()
+        row = next(item for item in rows if str(item["source_document_id"]) == document)
+        assert str(row["source_revision_id"]) == expected
+        assert row["source_policy_applicable"] is applicable

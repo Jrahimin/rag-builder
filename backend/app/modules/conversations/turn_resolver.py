@@ -29,6 +29,7 @@ from app.modules.conversations.turn_resolution import (
     TurnResolutionInput,
     effective_retrieval_inputs,
     fallback_resolution,
+    normalize_request_scope,
     parse_resolver_json,
     referenced_message_ids,
     resolve_effective_as_of,
@@ -448,6 +449,12 @@ def _diagnostics(
 ) -> dict[str, Any]:
     query_changed = retrieval.query != payload.current_message
     diagnostics: dict[str, Any] = {
+        "normalized_scope": normalize_request_scope(
+            retrieval.query,
+            reference_time=payload.reference_time,
+            request_filters=payload.request_filters,
+            project_defaults=payload.domain_instructions,
+        ).model_dump(mode="json"),
         "version": TURN_RESOLUTION_VERSION,
         "prompt_version": TURN_RESOLUTION_PROMPT_VERSION,
         "outcome": resolution.outcome.value,

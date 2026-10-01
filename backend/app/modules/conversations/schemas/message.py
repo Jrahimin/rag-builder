@@ -5,11 +5,12 @@ from __future__ import annotations
 import uuid
 from datetime import date, datetime
 from enum import StrEnum
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.models.message import MessageRole
+from app.modules.conversations.answer_draft import public_draft_diagnostics
 
 
 class CitationSourceKind(StrEnum):
@@ -56,6 +57,9 @@ class CitationSnapshot(BaseModel):
     evidence_span_derivation: str | None = None
     evidence_query_variant_id: str | None = None
     excerpt: str | None = None
+    supporting_spans: list[dict[str, Any]] = Field(default_factory=list)
+    structural_context: list[str] = Field(default_factory=list)
+    provenance_precision: str | None = None
     processing_version: int | None = None
     index_build_id: uuid.UUID | None = None
     source_metadata_generation: int | None = None
@@ -133,6 +137,10 @@ class InsufficientEvidenceReason(StrEnum):
     # candidates; CONTEXT_SELECTION_EMPTY covers any remaining empty-after-admit case.
     CONTEXT_SELECTION_EMPTY = "context_selection_empty"
     UNRESOLVED_AUTHORITY = "unresolved_authority"
+    CLAIM_VERIFICATION_FAILED = "claim_verification_failed"
+    REQUEST_DEADLINE_EXCEEDED = "request_deadline_exceeded"
+    RECOVERY_DEADLINE_EXCEEDED = "recovery_deadline_exceeded"
+    PROVIDER_TIMEOUT = "provider_timeout"
 
 
 class ClaimVerification(StrEnum):
@@ -232,7 +240,9 @@ class AnswerClaim(BaseModel):
     verification_reason: str | None = None
     assertion_text: str | None = None
 
+    requirement_ids: list[str] = Field(default_factory=list)
     claim_id: str
+    assertion_id: str | None = None
     text: str
     grounded: bool
     verification: ClaimVerification
@@ -260,6 +270,34 @@ class NoticeSchema(BaseModel):
     language: str
     text: str
     source: dict[Any, Any] = Field(default_factory=dict)
+
+
+class TerminalOutcome(BaseModel):
+    """Message delivery is distinct from successful factual answering."""
+
+    model_config = ConfigDict(extra="forbid")
+    version: Literal["answer.outcome.v1"] = "answer.outcome.v1"
+    outcome: Literal[
+        "answered",
+        "partial",
+        "needs_input",
+        "insufficient_evidence",
+        "unresolved_authority",
+        "verification_failed",
+        "timed_out",
+    ]
+    reason_code: str = Field(max_length=100)
+    failure_stage: (
+        Literal["retrieval", "coverage", "draft_schema", "claim_verification", "persistence"] | None
+    ) = None
+    requested_scope: dict[str, Any] = Field(default_factory=dict)
+    coverage: Literal["complete", "partial", "incomplete", "not_assessed"] = "not_assessed"
+    retryable: bool = False
+    next_action: Literal["retry", "supply_input", "review_source", "contact_operator", "none"] = (
+        "none"
+    )
+    supported_requirement_ids: list[str] = Field(default_factory=list)
+    unresolved_requirement_ids: list[str] = Field(default_factory=list)
 
 
 class MessageResponse(BaseModel):
@@ -291,6 +329,7 @@ class MessageResponse(BaseModel):
     claims: list[AnswerClaim] = Field(default_factory=list)
     grounded: bool | None = None
     insufficient_evidence_reason: InsufficientEvidenceReason | None = None
+    terminal_outcome: TerminalOutcome | None = None
     notices: list[NoticeSchema] = Field(default_factory=list)
     source_provenance: SourceProvenance = SourceProvenance.NONE
     created_at: datetime
@@ -309,7 +348,10 @@ class MessageResponse(BaseModel):
             base = base.model_copy(update={"provider": conversation_provider})
         if message.model is None and conversation_model is not None:
             base = base.model_copy(update={"model": conversation_model})
-        metadata = getattr(message, "message_metadata", None) or {}
+        metadata = dict(getattr(message, "message_metadata", None) or {})
+        metadata.pop("operator_diagnostic", None)
+        if "answer_draft" in metadata:
+            metadata["answer_draft"] = public_draft_diagnostics(metadata["answer_draft"])
         provenance = metadata.get("source_provenance", SourceProvenance.NONE.value)
         try:
             source_provenance = SourceProvenance(provenance)
@@ -321,12 +363,23 @@ class MessageResponse(BaseModel):
             for item in raw_notices
             if isinstance(item, (dict, NoticeSchema))
         ]
-        base = base.model_copy(update={"source_provenance": source_provenance, "notices": notices})
+        base = base.model_copy(
+            update={
+                "source_provenance": source_provenance,
+                "metadata": metadata,
+                "notices": notices,
+                "terminal_outcome": TerminalOutcome.model_validate(metadata["terminal_outcome"])
+                if isinstance(metadata.get("terminal_outcome"), dict)
+                else None,
+            }
+        )
         return base
 
 
 class MessageSendRequest(BaseModel):
     """Send a user message in a conversation."""
+
+    preview_index_build_id: uuid.UUID | None = None
 
     model_config = ConfigDict(extra="forbid")
 
@@ -342,3 +395,12 @@ class ChatTurnResponse(BaseModel):
 
     user_message: MessageResponse
     assistant_message: MessageResponse
+
+
+class MessageDiagnosticResponse(BaseModel):
+    message_id: uuid.UUID
+    project_id: uuid.UUID
+    summary: dict[str, Any]
+    payload: dict[str, Any] | None
+    expires_at: datetime | None
+    expired: bool

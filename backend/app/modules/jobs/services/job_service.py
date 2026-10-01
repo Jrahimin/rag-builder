@@ -14,7 +14,7 @@ from app.core.config import JobsConfig
 from app.core.exceptions import BadRequestError, NotFoundError
 from app.models.document import Document
 from app.models.job_configuration_snapshot import JobConfigurationSnapshot
-from app.models.job_run import JobRun, JobState
+from app.models.job_run import JobRun, JobState, JobType
 from app.modules.jobs.repositories.job_configuration_repository import (
     JobConfigurationRepository,
 )
@@ -27,6 +27,7 @@ from app.platform.audit.contracts import (
     AuditOutcome,
     AuditRecorder,
 )
+from app.platform.db.advisory_lock import acquire_project_stage_lock
 from app.platform.http.pagination import PaginatedResult
 from app.platform.jobs.contracts import (
     DurableJobSubmitter,
@@ -94,6 +95,43 @@ class JobService(DurableJobSubmitter):
         if job.project_id != self._project_id:
             msg = "Job project_id does not match service scope"
             raise ValueError(msg)
+        available_at = None
+        coalesce_seconds = job.payload.get("coalesce_seconds", 0)
+        if (
+            job.name == "document.embed"
+            and isinstance(coalesce_seconds, int)
+            and coalesce_seconds > 0
+        ):
+            await acquire_project_stage_lock(
+                self._session, project_id=self._project_id, stage="ingestion-coalesce"
+            )
+            identity = configuration.index_output_digest()
+            pending = await self._session.scalar(
+                select(JobRun)
+                .where(
+                    JobRun.project_id == self._project_id,
+                    JobRun.job_type == JobType.CORPUS_REEMBED,
+                    JobRun.state == JobState.QUEUED,
+                    JobRun.payload["coalesce_identity"].astext == identity,
+                )
+                .order_by(JobRun.created_at, JobRun.id)
+                .limit(1)
+            )
+            if pending is not None:
+                return JobSubmission(job_id=pending.id, created=False)
+            available_at = datetime.now(UTC) + timedelta(seconds=coalesce_seconds)
+            job = job.model_copy(
+                update={
+                    "name": "corpus.reembed",
+                    "document_id": None,
+                    "idempotency_key": f"ingestion.batch:{self._project_id}:{uuid.uuid4()}",
+                    "payload": {
+                        "coalesce_identity": identity,
+                        "auto_activate": True,
+                        "embedding_set_version": job.payload["embedding_set_version"],
+                    },
+                }
+            )
         if configuration_snapshot_id is None:
             snapshot = await self._snapshots.get_or_create(configuration)
             configuration_snapshot_id = snapshot.id
@@ -108,7 +146,10 @@ class JobService(DurableJobSubmitter):
             retry_of_job_id=retry_of_job_id,
         )
         if created:
-            self._outbox.add_intent(run.id)
+            if available_at is None:
+                self._outbox.add_intent(run.id)
+            else:
+                self._outbox.add_intent(run.id, available_at=available_at)
             self._record_job_event(
                 run,
                 event_type=AuditEventType.JOB_SUBMITTED,

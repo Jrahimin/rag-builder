@@ -135,7 +135,8 @@ async def test_table_retains_parent_period_and_child_category() -> None:
     table_chunk = next(c for c in chunks if c.chunk_metadata.get("element_type") == "table")
     assert "2028 renewals" in table_chunk.content
     assert "Enterprise customers" in table_chunk.content
-    assert table_chunk.char_start == 0
+    assert table_chunk.char_start is None
+    assert table_chunk.chunk_metadata["provenance_precision"] == "chunk_with_source_spans"
     assert table_chunk.page_start == 1
 
 

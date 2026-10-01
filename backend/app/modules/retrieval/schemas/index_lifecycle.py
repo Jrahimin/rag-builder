@@ -30,6 +30,7 @@ class IndexBuildResponse(BaseModel):
     chunk_count: int
     vector_count: int
     keyword_count: int
+    structural_contract_version: str | None = None
     manifest: dict[str, Any]
     validated_at: datetime | None
     activated_at: datetime | None

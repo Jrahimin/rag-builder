@@ -36,6 +36,8 @@ Error:
 }
 ```
 
+See [Provider expense controls](provider_costs.md) for job failures, paid evaluations and accounting.
+
 ## Modules
 
 | Module | File | Prefix |

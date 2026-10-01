@@ -11,6 +11,7 @@ from app.platform.jobs.errors import JobEnqueueError
 from app.platform.jobs.names import (
     CORPUS_REEMBED,
     CORPUS_REINDEX,
+    CORPUS_STRUCTURE_V1,
     DOCUMENT_DELETE,
     DOCUMENT_EMBED,
     DOCUMENT_INDEX,
@@ -38,7 +39,11 @@ def _validate_job_id(payload: dict[str, Any]) -> str:
 
 
 def _build_registry() -> dict[str, JobDispatchSpec]:
-    from app.worker.handlers.corpus import corpus_reembed_task, corpus_reindex_task
+    from app.worker.handlers.corpus import (
+        corpus_reembed_task,
+        corpus_reindex_task,
+        corpus_structure_v1_task,
+    )
     from app.worker.handlers.document import document_process_task
     from app.worker.handlers.document_lifecycle import document_delete_task, document_purge_task
     from app.worker.handlers.embedding import document_embed_task
@@ -112,6 +117,13 @@ def _build_registry() -> dict[str, JobDispatchSpec]:
             .kiq(project_id=str(project_id), job_id=durable_job_id)
         )
 
+    async def enqueue_structure(*, job_id: str, project_id: uuid.UUID, durable_job_id: str) -> Any:
+        return await (
+            corpus_structure_v1_task.kicker()
+            .with_task_id(job_id)
+            .kiq(project_id=str(project_id), job_id=durable_job_id)
+        )
+
     async def enqueue_document_delete(
         *, job_id: str, project_id: uuid.UUID, durable_job_id: str
     ) -> Any:
@@ -158,6 +170,7 @@ def _build_registry() -> dict[str, JobDispatchSpec]:
         ),
         CORPUS_REEMBED: JobDispatchSpec(_validate_job_id, enqueue_corpus_reembed),
         CORPUS_REINDEX: JobDispatchSpec(_validate_job_id, enqueue_corpus_reindex),
+        CORPUS_STRUCTURE_V1: JobDispatchSpec(_validate_job_id, enqueue_structure),
         DOCUMENT_DELETE: JobDispatchSpec(_validate_job_id, enqueue_document_delete),
         DOCUMENT_PURGE: JobDispatchSpec(_validate_job_id, enqueue_document_purge),
         STORAGE_RECONCILE: JobDispatchSpec(_validate_job_id, enqueue_storage_reconcile),

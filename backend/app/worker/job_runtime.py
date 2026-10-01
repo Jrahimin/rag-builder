@@ -13,6 +13,7 @@ import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.composition.jobs import build_job_service
+from app.composition.provider_work import provider_work_scope
 from app.core.config import Settings, get_settings
 from app.models.document import DocumentStatus
 from app.models.index_build import IndexBuildState
@@ -144,7 +145,14 @@ async def run_durable_job(
                 # autoflush of business changes cannot also lock the job row and
                 # make a synchronous progress report wait on its own transaction.
                 session.expunge(run)
-                child = await operation(session, run, effective_settings, service, reporter)
+                with provider_work_scope(
+                    effective_settings,
+                    database.session_factory,
+                    project_uuid,
+                    str(job_uuid),
+                    "evaluation" if run.job_type is JobType.EVALUATION_RUN else run.job_type.value,
+                ):
+                    child = await operation(session, run, effective_settings, service, reporter)
                 submission = await service.stage_success(
                     run_id,
                     worker_id=worker_id,
@@ -173,7 +181,8 @@ async def run_durable_job(
                 if (
                     not will_retry
                     and failed_run.document_id is not None
-                    and failure.code != "index_build_corpus_changed"
+                    and failure.code
+                    not in {"index_build_corpus_changed", "provider_budget_exhausted"}
                 ):
                     documents = DocumentRepository(session, project_uuid)
                     document = await documents.get_by_id(

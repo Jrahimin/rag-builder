@@ -47,6 +47,158 @@ def _resolution(bindings=(), **kwargs):
     )
 
 
+@pytest.mark.parametrize("period", ["2026-27", "2026\u201327", "2026-2027"])
+def test_resolver_cannot_invent_assessment_year(period: str) -> None:
+    payload = _payload("What is the current tax rebate rate?")
+    resolution = TurnResolution(
+        outcome="resolved",
+        relation="follow_up",
+        effective_question=f"What is the tax rebate rate for assessment year {period}?",
+    )
+    with pytest.raises(TurnResolutionError, match="unattested period"):
+        validate_turn_resolution(resolution, payload)
+
+
+def test_explicit_historical_year_survives_rewrite_and_punctuation_change() -> None:
+    payload = _payload("What was the tax rebate rate for assessment year 2024\u201325?")
+    resolution = TurnResolution(
+        outcome="resolved",
+        relation="follow_up",
+        effective_question="What was the tax rebate rate for assessment year 2024-2025?",
+    )
+    assert validate_turn_resolution(resolution, payload).effective_question == (
+        "What was the tax rebate rate for assessment year 2024-2025?"
+    )
+
+
+@pytest.mark.parametrize(
+    ("question", "rewrite"),
+    [
+        ("What was the rebate rate in 2024?", "What was the rebate rate in 2026?"),
+        ("২০২৪ সালে রেয়াতের হার কত?", "২০২৬ সালে রেয়াতের হার কত?"),
+        ("What was the rate for AY 2024-25?", "What was the rate for FY 2024-25?"),
+        ("করবর্ষ ২০২৪-২৫ এর হার কত?", "অর্থবছর ২০২৪-২৫ এর হার কত?"),
+    ],
+)
+def test_explicit_historical_period_kind_and_year_survive_rewrite(
+    question: str, rewrite: str
+) -> None:
+    with pytest.raises(TurnResolutionError, match="drops or substitutes"):
+        validate_turn_resolution(
+            TurnResolution(outcome="resolved", relation="follow_up", effective_question=rewrite),
+            _payload(question),
+        )
+
+
+def test_project_period_policy_can_authorize_rewritten_year() -> None:
+    payload = _payload("What is the current tax rebate rate?").model_copy(
+        update={"domain_instructions": "Use assessment year 2026\u201327 as the default."}
+    )
+    resolution = TurnResolution(
+        outcome="resolved",
+        relation="follow_up",
+        effective_question="What is the tax rebate rate for assessment year 2026-2027?",
+    )
+    assert validate_turn_resolution(resolution, payload).effective_question.endswith("2026-2027?")
+
+
+@pytest.mark.parametrize(
+    "effective_question",
+    [
+        "What was the tax rebate rate for assessment year 2026-27?",
+        "What was the tax rebate rate?",
+    ],
+)
+def test_explicit_user_year_outranks_conflicting_project_default(
+    effective_question: str,
+) -> None:
+    payload = _payload("What was the tax rebate rate for assessment year 2024-25?").model_copy(
+        update={"domain_instructions": "Default to assessment year 2026-27."}
+    )
+    resolution = TurnResolution(
+        outcome="resolved",
+        relation="follow_up",
+        effective_question=effective_question,
+    )
+    with pytest.raises(TurnResolutionError, match="drops or substitutes"):
+        validate_turn_resolution(resolution, payload)
+
+
+def test_explicit_user_year_rejects_conflicting_history_period_binding() -> None:
+    previous_id = uuid.uuid4()
+    payload = _payload(
+        "What was the tax rebate rate for assessment year 2024-25?",
+        history=[
+            HistoryMessage(
+                id=previous_id,
+                role="user",
+                content="Use assessment year 2026-27.",
+            )
+        ],
+    )
+    resolution = TurnResolution(
+        outcome="resolved",
+        relation="follow_up",
+        effective_question="What was the tax rebate rate for assessment year 2024-25?",
+        active_bindings=[
+            ReferenceBinding(
+                kind="period_date",
+                active_value="2026-27",
+                origin="user_literal",
+                references=[
+                    BindingReference(
+                        message_id=previous_id,
+                        role="user",
+                        excerpt="2026-27",
+                    )
+                ],
+            )
+        ],
+    )
+    with pytest.raises(TurnResolutionError, match="Prior period binding conflicts"):
+        validate_turn_resolution(resolution, payload)
+
+
+@pytest.mark.parametrize(
+    "effective_question",
+    [
+        "What was the rate for assessment year 2026?",
+        "What was the rate?",
+    ],
+)
+def test_single_named_assessment_year_cannot_be_changed_or_dropped(
+    effective_question: str,
+) -> None:
+    payload = _payload("What was the rate for AY 2024?").model_copy(
+        update={"domain_instructions": "Default to AY 2026."}
+    )
+    resolution = TurnResolution(
+        outcome="resolved",
+        relation="follow_up",
+        effective_question=effective_question,
+    )
+    with pytest.raises(TurnResolutionError, match="drops or substitutes"):
+        validate_turn_resolution(resolution, payload)
+
+
+def test_model_cannot_invent_single_named_assessment_year() -> None:
+    payload = _payload("What is the current rate?")
+    resolution = TurnResolution(
+        outcome="resolved",
+        relation="follow_up",
+        effective_question="What is the rate for AY 2026?",
+    )
+    with pytest.raises(TurnResolutionError, match="unattested period"):
+        validate_turn_resolution(resolution, payload)
+
+
+def test_year_range_parser_excludes_iso_dates_and_handles_century_rollover() -> None:
+    from app.modules.conversations.turn_resolution import _year_ranges
+
+    assert _year_ranges("as of 2024-01-01") == set()
+    assert _year_ranges("assessment year 1999-00") == {(1999, 2000)}
+
+
 @pytest.mark.parametrize(
     ("left", "right"),
     [

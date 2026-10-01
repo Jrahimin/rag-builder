@@ -7,16 +7,23 @@ import json
 import uuid
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import aclosing, suppress
-from typing import cast
+from typing import Annotated, cast
 
 import structlog
 from fastapi import APIRouter, Depends, Query, Request, status
 from fastapi.responses import StreamingResponse
 
+from app.composition.audit import DatabaseAuditRecorder
 from app.core.exceptions import APEError
 from app.core.http.envelopes import ApiResponse
 from app.dependencies.admin_auth import require_super_admin
+from app.dependencies.common import DbSessionDep
 from app.dependencies.conversations import ChatServiceDep, ConversationServiceDep
+from app.dependencies.projects import ensure_project_accessible
+from app.modules.admin_auth.schemas import AuthenticatedAdmin
+from app.modules.conversations.repositories.message_diagnostic_repository import (
+    MessageDiagnosticRepository,
+)
 from app.modules.conversations.schemas.conversation import (
     ConversationConfigRefresh,
     ConversationCreate,
@@ -25,9 +32,11 @@ from app.modules.conversations.schemas.conversation import (
 )
 from app.modules.conversations.schemas.message import (
     ChatTurnResponse,
+    MessageDiagnosticResponse,
     MessageResponse,
     MessageSendRequest,
 )
+from app.modules.conversations.services.message_diagnostic_service import MessageDiagnosticService
 from app.platform.http.pagination import ListParams, PaginatedResult
 from app.platform.providers.errors import ProviderError
 
@@ -326,3 +335,36 @@ async def stream_message(
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no"},
     )
+
+
+@router.get(
+    "/{conversation_id}/messages/{message_id}/diagnostic",
+    response_model=ApiResponse[MessageDiagnosticResponse],
+    dependencies=[Depends(ensure_project_accessible)],
+    summary="Read an expiring operator message diagnostic",
+)
+async def get_message_diagnostic(
+    project_id: uuid.UUID,
+    conversation_id: uuid.UUID,
+    message_id: uuid.UUID,
+    session: DbSessionDep,
+    service: ConversationServiceDep,
+    admin: Annotated[AuthenticatedAdmin, Depends(require_super_admin)],
+) -> ApiResponse[MessageDiagnosticResponse]:
+    await service.get(conversation_id)
+    # Ensure the requested message belongs to this conversation as well as this Project.
+    from app.modules.conversations.repositories.message_repository import MessageRepository
+
+    message = await MessageRepository(session, project_id).get_by_id(message_id)
+    if message is None or message.conversation_id != conversation_id:
+        from app.core.exceptions import NotFoundError
+
+        raise NotFoundError(
+            message="Message diagnostic not found.", code="message_diagnostic_not_found"
+        )
+    result = await MessageDiagnosticService(
+        MessageDiagnosticRepository(session, project_id),
+        DatabaseAuditRecorder(session, project_id),
+        str(admin.id),
+    ).get(message_id)
+    return ApiResponse.ok(MessageDiagnosticResponse.model_validate(result))

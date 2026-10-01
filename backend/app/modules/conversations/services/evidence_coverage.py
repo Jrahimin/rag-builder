@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import unicodedata
 from typing import Any, Literal
 
@@ -78,6 +79,45 @@ def numbered_source_lines(content: str) -> str:
     return "\n".join(f"L{i}: {line}" for i, line in enumerate(content.splitlines(), start=1))
 
 
+class ConditionFacet(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    who: str = Field(min_length=1, max_length=400)
+    action: str = Field(min_length=1, max_length=600)
+    when: str = Field(default="", max_length=400)
+    condition: str = Field(min_length=1, max_length=600)
+    evidence_indexes: list[int] = Field(min_length=1, max_length=8)
+
+
+def condition_facet_instructions() -> str:
+    """Every producer uses one canonical list shape and scalar types."""
+    one = ConditionFacet(
+        who="tenant",
+        action="supply rental agreement",
+        when="",
+        condition="rented premises",
+        evidence_indexes=[0],
+    )
+    two = ConditionFacet(
+        who="factory operator",
+        action="supply factory clearance",
+        when="new application",
+        condition="factory",
+        evidence_indexes=[1],
+    )
+    return (
+        "condition_facets is an ARRAY, never an object. Examples: [] ; "
+        + json.dumps([one.model_dump()], ensure_ascii=False)
+        + " ; "
+        + json.dumps([one.model_dump(), two.model_dump()], ensure_ascii=False)
+        + "\nItem schema: "
+        + json.dumps(ConditionFacet.model_json_schema())
+        + "\nAll text fields are strings (when may be empty, never null). evidence_indexes "
+        "are zero-based indexes of THIS check's evidence; never borrow another check. "
+        "Preserve subject, action and tenant/factory conditions. Semantic equivalents are allowed. "
+        "Missing source conditions remain unresolved_facets; personal eligibility needs user facts."
+    )
+
+
 class _Check(BaseModel):
     model_config = ConfigDict(extra="forbid")
     query_index: int = -1  # Legacy wire compatibility only; never a new requirement identity.
@@ -88,6 +128,7 @@ class _Check(BaseModel):
     # that proof answers the original requirement in the active review.
     fulfillment: Literal["full", "partial", "none"] | None = None
     unresolved_facets: list[str] = Field(default_factory=list, max_length=12)
+    condition_facets: list[ConditionFacet] = Field(default_factory=list, max_length=12)
     answerable_scope: str = Field(default="", max_length=1000)
     needs_adjacent_context: bool = False
     evidence: list[_Quote] = Field(max_length=8)
@@ -220,7 +261,12 @@ class CoverageVerdict(BaseModel):
             exclusions=exclusions,
         )
 
-    def partial_validates(self, context: list[ContextChunk], requirement_ids: set[str]) -> bool:
+    def partial_validates(
+        self,
+        context: list[ContextChunk],
+        requirement_ids: set[str],
+        mandatory_ids: set[str] | dict[str, set[str]] | None = None,
+    ) -> bool:
         """Require exact proof for every dependency of the explicitly limited scope."""
         partial = self.partial_answer
         if self.complete or not self.missing or partial is None or not requirement_ids:
@@ -231,6 +277,25 @@ class CoverageVerdict(BaseModel):
             return False
         if len(ids) != len(set(ids)) or not set(ids).issubset(requirement_ids):
             return False
+        if isinstance(mandatory_ids, dict):
+            # Follow dependencies transitively; cycles do not remove obligations.
+            needed = set(ids)
+            pending = list(ids)
+            while pending:
+                for dependency in mandatory_ids.get(pending.pop(), set()):
+                    if dependency not in needed:
+                        needed.add(dependency)
+                        pending.append(dependency)
+            mandatory_ids = needed
+        if mandatory_ids:
+            if not mandatory_ids.issubset(set(ids)):
+                return False
+            if any(
+                check.requirement_id in mandatory_ids
+                and (check.fulfillment != "full" or check.unresolved_facets)
+                for check in checks
+            ):
+                return False
         # Also reject missing/duplicated original checks: a scoped review cannot
         # hide a dependency by dropping its check from the original question.
         all_ids = [check.requirement_id for check in self.checks]

@@ -318,4 +318,9 @@ def test_luna_reasoning_is_bounded_but_json_mode_is_internal_only(purpose):
     assert "reasoning_effort" not in provider._body(messages, max_tokens=4096, stream=False)
     assert "response_format" not in provider._body(messages, max_tokens=4096, stream=False)
     with work.stage(purpose):
-        assert "response_format" not in provider._body(messages, max_tokens=4096, stream=True)
+        streamed = provider._body(messages, max_tokens=4096, stream=True)
+    assert streamed["reasoning_effort"] == body["reasoning_effort"]
+    if purpose == "answer_generation":
+        assert "response_format" not in streamed
+    else:
+        assert streamed["response_format"] == body["response_format"] == {"type": "json_object"}

@@ -23,10 +23,12 @@ See ``docs/learning/conversation_provider_integration.md``.
 
 from __future__ import annotations
 
+import json
 from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
+from typing import Any
 
 
 class ChatRole(StrEnum):
@@ -75,8 +77,40 @@ class ChatCompletionChunk:
     usage: ChatUsage | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class StructuredOutput:
+    """Neutral constrained-JSON intent. Semantic/proof validation is mandatory."""
+
+    name: str
+    schema: dict[str, Any]
+
+
 class BaseLLMProvider(ABC):
     """Generate chat completions behind a vendor-neutral interface."""
+
+    supports_output_contract: bool = False
+
+    async def generate_structured(
+        self,
+        messages: list[ChatMessage],
+        *,
+        output_contract: StructuredOutput,
+        temperature: float | None = None,
+        max_tokens: int,
+    ) -> ChatCompletionResult:
+        """Use adapter constraints or a JSON-only prompt on legacy adapters."""
+        if getattr(self, "supports_output_contract", False) is True:
+            return await self.generate(
+                messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                output_contract=output_contract,
+            )
+        return await self.generate(
+            constrained_messages(messages, output_contract),
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
 
     @property
     @abstractmethod
@@ -100,6 +134,7 @@ class BaseLLMProvider(ABC):
         *,
         temperature: float | None = None,
         max_tokens: int,
+        output_contract: StructuredOutput | None = None,
     ) -> ChatCompletionResult:
         """Run a non-streaming chat completion; ``None`` uses provider defaults."""
 
@@ -110,5 +145,39 @@ class BaseLLMProvider(ABC):
         *,
         temperature: float | None = None,
         max_tokens: int,
+        output_contract: StructuredOutput | None = None,
     ) -> AsyncGenerator[ChatCompletionChunk, None]:
         """Stream deltas; ``None`` uses provider defaults."""
+
+
+async def generate_structured(
+    provider: BaseLLMProvider,
+    messages: list[ChatMessage],
+    *,
+    output_contract: StructuredOutput,
+    temperature: float | None = None,
+    max_tokens: int,
+) -> ChatCompletionResult:
+    """Apply the neutral contract through wrappers and legacy duck-typed ports."""
+    return await BaseLLMProvider.generate_structured(
+        provider,
+        messages,
+        output_contract=output_contract,
+        temperature=temperature,
+        max_tokens=max_tokens,
+    )
+
+
+def constrained_messages(
+    messages: list[ChatMessage], output_contract: StructuredOutput
+) -> list[ChatMessage]:
+    """JSON-only fallback keeps the question and existing retry instruction in place."""
+    instruction = "Return only JSON matching " + json.dumps(
+        output_contract.schema, ensure_ascii=False
+    )
+    if messages and messages[0].role is ChatRole.SYSTEM:
+        return [
+            replace(messages[0], content=messages[0].content + "\n" + instruction),
+            *messages[1:],
+        ]
+    return [ChatMessage(role=ChatRole.SYSTEM, content=instruction), *messages]

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,6 +24,8 @@ class KnowledgeRetrievalSourceMetadataAdapter:
     def __init__(self, session: AsyncSession) -> None:
         self._reader = KnowledgeSourceMetadataReader(session)
 
+    supports_period_scope = True
+
     async def capture(
         self,
         *,
@@ -32,6 +35,8 @@ class KnowledgeRetrievalSourceMetadataAdapter:
         as_of: datetime | None,
         generation: int | None = None,
         scoped_document_id: uuid.UUID | None = None,
+        period_lookup: bool = False,
+        request_scope: dict[str, Any] | None = None,
     ) -> SourceMetadataScope:
         cap = SourcePolicyDeploymentCap(deployment_cap)
         effective_mode = cap_source_policy_mode(configured_mode, cap)
@@ -44,6 +49,7 @@ class KnowledgeRetrievalSourceMetadataAdapter:
             generation=generation,
             as_of=as_of,
             enforce=enforce_join,
+            request_scope=request_scope,
         )
         return SourceMetadataScope(
             selectable=captured.selectable,
@@ -64,6 +70,7 @@ class KnowledgeRetrievalSourceMetadataAdapter:
         generation: int,
         as_of: datetime | None,
         index_build_id: uuid.UUID,
+        request_scope: dict[str, Any] | None = None,
     ) -> list[ModifierExpansionRecord]:
         records = await self._reader.incoming_modifiers(
             project_id=project_id,
@@ -71,6 +78,7 @@ class KnowledgeRetrievalSourceMetadataAdapter:
             generation=generation,
             as_of=as_of,
             index_build_id=index_build_id,
+            request_scope=request_scope,
         )
         return [
             ModifierExpansionRecord(
@@ -87,6 +95,9 @@ class KnowledgeRetrievalSourceMetadataAdapter:
                 base_effective_to=item.base_effective_to,
                 outcome=ModifierExpansionOutcome(item.outcome),
                 target_provisions=item.target_provisions,
+                provision_effect=item.provision_effect,
+                replacement_scope_verified=item.replacement_scope_verified,
+                supporting_spans=item.supporting_spans,
             )
             for item in records
         ]

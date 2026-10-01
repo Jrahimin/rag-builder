@@ -18,6 +18,7 @@ from app.platform.providers.contracts.llm import (
     ChatMessage,
     ChatRole,
     ChatUsage,
+    StructuredOutput,
 )
 from app.platform.providers.errors import ProviderError
 
@@ -29,6 +30,8 @@ _GEMINI_ROLE = {
 
 class GeminiChatProvider(BaseLLMProvider):
     """Chat via Gemini generateContent API."""
+
+    supports_output_contract = True
 
     def __init__(
         self,
@@ -81,6 +84,7 @@ class GeminiChatProvider(BaseLLMProvider):
         *,
         temperature: float | None = None,
         max_tokens: int,
+        output_contract: StructuredOutput | None = None,
     ) -> dict[str, object]:
         system_instruction, contents = self._split_messages(messages)
         generation_config: dict[str, object] = {}
@@ -91,6 +95,9 @@ class GeminiChatProvider(BaseLLMProvider):
                 max_tokens=max_tokens,
             )
         )
+        if output_contract is not None:
+            generation_config["responseMimeType"] = "application/json"
+            generation_config["responseJsonSchema"] = output_contract.schema
         body: dict[str, object] = {
             "contents": contents,
             "generationConfig": generation_config,
@@ -156,9 +163,15 @@ class GeminiChatProvider(BaseLLMProvider):
         *,
         temperature: float | None = None,
         max_tokens: int,
+        output_contract: StructuredOutput | None = None,
     ) -> ChatCompletionResult:
         url = self._url(stream=False)
-        body = self._request_body(messages, temperature=temperature, max_tokens=max_tokens)
+        body = self._request_body(
+            messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            output_contract=output_contract,
+        )
         try:
             async with httpx.AsyncClient(timeout=self._timeout) as client:
                 response = await client.post(url, json=body)
@@ -179,9 +192,15 @@ class GeminiChatProvider(BaseLLMProvider):
         *,
         temperature: float | None = None,
         max_tokens: int,
+        output_contract: StructuredOutput | None = None,
     ) -> AsyncGenerator[ChatCompletionChunk, None]:
         url = self._url(stream=True)
-        body = self._request_body(messages, temperature=temperature, max_tokens=max_tokens)
+        body = self._request_body(
+            messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            output_contract=output_contract,
+        )
         client = httpx.AsyncClient(timeout=self._timeout)
         try:
             async with client.stream("POST", url, json=body) as response:

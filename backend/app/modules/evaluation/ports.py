@@ -62,6 +62,24 @@ class QualityAnswer:
     selected_chunk_ids: list[uuid.UUID] = field(default_factory=list)
     evidence_gate: dict[str, Any] = field(default_factory=dict)
 
+    execution: dict[str, Any] = field(default_factory=dict)
+    complete_turn_latency_ms: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class EvaluationCaseInput:
+    query: str
+    top_k: int
+    document_id: uuid.UUID | None = None
+    metadata_filter: dict[str, str] = field(default_factory=dict)
+    as_of: datetime | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class QualityCaseExecution:
+    search: QualitySearchResult
+    answer: QualityAnswer
+
 
 class EvaluationRetrievalPort(Protocol):
     @property

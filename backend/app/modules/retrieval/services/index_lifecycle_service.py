@@ -25,7 +25,12 @@ from app.platform.jobs.contracts import (
     JobDefinition,
     RetryPolicy,
 )
-from app.platform.jobs.names import CORPUS_REEMBED, CORPUS_REINDEX, STORAGE_RECONCILE
+from app.platform.jobs.names import (
+    CORPUS_REEMBED,
+    CORPUS_REINDEX,
+    CORPUS_STRUCTURE_V1,
+    STORAGE_RECONCILE,
+)
 from app.platform.providers.errors import ProviderError
 
 
@@ -60,6 +65,32 @@ class IndexLifecycleService:
     async def enqueue_reindex(self, *, auto_activate: bool = False) -> LifecycleJobResponse:
         return await self._enqueue(IndexBuildOperation.REINDEX, CORPUS_REINDEX, auto_activate)
 
+    async def enqueue_private_reprocess(
+        self, *, source_build_id: uuid.UUID | None = None
+    ) -> LifecycleJobResponse:
+        if source_build_id:
+            from app.modules.retrieval.structural_contract import verify_structural_build
+
+            source = await self.get(source_build_id)
+            if (
+                source.state not in {IndexBuildState.VALIDATED, IndexBuildState.RETAINED}
+                or not source.structural_contract_version
+            ):
+                raise BadRequestError(
+                    "Revalidation requires a sealed structural generation.",
+                    code="structural_build_contract_invalid",
+                )
+            await verify_structural_build(
+                self._session, self._project_id, source, allow_legacy_unit_hash=True
+            )
+        return await self._enqueue(
+            IndexBuildOperation.REPROCESS,
+            CORPUS_STRUCTURE_V1,
+            False,
+            structural_reprocess=True,
+            source_build_id=source_build_id,
+        )
+
     async def enqueue_storage_reconciliation(self) -> LifecycleJobResponse:
         submission = await self._jobs.stage(
             JobDefinition(
@@ -83,9 +114,16 @@ class IndexLifecycleService:
         return LifecycleJobResponse(job_id=submission.job_id, created=submission.created)
 
     async def _enqueue(
-        self, operation: IndexBuildOperation, job_name: str, auto_activate: bool
+        self,
+        operation: IndexBuildOperation,
+        job_name: str,
+        auto_activate: bool,
+        *,
+        structural_reprocess: bool = False,
+        source_build_id: uuid.UUID | None = None,
     ) -> LifecycleJobResponse:
         build = IndexBuild(
+            structural_contract_version="structure.v1" if structural_reprocess else None,
             project_id=self._project_id,
             operation=operation,
             state=IndexBuildState.BUILDING,
@@ -121,6 +159,9 @@ class IndexLifecycleService:
                 payload={
                     "build_id": str(build.id),
                     "auto_activate": auto_activate,
+                    "structural_reprocess": structural_reprocess,
+                    "source_build_id": str(source_build_id) if source_build_id else None,
+                    "structural_contract_version": "structure.v1" if structural_reprocess else None,
                     "embedding_set_version": self._embedding_set_version,
                 },
                 idempotency_key=f"{job_name}:{self._project_id}:{build.id}",

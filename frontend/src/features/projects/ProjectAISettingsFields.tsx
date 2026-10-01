@@ -129,7 +129,7 @@ export function configFormFromEffective(
   const behavior = stored.behavior;
   const globalModelId =
     global.llm.generation_model_id ?? config.configuration.llm.generation_model_id ?? "";
-  const globalResponse = global.chat.response_mode;
+  const globalResponse = global.chat.response_mode ?? "indexed_only";
   const globalGrounding: GroundingAssurance =
     global.chat.grounding_mode === "balanced" ? "balanced" : "strict";
   const globalTranslation: TranslationMode = global.retrieval.query_translation_enabled
@@ -237,7 +237,7 @@ export function buildSparseProjectConfig(form: ProjectConfigForm): ProjectAIConf
   if (form.profileId !== "inherit") execution.profile_id = form.profileId;
   if (form.profileId === "custom") Object.assign(execution, form.execution);
   Object.assign(execution, form.recovery);
-  return { behavior, execution } as ProjectAIConfig;
+  return { behavior, execution };
 }
 
 export function sparseHasOverrides(configuration: ProjectAIConfig): boolean {

@@ -14,7 +14,7 @@ import uuid
 from collections.abc import Sequence
 from datetime import UTC, date, datetime, timedelta
 from enum import StrEnum
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
@@ -160,6 +160,22 @@ class TurnResolutionError(ValueError):
 _CURRENCY_SYMBOLS = frozenset({"$", "€", "£", "¥", "৳"})
 _AMOUNT_GROUPING = frozenset({",", "_", "\u00a0", "\u202f", "\u09f7", "\u066c"})
 _ISO_DATE_RE = re.compile(r"(?<!\d)\d{4}-\d{2}-\d{2}(?!\d)")
+_YEAR_RANGE_RE = re.compile(
+    r"(?<!\d)(?:19|20)\d{2}\s*[-\u2013\u2014/]\s*(?:\d{2}|(?:19|20)\d{2})"
+    r"(?!\d|[-\u2013\u2014/]\d)"
+)
+_NAMED_YEAR_RE = re.compile(
+    r"(?:\b(?:assessment|tax|fiscal|financial|calendar)\s+year\b|\b(?:AY|FY)\b|"
+    r"করবর্ষ|অর্থবছর)\s*[:\-]?\s*((?:19|20)\d{2})(?!\d)",
+    re.IGNORECASE,
+)
+_EXPLICIT_PERIOD_RE = re.compile(
+    r"(?P<label>\b(?:assessment|tax|fiscal|financial|calendar)\s+year\b|"
+    r"\b(?:AY|FY)\b|করবর্ষ|অর্থবছর|\b(?:in|during|for)\b)"
+    r"\s*[:\-]?\s*(?P<year>(?:19|20)\d{2}(?:\s*[-\u2013\u2014/]\s*(?:\d{2}|(?:19|20)\d{2}))?)(?!\d)"
+    r"|(?P<bn_year>(?:19|20)\d{2})\s*(?P<bn_label>সালে|সনের|বছরে)",
+    re.IGNORECASE,
+)
 _CURRENCY_TOKEN_RE = re.compile(
     r"(?<![\w$€£¥৳])(?:bdt|usd|eur|gbp|inr|tk|taka|\u099f\u09be\u0995\u09be)"
     r"(?![\w$€£¥৳])",
@@ -267,6 +283,8 @@ def _parameter_like_tokens(text: str) -> tuple[str, ...]:
 
     for match in _ISO_DATE_RE.finditer(folded):
         _take(match.start(), match.end())
+    for match in _YEAR_RANGE_RE.finditer(folded):
+        _take(match.start(), match.end())
     for match in _MEASURED_QUANTITY_RE.finditer(folded):
         _take(match.start(), match.end())
     for match in _AMOUNT_RE.finditer(folded):
@@ -325,7 +343,47 @@ def _affixed_quantity_tokens(text: str) -> tuple[str, ...]:
     return tuple(tokens)
 
 
+def _year_ranges(text: str) -> set[tuple[int, int]]:
+    """Canonicalize abbreviated fiscal/assessment ranges across digit scripts."""
+    periods: set[tuple[int, int]] = set()
+    for match in _YEAR_RANGE_RE.finditer(_fold_for_extraction(text)):
+        first, second = re.split(r"\s*[-\u2013\u2014/]\s*", match.group())
+        start = int(first)
+        end = int(f"{first[:2]}{second}") if len(second) == 2 else int(second)
+        if len(second) == 2 and end < start:
+            end += 100
+        periods.add((start, end))
+    return periods
+
+
+def _named_years(text: str) -> set[int]:
+    return {int(match.group(1)) for match in _NAMED_YEAR_RE.finditer(_fold_for_extraction(text))}
+
+
+def _explicit_period_scope(text: str) -> set[tuple[str, int, int]]:
+    """Keep the user's period kind as well as its years across a rewrite."""
+    scopes: set[tuple[str, int, int]] = set()
+    for match in _EXPLICIT_PERIOD_RE.finditer(_fold_for_extraction(text)):
+        label = (match.group("label") or match.group("bn_label") or "").casefold()
+        if label in {"ay", "assessment year", "tax year", "করবর্ষ"}:
+            kind = "assessment"
+        elif label in {"fy", "fiscal year", "financial year", "অর্থবছর"}:
+            kind = "fiscal"
+        elif label == "calendar year":
+            kind = "calendar"
+        else:
+            kind = "bare"
+        value = match.group("year") or match.group("bn_year")
+        ranges = _year_ranges(value)
+        start, end = next(iter(ranges)) if ranges else (int(value), int(value))
+        scopes.add((kind, start, end))
+    return scopes
+
+
 def _token_justified_by_texts(token: str, texts: Sequence[str]) -> bool:
+    if _YEAR_RANGE_RE.fullmatch(token):
+        attested = set().union(*(_year_ranges(t) for t in texts))
+        return bool(_year_ranges(token) & attested)
     return any(_literal_value_present(token, text) for text in texts if text)
 
 
@@ -340,6 +398,60 @@ def _validate_effective_question_parameters(
         payload.current_message,
         *(binding.active_value for binding in resolution.active_bindings),
     ]
+    period_texts = [*allowed_texts, payload.domain_instructions]
+    explicit_periods = _year_ranges(payload.current_message)
+    explicit_scope = _explicit_period_scope(payload.current_message)
+    rewritten_scope = _explicit_period_scope(resolution.effective_question)
+    if explicit_scope and rewritten_scope != explicit_scope:
+        raise TurnResolutionError(
+            "Effective question drops or substitutes the user's period kind or year.",
+            code="mutated_effective_question",
+            field="effective_question",
+        )
+    explicit_named_years = _named_years(payload.current_message)
+    rewritten_named_years = _named_years(resolution.effective_question)
+    if explicit_named_years:
+        if rewritten_named_years != explicit_named_years or (
+            not explicit_periods and _year_ranges(resolution.effective_question)
+        ):
+            raise TurnResolutionError(
+                "Effective question drops or substitutes the user's period.",
+                code="mutated_effective_question",
+                field="effective_question",
+            )
+    elif rewritten_named_years:
+        attested_named_years = set().union(*(_named_years(text) for text in period_texts))
+        attested_named_years.update(start for start, _end in explicit_periods)
+        if not rewritten_named_years <= attested_named_years:
+            raise TurnResolutionError(
+                "Effective question introduces an unattested period.",
+                code="mutated_effective_question",
+                field="effective_question",
+            )
+    # Current user scope outranks a configured default or an older binding.
+    # Both omission and substitution would change the operative question.
+    if explicit_periods and _year_ranges(resolution.effective_question) != explicit_periods:
+        raise TurnResolutionError(
+            "Effective question drops or substitutes the user's period.",
+            code="mutated_effective_question",
+            field="effective_question",
+        )
+    if explicit_periods or explicit_named_years:
+        for binding in resolution.active_bindings:
+            if binding.kind is not BindingKind.PERIOD_DATE:
+                continue
+            if _year_ranges(binding.active_value) & explicit_periods:
+                continue
+            if _named_years(binding.active_value) & explicit_named_years:
+                continue
+            if _literal_value_present(binding.active_value, payload.current_message):
+                continue
+            raise TurnResolutionError(
+                "Prior period binding conflicts with the user's explicit period.",
+                code="mutated_effective_question",
+                field="active_bindings",
+            )
+        period_texts = [*allowed_texts]
     history_texts = [item.content for item in payload.history]
     new_amount_texts = [
         payload.current_message,
@@ -351,8 +463,17 @@ def _validate_effective_question_parameters(
     ]
     correction_mentions_old = resolution.relation is TurnRelation.CORRECTION
     for token in _parameter_like_tokens(resolution.effective_question):
-        if _token_justified_by_texts(token, allowed_texts):
+        if _token_justified_by_texts(
+            token,
+            period_texts if _YEAR_RANGE_RE.fullmatch(token) else allowed_texts,
+        ):
             continue
+        if _YEAR_RANGE_RE.fullmatch(token):
+            raise TurnResolutionError(
+                "Effective question introduces an unattested period.",
+                code="mutated_effective_question",
+                field="effective_question",
+            )
         core, affix = _split_quantity_token(token)
         if (
             core != token
@@ -656,12 +777,171 @@ class EffectiveSnapshot(BaseModel):
     clarify_reason: str | None = None
 
 
+class RequestedPeriod(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    kind: Literal["assessment", "fiscal", "calendar", "bare"]
+    start_year: int
+    end_year: int
+    source_text: str
+
+
+class StipulatedFact(BaseModel):
+    """User scenario stipulation, never evidence of legal membership."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    field: Literal["category", "condition"]
+    value: str
+    origin: Literal["user"] = "user"
+    source_text: str
+
+
+class RequestScope(BaseModel):
+    """One every-turn scope contract. Periods are not invented snapshot dates."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    version: str = "request.scope.v1"
+    task_kind: Literal[
+        "lookup", "explanation", "eligibility", "calculation", "comparison", "overview"
+    ] = "lookup"
+    subject: str = ""
+    requested_periods: tuple[RequestedPeriod, ...] = ()
+    exact_as_of: datetime | None = None
+    current_reference_time: datetime | None = None
+    temporal_basis: Literal["applicable_rule", "known_at"] = "applicable_rule"
+    known_at_inclusive: bool = True
+    jurisdiction: str | None = None
+    category: str | None = None
+    named_instruments: tuple[str, ...] = ()
+    source_restriction: str = "project_default"
+    document_id: uuid.UUID | None = None
+    explicit_inputs: tuple[str, ...] = ()
+    stipulated_facts: tuple[StipulatedFact, ...] = ()
+    eligibility_requested: bool = False
+    project_defaults: str = ""
+
+
+def normalize_request_scope(
+    question: str,
+    *,
+    reference_time: datetime | None = None,
+    request_filters: RequestFilters | None = None,
+    project_defaults: str = "",
+) -> RequestScope:
+    filters = request_filters or RequestFilters()
+    folded = _fold_for_extraction(question)
+    periods = tuple(
+        RequestedPeriod(
+            kind=cast(Literal["assessment", "fiscal", "calendar", "bare"], kind),
+            start_year=start,
+            end_year=end,
+            source_text=question,
+        )
+        for kind, start, end in sorted(_explicit_period_scope(question))
+    )
+    eligibility_requested = bool(
+        re.search(
+            r"\b(?:whether\s+(?:i|we|my\s+\w+)|(?:do|does|am|are|is)\s+"
+            r"(?:i|we|my\s+\w+|our\s+\w+)\b.*?(?:qualif\w*|eligib\w*)|"
+            r"(?:my|our)\s+eligibility|(?:i|we)\s+qualif\w*)\b|আমি.*যোগ্য",
+            folded,
+            re.I,
+        )
+    )
+    task = "lookup"
+    for label, pattern in (
+        (
+            "calculation",
+            r"\b(?:calculat(?:e|ed|ing|ion|ions)|recalculat(?:e|ion)|"
+            r"comput(?:e|ing|ation)|breakdown)\b|\bhow much\b|"
+            r"হিসাব|হিসেব|গণনা|পরিগণনা",
+        ),
+        ("comparison", r"compare|comparison|difference|তুলনা"),
+        ("eligibility", r"am i|do i qualify|my eligibility|আমি.*যোগ্য"),
+        ("overview", r"overview|summari[sz]e|সারাংশ"),
+        ("explanation", r"explain|why|ব্যাখ্যা"),
+    ):
+        if label == "calculation" and re.search(
+            r"\b(?:do not|don't|no|without|not asking (?:you )?to)\s+"
+            r"(?:\w+\s+){0,2}(?:calculat\w*|comput\w*|breakdown)",
+            folded,
+        ):
+            continue
+        if re.search(pattern, folded, re.I):
+            task = label
+            break
+    eligibility_requested = eligibility_requested or task == "eligibility"
+    if eligibility_requested and task not in {"calculation", "comparison"}:
+        task = "eligibility"
+    known = bool(
+        re.search(
+            r"known (?:as of|then|before|on)|published (?:by|before)|"
+            r"information (?:was )?available(?: on| before)?",
+            folded,
+            re.I,
+        )
+    )
+    instruments = tuple(
+        dict.fromkeys(
+            re.findall(
+                r"\b[A-Z][A-Za-z ]{1,65}(?:Act|Rules|Regulations|Circular)(?:,? \d{4})?", question
+            )
+        )
+    )
+    known_date = _ISO_DATE_RE.search(question) if known else None
+    jurisdiction = (filters.metadata_filter or {}).get("jurisdiction")
+    category = (filters.metadata_filter or {}).get("category")
+    named_category = re.search(
+        r"\b(?:specified person|private compan(?:y|ies)|public compan(?:y|ies)|"
+        r"tenant|factory operator|registered partnership)\b",
+        question,
+        re.I,
+    )
+    stipulated: tuple[StipulatedFact, ...] = ()
+    if named_category:
+        category = category or named_category.group().casefold()
+        # A category scoped rule ("what must a specified person deduct") supplies
+        # the lookup's subject; a question about membership does not assert it.
+        if not eligibility_requested:
+            stipulated = (
+                StipulatedFact(
+                    field="category", value=category, source_text=named_category.group()
+                ),
+            )
+    return RequestScope(
+        jurisdiction=jurisdiction,
+        category=category,
+        task_kind=cast(
+            Literal[
+                "lookup", "explanation", "eligibility", "calculation", "comparison", "overview"
+            ],
+            task,
+        ),
+        subject=question,
+        requested_periods=periods,
+        exact_as_of=filters.as_of
+        or (datetime.fromisoformat(known_date.group()).replace(tzinfo=UTC) if known_date else None),
+        current_reference_time=reference_time,
+        temporal_basis="known_at" if known else "applicable_rule",
+        known_at_inclusive=not bool(known and re.search(r"\bbefore\b", folded, re.I)),
+        named_instruments=instruments,
+        document_id=filters.document_id,
+        source_restriction="indexed_only"
+        if _message_requests_indexed_only(question)
+        else filters.source_scope.value,
+        explicit_inputs=_parameter_like_tokens(question),
+        stipulated_facts=stipulated,
+        eligibility_requested=eligibility_requested,
+        project_defaults=project_defaults,
+    )
+
+
 class EffectiveRetrievalInputs(BaseModel):
     """Application-constructed retrieval inputs. Filters stay exactly as requested."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     query: str
+    normalized_scope: RequestScope = Field(default_factory=RequestScope)
     document_id: uuid.UUID | None = None
     metadata_filter: dict[str, str] = Field(default_factory=dict)
     as_of: datetime | None = None
@@ -905,6 +1185,7 @@ def effective_retrieval_inputs(
         source_scope_reason = "project_response_mode"
     return EffectiveRetrievalInputs(
         query=query,
+        normalized_scope=normalize_request_scope(query, request_filters=request_filters),
         document_id=request_filters.document_id,
         metadata_filter=dict(request_filters.metadata_filter),
         as_of=as_of,
@@ -923,6 +1204,7 @@ def effective_retrieval_inputs(
 
 
 _INDEXED_ONLY_PATTERNS = (
+    re.compile(r"\bin (?:this|the) corpus\b", re.IGNORECASE),
     re.compile(
         r"\busing\s+only\s+(?:the\s+)?(?:active\s+)?(?:project\s+)?"
         r"(?:corpus|knowledge\s+base|uploaded\s+documents?|"

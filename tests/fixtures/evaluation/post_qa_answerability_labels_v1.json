@@ -1,0 +1,114 @@
+{
+  "name": "post-qa-source-grounded-answerability",
+  "version": "1.1.0",
+  "schema_version": 1,
+  "source_build_id": "c75f7019-f94b-4435-9036-e9cf59ae216b",
+  "source_metadata_generation": 35,
+  "label_policy": "Source-grounded labels independent of generated answers; unknown is excluded from positive-completion denominator. Completion, abstention, protocol and latency score separately.",
+  "cases": [
+    {
+      "key": "agm-positive",
+      "kind": "citation",
+      "answerability": "answerable",
+      "query": "Under Companies Act 1994, what is the first AGM deadline and maximum interval between AGMs?",
+      "relevant_chunk_ids": [
+        "4d0dd2f9-6902-495d-9c08-6dbdb536df1a"
+      ],
+      "required_source_ranges": [
+        {
+          "start_line": 7,
+          "end_line": 7
+        },
+        {
+          "start_line": 5,
+          "end_line": 5
+        }
+      ],
+      "expected_answer_tokens": [
+        "18",
+        "15"
+      ],
+      "required_repetitions": 3
+    },
+    {
+      "key": "threshold-split-proof",
+      "kind": "citation",
+      "answerability": "answerable_with_heading_dependency",
+      "query": "What is the tax-free threshold for an ordinary individual for AY 2026-27?",
+      "relevant_chunk_ids": [
+        "5aa3a215-d3da-4242-b16f-74df447729c4"
+      ],
+      "required_source_ranges": [
+        {
+          "start_line": 1,
+          "end_line": 7
+        },
+        {
+          "start_line": 8,
+          "end_line": 14
+        }
+      ],
+      "expected_answer_tokens": [
+        "400"
+      ],
+      "required_repetitions": 3
+    },
+    {
+      "key": "dncc-conditional-subrequirements",
+      "kind": "citation",
+      "answerability": "answerable_partial",
+      "query": "For a DNCC new trade-license tenant/factory application, what are the rental-agreement and factory-clearance conditions?",
+      "relevant_chunk_ids": [
+        "46c4724c-4afa-4149-b861-b2085efaea39"
+      ],
+      "coverage_limit": "Only these two conditional duties; the entire checklist has not been independently certified."
+    },
+    {
+      "key": "historical-threshold",
+      "kind": "no_answer",
+      "answerability": "unknown_source_scope",
+      "query": "What is the tax-free threshold for AY 2025-26?",
+      "expected_no_answer": false,
+      "scoring": "Require historical identity safety; do not reward substitution or assert source absence."
+    },
+    {
+      "key": "office-rent-amendment",
+      "kind": "no_answer",
+      "answerability": "unknown_authority_chain",
+      "query": "What must a specified person deduct on office rent in 2026?",
+      "expected_no_answer": false,
+      "scoring": "Payer stipulated, rate/amendment chain unverified; do not reward unnecessary personal-eligibility work."
+    },
+    {
+      "key": "unsupported-crypto",
+      "kind": "no_answer",
+      "answerability": "unsupported_selected_evidence",
+      "query": "What specific Bangladesh income-tax rule applies to cryptocurrency staking in 2026?",
+      "expected_no_answer": true
+    }
+  ],
+  "acceptance_contract": {
+    "positive_repetitions": 3,
+    "transports": [
+      "regular",
+      "sse_done",
+      "persisted_get",
+      "operator_ui"
+    ],
+    "negative_controls": [
+      "wrong_table",
+      "wrong_year",
+      "wrong_category",
+      "wrong_revision",
+      "wrong_build",
+      "rebound_requirement_or_proof",
+      "rejected_draft_transport_leak"
+    ],
+    "timing_windows_seconds": {
+      "recovery": 30,
+      "work": 50,
+      "request": 60
+    },
+    "unknown_source_policy": "Historical AY2025-26 and office-rent amendment applicability remain independent unknowns."
+  }
+}

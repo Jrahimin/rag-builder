@@ -128,6 +128,45 @@ class ContextChunk:
 
 
 @dataclass(frozen=True, slots=True)
+class EvidenceScope:
+    """Source-declared applicability, never inferred from publication recency."""
+
+    headings: tuple[str, ...] = ()
+    applicable_period: str | None = None
+    effective_from: str | None = None
+    effective_to: str | None = None
+    operative_status: str | None = None
+    provisions: tuple[str, ...] = ()
+    amendment_dependencies: tuple[str, ...] = ()
+    facts: tuple[dict[str, Any], ...] = ()
+    structural_version: str | None = None
+
+    @classmethod
+    def from_metadata(cls, metadata: dict[str, Any]) -> EvidenceScope:
+        def text(key: str) -> str | None:
+            value = metadata.get(key)
+            return str(value) if value is not None else None
+
+        def strings(key: str) -> tuple[str, ...]:
+            value = metadata.get(key)
+            if not isinstance(value, (tuple, list)):
+                return ()
+            return tuple(item for item in value if isinstance(item, str))
+
+        return cls(
+            headings=strings("heading_path"),
+            applicable_period=text("applicable_period"),
+            effective_from=text("source_effective_from"),
+            effective_to=text("source_effective_to"),
+            operative_status=text("source_lifecycle_status"),
+            provisions=strings("provision_references"),
+            amendment_dependencies=strings("amendment_dependencies"),
+            facts=tuple(metadata.get("scope_facts") or ()),
+            structural_version=text("structure_version"),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class EvidenceUnit(ContextChunk):
     """One immutable admitted span carried through the generation lifecycle."""
 
@@ -139,6 +178,10 @@ class EvidenceUnit(ContextChunk):
     span_derivation: str = "complete_chunk"
     query_variant_id: str = "original"
     corroboration_method: str = ""
+
+    @property
+    def scope(self) -> EvidenceScope:
+        return EvidenceScope.from_metadata(self.metadata)
 
 
 @dataclass(frozen=True, slots=True)

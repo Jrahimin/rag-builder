@@ -160,3 +160,10 @@ produce operator-visible warnings. These APIs maintain metadata and activation h
 retrieval captures an immutable source generation and applies the shared source contract to both
 semantic and keyword candidates. The configured `off` / `observe` / `enforce` policy remains
 bounded by the deployment safety cap.
+
+
+Legal-period source selection uses exact typed AY/FY identities unless an attested
+scope fact declares period_mode=range. Multi-period replacement scope may be established
+across separate pinned chunks of the same document, subject to project/build/generation
+and availability filters. Publication known-at cutoffs do not replace legal
+applicability. Source API writes and index activation behavior are unchanged.

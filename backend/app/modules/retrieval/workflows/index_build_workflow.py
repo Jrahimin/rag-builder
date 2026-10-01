@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import uuid
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 
 from sqlalchemy import delete, select
@@ -23,6 +24,7 @@ from app.modules.retrieval.keyword.tokenizer import (
     tokenize,
 )
 from app.modules.retrieval.repositories.index_build_repository import IndexBuildRepository
+from app.modules.retrieval.structural_contract import verify_structural_build
 from app.platform.db.advisory_lock import acquire_project_stage_lock
 from app.platform.domain.content_hash import content_hash
 from app.platform.domain.language_detection import (
@@ -34,7 +36,11 @@ from app.platform.domain.language_detection import (
 )
 from app.platform.jobs.contracts import JobProgressCallback
 from app.platform.jobs.errors import JobError, PermanentJobError
-from app.platform.providers.contracts.embedding import BaseEmbeddingProvider, EmbeddingPurpose
+from app.platform.providers.contracts.embedding import (
+    BaseEmbeddingProvider,
+    EmbeddingBatchResult,
+    EmbeddingPurpose,
+)
 
 
 class IndexBuildWorkflow:
@@ -51,7 +57,12 @@ class IndexBuildWorkflow:
         filterable_metadata_keys: list[str],
         fts_regconfig: str,
         on_progress: JobProgressCallback | None = None,
+        reuse_index_build_id: uuid.UUID | None = None,
+        private_chunk_factory: Callable[[Document, uuid.UUID], Awaitable[list[DocumentChunk]]]
+        | None = None,
     ) -> None:
+        self._reuse_index_build_id = reuse_index_build_id
+        self._private_chunk_factory = private_chunk_factory
         self._session = session
         self._project_id = project_id
         self._embedder = embedder
@@ -69,6 +80,11 @@ class IndexBuildWorkflow:
         exclude_document_id: uuid.UUID | None = None,
         auto_activate: bool = False,
     ) -> IndexBuild:
+        if self._private_chunk_factory is not None and auto_activate:
+            raise PermanentJobError(
+                "Private structural builds require explicit acceptance and activation.",
+                code="private_build_auto_activation_forbidden",
+            )
         build = await self._builds.get_by_id(build_id, for_update=True)
         if build is None:
             raise PermanentJobError("Index build does not exist.", code="index_build_not_found")
@@ -77,18 +93,43 @@ class IndexBuildWorkflow:
             IndexBuildState.ACTIVE,
             IndexBuildState.RETAINED,
         }:
+            await verify_structural_build(self._session, self._project_id, build)
             return build
         if build.state is not IndexBuildState.BUILDING:
             raise PermanentJobError(
                 "Index build is no longer writable.", code="index_build_immutable"
             )
 
+        if build.structural_contract_version and self._private_chunk_factory is None:
+            raise PermanentJobError(
+                "Structural intent requires a compatible producer.",
+                code="structural_worker_incompatible",
+            )
+        if self._reuse_index_build_id:
+            source_build = await self._builds.get_by_id(self._reuse_index_build_id)
+            if (
+                source_build is None
+                or source_build.state not in {IndexBuildState.VALIDATED, IndexBuildState.RETAINED}
+                or not source_build.structural_contract_version
+            ):
+                raise PermanentJobError(
+                    "Revalidation input is not a sealed structural build.",
+                    code="structural_build_contract_invalid",
+                )
+            await verify_structural_build(
+                self._session, self._project_id, source_build, allow_legacy_unit_hash=True
+            )
+            await self._validate_versions(source_build.manifest["documents"])
         await self._clear_partial_rows(build.id)
         documents = await self._eligible_documents(exclude_document_id=exclude_document_id)
         manifest: list[dict[str, object]] = []
         all_chunks: list[tuple[Document, DocumentChunk]] = []
         for document in documents:
-            chunks = await self._current_chunks(document)
+            chunks = (
+                await self._private_chunk_factory(document, build.id)
+                if self._private_chunk_factory
+                else await self._current_chunks(document)
+            )
             if not chunks:
                 continue
             manifest.append(
@@ -96,6 +137,11 @@ class IndexBuildWorkflow:
                     "document_id": str(document.id),
                     "document_version": document.version,
                     "chunk_count": len(chunks),
+                    "chunk_generation_id": str(build.id)
+                    if self._private_chunk_factory
+                    else (
+                        str(document.chunk_generation_id) if document.chunk_generation_id else None
+                    ),
                     **_document_language_manifest_fields(document, chunks),
                 }
             )
@@ -104,10 +150,63 @@ class IndexBuildWorkflow:
         await self._report("building_vectors", 10)
         for offset in range(0, len(all_chunks), self._batch_size):
             batch = all_chunks[offset : offset + self._batch_size]
-            result = await self._embedder.embed_texts(
-                [chunk.content for _, chunk in batch],
-                purpose=EmbeddingPurpose.DOCUMENT,
-            )
+            if self._reuse_index_build_id:
+                source_ids = [
+                    uuid.UUID(str(chunk.chunk_metadata["revalidation_source_chunk_id"]))
+                    for _, chunk in batch
+                ]
+                source_vectors = (
+                    (
+                        await self._session.execute(
+                            select(ChunkEmbedding).where(
+                                ChunkEmbedding.project_id == self._project_id,
+                                ChunkEmbedding.index_build_id == self._reuse_index_build_id,
+                                ChunkEmbedding.chunk_id.in_(source_ids),
+                            )
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+                vectors_by_id = {vector.chunk_id: vector for vector in source_vectors}
+                expected_identity = (
+                    self._embedder.provider_name,
+                    self._embedder.model_name,
+                    self._embedder.dimensions,
+                    self._embedding_set_version,
+                )
+                ordered_vectors = []
+                for source_id, (_, chunk) in zip(source_ids, batch, strict=True):
+                    vector = vectors_by_id.get(source_id)
+                    if (
+                        vector is None
+                        or vector.input_content_hash != content_hash(chunk.content)
+                        or (
+                            vector.provider,
+                            vector.model,
+                            vector.dimensions,
+                            vector.embedding_set_version,
+                        )
+                        != expected_identity
+                        or vector.embedding_schema_version != EMBEDDING_SCHEMA_VERSION
+                    ):
+                        raise PermanentJobError(
+                            "Revalidation vector input or identity changed.",
+                            code="revalidation_vector_mismatch",
+                        )
+                    ordered_vectors.append(vector)
+                result = EmbeddingBatchResult(
+                    vectors=[list(v.embedding) for v in ordered_vectors],
+                    provider=ordered_vectors[0].provider,
+                    model=ordered_vectors[0].model,
+                    dimensions=ordered_vectors[0].dimensions,
+                    provider_version=ordered_vectors[0].provider_version,
+                )
+            else:
+                result = await self._embedder.embed_texts(
+                    [chunk.content for _, chunk in batch],
+                    purpose=EmbeddingPurpose.DOCUMENT,
+                )
             if len(result.vectors) != len(batch) or any(
                 len(vector) != result.dimensions for vector in result.vectors
             ):
@@ -147,6 +246,18 @@ class IndexBuildWorkflow:
                 for key in self._filterable_metadata_keys
                 if key in chunk.chunk_metadata
             }
+            metadata.update(
+                {
+                    key: chunk.chunk_metadata[key]
+                    for key in (
+                        "structure_version",
+                        "structural_unit_id",
+                        "scope_facts",
+                        "source_spans",
+                    )
+                    if key in chunk.chunk_metadata
+                }
+            )
             metadata.update(
                 build_index_language_snapshot(
                     content=chunk.content,
@@ -191,6 +302,10 @@ class IndexBuildWorkflow:
             "index_profile_id": build.index_profile_id or "legacy-unprofiled",
             "index_profile_hash": build.index_profile_hash,
             "documents": manifest,
+            "structural_contract_version": build.structural_contract_version,
+            "revalidation_source_build_id": str(self._reuse_index_build_id)
+            if self._reuse_index_build_id
+            else None,
             "language_metadata_schema_version": LANGUAGE_METADATA_SCHEMA_VERSION,
             "chunk_language_counts": language_inventory["chunk_language_counts"],
             "document_language_counts": language_inventory["document_language_counts"],
@@ -202,6 +317,8 @@ class IndexBuildWorkflow:
         build.corpus_fingerprint = hashlib.sha256(
             json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode()
         ).hexdigest()
+        await self._session.flush()
+        await verify_structural_build(self._session, self._project_id, build)
         build.validated_at = datetime.now(UTC)
         build.state = IndexBuildState.VALIDATED
         await self._report("validated", 90)
@@ -240,6 +357,7 @@ class IndexBuildWorkflow:
                 DocumentChunk.project_id == self._project_id,
                 DocumentChunk.document_id == document.id,
                 DocumentChunk.document_version == document.version,
+                DocumentChunk.generation_id == document.chunk_generation_id,
             )
             .order_by(DocumentChunk.chunk_index)
         )
@@ -423,6 +541,12 @@ async def mark_included_documents_ready(
             continue
         if document.status not in _READY_AFTER_ACTIVATION:
             continue
+        entries = build.manifest.get("documents", [])
+        entry: dict[str, object] = next(
+            (item for item in entries if item.get("document_id") == str(document.id)), {}
+        )
+        generation = entry.get("chunk_generation_id")
+        document.chunk_generation_id = uuid.UUID(str(generation)) if generation else None
         document.status = DocumentStatus.READY
         document.error_message = None
 
@@ -431,6 +555,7 @@ async def activate_index_build(
     session: AsyncSession, project_id: uuid.UUID, build: IndexBuild
 ) -> ProjectIndexPointer:
     """Atomically move the one authoritative pointer to a validated build."""
+    await verify_structural_build(session, project_id, build)
     await acquire_project_stage_lock(session, project_id=project_id, stage="index_activation")
     repository = IndexBuildRepository(session, project_id)
     pointer = await repository.get_pointer(for_update=True)
