@@ -1065,9 +1065,7 @@ class ChatService:
         )
 
     def _insufficient_content(self, prepared: _PreparedTurn, question: str) -> str:
-        return MessageExecutionRunner._insufficient_content(
-            self, prepared=prepared, question=question
-        )
+        return self._runner._insufficient_content(prepared, question)
 
     # _with_web_fallback_notice / _web_fallback_notice removed in Phase 3.
     # Web evidence is now announced via a structured Notice, not prepended text.

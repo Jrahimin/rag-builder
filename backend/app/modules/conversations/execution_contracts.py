@@ -32,7 +32,14 @@ class TurnIntent(ExecutionContract):
 
     @classmethod
     def from_scope(
-        cls, scope: RequestScope, *, source_policy: str | None = None, **routing: bool
+        cls,
+        scope: RequestScope,
+        *,
+        source_policy: str | None = None,
+        comparison_requested: bool = False,
+        overview_requested: bool = False,
+        calculation_requested: bool = False,
+        applicability_requested: bool = False,
     ) -> TurnIntent:
         return cls(
             task=str(scope.task_kind),
@@ -43,7 +50,10 @@ class TurnIntent(ExecutionContract):
             },
             periods=[v.model_dump(mode="json") for v in scope.requested_periods],
             source_policy=source_policy or scope.source_restriction,
-            **routing,
+            comparison_requested=comparison_requested,
+            overview_requested=overview_requested,
+            calculation_requested=calculation_requested,
+            applicability_requested=applicability_requested,
         )
 
 
@@ -113,6 +123,12 @@ class RequirementGraph(ExecutionContract):
                         row.get("text") or row.get("description") or row.get("requirement") or ""
                     ),
                     origin=row.get("origin") or "necessary_applicability",
+                    materiality=row.get("materiality")
+                    or (
+                        "secondary_detail"
+                        if row.get("origin") == "optional_corroboration"
+                        else "central_rule"
+                    ),
                     required=row.get("required") is not False
                     and row.get("origin") != "optional_corroboration",
                     depends_on=[
