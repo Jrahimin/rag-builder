@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 import uuid
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.composition.jobs import build_job_service
 from app.composition.source_metadata import KnowledgeRetrievalSourceMetadataAdapter
@@ -19,19 +22,21 @@ from app.core.config import (
     RetrievalStrategy,
     Settings,
 )
-from app.modules.conversations.context_builder import ContextBuilder
-from app.modules.conversations.grounded_context import assess_and_select_knowledge
-from app.modules.conversations.grounding_service import GroundingService
-from app.modules.conversations.ports import ContextChunk
-from app.modules.conversations.prompt_builder import PromptBuilder
+from app.modules.conversations.ports import ContextChunk, ContextRetrievalResult
 from app.modules.conversations.prompts.registry import (
     GROUNDED_PROMPT_VERSION,
-    require_prompt_template,
+)
+from app.modules.conversations.schemas.message import MessageSendRequest
+from app.modules.conversations.services.message_execution_runner_service import (
+    MessageExecutionRunner,
+    _combine_token_counts,
 )
 from app.modules.evaluation.ports import (
     EvaluationAnswerPort,
+    EvaluationCaseInput,
     EvaluationRetrievalPort,
     QualityAnswer,
+    QualityCaseExecution,
     QualityHit,
     QualitySearchResult,
 )
@@ -60,7 +65,7 @@ from app.platform.providers.contracts.embedding import BaseEmbeddingProvider
 from app.platform.providers.contracts.llm import BaseLLMProvider
 from app.platform.providers.contracts.query_translation import BaseQueryTranslationProvider
 from app.platform.providers.contracts.reranker import BaseRerankerProvider
-from app.platform.providers.errors import ProviderError
+from app.platform.providers.errors import ProviderError, ProviderTimeoutError
 from app.platform.providers.implementations.embedding_factory import (
     create_embedding_provider,
     create_embedding_provider_for_identity,
@@ -73,6 +78,7 @@ from app.platform.providers.implementations.query_translation_factory import (
     create_query_translation_provider,
 )
 from app.platform.providers.implementations.reranker_factory import create_reranker_provider
+from app.platform.providers.request_work import ObservedLLM, RequestWork
 
 
 class SearchEvaluationAdapter(EvaluationRetrievalPort):
@@ -92,6 +98,10 @@ class SearchEvaluationAdapter(EvaluationRetrievalPort):
         config_provenance: dict[str, Any] | None = None,
     ) -> None:
         self._settings = settings
+        self._project_id = project_id
+        self._session_factory = async_sessionmaker(
+            bind=session.bind, expire_on_commit=False, join_transaction_mode="create_savepoint"
+        )
         self._source_metadata = KnowledgeRetrievalSourceMetadataAdapter(session)
         self._source_policy_mode = source_policy_mode
         self._source_metadata_generation = source_metadata_generation
@@ -227,40 +237,7 @@ class SearchEvaluationAdapter(EvaluationRetrievalPort):
                 as_of=as_of,
             )
         )
-        return QualitySearchResult(
-            hits=[
-                QualityHit(
-                    chunk_id=result.chunk_id,
-                    document_id=result.document_id,
-                    content=result.content,
-                    score=result.score,
-                    semantic_score=result.semantic_score,
-                    rank_score=result.rank_score,
-                    rerank_relevance_score=result.rerank_relevance_score,
-                    passage_semantic_score=result.passage_semantic_score,
-                    passage_char_start=result.passage_char_start,
-                    passage_char_end=result.passage_char_end,
-                    passage_score_method=result.passage_score_method,
-                    filename=result.filename,
-                    chunk_index=result.chunk_index,
-                    page_number=result.page_number,
-                    char_start=result.char_start,
-                    char_end=result.char_end,
-                    evidence_calibration_id=result.evidence_calibration_id,
-                    query_variants=result.query_variants,
-                    branch_contributions=result.branch_contributions,
-                    metadata=dict(result.metadata),
-                )
-                for result in response.results
-            ],
-            latency_ms=response.diagnostics.duration_ms,
-            rerank_status=response.diagnostics.rerank_status,
-            reranker_provider=response.diagnostics.reranker_provider,
-            reranker_model=response.diagnostics.reranker_model,
-            reranker_version=response.diagnostics.reranker_version,
-            reranker_score_scale=response.diagnostics.reranker_score_scale,
-            provenance=response.diagnostics.model_dump(mode="json"),
-        )
+        return _quality_search_result(response)
 
     def _service(
         self,
@@ -272,6 +249,7 @@ class SearchEvaluationAdapter(EvaluationRetrievalPort):
         query_translator: object | None = None,
         query_translation_config: QueryTranslationConfig | None = None,
         persist_translation_text: bool = False,
+        source_metadata: KnowledgeRetrievalSourceMetadataAdapter | None = None,
     ) -> SearchService:
         return SearchService(
             session=session,
@@ -280,7 +258,7 @@ class SearchEvaluationAdapter(EvaluationRetrievalPort):
             reranker=reranker,
             retrieval_config=retrieval_config or self._settings.retrieval,
             ai_policy=self._settings.ai_policy,
-            source_metadata=self._source_metadata,
+            source_metadata=source_metadata or self._source_metadata,
             configured_source_policy_mode=self._source_policy_mode,
             configuration_hash=self._configuration_hash,
             config_provenance=self._config_provenance,
@@ -292,6 +270,25 @@ class SearchEvaluationAdapter(EvaluationRetrievalPort):
             query_embedder_factory=self._query_embedder_factory,
         )
 
+    @asynccontextmanager
+    async def case_search(self, profile: str) -> AsyncIterator[tuple[SearchService, AsyncSession]]:
+        # This session owns only retrieval reads. Rolling it back never expires
+        # the evaluation run/job retained by the worker's persistence session.
+        prototype = self._services[profile]
+        async with self._session_factory() as session:
+            service = self._service(
+                session,
+                self._project_id,
+                prototype._embedder,
+                prototype._reranker,
+                retrieval_config=prototype._config,
+                query_translator=prototype._query_translator,
+                query_translation_config=prototype._query_translation_config,
+                persist_translation_text=prototype._persist_translation_text,
+                source_metadata=KnowledgeRetrievalSourceMetadataAdapter(session),
+            )
+            yield service, session
+
     def _query_embedder_factory(self, identity: EmbeddingIdentity) -> BaseEmbeddingProvider:
         return create_embedding_provider_for_identity(
             self._settings,
@@ -301,8 +298,144 @@ class SearchEvaluationAdapter(EvaluationRetrievalPort):
         )
 
 
+def _quality_search_result(response: Any) -> QualitySearchResult:
+    return QualitySearchResult(
+        hits=[
+            QualityHit(
+                chunk_id=result.chunk_id,
+                document_id=result.document_id,
+                content=result.content,
+                score=result.score,
+                semantic_score=result.semantic_score,
+                rank_score=result.rank_score,
+                rerank_relevance_score=result.rerank_relevance_score,
+                passage_semantic_score=result.passage_semantic_score,
+                passage_char_start=result.passage_char_start,
+                passage_char_end=result.passage_char_end,
+                passage_score_method=result.passage_score_method,
+                filename=result.filename,
+                chunk_index=result.chunk_index,
+                page_number=result.page_number,
+                char_start=result.char_start,
+                char_end=result.char_end,
+                evidence_calibration_id=result.evidence_calibration_id,
+                query_variants=result.query_variants,
+                branch_contributions=result.branch_contributions,
+                metadata=dict(result.metadata),
+            )
+            for result in response.results
+        ],
+        latency_ms=response.diagnostics.duration_ms,
+        rerank_status=response.diagnostics.rerank_status,
+        reranker_provider=response.diagnostics.reranker_provider,
+        reranker_model=response.diagnostics.reranker_model,
+        reranker_version=response.diagnostics.reranker_version,
+        reranker_score_scale=response.diagnostics.reranker_score_scale,
+        provenance=response.diagnostics.model_dump(mode="json"),
+    )
+
+
+class _EvaluationMessageRetrieval:
+    """Production search/structural recall for a pinned evaluation profile."""
+
+    supports_adjacent_retrieval = True
+    supports_cited_retrieval = True
+    supports_exact_recall = True
+
+    def __init__(
+        self,
+        search: SearchService | None,
+        hits: list[QualityHit],
+        provenance: dict[str, Any],
+        *,
+        top_k: int | None = None,
+    ):
+        self.search = search
+        self.initial = ContextRetrievalResult(
+            chunks=[ContextChunk.from_retrieval_result(hit) for hit in hits],
+            diagnostics=dict(provenance),
+        )
+        self.used_initial = False
+        self.top_k = top_k
+        self.first_search: QualitySearchResult | None = None
+        self.query_embedder = search.resolved_query_embedder if search else None
+
+    def set_request_scope(self, scope: dict[str, Any]) -> None:
+        if self.search is not None:
+            self.search.set_request_scope(scope)
+
+    async def retrieve(
+        self,
+        *,
+        query: str,
+        top_k: int,
+        document_id: uuid.UUID | None = None,
+        metadata_filter: dict[str, str] | None = None,
+        as_of: datetime | None = None,
+        adjacent_to: list[uuid.UUID] | None = None,
+        cited_chunk_ids: list[uuid.UUID] | None = None,
+    ) -> ContextRetrievalResult:
+        if (
+            self.search is None
+            and not self.used_initial
+            and not adjacent_to
+            and not cited_chunk_ids
+        ):
+            self.used_initial = True
+            return self.initial
+        if self.search is None:
+            raise ProviderError(
+                "Evaluation recovery search is unavailable",
+                provider_name="retrieval",
+                context={"reason": "evaluation_recovery_unavailable"},
+            )
+        result = await self.search.search(
+            SearchRequest(
+                query=query,
+                top_k=self.top_k if not self.used_initial and self.top_k is not None else top_k,
+                document_id=document_id,
+                metadata_filter=metadata_filter or {},
+                as_of=as_of,
+            ),
+            adjacent_to=adjacent_to,
+            cited_chunk_ids=cited_chunk_ids,
+        )
+        if not self.used_initial and not adjacent_to and not cited_chunk_ids:
+            self.used_initial = True
+            self.first_search = _quality_search_result(result)
+        return ContextRetrievalResult(
+            chunks=[ContextChunk.from_retrieval_result(hit) for hit in result.results],
+            diagnostics=result.diagnostics.model_dump(mode="json"),
+        )
+
+    async def retrieve_exact(
+        self,
+        *,
+        chunk_ids: list[uuid.UUID],
+        query: str = "",
+        document_id: uuid.UUID | None = None,
+        metadata_filter: dict[str, str] | None = None,
+        as_of: datetime | None = None,
+    ) -> ContextRetrievalResult:
+        if self.search is None:
+            return ContextRetrievalResult(
+                chunks=[], diagnostics={"identity_recall_status": "unavailable"}
+            )
+        result = await self.search.recall_indexed_identities(
+            chunk_ids=chunk_ids,
+            query=query,
+            document_id=document_id,
+            metadata_filter=metadata_filter,
+            as_of=as_of,
+        )
+        return ContextRetrievalResult(
+            chunks=[ContextChunk.from_retrieval_result(hit) for hit in result.results],
+            diagnostics=result.diagnostics.model_dump(mode="json"),
+        )
+
+
 class GroundedEvaluationAnswerAdapter(EvaluationAnswerPort):
-    """Exercise the same prompt, context, refusal, and claim mapping as chat."""
+    """Execute production scope, recovery, drafting, verification and finalization."""
 
     def __init__(
         self,
@@ -312,107 +445,189 @@ class GroundedEvaluationAnswerAdapter(EvaluationAnswerPort):
         embedder: BaseEmbeddingProvider | None = None,
         domain_instructions: str = "",
         prompt_profile: str = "default",
+        retrieval: SearchEvaluationAdapter | None = None,
+        project_id: uuid.UUID | None = None,
+        session: AsyncSession | None = None,
     ) -> None:
         self._settings = settings
         self._llm = llm
-        self._context = ContextBuilder(settings.chat)
-        self._prompt = PromptBuilder()
-        self._grounding = GroundingService(settings.chat, embedder=embedder)
+        self._embedder = embedder
         self._domain_instructions = domain_instructions
         self._prompt_profile = prompt_profile
+        self._retrieval = retrieval
+        self._project_id = project_id or uuid.UUID(int=0)
+        self._session = session
 
-    async def answer(
+    async def _release_read_transaction(self) -> None:
+        # Legacy in-memory answer() has no retrieval transaction to release.
+        return None
+
+    async def execute_case(
+        self, *, profile: str, case: EvaluationCaseInput
+    ) -> QualityCaseExecution:
+        if self._retrieval is None:
+            raise ValueError("Production evaluation requires retrieval composition")
+        work = RequestWork(self._project_id)
+        work.deadline = min(work.deadline, work.started + 50.0)
+        async with self._retrieval.case_search(profile) as (service, session):
+            retrieval = _EvaluationMessageRetrieval(service, [], {}, top_k=case.top_k)
+            answer = await self.answer_for_case(
+                profile=profile,
+                request=MessageSendRequest(
+                    content=case.query,
+                    document_id=case.document_id,
+                    metadata_filter=case.metadata_filter,
+                    as_of=case.as_of,
+                ),
+                hits=[],
+                provenance={},
+                execution_retrieval=retrieval,
+                work=work,
+                release_read_transaction=session.rollback,
+            )
+            search = retrieval.first_search or QualitySearchResult(
+                hits=[],
+                latency_ms=work.timings.get("retrieval", 0),
+                rerank_status="not_run",
+                provenance={"status": "execution_ended_before_first_retrieval"},
+            )
+            return QualityCaseExecution(search=search, answer=answer)
+
+    async def answer(self, *, profile: str, question: str, hits: list[QualityHit]) -> QualityAnswer:
+        return await self.answer_for_case(
+            profile=profile, request=MessageSendRequest(content=question), hits=hits, provenance={}
+        )
+
+    async def answer_for_case(
         self,
         *,
         profile: str,
-        question: str,
+        request: MessageSendRequest,
         hits: list[QualityHit],
+        provenance: dict[str, Any],
+        execution_retrieval: _EvaluationMessageRetrieval | None = None,
+        work: RequestWork | None = None,
+        release_read_transaction: Any = None,
     ) -> QualityAnswer:
-        del profile
-        chunks = [ContextChunk.from_retrieval_result(hit) for hit in hits]
-        grounding = self._grounding
-        rerank_status = next(
-            (
-                str(chunk.metadata.get("rerank_status"))
-                for chunk in chunks
-                if chunk.metadata.get("rerank_status")
-            ),
-            None,
-        )
-        decision, selected = await assess_and_select_knowledge(
-            grounding=grounding,
-            context_builder=self._context,
+        started = work.started if work is not None else time.perf_counter()
+        service = self._retrieval._services.get(profile) if self._retrieval else None
+        retrieval = execution_retrieval or _EvaluationMessageRetrieval(None, hits, provenance)
+        work = work or RequestWork(self._project_id)
+        work.deadline = min(work.deadline, work.started + 50.0)
+        runner = MessageExecutionRunner(
+            project_id=self._project_id,
+            retrieval=retrieval,
             chat_config=self._settings.chat,
-            question=question,
-            chunks=chunks,
-            rerank_status=rerank_status,
-            retrieval_config=self._settings.retrieval,
-        )
-        blocked = grounding.blocks_generation(decision)
-        if blocked:
-            return QualityAnswer(
-                answer=self._settings.chat.insufficient_evidence_message,
-                insufficient_evidence_reason=(
-                    decision.reason.value
-                    if decision.reason is not None
-                    else "insufficient_evidence"
-                ),
-                grounded=False,
-                citation_coverage=1.0,
-                claims=[],
-                provider=self._llm.provider_name,
-                model=self._llm.model_name,
-                input_tokens=0,
-                output_tokens=0,
-                provider_latency_ms=0,
-                generation_ran=False,
-                selected_chunk_ids=[chunk.chunk_id for chunk in selected],
-                evidence_gate=grounding.diagnostics(
-                    decision,
-                    blocked_generation=True,
-                    generation_ran=False,
-                ),
-            )
-        messages = self._prompt.build(
-            template=require_prompt_template(GROUNDED_PROMPT_VERSION),
-            context_chunks=selected,
-            history=[],
-            user_question=question,
+            retrieval_config=service._config if service is not None else self._settings.retrieval,
+            llm_config=self._settings.llm,
+            release_read_transaction=release_read_transaction or self._release_read_transaction,
+            embedder=self._embedder,
             domain_instructions=self._domain_instructions,
             prompt_profile=self._prompt_profile,
+            work=work,
         )
-        provider_started = time.perf_counter()
-        completion = await self._llm.generate(
-            messages,
-            temperature=self._settings.llm.temperature,
-            max_tokens=self._settings.llm.max_tokens,
-        )
-        provider_latency_ms = int((time.perf_counter() - provider_started) * 1000)
-        result = await grounding.map_claims(
-            completion.content,
-            selected,
-            require_citations=True,
-        )
+        generation_ran = False
+        generation_ms = 0
+        prepared = None
+        try:
+            with work.attached():
+                async with asyncio.timeout(max(0.0, work.deadline - time.perf_counter())):
+                    prepared = await runner.prepare(
+                        request=request,
+                        current_message_id=uuid.uuid4(),
+                        generation_history=[],
+                        resolver_source=[],
+                        citation_chunks={},
+                        assistant_metadata_by_id={},
+                        previous_assistant_metadata={},
+                        llm=ObservedLLM(
+                            self._llm, work, capacity=self._settings.llm.context_window_tokens
+                        ),
+                        temperature=self._settings.llm.temperature,
+                    )
+                    if prepared.preparation_error is not None:
+                        raise prepared.preparation_error
+                    generation_ran = (
+                        bool(prepared.selected)
+                        and prepared.non_knowledge_response is None
+                        and prepared.clarification_response is None
+                    )
+                    generation_ms = 0
+                    if generation_ran:
+                        generation_started = time.perf_counter()
+                        completion = await runner.generate(prepared)
+                        generation_ms = round((time.perf_counter() - generation_started) * 1000)
+                        content = completion.content
+                        finish_reason = completion.finish_reason
+                        provider, model = completion.provider, completion.model
+                        input_tokens, output_tokens = _combine_token_counts(
+                            prepared.resolver_usage,
+                            completion.usage.input_tokens,
+                            completion.usage.output_tokens,
+                        )
+                    else:
+                        content = (
+                            prepared.non_knowledge_response
+                            or prepared.clarification_response
+                            or runner._insufficient_content(prepared, request.content)
+                        )
+                        finish_reason = "insufficient_evidence"
+                        provider, model = self._llm.provider_name, self._llm.model_name
+                        input_tokens, output_tokens = _combine_token_counts(
+                            prepared.resolver_usage, 0, 0
+                        )
+                    result = await runner.finalize(
+                        prepared=prepared,
+                        content=content,
+                        finish_reason=finish_reason,
+                        input_tokens=input_tokens,
+                        output_tokens=output_tokens,
+                        provider=provider,
+                        model=model,
+                        generation_ms=generation_ms,
+                        total_ms=round((time.perf_counter() - started) * 1000),
+                        user_content_for_title=request.content,
+                        streamed=False,
+                        input_tokens_logged=input_tokens,
+                        output_tokens_logged=output_tokens,
+                        generation_ran=generation_ran,
+                        non_knowledge_turn=prepared.non_knowledge_response is not None,
+                        clarification_turn=prepared.clarification_response is not None,
+                        insufficient_reason=prepared.evidence.reason
+                        if not prepared.selected
+                        else None,
+                    )
+        except (TimeoutError, ProviderTimeoutError) as exc:
+            reason = (
+                exc.context.get("reason", "provider_timeout")
+                if isinstance(exc, ProviderTimeoutError)
+                else "request_deadline_exceeded"
+            )
+            if reason not in {"request_deadline_exceeded", "recovery_deadline_exceeded"}:
+                reason = "provider_timeout"
+            result = runner.deadline_result(
+                request,
+                reason=reason,
+                failure_phase=exc.context.get("phase")
+                if isinstance(exc, ProviderTimeoutError)
+                else None,
+            )
         return QualityAnswer(
-            answer=completion.content,
-            insufficient_evidence_reason=None,
-            # grounded=None (polarity-only, no verifiable claims) is treated as
-            # False for evaluation metrics; the chat API exposes it as null.
+            answer=result.content,
+            insufficient_evidence_reason=result.insufficient_evidence_reason,
             grounded=bool(result.grounded),
-            citation_coverage=result.citation_coverage,
+            citation_coverage=result.metadata.get("citation_coverage", 0.0),
             claims=result.claims,
-            provider=completion.provider,
-            model=completion.model,
-            input_tokens=completion.usage.input_tokens,
-            output_tokens=completion.usage.output_tokens,
-            provider_latency_ms=provider_latency_ms,
-            generation_ran=True,
-            selected_chunk_ids=[chunk.chunk_id for chunk in selected],
-            evidence_gate=grounding.diagnostics(
-                decision,
-                blocked_generation=False,
-                generation_ran=True,
-            ),
+            provider=result.provider,
+            model=result.model,
+            input_tokens=result.input_tokens,
+            output_tokens=result.output_tokens,
+            provider_latency_ms=generation_ms,
+            generation_ran=generation_ran,
+            selected_chunk_ids=[chunk.chunk_id for chunk in prepared.selected] if prepared else [],
+            evidence_gate=result.metadata.get("evidence_gate", {}),
+            execution=result.finalization.public_projection(),
+            complete_turn_latency_ms=round((time.perf_counter() - started) * 1000),
         )
 
 
@@ -485,6 +700,9 @@ def build_evaluation_runner(
         embedder=effective_embedder,
         domain_instructions=domain_instructions,
         prompt_profile=prompt_profile,
+        retrieval=retrieval,
+        project_id=project_id,
+        session=session,
     )
     return EvaluationRunnerService(
         runs=EvaluationRunRepository(session, project_id),

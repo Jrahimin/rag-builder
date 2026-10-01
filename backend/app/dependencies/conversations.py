@@ -10,7 +10,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Annotated, Any
 
-from fastapi import Depends, Path
+from fastapi import Depends, Header, Path, Request
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.composition.audit import DatabaseAuditRecorder
@@ -25,6 +25,9 @@ from app.modules.conversations.repositories.config_snapshot_repository import (
     ConversationConfigSnapshotRepository,
 )
 from app.modules.conversations.repositories.conversation_repository import ConversationRepository
+from app.modules.conversations.repositories.message_diagnostic_repository import (
+    MessageDiagnosticRepository,
+)
 from app.modules.conversations.repositories.message_repository import MessageRepository
 from app.modules.conversations.services.chat_service import ChatService
 from app.modules.conversations.services.conversation_service import ConversationService
@@ -290,6 +293,19 @@ async def get_conversation_service(
     )
 
 
+async def diagnostic_capture_authorization(
+    auth: AdminOrOrganizationDep,
+    capture: Annotated[str | None, Header(alias="X-APE-Diagnostic-Capture")] = None,
+) -> bool:
+    from app.core.exceptions import ForbiddenError
+
+    if capture not in {None, "full"}:
+        raise ForbiddenError("Unsupported diagnostic capture mode.")
+    if capture == "full" and not (auth.is_platform_admin or not get_settings().auth.enabled):
+        raise ForbiddenError("Operator access is required for diagnostic capture.")
+    return capture == "full"
+
+
 async def get_chat_service(
     session: DbSessionDep,
     project_id: Annotated[uuid.UUID, Path()],
@@ -298,6 +314,8 @@ async def get_chat_service(
     ],
     message_repository: Annotated[MessageRepository, Depends(get_message_repository)],
     conversation_id: Annotated[uuid.UUID, Path()],
+    request: Request,
+    diagnostic_capture: Annotated[bool, Depends(diagnostic_capture_authorization)],
     embedder: Annotated[BaseEmbeddingProvider, Depends(get_embedding_provider)],
 ) -> ChatService:
     work = RequestWork(project_id)
@@ -430,6 +448,12 @@ async def get_chat_service(
         embedder=embedder,
         web_search=web_search,
         web_search_config=effective_settings.web_search,
+        diagnostic_capture=diagnostic_capture,
+        diagnostic_repository=MessageDiagnosticRepository(session, project_id),
+        audit=DatabaseAuditRecorder(session, project_id),
+        diagnostic_actor_id=str(
+            getattr(getattr(request.state, "authenticated_admin", None), "id", "local-development")
+        ),
     )
 
 

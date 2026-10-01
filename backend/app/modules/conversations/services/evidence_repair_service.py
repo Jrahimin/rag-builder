@@ -13,7 +13,7 @@ from copy import deepcopy
 from dataclasses import asdict, dataclass, replace
 from datetime import date
 from time import monotonic
-from typing import Any, Literal, cast
+from typing import Any, cast
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
@@ -24,6 +24,7 @@ from app.modules.conversations.current_authority import (
     authority_record_affects_chunk,
     remove_superseded_provisions,
 )
+from app.modules.conversations.execution_contracts import Requirement as EvidenceRequirement
 from app.modules.conversations.grounded_context import assess_and_select_knowledge
 from app.modules.conversations.grounding_service import EvidenceDecision, GroundingService
 from app.modules.conversations.ports import (
@@ -107,37 +108,6 @@ _SOURCE_CONTEXT_KEYS = (
 _AUTHORITATIVE_SOURCE_CONTEXT_KEYS = tuple(
     key for key in _SOURCE_CONTEXT_KEYS if key not in {"source_work_key", "source_group_id"}
 )
-
-
-class EvidenceRequirement(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    requirement_id: str = Field(min_length=1, max_length=80)
-    description: str = Field(min_length=1, max_length=1000)
-    origin: Literal[
-        "explicit_user_request", "necessary_applicability", "optional_corroboration"
-    ] = "necessary_applicability"
-    materiality: Literal[
-        "governing_applicability", "central_rule", "adjacent_rule", "secondary_detail"
-    ]
-
-    # Internal only: stable requirement IDs governing this particular claim.
-    depends_on: list[str] = Field(default_factory=list, max_length=12)
-    task_kind: Literal["rule_lookup", "personal_eligibility", "calculation", "comparison"] = (
-        "rule_lookup"
-    )
-
-    @model_validator(mode="before")
-    @classmethod
-    def accept_pre_materiality_plans(cls, value: Any) -> Any:
-        """Keep stored/test plans readable while making materiality required on the wire."""
-        if not isinstance(value, dict) or value.get("materiality"):
-            return value
-        compatible = dict(value)
-        origin = compatible.get("origin", "necessary_applicability")
-        compatible["materiality"] = {
-            "optional_corroboration": "secondary_detail",
-        }.get(origin, "central_rule")
-        return compatible
 
 
 class _SearchQuery(BaseModel):
@@ -2552,6 +2522,12 @@ async def repair_knowledge_evidence(
                 diagnostics["status"] = "incomplete_plan"
                 return result
             plan = _SearchPlan.model_validate_json(completion.content)
+            plan.requirements = [
+                r.model_copy(
+                    update={"assigned_scope": inputs.normalized_scope.model_dump(mode="json")}
+                )
+                for r in plan.requirements
+            ]
             all_requirement_ids = {r.requirement_id for r in plan.requirements}
             if len(all_requirement_ids) != len(plan.requirements):
                 diagnostics["status"] = "invalid_plan"

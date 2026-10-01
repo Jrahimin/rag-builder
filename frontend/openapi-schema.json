@@ -321,6 +321,17 @@
               }
             ]
           },
+          "assertion_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assertion Id"
+          },
           "assertion_text": {
             "anyOf": [
               {
@@ -1542,6 +1553,48 @@
           }
         },
         "title": "ApiResponse[LivenessStatus]",
+        "type": "object"
+      },
+      "ApiResponse_MessageDiagnosticResponse_": {
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MessageDiagnosticResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          },
+          "meta": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ResponseMeta"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "success": {
+            "default": true,
+            "title": "Success",
+            "type": "boolean"
+          }
+        },
+        "title": "ApiResponse[MessageDiagnosticResponse]",
         "type": "object"
       },
       "ApiResponse_MetricsSnapshot_": {
@@ -3412,6 +3465,8 @@
           "project.ownership_confirmed",
           "project_config.revision_created",
           "project_config.revision_restored",
+          "message_diagnostic.read",
+          "message_diagnostic.capture",
           "conversation.config_updated",
           "source_metadata.revision_created",
           "source_metadata.revision_activated",
@@ -8172,6 +8227,63 @@
           "environment"
         ],
         "title": "LivenessStatus",
+        "type": "object"
+      },
+      "MessageDiagnosticResponse": {
+        "properties": {
+          "expired": {
+            "title": "Expired",
+            "type": "boolean"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "message_id": {
+            "format": "uuid",
+            "title": "Message Id",
+            "type": "string"
+          },
+          "payload": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payload"
+          },
+          "project_id": {
+            "format": "uuid",
+            "title": "Project Id",
+            "type": "string"
+          },
+          "summary": {
+            "additionalProperties": true,
+            "title": "Summary",
+            "type": "object"
+          }
+        },
+        "required": [
+          "message_id",
+          "project_id",
+          "summary",
+          "payload",
+          "expires_at",
+          "expired"
+        ],
+        "title": "MessageDiagnosticResponse",
         "type": "object"
       },
       "MessageResponse": {
@@ -18305,6 +18417,22 @@
             }
           },
           {
+            "in": "header",
+            "name": "X-APE-Diagnostic-Capture",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Ape-Diagnostic-Capture"
+            }
+          },
+          {
             "in": "cookie",
             "name": "ape_admin_access",
             "required": false,
@@ -18395,6 +18523,22 @@
             }
           },
           {
+            "in": "header",
+            "name": "X-APE-Diagnostic-Capture",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Ape-Diagnostic-Capture"
+            }
+          },
+          {
             "in": "cookie",
             "name": "ape_admin_access",
             "required": false,
@@ -18453,6 +18597,96 @@
           }
         ],
         "summary": "Send a message and stream the grounded answer (SSE)",
+        "tags": [
+          "conversations"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/conversations/{conversation_id}/messages/{message_id}/diagnostic": {
+      "get": {
+        "operationId": "get_message_diagnostic_api_v1_projects__project_id__conversations__conversation_id__messages__message_id__diagnostic_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "message_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Message Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "ape_admin_access",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Ape Admin Access"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_MessageDiagnosticResponse_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "AdminCookie": []
+          },
+          {
+            "OrganizationBearer": []
+          },
+          {
+            "OrganizationApiKey": []
+          }
+        ],
+        "summary": "Read an expiring operator message diagnostic",
         "tags": [
           "conversations"
         ]

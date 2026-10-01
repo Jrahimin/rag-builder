@@ -12,8 +12,17 @@ from pydantic import TypeAdapter
 from app.core.config import EvaluationConfig
 from app.core.exceptions import NotFoundError
 from app.modules.evaluation.errors import EvaluationCorpusChangedError
-from app.modules.evaluation.metrics import compute_profile_metrics, rank_metrics
-from app.modules.evaluation.ports import EvaluationAnswerPort, EvaluationRetrievalPort
+from app.modules.evaluation.metrics import (
+    completed_abstention,
+    compute_profile_metrics,
+    execution_failed,
+    rank_metrics,
+)
+from app.modules.evaluation.ports import (
+    EvaluationAnswerPort,
+    EvaluationCaseInput,
+    EvaluationRetrievalPort,
+)
 from app.modules.evaluation.repositories.evaluation_corpus_repository import (
     EvaluationCorpusRepository,
 )
@@ -89,19 +98,31 @@ class EvaluationRunnerService:
 
         for case in cases:
             for profile in self._retrieval.profiles:
-                search = await self._retrieval.search(
-                    profile=profile,
-                    query=case.query,
-                    top_k=run.top_k,
-                    document_id=case.document_id,
-                    metadata_filter=case.metadata_filter,
-                    as_of=case.as_of,
-                )
-                answer = await self._answerer.answer(
-                    profile=profile,
-                    question=case.query,
-                    hits=search.hits,
-                )
+                production_execution = getattr(self._answerer, "execute_case", None)
+                if callable(production_execution):
+                    execution = await production_execution(
+                        profile=profile,
+                        case=EvaluationCaseInput(
+                            query=case.query,
+                            top_k=run.top_k,
+                            document_id=case.document_id,
+                            metadata_filter=case.metadata_filter,
+                            as_of=case.as_of,
+                        ),
+                    )
+                    search, answer = execution.search, execution.answer
+                else:
+                    search = await self._retrieval.search(
+                        profile=profile,
+                        query=case.query,
+                        top_k=run.top_k,
+                        document_id=case.document_id,
+                        metadata_filter=case.metadata_filter,
+                        as_of=case.as_of,
+                    )
+                    answer = await self._answerer.answer(
+                        profile=profile, question=case.query, hits=search.hits
+                    )
                 all_results.append(_case_result(case, profile, search, answer))
                 completed_steps += 1
                 if on_progress is not None:
@@ -362,6 +383,8 @@ def _case_result(case: EvaluationCase, profile: str, search: Any, answer: Any) -
         "input_tokens": answer.input_tokens,
         "output_tokens": answer.output_tokens,
         "provider_latency_ms": answer.provider_latency_ms,
+        "execution": answer.execution,
+        "complete_turn_latency_ms": answer.complete_turn_latency_ms,
     }
 
 
@@ -494,7 +517,10 @@ def _failed_cases(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
     failed: list[dict[str, Any]] = []
     for result in results:
         reasons: list[str] = []
-        refused = result["insufficient_evidence_reason"] is not None
+        failed_execution = execution_failed(result)
+        refused = completed_abstention(result)
+        if failed_execution:
+            reasons.append("execution_failed")
         if bool(result["expected_no_answer"]) != refused:
             reasons.append("refusal_mismatch")
         if not result["expected_no_answer"] and not result["relevant_retrieved"]:

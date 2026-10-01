@@ -73,6 +73,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     webhook_dispatcher: WebhookDispatcher | None = None
     webhook_dispatcher_task: asyncio.Task[None] | None = None
     provider_preflight_task: asyncio.Task[None] | None = None
+    diagnostic_retention_task: asyncio.Task[None] | None = None
     queue = get_job_queue()
     try:
         preflight_service = StartupPreflightService(
@@ -105,6 +106,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 webhook_dispatcher.run_forever(),
                 name="webhook-dispatcher",
             )
+        from app.composition.message_diagnostic_retention import diagnostic_retention_loop
+
+        diagnostic_retention_task = asyncio.create_task(
+            diagnostic_retention_loop(app.state.db.session_factory),
+            name="message-diagnostic-retention",
+        )
         log.info(
             "application_started",
             runtime_profile=settings.runtime.profile.value,
@@ -115,6 +122,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         log.info("application_stopping")
         await stop_dispatcher_task(dispatcher, dispatcher_task)
         await stop_webhook_dispatcher(webhook_dispatcher, webhook_dispatcher_task)
+        if diagnostic_retention_task is not None:
+            diagnostic_retention_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await diagnostic_retention_task
         if provider_preflight_task is not None:
             provider_preflight_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):

@@ -849,12 +849,23 @@ def normalize_request_scope(
     )
     task = "lookup"
     for label, pattern in (
+        (
+            "calculation",
+            r"\b(?:calculat(?:e|ed|ing|ion|ions)|recalculat(?:e|ion)|"
+            r"comput(?:e|ing|ation)|breakdown)\b|\bhow much\b|"
+            r"হিসাব|হিসেব|গণনা|পরিগণনা",
+        ),
         ("comparison", r"compare|comparison|difference|তুলনা"),
-        ("calculation", r"calculate|calculation|how much.*(?:owe|pay)|হিসাব"),
         ("eligibility", r"am i|do i qualify|my eligibility|আমি.*যোগ্য"),
         ("overview", r"overview|summari[sz]e|সারাংশ"),
         ("explanation", r"explain|why|ব্যাখ্যা"),
     ):
+        if label == "calculation" and re.search(
+            r"\b(?:do not|don't|no|without|not asking (?:you )?to)\s+"
+            r"(?:\w+\s+){0,2}(?:calculat\w*|comput\w*|breakdown)",
+            folded,
+        ):
+            continue
         if re.search(pattern, folded, re.I):
             task = label
             break

@@ -518,3 +518,32 @@ provider_timeout consistently with the actual cutoff. A deterministic nonfactual
 terminal skips semantic verification; any factual partial claim retains full
 verification. Language resolution supplies the same EN/BN content to Regular,
 SSE and persisted GET.
+
+
+### Operator message diagnostics
+
+`GET /api/v1/projects/{project_id}/conversations/{conversation_id}/messages/{message_id}/diagnostic`
+
+Requires an operator session and Project access. The message must belong to the
+requested Project and conversation. Reads are audited. Returns bounded summary
+metadata and an optional full payload. Full payloads expire after seven days and
+are returned as `null` when expired; summaries remain available.
+
+```json
+{"success":true,"data":{"message_id":"00000000-0000-0000-0000-000000000001","project_id":"00000000-0000-0000-0000-000000000002","summary":{"version":"message.diagnostic.v1"},"payload":null,"expires_at":null,"expired":false}}
+```
+
+For opt-in QA, send `X-APE-Diagnostic-Capture: full` on the existing Regular or SSE
+message POST. This requires operator authorization and the existing CSRF policy.
+Organization API keys cannot request capture. The public Message contract remains
+compatible: `claims[].assertion_id` is optional and `metadata.execution` is additive.
+Full diagnostic payloads and rejected assertion text do not appear in public
+Regular/SSE/GET responses. Attempted and published verification counts appear
+separately in message metadata.
+
+
+Full diagnostic artifacts may include original/source and local/admitted offsets, optional
+requirement origins and assigned scopes, partial limitations, and completed/interrupted attempts.
+These private records remain subject to operator/project access and seven-day payload expiry;
+public responses contain only the execution summary and verified claims/citations. The finer
+terminal cause does not remove the existing insufficient_evidence_reason compatibility field.

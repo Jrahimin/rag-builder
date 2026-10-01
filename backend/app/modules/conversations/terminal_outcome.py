@@ -83,17 +83,27 @@ def terminal_outcome(
             next_action="retry",
             **common,
         )
+    if reason == "claim_verification_failed" and not draft.get("timeout_reason"):
+        return TerminalOutcome(
+            outcome="verification_failed",
+            reason_code=diagnostics.get("verification_failure") or "claim_verification_failed",
+            failure_stage="claim_verification",
+            retryable=True,
+            next_action="retry",
+            **common,
+        )
     budget_reason = repair.get("stop_reason") or (repair.get("requirement_progress") or {}).get(
         "stop_reason"
     )
     provider_reason = draft.get("timeout_reason") or (repair.get("provider_context") or {}).get(
         "reason"
     )
+    recovery_incomplete = not supported_claims and not bool(diagnostics.get("generation_ran"))
     timeout = (
         bool(draft.get("timeout_reason"))
         or reason in {"request_deadline_exceeded", "recovery_deadline_exceeded", "provider_timeout"}
         or (
-            not supported_claims
+            recovery_incomplete
             and (
                 budget_reason
                 in {
@@ -152,15 +162,6 @@ def terminal_outcome(
                 else "recovery_deadline_exceeded"
             ),
             failure_stage=failure_stage,
-            retryable=True,
-            next_action="retry",
-            **common,
-        )
-    if reason == "claim_verification_failed":
-        return TerminalOutcome(
-            outcome="verification_failed",
-            reason_code=diagnostics.get("verification_failure") or "claim_verification_failed",
-            failure_stage="claim_verification",
             retryable=True,
             next_action="retry",
             **common,
@@ -298,6 +299,4 @@ def terminal_projection(
                 "source": {"failure_stage": result.failure_stage, "reason": result.reason_code},
             }
         )
-    elif result.outcome == "insufficient_evidence" and legacy_reason == "unresolved_authority":
-        legacy_reason = "context_selection_empty"
     return content, finish_reason, legacy_reason, notices

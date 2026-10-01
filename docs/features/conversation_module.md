@@ -643,3 +643,70 @@ Questioned category membership remains an eligibility obligation in mixed calcul
 or comparison tasks. Only asserted scenario premises can be treated as stipulations.
 Selective citation previews include operative AGM timing clauses while the full
 original supporting spans remain available.
+
+
+## Shared message execution and operator diagnostics (2026-10-01)
+
+`MessageExecutionRunner` owns production scope resolution, retrieval/admission,
+coverage/recovery, generation, draft validation, claim verification and terminal
+finalization. Regular and SSE adapters call the same generation operation; SSE
+buffers factual output until final verification. Evaluation uses this runner with
+its selected production search profile, request filters and captured provenance.
+Authentication, immutable configuration selection, ORM history loading, transaction
+release and message persistence remain caller-owned.
+
+Execution artifacts are typed `TurnIntent`, `RequirementGraph`, `EvidenceBundle`,
+`AnswerAssertion` and `FinalizationResult`. Exact proof references and source/span
+hashes cross the preparation/finalization boundary. Existing public metadata and
+provider schemas remain compatibility projections. Verified claims now retain an
+optional stable `assertion_id` across transports. The additive `execution` metadata
+contains normalized scope, admitted proof identities, verified IDs and terminal
+result; attempted/published claim counters are separate.
+
+A failed verifier after partial recovery remains `verification_failed`. Optional
+recovery stops are recorded separately and cannot overwrite that final cause. An
+actual generation/correction/provider deadline still reports `timed_out` at its
+actual stage. Public responses contain verified/published claims and sanitized
+answer-draft metadata; operator payloads are never persisted in public metadata.
+
+Apply migration `20261001_0037` before enabling the new runtime. Normal production
+turns retain only bounded diagnostic summaries (16 KiB cap). An operator may opt in
+to a full capture for one message using `X-APE-Diagnostic-Capture: full` on Regular
+or SSE. Organization API keys cannot enable capture, including when an operator
+cookie is also present. Full contract-derived payloads are capped at 256 KiB,
+exclude arbitrary provider/configuration payloads and hidden model reasoning, and
+expire seven days after creation. Oversize payloads retain a hash and explicit
+truncation marker. Reads and capture are audited. Project-scoped expiry occurs on
+reads/writes; the API lifespan also clears expired payloads every 60 seconds.
+Expired payloads are unavailable immediately on read, while the physical sweep
+may lag by at most its interval while the API is running. A stopped API cannot
+run retention; restart performs a sweep.
+
+The diagnostic endpoint requires an operator session and accessible Project,
+conversation and message. Summaries record the runner fingerprint captured when
+its module loaded, draft schema hash, prompt/configuration/source/build identity.
+These fingerprints attest that process's runner import, not all transitive Python
+modules. Historical process code remains unattested until a controlled restart
+and a new diagnostic capture.
+
+Deterministic captured-failure and Regular/SSE/evaluation/persisted GET parity
+fixtures live in `tests/unit/modules/conversations/test_message_execution_runner.py`.
+Diagnostic authorization, bounds, expiry, auditing and public sanitation tests
+live in `test_message_diagnostics.py`. Phase 1 preserves legacy fixed deadlines;
+adaptive policy, proof-verifier repairs and corpus certification remain later
+approved phases.
+
+
+The resolved typed TurnIntent owns the routing decisions used by preparation. Requirement
+contracts retain optional origin, dependencies and the assigned normalized scope. Finalization
+keeps partial-scope limitations, every completed verification/correction attempt, and interrupted
+verification records for operator capture. A later timeout preserves already selected evidence
+and completed checks while publishing the shared timeout response. EvidenceBundle distinguishes
+the original chunk hash and source offsets from the admitted span hash and local offsets.
+Streaming buffers provider deltas through the same runner and finalizer, and records cancellation
+inside the generation stage when the client disconnects.
+
+The recovery planner and turn-local proof map use the same shared Requirement model as
+finalization. Its existing requirement_id/description/depends_on wire fields remain compatible;
+assigned scope is fixed from the normalized request before proof execution, and optional origin
+determines whether the requirement is mandatory.

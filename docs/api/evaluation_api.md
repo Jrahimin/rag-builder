@@ -70,3 +70,20 @@ Get one run. Cross-Project IDs return `evaluation_run_not_found`.
 
 Return the latest run, its immutable dataset, and current acceptance thresholds. Before the first
 run, `dataset` is the latest available dataset. This is the console quality read model.
+
+
+Production Evidence Quality evaluation now invokes the shared message runner,
+including normalized request scope, production recovery, draft generation,
+semantic verification and terminal reduction. Case results add `execution` and
+`complete_turn_latency_ms`. Existing `latency_ms` remains retrieval latency for
+compatibility. Evaluation does not create conversation messages; its transactions
+and result persistence remain owned by the evaluation service. Timeouts remain
+failed complete-turn outcomes and must not be treated as correct abstention.
+
+
+Production evaluation starts the complete-turn clock before scope normalization and the first
+search. Each case/profile gets a fresh search service and a separate read session; evaluation
+run/job persistence retains its own transaction. Retrieval metrics come from that first scoped
+search, using the dataset filters and run top_k. Timeout and verification-failed cases are
+execution failures, appear in failed_cases, and earn no no_result_behavior abstention credit.
+The profile metrics include execution_failure_count.

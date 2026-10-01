@@ -30,6 +30,8 @@ class AuditEventType(StrEnum):
     PROJECT_OWNERSHIP_CONFIRMED = "project.ownership_confirmed"
     PROJECT_CONFIG_REVISION_CREATED = "project_config.revision_created"
     PROJECT_CONFIG_REVISION_RESTORED = "project_config.revision_restored"
+    MESSAGE_DIAGNOSTIC_READ = "message_diagnostic.read"
+    MESSAGE_DIAGNOSTIC_CAPTURE = "message_diagnostic.capture"
     CONVERSATION_CONFIG_UPDATED = "conversation.config_updated"
     SOURCE_METADATA_REVISION_CREATED = "source_metadata.revision_created"
     SOURCE_METADATA_REVISION_ACTIVATED = "source_metadata.revision_activated"

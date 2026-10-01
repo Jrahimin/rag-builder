@@ -2786,6 +2786,8 @@ async def _open_journey_chat(
     embedder: Any,
     conversation_id: uuid.UUID,
 ) -> Any:
+    from starlette.requests import Request
+
     from app.dependencies.conversations import get_chat_service
     from app.modules.conversations.repositories.conversation_repository import (
         ConversationRepository,
@@ -2796,12 +2798,14 @@ async def _open_journey_chat(
     messages = MessageRepository(session, project_id)
     return _enable_journey_candidate_traces(
         await get_chat_service(
-            session,
-            project_id,
-            conversations,
-            messages,
-            conversation_id,
-            embedder,
+            session=session,
+            project_id=project_id,
+            conversation_repository=conversations,
+            message_repository=messages,
+            conversation_id=conversation_id,
+            request=Request({"type": "http", "headers": [], "state": {}}),
+            diagnostic_capture=False,
+            embedder=embedder,
         )
     )
 

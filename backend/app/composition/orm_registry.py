@@ -29,6 +29,7 @@ from app.models.job_outbox import JobOutbox  # noqa: F401
 from app.models.job_run import JobRun  # noqa: F401
 from app.models.keyword_term_stats import KeywordCollectionStats, KeywordTermStats  # noqa: F401
 from app.models.message import Message  # noqa: F401
+from app.models.message_diagnostic import MessageDiagnostic  # noqa: F401
 from app.models.organization import Organization  # noqa: F401
 from app.models.organization_api_key import OrganizationApiKey  # noqa: F401
 from app.models.project import Project  # noqa: F401

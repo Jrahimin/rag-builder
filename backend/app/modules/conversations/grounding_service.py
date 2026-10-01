@@ -1218,17 +1218,11 @@ class GroundingService:
                     # batch entailment; ordinary passages keep lexical/semantic checks.
                     if model_entailment:
                         semantic = ClaimVerification(entailments[draft_position])
-                    if (
-                        not model_entailment
-                        and score is not None
-                        and score < self._config.claim_semantic_reject_floor
-                    ):
-                        semantic = ClaimVerification.UNSUPPORTED
-                    verification = (
-                        semantic
-                        if model_entailment
-                        else _combine_claim_verification(lexical, semantic)
-                    )
+                        verification = semantic
+                    else:
+                        if score is not None and score < self._config.claim_semantic_reject_floor:
+                            semantic = ClaimVerification.UNSUPPORTED
+                        verification = _combine_claim_verification(lexical, semantic)
                     verification_method = "lexical" if uses_lexical else "semantic"
                     if (
                         not model_entailment
@@ -1710,6 +1704,7 @@ def _evidence_unit(
         "evidence_unit_id": unit_id,
         "evidence_span_hash": span_hash,
         "evidence_source_chunk_hash": chunk.chunk_hash,
+        "source_chunk_char_end": chunk.char_end,
         "evidence_chunk_char_start": span.char_start,
         "evidence_chunk_char_end": span.char_end,
         "evidence_span_derivation": span.derivation,

@@ -1654,7 +1654,7 @@ async def test_persisted_web_diagnostics_keep_partial_scope_review_nested(
         )
 
     monkeypatch.setattr(
-        "app.modules.conversations.services.chat_service.review_web_evidence",
+        "app.modules.conversations.services.message_execution_runner_service.review_web_evidence",
         AsyncMock(side_effect=partial_review),
     )
 
@@ -1724,7 +1724,7 @@ async def test_bounded_deadline_keeps_unresolved_indexed_authority_closed(
     service._retrieval = UnresolvedRuleRetrieval()
     service._web_search = web
     monkeypatch.setattr(
-        "app.modules.conversations.services.chat_service.repair_knowledge_evidence",
+        "app.modules.conversations.services.message_execution_runner_service.repair_knowledge_evidence",
         AsyncMock(
             return_value=EvidenceRepairResult(
                 [],
@@ -1791,7 +1791,8 @@ async def test_scoped_bounded_recovery_deadline_persists_insufficient_evidence_w
         )
     )
     monkeypatch.setattr(
-        "app.modules.conversations.services.chat_service.repair_knowledge_evidence", repair
+        "app.modules.conversations.services.message_execution_runner_service.repair_knowledge_evidence",
+        repair,
     )
 
     turn = await service.send_message(
@@ -1860,7 +1861,8 @@ async def test_current_and_calculation_deadline_guards_suppress_web_fallback(
         )
     )
     monkeypatch.setattr(
-        "app.modules.conversations.services.chat_service.repair_knowledge_evidence", repair
+        "app.modules.conversations.services.message_execution_runner_service.repair_knowledge_evidence",
+        repair,
     )
 
     turn = await service.send_message(conversation.id, MessageSendRequest(content=question))
@@ -1935,7 +1937,8 @@ async def test_empty_recall_current_fact_timeout_does_not_escape_to_web(
         )
     )
     monkeypatch.setattr(
-        "app.modules.conversations.services.chat_service.repair_knowledge_evidence", repair
+        "app.modules.conversations.services.message_execution_runner_service.repair_knowledge_evidence",
+        repair,
     )
 
     turn = await service.send_message(conversation.id, MessageSendRequest(content=question))
@@ -1980,7 +1983,7 @@ async def test_recovery_discovered_unresolved_source_blocks_web_in_factual_mode(
         metadata={"authority_status": "unresolved"},
     )
     monkeypatch.setattr(
-        "app.modules.conversations.services.chat_service.repair_knowledge_evidence",
+        "app.modules.conversations.services.message_execution_runner_service.repair_knowledge_evidence",
         AsyncMock(
             return_value=EvidenceRepairResult(
                 [discovered],
@@ -2042,7 +2045,8 @@ async def test_provider_timeout_during_bounded_recovery_still_persists_failure(
         )
     )
     monkeypatch.setattr(
-        "app.modules.conversations.services.chat_service.repair_knowledge_evidence", repair
+        "app.modules.conversations.services.message_execution_runner_service.repair_knowledge_evidence",
+        repair,
     )
 
     with pytest.raises(ServiceUnavailableError):
@@ -2074,9 +2078,10 @@ async def test_broad_compliance_with_no_safe_indexed_proof_attempts_recovery_bef
 ) -> None:
     offset = [0.0]
     real_counter = time.perf_counter
+    clock = SimpleNamespace(perf_counter=lambda: real_counter() + offset[0])
+    monkeypatch.setattr("app.modules.conversations.services.chat_service.time", clock)
     monkeypatch.setattr(
-        "app.modules.conversations.services.chat_service.time",
-        SimpleNamespace(perf_counter=lambda: real_counter() + offset[0]),
+        "app.modules.conversations.services.message_execution_runner_service.time", clock
     )
     conversation.system_prompt_version = "v5"
     web = FakeWebSearch(
@@ -2125,7 +2130,8 @@ async def test_broad_compliance_with_no_safe_indexed_proof_attempts_recovery_bef
 
     repair = AsyncMock(side_effect=consume_recovery_budget)
     monkeypatch.setattr(
-        "app.modules.conversations.services.chat_service.repair_knowledge_evidence", repair
+        "app.modules.conversations.services.message_execution_runner_service.repair_knowledge_evidence",
+        repair,
     )
 
     turn = await service.send_message(
@@ -2135,8 +2141,13 @@ async def test_broad_compliance_with_no_safe_indexed_proof_attempts_recovery_bef
 
     repair.assert_awaited_once()
     assert not web.calls
-    assert turn.assistant_message.finish_reason == "recovery_deadline_exceeded"
-    assert turn.assistant_message.insufficient_evidence_reason == "recovery_deadline_exceeded"
+    timed_out = not completed_review or elapsed_before_web > 0
+    assert turn.assistant_message.finish_reason == (
+        "recovery_deadline_exceeded" if timed_out else "insufficient_evidence"
+    )
+    assert turn.assistant_message.insufficient_evidence_reason == (
+        "recovery_deadline_exceeded" if timed_out else "unresolved_authority"
+    )
     assert turn.assistant_message.metadata["web_search"]["status"] == (
         "suppressed_unresolved_authority"
     )
@@ -2148,8 +2159,12 @@ async def test_broad_compliance_with_no_safe_indexed_proof_attempts_recovery_bef
     assert scope["complete"] is False
     assert scope["partial"] is False
 
-    assert turn.assistant_message.terminal_outcome.outcome == "timed_out"
-    assert turn.assistant_message.terminal_outcome.reason_code == "recovery_deadline_exceeded"
+    assert turn.assistant_message.terminal_outcome.outcome == (
+        "timed_out" if timed_out else "insufficient_evidence"
+    )
+    assert turn.assistant_message.terminal_outcome.reason_code == (
+        "recovery_deadline_exceeded" if timed_out else "source_review_incomplete"
+    )
 
 
 @pytest.mark.parametrize(
@@ -2404,7 +2419,24 @@ async def test_repaired_evidence_reaches_generation_without_old_rule_or_web(
                 if coverage_complete and missing_inputs
                 else []
             ),
-            answer,
+            replace(
+                answer,
+                content=json.dumps(
+                    {
+                        "version": "answer.draft.v1",
+                        "segments": [
+                            {
+                                "text": (
+                                    "Current refund entitlement is 45 days for eligible purchases."
+                                ),
+                                "requirement_ids": ["query-0"],
+                                "proof_ids": [str(current.chunk_id)],
+                            }
+                        ],
+                    }
+                ),
+            ),
+            replace(answer, content='{"verdicts":["supported"]}', usage=ChatUsage(0, 0)),
         ]
     )
     service = _service(
@@ -2453,7 +2485,7 @@ async def test_repaired_evidence_reaches_generation_without_old_rule_or_web(
     assert ("retrieval" in repair["branches"][0]) is store_trace
     assert repair["coverage"]["quotes_validated"] is True
     assert "quote" not in repair["coverage"]["checks"][0]
-    messages = llm.generate.call_args_list[-1].args[0]
+    messages = llm.generate.call_args_list[-2].args[0]
     prompt = "\n".join(message.content for message in messages)
     assert current.content in prompt
     assert initial.chunks[0].content not in prompt
@@ -4505,7 +4537,9 @@ async def test_ranked_cited_fallback_admits_chunk_when_relevance_rejects(
 ):
     from app.modules.conversations.grounding_service import EvidenceDecision
     from app.modules.conversations.schemas.message import InsufficientEvidenceReason
-    from app.modules.conversations.services import chat_service as chat_service_mod
+    from app.modules.conversations.services import (
+        message_execution_runner_service as chat_service_mod,
+    )
 
     cited_chunk = _reusable_chunk()
     prior_user, prior_assistant = _history_messages(
@@ -5051,7 +5085,7 @@ async def test_resolver_timeout_falls_back_without_using_interpretation(
     )
     message_repository.list_recent_for_conversation.return_value = [prior_user, prior_assistant]
     monkeypatch.setattr(
-        "app.modules.conversations.services.chat_service.RESOLUTION_TIMEOUT_SECONDS",
+        "app.modules.conversations.services.message_execution_runner_service.RESOLUTION_TIMEOUT_SECONDS",
         0.05,
     )
 

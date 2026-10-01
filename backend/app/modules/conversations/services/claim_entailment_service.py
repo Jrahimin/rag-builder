@@ -11,7 +11,7 @@ from app.platform.providers.contracts.llm import (
     StructuredOutput,
     generate_structured,
 )
-from app.platform.providers.errors import ProviderError
+from app.platform.providers.errors import ProviderError, ProviderTimeoutError
 from app.platform.providers.request_work import current_request_purpose, current_request_work
 
 
@@ -91,6 +91,8 @@ contradiction is unsupported. Do not consult outside knowledge."""
                 }
                 return ["unverified"] * len(assertions)
             return verdicts
+        except ProviderTimeoutError:
+            raise
         except ProviderError:
             self.last_failure = {"reason": "verifier_unavailable", "stage": "claim_verification"}
             return ["unverified"] * len(assertions)

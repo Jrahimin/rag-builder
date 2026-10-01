@@ -115,3 +115,26 @@ async def test_stream_message_emits_sanitized_error_on_failure(
     event = json.loads(data_lines[-1])
     assert event["event"] == "error"
     assert "temporarily unavailable" in event["message"]
+
+
+async def test_journey_cli_constructs_production_chat_service(db_client):
+    from app.cli.rag_journey import _open_journey_chat
+    from app.dependencies.common import get_db_session
+    from app.platform.providers.implementations.embedding_factory import get_embedding_provider
+
+    project = await _create_project(db_client)
+    conversation = await _create_conversation(db_client, project)
+    generator = db_client._transport.app.dependency_overrides[get_db_session]()
+    session = await anext(generator)
+    try:
+        service = await _open_journey_chat(
+            session,
+            project_id=uuid.UUID(project),
+            conversation_id=uuid.UUID(conversation),
+            embedder=get_embedding_provider(),
+        )
+        assert service._project_id == uuid.UUID(project)
+        assert not service._diagnostic_capture
+        assert service._runner is not None
+    finally:
+        await generator.aclose()

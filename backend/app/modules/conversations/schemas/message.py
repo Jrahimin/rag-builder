@@ -242,6 +242,7 @@ class AnswerClaim(BaseModel):
 
     requirement_ids: list[str] = Field(default_factory=list)
     claim_id: str
+    assertion_id: str | None = None
     text: str
     grounded: bool
     verification: ClaimVerification
@@ -348,6 +349,7 @@ class MessageResponse(BaseModel):
         if message.model is None and conversation_model is not None:
             base = base.model_copy(update={"model": conversation_model})
         metadata = dict(getattr(message, "message_metadata", None) or {})
+        metadata.pop("operator_diagnostic", None)
         if "answer_draft" in metadata:
             metadata["answer_draft"] = public_draft_diagnostics(metadata["answer_draft"])
         provenance = metadata.get("source_provenance", SourceProvenance.NONE.value)
@@ -393,3 +395,12 @@ class ChatTurnResponse(BaseModel):
 
     user_message: MessageResponse
     assistant_message: MessageResponse
+
+
+class MessageDiagnosticResponse(BaseModel):
+    message_id: uuid.UUID
+    project_id: uuid.UUID
+    summary: dict[str, Any]
+    payload: dict[str, Any] | None
+    expires_at: datetime | None
+    expired: bool

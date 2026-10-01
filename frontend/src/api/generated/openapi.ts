@@ -844,6 +844,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{project_id}/conversations/{conversation_id}/messages/{message_id}/diagnostic": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read an expiring operator message diagnostic */
+        get: operations["get_message_diagnostic_api_v1_projects__project_id__conversations__conversation_id__messages__message_id__diagnostic_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{project_id}/conversations/{conversation_id}/status": {
         parameters: {
             query?: never;
@@ -1677,6 +1694,8 @@ export interface components {
          */
         AnswerClaim: {
             arithmetic_verification?: components["schemas"]["ClaimVerification"] | null;
+            /** Assertion Id */
+            assertion_id?: string | null;
             /** Assertion Text */
             assertion_text?: string | null;
             /**
@@ -2057,6 +2076,18 @@ export interface components {
         /** ApiResponse[LivenessStatus] */
         ApiResponse_LivenessStatus_: {
             data?: components["schemas"]["LivenessStatus"] | null;
+            /** Message */
+            message?: string | null;
+            meta?: components["schemas"]["ResponseMeta"] | null;
+            /**
+             * Success
+             * @default true
+             */
+            success?: boolean;
+        };
+        /** ApiResponse[MessageDiagnosticResponse] */
+        ApiResponse_MessageDiagnosticResponse_: {
+            data?: components["schemas"]["MessageDiagnosticResponse"] | null;
             /** Message */
             message?: string | null;
             meta?: components["schemas"]["ResponseMeta"] | null;
@@ -2611,7 +2642,7 @@ export interface components {
          * AuditEventType
          * @enum {string}
          */
-        AuditEventType: "organization.created" | "organization.updated" | "organization.status_changed" | "organization.archived" | "organization.restored" | "api_key.created" | "api_key.rotated" | "api_key.revoked" | "admin_user.created" | "admin_user.status_changed" | "admin_user.archived" | "admin_user.restored" | "project.created" | "project.updated" | "project.status_changed" | "project.archived" | "project.restored" | "project.ownership_reassigned" | "project.ownership_confirmed" | "project_config.revision_created" | "project_config.revision_restored" | "conversation.config_updated" | "source_metadata.revision_created" | "source_metadata.revision_activated" | "job.submitted" | "job.retried" | "job.started" | "job.succeeded" | "job.retry_scheduled" | "job.failed" | "job.recovered" | "job.dispatch_deferred" | "index_build.activated" | "index_build.rolled_back" | "document.delete_requested" | "document.purge_requested" | "storage.reconciliation_requested" | "webhook.endpoint_created" | "webhook.endpoint_enabled" | "webhook.endpoint_disabled" | "webhook.delivery_replayed";
+        AuditEventType: "organization.created" | "organization.updated" | "organization.status_changed" | "organization.archived" | "organization.restored" | "api_key.created" | "api_key.rotated" | "api_key.revoked" | "admin_user.created" | "admin_user.status_changed" | "admin_user.archived" | "admin_user.restored" | "project.created" | "project.updated" | "project.status_changed" | "project.archived" | "project.restored" | "project.ownership_reassigned" | "project.ownership_confirmed" | "project_config.revision_created" | "project_config.revision_restored" | "message_diagnostic.read" | "message_diagnostic.capture" | "conversation.config_updated" | "source_metadata.revision_created" | "source_metadata.revision_activated" | "job.submitted" | "job.retried" | "job.started" | "job.succeeded" | "job.retry_scheduled" | "job.failed" | "job.recovered" | "job.dispatch_deferred" | "index_build.activated" | "index_build.rolled_back" | "document.delete_requested" | "document.purge_requested" | "storage.reconciliation_requested" | "webhook.endpoint_created" | "webhook.endpoint_enabled" | "webhook.endpoint_disabled" | "webhook.delivery_replayed";
         /**
          * AuditOutcome
          * @enum {string}
@@ -4249,6 +4280,31 @@ export interface components {
             status?: string;
             /** Version */
             version: string;
+        };
+        /** MessageDiagnosticResponse */
+        MessageDiagnosticResponse: {
+            /** Expired */
+            expired: boolean;
+            /** Expires At */
+            expires_at: string | null;
+            /**
+             * Message Id
+             * Format: uuid
+             */
+            message_id: string;
+            /** Payload */
+            payload: {
+                [key: string]: unknown;
+            } | null;
+            /**
+             * Project Id
+             * Format: uuid
+             */
+            project_id: string;
+            /** Summary */
+            summary: {
+                [key: string]: unknown;
+            };
         };
         /**
          * MessageResponse
@@ -8419,7 +8475,9 @@ export interface operations {
     send_message_api_v1_projects__project_id__conversations__conversation_id__messages_post: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "X-APE-Diagnostic-Capture"?: string | null;
+            };
             path: {
                 project_id: string;
                 conversation_id: string;
@@ -8457,7 +8515,9 @@ export interface operations {
     stream_message_api_v1_projects__project_id__conversations__conversation_id__messages_stream_post: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "X-APE-Diagnostic-Capture"?: string | null;
+            };
             path: {
                 project_id: string;
                 conversation_id: string;
@@ -8479,6 +8539,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_message_diagnostic_api_v1_projects__project_id__conversations__conversation_id__messages__message_id__diagnostic_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+                conversation_id: string;
+                message_id: string;
+            };
+            cookie?: {
+                ape_admin_access?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_MessageDiagnosticResponse_"];
                 };
             };
             /** @description Validation Error */
