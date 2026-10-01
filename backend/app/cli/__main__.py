@@ -7,10 +7,13 @@ import sys
 
 from app.cli.config_cli import main as config_main
 from app.cli.doctor_cli import main as doctor_main
+from app.cli.provider_costs_cli import main as provider_costs_main
 from app.cli.rag_journey_cli import main as rag_journey_main
 
 
 def main() -> int:
+    if len(sys.argv) > 1 and sys.argv[1] == "provider-costs":
+        return provider_costs_main(sys.argv[2:])
     if len(sys.argv) > 1 and sys.argv[1] == "rag-journey":
         return rag_journey_main(sys.argv[2:])
     if len(sys.argv) > 1 and sys.argv[1] == "config":

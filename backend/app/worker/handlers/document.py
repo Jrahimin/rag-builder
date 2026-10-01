@@ -71,6 +71,7 @@ async def _process(
     )
     definition = indexing.build_embed_job(document)
     definition.payload["operation"] = str(run.payload.get("operation", "ingest"))
+    definition.payload["coalesce_seconds"] = settings.provider_costs.build_coalesce_seconds
     return definition
 
 

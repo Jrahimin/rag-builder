@@ -21,6 +21,7 @@ from app.platform.providers.errors import (
     ProviderUnavailableError,
 )
 from app.platform.providers.implementations.cohere_http import cohere_post
+from app.platform.providers.provider_work import billed_usage
 
 _PURPOSE_TO_INPUT_TYPE = {
     EmbeddingPurpose.QUERY: "search_query",
@@ -65,6 +66,10 @@ class CohereEmbeddingProvider(BaseEmbeddingProvider):
     def provider_version(self) -> str:
         return self._provider_version
 
+    @property
+    def cache_namespace(self) -> str:
+        return self._base_url
+
     async def embed_texts(
         self,
         texts: list[str],
@@ -80,10 +85,14 @@ class CohereEmbeddingProvider(BaseEmbeddingProvider):
                 provider_version=self._provider_version,
             )
         vectors: list[list[float]] = []
+        billed: int | None = 0
         for start in range(0, len(texts), _MAX_TEXTS_PER_REQUEST):
             batch = texts[start : start + _MAX_TEXTS_PER_REQUEST]
-            vectors.extend(await self._embed_batch(batch, purpose))
+            batch_vectors, tokens = await self._embed_batch(batch, purpose)
+            vectors.extend(batch_vectors)
+            billed = None if billed is None or tokens is None else billed + tokens
         return EmbeddingBatchResult(
+            billed_input_tokens=billed,
             vectors=vectors,
             provider=self.provider_name,
             model=self.model_name,
@@ -95,7 +104,7 @@ class CohereEmbeddingProvider(BaseEmbeddingProvider):
         self,
         texts: list[str],
         purpose: EmbeddingPurpose,
-    ) -> list[list[float]]:
+    ) -> tuple[list[list[float]], int | None]:
         try:
             response = await cohere_post(
                 base_url=self._base_url,
@@ -151,7 +160,7 @@ class CohereEmbeddingProvider(BaseEmbeddingProvider):
                 "Cohere embed returned a mismatched vector batch.",
                 provider_name=self.provider_name,
             )
-        return vectors
+        return vectors, billed_usage(response.json())[0]
 
 
 def _float_vectors(payload: object, *, dimensions: int) -> list[list[float]]:

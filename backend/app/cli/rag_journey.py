@@ -3553,7 +3553,7 @@ def render_summary(result: Mapping[str, Any]) -> str:
         )
         standalone_cases = [case for case in variant["cases"] if not case.get("sequence_key")]
         for case in standalone_cases:
-            stages = ", ".join(failure["stage"] for failure in case["failures"]) or "—"
+            stages = ", ".join(failure["stage"] for failure in case["failures"]) or "â€”"
             lines.append(
                 f"| `{case['key']}` | {', '.join(case['tags'])} | "
                 f"{'PASS' if case['passed'] else 'FAIL'} | {stages} | "
@@ -3577,7 +3577,7 @@ def render_summary(result: Mapping[str, Any]) -> str:
                 ]
             )
             for item in sequences:
-                failed = ", ".join(f"`{key}`" for key in item.get("failed_turns") or []) or "—"
+                failed = ", ".join(f"`{key}`" for key in item.get("failed_turns") or []) or "â€”"
                 lines.append(
                     f"| `{item['key']}` | {item['turn_count']} | "
                     f"{'PASS' if item.get('passed') else 'FAIL'} | {failed} |"
@@ -3592,7 +3592,7 @@ def render_summary(result: Mapping[str, Any]) -> str:
             for case in variant["cases"]:
                 if not case.get("sequence_key"):
                     continue
-                stages = ", ".join(failure["stage"] for failure in case["failures"]) or "—"
+                stages = ", ".join(failure["stage"] for failure in case["failures"]) or "â€”"
                 result_label = (
                     "BLOCKED" if case.get("blocked") else ("PASS" if case["passed"] else "FAIL")
                 )
@@ -3780,12 +3780,12 @@ _LANGUAGE_BUCKET_LABELS = {
 
 def _fmt_ms(value: object) -> str:
     number = _optional_ms(value)
-    return "—" if number is None else str(number)
+    return "â€”" if number is None else str(number)
 
 
 def _fmt_share(value: object) -> str:
     if not isinstance(value, (int, float)) or isinstance(value, bool):
-        return "—"
+        return "â€”"
     return f"{float(value):.0%}"
 
 
@@ -3813,18 +3813,18 @@ def _render_translation_comparison(translation: Mapping[str, Any]) -> list[str]:
         "Same Project, corpus, and active index. `translation_on` is the current configuration; "
         "`translation_off` only sets `behavior.translation_policy=disabled`. "
         "Quality uses journey pass/fail, recall, rank, nDCG, admission, grounding, citation, and "
-        "generation — not LLM wording similarity. `grounding_and_context` is residual "
+        "generation â€” not LLM wording similarity. `grounding_and_context` is residual "
         "`total - retrieval - generation`. Dense/lexical branch latencies are omitted unless "
         "the retrieval diagnostics expose them.",
         "",
-        "| Case | Lang | ON | OFF | ON ms | OFF ms | Δ ms | Retrieval Δ "
+        "| Case | Lang | ON | OFF | ON ms | OFF ms | Î” ms | Retrieval Î” "
         "| Translation contribution | Verdict |",
         "|---|---|---:|---:|---:|---:|---:|---|---|---|",
     ]
     for pair in translation.get("cases") or []:
         lang = _LANGUAGE_BUCKET_LABELS.get(
             str(pair.get("language_bucket")),
-            pair.get("language_bucket") or "—",
+            pair.get("language_bucket") or "â€”",
         )
         lines.append(
             f"| `{pair['key']}` | {lang} | "
@@ -3859,7 +3859,7 @@ def _render_translation_comparison(translation: Mapping[str, Any]) -> list[str]:
             "",
             "### Latency",
             "",
-            "| Slice | ON p50/p95/mean | OFF p50/p95/mean | Δ p50/p95/mean "
+            "| Slice | ON p50/p95/mean | OFF p50/p95/mean | Î” p50/p95/mean "
             "| Translation share p50/overall |",
             "|---|---:|---:|---:|---:|",
         ]
@@ -3901,6 +3901,16 @@ async def run_journey(
     from app.platform.db.session import Database
     from app.platform.providers.implementations.storage_factory import create_storage_provider
 
+    paid = (
+        settings.embedding.backend.value == "cohere"
+        or settings.retrieval.reranker_backend.value == "cohere"
+    )
+    if paid and not (
+        settings.provider_costs.paid_evaluation_enabled and settings.provider_costs.enforce_budgets
+    ):
+        raise JourneyError(
+            "Paid rag-journey requires explicit paid-evaluation opt-in and enforced finite budgets"
+        )
     notify = progress or (lambda _message: None)
     if settings.jobs.backend is not JobQueueBackend.INLINE:
         raise JourneyError(
@@ -3963,6 +3973,7 @@ async def run_journey(
     storage = create_storage_provider(settings)
     project_id: uuid.UUID | None = None
     document_ids: dict[str, uuid.UUID] = {}
+    cost_scope = None
     try:
         notify("preflight: database, migrations, pgvector, storage, default Organization")
         await database.check()
@@ -3972,6 +3983,12 @@ async def run_journey(
             project = await _create_project(session, run_token=run_token, pack_key=manifest.key)
             project_id = project.id
             result["project_id"] = str(project_id)
+        from app.composition.provider_work import provider_work_scope
+
+        cost_scope = provider_work_scope(
+            settings, database.session_factory, project_id, str(run_uuid), "evaluation"
+        )
+        cost_scope.__enter__()
 
         baseline_values = dict(options.overrides)
         baseline_config = build_project_config(baseline_values)
@@ -4168,6 +4185,8 @@ async def run_journey(
                     }
                     result["status"] = "failed"
         result["completed_at"] = datetime.now(UTC).isoformat()
+        if cost_scope is not None:
+            cost_scope.__exit__(None, None, None)
         await database.dispose()
         write_reports(result, artifact_dir)
     return result, artifact_dir

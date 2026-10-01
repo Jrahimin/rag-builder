@@ -13,9 +13,10 @@ from app.platform.providers.implementations.gemini_embedding import GeminiEmbedd
 from app.platform.providers.implementations.hash_embedding import HashEmbeddingProvider
 from app.platform.providers.implementations.ollama_embedding import OllamaEmbeddingProvider
 from app.platform.providers.implementations.openai_embedding import OpenAIEmbeddingProvider
+from app.platform.providers.provider_work import CachedEmbeddingProvider
 
 
-def create_embedding_provider(
+def _create_embedding_provider(
     settings: Settings,
     *,
     backend: EmbeddingBackend | None = None,
@@ -87,6 +88,21 @@ def create_embedding_provider(
         )
     msg = f"Unsupported embedding backend: {cfg.backend!r}"
     raise ProviderError(msg, provider_name="embedding_factory")
+
+
+def create_embedding_provider(
+    settings: Settings,
+    *,
+    backend: EmbeddingBackend | None = None,
+    model: str | None = None,
+    dimensions: int | None = None,
+) -> BaseEmbeddingProvider:
+    provider = _create_embedding_provider(
+        settings, backend=backend, model=model, dimensions=dimensions
+    )
+    if settings.provider_costs.cache_enabled and provider.provider_name == "cohere":
+        return CachedEmbeddingProvider(provider)
+    return provider
 
 
 def create_embedding_provider_for_identity(

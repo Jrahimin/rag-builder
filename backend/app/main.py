@@ -29,6 +29,7 @@ from app.api.health import router as health_router
 from app.api.metrics import router as metrics_router
 from app.api.v1.router import api_v1_router
 from app.composition.jobs import DurableJobDispatcher, stop_dispatcher_task
+from app.composition.provider_work import ProviderWorkMiddleware
 from app.composition.webhooks import WebhookDispatcher, stop_webhook_dispatcher
 from app.core.auth_config_validation import validate_auth_config
 from app.core.config import Settings, get_settings
@@ -159,6 +160,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     # Middleware: the last added is outermost. RequestContext wraps everything
     # so every request (including CORS preflight) gets correlation IDs + logs.
+    app.add_middleware(ProviderWorkMiddleware)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors.allow_origins,

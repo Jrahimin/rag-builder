@@ -122,6 +122,10 @@ async def execute_index_build(
         raise PermanentJobError(
             "Incompatible structural worker delivery.", code="structural_worker_incompatible"
         )
+    if settings.provider_costs.build_coalesce_seconds:
+        from app.platform.db.advisory_lock import acquire_project_stage_lock
+
+        await acquire_project_stage_lock(session, project_id=run.project_id, stage="corpus-build")
     embedder = create_embedding_provider(settings)
     private = (
         PrivateStructuralGeneration(

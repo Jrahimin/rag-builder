@@ -697,6 +697,7 @@ class CachedEmbeddingProvider(BaseEmbeddingProvider):
                     self.work.vectors[key] = list(vector)
                     futures[key].set_result(list(vector))
                 call["status"] = "completed"
+                call["input_tokens"] = result.billed_input_tokens
             except BaseException as exc:
                 if isinstance(exc, TimeoutError):
                     exc = ProviderTimeoutError(
