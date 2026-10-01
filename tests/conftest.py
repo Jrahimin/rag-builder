@@ -34,6 +34,7 @@ os.environ.setdefault("APE_LOGGING__RENDER_JSON", "false")
 _test_storage_root = Path(tempfile.mkdtemp(prefix="ape_test_storage_"))
 os.environ.setdefault("APE_STORAGE__BACKEND", "local")
 os.environ.setdefault("APE_STORAGE__LOCAL_ROOT", str(_test_storage_root))
+os.environ["APE_LLM__BACKEND"] = "echo"
 os.environ["APE_EMBEDDING__BACKEND"] = "hash"
 os.environ["APE_RETRIEVAL__RERANKER_BACKEND"] = "noop"
 os.environ["APE_PROVIDER_COSTS__ENABLED"] = "false"

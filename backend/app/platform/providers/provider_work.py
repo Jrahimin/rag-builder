@@ -84,6 +84,12 @@ def micro_usd(value: Decimal) -> int:
     return int((value * 1_000_000).to_integral_value(rounding=ROUND_CEILING))
 
 
+def embedding_reservation(texts: list[str], config: ProviderCostsConfig) -> int:
+    # Allow tokenizer framing per input in addition to a conservative byte proxy.
+    size = sum(len(text.encode()) + 32 for text in texts)
+    return micro_usd(Decimal(size) * Decimal(str(config.embedding_usd_per_million)) / 1_000_000)
+
+
 def billed_usage(payload: object) -> tuple[int | None, int | None]:
     if not isinstance(payload, dict):
         return None, None
@@ -114,22 +120,25 @@ async def metered_cohere_post(
                 provider_name="cohere",
             )
         return await send()
-    if scope.workload == "evaluation" and not scope.config.paid_evaluation_enabled:
-        raise ProviderError("Paid evaluation requires explicit opt-in", provider_name="cohere")
+    if scope.workload == "evaluation" and (
+        not scope.config.paid_evaluation_enabled or not scope.config.enforce_budgets
+    ):
+        raise ProviderError(
+            "Paid evaluation requires explicit opt-in and enforced finite budgets",
+            provider_name="cohere",
+        )
     if not scope.config.enabled:
         return await send()
     cfg = scope.config
     purpose = str(payload.get("input_type", "reranking"))
     model = str(payload.get("model", "unknown"))
-    if cfg.enforce_budgets and model not in {"embed-v4.0", "rerank-v4.0-pro"}:
+    if cfg.enforce_budgets and (endpoint, model) not in {
+        ("/v2/embed", "embed-v4.0"),
+        ("/v2/rerank", "rerank-v4.0-pro"),
+    }:
         raise ProviderError("No approved price for this provider model", provider_name="cohere")
     if endpoint == "/v2/embed":
-        # UTF-8 bytes are a deliberately conservative input estimate, not billed tokens.
-        estimate = micro_usd(
-            Decimal(sum(len(t.encode()) for t in payload.get("texts", [])))
-            * Decimal(str(cfg.embedding_usd_per_million))
-            / 1_000_000
-        )
+        estimate = embedding_reservation(payload.get("texts", []), cfg)
     else:
         query_bytes = len(str(payload.get("query", "")).encode())
         virtual_docs = sum(

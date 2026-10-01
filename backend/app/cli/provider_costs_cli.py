@@ -8,13 +8,15 @@ import hashlib
 import json
 import sys
 import uuid
+from contextlib import redirect_stdout
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, true
 
 from app.core.config import get_settings
+from app.core.logging import configure_logging
 from app.models.document import Document, DocumentStatus
 from app.models.document_chunk import DocumentChunk
 from app.models.provider_work import ProviderUsageAttempt
@@ -22,10 +24,12 @@ from app.platform.db.session import Database
 from app.platform.infra.providers.provider_work_repository import ProviderWorkRepository
 from app.platform.providers.contracts.embedding import EmbeddingPurpose
 from app.platform.providers.implementations.embedding_factory import create_embedding_provider
-from app.platform.providers.provider_work import cache_identity, cache_key, micro_usd
+from app.platform.providers.provider_work import cache_identity, cache_key, embedding_reservation
 
 
-async def report(project_id: uuid.UUID, month: str, preview: bool) -> dict[str, Any]:
+async def report(
+    project_id: uuid.UUID, month: str, preview: bool, reference: str | None = None
+) -> dict[str, Any]:
     settings = get_settings()
     start = datetime.strptime(month, "%Y-%m").replace(tzinfo=UTC)
     end = (
@@ -40,11 +44,20 @@ async def report(project_id: uuid.UUID, month: str, preview: bool) -> dict[str, 
             amount = func.coalesce(
                 ProviderUsageAttempt.billed_micro_usd, ProviderUsageAttempt.reserved_micro_usd
             )
+            dimensions = [
+                func.to_char(
+                    func.timezone("UTC", ProviderUsageAttempt.created_at), "YYYY-MM-DD"
+                ).label("day_utc"),
+                ProviderUsageAttempt.workload,
+                ProviderUsageAttempt.endpoint,
+                ProviderUsageAttempt.purpose,
+                ProviderUsageAttempt.model,
+                ProviderUsageAttempt.environment,
+                ProviderUsageAttempt.price_version,
+            ]
             groups = await session.execute(
                 select(
-                    ProviderUsageAttempt.workload,
-                    ProviderUsageAttempt.endpoint,
-                    ProviderUsageAttempt.purpose,
+                    *dimensions,
                     func.count().label("attempts"),
                     func.sum(ProviderUsageAttempt.billed_tokens).label("billed_tokens"),
                     func.sum(ProviderUsageAttempt.search_units).label("search_units"),
@@ -57,17 +70,23 @@ async def report(project_id: uuid.UUID, month: str, preview: bool) -> dict[str, 
                     ProviderUsageAttempt.project_id == project_id,
                     ProviderUsageAttempt.created_at >= start,
                     ProviderUsageAttempt.created_at < end,
+                    ProviderUsageAttempt.reference == reference
+                    if reference is not None
+                    else true(),
                 )
-                .group_by(
-                    ProviderUsageAttempt.workload,
-                    ProviderUsageAttempt.endpoint,
-                    ProviderUsageAttempt.purpose,
-                )
+                .group_by(*dimensions)
+                .order_by(*dimensions)
             )
             result: dict[str, Any] = {
                 "project_id": str(project_id),
                 "month_utc": month,
-                "usage": [dict(row._mapping) for row in groups],
+                "usage": [
+                    {
+                        key: int(value) if isinstance(value, Decimal) else value
+                        for key, value in row._mapping.items()
+                    }
+                    for row in groups
+                ],
                 "note": (
                     "Unknown costs retain reservations; historical unrecorded calls are absent."
                 ),
@@ -123,12 +142,10 @@ async def report(project_id: uuid.UUID, month: str, preview: bool) -> dict[str, 
                     if settings.provider_costs.cache_enabled
                     else chunks
                 )
-                estimate = micro_usd(
-                    Decimal(sum(len(t.encode()) for t in uncached))
-                    * Decimal(str(settings.provider_costs.embedding_usd_per_million))
-                    / 1_000_000
-                )
-                if provider.provider_name != "cohere" or provider.model_name != "embed-v4.0":
+                estimate: int | None = None
+                if provider.provider_name == "cohere" and provider.model_name == "embed-v4.0":
+                    estimate = embedding_reservation(uncached, settings.provider_costs)
+                elif provider.provider_name == "hash":
                     estimate = 0
                 result["build_preview"] = {
                     "chunks": len(chunks),
@@ -136,8 +153,8 @@ async def report(project_id: uuid.UUID, month: str, preview: bool) -> dict[str, 
                     "uncached_inputs": len(uncached),
                     "estimated_micro_usd": estimate,
                     "estimate_basis": (
-                        "UTF-8 bytes at configured Cohere v4 rate; zero for other models; "
-                        "corpus can change"
+                        "UTF-8 bytes plus 32 bytes framing allowance per input at Cohere v4 rate; "
+                        "unsupported pricing is null; corpus can change"
                     ),
                 }
             return result
@@ -150,9 +167,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--project", type=uuid.UUID, required=True)
     parser.add_argument("--month", default=datetime.now(UTC).strftime("%Y-%m"))
     parser.add_argument("--preview-build", action="store_true")
-    args = parser.parse_args(argv)
-    payload = json.dumps(
-        asyncio.run(report(args.project, args.month, args.preview_build)), indent=2
+    parser.add_argument(
+        "--reference", help="Restrict usage to one request, job or QA run reference."
     )
+    args = parser.parse_args(argv)
+    # Keep stdout valid JSON; lifecycle logs belong on stderr for CLI consumers.
+    with redirect_stdout(sys.stderr):
+        configure_logging(get_settings())
+        result = asyncio.run(report(args.project, args.month, args.preview_build, args.reference))
+    payload = json.dumps(result, indent=2)
     sys.stdout.write(f"{payload}\n")
     return 0

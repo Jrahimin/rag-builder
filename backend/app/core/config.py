@@ -1034,8 +1034,8 @@ class ProviderCostsConfig(BaseModel):
     evaluation_budget_usd: float = Field(default=1.0, gt=0, allow_inf_nan=False)
     paid_evaluation_enabled: bool = False
     cache_ttl_days: int = Field(default=30, ge=1, le=365)
-    embedding_usd_per_million: float = Field(default=0.12, ge=0, allow_inf_nan=False)
-    rerank_usd_per_unit: float = Field(default=0.0025, ge=0, allow_inf_nan=False)
+    embedding_usd_per_million: float = Field(default=0.12, gt=0, allow_inf_nan=False)
+    rerank_usd_per_unit: float = Field(default=0.0025, gt=0, allow_inf_nan=False)
     price_version: str = "cohere-v4-2026-09"
     build_coalesce_seconds: int = Field(default=0, ge=0, le=300)
 

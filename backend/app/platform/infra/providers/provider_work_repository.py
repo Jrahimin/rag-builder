@@ -82,7 +82,7 @@ class ProviderWorkRepository:
         )
         hashes: dict[str, list[float]] = {}
         for input_hash, vector in rows:
-            hashes.setdefault(input_hash, list(vector))
+            hashes.setdefault(input_hash, [float(value) for value in vector])
         return {key: hashes[h] for key, h in inputs.items() if h in hashes}
 
     async def save_vectors(
@@ -102,7 +102,7 @@ class ProviderWorkRepository:
                     "project_id": project_id,
                     "cache_key": key,
                     "identity": identity,
-                    "vector": vector,
+                    "vector": [float(value) for value in vector],
                     "expires_at": expiry,
                 }
                 for key, (identity, vector) in rows.items()

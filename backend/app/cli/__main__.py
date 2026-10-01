@@ -20,6 +20,9 @@ def main() -> int:
         return config_main(sys.argv[2:])
     parser = argparse.ArgumentParser(prog="python -m app.cli")
     subparsers = parser.add_subparsers(dest="command", required=True)
+    subparsers.add_parser(
+        "provider-costs", help="Show Cohere usage and uncached build cost preview"
+    )
     subparsers.add_parser("doctor", help="Check configuration and local dependencies")
     subparsers.add_parser("rag-journey", help="Run the local tax_v1 RAG journey")
     subparsers.add_parser("config", help="Run one-shot configuration maintenance")

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import uuid
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock
@@ -219,3 +220,132 @@ async def test_ingestion_coalesces_with_fixed_deadline_and_queues_successor_when
         )
     successor = await stage()
     assert successor.created and successor.job_id != first.job_id
+
+
+async def test_sealed_vectors_seed_exact_document_cache_and_readonly_preview(
+    committed_project, settings, monkeypatch
+):
+    from unittest.mock import MagicMock
+
+    from app.cli import provider_costs_cli
+    from app.models.chunk_embedding import ChunkEmbedding
+    from app.models.document import Document, DocumentStatus
+    from app.models.document_chunk import DocumentChunk
+    from app.models.index_build import IndexBuild, IndexBuildOperation, IndexBuildState
+    from app.platform.domain.content_hash import content_hash
+    from app.platform.providers.contracts.embedding import BaseEmbeddingProvider, EmbeddingPurpose
+    from app.platform.providers.provider_work import (
+        CachedEmbeddingProvider,
+        attached_provider_scope,
+        cache_identity,
+        cache_key,
+    )
+
+    database, project = committed_project
+    store = ProviderWorkRepository(database.session_factory)
+    raw = MagicMock(spec=BaseEmbeddingProvider)
+    raw.provider_name, raw.model_name = "cohere", "embed-v4.0"
+    raw.dimensions, raw.provider_version = settings.embedding.dimensions, "1"
+    raw.cache_namespace = "https://api.cohere.com"
+    raw.embed_texts = AsyncMock(
+        side_effect=AssertionError("Sealed reuse and preview must not contact Cohere")
+    )
+    text = "exact unchanged business policy"
+    vector = [1.0] + [0.0] * (raw.dimensions - 1)
+    build_id, document_id, chunk_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    async with database.session_factory() as session, session.begin():
+        session.add(
+            Document(
+                id=document_id,
+                project_id=project,
+                filename="policy.txt",
+                size_bytes=len(text),
+                storage_key="test-only",
+                content_sha256=content_hash(text),
+                status=DocumentStatus.READY,
+            )
+        )
+        session.add(
+            IndexBuild(
+                id=build_id,
+                project_id=project,
+                operation=IndexBuildOperation.INGEST,
+                state=IndexBuildState.VALIDATED,
+                configuration_hash="f" * 64,
+                embedding_set_version=3,
+            )
+        )
+        await session.flush()
+        session.add(
+            DocumentChunk(
+                id=chunk_id,
+                project_id=project,
+                document_id=document_id,
+                chunk_index=0,
+                content=text,
+            )
+        )
+        await session.flush()
+        session.add(
+            ChunkEmbedding(
+                project_id=project,
+                document_id=document_id,
+                chunk_id=chunk_id,
+                index_build_id=build_id,
+                embedding_set_version=3,
+                document_version=1,
+                provider="cohere",
+                model="embed-v4.0",
+                dimensions=raw.dimensions,
+                provider_version="1",
+                input_content_hash=content_hash(text),
+                embedding=vector,
+            )
+        )
+    identity = cache_identity(raw, 3, EmbeddingPurpose.DOCUMENT)
+    key = cache_key(identity, text)
+    async with database.session_factory() as session:
+        seeded = await store.seed_vectors(session, project, identity, {key: content_hash(text)})
+        assert seeded == {key: vector}
+        for incompatible in [
+            {"purpose": "query"},
+            {"namespace": "other-endpoint"},
+            {"embedding_set_version": 4},
+            {"provider_version": "2"},
+            {"model": "other"},
+        ]:
+            assert (
+                await store.seed_vectors(
+                    session, project, {**identity, **incompatible}, {key: content_hash(text)}
+                )
+                == {}
+            )
+        assert (
+            await store.seed_vectors(session, uuid.uuid4(), identity, {key: content_hash(text)})
+            == {}
+        )
+    scope = cost_scope(project, store)
+    with attached_provider_scope(scope):
+        result = await CachedEmbeddingProvider(raw).embed_texts([text, text])
+    assert result.vectors == [vector, vector] and result.billed_input_tokens == 0
+    raw.embed_texts.assert_not_awaited()
+    attempt = await store.reserve(scope, "/v2/embed", "embed-v4.0", "search_document", 100)
+    await store.complete(attempt, "completed", 23, None, 3)
+    live = settings.model_copy(
+        update={
+            "provider_costs": scope.config,
+            "retrieval": settings.retrieval.model_copy(update={"embedding_set_version": 3}),
+        }
+    )
+    monkeypatch.setattr(provider_costs_cli, "get_settings", lambda: live)
+    monkeypatch.setattr(provider_costs_cli, "create_embedding_provider", lambda _: raw)
+    report = await provider_costs_cli.report(
+        project, datetime.now(UTC).strftime("%Y-%m"), True, scope.reference
+    )
+    assert report["build_preview"]["uncached_inputs"] == 0
+    assert report["build_preview"]["estimated_micro_usd"] == 0
+    assert json.dumps(report)
+    assert report["usage"][0]["billed_tokens"] == 23
+    assert report["usage"][0]["accounted_micro_usd"] == 3
+    assert report["usage"][0]["day_utc"] == datetime.now(UTC).strftime("%Y-%m-%d")
+    raw.embed_texts.assert_not_awaited()

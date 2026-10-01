@@ -259,3 +259,48 @@ async def test_ordinary_suite_cannot_send_external_http():
     async with httpx.AsyncClient() as client:
         with pytest.raises(AssertionError, match="Ordinary tests"):
             await client.get("https://api.cohere.com/anything")
+
+
+@pytest.mark.parametrize("invalid", ["nonfinite", "identity"])
+async def test_invalid_provider_results_never_enter_durable_cache(invalid):
+    raw = Embeddings()
+    raw.embed_texts = AsyncMock(
+        return_value=EmbeddingBatchResult(
+            [[float("nan") if invalid == "nonfinite" else 1.0, 1.0]],
+            "cohere",
+            "wrong-model" if invalid == "identity" else "embed-v4.0",
+            2,
+            "v1",
+            10,
+        )
+    )
+    scope = work()
+    with attached_provider_scope(scope), pytest.raises(ProviderError):
+        await CachedEmbeddingProvider(raw).embed_texts(["text"])
+    assert scope.store.data == {}
+
+
+def test_custom_endpoint_namespace_never_stores_url_credentials():
+    from app.platform.providers.implementations.cohere_embedding import CohereEmbeddingProvider
+
+    provider = CohereEmbeddingProvider(
+        api_key="fake",
+        base_url="https://fake-user:fake-password@example.test/path?token=fake-secret",
+    )
+    assert provider.cache_namespace.startswith("sha256:")
+    assert "fake" not in provider.cache_namespace
+    assert "example" not in provider.cache_namespace
+
+
+async def test_paid_evaluation_cannot_bypass_budgets_in_observation_mode():
+    store = AsyncMock()
+    send = AsyncMock()
+    with (
+        attached_provider_scope(
+            replace(work(store, paid_evaluation_enabled=True), workload="evaluation")
+        ),
+        pytest.raises(ProviderError, match="enforced finite budgets"),
+    ):
+        await metered_cohere_post(send, "/v2/embed", {"model": "embed-v4.0", "texts": ["x"]})
+    store.reserve.assert_not_awaited()
+    send.assert_not_awaited()

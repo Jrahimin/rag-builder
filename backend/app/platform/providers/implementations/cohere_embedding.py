@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from typing import Any
 
 import httpx
@@ -68,7 +69,9 @@ class CohereEmbeddingProvider(BaseEmbeddingProvider):
 
     @property
     def cache_namespace(self) -> str:
-        return self._base_url
+        if self._base_url == "https://api.cohere.com":
+            return self._base_url
+        return "sha256:" + hashlib.sha256(self._base_url.encode()).hexdigest()
 
     async def embed_texts(
         self,

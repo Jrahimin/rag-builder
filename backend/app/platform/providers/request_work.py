@@ -624,6 +624,7 @@ class CachedEmbeddingProvider(BaseEmbeddingProvider):
     async def embed_texts(
         self, texts: list[str], *, purpose: EmbeddingPurpose = EmbeddingPurpose.DOCUMENT
     ) -> EmbeddingBatchResult:
+        billed: int | None = 0
         prefix = (
             self.work.project_id,
             self.provider_name,
@@ -698,6 +699,7 @@ class CachedEmbeddingProvider(BaseEmbeddingProvider):
                     futures[key].set_result(list(vector))
                 call["status"] = "completed"
                 call["input_tokens"] = result.billed_input_tokens
+                billed = result.billed_input_tokens
             except BaseException as exc:
                 if isinstance(exc, TimeoutError):
                     exc = ProviderTimeoutError(
@@ -725,4 +727,5 @@ class CachedEmbeddingProvider(BaseEmbeddingProvider):
             model=self.model_name,
             dimensions=self.dimensions,
             provider_version=self.provider_version,
+            billed_input_tokens=billed,
         )

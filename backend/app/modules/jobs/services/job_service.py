@@ -105,7 +105,7 @@ class JobService(DurableJobSubmitter):
             await acquire_project_stage_lock(
                 self._session, project_id=self._project_id, stage="ingestion-coalesce"
             )
-            identity = configuration.output_digest()
+            identity = configuration.index_output_digest()
             pending = await self._session.scalar(
                 select(JobRun)
                 .where(
