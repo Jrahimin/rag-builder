@@ -102,6 +102,8 @@ class EvaluationService:
     async def queue_run(
         self,
         request: EvaluationRunCreate,
+        *,
+        full_capture: bool = False,
     ) -> tuple[EvaluationRunResponse, JobSubmission]:
         dataset = await self._datasets.get_by_id(request.dataset_id)
         if dataset is None:
@@ -114,8 +116,17 @@ class EvaluationService:
             embedding_set_version=int(self._version_snapshot["retrieval"]["embedding_set_version"]),
             embedding_provider=str(self._version_snapshot["embedding"]["backend"]),
             embedding_model=str(self._version_snapshot["embedding"]["model"]),
+            **(
+                {"preview_index_build_id": request.preview_index_build_id}
+                if request.preview_index_build_id
+                else {}
+            ),
         )
+        from app.platform.domain.runtime_identity import runtime_code_fingerprint
+
         versions = {
+            "runtime_identity": runtime_code_fingerprint(),
+            "diagnostic_full_capture": full_capture,
             **self._version_snapshot,
             "corpus": corpus,
             "dataset": {
@@ -155,6 +166,9 @@ class EvaluationService:
                 **self._execution_provenance,
                 "active_index_build_id": index_build_id,
                 "source_metadata_generation": source_generation,
+                "preview_index_build_id": str(request.preview_index_build_id)
+                if request.preview_index_build_id
+                else None,
             },
             metrics={},
             case_results=[],
@@ -254,12 +268,12 @@ def _run_response(record: EvaluationRunRecord) -> EvaluationRunResponse:
         job_state=record.job.state.value,
         top_k=run.top_k,
         configuration_hash=run.configuration_hash,
-        versions=dict(run.versions),
-        metrics=dict(run.metrics),
-        case_results=list(run.case_results),
-        regressions=list(run.regressions),
-        failed_cases=list(run.failed_cases),
-        reranker_comparison=dict(run.reranker_comparison),
+        versions=sanitize_public_evaluation(dict(run.versions)),
+        metrics=sanitize_public_evaluation(dict(run.metrics)),
+        case_results=sanitize_public_evaluation(list(run.case_results)),
+        regressions=sanitize_public_evaluation(list(run.regressions)),
+        failed_cases=sanitize_public_evaluation(list(run.failed_cases)),
+        reranker_comparison=sanitize_public_evaluation(dict(run.reranker_comparison)),
         provider=run.provider,
         model=run.model,
         input_tokens=run.input_tokens,
@@ -269,7 +283,7 @@ def _run_response(record: EvaluationRunRecord) -> EvaluationRunResponse:
         total_latency_ms=run.total_latency_ms,
         index_build_id=run.index_build_id,
         source_metadata_generation=run.source_metadata_generation,
-        config_provenance=dict(run.config_provenance),
+        config_provenance=sanitize_public_evaluation(dict(run.config_provenance)),
         completed_at=run.completed_at,
         created_at=run.created_at,
     )
@@ -283,3 +297,16 @@ def _digest(value: object) -> str:
         separators=(",", ":"),
     ).encode("utf-8")
     return hashlib.sha256(payload).hexdigest()
+
+
+def sanitize_public_evaluation(value: Any) -> Any:
+    """Defense for legacy stored rows as well as current sanitized writes."""
+    if isinstance(value, dict):
+        return {
+            key: sanitize_public_evaluation(item)
+            for key, item in value.items()
+            if key not in {"operator_diagnostic", "rejected_attempts", "raw_provider_response"}
+        }
+    if isinstance(value, list):
+        return [sanitize_public_evaluation(item) for item in value]
+    return value

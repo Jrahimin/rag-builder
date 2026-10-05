@@ -17,9 +17,12 @@ from typing import Any
 
 import pytest
 
-from app.composition.evaluation import GroundedEvaluationAnswerAdapter
 from app.core.config import EvidenceGateMode, Settings
-from app.modules.evaluation.ports import QualityHit
+from app.modules.conversations.context_builder import ContextBuilder
+from app.modules.conversations.grounded_context import assess_and_select_knowledge
+from app.modules.conversations.grounding_service import GroundingService
+from app.modules.conversations.ports import ContextChunk
+from app.modules.evaluation.ports import QualityAnswer, QualityHit
 from app.modules.evaluation.schemas.evaluation import EvaluationCase, EvaluationDatasetCreate
 from app.modules.evaluation.services.evaluation_runner_service import _case_result
 from app.platform.providers.implementations.echo_chat import EchoLLMProvider
@@ -136,12 +139,54 @@ def _chat_config(*, mode: EvidenceGateMode, threshold: float):
     )
 
 
-def _adapter(mode: EvidenceGateMode, threshold: float) -> GroundedEvaluationAnswerAdapter:
-    settings = Settings().model_copy(update={"chat": _chat_config(mode=mode, threshold=threshold)})
-    return GroundedEvaluationAnswerAdapter(
-        settings=settings,
-        llm=EchoLLMProvider(model="echo-test", provider_version="1"),
-    )
+class _GateMeasurement:
+    """Measure admission only; complete production execution is covered separately.
+
+    The recorded fixture has no applicability proof or provider review protocol.
+    Keeping this seam at the production gate preserves its threshold experiment.
+    """
+
+    def __init__(self, config):
+        self.config = config
+
+    async def answer(self, *, profile, question, hits):
+        grounding = GroundingService(self.config)
+        decision, selected = await assess_and_select_knowledge(
+            grounding=grounding,
+            context_builder=ContextBuilder(self.config),
+            chat_config=self.config,
+            question=question,
+            chunks=[ContextChunk.from_retrieval_result(h) for h in hits],
+            rerank_status="passthrough",
+        )
+        ran = bool(selected) and not grounding.blocks_generation(decision)
+        from app.platform.providers.contracts.llm import ChatMessage, ChatRole
+
+        if ran:
+            completion = await EchoLLMProvider(model="echo-test", provider_version="1").generate(
+                [ChatMessage(ChatRole.USER, question)], temperature=None, max_tokens=100
+            )
+            result = await grounding.map_claims(completion.content, selected)
+            content = completion.content
+        else:
+            result = None
+            content = "Insufficient evidence."
+        return QualityAnswer(
+            answer=content,
+            insufficient_evidence_reason=None if ran else str(decision.reason),
+            grounded=bool(result.grounded) if result else False,
+            citation_coverage=result.citation_coverage if result else 0.0,
+            claims=result.claims if result else [],
+            generation_ran=ran,
+            selected_chunk_ids=[c.chunk_id for c in selected],
+            evidence_gate=grounding.diagnostics(
+                decision, blocked_generation=not ran, generation_ran=ran
+            ),
+        )
+
+
+def _adapter(mode: EvidenceGateMode, threshold: float) -> _GateMeasurement:
+    return _GateMeasurement(_chat_config(mode=mode, threshold=threshold))
 
 
 def _required_cases() -> dict[str, EvaluationCase]:

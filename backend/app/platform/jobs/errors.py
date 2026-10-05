@@ -41,3 +41,7 @@ class PermanentJobError(JobError):
     """A stable input/configuration failure that should not be retried."""
 
     code = "permanent_job_error"
+
+
+class PendingBuildAcceptance(Exception):
+    """Durable suspension, not success or failure and not an attempt-consuming retry."""

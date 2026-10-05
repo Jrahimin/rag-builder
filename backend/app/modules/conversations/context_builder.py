@@ -49,7 +49,51 @@ class ContextBuilder:
                 for group in groups.values()
                 if len(group) > i
             ]
+        by_id = {str(c.chunk_id): c for c in chunks}
+        ordered: list[ContextChunk] = []
+        queued: set[str] = set()
+        for first in chunks:
+            unit = {str(first.chunk_id)}
+            while True:
+                expanded = unit | {
+                    linked
+                    for key in unit
+                    if key in by_id
+                    for linked in by_id[key].metadata.get("proof_unit_chunk_ids", [])
+                }
+                if expanded == unit:
+                    break
+                unit = expanded
+            ordered.extend(c for c in chunks if str(c.chunk_id) in unit - queued)
+            queued.update(unit)
+        chunks = ordered
+        admitted_ids: set[str] = set()
+        rejected_units: set[str] = set()
         for chunk in chunks:
+            identity = str(chunk.chunk_id)
+            unit = set(chunk.metadata.get("proof_unit_chunk_ids") or [identity])
+            # Shared multi-chunk proof keeps the heading, rows and continuation
+            # together. Expand intersecting units before admitting any member.
+            while True:
+                expanded = unit | {
+                    linked
+                    for key in unit
+                    if key in by_id
+                    for linked in by_id[key].metadata.get("proof_unit_chunk_ids", [])
+                }
+                if expanded == unit:
+                    break
+                unit = expanded
+            if identity in rejected_units:
+                continue
+            remaining = unit - admitted_ids
+            if chunk.metadata.get("proof_unit_chunk_ids") and (
+                not unit.issubset(by_id)
+                or sum(len(by_id[key].content) for key in remaining) > char_budget
+                or len(selected) + len(remaining) > self._config.max_context_chunks
+            ):
+                rejected_units.update(unit)
+                continue
             if chunk.chunk_id in seen_ids or chunk.chunk_hash in seen_hashes:
                 continue
             seen_ids.add(chunk.chunk_id)
@@ -58,9 +102,15 @@ class ContextBuilder:
                 break
             if char_budget <= 0:
                 break
-            if isinstance(chunk, EvidenceUnit) and len(chunk.content) > char_budget:
+            if (
+                isinstance(chunk, EvidenceUnit)
+                or chunk.metadata.get("table_id")
+                or chunk.metadata.get("table_context_status")
+                or chunk.metadata.get("reviewed_proof")
+            ) and len(chunk.content) > char_budget:
                 # An admitted unit is indivisible: budgeting may omit it, never rewrite it.
                 continue
+            admitted_ids.add(identity)
             chunk = chunk.restore_applied_rerank_scores()
             if len(chunk.content) > char_budget:
                 selected.append(replace(chunk, content=chunk.content[:char_budget]))
@@ -113,7 +163,10 @@ def comparison_requested(question: str) -> bool:
     """Lightweight question cue, not an additional model classification call."""
     return bool(
         re.search(
-            r"\b(compare|comparison|versus|vs\.?|disagree|perspectives|accounts|differences)\b|তুলনা|মতভেদ|পার্থক্য",
+            (
+                "\\b(compare|comparison|versus|vs\\.?|disagree|perspectiv"
+                "es|accounts|differences)\\b|তুলনা|মতভেদ|পার্থক্য"
+            ),
             question,
             re.IGNORECASE,
         )

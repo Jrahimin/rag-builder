@@ -7,16 +7,22 @@ import sys
 
 from app.cli.config_cli import main as config_main
 from app.cli.doctor_cli import main as doctor_main
+from app.cli.provider_costs_cli import main as provider_costs_main
 from app.cli.rag_journey_cli import main as rag_journey_main
 
 
 def main() -> int:
+    if len(sys.argv) > 1 and sys.argv[1] == "provider-costs":
+        return provider_costs_main(sys.argv[2:])
     if len(sys.argv) > 1 and sys.argv[1] == "rag-journey":
         return rag_journey_main(sys.argv[2:])
     if len(sys.argv) > 1 and sys.argv[1] == "config":
         return config_main(sys.argv[2:])
     parser = argparse.ArgumentParser(prog="python -m app.cli")
     subparsers = parser.add_subparsers(dest="command", required=True)
+    subparsers.add_parser(
+        "provider-costs", help="Show Cohere usage and uncached build cost preview"
+    )
     subparsers.add_parser("doctor", help="Check configuration and local dependencies")
     subparsers.add_parser("rag-journey", help="Run the local tax_v1 RAG journey")
     subparsers.add_parser("config", help="Run one-shot configuration maintenance")

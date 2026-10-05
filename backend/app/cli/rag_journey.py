@@ -9,7 +9,7 @@ import statistics
 import time
 import unicodedata
 import uuid
-from collections.abc import AsyncIterator, Callable, Iterator, Mapping, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -2070,6 +2070,17 @@ async def _latest_document_job_id(
     return runs[0].id
 
 
+def _require_isolated_acceptance_driver(settings: Settings) -> None:
+    """The explicit callback is test-only and cannot authorize ordinary tooling."""
+    if not (
+        settings.app.env == "testing"
+        and settings.database.name == settings.test_database.name == "ape_test"
+        and settings.embedding.backend.value == "hash"
+        and settings.llm.backend.value == "echo"
+    ):
+        raise JourneyError("Fixture acceptance driver requires isolated ape_test with hash/echo.")
+
+
 async def _await_durable_job(
     session_factory: Any,
     *,
@@ -2078,6 +2089,7 @@ async def _await_durable_job(
     settings: Settings,
     timeout_seconds: float = 900.0,
     failure_prefix: str = "Durable job",
+    acceptance_driver: Callable[[Any, uuid.UUID, uuid.UUID], Awaitable[None]] | None = None,
 ) -> None:
     """Drain one inline durable job through retry and terminal states."""
     import asyncio
@@ -2098,12 +2110,40 @@ async def _await_durable_job(
             )
             run = (await service.get_detail(job_id)).run
             if run.state is JobState.SUCCEEDED:
+                result = run.result or {}
+                if result.get("state") == "validated" and result.get("build_id"):
+                    if acceptance_driver is None:
+                        raise JourneyError(
+                            f"{failure_prefix} completed build {result['build_id']}, which still "
+                            "requires project/build-bound quality acceptance and activation."
+                        )
+                    _require_isolated_acceptance_driver(settings)
+                    await acceptance_driver(session, project_id, uuid.UUID(str(result["build_id"])))
+                    await session.commit()
                 return
             if run.state is JobState.FAILED:
                 raise JourneyError(
                     f"{failure_prefix} failed "
                     f"({run.failure_code or 'unknown'}: {run.failure_message or 'no message'})."
                 )
+            if run.state is JobState.WAITING_ACCEPTANCE:
+                build_id = run.payload.get("build_id")
+                if acceptance_driver is None or not build_id:
+                    raise JourneyError(
+                        f"{failure_prefix} {job_id} is awaiting quality acceptance for build "
+                        f"{build_id or 'unknown'}; approve a project/build-bound receipt, activate "
+                        "the build, and resume the durable job before retrying cleanup."
+                    )
+                _require_isolated_acceptance_driver(settings)
+                await acceptance_driver(session, project_id, uuid.UUID(str(build_id)))
+                resumed = await service.resume_accepted_waiting()
+                await session.commit()
+                if resumed != 1:
+                    raise JourneyError(
+                        f"Fixture acceptance did not resume job {job_id} exactly once."
+                    )
+                await service.dispatch(job_id)
+                continue
             if run.state in {
                 JobState.RETRY_SCHEDULED,
                 JobState.QUEUED,
@@ -2126,6 +2166,7 @@ async def _ensure_indexed(
     project_id: uuid.UUID,
     document_ids: Mapping[str, uuid.UUID],
     settings: Settings,
+    acceptance_driver: Callable[[Any, uuid.UUID, uuid.UUID], Awaitable[None]] | None = None,
 ) -> dict[str, Any]:
     from app.composition.retrieval import build_indexing_service
     from app.models.document import DocumentStatus
@@ -2197,6 +2238,7 @@ async def _ensure_indexed(
                     job_id=embed_job_id,
                     settings=settings,
                     failure_prefix=f"Document {source_key!r} embed job",
+                    acceptance_driver=acceptance_driver,
                 )
 
         document = await current_document(source_key, document_id)
@@ -2234,6 +2276,7 @@ async def _ensure_indexed(
                     job_id=index_job_id,
                     settings=settings,
                     failure_prefix=f"Document {source_key!r} index job",
+                    acceptance_driver=acceptance_driver,
                 )
 
         document = await current_document(source_key, document_id)
@@ -2786,6 +2829,8 @@ async def _open_journey_chat(
     embedder: Any,
     conversation_id: uuid.UUID,
 ) -> Any:
+    from starlette.requests import Request
+
     from app.dependencies.conversations import get_chat_service
     from app.modules.conversations.repositories.conversation_repository import (
         ConversationRepository,
@@ -2796,12 +2841,14 @@ async def _open_journey_chat(
     messages = MessageRepository(session, project_id)
     return _enable_journey_candidate_traces(
         await get_chat_service(
-            session,
-            project_id,
-            conversations,
-            messages,
-            conversation_id,
-            embedder,
+            session=session,
+            project_id=project_id,
+            conversation_repository=conversations,
+            message_repository=messages,
+            conversation_id=conversation_id,
+            request=Request({"type": "http", "headers": [], "state": {}}),
+            diagnostic_capture=False,
+            embedder=embedder,
         )
     )
 
@@ -3014,6 +3061,7 @@ async def _await_document_purge(
     job_id: uuid.UUID,
     settings: Settings,
     timeout_seconds: float = 900.0,
+    acceptance_driver: Callable[[Any, uuid.UUID, uuid.UUID], Awaitable[None]] | None = None,
 ) -> None:
     """Drain inline durable purge jobs through retry and terminal states."""
     await _await_durable_job(
@@ -3023,6 +3071,7 @@ async def _await_document_purge(
         settings=settings,
         timeout_seconds=timeout_seconds,
         failure_prefix="Document purge job",
+        acceptance_driver=acceptance_driver,
     )
 
 
@@ -3036,6 +3085,7 @@ async def _cleanup_project(
     settings: Settings,
     storage: Any,
     progress: Progress,
+    acceptance_driver: Callable[[Any, uuid.UUID, uuid.UUID], Awaitable[None]] | None = None,
 ) -> None:
     """Purge documents through production lifecycle, then remove the exact aggregate."""
     from sqlalchemy import select
@@ -3079,6 +3129,7 @@ async def _cleanup_project(
             project_id=project_id,
             job_id=job_id,
             settings=settings,
+            acceptance_driver=acceptance_driver,
         )
     remaining_keys = await storage.list_keys(f"{project_id}/")
     if remaining_keys:
@@ -3549,7 +3600,7 @@ def render_summary(result: Mapping[str, Any]) -> str:
         )
         standalone_cases = [case for case in variant["cases"] if not case.get("sequence_key")]
         for case in standalone_cases:
-            stages = ", ".join(failure["stage"] for failure in case["failures"]) or "—"
+            stages = ", ".join(failure["stage"] for failure in case["failures"]) or "â€”"
             lines.append(
                 f"| `{case['key']}` | {', '.join(case['tags'])} | "
                 f"{'PASS' if case['passed'] else 'FAIL'} | {stages} | "
@@ -3573,7 +3624,7 @@ def render_summary(result: Mapping[str, Any]) -> str:
                 ]
             )
             for item in sequences:
-                failed = ", ".join(f"`{key}`" for key in item.get("failed_turns") or []) or "—"
+                failed = ", ".join(f"`{key}`" for key in item.get("failed_turns") or []) or "â€”"
                 lines.append(
                     f"| `{item['key']}` | {item['turn_count']} | "
                     f"{'PASS' if item.get('passed') else 'FAIL'} | {failed} |"
@@ -3588,7 +3639,7 @@ def render_summary(result: Mapping[str, Any]) -> str:
             for case in variant["cases"]:
                 if not case.get("sequence_key"):
                     continue
-                stages = ", ".join(failure["stage"] for failure in case["failures"]) or "—"
+                stages = ", ".join(failure["stage"] for failure in case["failures"]) or "â€”"
                 result_label = (
                     "BLOCKED" if case.get("blocked") else ("PASS" if case["passed"] else "FAIL")
                 )
@@ -3776,12 +3827,12 @@ _LANGUAGE_BUCKET_LABELS = {
 
 def _fmt_ms(value: object) -> str:
     number = _optional_ms(value)
-    return "—" if number is None else str(number)
+    return "â€”" if number is None else str(number)
 
 
 def _fmt_share(value: object) -> str:
     if not isinstance(value, (int, float)) or isinstance(value, bool):
-        return "—"
+        return "â€”"
     return f"{float(value):.0%}"
 
 
@@ -3809,18 +3860,18 @@ def _render_translation_comparison(translation: Mapping[str, Any]) -> list[str]:
         "Same Project, corpus, and active index. `translation_on` is the current configuration; "
         "`translation_off` only sets `behavior.translation_policy=disabled`. "
         "Quality uses journey pass/fail, recall, rank, nDCG, admission, grounding, citation, and "
-        "generation — not LLM wording similarity. `grounding_and_context` is residual "
+        "generation â€” not LLM wording similarity. `grounding_and_context` is residual "
         "`total - retrieval - generation`. Dense/lexical branch latencies are omitted unless "
         "the retrieval diagnostics expose them.",
         "",
-        "| Case | Lang | ON | OFF | ON ms | OFF ms | Δ ms | Retrieval Δ "
+        "| Case | Lang | ON | OFF | ON ms | OFF ms | Î” ms | Retrieval Î” "
         "| Translation contribution | Verdict |",
         "|---|---|---:|---:|---:|---:|---:|---|---|---|",
     ]
     for pair in translation.get("cases") or []:
         lang = _LANGUAGE_BUCKET_LABELS.get(
             str(pair.get("language_bucket")),
-            pair.get("language_bucket") or "—",
+            pair.get("language_bucket") or "â€”",
         )
         lines.append(
             f"| `{pair['key']}` | {lang} | "
@@ -3855,7 +3906,7 @@ def _render_translation_comparison(translation: Mapping[str, Any]) -> list[str]:
             "",
             "### Latency",
             "",
-            "| Slice | ON p50/p95/mean | OFF p50/p95/mean | Δ p50/p95/mean "
+            "| Slice | ON p50/p95/mean | OFF p50/p95/mean | Î” p50/p95/mean "
             "| Translation share p50/overall |",
             "|---|---:|---:|---:|---:|",
         ]
@@ -3890,6 +3941,7 @@ async def run_journey(
     options: JourneyOptions,
     *,
     progress: Progress | None = None,
+    acceptance_driver: Callable[[Any, uuid.UUID, uuid.UUID], Awaitable[None]] | None = None,
 ) -> tuple[dict[str, Any], Path]:
     """Execute one fresh tax_v1 journey and always emit a local report."""
     from app.core.config import JobQueueBackend
@@ -3897,6 +3949,18 @@ async def run_journey(
     from app.platform.db.session import Database
     from app.platform.providers.implementations.storage_factory import create_storage_provider
 
+    if acceptance_driver is not None:
+        _require_isolated_acceptance_driver(settings)
+    paid = (
+        settings.embedding.backend.value == "cohere"
+        or settings.retrieval.reranker_backend.value == "cohere"
+    )
+    if paid and not (
+        settings.provider_costs.paid_evaluation_enabled and settings.provider_costs.enforce_budgets
+    ):
+        raise JourneyError(
+            "Paid rag-journey requires explicit paid-evaluation opt-in and enforced finite budgets"
+        )
     notify = progress or (lambda _message: None)
     if settings.jobs.backend is not JobQueueBackend.INLINE:
         raise JourneyError(
@@ -3959,6 +4023,7 @@ async def run_journey(
     storage = create_storage_provider(settings)
     project_id: uuid.UUID | None = None
     document_ids: dict[str, uuid.UUID] = {}
+    cost_scope = None
     try:
         notify("preflight: database, migrations, pgvector, storage, default Organization")
         await database.check()
@@ -3968,6 +4033,26 @@ async def run_journey(
             project = await _create_project(session, run_token=run_token, pack_key=manifest.key)
             project_id = project.id
             result["project_id"] = str(project_id)
+        from app.composition.provider_work import provider_work_scope
+
+        cost_scope = provider_work_scope(
+            settings,
+            database.session_factory,
+            project_id,
+            str(run_uuid),
+            "evaluation",
+            cache_sessions=(
+                database.provider_cache_session_factory
+                if settings.provider_costs.cache_enabled
+                else None
+            ),
+            accounting_sessions=(
+                database.provider_accounting_session_factory
+                if settings.provider_costs.enabled
+                else None
+            ),
+        )
+        cost_scope.__enter__()
 
         baseline_values = dict(options.overrides)
         baseline_config = build_project_config(baseline_values)
@@ -4020,6 +4105,7 @@ async def run_journey(
             project_id=project_id,
             document_ids=document_ids,
             settings=settings,
+            acceptance_driver=acceptance_driver,
         )
         chunks = await _runtime_chunks(
             database.session_factory,
@@ -4147,6 +4233,7 @@ async def run_journey(
                     settings=settings,
                     storage=storage,
                     progress=notify,
+                    acceptance_driver=acceptance_driver,
                 )
                 result["cleanup"] = {"status": "succeeded"}
             except Exception as exc:
@@ -4164,6 +4251,8 @@ async def run_journey(
                     }
                     result["status"] = "failed"
         result["completed_at"] = datetime.now(UTC).isoformat()
+        if cost_scope is not None:
+            cost_scope.__exit__(None, None, None)
         await database.dispose()
         write_reports(result, artifact_dir)
     return result, artifact_dir

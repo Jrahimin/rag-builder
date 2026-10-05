@@ -269,6 +269,22 @@ describe("message grounding explanation", () => {
     expect(screen.getByText("Task unanswered / verification failed")).toBeInTheDocument();
     expect(screen.queryByText("Task unanswered / insufficient evidence")).not.toBeInTheDocument();
   });
+  test("labels an expired evidence review separately from a completed evidence gap", () => {
+    inspect({
+      ...message,
+      insufficient_evidence_reason: "unresolved_authority",
+      citations: [],
+      claims: [],
+      metadata: {
+        knowledge_repair: {
+          stop_reason: "recovery_deadline_exceeded",
+          requirement_progress: { stop_reason: "recovery_deadline_exceeded" },
+        },
+      },
+    });
+    expect(screen.getByRole("heading", { name: "Source review timed out" })).toBeInTheDocument();
+    expect(screen.getByText("Task unanswered / source review timed out")).toBeInTheDocument();
+  });
 });
 
 test("shows executed recovery searches even when a timeout skipped progress assembly", () => {
@@ -364,3 +380,46 @@ test("citation preview retains legacy contiguous offsets without provenance fiel
   expect(screen.getByText(/characters 200–280/)).toBeInTheDocument();
   expect(screen.getByText(/of 80 source characters/)).toBeInTheDocument();
 });
+
+describe("typed terminal answer outcome", () => {
+  test.each([
+    ["verification_failed", "Verification failed", "draft_schema", "answer_draft_invalid"],
+    ["timed_out", "Timed out", "coverage", "request_deadline_exceeded"],
+    ["unresolved_authority", "Needs source review", "coverage", "unresolved_authority"],
+    ["needs_input", "Needs input", null, "missing_scenario_input"],
+  ] as const)(
+    "renders %s from the persisted terminal contract",
+    (outcome, label, stage, reason) => {
+      inspect({
+        ...message,
+        claims: [],
+        citations: [],
+        terminal_outcome: {
+          version: "answer.outcome.v1",
+          outcome,
+          reason_code: reason,
+          failure_stage: stage,
+          coverage: "incomplete",
+          retryable: false,
+          next_action: outcome === "needs_input" ? "supply_input" : "review_source",
+        },
+        metadata: {
+          lifecycle: { processing_ms: 40000, persistence_completed: true },
+          rejected_draft: { candidate_count: 2, issues: [{ path: "segments", type: "list_type" }] },
+        },
+      });
+      expect(screen.getByRole("heading", { name: label })).toBeInTheDocument();
+      expect(screen.getByLabelText("Answer outcome")).toHaveTextContent(reason);
+      expect(screen.getByText("Rejected draft diagnostics")).toBeInTheDocument();
+      expect(screen.getAllByText(/40000 ms server processing/).length).toBeGreaterThan(0);
+    },
+  );
+});
+
+test.each([undefined, null, true, 7, "malformed", ["not a record"]])(
+  "ignores malformed rejected draft metadata %s",
+  (rejected) => {
+    inspect({ ...message, metadata: { rejected_draft: rejected } });
+    expect(screen.queryByText("Rejected draft diagnostics")).not.toBeInTheDocument();
+  },
+);

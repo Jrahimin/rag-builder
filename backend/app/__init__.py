@@ -10,3 +10,6 @@ Canonical layout (see ``docs/architecture/module-architecture.md``):
 """
 
 __version__ = "0.9.0"
+
+# Capture before importing execution modules; deployment requires process restart.
+from app.platform.domain.runtime_identity import LOADED_RUNTIME_IDENTITY as LOADED_RUNTIME_IDENTITY

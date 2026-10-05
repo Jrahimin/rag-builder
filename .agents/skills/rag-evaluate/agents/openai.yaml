@@ -1,0 +1,6 @@
+interface:
+  display_name: "RAG Evaluate"
+  short_description: "Inspect RAG captures and bounded evaluation"
+  default_prompt: "Use $rag-evaluate to inspect saved captures and current RAG evidence, report acceptance gaps, and avoid new live prompts or paid calls."
+policy:
+  allow_implicit_invocation: false

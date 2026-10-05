@@ -70,6 +70,9 @@ class ModifierExpansionRecord:
     candidate_count: int = 0
     retained_candidate_count: int = 0
     target_provisions: tuple[str, ...] = ()
+    provision_effect: str = "unknown"
+    replacement_scope_verified: bool = False
+    supporting_spans: tuple[dict[str, Any], ...] = ()
 
     def diagnostic(self) -> dict[str, Any]:
         return {
@@ -90,6 +93,9 @@ class ModifierExpansionRecord:
             "candidate_count": self.candidate_count,
             "retained_candidate_count": self.retained_candidate_count,
             "target_provisions": list(self.target_provisions),
+            "provision_effect": self.provision_effect,
+            "replacement_scope_verified": self.replacement_scope_verified,
+            "supporting_spans": list(self.supporting_spans),
         }
 
     def recall_provenance(self) -> dict[str, Any]:

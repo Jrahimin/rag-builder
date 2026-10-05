@@ -68,6 +68,7 @@ class Document(Base, UUIDPrimaryKeyMixin, TimestampMixin, SoftDeleteMixin, Proje
         server_default=DocumentStatus.UPLOADED.value,
     )
     version: Mapped[int] = mapped_column(nullable=False, default=1, server_default=text("1"))
+    chunk_generation_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     parser_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
     parser_version: Mapped[str | None] = mapped_column(String(64), nullable=True)

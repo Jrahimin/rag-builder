@@ -194,3 +194,161 @@ Bulk re-embedding remains an operator/admin-script concern.
 
 Operational sequence and validation queries:
 [pgvector operations runbook](../learning/pgvector-operations-runbook.md).
+
+
+## Build acceptance
+
+- `GET /api/v1/projects/{project_id}/index-builds/{build_id}/acceptance`: authenticated
+  operator; lists immutable project/build quality receipts.
+- `POST /api/v1/projects/{project_id}/index-builds/{build_id}/acceptance`: authenticated
+  operator with browser CSRF; appends a validated `build.acceptance.v1` artifact.
+  Identical artifact hashes are idempotent. Cross-project, failed or stale claims
+  are rejected. OpenAPI lists every identity and report-case field.
+
+Activation/rollback retain existing project authorization and now also require a
+current operator-attested receipt. `index_acceptance_missing/stale/failed/incomplete`
+are 400 responses; active pointer remains unchanged. Creating a receipt is not an
+activation request. Offline hash/echo receipts are not live certification.
+
+### Approved acceptance sets
+
+`POST /api/v1/projects/{project_id}/index-builds/{build_id}/acceptance-set` requires
+operator access and browser CSRF. The `acceptance.set.v1` definition binds project,
+sealed build, revision, certification, case expectations, repetitions and comparison
+obligations. Identical repeated submission is idempotent; replacement is rejected.
+The definition hash must match `build.acceptance.v1.acceptance_set_hash`. A missing,
+changed or substituted set cannot authorize activation. Production sets require
+three repetitions and comparison evidence. The captured remediation corpus retains
+its mandated question set; unrelated projects may define their own reviewed set.
+
+### Build scope reviews and observed reports
+
+These endpoints require Super Admin and Project authorization; browser writes also
+require CSRF. Prefix: `/api/v1/projects/{project_id}/index-builds/{build_id}`.
+
+| Method and suffix | Purpose |
+| --- | --- |
+| `GET /acceptance-identity` | Return secret-free runtime/configuration, corpus and semantic structure identity; audited read. |
+| `POST /scope-reviews` | Publish an immutable exact-source `scope.v2` overlay on a sealed private candidate. |
+| `POST /acceptance-reports` | Persist observed production Message comparison proof. |
+
+Scope review request (hash placeholders represent lowercase SHA-256 values):
+
+```json
+{
+  "chunk_id": "<chunk-uuid>",
+  "source_revision_id": "<source-revision-uuid>",
+  "source_generation": 7,
+  "source_content_hash": "<sha256>",
+  "chunk_hash": "<sha256>",
+  "facts": [{
+    "version": "scope.v2",
+    "kind": "period",
+    "value": "2025-2026",
+    "legal_kind": "assessment",
+    "start_year": 2025,
+    "end_year": 2026,
+    "scope": "governing",
+    "locality": "provision",
+    "locality_id": "<provision-id>",
+    "effect": "operative",
+    "exhaustive": false,
+    "status": "reviewed",
+    "source_span": {
+      "text": "<exact source quote>",
+      "char_start": 100,
+      "char_end": 120,
+      "provenance": "exact_source_span"
+    },
+    "review_provenance": {
+      "reviewer": "<reviewer-id>",
+      "evidence_hash": "<quote-sha256>",
+      "reason": "<source-backed review reason>"
+    }
+  }]
+}
+```
+
+Use actual quote lengths and document offsets. The service records the authenticated
+reviewer. Response data includes review ID/hash, Project/build, chunk/revision/generation,
+envelope, author and creation time. `scope_review_build_unavailable`, `scope_review_stale`,
+`scope_review_source_mismatch`, `scope_review_invalid_span`, `scope_review_invalid` and
+`scope_review_immutable` are **400** errors. Requests are bounded to 100 facts,
+6,000 characters per quote and a 512 KB envelope. Changed publication requires a new
+candidate; identical reviews are idempotent.
+
+Observed report request structure:
+
+```json
+{
+  "version": "acceptance.observed.v1",
+  "compared_active_build_id": "<active-build-uuid>",
+  "labels": {
+    "<case-id>": {
+      "question": "<exact approved question>",
+      "expected": "answered",
+      "reason": "<review reason>",
+      "inventory_hash": "<candidate-semantic-structure-sha256>",
+      "spans": [{
+        "chunk_id": "<chunk-uuid>",
+        "chunk_hash": "<sha256>",
+        "quote": "<exact source quote>",
+        "char_start": 100,
+        "char_end": 120
+      }],
+      "missing_requirements": []
+    }
+  },
+  "turns": [{
+    "case_id": "<case-id>",
+    "repetition": 1,
+    "build_id": "<candidate-or-active-build-uuid>",
+    "user_message_id": "<user-message-uuid>",
+    "assistant_message_id": "<assistant-message-uuid>",
+    "raw_message": { "id": "<assistant-message-uuid>", "content": "<captured content>", "claims": [], "citations": [], "metadata": {} }
+  }],
+  "parity": [{
+    "assistant_message_id": "<assistant-message-uuid>",
+    "transport": "get",
+    "raw_message": { "id": "<assistant-message-uuid>" }
+  }]
+}
+```
+
+The example shows the shape; complete submissions supply actual public Message bodies,
+three repetitions per approved definition case on both builds and both SSE/GET captures.
+For remediation this is the immutable twelve-case, 72-Message matrix; the separate
+sixteen-question historical baseline is optional. Additional reviewed labels/captures
+do not expand required repetitions or release metrics. Parity retains all public
+citation and assertion-evidence fields, normalizing optional schema defaults and
+rejecting malformed or unknown nested proof fields. Answered/partial
+labels require reviewed spans; every non-answered label requires named missing
+requirements. The JSON-only API never opens caller-supplied server paths. Private
+diagnostic/credential fields are rejected. Limits: 256 KB per Message, 8 MB per report,
+100 labels, 600 turns, 20 parity captures.
+
+Response data contains `id`, `project_id`, `build_id`, `report_hash` and normalized
+`report`. Invalid/stale proof returns `acceptance_observed_invalid`; failed terminal
+or assertion proof returns `acceptance_observed_failed` (**400**). Completed turns
+must meet 45/120-second simple/complex ceilings and 30/90-second p95 targets.
+
+Production `POST /acceptance` artifacts additionally supply `observed_report_id`,
+`observed_report_hash`, `compared_active_build_id` and `comparison_report_hash` matching
+the stored report. Cases and semantic structure hashes must agree. Receipt publication
+and activation remain separate requests.
+
+
+POST /acceptance-reports adds comparison_mode (active_candidate, default;
+or first_build). First-build requests set compared_active_build_id=null and supply
+three candidate repetitions only; the Project must have no active pointer or prior
+activation history. Reports record baseline_status, release_build_id and
+comparison_only_build_id. Subsequent requests retain both-build repetitions.
+Failed active outcomes remain comparison evidence; candidate success and latency
+release gates remain mandatory. Missing final persistence measurement rejects timing
+certification. Rollback uses the exact retained target's original accepted report and
+current runtime/configuration/source identity, without inventing a new comparison.
+
+Search diagnostics add indexed_corpus_empty=true only for a sealed pinned build whose
+manifest has no documents and whose keyword/vector/chunk counts are all zero. This
+attested inventory gap completes an indexed-only limitation without further LLM
+planning; an ordinary query miss does not establish corpus absence.

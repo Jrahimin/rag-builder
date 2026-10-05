@@ -3,11 +3,19 @@
 from __future__ import annotations
 
 import uuid
+from typing import Any
 
-from fastapi import APIRouter, Query, status
+from fastapi import APIRouter, Depends, Query, status
 
+from app.composition.audit import DatabaseAuditRecorder
+from app.core.exceptions import BadRequestError
 from app.core.http.envelopes import ApiResponse
+from app.dependencies.admin_auth import CurrentAdminDep, require_super_admin
+from app.dependencies.common import DbSessionDep
 from app.dependencies.evaluation import EvaluationServiceDep
+from app.modules.evaluation.repositories.evaluation_diagnostic_repository import (
+    EvaluationDiagnosticRepository,
+)
 from app.modules.evaluation.schemas.evaluation import (
     EvaluationDatasetCreate,
     EvaluationDatasetResponse,
@@ -15,6 +23,7 @@ from app.modules.evaluation.schemas.evaluation import (
     EvaluationRunResponse,
     QualitySummary,
 )
+from app.platform.audit.contracts import AuditActorType, AuditEventType, AuditOutcome
 
 router = APIRouter()
 
@@ -65,6 +74,11 @@ async def create_run(
     service: EvaluationServiceDep,
 ) -> ApiResponse[EvaluationRunResponse]:
     del project_id
+    if body.preview_index_build_id is not None:
+        raise BadRequestError(
+            "Candidate evaluation uses the privileged captured-run endpoint.",
+            code="preview_requires_admin",
+        )
     run, _submission = await service.queue_run(body)
     return ApiResponse.ok(run)
 
@@ -109,3 +123,59 @@ async def get_quality(
 ) -> ApiResponse[QualitySummary]:
     del project_id
     return ApiResponse.ok(await service.quality_summary())
+
+
+@router.post(
+    "/runs/captured",
+    response_model=ApiResponse[EvaluationRunResponse],
+    status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[Depends(require_super_admin)],
+)
+async def create_captured_run(
+    project_id: uuid.UUID,
+    body: EvaluationRunCreate,
+    service: EvaluationServiceDep,
+    admin: CurrentAdminDep,
+    session: DbSessionDep,
+) -> ApiResponse[EvaluationRunResponse]:
+    run, _ = await service.queue_run(body, full_capture=True)
+    DatabaseAuditRecorder(session, project_id).record(
+        event_type=AuditEventType.EVALUATION_DIAGNOSTIC_CAPTURE,
+        actor_type=AuditActorType.OPERATOR,
+        actor_id=str(admin.id),
+        resource_type="evaluation_run",
+        resource_id=run.id,
+        outcome=AuditOutcome.SUCCESS,
+    )
+    await session.commit()
+    return ApiResponse.ok(run)
+
+
+@router.get(
+    "/runs/{run_id}/diagnostics",
+    response_model=ApiResponse[list[dict[str, Any]]],
+    dependencies=[Depends(require_super_admin)],
+)
+async def get_evaluation_diagnostics(
+    project_id: uuid.UUID, run_id: uuid.UUID, admin: CurrentAdminDep, session: DbSessionDep
+) -> ApiResponse[list[dict[str, Any]]]:
+    rows = await EvaluationDiagnosticRepository(session, project_id).get(run_id)
+    DatabaseAuditRecorder(session, project_id).record(
+        event_type=AuditEventType.EVALUATION_DIAGNOSTIC_READ,
+        actor_type=AuditActorType.OPERATOR,
+        actor_id=str(admin.id),
+        resource_type="evaluation_run",
+        resource_id=run_id,
+        outcome=AuditOutcome.SUCCESS,
+    )
+    result = [
+        {
+            "case_key": row.case_key,
+            "profile": row.profile,
+            "payload": row.payload,
+            "expires_at": row.expires_at,
+        }
+        for row in rows
+    ]
+    await session.commit()
+    return ApiResponse.ok(result)

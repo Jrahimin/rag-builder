@@ -19,8 +19,9 @@ from app.modules.knowledge.repositories.source_metadata_repository import (
 )
 from app.modules.retrieval.repositories.index_build_repository import IndexBuildRepository
 from app.modules.retrieval.services.retrieval_cleanup_service import RetrievalCleanupService
+from app.platform.infra.providers.provider_work_repository import purge_project_cache
 from app.platform.jobs.contracts import JobDefinition
-from app.platform.jobs.errors import PermanentJobError
+from app.platform.jobs.errors import PendingBuildAcceptance, PermanentJobError
 from app.platform.providers.implementations.storage_factory import create_storage_provider
 from app.worker.broker import broker
 from app.worker.handlers.corpus import execute_index_build
@@ -46,7 +47,7 @@ async def _execute(
             return
         raise PermanentJobError("Document no longer exists.", code="document_not_found")
     operation = IndexBuildOperation.PURGE if purge else IndexBuildOperation.DELETE
-    await execute_index_build(
+    result = await execute_index_build(
         session,
         run,
         settings,
@@ -54,6 +55,14 @@ async def _execute(
         operation=operation,
         auto_activate_default=True,
     )
+    if result.state is not IndexBuildState.ACTIVE:
+        run.result = {
+            **(run.result or {}),
+            "activation_status": "pending_quality_acceptance",
+            "destructive_work": "not_started",
+        }
+        await reporter.report("awaiting_quality_acceptance", 90)
+        raise PendingBuildAcceptance()
     if not purge:
         if document.deleted_at is None:
             from datetime import UTC, datetime
@@ -63,6 +72,7 @@ async def _execute(
         run.result = {**(run.result or {}), "document_id": str(document.id), "mode": "delete"}
         return
 
+    await purge_project_cache(session, run.project_id)
     await reporter.report("purging_relational_artifacts", 92)
     cleanup = RetrievalCleanupService(session, run.project_id)
     await cleanup.on_document_delete(document.id)

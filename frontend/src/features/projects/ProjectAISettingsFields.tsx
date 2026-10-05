@@ -54,6 +54,7 @@ function hasValue(value: object | undefined, key: string) {
 }
 
 const RECOVERY_EXECUTION_KEYS = new Set([
+  "execution_policy",
   "bounded_recovery_enabled",
   "focused_recovery_timeout_seconds",
   "broad_recovery_timeout_seconds",
@@ -129,7 +130,7 @@ export function configFormFromEffective(
   const behavior = stored.behavior;
   const globalModelId =
     global.llm.generation_model_id ?? config.configuration.llm.generation_model_id ?? "";
-  const globalResponse = global.chat.response_mode;
+  const globalResponse = global.chat.response_mode ?? "indexed_only";
   const globalGrounding: GroundingAssurance =
     global.chat.grounding_mode === "balanced" ? "balanced" : "strict";
   const globalTranslation: TranslationMode = global.retrieval.query_translation_enabled
@@ -237,7 +238,7 @@ export function buildSparseProjectConfig(form: ProjectConfigForm): ProjectAIConf
   if (form.profileId !== "inherit") execution.profile_id = form.profileId;
   if (form.profileId === "custom") Object.assign(execution, form.execution);
   Object.assign(execution, form.recovery);
-  return { behavior, execution } as ProjectAIConfig;
+  return { behavior, execution };
 }
 
 export function sparseHasOverrides(configuration: ProjectAIConfig): boolean {
@@ -641,6 +642,23 @@ export function ProjectAISettingsFields({
   const globalConfig = effective?.deployment_configuration ?? effective?.configuration;
   const globalRecoveryEnabled =
     globalConfig?.chat.bounded_recovery_enabled === false ? false : true;
+  const globalExecutionPolicy = globalConfig?.chat.execution_policy ?? "legacy";
+  const storedExecutionPolicy = form.recovery.execution_policy;
+  const executionPolicy =
+    storedExecutionPolicy === "legacy" || storedExecutionPolicy === "adaptive_v1"
+      ? storedExecutionPolicy
+      : globalExecutionPolicy;
+  const executionPolicySource: SettingSource = hasValue(form.recovery, "execution_policy")
+    ? "project"
+    : "global";
+  const chooseExecutionPolicy = (value: string) => {
+    setForm((current) => {
+      const recovery = { ...current.recovery };
+      if (value === "inherit") delete recovery.execution_policy;
+      else recovery.execution_policy = value;
+      return { ...current, recovery };
+    });
+  };
   const recoveryEnabled =
     form.recovery.bounded_recovery_enabled === false
       ? false
@@ -928,6 +946,21 @@ export function ProjectAISettingsFields({
           </span>
         </header>
         <div className="behavior-grid">
+          <BehaviorSetting
+            label="Message execution policy"
+            hint="Adaptive gives simple requests up to 45 seconds and complex requests up to 120 seconds, with reserved time to verify and save the answer. Saved conversations keep their original policy; start a new conversation after saving a change."
+            source={executionPolicySource}
+            onUseGlobal={() => chooseExecutionPolicy("inherit")}
+          >
+            <select
+              aria-label="Message execution policy"
+              value={executionPolicy}
+              onChange={(event) => chooseExecutionPolicy(event.target.value)}
+            >
+              <option value="legacy">Legacy</option>
+              <option value="adaptive_v1">Adaptive</option>
+            </select>
+          </BehaviorSetting>
           <BehaviorSetting
             label="Bounded evidence recovery"
             hint="On uses short, task-aware recovery budgets instead of the legacy 300-second repair path. It does not relax grounding or citation requirements."

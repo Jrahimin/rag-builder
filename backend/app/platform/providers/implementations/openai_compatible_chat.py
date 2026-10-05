@@ -11,6 +11,7 @@ import httpx
 from app.core.logging import get_logger
 from app.platform.providers.capabilities import (
     describe_llm_capability,
+    structured_output_capability,
     translate_generation_parameters,
 )
 from app.platform.providers.contracts.llm import (
@@ -20,6 +21,7 @@ from app.platform.providers.contracts.llm import (
     ChatMessage,
     ChatRole,
     ChatUsage,
+    StructuredOutput,
 )
 from app.platform.providers.errors import ProviderError, ProviderQuotaError
 from app.platform.providers.request_work import current_request_purpose
@@ -41,6 +43,8 @@ def _safe_error_value(value: object) -> str | None:
 class OpenAICompatibleChatProvider(BaseLLMProvider):
     """Chat via an OpenAI-compatible ``/v1/chat/completions`` endpoint."""
 
+    supports_output_contract = True
+
     def __init__(
         self,
         *,
@@ -50,6 +54,7 @@ class OpenAICompatibleChatProvider(BaseLLMProvider):
         model: str,
         provider_version: str,
         request_timeout_seconds: float,
+        schema_capabilities: list[dict[str, str]] | None = None,
     ) -> None:
         self._provider_name = provider_name
         self._api_key = api_key
@@ -57,6 +62,7 @@ class OpenAICompatibleChatProvider(BaseLLMProvider):
         self._model = model
         self._provider_version = provider_version
         self._timeout = request_timeout_seconds
+        self._schema_capabilities = schema_capabilities
 
     @property
     def provider_name(self) -> str:
@@ -82,6 +88,7 @@ class OpenAICompatibleChatProvider(BaseLLMProvider):
         *,
         temperature: float | None = None,
         max_tokens: int,
+        output_contract: StructuredOutput | None = None,
         stream: bool,
     ) -> dict[str, object]:
         body: dict[str, object] = {
@@ -100,17 +107,56 @@ class OpenAICompatibleChatProvider(BaseLLMProvider):
             )
         )
         body.update(_reasoning_parameters(self._model, max_tokens))
-        if (
-            not stream
-            and self.provider_name == "openai"
-            and self._model.strip().lower() == "gpt-6-luna"
-            and current_request_purpose() in _JSON_REVIEW_PURPOSES
+        structured = structured_output_capability(
+            self.provider_name, self.model_name, self._base_url, self._schema_capabilities
+        )
+        if output_contract is not None and structured["schema_mode"] == "json_schema":
+            body["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": output_contract.name,
+                    "strict": True,
+                    "schema": output_contract.schema,
+                },
+            }
+        elif structured["schema_mode"] == "json_object" and (
+            output_contract is not None or current_request_purpose() in _JSON_REVIEW_PURPOSES
         ):
-            # These internal calls already request JSON. Provider JSON mode
-            # prevents syntax-only retries; Pydantic and quote validation still
-            # enforce the application schema and evidence contract.
             body["response_format"] = {"type": "json_object"}
+        elif output_contract is not None:
+            # Unknown compatible endpoints receive a portable schema prompt.
+            wire_messages = [{"role": _role_value(m.role), "content": m.content} for m in messages]
+            wire_messages.append(
+                {
+                    "role": "system",
+                    "content": "Return only JSON matching "
+                    + json.dumps(output_contract.schema, ensure_ascii=False),
+                }
+            )
+            body["messages"] = wire_messages
         return body
+
+    def request_provenance(
+        self, output_contract: StructuredOutput | None, max_tokens: int
+    ) -> dict[str, Any]:
+        structured = structured_output_capability(
+            self.provider_name, self.model_name, self._base_url, self._schema_capabilities
+        )
+        constrained = output_contract is not None or (
+            structured["schema_mode"] == "json_object"
+            and current_request_purpose() in _JSON_REVIEW_PURPOSES
+        )
+        return {
+            **structured,
+            "schema_mode": structured["schema_mode"] if constrained else "none",
+            "provider": self.provider_name,
+            "model": self.model_name,
+            "reasoning": _reasoning_parameters(self._model, max_tokens).get(
+                "reasoning_effort", "provider_default"
+            ),
+            "purpose": current_request_purpose() or "unspecified",
+            "local_validation": "consumer_schema_required" if constrained else "not_applicable",
+        }
 
     async def _http_error(
         self,
@@ -168,6 +214,7 @@ class OpenAICompatibleChatProvider(BaseLLMProvider):
         *,
         temperature: float | None = None,
         max_tokens: int,
+        output_contract: StructuredOutput | None = None,
     ) -> ChatCompletionResult:
         url = f"{self._base_url}/v1/chat/completions"
         try:
@@ -180,6 +227,7 @@ class OpenAICompatibleChatProvider(BaseLLMProvider):
                         temperature=temperature,
                         max_tokens=max_tokens,
                         stream=False,
+                        output_contract=output_contract,
                     ),
                 )
                 if response.is_error:
@@ -212,6 +260,7 @@ class OpenAICompatibleChatProvider(BaseLLMProvider):
             finish_reason=str(finish_reason) if finish_reason else None,
             usage=usage,
             provider_version=self._provider_version,
+            provenance=self.request_provenance(output_contract, max_tokens),
         )
 
     async def stream(
@@ -220,6 +269,7 @@ class OpenAICompatibleChatProvider(BaseLLMProvider):
         *,
         temperature: float | None = None,
         max_tokens: int,
+        output_contract: StructuredOutput | None = None,
     ) -> AsyncGenerator[ChatCompletionChunk, None]:
         url = f"{self._base_url}/v1/chat/completions"
         client = httpx.AsyncClient(timeout=self._timeout)
@@ -233,6 +283,7 @@ class OpenAICompatibleChatProvider(BaseLLMProvider):
                     temperature=temperature,
                     max_tokens=max_tokens,
                     stream=True,
+                    output_contract=output_contract,
                 ),
             ) as response:
                 if response.is_error:
@@ -292,6 +343,7 @@ _JSON_REVIEW_PURPOSES = frozenset(
         "web_evidence_review",
         "scenario_input_review",
         "turn_resolution",
+        "claim_verification",
     }
 )
 
@@ -308,6 +360,7 @@ def _reasoning_parameters(model: str, max_tokens: int) -> dict[str, str]:
         "web_evidence_review",
         "scenario_input_review",
         "turn_resolution",
+        "claim_verification",
         "answer_generation",
     }:
         return {"reasoning_effort": "low"}

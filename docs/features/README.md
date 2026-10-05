@@ -18,6 +18,7 @@ Concise, per-feature reference documentation for the AI Platform Engine.
 | Project AI policy and provenance | [project_ai_policy_and_provenance.md](./project_ai_policy_and_provenance.md) | Immutable policy revisions, capabilities, execution snapshots, ownership lock |
 | Operator onboarding and source lifecycle | [operator_onboarding_and_source_lifecycle.md](./operator_onboarding_and_source_lifecycle.md) | Client lifecycle, credential handoff/rotation, canonical Project admin, immutable source metadata |
 | Knowledge | [knowledge_module.md](./knowledge_module.md) | Upload → parse → chunk (`status=chunked`) |
+| Provider expense controls | [provider_cost_controls.md](./provider_cost_controls.md) | Durable exact-input reuse, billed usage, coalesced ingestion and spend admission |
 | Durable jobs | [jobs_module.md](./jobs_module.md) | Transactional dispatch, lease/retry recovery, inspection APIs |
 | Safe corpus/index lifecycle | [safe_corpus_index_lifecycle.md](./safe_corpus_index_lifecycle.md) | Immutable full builds, atomic activation/rollback, safe delete/purge, upload validation |
 | Hosted integration and delivery | [hosted-integration-commercial-delivery.md](./hosted-integration-commercial-delivery.md) | Signed webhooks, stable v1 contract, hosted profile, recovery operations |

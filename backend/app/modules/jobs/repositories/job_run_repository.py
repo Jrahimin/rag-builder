@@ -5,9 +5,10 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import and_, func, or_, select, update
+from sqlalchemy import String, and_, cast, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 
+from app.models.index_build import ProjectIndexPointer
 from app.models.job_run import JobRun, JobState, JobType
 from app.platform.jobs.contracts import JobDefinition
 from app.platform.persistence.project_scoped_repository import ProjectScopedRepository
@@ -191,6 +192,27 @@ class JobRunRepository(ProjectScopedRepository[JobRun]):
             .with_for_update()
         )
         return result.scalar_one_or_none()
+
+    async def accepted_waiting_for_update(self, *, limit: int) -> list[JobRun]:
+        rows = await self._session.execute(
+            self._scoped()
+            .join(
+                ProjectIndexPointer,
+                (ProjectIndexPointer.project_id == JobRun.project_id)
+                & (
+                    cast(ProjectIndexPointer.active_build_id, String)
+                    == JobRun.payload["build_id"].astext
+                ),
+            )
+            .where(
+                JobRun.state == JobState.WAITING_ACCEPTANCE,
+                JobRun.job_type.in_([JobType.DOCUMENT_DELETE, JobType.DOCUMENT_PURGE]),
+            )
+            .order_by(JobRun.created_at, JobRun.id)
+            .limit(limit)
+            .with_for_update(of=JobRun, skip_locked=True)
+        )
+        return list(rows.scalars())
 
     async def list_expired_for_update(self, *, limit: int) -> list[JobRun]:
         result = await self._session.execute(

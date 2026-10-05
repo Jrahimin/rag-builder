@@ -232,6 +232,7 @@ async def test_current_historical_replacement_modifier_hybrid_and_legacy_behavio
         {
             "title": "Timeline historical revision",
             "revision_label": "Historical",
+            "edition_key": "timeline.historical",
             "effective_from": "2000-01-01",
             "effective_to": "2020-12-31",
             "lifecycle_status": "retired",
@@ -246,6 +247,7 @@ async def test_current_historical_replacement_modifier_hybrid_and_legacy_behavio
         {
             "title": "Timeline current revision",
             "revision_label": "Current",
+            "edition_key": "timeline.current",
             "effective_from": "2021-01-01",
             "effective_to": "9999-12-31",
             "lifecycle_status": "active",
@@ -266,6 +268,7 @@ async def test_current_historical_replacement_modifier_hybrid_and_legacy_behavio
         {
             "title": "Overlapping policy previous revision",
             "revision_label": "Previous overlap",
+            "edition_key": "overlap.previous",
             "effective_from": "2000-01-01",
             "effective_to": "2030-12-31",
             "lifecycle_status": "active",
@@ -281,6 +284,7 @@ async def test_current_historical_replacement_modifier_hybrid_and_legacy_behavio
             "source_group_id": overlap_previous["source_group_id"],
             "title": "Overlapping policy current revision",
             "revision_label": "Current overlap",
+            "edition_key": "overlap.current",
             "effective_from": "2020-01-01",
             "effective_to": "2040-12-31",
             "lifecycle_status": "active",

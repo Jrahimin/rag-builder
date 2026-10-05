@@ -596,6 +596,15 @@ export const operatorApiClient = {
     request<LifecycleJob>(`${apiRoot}/projects/${projectId}/index-builds/reindex`, {
       method: "POST",
     }),
+  reprocessPrivateCorpus: (projectId: string) =>
+    request<LifecycleJob>(`${apiRoot}/projects/${projectId}/index-builds/reprocess-private`, {
+      method: "POST",
+    }),
+  revalidatePrivateCorpus: (projectId: string, buildId: string) =>
+    request<LifecycleJob>(
+      `${apiRoot}/projects/${projectId}/index-builds/${buildId}/revalidate-private`,
+      { method: "POST" },
+    ),
   reconcileStorage: (projectId: string) =>
     request<LifecycleJob>(`${apiRoot}/projects/${projectId}/index-builds/reconcile-storage`, {
       method: "POST",
@@ -636,12 +645,14 @@ export const operatorApiClient = {
     content: string,
     documentId?: string,
     sourceScope?: SourceScope,
+    previewIndexBuildId?: string,
   ) =>
     request<ChatTurn>(`${apiRoot}/projects/${projectId}/conversations/${conversationId}/messages`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         content,
+        preview_index_build_id: previewIndexBuildId ?? null,
         document_id: documentId ?? null,
         metadata_filter: {},
         source_scope: sourceScope ?? "project_default",
@@ -657,6 +668,7 @@ export const operatorApiClient = {
     signal?: AbortSignal,
     onTiming?: (timing: StreamDeliveryTiming) => void,
     sourceScope?: SourceScope,
+    previewIndexBuildId?: string,
   ): Promise<StreamMessageResult> => {
     const timing: StreamDeliveryTiming = { requestStartedAt: performance.now() };
     const send = () =>
@@ -670,6 +682,7 @@ export const operatorApiClient = {
         },
         body: JSON.stringify({
           content,
+          preview_index_build_id: previewIndexBuildId ?? null,
           document_id: documentId ?? null,
           metadata_filter: {},
           source_scope: sourceScope ?? "project_default",

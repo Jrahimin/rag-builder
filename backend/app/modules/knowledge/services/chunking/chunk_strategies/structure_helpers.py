@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import replace
 
+from app.modules.knowledge.scope_facts import extract_scope_facts
 from app.modules.knowledge.services.chunking.models import ChunkingContext, DraftChunk
 from app.modules.knowledge.services.chunking.token_counting_service import TokenCountingService
 from app.platform.providers.contracts.document_parser import ParsedElement, ParsedElementType
@@ -60,6 +62,13 @@ def pack_elements(
         if element.element_type is ParsedElementType.HEADING:
             current_section_title = element.text.strip()
             preceding = []
+
+        if element.metadata.get("boilerplate") or element.metadata.get("role") in {
+            "footer",
+            "header",
+            "contents",
+        }:
+            continue
 
         draft = element_to_draft(element, section_title=current_section_title)
         draft.metadata["strategy_used"] = strategy_name
@@ -128,7 +137,7 @@ def pack_elements(
         # including across page breaks, so a footer cannot replace legal scope.
         preceding.append(element)
         while len(preceding) > 1 and (
-            len(preceding) > 32
+            len(preceding) > 4
             or token_counter.count("\n\n".join(item.text for item in preceding))
             > context.config.max_tokens // 2
         ):
@@ -358,6 +367,47 @@ def chunk_by_sections(
             current = getattr(draft, attribute)
             if isinstance(origin, int):
                 setattr(draft, attribute, min(origin, current) if current is not None else origin)
+    for draft in chunks:
+        spans = []
+        for element in elements:
+            if element.text.strip() and element.text.strip() in draft.content:
+                start, end = element.char_start, element.char_end
+                exact = (
+                    start is not None
+                    and end is not None
+                    and context.parsed.text[start:end].strip() == element.text.strip()
+                )
+                spans.append(
+                    {
+                        "role": element.element_type.value,
+                        "text": element.text.strip(),
+                        "char_start": start if exact else None,
+                        "char_end": end if exact else None,
+                        "provenance": "exact_source_span" if exact else "chunk",
+                    }
+                )
+        draft.metadata["structure_version"] = "structure.v1"
+        draft.metadata["structural_unit_id"] = hashlib.sha256(draft.content.encode()).hexdigest()
+        draft.metadata["source_spans"] = spans
+        scope_facts = extract_scope_facts(spans, unit_id=draft.metadata["structural_unit_id"])
+        draft.metadata["scope_fact_version"] = "scope.v2"
+        draft.metadata["scope_facts"] = scope_facts
+        draft.metadata["provision_references"] = list(
+            dict.fromkeys(fact["value"] for fact in scope_facts if fact["kind"] == "provision")
+        )
+        periods = list(
+            dict.fromkeys(fact["value"] for fact in scope_facts if fact["kind"] == "period")
+        )
+        if len(periods) == 1:
+            draft.metadata["applicable_period_candidate"] = periods[0]
+        # Reassembled table prefixes do not have a contiguous document offset.
+        if (
+            draft.char_start is None
+            or draft.char_end is None
+            or context.parsed.text[draft.char_start : draft.char_end] != draft.content
+        ):
+            draft.char_start = draft.char_end = None
+            draft.metadata["provenance_precision"] = "chunk_with_source_spans"
     return chunks
 
 

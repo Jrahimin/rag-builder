@@ -844,6 +844,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{project_id}/conversations/{conversation_id}/messages/{message_id}/diagnostic": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read an expiring operator message diagnostic */
+        get: operations["get_message_diagnostic_api_v1_projects__project_id__conversations__conversation_id__messages__message_id__diagnostic_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{project_id}/conversations/{conversation_id}/status": {
         parameters: {
             query?: never;
@@ -1035,6 +1052,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{project_id}/evaluations/runs/captured": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create Captured Run */
+        post: operations["create_captured_run_api_v1_projects__project_id__evaluations_runs_captured_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{project_id}/evaluations/runs/{run_id}": {
         parameters: {
             query?: never;
@@ -1044,6 +1078,23 @@ export interface paths {
         };
         /** Get one quality run and its exact versions */
         get: operations["get_run_api_v1_projects__project_id__evaluations_runs__run_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/evaluations/runs/{run_id}/diagnostics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Evaluation Diagnostics */
+        get: operations["get_evaluation_diagnostics_api_v1_projects__project_id__evaluations_runs__run_id__diagnostics_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1154,6 +1205,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{project_id}/index-builds/reprocess-private": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Reprocess Private Corpus */
+        post: operations["reprocess_private_corpus_api_v1_projects__project_id__index_builds_reprocess_private_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{project_id}/index-builds/rollback": {
         parameters: {
             query?: never;
@@ -1171,6 +1239,75 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{project_id}/index-builds/{build_id}/acceptance": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Build Acceptance */
+        get: operations["list_build_acceptance_api_v1_projects__project_id__index_builds__build_id__acceptance_get"];
+        put?: never;
+        /** Attest Build Acceptance */
+        post: operations["attest_build_acceptance_api_v1_projects__project_id__index_builds__build_id__acceptance_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/index-builds/{build_id}/acceptance-identity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Build Acceptance Identity */
+        get: operations["build_acceptance_identity_api_v1_projects__project_id__index_builds__build_id__acceptance_identity_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/index-builds/{build_id}/acceptance-reports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Publish Observed Acceptance */
+        post: operations["publish_observed_acceptance_api_v1_projects__project_id__index_builds__build_id__acceptance_reports_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/index-builds/{build_id}/acceptance-set": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Define Acceptance Set */
+        post: operations["define_acceptance_set_api_v1_projects__project_id__index_builds__build_id__acceptance_set_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{project_id}/index-builds/{build_id}/activate": {
         parameters: {
             query?: never;
@@ -1182,6 +1319,40 @@ export interface paths {
         put?: never;
         /** Activate Index Build */
         post: operations["activate_index_build_api_v1_projects__project_id__index_builds__build_id__activate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/index-builds/{build_id}/revalidate-private": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Revalidate Private Corpus */
+        post: operations["revalidate_private_corpus_api_v1_projects__project_id__index_builds__build_id__revalidate_private_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/index-builds/{build_id}/scope-reviews": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Publish Scope Review */
+        post: operations["publish_scope_review_api_v1_projects__project_id__index_builds__build_id__scope_reviews_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1528,6 +1699,66 @@ export interface components {
             /** Active V1 Projects */
             active_v1_projects: number;
         };
+        /** AcceptanceCase */
+        AcceptanceCase: {
+            /**
+             * Actual
+             * @enum {string}
+             */
+            actual: "answered" | "partial" | "insufficient_evidence" | "unresolved_authority" | "verification_failed" | "timed_out";
+            /** Assertions Verified */
+            assertions_verified: boolean;
+            /** Case Id */
+            case_id: string;
+            /** Evidence Hash */
+            evidence_hash: string;
+            /**
+             * Expected
+             * @enum {string}
+             */
+            expected: "answered" | "partial" | "insufficient_evidence" | "unresolved_authority";
+            /** Repetition */
+            repetition: number;
+            /** Scope Verified */
+            scope_verified: boolean;
+        };
+        /** AcceptanceSetDefinition */
+        AcceptanceSetDefinition: {
+            /**
+             * Build Id
+             * Format: uuid
+             */
+            build_id: string;
+            /** Case Expectations */
+            case_expectations: {
+                [key: string]: "answered" | "partial" | "insufficient_evidence" | "unresolved_authority";
+            };
+            /**
+             * Certification
+             * @enum {string}
+             */
+            certification: "offline_fixture" | "production";
+            /**
+             * Project Id
+             * Format: uuid
+             */
+            project_id: string;
+            /** Repetitions */
+            repetitions: number;
+            /**
+             * Require Comparison
+             * @default true
+             */
+            require_comparison?: boolean;
+            /** Revision */
+            revision: string;
+            /**
+             * Version
+             * @default acceptance.set.v1
+             * @constant
+             */
+            version?: "acceptance.set.v1";
+        };
         /** ActiveConfiguration */
         ActiveConfiguration: {
             /** Application Version */
@@ -1643,25 +1874,31 @@ export interface components {
          */
         AnswerClaim: {
             arithmetic_verification?: components["schemas"]["ClaimVerification"] | null;
+            /** Assertion Id */
+            assertion_id?: string | null;
             /** Assertion Text */
             assertion_text?: string | null;
             /**
              * Authority Status
              * @default not_assessed
              */
-            authority_status: string;
+            authority_status?: string;
+            /** Calculation References */
+            calculation_references?: string[];
             /** Claim Id */
             claim_id: string;
             /**
              * Claim Kind
              * @default source_assertion
              */
-            claim_kind: string;
+            claim_kind?: string;
             /** Evidence */
             evidence?: components["schemas"]["ClaimEvidence"][];
             evidence_support?: components["schemas"]["ClaimVerification"] | null;
             /** Grounded */
             grounded: boolean;
+            /** Requirement Ids */
+            requirement_ids?: string[];
             /** Text */
             text: string;
             verification: components["schemas"]["ClaimVerification"];
@@ -1669,6 +1906,10 @@ export interface components {
             verification_method?: string | null;
             /** Verification Reason */
             verification_reason?: string | null;
+            /** Verifier Failures */
+            verifier_failures?: {
+                [key: string]: unknown;
+            }[];
         };
         /**
          * ApiKeyCreate
@@ -1727,14 +1968,14 @@ export interface components {
              * Confirm Immediate Revocation
              * @default false
              */
-            confirm_immediate_revocation: boolean;
+            confirm_immediate_revocation?: boolean;
             /** Replacement Name */
             replacement_name?: string | null;
             /**
              * Revoke Old
              * @default false
              */
-            revoke_old: boolean;
+            revoke_old?: boolean;
         };
         /**
          * ApiKeySecretResponse
@@ -1788,7 +2029,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[ActiveConfiguration] */
         ApiResponse_ActiveConfiguration_: {
@@ -1800,7 +2041,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[ActiveSourceResponse] */
         ApiResponse_ActiveSourceResponse_: {
@@ -1812,7 +2053,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[AdminUserResponse] */
         ApiResponse_AdminUserResponse_: {
@@ -1824,7 +2065,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[ApiKeyResponse] */
         ApiResponse_ApiKeyResponse_: {
@@ -1836,7 +2077,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[ApiKeySecretResponse] */
         ApiResponse_ApiKeySecretResponse_: {
@@ -1848,7 +2089,19 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
+        };
+        /** ApiResponse[BuildAcceptanceResponse] */
+        ApiResponse_BuildAcceptanceResponse_: {
+            data?: components["schemas"]["BuildAcceptanceResponse"] | null;
+            /** Message */
+            message?: string | null;
+            meta?: components["schemas"]["ResponseMeta"] | null;
+            /**
+             * Success
+             * @default true
+             */
+            success?: boolean;
         };
         /** ApiResponse[ChatTurnResponse] */
         ApiResponse_ChatTurnResponse_: {
@@ -1860,7 +2113,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[ConversationResponse] */
         ApiResponse_ConversationResponse_: {
@@ -1872,7 +2125,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[CurrentAdminResponse] */
         ApiResponse_CurrentAdminResponse_: {
@@ -1884,7 +2137,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[DependencyOverview] */
         ApiResponse_DependencyOverview_: {
@@ -1896,7 +2149,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[DocumentResponse] */
         ApiResponse_DocumentResponse_: {
@@ -1908,7 +2161,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[EffectiveProjectAIConfigResponse] */
         ApiResponse_EffectiveProjectAIConfigResponse_: {
@@ -1920,7 +2173,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[EvaluationDatasetResponse] */
         ApiResponse_EvaluationDatasetResponse_: {
@@ -1932,7 +2185,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[EvaluationRunResponse] */
         ApiResponse_EvaluationRunResponse_: {
@@ -1944,7 +2197,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[GenerationResponse] */
         ApiResponse_GenerationResponse_: {
@@ -1956,7 +2209,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[IndexBuildListResponse] */
         ApiResponse_IndexBuildListResponse_: {
@@ -1968,7 +2221,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[IndexBuildResponse] */
         ApiResponse_IndexBuildResponse_: {
@@ -1980,7 +2233,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[JobDetailResponse] */
         ApiResponse_JobDetailResponse_: {
@@ -1992,7 +2245,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[JobResponse] */
         ApiResponse_JobResponse_: {
@@ -2004,7 +2257,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[LifecycleJobResponse] */
         ApiResponse_LifecycleJobResponse_: {
@@ -2016,7 +2269,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[LivenessStatus] */
         ApiResponse_LivenessStatus_: {
@@ -2028,7 +2281,19 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
+        };
+        /** ApiResponse[MessageDiagnosticResponse] */
+        ApiResponse_MessageDiagnosticResponse_: {
+            data?: components["schemas"]["MessageDiagnosticResponse"] | null;
+            /** Message */
+            message?: string | null;
+            meta?: components["schemas"]["ResponseMeta"] | null;
+            /**
+             * Success
+             * @default true
+             */
+            success?: boolean;
         };
         /** ApiResponse[MetricsSnapshot] */
         ApiResponse_MetricsSnapshot_: {
@@ -2040,7 +2305,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[NoneType] */
         ApiResponse_NoneType_: {
@@ -2053,7 +2318,19 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
+        };
+        /** ApiResponse[ObservedAcceptanceReportResponse] */
+        ApiResponse_ObservedAcceptanceReportResponse_: {
+            data?: components["schemas"]["ObservedAcceptanceReportResponse"] | null;
+            /** Message */
+            message?: string | null;
+            meta?: components["schemas"]["ResponseMeta"] | null;
+            /**
+             * Success
+             * @default true
+             */
+            success?: boolean;
         };
         /** ApiResponse[OperatorOverview] */
         ApiResponse_OperatorOverview_: {
@@ -2065,7 +2342,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[OrganizationResponse] */
         ApiResponse_OrganizationResponse_: {
@@ -2077,7 +2354,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[PaginatedResult[AdminUserResponse]] */
         ApiResponse_PaginatedResult_AdminUserResponse__: {
@@ -2089,7 +2366,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[PaginatedResult[ApiKeyResponse]] */
         ApiResponse_PaginatedResult_ApiKeyResponse__: {
@@ -2101,7 +2378,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[PaginatedResult[ChunkResponse]] */
         ApiResponse_PaginatedResult_ChunkResponse__: {
@@ -2113,7 +2390,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[PaginatedResult[ConversationResponse]] */
         ApiResponse_PaginatedResult_ConversationResponse__: {
@@ -2125,7 +2402,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[PaginatedResult[DocumentResponse]] */
         ApiResponse_PaginatedResult_DocumentResponse__: {
@@ -2137,7 +2414,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[PaginatedResult[JobResponse]] */
         ApiResponse_PaginatedResult_JobResponse__: {
@@ -2149,7 +2426,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[PaginatedResult[MessageResponse]] */
         ApiResponse_PaginatedResult_MessageResponse__: {
@@ -2161,7 +2438,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[PaginatedResult[OrganizationResponse]] */
         ApiResponse_PaginatedResult_OrganizationResponse__: {
@@ -2173,7 +2450,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[PaginatedResult[ProjectResponse]] */
         ApiResponse_PaginatedResult_ProjectResponse__: {
@@ -2185,7 +2462,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[PaginatedResult[WebhookDeliveryResponse]] */
         ApiResponse_PaginatedResult_WebhookDeliveryResponse__: {
@@ -2197,7 +2474,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[PaginatedResult[WebhookEndpointResponse]] */
         ApiResponse_PaginatedResult_WebhookEndpointResponse__: {
@@ -2209,7 +2486,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[ProjectAIConfigRevisionResponse] */
         ApiResponse_ProjectAIConfigRevisionResponse_: {
@@ -2221,7 +2498,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[ProjectAIProfileNormalizationPreview] */
         ApiResponse_ProjectAIProfileNormalizationPreview_: {
@@ -2233,7 +2510,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[ProjectOwnershipMigrationStatus] */
         ApiResponse_ProjectOwnershipMigrationStatus_: {
@@ -2245,7 +2522,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[ProjectOwnershipPreflight] */
         ApiResponse_ProjectOwnershipPreflight_: {
@@ -2257,7 +2534,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[ProjectResponse] */
         ApiResponse_ProjectResponse_: {
@@ -2269,7 +2546,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[QualitySummary] */
         ApiResponse_QualitySummary_: {
@@ -2281,7 +2558,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[ReadinessStatus] */
         ApiResponse_ReadinessStatus_: {
@@ -2293,7 +2570,19 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
+        };
+        /** ApiResponse[ScopeReviewResponse] */
+        ApiResponse_ScopeReviewResponse_: {
+            data?: components["schemas"]["ScopeReviewResponse"] | null;
+            /** Message */
+            message?: string | null;
+            meta?: components["schemas"]["ResponseMeta"] | null;
+            /**
+             * Success
+             * @default true
+             */
+            success?: boolean;
         };
         /** ApiResponse[SearchResponse] */
         ApiResponse_SearchResponse_: {
@@ -2305,7 +2594,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[SourceActivationResponse] */
         ApiResponse_SourceActivationResponse_: {
@@ -2317,7 +2606,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[SourceRevisionCreateResponse] */
         ApiResponse_SourceRevisionCreateResponse_: {
@@ -2329,7 +2618,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[SourceRevisionResponse] */
         ApiResponse_SourceRevisionResponse_: {
@@ -2341,7 +2630,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[SourceStateResponse] */
         ApiResponse_SourceStateResponse_: {
@@ -2353,7 +2642,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[UsageReport] */
         ApiResponse_UsageReport_: {
@@ -2365,7 +2654,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[WebhookDeliveryDetailResponse] */
         ApiResponse_WebhookDeliveryDetailResponse_: {
@@ -2377,7 +2666,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[WebhookDeliveryResponse] */
         ApiResponse_WebhookDeliveryResponse_: {
@@ -2389,7 +2678,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[WebhookEndpointCreatedResponse] */
         ApiResponse_WebhookEndpointCreatedResponse_: {
@@ -2401,7 +2690,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[WebhookEndpointResponse] */
         ApiResponse_WebhookEndpointResponse_: {
@@ -2413,7 +2702,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[WorkerOverview] */
         ApiResponse_WorkerOverview_: {
@@ -2425,7 +2714,22 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
+        };
+        /** ApiResponse[dict[str, Any]] */
+        ApiResponse_dict_str__Any__: {
+            /** Data */
+            data?: {
+                [key: string]: unknown;
+            } | null;
+            /** Message */
+            message?: string | null;
+            meta?: components["schemas"]["ResponseMeta"] | null;
+            /**
+             * Success
+             * @default true
+             */
+            success?: boolean;
         };
         /** ApiResponse[list[AuditEventResponse]] */
         ApiResponse_list_AuditEventResponse__: {
@@ -2438,7 +2742,20 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
+        };
+        /** ApiResponse[list[BuildAcceptanceResponse]] */
+        ApiResponse_list_BuildAcceptanceResponse__: {
+            /** Data */
+            data?: components["schemas"]["BuildAcceptanceResponse"][] | null;
+            /** Message */
+            message?: string | null;
+            meta?: components["schemas"]["ResponseMeta"] | null;
+            /**
+             * Success
+             * @default true
+             */
+            success?: boolean;
         };
         /** ApiResponse[list[EvaluationDatasetResponse]] */
         ApiResponse_list_EvaluationDatasetResponse__: {
@@ -2451,7 +2768,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[list[EvaluationRunResponse]] */
         ApiResponse_list_EvaluationRunResponse__: {
@@ -2464,7 +2781,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[list[ProjectAIConfigRevisionResponse]] */
         ApiResponse_list_ProjectAIConfigRevisionResponse__: {
@@ -2477,7 +2794,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[list[RecentFailure]] */
         ApiResponse_list_RecentFailure__: {
@@ -2490,7 +2807,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[list[SourceActivationResponse]] */
         ApiResponse_list_SourceActivationResponse__: {
@@ -2503,7 +2820,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /** ApiResponse[list[SourceRevisionResponse]] */
         ApiResponse_list_SourceRevisionResponse__: {
@@ -2516,7 +2833,22 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
+        };
+        /** ApiResponse[list[dict[str, Any]]] */
+        ApiResponse_list_dict_str__Any___: {
+            /** Data */
+            data?: {
+                [key: string]: unknown;
+            }[] | null;
+            /** Message */
+            message?: string | null;
+            meta?: components["schemas"]["ResponseMeta"] | null;
+            /**
+             * Success
+             * @default true
+             */
+            success?: boolean;
         };
         /** ApiResponse[list[dict[str, object]]] */
         ApiResponse_list_dict_str__object___: {
@@ -2531,7 +2863,7 @@ export interface components {
              * Success
              * @default true
              */
-            success: boolean;
+            success?: boolean;
         };
         /**
          * AuditActorType
@@ -2575,7 +2907,7 @@ export interface components {
          * AuditEventType
          * @enum {string}
          */
-        AuditEventType: "organization.created" | "organization.updated" | "organization.status_changed" | "organization.archived" | "organization.restored" | "api_key.created" | "api_key.rotated" | "api_key.revoked" | "admin_user.created" | "admin_user.status_changed" | "admin_user.archived" | "admin_user.restored" | "project.created" | "project.updated" | "project.status_changed" | "project.archived" | "project.restored" | "project.ownership_reassigned" | "project.ownership_confirmed" | "project_config.revision_created" | "project_config.revision_restored" | "conversation.config_updated" | "source_metadata.revision_created" | "source_metadata.revision_activated" | "job.submitted" | "job.retried" | "job.started" | "job.succeeded" | "job.retry_scheduled" | "job.failed" | "job.recovered" | "job.dispatch_deferred" | "index_build.activated" | "index_build.rolled_back" | "document.delete_requested" | "document.purge_requested" | "storage.reconciliation_requested" | "webhook.endpoint_created" | "webhook.endpoint_enabled" | "webhook.endpoint_disabled" | "webhook.delivery_replayed";
+        AuditEventType: "organization.created" | "organization.updated" | "organization.status_changed" | "organization.archived" | "organization.restored" | "api_key.created" | "api_key.rotated" | "api_key.revoked" | "admin_user.created" | "admin_user.status_changed" | "admin_user.archived" | "admin_user.restored" | "project.created" | "project.updated" | "project.status_changed" | "project.archived" | "project.restored" | "project.ownership_reassigned" | "project.ownership_confirmed" | "project_config.revision_created" | "project_config.revision_restored" | "message_diagnostic.read" | "message_diagnostic.capture" | "conversation.config_updated" | "source_metadata.revision_created" | "source_metadata.revision_activated" | "job.submitted" | "job.retried" | "job.started" | "job.succeeded" | "job.retry_scheduled" | "job.failed" | "job.recovered" | "job.dispatch_deferred" | "evaluation.diagnostic.capture" | "evaluation.diagnostic.read" | "index_build.accepted" | "index_build.activated" | "index_build.rolled_back" | "document.delete_requested" | "document.purge_requested" | "storage.reconciliation_requested" | "webhook.endpoint_created" | "webhook.endpoint_enabled" | "webhook.endpoint_disabled" | "webhook.delivery_replayed";
         /**
          * AuditOutcome
          * @enum {string}
@@ -2617,11 +2949,125 @@ export interface components {
          * @enum {string}
          */
         BranchScoreType: "cosine_similarity" | "keyword_bm25";
+        /** BuildAcceptanceArtifact */
+        BuildAcceptanceArtifact: {
+            /** Acceptance Set Hash */
+            acceptance_set_hash?: string | null;
+            /** Acceptance Set Revision */
+            acceptance_set_revision: string;
+            /**
+             * Build Id
+             * Format: uuid
+             */
+            build_id: string;
+            /** Build Manifest Hash */
+            build_manifest_hash: string;
+            /** Cases */
+            cases: components["schemas"]["AcceptanceCase"][];
+            /**
+             * Certification
+             * @enum {string}
+             */
+            certification: "offline_fixture" | "production";
+            /** Code Fingerprint */
+            code_fingerprint: string;
+            /** Compared Active Build Id */
+            compared_active_build_id?: string | null;
+            /** Comparison Report Hash */
+            comparison_report_hash?: string | null;
+            /** Configuration Hash */
+            configuration_hash: string;
+            /** Corpus Fingerprint */
+            corpus_fingerprint: string;
+            /** Embedding Identity */
+            embedding_identity: {
+                [key: string]: unknown;
+            };
+            /** Index Configuration Hash */
+            index_configuration_hash: string;
+            /** Observed Report Hash */
+            observed_report_hash?: string | null;
+            /** Observed Report Id */
+            observed_report_id?: string | null;
+            /** Project Config Revision Id */
+            project_config_revision_id: string | null;
+            /**
+             * Project Id
+             * Format: uuid
+             */
+            project_id: string;
+            /** Report Hash */
+            report_hash: string;
+            /** Semantic Structure Hash */
+            semantic_structure_hash: string;
+            /** Source Generation */
+            source_generation: number;
+            /**
+             * Version
+             * @default build.acceptance.v1
+             * @constant
+             */
+            version?: "build.acceptance.v1";
+        };
+        /** BuildAcceptanceResponse */
+        BuildAcceptanceResponse: {
+            artifact: components["schemas"]["BuildAcceptanceArtifact"];
+            /** Artifact Hash */
+            artifact_hash: string;
+            /**
+             * Build Id
+             * Format: uuid
+             */
+            build_id: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Created By */
+            created_by: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Project Id
+             * Format: uuid
+             */
+            project_id: string;
+        };
         /**
          * CanonicalRerankMode
          * @enum {string}
          */
         CanonicalRerankMode: "always" | "cross_language";
+        /** CapturedTurn */
+        CapturedTurn: {
+            /**
+             * Assistant Message Id
+             * Format: uuid
+             */
+            assistant_message_id: string;
+            /**
+             * Build Id
+             * Format: uuid
+             */
+            build_id: string;
+            /** Case Id */
+            case_id: string;
+            /** Raw Message */
+            raw_message: {
+                [key: string]: unknown;
+            };
+            /** Repetition */
+            repetition: number;
+            /**
+             * User Message Id
+             * Format: uuid
+             */
+            user_message_id: string;
+        };
         /**
          * ChatTurnResponse
          * @description User + assistant messages from one chat turn.
@@ -2770,6 +3216,8 @@ export interface components {
             project_id?: string | null;
             /** Prompt Version */
             prompt_version?: string | null;
+            /** Provenance Precision */
+            provenance_precision?: string | null;
             /** Relationship Recall Provenance */
             relationship_recall_provenance?: {
                 [key: string]: unknown;
@@ -2783,7 +3231,7 @@ export interface components {
             /** Source Group Id */
             source_group_id?: string | null;
             /** @default knowledge */
-            source_kind: components["schemas"]["CitationSourceKind"];
+            source_kind?: components["schemas"]["CitationSourceKind"];
             /** Source Lifecycle Status */
             source_lifecycle_status?: string | null;
             /** Source Metadata Generation */
@@ -2806,6 +3254,12 @@ export interface components {
             source_title?: string | null;
             /** Source Type */
             source_type?: string | null;
+            /** Structural Context */
+            structural_context?: string[];
+            /** Supporting Spans */
+            supporting_spans?: {
+                [key: string]: unknown;
+            }[];
             /** Web Provider */
             web_provider?: string | null;
             /** Web Retrieved At */
@@ -2849,7 +3303,7 @@ export interface components {
             /** Page Number */
             page_number?: number | null;
             /** @default knowledge */
-            source_kind: components["schemas"]["CitationSourceKind"];
+            source_kind?: components["schemas"]["CitationSourceKind"];
             /** Web Provider */
             web_provider?: string | null;
             /** Web Retrieved At */
@@ -2872,7 +3326,7 @@ export interface components {
             /** Calibration Profile Id */
             calibration_profile_id?: string | null;
             /** @default off */
-            configured_source_policy_mode: components["schemas"]["SourcePolicyMode"];
+            configured_source_policy_mode?: components["schemas"]["SourcePolicyMode"];
             /** Deployment Default Execution Profile Id */
             deployment_default_execution_profile_id?: string | null;
             /** Deployment Profile Hash */
@@ -2880,7 +3334,7 @@ export interface components {
             /** Deployment Profile Id */
             deployment_profile_id?: string | null;
             /** @default off */
-            effective_source_policy_mode: components["schemas"]["SourcePolicyMode"];
+            effective_source_policy_mode?: components["schemas"]["SourcePolicyMode"];
             /** Execution Overrides */
             execution_overrides?: {
                 [key: string]: unknown;
@@ -2915,14 +3369,14 @@ export interface components {
              * Provider Capability Version
              * @default 2026-08-16.v2
              */
-            provider_capability_version: string;
+            provider_capability_version?: string;
             /**
              * Resolution Schema Version
              * @default 1
              */
-            resolution_schema_version: number;
+            resolution_schema_version?: number;
             /** @default enforce */
-            source_policy_deployment_cap: components["schemas"]["SourcePolicyDeploymentCap"];
+            source_policy_deployment_cap?: components["schemas"]["SourcePolicyDeploymentCap"];
         };
         /** ConfigurationSnapshotSummary */
         ConfigurationSnapshotSummary: {
@@ -3084,7 +3538,7 @@ export interface components {
              * Cached
              * @default false
              */
-            cached: boolean;
+            cached?: boolean;
             /** Checked At */
             checked_at?: string | null;
             /** Detail */
@@ -3187,27 +3641,27 @@ export interface components {
              * Bounded Recovery Enabled
              * @default false
              */
-            bounded_recovery_enabled: boolean;
+            bounded_recovery_enabled?: boolean;
             /**
              * Broad Recovery Followup Max Queries
              * @default 2
              */
-            broad_recovery_followup_max_queries: number;
+            broad_recovery_followup_max_queries?: number;
             /**
              * Broad Recovery Max Followup Rounds
              * @default 1
              */
-            broad_recovery_max_followup_rounds: number;
+            broad_recovery_max_followup_rounds?: number;
             /**
              * Broad Recovery Max Queries
              * @default 4
              */
-            broad_recovery_max_queries: number;
+            broad_recovery_max_queries?: number;
             /**
              * Broad Recovery Timeout Seconds
              * @default 30
              */
-            broad_recovery_timeout_seconds: number;
+            broad_recovery_timeout_seconds?: number;
             /** Citation Excerpt Max Chars */
             citation_excerpt_max_chars: number;
             /** Context Char Budget */
@@ -3216,31 +3670,37 @@ export interface components {
              * Cross Language Semantic Evidence Score Threshold
              * @default 0.3
              */
-            cross_language_semantic_evidence_score_threshold: number;
+            cross_language_semantic_evidence_score_threshold?: number;
             /** @default enforce */
-            evidence_gate_mode: components["schemas"]["EvidenceGateMode"];
+            evidence_gate_mode?: components["schemas"]["EvidenceGateMode"];
+            /**
+             * Execution Policy
+             * @default legacy
+             * @enum {string}
+             */
+            execution_policy?: "legacy" | "adaptive_v1";
             /**
              * Focused Recovery Max Queries
              * @default 2
              */
-            focused_recovery_max_queries: number;
+            focused_recovery_max_queries?: number;
             /**
              * Focused Recovery Timeout Seconds
              * @default 15
              */
-            focused_recovery_timeout_seconds: number;
+            focused_recovery_timeout_seconds?: number;
             /** @default strict */
-            grounding_mode: components["schemas"]["GroundingMode"];
+            grounding_mode?: components["schemas"]["GroundingMode"];
             /**
              * High Confidence Band Enabled
              * @default false
              */
-            high_confidence_band_enabled: boolean;
+            high_confidence_band_enabled?: boolean;
             /**
              * High Confidence Reranker Evidence Score
              * @default 0.7
              */
-            high_confidence_reranker_evidence_score: number;
+            high_confidence_reranker_evidence_score?: number;
             /** Include Citations */
             include_citations: boolean;
             /** Lexical Corroboration Coverage */
@@ -3255,16 +3715,16 @@ export interface components {
              * Minimum Claim Semantic Score
              * @default 0.25
              */
-            minimum_claim_semantic_score: number;
+            minimum_claim_semantic_score?: number;
             /** Minimum Claim Token Coverage */
             minimum_claim_token_coverage: number;
             /**
              * Minimum Reranker Evidence Score
              * @default 0.4
              */
-            minimum_reranker_evidence_score: number;
+            minimum_reranker_evidence_score?: number;
             /** @default indexed_only */
-            response_mode: components["schemas"]["ResponseMode"];
+            response_mode?: components["schemas"]["ResponseMode"];
         };
         /** EffectiveLLMPolicy */
         EffectiveLLMPolicy: {
@@ -3288,7 +3748,7 @@ export interface components {
              * @default authoritative
              * @enum {string}
              */
-            evidence_approach: "factual" | "authoritative" | "multi_perspective";
+            evidence_approach?: "factual" | "authoritative" | "multi_perspective";
             llm: components["schemas"]["EffectiveLLMPolicy"];
             /** Prompt Profile */
             prompt_profile: string;
@@ -3315,7 +3775,7 @@ export interface components {
              * Custom Execution
              * @default false
              */
-            custom_execution: boolean;
+            custom_execution?: boolean;
             deployment_configuration?: components["schemas"]["EffectiveProjectAIConfig"] | null;
             /** Effective Value Hash */
             effective_value_hash: string;
@@ -3336,7 +3796,7 @@ export interface components {
              * Required Index Action
              * @default none
              */
-            required_index_action: string;
+            required_index_action?: string;
             /** Resolution Fingerprint */
             resolution_fingerprint: string;
             /** Structured Origins */
@@ -3350,73 +3810,73 @@ export interface components {
              * Deduplicate By Content Hash
              * @default true
              */
-            deduplicate_by_content_hash: boolean;
+            deduplicate_by_content_hash?: boolean;
             /**
              * Hnsw Ef Search
              * @default 100
              */
-            hnsw_ef_search: number;
+            hnsw_ef_search?: number;
             /**
              * Keyword Candidate Top K
              * @default 50
              */
-            keyword_candidate_top_k: number;
+            keyword_candidate_top_k?: number;
             /**
              * Keyword Weight
              * @default 1
              */
-            keyword_weight: number;
+            keyword_weight?: number;
             /**
              * Max Chunks Per Document
              * @default 4
              */
-            max_chunks_per_document: number;
+            max_chunks_per_document?: number;
             /**
              * Max Chunks Per Section
              * @default 2
              */
-            max_chunks_per_section: number;
+            max_chunks_per_section?: number;
             /**
              * Max Related Sources
              * @default 8
              */
-            max_related_sources: number;
+            max_related_sources?: number;
             /**
              * Max Relationship Candidates
              * @default 20
              */
-            max_relationship_candidates: number;
+            max_relationship_candidates?: number;
             /** Min Ocr Confidence */
             min_ocr_confidence?: number | null;
             /** @default off */
-            modifies_expansion_mode: components["schemas"]["ModifiesExpansionMode"];
+            modifies_expansion_mode?: components["schemas"]["ModifiesExpansionMode"];
             /**
              * Passage Min Tokens
              * @default 32
              */
-            passage_min_tokens: number;
+            passage_min_tokens?: number;
             /**
              * Passage Overlap Tokens
              * @default 24
              */
-            passage_overlap_tokens: number;
+            passage_overlap_tokens?: number;
             /**
              * Passage Scoring Enabled
              * @default false
              */
-            passage_scoring_enabled: boolean;
+            passage_scoring_enabled?: boolean;
             /**
              * Passage Window Tokens
              * @default 96
              */
-            passage_window_tokens: number;
+            passage_window_tokens?: number;
             /** Query Translation Backend */
             query_translation_backend?: string | null;
             /**
              * Query Translation Enabled
              * @default false
              */
-            query_translation_enabled: boolean;
+            query_translation_enabled?: boolean;
             /** Query Translation Model */
             query_translation_model?: string | null;
             /** Query Translation Prompt Version */
@@ -3425,9 +3885,9 @@ export interface components {
              * Rerank Candidate Window
              * @default 25
              */
-            rerank_candidate_window: number;
+            rerank_candidate_window?: number;
             /** @default always */
-            rerank_mode: components["schemas"]["RerankMode"];
+            rerank_mode?: components["schemas"]["RerankMode"];
             /** Rerank Score Threshold */
             rerank_score_threshold: number | null;
             reranker_backend?: components["schemas"]["RerankerBackend"] | null;
@@ -3437,21 +3897,21 @@ export interface components {
              * Rrf K
              * @default 60
              */
-            rrf_k: number;
+            rrf_k?: number;
             /** Score Threshold */
             score_threshold?: number | null;
             /**
              * Semantic Candidate Top K
              * @default 50
              */
-            semantic_candidate_top_k: number;
+            semantic_candidate_top_k?: number;
             /** Semantic Evidence Score Threshold */
             semantic_evidence_score_threshold: number;
             /**
              * Semantic Weight
              * @default 1
              */
-            semantic_weight: number;
+            semantic_weight?: number;
             strategy: components["schemas"]["RetrievalStrategy"];
             /** Top K */
             top_k: number;
@@ -3486,7 +3946,9 @@ export interface components {
              * Expected No Answer
              * @default false
              */
-            expected_no_answer: boolean;
+            expected_no_answer?: boolean;
+            /** Expected Outcome */
+            expected_outcome?: ("answered" | "partial" | "insufficient_evidence" | "unresolved_authority") | null;
             /** Hard Negative Evidence Phrases */
             hard_negative_evidence_phrases?: string[];
             /** Key */
@@ -3530,7 +3992,7 @@ export interface components {
              * Schema Version
              * @default 1
              */
-            schema_version: number;
+            schema_version?: number;
             /** Version */
             version: string;
         };
@@ -3571,6 +4033,8 @@ export interface components {
              * Format: uuid
              */
             dataset_id: string;
+            /** Preview Index Build Id */
+            preview_index_build_id?: string | null;
             /** Top K */
             top_k?: number | null;
         };
@@ -3745,7 +4209,7 @@ export interface components {
              * @default caller_context
              * @constant
              */
-            context_provenance: "caller_context";
+            context_provenance?: "caller_context";
             /**
              * Created At
              * Format: date-time
@@ -3763,7 +4227,7 @@ export interface components {
              * Idempotency Replayed
              * @default false
              */
-            idempotency_replayed: boolean;
+            idempotency_replayed?: boolean;
             /** Index Build Id */
             index_build_id: string | null;
             /** Model */
@@ -3791,7 +4255,7 @@ export interface components {
              * @default none
              * @constant
              */
-            source_provenance: "none";
+            source_provenance?: "none";
             status: components["schemas"]["GenerationStatus"];
             timing: components["schemas"]["GenerationTiming"];
             /** Trace Id */
@@ -3803,7 +4267,7 @@ export interface components {
              * Web Enrichment Used
              * @default false
              */
-            web_enrichment_used: boolean;
+            web_enrichment_used?: boolean;
         };
         /**
          * GenerationRetentionMode
@@ -3928,6 +4392,8 @@ export interface components {
              */
             project_id: string;
             state: components["schemas"]["IndexBuildState"];
+            /** Structural Contract Version */
+            structural_contract_version?: string | null;
             /**
              * Updated At
              * Format: date-time
@@ -3948,7 +4414,7 @@ export interface components {
          * @description Stable reasons for a correct no-answer outcome.
          * @enum {string}
          */
-        InsufficientEvidenceReason: "no_retrieval_results" | "below_relevance_threshold" | "context_selection_empty" | "unresolved_authority";
+        InsufficientEvidenceReason: "no_retrieval_results" | "below_relevance_threshold" | "context_selection_empty" | "unresolved_authority" | "claim_verification_failed" | "request_deadline_exceeded" | "recovery_deadline_exceeded" | "provider_timeout";
         /** InvariantState */
         InvariantState: {
             /** Content Hash Deduplication */
@@ -4151,12 +4617,12 @@ export interface components {
          * JobState
          * @enum {string}
          */
-        JobState: "queued" | "running" | "retry_scheduled" | "succeeded" | "failed";
+        JobState: "queued" | "running" | "retry_scheduled" | "waiting_acceptance" | "succeeded" | "failed";
         /**
          * JobType
          * @enum {string}
          */
-        JobType: "document.process" | "document.embed" | "document.index" | "evaluation.run" | "corpus.reembed" | "corpus.reindex" | "document.delete" | "document.purge" | "storage.reconcile";
+        JobType: "document.process" | "document.embed" | "document.index" | "evaluation.run" | "corpus.reembed" | "corpus.reindex" | "corpus.structure.v1" | "document.delete" | "document.purge" | "storage.reconcile";
         JsonValue: unknown;
         /**
          * LLMBackend
@@ -4200,15 +4666,42 @@ export interface components {
              * Status
              * @default ok
              */
-            status: string;
+            status?: string;
             /** Version */
             version: string;
+        };
+        /** MessageDiagnosticResponse */
+        MessageDiagnosticResponse: {
+            /** Expired */
+            expired: boolean;
+            /** Expires At */
+            expires_at: string | null;
+            /**
+             * Message Id
+             * Format: uuid
+             */
+            message_id: string;
+            /** Payload */
+            payload: {
+                [key: string]: unknown;
+            } | null;
+            /**
+             * Project Id
+             * Format: uuid
+             */
+            project_id: string;
+            /** Summary */
+            summary: {
+                [key: string]: unknown;
+            };
         };
         /**
          * MessageResponse
          * @description Serialized message entity.
          */
         MessageResponse: {
+            /** Citation Coverage Status */
+            citation_coverage_status?: ("applicable" | "not_applicable") | null;
             /** Citations */
             citations?: components["schemas"]["CitationSnapshot"][];
             /** Claims */
@@ -4268,13 +4761,16 @@ export interface components {
             provider?: string | null;
             /** Provider Latency Ms */
             provider_latency_ms?: number | null;
+            /** Provider Provenance */
+            provider_provenance?: components["schemas"]["ProviderStageProvenance"][];
             /** Retrieval Latency Ms */
             retrieval_latency_ms?: number | null;
             role: components["schemas"]["MessageRole"];
             /** Source Metadata Generation */
             source_metadata_generation?: number | null;
             /** @default none */
-            source_provenance: components["schemas"]["SourceProvenance"];
+            source_provenance?: components["schemas"]["SourceProvenance"];
+            terminal_outcome?: components["schemas"]["TerminalOutcome"] | null;
             /** Total Latency Ms */
             total_latency_ms?: number | null;
             /**
@@ -4304,8 +4800,10 @@ export interface components {
             metadata_filter?: {
                 [key: string]: string;
             };
+            /** Preview Index Build Id */
+            preview_index_build_id?: string | null;
             /** @default project_default */
-            source_scope: components["schemas"]["SourceScope"];
+            source_scope?: components["schemas"]["SourceScope"];
         };
         /** MetricsSnapshot */
         MetricsSnapshot: {
@@ -4347,6 +4845,55 @@ export interface components {
             };
             /** Text */
             text: string;
+        };
+        /** ObservedAcceptanceReportCreate */
+        ObservedAcceptanceReportCreate: {
+            /** Compared Active Build Id */
+            compared_active_build_id?: string | null;
+            /**
+             * Comparison Mode
+             * @default active_candidate
+             * @enum {string}
+             */
+            comparison_mode?: "active_candidate" | "first_build";
+            /** Labels */
+            labels: {
+                [key: string]: components["schemas"]["ReviewedCaseLabel"];
+            };
+            /** Parity */
+            parity: components["schemas"]["ParityCapture"][];
+            /** Turns */
+            turns: components["schemas"]["CapturedTurn"][];
+            /**
+             * Version
+             * @default acceptance.observed.v1
+             * @constant
+             */
+            version?: "acceptance.observed.v1";
+        };
+        /** ObservedAcceptanceReportResponse */
+        ObservedAcceptanceReportResponse: {
+            /**
+             * Build Id
+             * Format: uuid
+             */
+            build_id: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Project Id
+             * Format: uuid
+             */
+            project_id: string;
+            /** Report */
+            report: {
+                [key: string]: unknown;
+            };
+            /** Report Hash */
+            report_hash: string;
         };
         /** OperatorOverview */
         OperatorOverview: {
@@ -4535,6 +5082,23 @@ export interface components {
             /** Total */
             total: number;
         };
+        /** ParityCapture */
+        ParityCapture: {
+            /**
+             * Assistant Message Id
+             * Format: uuid
+             */
+            assistant_message_id: string;
+            /** Raw Message */
+            raw_message: {
+                [key: string]: unknown;
+            };
+            /**
+             * Transport
+             * @enum {string}
+             */
+            transport: "sse" | "get";
+        };
         /**
          * ProjectAIConfig
          * @description Canonical V2 Project contract used for every new write and ordinary restore.
@@ -4636,7 +5200,7 @@ export interface components {
             grounding_assurance?: components["schemas"]["GroundingMode"] | null;
             response_mode?: components["schemas"]["ResponseMode"] | null;
             /** @default inherit */
-            translation_policy: components["schemas"]["TranslationPolicy"];
+            translation_policy?: components["schemas"]["TranslationPolicy"];
         };
         /**
          * ProjectCreate
@@ -4669,6 +5233,8 @@ export interface components {
             context_char_budget?: number | null;
             /** Deduplicate By Content Hash */
             deduplicate_by_content_hash?: boolean | null;
+            /** Execution Policy */
+            execution_policy?: ("legacy" | "adaptive_v1") | null;
             /** Focused Recovery Max Queries */
             focused_recovery_max_queries?: number | null;
             /** Focused Recovery Timeout Seconds */
@@ -4853,6 +5419,45 @@ export interface components {
             /** Provider Version */
             provider_version?: string | null;
         };
+        /** ProviderStageProvenance */
+        ProviderStageProvenance: {
+            /** Capability Revision */
+            capability_revision?: string | null;
+            /** Capability Source */
+            capability_source?: string | null;
+            /** Endpoint Hash */
+            endpoint_hash?: string | null;
+            /** Local Validation */
+            local_validation?: string | null;
+            /** Model */
+            model: string;
+            /** Provider */
+            provider: string;
+            /**
+             * Purpose
+             * @default unspecified
+             */
+            purpose?: string;
+            /**
+             * Reasoning
+             * @default provider_default
+             */
+            reasoning?: string;
+            /** Schema Hash */
+            schema_hash?: string | null;
+            /**
+             * Schema Mode
+             * @default none
+             * @enum {string}
+             */
+            schema_mode?: "none" | "prompt" | "json_object" | "json_schema";
+            /** Schema Name */
+            schema_name?: string | null;
+            /** Span Id */
+            span_id?: string | null;
+            /** Status */
+            status?: string | null;
+        };
         /** QualitySummary */
         QualitySummary: {
             /** Acceptance Thresholds */
@@ -4905,7 +5510,7 @@ export interface components {
              * Recommended
              * @default false
              */
-            recommended: boolean;
+            recommended?: boolean;
             /** Selectable */
             selectable: boolean;
             /** Values */
@@ -4959,6 +5564,20 @@ export interface components {
             /** Stage */
             stage: string;
         };
+        /** RelationshipSourceSpan */
+        RelationshipSourceSpan: {
+            /** Char End */
+            char_end: number;
+            /** Char Start */
+            char_start: number;
+            /**
+             * Chunk Id
+             * Format: uuid
+             */
+            chunk_id: string;
+            /** Quote */
+            quote: string;
+        };
         /**
          * RerankMode
          * @description When the multilingual reranker may run after RRF.
@@ -5000,7 +5619,7 @@ export interface components {
              * Branch Contributions
              * @default []
              */
-            branch_contributions: components["schemas"]["BranchContribution"][];
+            branch_contributions?: components["schemas"]["BranchContribution"][];
             /** Char End */
             char_end?: number | null;
             /** Char Start */
@@ -5045,7 +5664,7 @@ export interface components {
              * Query Variants
              * @default []
              */
-            query_variants: components["schemas"]["QueryVariant"][];
+            query_variants?: components["schemas"]["QueryVariant"][];
             /** Rank Score */
             rank_score?: number | null;
             /** Rerank Relevance Score */
@@ -5061,6 +5680,173 @@ export interface components {
          * @enum {string}
          */
         RetrievalStrategy: "semantic" | "hybrid";
+        /** ReviewedCaseLabel */
+        ReviewedCaseLabel: {
+            /**
+             * Expected
+             * @enum {string}
+             */
+            expected: "answered" | "partial" | "insufficient_evidence" | "unresolved_authority";
+            /** Inventory Hash */
+            inventory_hash: string;
+            /** Missing Requirements */
+            missing_requirements?: string[];
+            /** Question */
+            question: string;
+            /** Reason */
+            reason: string;
+            /** Spans */
+            spans?: components["schemas"]["ReviewedSourceSpan"][];
+        };
+        /** ReviewedSourceSpan */
+        ReviewedSourceSpan: {
+            /** Char End */
+            char_end: number;
+            /** Char Start */
+            char_start: number;
+            /** Chunk Hash */
+            chunk_hash: string;
+            /**
+             * Chunk Id
+             * Format: uuid
+             */
+            chunk_id: string;
+            /** Quote */
+            quote: string;
+        };
+        /** ScopeFact */
+        ScopeFact: {
+            /**
+             * Effect
+             * @default unknown
+             * @enum {string}
+             */
+            effect?: "unknown" | "operative" | "proposal" | "example";
+            /** End Year */
+            end_year?: number | null;
+            /**
+             * Exhaustive
+             * @default false
+             */
+            exhaustive?: boolean;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "period" | "provision";
+            /** Legal Kind */
+            legal_kind?: ("assessment" | "fiscal" | "calendar") | null;
+            /**
+             * Locality
+             * @default span
+             * @enum {string}
+             */
+            locality?: "document" | "provision" | "table" | "span";
+            /** Locality Id */
+            locality_id: string;
+            /**
+             * Period Mode
+             * @default single
+             * @enum {string}
+             */
+            period_mode?: "single" | "range";
+            /** Review Provenance */
+            review_provenance?: {
+                [key: string]: string;
+            };
+            /**
+             * Scope
+             * @default mention
+             * @enum {string}
+             */
+            scope?: "mention" | "governing";
+            /** Source Span */
+            source_span: {
+                [key: string]: unknown;
+            };
+            /** Start Year */
+            start_year?: number | null;
+            /**
+             * Status
+             * @default source_attested
+             * @enum {string}
+             */
+            status?: "source_attested" | "reviewed";
+            /** Value */
+            value: string;
+            /**
+             * Version
+             * @default scope.v2
+             * @constant
+             */
+            version?: "scope.v2";
+        };
+        /** ScopeReviewCreate */
+        ScopeReviewCreate: {
+            /** Chunk Hash */
+            chunk_hash: string;
+            /**
+             * Chunk Id
+             * Format: uuid
+             */
+            chunk_id: string;
+            /** Facts */
+            facts: components["schemas"]["ScopeFact"][];
+            /** Source Content Hash */
+            source_content_hash: string;
+            /** Source Generation */
+            source_generation: number;
+            /**
+             * Source Revision Id
+             * Format: uuid
+             */
+            source_revision_id: string;
+        };
+        /** ScopeReviewResponse */
+        ScopeReviewResponse: {
+            /**
+             * Build Id
+             * Format: uuid
+             */
+            build_id: string;
+            /** Chunk Hash */
+            chunk_hash: string;
+            /**
+             * Chunk Id
+             * Format: uuid
+             */
+            chunk_id: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Created By */
+            created_by: string;
+            /** Envelope */
+            envelope: {
+                [key: string]: unknown;
+            };
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Project Id
+             * Format: uuid
+             */
+            project_id: string;
+            /** Review Hash */
+            review_hash: string;
+            /** Source Generation */
+            source_generation: number;
+            /**
+             * Source Revision Id
+             * Format: uuid
+             */
+            source_revision_id: string;
+        };
         /**
          * SearchDiagnostics
          * @description Sanitized execution facts used by quality evaluation and operators.
@@ -5096,7 +5882,7 @@ export interface components {
              * Diversity Backfilled Count
              * @default 0
              */
-            diversity_backfilled_count: number;
+            diversity_backfilled_count?: number;
             /** Diversity Deferred Reasons */
             diversity_deferred_reasons?: {
                 [key: string]: number;
@@ -5105,7 +5891,7 @@ export interface components {
              * Duplicate Suppression Input Count
              * @default 0
              */
-            duplicate_suppression_input_count: number;
+            duplicate_suppression_input_count?: number;
             /** Duplicate Suppression Reasons */
             duplicate_suppression_reasons?: {
                 [key: string]: number;
@@ -5114,7 +5900,7 @@ export interface components {
              * Duplicate Suppression Removed Count
              * @default 0
              */
-            duplicate_suppression_removed_count: number;
+            duplicate_suppression_removed_count?: number;
             /** Duration Ms */
             duration_ms: number;
             /** Embedding Dimensions */
@@ -5137,23 +5923,28 @@ export interface components {
             identity_recall_status?: string | null;
             /** Index Build Id */
             index_build_id?: string | null;
+            /**
+             * Indexed Corpus Empty
+             * @default false
+             */
+            indexed_corpus_empty?: boolean;
             /** Language Routing Status */
             language_routing_status?: string | null;
             /**
              * Modifies Authority Scope Status
              * @default not_applicable
              */
-            modifies_authority_scope_status: string;
+            modifies_authority_scope_status?: string;
             /**
              * Modifies Authority Unscoped Count
              * @default 0
              */
-            modifies_authority_unscoped_count: number;
+            modifies_authority_unscoped_count?: number;
             /**
              * Modifies Expansion Depth
              * @default 1
              */
-            modifies_expansion_depth: number;
+            modifies_expansion_depth?: number;
             /** Modifies Expansion Exclusion Reasons */
             modifies_expansion_exclusion_reasons?: {
                 [key: string]: number;
@@ -5166,7 +5957,11 @@ export interface components {
              * Modifies Expansion Status
              * @default disabled
              */
-            modifies_expansion_status: string;
+            modifies_expansion_status?: string;
+            /** Normalized Scope */
+            normalized_scope?: {
+                [key: string]: unknown;
+            };
             /** Passage Score Method */
             passage_score_method?: string | null;
             /** Post Rerank Removal Reasons */
@@ -5177,12 +5972,12 @@ export interface components {
              * Post Rerank Removed Count
              * @default 0
              */
-            post_rerank_removed_count: number;
+            post_rerank_removed_count?: number;
             /**
              * Post Rerank Unfilled Slots
              * @default 0
              */
-            post_rerank_unfilled_slots: number;
+            post_rerank_unfilled_slots?: number;
             /** Query Language Profile */
             query_language_profile?: string | null;
             /** Query Variants */
@@ -5195,12 +5990,12 @@ export interface components {
              * Related Source Count
              * @default 0
              */
-            related_source_count: number;
+            related_source_count?: number;
             /**
              * Relationship Candidate Count
              * @default 0
              */
-            relationship_candidate_count: number;
+            relationship_candidate_count?: number;
             /** Rerank Failure Reason */
             rerank_failure_reason?: string | null;
             /** Rerank Requested */
@@ -5211,7 +6006,7 @@ export interface components {
              * Reranked Candidate Count
              * @default 0
              */
-            reranked_candidate_count: number;
+            reranked_candidate_count?: number;
             /** Reranker Latency Ms */
             reranker_latency_ms?: number | null;
             /** Reranker Model */
@@ -5230,12 +6025,12 @@ export interface components {
              * Retrieved Candidate Count
              * @default 0
              */
-            retrieved_candidate_count: number;
+            retrieved_candidate_count?: number;
             /**
              * Romanized Or Codeswitched
              * @default false
              */
-            romanized_or_codeswitched: boolean;
+            romanized_or_codeswitched?: boolean;
             /** Selected Trace */
             selected_trace?: {
                 [key: string]: unknown;
@@ -5248,12 +6043,12 @@ export interface components {
              * Source Metadata Generation
              * @default 0
              */
-            source_metadata_generation: number;
+            source_metadata_generation?: number;
             /**
              * Source Policy Configured Mode
              * @default off
              */
-            source_policy_configured_mode: string;
+            source_policy_configured_mode?: string;
             /** Source Policy Consolidation Reasons */
             source_policy_consolidation_reasons?: {
                 [key: string]: number;
@@ -5262,12 +6057,12 @@ export interface components {
              * Source Policy Deployment Cap
              * @default enforce
              */
-            source_policy_deployment_cap: string;
+            source_policy_deployment_cap?: string;
             /**
              * Source Policy Effective Mode
              * @default off
              */
-            source_policy_effective_mode: string;
+            source_policy_effective_mode?: string;
             /** Source Policy Exclusion Reasons */
             source_policy_exclusion_reasons?: {
                 [key: string]: number;
@@ -5276,7 +6071,7 @@ export interface components {
              * Source Policy Status
              * @default off
              */
-            source_policy_status: string;
+            source_policy_status?: string;
             strategy: components["schemas"]["RetrievalStrategy"];
             /** Translated Query */
             translated_query?: string | null;
@@ -5407,7 +6202,24 @@ export interface components {
         SourceProvenance: "knowledge" | "web" | "knowledge_and_web" | "none";
         /** SourceRelationshipCreate */
         SourceRelationshipCreate: {
+            /**
+             * Provision Effect
+             * @default unknown
+             * @enum {string}
+             */
+            provision_effect?: "unknown" | "replaces" | "adds" | "amends" | "savings";
             relationship_type: components["schemas"]["SourceRelationshipType"];
+            /**
+             * Replacement Scope Verified
+             * @default false
+             */
+            replacement_scope_verified?: boolean;
+            /** Review Provenance */
+            review_provenance?: {
+                [key: string]: string;
+            };
+            /** Supporting Spans */
+            supporting_spans?: components["schemas"]["RelationshipSourceSpan"][];
             /** Target Provisions */
             target_provisions?: string[];
             /**
@@ -5428,7 +6240,24 @@ export interface components {
              * Format: uuid
              */
             id: string;
+            /**
+             * Provision Effect
+             * @default unknown
+             * @enum {string}
+             */
+            provision_effect?: "unknown" | "replaces" | "adds" | "amends" | "savings";
             relationship_type: components["schemas"]["SourceRelationshipType"];
+            /**
+             * Replacement Scope Verified
+             * @default false
+             */
+            replacement_scope_verified?: boolean;
+            /** Review Provenance */
+            review_provenance?: {
+                [key: string]: string;
+            };
+            /** Supporting Spans */
+            supporting_spans?: components["schemas"]["RelationshipSourceSpan"][];
             /** Target Provisions */
             target_provisions?: string[];
             /**
@@ -5456,20 +6285,22 @@ export interface components {
              * Activate
              * @default false
              */
-            activate: boolean;
+            activate?: boolean;
             /** Change Reason */
             change_reason?: string | null;
             /**
              * Create New Group
              * @default false
              */
-            create_new_group: boolean;
+            create_new_group?: boolean;
+            /** Edition Key */
+            edition_key?: string | null;
             /** Effective From */
             effective_from?: string | null;
             /** Effective To */
             effective_to?: string | null;
             /** @default active */
-            lifecycle_status: components["schemas"]["SourceLifecycleStatus"];
+            lifecycle_status?: components["schemas"]["SourceLifecycleStatus"];
             /** Published Date */
             published_date?: string | null;
             /** Relationships */
@@ -5478,13 +6309,13 @@ export interface components {
              * Revision Label
              * @default Revision
              */
-            revision_label: string;
+            revision_label?: string;
             /** Revision Number */
             revision_number?: number | null;
             /** Source Group Id */
             source_group_id?: string | null;
             /** @default primary */
-            source_role: components["schemas"]["SourceRole"];
+            source_role?: components["schemas"]["SourceRole"];
             /** Source Type */
             source_type?: string | null;
             /** Title */
@@ -5515,6 +6346,8 @@ export interface components {
              * Format: uuid
              */
             document_id: string;
+            /** Edition Key */
+            edition_key?: string | null;
             /** Effective From */
             effective_from: string | null;
             /** Effective To */
@@ -5592,6 +6425,52 @@ export interface components {
             owner: string;
             /** Path */
             path: string;
+        };
+        /**
+         * TerminalOutcome
+         * @description Message delivery is distinct from successful factual answering.
+         */
+        TerminalOutcome: {
+            /**
+             * Coverage
+             * @default not_assessed
+             * @enum {string}
+             */
+            coverage?: "complete" | "partial" | "incomplete" | "not_assessed";
+            /** Failure Stage */
+            failure_stage?: ("retrieval" | "coverage" | "draft_schema" | "claim_verification" | "persistence") | null;
+            /**
+             * Next Action
+             * @default none
+             * @enum {string}
+             */
+            next_action?: "retry" | "supply_input" | "review_source" | "contact_operator" | "none";
+            /**
+             * Outcome
+             * @enum {string}
+             */
+            outcome: "answered" | "partial" | "needs_input" | "insufficient_evidence" | "unresolved_authority" | "verification_failed" | "timed_out";
+            /** Reason Code */
+            reason_code: string;
+            /** Requested Scope */
+            requested_scope?: {
+                [key: string]: unknown;
+            };
+            /**
+             * Retryable
+             * @default false
+             */
+            retryable?: boolean;
+            /** Supported Requirement Ids */
+            supported_requirement_ids?: string[];
+            /** Unresolved Requirement Ids */
+            unresolved_requirement_ids?: string[];
+            /**
+             * Version
+             * @default answer.outcome.v1
+             * @constant
+             */
+            version?: "answer.outcome.v1";
         };
         /** TokenUsageMetrics */
         TokenUsageMetrics: {
@@ -5700,7 +6579,7 @@ export interface components {
              * Required Index Action
              * @default none
              */
-            required_index_action: string;
+            required_index_action?: string;
         };
         /** ValidationError */
         ValidationError: {
@@ -8280,7 +9159,9 @@ export interface operations {
     send_message_api_v1_projects__project_id__conversations__conversation_id__messages_post: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "X-APE-Diagnostic-Capture"?: string | null;
+            };
             path: {
                 project_id: string;
                 conversation_id: string;
@@ -8318,7 +9199,9 @@ export interface operations {
     stream_message_api_v1_projects__project_id__conversations__conversation_id__messages_stream_post: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "X-APE-Diagnostic-Capture"?: string | null;
+            };
             path: {
                 project_id: string;
                 conversation_id: string;
@@ -8340,6 +9223,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_message_diagnostic_api_v1_projects__project_id__conversations__conversation_id__messages__message_id__diagnostic_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+                conversation_id: string;
+                message_id: string;
+            };
+            cookie?: {
+                ape_admin_access?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_MessageDiagnosticResponse_"];
                 };
             };
             /** @description Validation Error */
@@ -8883,6 +9801,43 @@ export interface operations {
             };
         };
     };
+    create_captured_run_api_v1_projects__project_id__evaluations_runs_captured_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: {
+                ape_admin_access?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EvaluationRunCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_EvaluationRunResponse_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_run_api_v1_projects__project_id__evaluations_runs__run_id__get: {
         parameters: {
             query?: never;
@@ -8904,6 +9859,40 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApiResponse_EvaluationRunResponse_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_evaluation_diagnostics_api_v1_projects__project_id__evaluations_runs__run_id__diagnostics_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+                run_id: string;
+            };
+            cookie?: {
+                ape_admin_access?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_list_dict_str__Any___"];
                 };
             };
             /** @description Validation Error */
@@ -9123,6 +10112,39 @@ export interface operations {
             };
         };
     };
+    reprocess_private_corpus_api_v1_projects__project_id__index_builds_reprocess_private_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: {
+                ape_admin_access?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_LifecycleJobResponse_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     rollback_index_build_api_v1_projects__project_id__index_builds_rollback_post: {
         parameters: {
             query?: never;
@@ -9143,6 +10165,188 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApiResponse_IndexBuildResponse_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_build_acceptance_api_v1_projects__project_id__index_builds__build_id__acceptance_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+                build_id: string;
+            };
+            cookie?: {
+                ape_admin_access?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_list_BuildAcceptanceResponse__"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    attest_build_acceptance_api_v1_projects__project_id__index_builds__build_id__acceptance_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+                build_id: string;
+            };
+            cookie?: {
+                ape_admin_access?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BuildAcceptanceArtifact"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_BuildAcceptanceResponse_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    build_acceptance_identity_api_v1_projects__project_id__index_builds__build_id__acceptance_identity_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+                build_id: string;
+            };
+            cookie?: {
+                ape_admin_access?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_dict_str__Any__"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    publish_observed_acceptance_api_v1_projects__project_id__index_builds__build_id__acceptance_reports_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+                build_id: string;
+            };
+            cookie?: {
+                ape_admin_access?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ObservedAcceptanceReportCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_ObservedAcceptanceReportResponse_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    define_acceptance_set_api_v1_projects__project_id__index_builds__build_id__acceptance_set_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+                build_id: string;
+            };
+            cookie?: {
+                ape_admin_access?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AcceptanceSetDefinition"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_dict_str__Any__"];
                 };
             };
             /** @description Validation Error */
@@ -9177,6 +10381,78 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApiResponse_IndexBuildResponse_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    revalidate_private_corpus_api_v1_projects__project_id__index_builds__build_id__revalidate_private_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+                build_id: string;
+            };
+            cookie?: {
+                ape_admin_access?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_LifecycleJobResponse_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    publish_scope_review_api_v1_projects__project_id__index_builds__build_id__scope_reviews_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+                build_id: string;
+            };
+            cookie?: {
+                ape_admin_access?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ScopeReviewCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_ScopeReviewResponse_"];
                 };
             };
             /** @description Validation Error */

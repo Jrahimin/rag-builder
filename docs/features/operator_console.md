@@ -112,6 +112,10 @@ Raw JSON is not the default presentation. Structured facts and friendly outcomes
 ## Query, error, and polling behavior
 
 - Job lists poll every 3 seconds while active and every 15 seconds otherwise; an opened job detail polls every 2 seconds while active.
+- In Test Lab, document and job polling runs on Journey/Documents, and build
+  polling runs on Journey/Lifecycle. Messages and Search fetch the summary once
+  but do not keep those lists on an idle interval. A `400` stops repeated job or
+  build polling until a relevant query refetch or setting change.
 - Documents and builds refetch after relevant mutations; projects, jobs, audit, and conversations are invalidated through shared TanStack Query keys.
 - Backend envelope failures retain stable error `code` and `trace_id`. The UI separately identifies backend-unavailable failures.
 - Loading, empty, no-results, insufficient-evidence, failure, and unavailable states are all explicit.
@@ -120,4 +124,29 @@ Raw JSON is not the default presentation. Structured facts and friendly outcomes
 
 Vitest and Testing Library cover Lab routing/project selection, Journey derivation, accepted versus terminal uploads, expected-word pass/fail, grounded citations and refusal, lifecycle job links and active-pointer change, structured reconciliation, typed purge confirmation, and error code/trace visibility. Existing overview, jobs, health, quality, and lifecycle tests remain in place.
 
+`pnpm test` runs files sequentially to bound jsdom worker contention during the combined frontend gate. This trades parallel wall-time speed for more timing margin within the existing test waits.
+
 The console remains an internal trusted-deployment surface. Operator accounts are cookie-session Super Admin and Admin roles with the same access today. It does not add customer-facing users, RBAC, a generic test-run backend, long-term Lab-session persistence, billing, connectors, or a second admin/developer console.
+
+
+## Proof inspection and exports
+
+The Messages inspector displays reviewed proof spans before source headings/context and provides a JSON response/trace export from already authenticated message data. It exports no request headers or credentials. Regular POST completion fills the message cache directly; SSE uses one reconciliation GET and reuses its page. Build polling slows to 30 seconds when no build is building and remains tab-aware.
+
+
+### Test Lab answer outcomes
+
+The inspector reads persisted terminal_outcome and displays Supported answer,
+Partial answer, Needs input, Insufficient evidence, Needs source review,
+Verification failed or Timed out. It shows the reason code, failing stage, next
+action and sanitized rejected-draft paths/counts. These diagnostics are available
+under the existing authenticated operator/project access and message retention.
+They contain no raw unverified answer. Normal and timed-out turns both expose
+metadata.lifecycle; a successful HTTP message delivery does not imply the factual
+answer passed verification. Legacy messages retain their previous presentation.
+
+
+Test Lab renders rejected-draft diagnostics only when metadata is a record; absent,
+null, scalar and array payloads are ignored. Public diagnostics do not include rejected
+assertion text. A typed timeout displays its actual cause and phase consistently with
+the persisted message, rather than an unrelated amendment or verification notice.

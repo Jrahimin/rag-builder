@@ -3,16 +3,11 @@
   "private": true,
   "version": "0.9.0",
   "type": "module",
-  "packageManager": "pnpm@9.15.4",
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "esbuild"
-    ]
-  },
+  "packageManager": "pnpm@11.22.0",
   "scripts": {
     "dev": "vite",
     "api:schema": "python scripts/generate_openapi_schema.py",
-    "api:types": "openapi-typescript openapi-schema.json -o src/api/generated/openapi.ts",
+    "api:types": "openapi-typescript openapi-schema.json -o src/api/generated/openapi.ts --default-non-nullable=false",
     "api:generate": "pnpm api:schema && pnpm api:types",
     "format": "prettier --write .",
     "format:check": "prettier --check .",

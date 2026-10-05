@@ -46,6 +46,9 @@ class ChunkKeywordIndex(Base, UUIDPrimaryKeyMixin, TimestampMixin, ProjectScoped
         ),
         Index("ix_chunk_keyword_index_project_esv", "project_id", "embedding_set_version"),
         Index("ix_chunk_keyword_index_search_vector", "search_vector", postgresql_using="gin"),
+        Index(
+            "ix_chunk_keyword_index_term_frequencies", "term_frequencies", postgresql_using="gin"
+        ),
     )
 
     document_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)

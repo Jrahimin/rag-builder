@@ -154,6 +154,7 @@ def _run_and_dataset() -> tuple[SimpleNamespace, SimpleNamespace]:
         dataset_id=dataset_id,
         top_k=5,
         versions={"corpus": dict(_CORPUS)},
+        config_provenance={},
         metrics={},
         case_results=[],
         regressions=[],

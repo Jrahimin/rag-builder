@@ -35,6 +35,7 @@ from app.modules.knowledge.services.chunking.models import (
 from app.modules.knowledge.services.chunking.sentence_similarity_service import (
     BaseSentenceSimilarityService,
 )
+from app.modules.knowledge.services.chunking.structural_provenance import annotate_structure
 from app.modules.knowledge.services.chunking.structure_analyzer_service import (
     StructureAnalyzerService,
 )
@@ -132,7 +133,13 @@ class ChunkingService:
                 raise ValueError(msg)
             drafts = strategy_impl.chunk(context)
 
+        annotate_structure(
+            drafts, parsed, max_tokens=self._config.max_tokens, token_counter=self._token_counter
+        )
         validated = self._validator.validate(drafts, self._config)
+        annotate_structure(
+            validated, parsed, max_tokens=self._config.max_tokens, token_counter=self._token_counter
+        )
         chunks = self._to_text_chunks(validated, parsed, analysis, strategy)
         elapsed_ms = int((time.perf_counter() - started) * 1000)
         avg_tokens = sum(chunk.token_count for chunk in chunks) / len(chunks) if chunks else 0.0
@@ -169,7 +176,13 @@ class ChunkingService:
             config=self._config,
             base_metadata={"strategy_used": "recursive_fallback"},
         )
+        annotate_structure(
+            drafts, parsed, max_tokens=self._config.max_tokens, token_counter=self._token_counter
+        )
         validated = self._validator.validate(drafts, self._config)
+        annotate_structure(
+            validated, parsed, max_tokens=self._config.max_tokens, token_counter=self._token_counter
+        )
         analysis = self._analyzer.analyze(parsed)
         return self._to_text_chunks(
             validated,
@@ -202,6 +215,16 @@ class ChunkingService:
                 )
             )
         return chunks
+
+    def reattest_final_drafts(self, drafts: list[DraftChunk], parsed: ParsedDocument) -> None:
+        """Re-attest immutable final text without introducing a vector-changing prefix."""
+        annotate_structure(
+            drafts,
+            parsed,
+            max_tokens=self._config.max_tokens,
+            token_counter=self._token_counter,
+            preserve_content=True,
+        )
 
     def _build_chunk_metadata(
         self,

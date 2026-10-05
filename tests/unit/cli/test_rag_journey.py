@@ -3230,3 +3230,100 @@ def test_journey_amount_equivalence_accepts_grouped_and_unicode_amounts():
     assert _answer_contains_expected_token("The rebate is 6 000.", "6000")
     assert _answer_contains_expected_token("রিবেট ৭৫,\u09e6\u09e6\u09e6 টাকা।", "75000")
     assert not _answer_contains_expected_token("The rebate is BDT 60,000.", "6000")
+
+
+async def test_pending_acceptance_is_reported_without_polling_or_dispatch(monkeypatch) -> None:
+    from unittest.mock import AsyncMock
+
+    from app.cli.rag_journey import _await_durable_job
+    from app.models.job_run import JobState
+
+    job_id, build_id, project_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    run = SimpleNamespace(state=JobState.WAITING_ACCEPTANCE, payload={"build_id": str(build_id)})
+    service = SimpleNamespace(
+        get_detail=AsyncMock(return_value=SimpleNamespace(run=run)),
+        dispatch=AsyncMock(),
+        dispatch_next=AsyncMock(),
+    )
+    monkeypatch.setattr("app.composition.jobs.build_job_service", lambda **kwargs: service)
+
+    class SessionFactory:
+        def __call__(self):
+            return self
+
+        async def __aenter__(self):
+            return object()
+
+        async def __aexit__(self, *args):
+            return None
+
+    with pytest.raises(JourneyError, match=f"{job_id}.*awaiting quality acceptance.*{build_id}"):
+        await _await_durable_job(
+            SessionFactory(), project_id=project_id, job_id=job_id, settings=SimpleNamespace()
+        )
+    service.dispatch.assert_not_awaited()
+    service.dispatch_next.assert_not_awaited()
+    service.get_detail.assert_awaited_once()
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [("env", "production"), ("database", "ape"), ("embedding", "cohere"), ("llm", "openai")],
+)
+def test_fixture_acceptance_driver_rejects_nonisolated_context(field, value) -> None:
+    from app.cli.rag_journey import _require_isolated_acceptance_driver
+
+    settings = SimpleNamespace(
+        app=SimpleNamespace(env="testing"),
+        database=SimpleNamespace(name="ape_test"),
+        test_database=SimpleNamespace(name="ape_test"),
+        embedding=SimpleNamespace(backend=SimpleNamespace(value="hash")),
+        llm=SimpleNamespace(backend=SimpleNamespace(value="echo")),
+    )
+    if field == "env":
+        settings.app.env = value
+    elif field == "database":
+        settings.database.name = value
+    else:
+        getattr(settings, field).backend.value = value
+    with pytest.raises(JourneyError, match="isolated ape_test"):
+        _require_isolated_acceptance_driver(settings)
+
+
+async def test_sealed_setup_build_reports_quality_obligation(monkeypatch) -> None:
+    from unittest.mock import AsyncMock
+
+    from app.cli.rag_journey import _await_durable_job
+    from app.models.job_run import JobState
+
+    job_id, build_id, project_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    service = SimpleNamespace(
+        get_detail=AsyncMock(
+            return_value=SimpleNamespace(
+                run=SimpleNamespace(
+                    state=JobState.SUCCEEDED,
+                    result={"state": "validated", "build_id": str(build_id)},
+                )
+            )
+        ),
+        dispatch=AsyncMock(),
+        dispatch_next=AsyncMock(),
+    )
+    monkeypatch.setattr("app.composition.jobs.build_job_service", lambda **kwargs: service)
+
+    class SessionFactory:
+        def __call__(self):
+            return self
+
+        async def __aenter__(self):
+            return object()
+
+        async def __aexit__(self, *args):
+            return None
+
+    with pytest.raises(JourneyError, match=f"{build_id}.*quality acceptance"):
+        await _await_durable_job(
+            SessionFactory(), project_id=project_id, job_id=job_id, settings=SimpleNamespace()
+        )
+    service.dispatch.assert_not_awaited()
+    service.dispatch_next.assert_not_awaited()

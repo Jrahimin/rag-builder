@@ -122,6 +122,10 @@ frontend/coverage/
 # Keep curated, reviewable evidence in docs/ or tests/fixtures/ instead.
 artifacts/
 
+# Local authenticated capture tooling and raw response inbox.
+/qa_capture_sink.py
+/.qa-capture-inbox/
+
 # Held-out turn-resolution examples stay outside the repo until freeze.
 tests/fixtures/journeys/held_out/**
 !tests/fixtures/journeys/held_out/README.md

@@ -11,6 +11,8 @@ from typing import Any
 
 import httpx
 
+from app.platform.providers.provider_work import metered_cohere_post
+
 _clients: dict[tuple[str, float], httpx.AsyncClient] = {}
 _lock = threading.Lock()
 
@@ -51,11 +53,15 @@ async def cohere_post(
     request_timeout_seconds: float,
 ) -> httpx.Response:
     client = shared_cohere_client(base_url=base_url, timeout=request_timeout_seconds)
-    return await client.post(
+    return await metered_cohere_post(
+        lambda: client.post(
+            path,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+        ),
         path,
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        },
-        json=payload,
+        payload,
     )

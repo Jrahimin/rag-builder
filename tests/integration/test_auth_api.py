@@ -597,3 +597,104 @@ async def test_cannot_disable_bootstrap_super_admin(auth_db_client: AsyncClient)
     )
     assert response.status_code == 403
     assert response.json()["error"]["code"] == "super_admin_protected"
+
+
+async def test_operator_message_diagnostics_authorization_scope_audit_and_expiry(auth_db_client):
+    from datetime import UTC, datetime, timedelta
+
+    from sqlalchemy import select, update
+
+    from app.dependencies.common import get_db_session
+    from app.models.audit_event import AuditEvent
+    from app.models.message_diagnostic import MessageDiagnostic
+    from app.platform.audit.contracts import AuditEventType
+
+    client = auth_db_client
+    _, _, org_auth = await _create_org_with_key(client)
+    project = await _create_project(client, org_auth)
+    other_project = await _create_project(client, org_auth)
+
+    async def conversation(project_id):
+        response = await client.post(
+            f"/api/v1/projects/{project_id}/conversations", json={}, headers=admin_headers()
+        )
+        assert response.status_code == 201
+        return response.json()["data"]["id"]
+
+    conversation_id = await conversation(project)
+    other_conversation = await conversation(project)
+    other_project_conversation = await conversation(other_project)
+    base = f"/api/v1/projects/{project}/conversations/{conversation_id}/messages"
+    cookies = dict(client.cookies)
+    client.cookies.clear()
+    denied = await client.post(
+        base,
+        json={"content": "What is the archive?"},
+        headers={"Authorization": org_auth, "X-APE-Diagnostic-Capture": "full"},
+    )
+    assert denied.status_code == 403
+    client.cookies.update(cookies)
+    sent = await client.post(
+        base,
+        json={"content": "What is the archive?"},
+        headers={**admin_headers(), "X-APE-Diagnostic-Capture": "full"},
+    )
+    assert sent.status_code == 200
+    assistant = sent.json()["data"]["assistant_message"]
+    message = assistant["id"]
+    assert "operator_diagnostic" not in assistant["metadata"]
+    endpoint = f"{base}/{message}/diagnostic"
+    captured = await client.get(endpoint)
+    assert captured.status_code == 200 and captured.json()["data"]["payload"] is not None
+    assert not captured.json()["data"]["expired"]
+    client.cookies.clear()
+    denied_read = await client.get(endpoint, headers={"Authorization": org_auth})
+    assert denied_read.status_code in {401, 403}
+    client.cookies.update(cookies)
+    for project_id, conversation in [
+        (project, other_conversation),
+        (other_project, other_project_conversation),
+    ]:
+        response = await client.get(
+            f"/api/v1/projects/{project_id}/conversations/{conversation}/messages/{message}/diagnostic"
+        )
+        assert response.status_code == 404
+        assert "payload" not in (response.json().get("data") or {})
+    session_generator = client._transport.app.dependency_overrides[get_db_session]()
+    db = await anext(session_generator)
+    try:
+        events = list(
+            await db.scalars(
+                select(AuditEvent).where(
+                    AuditEvent.project_id == uuid.UUID(project),
+                    AuditEvent.resource_id == uuid.UUID(message),
+                )
+            )
+        )
+        assert {e.event_type for e in events} >= {
+            AuditEventType.MESSAGE_DIAGNOSTIC_CAPTURE,
+            AuditEventType.MESSAGE_DIAGNOSTIC_READ,
+        }
+        await db.execute(
+            update(MessageDiagnostic)
+            .where(MessageDiagnostic.message_id == uuid.UUID(message))
+            .values(expires_at=datetime.now(UTC) - timedelta(seconds=1))
+        )
+        await db.commit()
+    finally:
+        await session_generator.aclose()
+    expired = await client.get(endpoint)
+    assert expired.status_code == 200
+    assert expired.json()["data"]["expired"] and expired.json()["data"]["payload"] is None
+    public = await client.get(base)
+    assert public.status_code == 200
+    assert "operator_diagnostic" not in public.text and "rejected_attempts" not in public.text
+    session_generator = client._transport.app.dependency_overrides[get_db_session]()
+    db = await anext(session_generator)
+    try:
+        record = await db.scalar(
+            select(MessageDiagnostic).where(MessageDiagnostic.message_id == uuid.UUID(message))
+        )
+        assert record is not None and record.payload is None
+    finally:
+        await session_generator.aclose()

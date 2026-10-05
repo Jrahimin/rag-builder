@@ -345,8 +345,12 @@ async def test_exact_text_and_arithmetic_cannot_greenlight_unresolved_authority(
     )
     grounding = GroundingService(ChatConfig())
     answer = "The investment rebate is 15%. [1]\n\n60,000 × 15% = 9,000. [1]"  # noqa: RUF001
-    before = await grounding.map_claims(answer, [original])
-    after = await grounding.map_claims(answer, selected)
+    before = await grounding.map_claims(
+        answer, [original], user_input="Supplied investment BDT 60,000"
+    )
+    after = await grounding.map_claims(
+        answer, selected, user_input="Supplied investment BDT 60,000"
+    )
     assert before.grounded is True
     assert after.grounded is False
     assert all(claim["verification"] == "unverified" for claim in after.claims)

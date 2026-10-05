@@ -358,7 +358,7 @@ async def test_enforce_overfetches_before_revision_consolidation_to_fill_top_k()
     service._build_retriever = MagicMock(return_value=retriever)  # type: ignore[method-assign]
     service._hydrator = MagicMock()
     service._hydrator.hydrate = AsyncMock(
-        side_effect=lambda rows: [
+        side_effect=lambda rows, **_: [
             RetrievalResult(
                 chunk_id=row.chunk_id,
                 document_id=uuid.uuid4(),

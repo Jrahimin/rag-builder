@@ -88,6 +88,12 @@ def _parser() -> argparse.ArgumentParser:
             "filters against the same index. Diagnostic only; never used for generation."
         ),
     )
+    parser.add_argument(
+        "--paid-eval", action="store_true", help="Explicitly allow paid Cohere calls."
+    )
+    parser.add_argument(
+        "--budget-usd", type=float, help="Positive total Cohere budget for this run."
+    )
     return parser
 
 
@@ -139,7 +145,32 @@ def main(argv: list[str] | None = None) -> int:
         os.environ["APE_JOBS__DISPATCHER_ENABLED"] = "false"
         get_settings.cache_clear()
         get_storage_provider.cache_clear()
-        result, artifact_dir = asyncio.run(run_journey(get_settings(), options, progress=_line))
+        settings = get_settings()
+        # Inline fixtures must build immediately; production debounce requires a dispatcher.
+        costs = settings.provider_costs.model_copy(update={"build_coalesce_seconds": 0})
+        settings = settings.model_copy(update={"provider_costs": costs})
+        uses_cohere = (
+            settings.embedding.backend.value == "cohere"
+            or settings.retrieval.reranker_backend.value == "cohere"
+        )
+        if uses_cohere and not args.paid_eval:
+            raise JourneyError(
+                "Cohere rag-journey requires --paid-eval and --budget-usd on this invocation"
+            )
+        if args.paid_eval:
+            if args.budget_usd is None or args.budget_usd <= 0:
+                raise JourneyError("--paid-eval requires a positive --budget-usd")
+            costs = type(settings.provider_costs).model_validate(
+                {
+                    **settings.provider_costs.model_dump(),
+                    "enabled": True,
+                    "paid_evaluation_enabled": True,
+                    "enforce_budgets": True,
+                    "evaluation_budget_usd": args.budget_usd,
+                }
+            )
+            settings = settings.model_copy(update={"provider_costs": costs})
+        result, artifact_dir = asyncio.run(run_journey(settings, options, progress=_line))
         _line(f"status={result['status']} reports={artifact_dir}")
         if result.get("project_id") and options.keep_project:
             _line(f"kept Project ID: {result['project_id']}")

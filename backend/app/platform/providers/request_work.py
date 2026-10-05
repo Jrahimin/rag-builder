@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import time
 import uuid
 from collections import Counter
@@ -23,8 +24,15 @@ from app.platform.providers.contracts.llm import (
     ChatCompletionChunk,
     ChatCompletionResult,
     ChatMessage,
+    StructuredOutput,
+    constrained_messages,
+    generate_structured,
 )
-from app.platform.providers.errors import ProviderError, sanitized_provider_failure_reason
+from app.platform.providers.errors import (
+    ProviderError,
+    ProviderTimeoutError,
+    sanitized_provider_failure_reason,
+)
 from app.platform.providers.prompt_budget import prompt_budget
 
 _AsyncMethod = TypeVar("_AsyncMethod", bound=Callable[..., Awaitable[Any]])
@@ -115,7 +123,10 @@ class RequestWork:
         self.counts: Counter[str] = Counter()
         self.vectors: dict[tuple[object, ...], list[float]] = {}
         self.content: dict[tuple[object, ...], object] = {}
+        self.evidence_snapshot: dict[str, Any] = {}
         self.embedding_lock = asyncio.Lock()
+        self.embedding_futures: dict[tuple[object, ...], asyncio.Future[list[float]]] = {}
+        self.deadline = self.started + 60.0
         self.calls: list[dict[str, Any]] = []
         self.validation_retries: list[dict[str, Any]] = []
         self.max_span_detail = max(1, max_span_detail)
@@ -125,6 +136,161 @@ class RequestWork:
         self._open: dict[str, dict[str, Any]] = {}
         self._span_started: dict[str, float] = {}
         self._unbound_purpose: str | None = None
+        self.execution_policy = "legacy"
+        self.budget_class = "simple"
+        self.promoted = False
+        self.promotion_reason: str | None = None
+        self._outer_timeout: asyncio.Timeout | None = None
+        self._reschedule_deadline: Callable[[float], None] | None = None
+        self.stage_estimates: dict[str, dict[str, Any]] = {}
+        self.completed_stages: set[str] = set()
+
+    def configure_execution(
+        self,
+        policy: str,
+        *,
+        complex_question: bool = False,
+        estimates: dict[str, dict[str, Any]] | None = None,
+    ) -> None:
+        """Freeze policy and measured estimates once per request, never per retry."""
+        if self.counts["execution_policy_frozen"]:
+            return
+        self.counts["execution_policy_frozen"] += 1
+        self.execution_policy = policy
+        if policy != "adaptive_v1":
+            return
+        self.budget_class = "complex" if complex_question else "simple"
+        self.deadline = self.started + (120.0 if complex_question else 45.0) - 2.0
+        for name, floor in {
+            "coverage": 10.0,
+            "generation": 8.0,
+            "verification": 12.0,
+            "persistence": 2.0,
+        }.items():
+            sample = (estimates or {}).get(name, {})
+            measured = (
+                float(sample.get("p95_seconds", 0)) if int(sample.get("samples", 0)) >= 20 else 0.0
+            )
+            self.stage_estimates[name] = {
+                "seconds": max(floor, measured),
+                "origin": "measured_p95" if measured > floor else "cold_start_floor",
+                "samples": int(sample.get("samples", 0)),
+                "estimate_id": sample.get("estimate_id"),
+            }
+
+        self.deadline = self.request_deadline - self.reserve("persistence")
+
+    def freeze_measured_stages(self, samples: list[dict[str, Any]]) -> None:
+        """Freeze larger p95s from completed spans, never sum overlapping spans."""
+        if self.execution_policy != "adaptive_v1" or self.counts["stage_samples_frozen"]:
+            return
+        self.counts["stage_samples_frozen"] += 1
+        aliases = {
+            "coverage": "coverage_review",
+            "generation": "answer_generation",
+            "verification": "claim_verification",
+            "persistence": "persistence",
+        }
+        for stage, span_name in aliases.items():
+            measured: list[tuple[float, str]] = []
+            for sample in samples:
+                lifecycle = (sample.get("metadata") or {}).get("lifecycle") or {}
+                if (lifecycle.get("deadline") or {}).get("budget_class") != self.budget_class:
+                    continue
+                spans = (lifecycle.get("spans") or {}).get("items") or []
+                completed = [
+                    float(item.get("elapsed_ms", 0)) / 1000
+                    for item in spans
+                    if item.get("name") == span_name and item.get("outcome") == "completed"
+                ]
+                if completed:
+                    measured.append((max(completed), str(sample.get("message_id"))))
+            if len(measured) < 20:
+                continue
+            ordered = sorted(value for value, _ in measured)
+            p95 = ordered[(95 * len(ordered) + 99) // 100 - 1]
+            if p95 > float(self.stage_estimates[stage]["seconds"]):
+                provenance = hashlib.sha256(
+                    "\n".join(sorted(identity for _, identity in measured)).encode()
+                ).hexdigest()
+                self.stage_estimates[stage] = {
+                    "seconds": p95,
+                    "origin": "measured_p95",
+                    "samples": len(measured),
+                    "estimate_id": provenance,
+                }
+        self.deadline = self.request_deadline - self.reserve("persistence")
+        if self._reschedule_deadline is not None:
+            self._reschedule_deadline(self.request_deadline)
+
+    @asynccontextmanager
+    async def execution_timeout(self) -> AsyncIterator[None]:
+        """The actual outer timer is rescheduled when the request is promoted."""
+        loop = asyncio.get_running_loop()
+        ceiling = self.request_deadline if self.execution_policy == "adaptive_v1" else self.deadline
+        timer = asyncio.timeout_at(loop.time() + max(0.0, ceiling - time.perf_counter()))
+        self._outer_timeout = timer
+        self._reschedule_deadline = lambda deadline: timer.reschedule(
+            loop.time() + max(0.0, deadline - time.perf_counter())
+        )
+        try:
+            async with timer:
+                yield
+        finally:
+            self._outer_timeout = None
+            self._reschedule_deadline = None
+
+    def promote(
+        self,
+        requirement_id: str,
+        *,
+        recoverable: bool,
+        known_corpus_gap: bool = False,
+        required: bool = True,
+        required_seconds: float | None = None,
+    ) -> bool:
+        if (
+            self.execution_policy != "adaptive_v1"
+            or self.budget_class == "complex"
+            or self.promoted
+            or not required
+            or not recoverable
+            or known_corpus_gap
+            or not requirement_id
+            or (
+                required_seconds is not None
+                and time.perf_counter() + required_seconds <= self.recovery_deadline
+            )
+        ):
+            return False
+        self.promoted = True
+        self.budget_class = "complex"
+        self.promotion_reason = requirement_id
+        self.deadline = self.started + 120.0 - self.reserve("persistence")
+        if self._reschedule_deadline is not None:
+            self._reschedule_deadline(self.request_deadline)
+        return True
+
+    def reserve(self, stage: str) -> float:
+        return (
+            0.0
+            if stage in self.completed_stages
+            else float(self.stage_estimates.get(stage, {}).get("seconds", 0))
+        )
+
+    def complete_stage(self, stage: str) -> None:
+        self.completed_stages.add(stage)
+
+    def claim_correction(self, kind: str) -> bool:
+        key = "malformed_correction_exchanges" if kind == "malformed" else "semantic_repairs"
+        if self.counts[key] >= 1:
+            return False
+        self.counts[key] += 1
+        return True
+
+    @property
+    def recovery_search_credits(self) -> int:
+        return 6 if self.execution_policy == "adaptive_v1" and self.budget_class == "complex" else 3
 
     def attach(self) -> Token[RequestWork | None]:
         """Bind this turn to the current task so parallel branches keep separate parents."""
@@ -141,6 +307,72 @@ class RequestWork:
             yield self
         finally:
             self.detach(token)
+
+    @property
+    def request_deadline(self) -> float:
+        return self.started + (
+            (120.0 if self.budget_class == "complex" else 45.0)
+            if self.execution_policy == "adaptive_v1"
+            else 60.0
+        )
+
+    @property
+    def recovery_deadline(self) -> float:
+        if self.execution_policy == "adaptive_v1":
+            return self.request_deadline - sum(
+                self.reserve(stage)
+                for stage in ("coverage", "generation", "verification", "persistence")
+            )
+        # 10 generation + 10 verification + 10 terminal persistence seconds.
+        return min(self.deadline - 20.0, self.request_deadline - 30.0)
+
+    def phase_deadline(self, purpose: str | None = None) -> float:
+        purpose = purpose or current_request_purpose() or self._unbound_purpose
+        if self.execution_policy == "adaptive_v1":
+            if purpose == "persistence":
+                return self.request_deadline
+            if purpose in {"claim_verification", "semantic_repair"}:
+                return self.request_deadline - self.reserve("persistence")
+            if purpose in {"answer_generation", "answer_shape_correction"}:
+                return (
+                    self.request_deadline
+                    - self.reserve("verification")
+                    - self.reserve("persistence")
+                )
+            if purpose in {
+                "coverage_review",
+                "scenario_input_review",
+                "web_evidence_review",
+                "selector_retry",
+                "structured_response_retry",
+            }:
+                return self.request_deadline - sum(
+                    self.reserve(stage) for stage in ("generation", "verification", "persistence")
+                )
+            return self.recovery_deadline
+        if purpose in {"answer_generation", "answer_shape_correction"}:
+            return self.deadline - 10.0
+        if purpose in {
+            "recovery_planning",
+            "coverage_review",
+            "structured_response_retry",
+            "selector_retry",
+            "scenario_input_review",
+            "web_evidence_review",
+            "turn_resolution",
+        }:
+            return self.recovery_deadline
+        if purpose in {"claim_verification", "persistence"}:
+            return self.deadline
+        return min(self.deadline, self.recovery_deadline)
+
+    def phase_timeout_context(self) -> dict[str, str]:
+        return {
+            "reason": "recovery_deadline_exceeded"
+            if self.phase_deadline() == self.recovery_deadline
+            else "request_deadline_exceeded",
+            "phase": current_request_purpose() or self._unbound_purpose or "coverage",
+        }
 
     def active_purposes(self) -> set[str]:
         """Return purposes with at least one open span or purpose context on this turn."""
@@ -280,6 +512,26 @@ class RequestWork:
     def snapshot(self) -> dict[str, Any]:
         return {
             "version": "turn.v1",
+            "deadline": {
+                "request_seconds": round(self.request_deadline - self.started, 3),
+                "recovery_seconds": round(max(0.0, self.recovery_deadline - self.started), 3),
+                "generation_reserve_seconds": self.reserve("generation")
+                if self.execution_policy == "adaptive_v1"
+                else 10,
+                "verification_reserve_seconds": self.reserve("verification")
+                if self.execution_policy == "adaptive_v1"
+                else 10,
+                "persistence_reserve_seconds": self.reserve("persistence")
+                if self.execution_policy == "adaptive_v1"
+                else 10,
+                "policy": self.execution_policy,
+                "budget_class": self.budget_class,
+                "p95_target_seconds": 90 if self.budget_class == "complex" else 30,
+                "promoted": self.promoted,
+                "promotion_requirement_id": self.promotion_reason,
+                "stage_estimates": {k: dict(v) for k, v in self.stage_estimates.items()},
+                "completed_stages": sorted(self.completed_stages),
+            },
             "processing_ms": round((time.perf_counter() - self.started) * 1000),
             "stages_ms": dict(self.timings),
             "counts": dict(self.counts),
@@ -366,6 +618,7 @@ class RequestWork:
 
 
 class ObservedLLM(BaseLLMProvider):
+    supports_output_contract = True
     """Record actual call attempts and provider-reported usage, without prompt text."""
 
     def __init__(
@@ -403,27 +656,86 @@ class ObservedLLM(BaseLLMProvider):
         return self.provider.provider_version
 
     async def generate(
-        self, messages: list[ChatMessage], *, temperature: float | None = None, max_tokens: int
+        self,
+        messages: list[ChatMessage],
+        *,
+        temperature: float | None = None,
+        max_tokens: int,
+        output_contract: StructuredOutput | None = None,
     ) -> ChatCompletionResult:
         self._check_budget(messages, max_tokens)
+        self._require_phase_budget()
         with self._call() as call:
-            result = await self.provider.generate(
-                messages, temperature=temperature, max_tokens=max_tokens
-            )
+            call.update(self._request_provenance(output_contract, max_tokens))
+            try:
+                async with asyncio.timeout(
+                    max(0.0, self.work.phase_deadline() - time.perf_counter())
+                ):
+                    if output_contract is not None:
+                        result = await generate_structured(
+                            self.provider,
+                            messages,
+                            output_contract=output_contract,
+                            temperature=temperature,
+                            max_tokens=max_tokens,
+                        )
+                    else:
+                        result = await self.provider.generate(
+                            messages, temperature=temperature, max_tokens=max_tokens
+                        )
+            except asyncio.CancelledError:
+                call["status"] = "cancelled"
+                raise
+            except TimeoutError as exc:
+                raise ProviderTimeoutError(
+                    "The shared request deadline was exhausted.",
+                    provider_name=self.provider_name,
+                    context=self.work.phase_timeout_context(),
+                ) from exc
             call.update(
                 status="completed",
                 input_tokens=result.usage.input_tokens,
                 output_tokens=result.usage.output_tokens,
                 reasoning_tokens=result.usage.reasoning_tokens,
             )
+            provenance = getattr(result, "provenance", None)
+            if isinstance(provenance, dict):
+                call.update(provenance)
             return result
 
     async def stream(
-        self, messages: list[ChatMessage], *, temperature: float | None = None, max_tokens: int
+        self,
+        messages: list[ChatMessage],
+        *,
+        temperature: float | None = None,
+        max_tokens: int,
+        output_contract: StructuredOutput | None = None,
     ) -> AsyncGenerator[ChatCompletionChunk, None]:
         self._check_budget(messages, max_tokens)
+        self._require_phase_budget()
         call, started = self._open_call()
-        upstream = self.provider.stream(messages, temperature=temperature, max_tokens=max_tokens)
+        call.update(self._request_provenance(output_contract, max_tokens))
+        if (
+            output_contract is not None
+            and getattr(self.provider, "supports_output_contract", False) is not True
+        ):
+            messages = constrained_messages(messages, output_contract)
+        if (
+            output_contract is not None
+            and getattr(self.provider, "supports_output_contract", False) is True
+        ):
+            upstream = self.provider.stream(
+                messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                output_contract=output_contract,
+            )
+        else:
+            upstream = self.provider.stream(
+                messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
         purpose = call.get("purpose")
         try:
             while True:
@@ -431,7 +743,11 @@ class ObservedLLM(BaseLLMProvider):
                 # the transport (which may resume/finalize in another task).
                 with self.work.purpose(str(purpose)) if purpose else nullcontext():
                     try:
-                        chunk = await anext(upstream)
+                        async with asyncio.timeout(
+                            max(0.0, self.work.phase_deadline() - time.perf_counter())
+                        ):
+                            self._require_phase_budget()
+                            chunk = await anext(upstream)
                     except StopAsyncIteration:
                         break
                 if chunk.usage is not None:
@@ -442,12 +758,48 @@ class ObservedLLM(BaseLLMProvider):
                     )
                 yield chunk
             call["status"] = "completed"
+        except TimeoutError as exc:
+            raise ProviderTimeoutError(
+                "The shared request deadline was exhausted.",
+                provider_name=self.provider_name,
+                context=self.work.phase_timeout_context(),
+            ) from exc
         except (asyncio.CancelledError, GeneratorExit):
             call["status"] = "cancelled"
             raise
         finally:
             call["duration_ms"] = round((time.perf_counter() - started) * 1000)
             await upstream.aclose()
+
+    def _request_provenance(
+        self, contract: StructuredOutput | None, max_tokens: int
+    ) -> dict[str, Any]:
+        describe = getattr(self.provider, "request_provenance", None)
+        descriptor = describe(contract, max_tokens) if callable(describe) else None
+        base = {
+            "schema_mode": "prompt" if contract else "none",
+            "reasoning": "provider_default",
+            "local_validation": "consumer_schema_required" if contract else "not_applicable",
+            "purpose": current_request_purpose() or "unspecified",
+            "model": self.model_name,
+        }
+        if isinstance(descriptor, dict):
+            base.update(descriptor)
+        base["purpose"] = current_request_purpose() or self.work._unbound_purpose or base["purpose"]
+        if contract:
+            base["schema_name"] = contract.name
+            base["schema_hash"] = hashlib.sha256(
+                json.dumps(contract.schema, sort_keys=True).encode()
+            ).hexdigest()
+        return base
+
+    def _require_phase_budget(self) -> None:
+        if self.work.phase_deadline() <= time.perf_counter():
+            raise ProviderTimeoutError(
+                "The phase deadline was exhausted before provider admission.",
+                provider_name=self.provider_name,
+                context=self.work.phase_timeout_context(),
+            )
 
     def _open_call(self) -> tuple[dict[str, Any], float]:
         call: dict[str, Any] = {
@@ -499,6 +851,7 @@ class CachedEmbeddingProvider(BaseEmbeddingProvider):
     async def embed_texts(
         self, texts: list[str], *, purpose: EmbeddingPurpose = EmbeddingPurpose.DOCUMENT
     ) -> EmbeddingBatchResult:
+        billed: int | None = 0
         prefix = (
             self.work.project_id,
             self.provider_name,
@@ -507,65 +860,99 @@ class CachedEmbeddingProvider(BaseEmbeddingProvider):
             self.dimensions,
             purpose.value,
         )
-        keys = [(*prefix, hashlib.sha256(text.encode("utf-8")).hexdigest()) for text in texts]
-        # Serialize the miss check and fill to coalesce overlapping concurrent requests.
-        # Failed/cancelled calls never populate the cache; the lock releases on cancellation.
+        keys: list[tuple[object, ...]] = [
+            (*prefix, hashlib.sha256(text.encode("utf-8")).hexdigest()) for text in texts
+        ]
+        # Register per-key ownership atomically; unrelated texts run independently.
+        owners: dict[tuple[object, ...], str] = {}
+        futures: dict[tuple[object, ...], asyncio.Future[list[float]]] = {}
         async with self.work.embedding_lock:
-            missing = {
-                key: text
-                for key, text in zip(keys, texts, strict=True)
-                if key not in self.work.vectors
-            }
-            self.work.counts["embedding_cache_hits"] += len(keys) - len(missing)
-            if missing:
-                started = time.perf_counter()
-                call: dict[str, Any] = {
-                    "kind": "embedding",
-                    "provider": self.provider_name,
-                    "model": self.model_name,
-                    "purpose": purpose.value,
-                    "texts": len(missing),
-                    "input_tokens": None,
-                    "output_tokens": None,
-                    "status": "failed",
-                    "provider_internal_retries": None,
-                }
-                self.work.counts["embedding_calls"] += 1
-                self.work.counts["embedded_texts"] += len(missing)
-                self.work.annotate_provider_call(call, purpose_field="work_purpose")
-                try:
-                    result = await self.provider.embed_texts(
-                        list(missing.values()), purpose=purpose
+            for key, text in zip(keys, texts, strict=True):
+                if key in self.work.vectors:
+                    self.work.counts["embedding_cache_hits"] += 1
+                    continue
+                future = self.work.embedding_futures.get(key)
+                if future is None:
+                    future = asyncio.get_running_loop().create_future()
+                    # Retrieve orphan exceptions if a waiter was cancelled.
+                    future.add_done_callback(
+                        lambda value: value.exception() if not value.cancelled() else None
                     )
-                    if (
-                        (result.provider, result.model, result.dimensions, result.provider_version)
-                        != (
-                            self.provider_name,
-                            self.model_name,
-                            self.dimensions,
-                            self.provider_version,
-                        )
-                        or len(result.vectors) != len(missing)
-                        or any(len(vector) != self.dimensions for vector in result.vectors)
-                    ):
-                        raise ProviderError(
-                            "Embedding result identity or vector shape mismatch",
+                    self.work.embedding_futures[key] = future
+                    owners[key] = text
+                else:
+                    self.work.counts["embedding_cache_hits"] += 1
+                futures[key] = future
+        if owners:
+            started = time.perf_counter()
+            call: dict[str, Any] = {
+                "kind": "embedding",
+                "provider": self.provider_name,
+                "model": self.model_name,
+                "purpose": purpose.value,
+                "texts": len(owners),
+                "input_tokens": None,
+                "output_tokens": None,
+                "status": "failed",
+                "provider_internal_retries": None,
+            }
+            self.work.counts["embedding_calls"] += 1
+            self.work.counts["embedded_texts"] += len(owners)
+            self.work.annotate_provider_call(call, purpose_field="work_purpose")
+            try:
+                async with asyncio.timeout(
+                    max(0.0, self.work.phase_deadline() - time.perf_counter())
+                ):
+                    if self.work.phase_deadline() <= time.perf_counter():
+                        raise ProviderTimeoutError(
+                            "Embedding phase deadline exhausted before provider admission.",
                             provider_name=self.provider_name,
-                            context={"reason": "embedding_identity_mismatch"},
+                            context=self.work.phase_timeout_context(),
                         )
-                    self.work.vectors.update(zip(missing, result.vectors, strict=True))
-                    call["status"] = "completed"
-                finally:
-                    call["duration_ms"] = round((time.perf_counter() - started) * 1000)
-                    self.work.timings[
-                        "query_embedding"
-                        if purpose is EmbeddingPurpose.QUERY
-                        else "document_embedding"
-                    ] += call["duration_ms"]
+                    result = await self.provider.embed_texts(list(owners.values()), purpose=purpose)
+                if (
+                    (result.provider, result.model, result.dimensions, result.provider_version)
+                    != (self.provider_name, self.model_name, self.dimensions, self.provider_version)
+                    or len(result.vectors) != len(owners)
+                    or any(len(vector) != self.dimensions for vector in result.vectors)
+                ):
+                    raise ProviderError(
+                        "Embedding result identity or vector shape mismatch",
+                        provider_name=self.provider_name,
+                        context={"reason": "embedding_identity_mismatch"},
+                    )
+                for key, vector in zip(owners, result.vectors, strict=True):
+                    self.work.vectors[key] = list(vector)
+                    futures[key].set_result(list(vector))
+                call["status"] = "completed"
+                call["input_tokens"] = result.billed_input_tokens
+                billed = result.billed_input_tokens
+            except BaseException as exc:
+                if isinstance(exc, TimeoutError):
+                    exc = ProviderTimeoutError(
+                        "The shared request deadline was exhausted.",
+                        provider_name=self.provider_name,
+                        context=self.work.phase_timeout_context(),
+                    )
+                for key in owners:
+                    if not futures[key].done():
+                        futures[key].set_exception(exc)
+                raise exc
+            finally:
+                for key in owners:
+                    self.work.embedding_futures.pop(key, None)
+                call["duration_ms"] = round((time.perf_counter() - started) * 1000)
+                self.work.timings[
+                    "query_embedding" if purpose is EmbeddingPurpose.QUERY else "document_embedding"
+                ] += call["duration_ms"]
+        for key, future in futures.items():
+            if key not in self.work.vectors:
+                await asyncio.shield(future)
         return EmbeddingBatchResult(
             vectors=[list(self.work.vectors[key]) for key in keys],
             provider=self.provider_name,
             model=self.model_name,
             dimensions=self.dimensions,
             provider_version=self.provider_version,
+            billed_input_tokens=billed,
         )

@@ -7,7 +7,17 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Any
 
-from sqlalchemy import DateTime, Enum, ForeignKeyConstraint, Index, Integer, String, Text, text
+from sqlalchemy import (
+    DateTime,
+    Enum,
+    ForeignKeyConstraint,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    text,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -40,10 +50,13 @@ class IndexBuild(Base, UUIDPrimaryKeyMixin, TimestampMixin, ProjectScopedMixin):
     __tablename__ = "index_builds"
     __table_args__ = (
         ForeignKeyConstraint(["project_id"], ["projects.id"], ondelete="CASCADE"),
+        UniqueConstraint("project_id", "id", name="uq_index_builds_project_id"),
         ForeignKeyConstraint(["job_id"], ["job_runs.id"], ondelete="SET NULL"),
         Index("ix_index_builds_project_created", "project_id", "created_at", "id"),
         Index("ix_index_builds_project_state", "project_id", "state", "created_at"),
     )
+
+    structural_contract_version: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
     job_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True, unique=True)
     state: Mapped[IndexBuildState] = mapped_column(

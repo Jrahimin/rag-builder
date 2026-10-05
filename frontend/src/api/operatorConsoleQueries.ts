@@ -1,9 +1,11 @@
 import { queryOptions, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  OperatorApiError,
   operatorApiClient,
   type IndexBuild,
   type LifecycleJob,
   type Project,
+  type MessagePage,
 } from "./operatorApiClient";
 
 export const operatorQueryKeys = {
@@ -146,12 +148,12 @@ export function useCreateProject() {
   });
 }
 
-export function useDocuments(projectId: string) {
+export function useDocuments(projectId: string, poll = true) {
   return useQuery({
     queryKey: operatorQueryKeys.documents(projectId),
     queryFn: () => operatorApiClient.getDocuments(projectId),
     enabled: Boolean(projectId),
-    refetchInterval: 15_000,
+    refetchInterval: poll ? 15_000 : false,
   });
 }
 
@@ -216,12 +218,17 @@ export function useSourceActivations(projectId: string, documentId = "") {
   });
 }
 
-export function useJobs(projectId: string, state: string, jobType: string) {
+export function useJobs(projectId: string, state: string, jobType: string, poll = true) {
   return useQuery({
     queryKey: operatorQueryKeys.jobs(projectId, state, jobType),
     queryFn: () => operatorApiClient.getJobs(projectId, { state, jobType }),
     enabled: Boolean(projectId),
     refetchInterval: (query) => {
+      if (
+        !poll ||
+        (query.state.error instanceof OperatorApiError && query.state.error.status === 400)
+      )
+        return false;
       const jobs = query.state.data?.items ?? [];
       return jobs.some((job) => ["queued", "running", "retry_scheduled"].includes(job.state))
         ? 3_000
@@ -318,20 +325,30 @@ export function useCreateEvaluationRun(projectId: string) {
   });
 }
 
-export function useIndexBuilds(projectId: string) {
+export function useIndexBuilds(projectId: string, poll = true) {
   return useQuery({
     queryKey: operatorQueryKeys.indexBuilds(projectId),
     queryFn: () => operatorApiClient.getIndexBuilds(projectId),
     enabled: Boolean(projectId),
-    refetchInterval: 5_000,
+    refetchInterval: (query) =>
+      poll && !(query.state.error instanceof OperatorApiError && query.state.error.status === 400)
+        ? query.state.data?.items.some((build) => build.state === "building")
+          ? 5_000
+          : 30_000
+        : false,
   });
 }
 
 export function useCorpusLifecycleAction(projectId: string) {
   const queryClient = useQueryClient();
-  return useMutation<LifecycleJob | IndexBuild, Error, "rebuild" | "reconcile" | "rollback">({
-    mutationFn: (action: "rebuild" | "reconcile" | "rollback") => {
+  return useMutation<
+    LifecycleJob | IndexBuild,
+    Error,
+    "rebuild" | "private" | "reconcile" | "rollback"
+  >({
+    mutationFn: (action: "rebuild" | "private" | "reconcile" | "rollback") => {
       if (action === "rebuild") return operatorApiClient.reembedCorpus(projectId);
+      if (action === "private") return operatorApiClient.reprocessPrivateCorpus(projectId);
       if (action === "reconcile") return operatorApiClient.reconcileStorage(projectId);
       return operatorApiClient.rollbackIndexBuild(projectId);
     },
@@ -400,17 +417,42 @@ export function useSendMessage(projectId: string, conversationId: string) {
       content,
       documentId,
       sourceScope,
+      previewIndexBuildId,
     }: {
       content: string;
       documentId?: string;
       sourceScope?: "project_default" | "indexed_only";
+      previewIndexBuildId?: string;
     }) =>
-      operatorApiClient.sendMessage(projectId, conversationId, content, documentId, sourceScope),
-    onSuccess: async () => {
+      operatorApiClient.sendMessage(
+        projectId,
+        conversationId,
+        content,
+        documentId,
+        sourceScope,
+        previewIndexBuildId,
+      ),
+    onSuccess: async (turn) => {
+      queryClient.setQueryData<MessagePage>(
+        operatorQueryKeys.messages(projectId, conversationId),
+        (previous) => {
+          if (!previous)
+            return {
+              items: [turn.user_message, turn.assistant_message],
+              total: 2,
+              limit: 50,
+              offset: 0,
+            };
+          const ids = new Set([turn.user_message.id, turn.assistant_message.id]);
+          const existing = previous.items.filter((message) => !ids.has(message.id));
+          return {
+            ...previous,
+            items: [...existing, turn.user_message, turn.assistant_message],
+            total: previous.total + 2 - (previous.items.length - existing.length),
+          };
+        },
+      );
       await Promise.all([
-        queryClient.invalidateQueries({
-          queryKey: operatorQueryKeys.messages(projectId, conversationId),
-        }),
         queryClient.invalidateQueries({ queryKey: operatorQueryKeys.conversations(projectId) }),
       ]);
     },
@@ -427,6 +469,7 @@ export function useStreamMessage(projectId: string, conversationId: string) {
       onProgress,
       signal,
       sourceScope,
+      previewIndexBuildId,
     }: {
       content: string;
       documentId?: string;
@@ -434,6 +477,7 @@ export function useStreamMessage(projectId: string, conversationId: string) {
       onProgress?: (message: string) => void;
       signal?: AbortSignal;
       sourceScope?: "project_default" | "indexed_only";
+      previewIndexBuildId?: string;
     }) => {
       const streamed = await operatorApiClient.streamMessage(
         projectId,
@@ -445,8 +489,10 @@ export function useStreamMessage(projectId: string, conversationId: string) {
         signal,
         undefined,
         sourceScope,
+        previewIndexBuildId,
       );
       const page = await operatorApiClient.getMessages(projectId, conversationId);
+      queryClient.setQueryData(operatorQueryKeys.messages(projectId, conversationId), page);
       const assistant = [...page.items].reverse().find((message) => message.role === "assistant");
       const user = [...page.items].reverse().find((message) => message.role === "user");
       if (!assistant || !user)
@@ -462,9 +508,6 @@ export function useStreamMessage(projectId: string, conversationId: string) {
     },
     onSuccess: async () => {
       await Promise.all([
-        queryClient.invalidateQueries({
-          queryKey: operatorQueryKeys.messages(projectId, conversationId),
-        }),
         queryClient.invalidateQueries({ queryKey: operatorQueryKeys.conversations(projectId) }),
       ]);
     },

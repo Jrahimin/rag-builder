@@ -21,18 +21,27 @@ from app.models.conversation_config_snapshot import ConversationConfigSnapshot  
 from app.models.document import Document  # noqa: F401
 from app.models.document_chunk import DocumentChunk  # noqa: F401
 from app.models.evaluation_dataset import EvaluationDataset  # noqa: F401
+from app.models.evaluation_diagnostic import EvaluationDiagnostic  # noqa: F401
 from app.models.evaluation_run import EvaluationRun  # noqa: F401
 from app.models.generation import Generation  # noqa: F401
+from app.models.index_acceptance import (  # noqa: F401
+    IndexAcceptance,
+    IndexAcceptanceReport,
+    IndexAcceptanceSet,
+)
 from app.models.index_build import IndexBuild, ProjectIndexPointer  # noqa: F401
+from app.models.index_scope_review import IndexScopeReview  # noqa: F401
 from app.models.job_configuration_snapshot import JobConfigurationSnapshot  # noqa: F401
 from app.models.job_outbox import JobOutbox  # noqa: F401
 from app.models.job_run import JobRun  # noqa: F401
 from app.models.keyword_term_stats import KeywordCollectionStats, KeywordTermStats  # noqa: F401
 from app.models.message import Message  # noqa: F401
+from app.models.message_diagnostic import MessageDiagnostic  # noqa: F401
 from app.models.organization import Organization  # noqa: F401
 from app.models.organization_api_key import OrganizationApiKey  # noqa: F401
 from app.models.project import Project  # noqa: F401
 from app.models.project_ai_config_revision import ProjectAIConfigRevision  # noqa: F401
+from app.models.provider_work import EmbeddingCache, ProviderUsageAttempt  # noqa: F401
 from app.models.source_metadata import (  # noqa: F401
     SourceActivationEvent,
     SourceGroup,

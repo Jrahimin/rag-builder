@@ -1,0 +1,807 @@
+{
+  "version": "1.0.0",
+  "source_build_id": "c75f7019-f94b-4435-9036-e9cf59ae216b",
+  "source_generation": 35,
+  "provenance": "Exact pinned chunks exported read-only; original QA05/001 line selectors preserved. DNCC quote proves conditional subrequirements, not whole checklist completeness.",
+  "rows": [
+    {
+      "id": "4d0dd2f9-6902-495d-9c08-6dbdb536df1a",
+      "document_id": "0caa2c93-e13d-4328-aab9-e078d67da112",
+      "chunk_index": 93,
+      "page_number": 1,
+      "char_start": null,
+      "char_end": null,
+      "content": "Companies Act 1994 — official Bangladesh Laws consolidated statutory text (Bangla)\n\nSection ৮১ - বার্ষিক সাধারণ সভা\n\n৮১৷ (১) প্রত্যেক কোম্পানী উহার অন্যান্য সভা ছাড়াও প্রতি ইংরেজী পঞ্জিকা-বত্সরে ইহার বার্ষিক সাধারণ সভা হিসাবে একটি সাধারণ সভা অনুষ্ঠান করিবে এবং উক্ত সভা আহ্বানের নোটিশে উহাকে বার্ষিক সাধারণ সভা বলিয়া সুনির্দিষ্টভাবে উল্লেখ করিবে; এবং কোন কোম্পানীর একটি বার্ষিক সাধারণ সভা অনুষ্ঠানের তারিখ এবং উহার পরবর্তী বার্ষিক সাধারণ সভা অনুষ্ঠানের তারিখের ব্যবধান পনের মাসের অধিক হইবে না :\n\nতবে শর্ত থাকে যে, কোন কোম্পানী নিগমিত হওয়ার তারিখ হইতে অনধিক আঠারো মাস সময়ের মধ্যে উহার প্রথম বার্ষিক সাধারণ সভা অনুষ্ঠান করিতে পারিবে এবং যদি এইরূপ সাধারণ সভা উক্ত সময়ের মধ্যে অনুষ্ঠিত হয় তাহা হইলে নিগমিত হওয়ার বৎসরে বা উহার পরবর্তী বত্সরে উক্ত কোম্পানীর অন্য কোন বার্ষিক সাধারণ সভা অনুষ্ঠান করার প্রয়োজন হইবে না :\n\nআরও শর্ত থাকে যে, উপরোক্ত বার্ষিক সাধারণ সভা অনুষ্ঠানের জন্য নির্ধারিত সময় অতিবাহিত হওয়ার তারিখ হইতে ত্রিশ দিনের মধ্যে কোন কোম্পানী রেজিষ্ট্রারের নিকট আবেদন করিলে, রেজিষ্ট্রার প্রথম বার্ষিক সাধারণ সভার ক্ষেত্র ব্যতীত অন্যান্য বার্ষিক সাধারণ সভা অনুষ্ঠানের সময় অনধিক নব্বই দিন অথবা যে পঞ্জিকা বৎসরের জন্য উক্ত সাধারণ সভা অনুষ্ঠিত হওয়ার কথা সেই বত্সরের ৩১শে ডিসেম্বর পর্যন্ত্ম, এই দুই মেয়াদের যাহা প্রথমে হয় সেই মেয়াদ পর্যন্ত বর্ধিত করিতে পারিবেন।\n\n(২) কোন কোম্পানী উপ-ধারা (১) এর বিধান পালনে ব্যর্থ হইলে, কোম্পানীর যে কোন সদস্যের আবেদনক্রমে, আদালত উক্ত কোম্পানীর বার্ষিক সাধারণ সভা আহ্বান করিতে অথবা আহ্বান করার নির্দেশ দিতে পারিবে এবং আদালত উক্ত সভা আহ্বান অনুষ্ঠান ও পরিচালনার জন্য যেরূপ সমীচীন বলিয়া বিবেচনা করিবে সেইরূপ অনুবর্তী (consequential) ও আনুষংগিক (incidental) আদেশ প্রদান করিতে পারিবে।",
+      "content_sha256": "13216c5c6ab5a1e686d0c458a0dd23024112e27104a2bcefe86bee99f9de7159",
+      "filename": "Companies Act 1994 - numbered official consolidated Bangla.md",
+      "metadata": {
+        "scope_facts": [
+          {
+            "kind": "provision",
+            "value": "Section ৮১",
+            "status": "source_attested",
+            "source_span": {
+              "role": "heading",
+              "text": "Section ৮১ - বার্ষিক সাধারণ সভা",
+              "char_end": 84887,
+              "char_start": 84856,
+              "provenance": "exact_source_span"
+            }
+          }
+        ],
+        "heading_path": [
+          "Companies Act 1994 — official Bangladesh Laws consolidated statutory text (Bangla)",
+          "Section ৮১ - বার্ষিক সাধারণ সভা"
+        ],
+        "section_title": "Section ৮১ - বার্ষিক সাধারণ সভা",
+        "provision_references": [
+          "Section ৮১"
+        ],
+        "structure_version": "structure.v1",
+        "structural_unit_id": "13216c5c6ab5a1e686d0c458a0dd23024112e27104a2bcefe86bee99f9de7159",
+        "source_spans": [
+          {
+            "role": "heading",
+            "text": "Companies Act 1994 — official Bangladesh Laws consolidated statutory text (Bangla)",
+            "char_end": 82,
+            "char_start": 0,
+            "provenance": "exact_source_span"
+          },
+          {
+            "role": "paragraph",
+            "text": "(",
+            "char_end": 407,
+            "char_start": 406,
+            "provenance": "exact_source_span"
+          },
+          {
+            "role": "paragraph",
+            "text": ")",
+            "char_end": 432,
+            "char_start": 431,
+            "provenance": "exact_source_span"
+          },
+          {
+            "role": "heading",
+            "text": "Section ৮১ - বার্ষিক সাধারণ সভা",
+            "char_end": 84887,
+            "char_start": 84856,
+            "provenance": "exact_source_span"
+          },
+          {
+            "role": "paragraph",
+            "text": "৮১৷ (১) প্রত্যেক কোম্পানী উহার অন্যান্য সভা ছাড়াও প্রতি ইংরেজী পঞ্জিকা-বত্সরে ইহার বার্ষিক সাধারণ সভা হিসাবে একটি সাধারণ সভা অনুষ্ঠান করিবে এবং উক্ত সভা আহ্বানের নোটিশে উহাকে বার্ষিক সাধারণ সভা বলিয়া সুনির্দিষ্টভাবে উল্লেখ করিবে; এবং কোন কোম্পানীর একটি বার্ষিক সাধারণ সভা অনুষ্ঠানের তারিখ এবং উহার পরবর্তী বার্ষিক সাধারণ সভা অনুষ্ঠানের তারিখের ব্যবধান পনের মাসের অধিক হইবে না :",
+            "char_end": 85266,
+            "char_start": 84889,
+            "provenance": "exact_source_span"
+          },
+          {
+            "role": "paragraph",
+            "text": "তবে শর্ত থাকে যে, কোন কোম্পানী নিগমিত হওয়ার তারিখ হইতে অনধিক আঠারো মাস সময়ের মধ্যে উহার প্রথম বার্ষিক সাধারণ সভা অনুষ্ঠান করিতে পারিবে এবং যদি এইরূপ সাধারণ সভা উক্ত সময়ের মধ্যে অনুষ্ঠিত হয় তাহা হইলে নিগমিত হওয়ার বৎসরে বা উহার পরবর্তী বত্সরে উক্ত কোম্পানীর অন্য কোন বার্ষিক সাধারণ সভা অনুষ্ঠান করার প্রয়োজন হইবে না :",
+            "char_end": 85583,
+            "char_start": 85268,
+            "provenance": "exact_source_span"
+          },
+          {
+            "role": "paragraph",
+            "text": "আরও শর্ত থাকে যে, উপরোক্ত বার্ষিক সাধারণ সভা অনুষ্ঠানের জন্য নির্ধারিত সময় অতিবাহিত হওয়ার তারিখ হইতে ত্রিশ দিনের মধ্যে কোন কোম্পানী রেজিষ্ট্রারের নিকট আবেদন করিলে, রেজিষ্ট্রার প্রথম বার্ষিক সাধারণ সভার ক্ষেত্র ব্যতীত অন্যান্য বার্ষিক সাধারণ সভা অনুষ্ঠানের সময় অনধিক নব্বই দিন অথবা যে পঞ্জিকা বৎসরের জন্য উক্ত সাধারণ সভা অনুষ্ঠিত হওয়ার কথা সেই বত্সরের ৩১শে ডিসেম্বর পর্যন্ত্ম, এই দুই মেয়াদের যাহা প্রথমে হয় সেই মেয়াদ পর্যন্ত বর্ধিত করিতে পারিবেন।",
+            "char_end": 86030,
+            "char_start": 85585,
+            "provenance": "exact_source_span"
+          },
+          {
+            "role": "paragraph",
+            "text": "(২) কোন কোম্পানী উপ-ধারা (১) এর বিধান পালনে ব্যর্থ হইলে, কোম্পানীর যে কোন সদস্যের আবেদনক্রমে, আদালত উক্ত কোম্পানীর বার্ষিক সাধারণ সভা আহ্বান করিতে অথবা আহ্বান করার নির্দেশ দিতে পারিবে এবং আদালত উক্ত সভা আহ্বান অনুষ্ঠান ও পরিচালনার জন্য যেরূপ সমীচীন বলিয়া বিবেচনা করিবে সেইরূপ অনুবর্তী (consequential) ও আনুষংগিক (incidental) আদেশ প্রদান করিতে পারিবে।",
+            "char_end": 86382,
+            "char_start": 86032,
+            "provenance": "exact_source_span"
+          }
+        ],
+        "project_id": "2ee2756f-ad27-44df-a9d3-1316b10ccbb1",
+        "index_build_id": "c75f7019-f94b-4435-9036-e9cf59ae216b",
+        "source_metadata_generation": 35,
+        "source_revision_id": "2015d765-b6a1-4c78-87b1-4c07819d290a",
+        "source_title": "Companies Act 1994 - Official Bangladesh Laws consolidated statutory body and amendment footnotes (Bangla; separate schedules excluded)",
+        "source_lifecycle_status": "active",
+        "source_role": "primary"
+      }
+    },
+    {
+      "id": "46c4724c-4afa-4149-b861-b2085efaea39",
+      "document_id": "3814d749-092d-4b4c-b8d4-3926e734c098",
+      "chunk_index": 1,
+      "page_number": null,
+      "char_start": null,
+      "char_end": null,
+      "content": "আবেদনকালে মালিকের ছবি , জাতীয় পরিচয় পত্রের ফটোকপি , অনাপত্তি সনদ , মূলধন প্রমানের প্রয়োজনীয় কাগ‍ সেবা মেমোরেন্ডাম অব আর্টিকেলস ) , মালিকানা প্রমানের জন্য দলিল / পর্চা ( ভাড়াটিয়া হলে ভাড়ার চুক্তিপত্র ) , হালনাগাদ হোল্ডিং ট্যাক প্রদানের ফায়ার সার্ভিস ও সিভিল ডিফেন্স কর্তৃক লাইসেন্স এর ফটোকপি ( শিল্প কারখানার ক্ষেত্রে ) , অন্যান্য পরিচয়পত্র / ছারপত্র এর কি 95 প্রয়োজনীয় হবে । পরবর্তীতে লাইসেন্স ও বিজ্ঞাপন সুপারভাইজার কর্তৃক যাচাই - বাছাই করত : ট্রেড লাইসেন্স অনুমোদনের নিমিত্ত উর্দ্ধতন অনুমোদিত হলে লাইসেন্সধারীর নিকট নির্ধারিত ফি প্রদানের জন্য SMS ও মেইল করা হবে । ফি প্রদানের পর প্রিন্টকৃত ট্রেড লাইসে সময় স্ব ঠিকানায় পৌছানো হবে । এছাড়া লাইসেন্সধারী নিজেও স্ব স্ব ইউজারে নগইন করে প্রিন্ট করতে পারবেন ।\n\nবর্তমানে অটো জেনারেটেড ট্রেড লাইসেন্স ( ধুকিপূর্ণ / জনসংবেদনশীল ব্যবসা ব্যতীত ) আবেদন দাখিলের পর পেমেন্টের সাথে সাথেই সময়ঃ ৩ কর্মদিবস ।",
+      "content_sha256": "2e85d6649766e4cb12d358b030d915b097453abdb9640232836fac4de07d6939",
+      "filename": "DNCC trade licence procedure.pdf",
+      "metadata": {
+        "scope_facts": [],
+        "section_title": null,
+        "provision_references": [],
+        "structure_version": "structure.v1",
+        "structural_unit_id": "2e85d6649766e4cb12d358b030d915b097453abdb9640232836fac4de07d6939",
+        "source_spans": [
+          {
+            "role": "paragraph",
+            "text": "সেবা",
+            "char_end": 192,
+            "char_start": 188,
+            "provenance": "exact_source_span"
+          },
+          {
+            "role": "paragraph",
+            "text": "সেবা মেমোরেন্ডাম অব আর্টিকেলস ) , মালিকানা প্রমানের জন্য দলিল / পর্চা ( ভাড়াটিয়া হলে ভাড়ার চুক্তিপত্র ) , হালনাগাদ হোল্ডিং ট্যাক",
+            "char_end": 568,
+            "char_start": 437,
+            "provenance": "exact_source_span"
+          },
+          {
+            "role": "paragraph",
+            "text": "প্রদানের ফায়ার সার্ভিস ও সিভিল ডিফেন্স কর্তৃক লাইসেন্স এর ফটোকপি ( শিল্প কারখানার ক্ষেত্রে ) , অন্যান্য পরিচয়পত্র / ছারপত্র এর কি 95",
+            "char_end": 704,
+            "char_start": 570,
+            "provenance": "exact_source_span"
+          },
+          {
+            "role": "paragraph",
+            "text": "প্রয়োজনীয় হবে । পরবর্তীতে লাইসেন্স ও বিজ্ঞাপন সুপারভাইজার কর্তৃক যাচাই - বাছাই করত : ট্রেড লাইসেন্স অনুমোদনের নিমিত্ত উর্দ্ধতন",
+            "char_end": 834,
+            "char_start": 706,
+            "provenance": "exact_source_span"
+          },
+          {
+            "role": "paragraph",
+            "text": "অনুমোদিত হলে লাইসেন্সধারীর নিকট নির্ধারিত ফি প্রদানের জন্য SMS ও মেইল করা হবে । ফি প্রদানের পর প্রিন্টকৃত ট্রেড লাইসে",
+            "char_end": 953,
+            "char_start": 836,
+            "provenance": "exact_source_span"
+          },
+          {
+            "role": "paragraph",
+            "text": "সময় স্ব ঠিকানায় পৌছানো হবে । এছাড়া লাইসেন্সধারী নিজেও স্ব স্ব ইউজারে নগইন করে প্রিন্ট করতে পারবেন ।",
+            "char_end": 1057,
+            "char_start": 955,
+            "provenance": "exact_source_span"
+          },
+          {
+            "role": "paragraph",
+            "text": "বর্তমানে অটো জেনারেটেড ট্রেড লাইসেন্স ( ধুকিপূর্ণ / জনসংবেদনশীল ব্যবসা ব্যতীত ) আবেদন দাখিলের পর পেমেন্টের সাথে সাথেই",
+            "char_end": 1176,
+            "char_start": 1059,
+            "provenance": "exact_source_span"
+          },
+          {
+            "role": "paragraph",
+            "text": "সময়ঃ ৩ কর্মদিবস ।",
+            "char_end": 1196,
+            "char_start": 1178,
+            "provenance": "exact_source_span"
+          },
+          {
+            "role": "paragraph",
+            "text": "জন্য",
+            "char_end": 1218,
+            "char_start": 1214,
+            "provenance": "exact_source_span"
+          },
+          {
+            "role": "paragraph",
+            "text": "প্রয়োজনীয়",
+            "char_end": 1231,
+            "char_start": 1220,
+            "provenance": "exact_source_span"
+          },
+          {
+            "role": "paragraph",
+            "text": "নির্ধারিত ফি প্রদানের জন্য SMS ও মেইল করা হবে । ফি প্রদানের পর প্রিন্টকৃত ট্রেড",
+            "char_end": 2138,
+            "char_start": 2059,
+            "provenance": "exact_source_span"
+          },
+          {
+            "role": "paragraph",
+            "text": "লাইসেন্সধারী নিজেও স্ব স্ব ইউজারে নগইন করে প্রিন্ট করতে পারবেন ।",
+            "char_end": 2289,
+            "char_start": 2225,
+            "provenance": "exact_source_span"
+          },
+          {
+            "role": "paragraph",
+            "text": "জন্য",
+            "char_end": 2331,
+            "char_start": 2327,
+            "provenance": "exact_source_span"
+          }
+        ],
+        "project_id": "2ee2756f-ad27-44df-a9d3-1316b10ccbb1",
+        "index_build_id": "c75f7019-f94b-4435-9036-e9cf59ae216b",
+        "source_metadata_generation": 35,
+        "source_revision_id": "cfbfb12c-de0a-476f-9af5-faebaa54a09a",
+        "source_title": "DNCC — Trade Licence Issuance and Renewal Procedure (17 July 2025)",
+        "source_lifecycle_status": "active",
+        "source_role": "supporting"
+      }
+    },
+    {
+      "id": "5aa3a215-d3da-4242-b16f-74df447729c4",
+      "document_id": "9f277455-7fec-4ae5-8789-d0f8def0880b",
+      "chunk_index": 245,
+      "page_number": 142,
+      "char_start": null,
+      "char_end": null,
+      "content": "২০২৬-২০২৭ এবং ২০২৭-২০২৮ করবর্ষের জন্য করহার\n\nআয়কর আইন , ২০২৩ ( ২০২৩ সনের ১২ নং আইন ) এর ধারা ২ ( ৬৯ ) এ সংজ্ঞায়িত\n\nব্যক্তিগণের ( persons ) মধ্যে অনিবাসী বাংলাদেশিসহ সকল স্বাভাবিক ব্যক্তি ( individual ) ও হিন্দু\n\nঅবিভক্ত পরিবারের ক্ষেত্রে মোট আয়ের উপর করহার নিম্নরূপ হইবে , যথা : -\nকরধাপ | করহার\n৪,০০,০০০ টাকা পর্যন্ত | শূন্য\nপরবর্তী ৩,০০,০০০ টাকা পর্যন্ত | ১০ %\nপরবর্তী ৪,০০,০০০ টাকা পর্যন্ত | ১৫ %\nপরবর্তী ৫,০০,০০০ টাকা পর্যন্ত | ২০ %\nপরবর্তী ২০,০০,০০০ টাকা পর্যন্ত | 25 %\nঅবশিষ্ট টাকার উপর | ৩০ %",
+      "content_sha256": "8ddcd6670c6f476699cb53f7e5625ae1b3deba34abb2ab932ebd8b38d55d0ff8",
+      "filename": "Finance Act 2026 Bangla.pdf",
+      "metadata": {
+        "scope_facts": [
+          {
+            "kind": "period",
+            "value": "২০২৬-২০২৭",
+            "status": "source_attested",
+            "source_span": {
+              "role": "paragraph",
+              "text": "২০২৬-২০২৭ এবং ২০২৭-২০২৮ করবর্ষের জন্য করহার",
+              "char_end": 254927,
+              "char_start": 254884,
+              "provenance": "exact_source_span"
+            }
+          },
+          {
+            "kind": "period",
+            "value": "২০২৭-২০২৮",
+            "status": "source_attested",
+            "source_span": {
+              "role": "paragraph",
+              "text": "২০২৬-২০২৭ এবং ২০২৭-২০২৮ করবর্ষের জন্য করহার",
+              "char_end": 254927,
+              "char_start": 254884,
+              "provenance": "exact_source_span"
+            }
+          },
+          {
+            "kind": "provision",
+            "value": "ধারা ২",
+            "status": "source_attested",
+            "source_span": {
+              "role": "paragraph",
+              "text": "আয়কর আইন , ২০২৩ ( ২০২৩ সনের ১২ নং আইন ) এর ধারা ২ ( ৬৯ ) এ সংজ্ঞায়িত",
+              "char_end": 254999,
+              "char_start": 254929,
+              "provenance": "exact_source_span"
+            }
+          }
+        ],
+        "heading_path": [],
+        "section_title": null,
+        "provision_references": [
+          "ধারা ২"
+        ],
+        "structure_version": "structure.v1",
+        "structural_unit_id": "8ddcd6670c6f476699cb53f7e5625ae1b3deba34abb2ab932ebd8b38d55d0ff8",
+        "table_context_status": "preserved",
+        "source_spans": [
+          {
+            "role": "paragraph",
+            "text": "গণ",
+            "char_end": 49,
+            "char_start": 47,
+            "provenance": "exact_source_span"
+          },
+          {
+            "role": "paragraph",
+            "text": "এবং",
+            "char_end": 2781,
+            "char_start": 2778,
+            "provenance": "exact_source_span"
+          },
+          {
+            "role": "paragraph",
+            "text": "হইবে , যথা : -",
+            "char_end": 7124,
+            "char_start": 7110,
+            "provenance": "exact_source_span"
+          },
+          {
+            "role": "paragraph",
+            "text": "হইবে , যথা : -",
+            "char_end": 11043,
+            "char_start": 11029,
+            "provenance": "exact_source_span"
+          },
+          {
+            "role": "paragraph",
+            "text": "যথা : -",
+            "char_end": 11494,
+            "char_start": 11487,
+            "provenance": "exact_source_span"
+          },
+          {
+            "role": "paragraph",
+            "text": "হইবে , যথা : -",
+            "char_end": 16350,
+            "char_start": 16336,
+            "provenance": "exact_source_span"
+          },
+          {
+            "role": "paragraph",
+            "text": "পর্যন্ত",
+            "char_end": 68153,
+            "char_start": 68146,
+            "provenance": "exact_source_span"
+          },
+          {
+            "role": "paragraph",
+            "text": "এর",
+            "char_end": 76124,
+            "char_start": 76122,
+            "provenance": "exact_source_span"
+          },
+          {
+            "role": "paragraph",
+            "text": "যথা : -",
+            "char_end": 76297,
+            "char_start": 76290,
+            "provenance": "exact_source_span"
+          },
+          {
+            "role": "paragraph",
+            "text": "যথা :",
+            "char_end": 77729,
+            "char_start": 77724,
+            "provenance": "exact_source_span"
+          },
+          {
+            "role": "paragraph",
+            "text": "হইবে , যথা : -",
+            "char_end": 110676,
+            "char_start": 110662,
+            "provenance": "exact_source_span"
+          },
+          {
+            "role": "paragraph",
+            "text": "হইবে , যথা : -",
+            "char_end": 118104,
+            "char_start": 118090,
+            "provenance": "exact_source_span"
+          },
+          {
+            "role": "paragraph",
+            "text": "যথা : -",
+            "char_end": 121527,
+            "char_start": 121520,
+            "provenance": "exact_source_span"
+          },
+          {
+            "role": "paragraph",
+            "text": "যথা :",
+            "char_end": 129189,
+            "char_start": 129184,
+            "provenance": "exact_source_span"
+          },
+          {
+            "role": "paragraph",
+            "text": "হইবে , যথা : -",
+            "char_end": 133146,
+            "char_start": 133132,
+            "provenance": "exact_source_span"
+          },
+          {
+            "role": "paragraph",
+            "text": "যথা : -",
+            "char_end": 133687,
+            "char_start": 133680,
+            "provenance": "exact_source_span"
+          },
+          {
+            "role": "paragraph",
+            "text": "হইবে , যথা : -",
+            "char_end": 134088,
+            "char_start": 134074,
+            "provenance": "exact_source_span"
+          },
+          {
+            "role": "paragraph",
+            "text": "এর",
+            "char_end": 144175,
+            "char_start": 144173,
+            "provenance": "exact_source_span"
+          },
+          {
+            "role": "paragraph",
+            "text": "হইবে , যথা : -",
+            "char_end": 144797,
+            "char_start": 144783,
+            "provenance": "exact_source_span"
+          },
+          {
+            "role": "paragraph",
+            "text": "এর",
+            "char_end": 145525,
+            "char_start": 145523,
+            "provenance": "exact_source_span"
+          },
+          {
+            "role": "paragraph",
+            "text": "যথা : -",
+            "char_end": 148107,
+            "char_start": 148100,
+            "provenance": "exact_source_span"
+          },
+          {
+            "role": "paragraph",
+            "text": "এর",
+            "char_end": 148646,
+            "char_start": 148644,
+            "provenance": "exact_source_span"
+          },
+          {
+            "role": "paragraph",
+            "text": "এর",
+            "char_end": 153931,
+            "char_start": 153929,
+            "provenance": "exact_source_span"
+          },
+          {
+            "role": "paragraph",
+            "text": "এর",
+            "char_end": 154892,
+            "char_start": 154890,
+            "provenance": "exact_source_span"
+          },
+          {
+            "role": "paragraph",
+            "text": "এর",
+            "char_end": 155850,
+            "char_start": 155848,
+            "provenance": "exact_source_span"
+          },
+          {
+            "role": "paragraph",
+            "text": "যথা : -",
+            "char_end": 156690,
+            "char_start": 156683,
+            "provenance": "exact_source_span"
+          },
+          {
+            "role": "paragraph",
+            "text": "ক্ষেত্রে",
+            "char_end": 159574,
+            "char_start": 159566,
+            "provenance": "exact_source_span"
+          },
+          {
+            "role": "paragraph",
+            "text": "এর",
+            "char_end": 163130,
+            "char_start": 163128,
+            "provenance": "exact_source_span"
+          },
+          {
+            "role": "paragraph",
+            "text": "এর",
+            "char_end": 166740,
+            "char_start": 166738,
+            "provenance": "exact_source_span"
+          },
+          {
+            "role": "paragraph",
+            "text": "হইবে , যথা :",
+            "char_end": 169149,
+            "char_start": 169137,
+            "provenance": "exact_source_span"
+          },
+          {
+            "role": "paragraph",
+            "text": "এর",
+            "char_end": 169527,
+            "char_start": 169525,
+            "provenance": "exact_source_span"
+          },
+          {
+            "role": "paragraph",
+            "text": "এর",
+            "char_end": 172082,
+            "char_start": 172080,
+            "provenance": "exact_source_span"
+          },
+          {
+            "role": "paragraph",
+            "text": "এর",
+            "char_end": 173919,
+            "char_start": 173917,
+            "provenance": "exact_source_span"
+          },
+          {
+            "role": "paragraph",
+            "text": "এর",
+            "char_end": 175151,
+            "char_start": 175149,
+            "provenance": "exact_source_span"
+          },
+          {
+            "role": "paragraph",
+            "text": "এর",
+            "char_end": 178744,
+            "char_start": 178742,
+            "provenance": "exact_source_span"
+          },
+          {
+            "role": "paragraph",
+            "text": "এর",
+            "char_end": 179263,
+            "char_start": 179261,
+            "provenance": "exact_source_span"
+          },
+          {
+            "role": "paragraph",
+            "text": "যথা :",
+            "char_end": 179351,
+            "char_start": 179346,
+            "provenance": "exact_source_span"
+          },
+          {
+            "role": "paragraph",
+            "text": "এর",
+            "char_end": 181012,
+            "char_start": 181010,
+            "provenance": "exact_source_span"
+          },
+          {
+            "role": "paragraph",
+            "text": "যথা : -",
+            "char_end": 182380,
+            "char_start": 182373,
+            "provenance": "exact_source_span"
+          },
+          {
+            "role": "paragraph",
+            "text": "এর",
+            "char_end": 183061,
+            "char_start": 183059,
+            "provenance": "exact_source_span"
+          },
+          {
+            "role": "paragraph",
+            "text": "এর",
+            "char_end": 184213,
+            "char_start": 184211,
+            "provenance": "exact_source_span"
+          },
+          {
+            "role": "paragraph",
+            "text": "যথা : -",
+            "char_end": 184683,
+            "char_start": 184676,
+            "provenance": "exact_source_span"
+          },
+          {
+            "role": "paragraph",
+            "text": "এর",
+            "char_end": 187503,
+            "char_start": 187501,
+            "provenance": "exact_source_span"
+          },
+          {
+            "role": "paragraph",
+            "text": "এর",
+            "char_end": 188404,
+            "char_start": 188402,
+            "provenance": "exact_source_span"
+          },
+          {
+            "role": "paragraph",
+            "text": "এর",
+            "char_end": 188671,
+            "char_start": 188669,
+            "provenance": "exact_source_span"
+          },
+          {
+            "role": "paragraph",
+            "text": "এর",
+            "char_end": 193026,
+            "char_start": 193024,
+            "provenance": "exact_source_span"
+          },
+          {
+            "role": "paragraph",
+            "text": "এর",
+            "char_end": 194052,
+            "char_start": 194050,
+            "provenance": "exact_source_span"
+          },
+          {
+            "role": "paragraph",
+            "text": "এর",
+            "char_end": 197598,
+            "char_start": 197596,
+            "provenance": "exact_source_span"
+          },
+          {
+            "role": "paragraph",
+            "text": "এর",
+            "char_end": 198095,
+            "char_start": 198093,
+            "provenance": "exact_source_span"
+          },
+          {
+            "role": "paragraph",
+            "text": "যথা :",
+            "char_end": 198189,
+            "char_start": 198184,
+            "provenance": "exact_source_span"
+          },
+          {
+            "role": "paragraph",
+            "text": "এর",
+            "char_end": 201104,
+            "char_start": 201102,
+            "provenance": "exact_source_span"
+          },
+          {
+            "role": "paragraph",
+            "text": "এর",
+            "char_end": 201672,
+            "char_start": 201670,
+            "provenance": "exact_source_span"
+          },
+          {
+            "role": "paragraph",
+            "text": "এর",
+            "char_end": 203236,
+            "char_start": 203234,
+            "provenance": "exact_source_span"
+          },
+          {
+            "role": "paragraph",
+            "text": "যথা : -",
+            "char_end": 203332,
+            "char_start": 203325,
+            "provenance": "exact_source_span"
+          },
+          {
+            "role": "paragraph",
+            "text": "এর",
+            "char_end": 204241,
+            "char_start": 204239,
+            "provenance": "exact_source_span"
+          },
+          {
+            "role": "paragraph",
+            "text": "যথা :",
+            "char_end": 206698,
+            "char_start": 206693,
+            "provenance": "exact_source_span"
+          },
+          {
+            "role": "paragraph",
+            "text": "বা",
+            "char_end": 207107,
+            "char_start": 207105,
+            "provenance": "exact_source_span"
+          },
+          {
+            "role": "paragraph",
+            "text": "যথা :",
+            "char_end": 211923,
+            "char_start": 211918,
+            "provenance": "exact_source_span"
+          },
+          {
+            "role": "paragraph",
+            "text": "হইবে , যথা : -",
+            "char_end": 215273,
+            "char_start": 215259,
+            "provenance": "exact_source_span"
+          },
+          {
+            "role": "paragraph",
+            "text": "হইবে , যথা : -",
+            "char_end": 216599,
+            "char_start": 216585,
+            "provenance": "exact_source_span"
+          },
+          {
+            "role": "paragraph",
+            "text": "হইবে , যথা : -",
+            "char_end": 222770,
+            "char_start": 222756,
+            "provenance": "exact_source_span"
+          },
+          {
+            "role": "paragraph",
+            "text": "এর",
+            "char_end": 224105,
+            "char_start": 224103,
+            "provenance": "exact_source_span"
+          },
+          {
+            "role": "paragraph",
+            "text": "যথা :",
+            "char_end": 246666,
+            "char_start": 246661,
+            "provenance": "exact_source_span"
+          },
+          {
+            "role": "paragraph",
+            "text": "যথা :",
+            "char_end": 248477,
+            "char_start": 248472,
+            "provenance": "exact_source_span"
+          },
+          {
+            "role": "paragraph",
+            "text": "২০২৬-২০২৭ এবং ২০২৭-২০২৮ করবর্ষের জন্য করহার",
+            "char_end": 254927,
+            "char_start": 254884,
+            "provenance": "exact_source_span"
+          },
+          {
+            "role": "paragraph",
+            "text": "আয়কর আইন , ২০২৩ ( ২০২৩ সনের ১২ নং আইন ) এর ধারা ২ ( ৬৯ ) এ সংজ্ঞায়িত",
+            "char_end": 254999,
+            "char_start": 254929,
+            "provenance": "exact_source_span"
+          },
+          {
+            "role": "paragraph",
+            "text": "ব্যক্তিগণের ( persons ) মধ্যে অনিবাসী বাংলাদেশিসহ সকল স্বাভাবিক ব্যক্তি ( individual ) ও হিন্দু",
+            "char_end": 255096,
+            "char_start": 255001,
+            "provenance": "exact_source_span"
+          },
+          {
+            "role": "paragraph",
+            "text": "অবিভক্ত পরিবারের ক্ষেত্রে মোট আয়ের উপর করহার নিম্নরূপ হইবে , যথা : -",
+            "char_end": 255167,
+            "char_start": 255098,
+            "provenance": "exact_source_span"
+          },
+          {
+            "role": "table",
+            "text": "অবিভক্ত পরিবারের ক্ষেত্রে মোট আয়ের উপর করহার নিম্নরূপ হইবে , যথা : -\nকরধাপ | করহার\n৪,০০,০০০ টাকা পর্যন্ত | শূন্য\nপরবর্তী ৩,০০,০০০ টাকা পর্যন্ত | ১০ %\nপরবর্তী ৪,০০,০০০ টাকা পর্যন্ত | ১৫ %\nপরবর্তী ৫,০০,০০০ টাকা পর্যন্ত | ২০ %\nপরবর্তী ২০,০০,০০০ টাকা পর্যন্ত | 25 %\nঅবশিষ্ট টাকার উপর | ৩০ %",
+            "char_end": 255456,
+            "char_start": 255169,
+            "provenance": "exact_source_span"
+          },
+          {
+            "role": "paragraph",
+            "text": "পরিবারের ক্ষেত্রে মোট আয়ের উপর করহার নিম্নরূপ হইবে , যথা : -",
+            "char_end": 256712,
+            "char_start": 256651,
+            "provenance": "exact_source_span"
+          },
+          {
+            "role": "paragraph",
+            "text": "পরিবারের ক্ষেত্রে মোট আয়ের উপর করহার নিম্নরূপ হইবে , যথা : -",
+            "char_end": 258282,
+            "char_start": 258221,
+            "provenance": "exact_source_span"
+          },
+          {
+            "role": "paragraph",
+            "text": "নিম্নরূপ হইবে , যথা : -",
+            "char_end": 259936,
+            "char_start": 259913,
+            "provenance": "exact_source_span"
+          },
+          {
+            "role": "paragraph",
+            "text": "যথা :",
+            "char_end": 264093,
+            "char_start": 264088,
+            "provenance": "exact_source_span"
+          }
+        ],
+        "project_id": "2ee2756f-ad27-44df-a9d3-1316b10ccbb1",
+        "index_build_id": "c75f7019-f94b-4435-9036-e9cf59ae216b",
+        "source_metadata_generation": 35,
+        "source_revision_id": "5cbc03f1-e683-4066-917b-4fb27ea15012",
+        "source_title": "Finance Act 2026 - amendments to Income Tax Act 2023",
+        "source_lifecycle_status": "active",
+        "source_role": "primary"
+      }
+    }
+  ]
+}

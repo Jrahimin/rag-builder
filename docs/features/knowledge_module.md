@@ -119,3 +119,11 @@ python worker.py
 - [Retrieval](./retrieval_module.md) — embed → index → search (`chunked` → `ready`)
 - [API reference](../api/knowledge_api.md)
 - [Plan](../plans/knowledge_module_plan.md)
+
+
+Governed source selection treats assessment/fiscal labels as exact typed identities.
+An explicitly attested legal-period range is distinct from a single-year label.
+Multi-period replacement matching operates across pinned chunks within one document;
+only a replacement covering every requested period may suppress the previous edition.
+Known-at publication availability is checked independently of legal applicability.
+See [source governance](source_governance.md) for activation history and proof limits.

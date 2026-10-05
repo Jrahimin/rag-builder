@@ -22,6 +22,46 @@ from app.platform.providers.contracts.embedding import (
 pytestmark = pytest.mark.unit
 
 
+class _ApprovedAssertionEntailment:
+    """Reviewed semantic fixture assertions; embeddings retain only locator role."""
+
+    def __init__(self, assertions):
+        self.assertions = set(assertions)
+
+    async def verify(self, inputs):
+        return [
+            "supported" if item["assertion"] in self.assertions else "unverified" for item in inputs
+        ]
+
+
+def test_indic_grouping_and_scaled_amounts_have_one_numeric_value() -> None:
+    from app.modules.conversations.grounding_service import _amount_set, _currency_amounts
+
+    expected = {750000.0}
+    assert _amount_set("BDT 750,000") == expected
+    assert _amount_set("৳\u09ed,\u09eb\u09e6,\u09e6\u09e6\u09e6") == expected
+    assert _amount_set("7.50 lakh") == expected
+    assert _amount_set("7.50 lac") == expected
+    assert _amount_set("\u09ed.\u09eb\u09e6 লক্ষ") == expected
+    assert _currency_amounts("৳\u09ed,\u09eb\u09e6,\u09e6\u09e6\u09e6") == expected
+    assert _currency_amounts("Tk 7.50 lac") == expected
+    assert _currency_amounts("Tk 7.50lac") == expected
+
+
+@pytest.mark.parametrize(
+    ("claim_amount", "expected"),
+    [("7.50 lac", "supported"), ("8.50 lac", "unsupported")],
+)
+async def test_scaled_currency_claim_checks_grouped_source_amount(
+    claim_amount: str, expected: str
+) -> None:
+    result = await GroundingService(ChatConfig(minimum_claim_token_coverage=0.3)).map_claims(
+        f"The rebate cap is Tk {claim_amount}. [1]",
+        [_chunk(content="The rebate cap is Tk \u09ed,\u09eb\u09e6,\u09e6\u09e6\u09e6.")],
+    )
+    assert result.claims[0]["verification"] == expected
+
+
 async def test_citation_range_separator_is_not_a_factual_claim() -> None:
     result = await GroundingService(ChatConfig()).map_claims(
         "[1]\u2013[2]", [_chunk(content="First source."), _chunk(content="Second source.")]
@@ -73,12 +113,33 @@ def test_currency_spellings_do_not_truncate_compound_amounts(source: str) -> Non
         ("৫০০ (পাঁচশত) টাকা", {500.0}),
         ("Tk 1 thousand", {1000.0}),
         ("৫০ (ষাট) টাকা", set()),
+        ("৭.৫০ (সাত দশমিক পাঁচ শূন্য) লক্ষ টাকা", {750000.0}),  # noqa: RUF001
+        ("৭.৫০ (সাত দশমিক ছয় শূন্য) লক্ষ টাকা", set()),  # noqa: RUF001
     ],
 )
 def test_numeric_currency_scale_and_parenthetical_spellout(source, expected):
     from app.modules.conversations.grounding_service import _currency_amounts
 
     assert _currency_amounts(source) == expected
+
+
+def test_enumerated_bengali_rebate_cap_remains_bound_to_rebate_rule() -> None:
+    from app.modules.conversations.grounding_service import (
+        _evidence_money_amounts,
+        _quantity_aligned_evidence,
+    )
+
+    source = (
+        "Section ৭৮ - সাধারণ কর রেয়াত\n"
+        "নিবাসী স্বাভাবিক ব্যক্তি করদাতা কর রেয়াত প্রাপ্য হইবেন-\n"
+        "(ক) ০.০৩ × ‘ক’; বা\n"  # noqa: RUF001
+        "(খ) [footnote 205][০.১০] × ‘খ’; বা\n"  # noqa: RUF001
+        "(গ) [footnote 206][৭.৫০ (সাত দশমিক পাঁচ শূন্য)] লক্ষ টাকা,"  # noqa: RUF001
+    )
+    claim = "The rebate is the lowest of 3%, 10%, or Tk 7.5 lakh."
+    aligned = _quantity_aligned_evidence(claim, [source])
+
+    assert _evidence_money_amounts(" ".join(aligned), claim=claim) == {750000}
 
 
 @pytest.mark.parametrize("amount", [100, 200])
@@ -252,6 +313,20 @@ async def test_table_header_is_structural_but_data_rows_are_still_checked() -> N
     assert len(result.claims) == 1
     assert "500,000" in result.claims[0]["text"]
     assert result.claims[0]["verification"] == "unsupported"
+
+
+def test_bengali_first_zero_rate_row_binds_english_tax_free_amount() -> None:
+    from decimal import Decimal
+
+    from app.modules.conversations.grounding_service import (
+        _evidence_money_amounts,
+        _quantity_aligned_evidence,
+    )
+
+    source = "মোট আয় | করহার\nপ্রথম ৪,০০,০০০ টাকা পর্যন্ত | শূন্য\nপরবর্তী ৩,০০,০০০ টাকা পর্যন্ত | ১০ %"  # noqa: RUF001
+    claim = "The tax-free income limit is Tk 400,000: the first band is taxed at 0%."
+    aligned = _quantity_aligned_evidence(claim, [source])
+    assert _evidence_money_amounts(" ".join(aligned), claim=claim) == {Decimal(400000)}
 
 
 @pytest.mark.parametrize(
@@ -687,7 +762,13 @@ async def test_list_preamble_is_not_a_claim() -> None:
     table = "সঞ্চয়পত্র হইতে অর্জিত মুনাফা সম্পত্তির অধিগ্রহণ রপ্তানির বিপরীতে মোটরযান"
     claim = "Source tax categories include savings certificates and property acquisition."
     service = GroundingService(
-        ChatConfig(minimum_claim_token_coverage=0.3),
+        entailment=_ApprovedAssertionEntailment(
+            {
+                claim,
+                "The source tax deduction/collection areas are: " + claim,
+            }
+        ),
+        config=ChatConfig(minimum_claim_token_coverage=0.3),
         embedder=_cluster_embedder({claim: "table", table: "table"}),
     )
 
@@ -906,6 +987,7 @@ async def test_bounded_citations_support_a_displayed_calculation_block() -> None
                 )
             )
         ],
+        user_input="BDT 60,000 eligible investment",
     )
 
     calculation = next(claim for claim in result.claims if "6,000**" in claim["text"])
@@ -944,6 +1026,7 @@ async def test_contiguous_uncited_list_block_inherits_neighbor_citations() -> No
         "- Rebate: 60,000 \u00d7 10% = **BDT 6,000**\n\n"
         "Therefore, the rebate is BDT 6,000. [1]",
         [_chunk(content="The investment rebate rate is 10%. The rebate is BDT 6,000.")],
+        user_input="BDT 60,000 eligible investment",
     )
 
     texts = [claim["text"] for claim in result.claims]
@@ -960,6 +1043,7 @@ async def test_uncited_calculation_inherits_from_cited_rate() -> None:
         "Eligible investment: BDT 60,000\n\n"
         "60,000 \u00d7 10% = BDT 6,000.",
         [_chunk(content="The current investment rebate is 10% of eligible investment.")],
+        user_input="BDT 60,000 eligible investment",
     )
 
     calculation = next(claim for claim in result.claims if "\u00d7" in claim["text"])
@@ -972,6 +1056,7 @@ async def test_rate_first_calculation_is_arithmetically_verified() -> None:
     result = await service.map_claims(
         "10% of BDT 90,000 = BDT 9,000. [1]",
         [_chunk(content="The current investment rebate is 10% of eligible investment.")],
+        user_input="BDT 90,000 eligible investment",
     )
 
     assert result.claims[0]["verification"] == "supported"
@@ -985,6 +1070,7 @@ async def test_conclusion_uses_setup_base_with_cited_rate() -> None:
         "Eligible investment: BDT 75,000\n\n"
         "Therefore, the rebate is BDT 7,500.",
         [_chunk(content="The current investment rebate is 10% of eligible investment.")],
+        user_input="BDT 75,000 eligible investment",
     )
 
     conclusion = next(claim for claim in result.claims if "7,500" in claim["text"])
@@ -997,6 +1083,7 @@ async def test_using_your_investment_restatement_is_setup() -> None:
     result = await service.map_claims(
         "Using your eligible investment of BDT 75,000.\n\n75,000 \u00d7 10% = BDT 7,500. [1]",
         [_chunk(content="The current investment rebate is 10% of eligible investment.")],
+        user_input="BDT 75,000 eligible investment",
     )
 
     assert all("Using your eligible investment" not in claim["text"] for claim in result.claims)
@@ -1027,6 +1114,7 @@ async def test_currency_prefixed_result_is_arithmetically_verified() -> None:
     result = await service.map_claims(
         "60,000 \u00d7 10% = BDT 6,000. [1]",
         [_chunk(content="The current investment rebate is 10% of eligible investment.")],
+        user_input="BDT 60,000 eligible investment",
     )
 
     assert result.claims[0]["verification"] == "supported"
@@ -1039,6 +1127,7 @@ async def test_bangla_conclusion_inherits_from_adjacent_cited_calculation() -> N
         "বর্তমান নিয়মে ৬০,০০০ টাকা যোগ্য বিনিয়োগের রিবেট **৬,০০০ টাকা**।\n\n"  # noqa: RUF001
         "হিসাব: ৬০,০০০ \u00d7 ১০% = **৬,০০০ টাকা**। [1]",  # noqa: RUF001
         [_chunk(content="The current investment rebate is 10% of eligible investment.")],
+        user_input="BDT 60,000 eligible investment",
     )
 
     assert len(result.claims) == 2
@@ -1064,6 +1153,7 @@ async def test_result_only_conclusion_inherits_from_adjacent_cited_calculation()
         "- Rebate: ৭৫,০০০ \u00d7 ১০% = **৭,৫০০ টাকা** [1]\n\n"  # noqa: RUF001
         "অতএব, আপনার rebate হবে **৭,৫০০ টাকা**।",  # noqa: RUF001
         [_chunk(content="The current investment rebate is 10% of eligible investment.")],
+        user_input="BDT 75,000 eligible investment",
     )
 
     conclusion = next(claim for claim in result.claims if "অতএব" in claim["text"])
@@ -1091,6 +1181,7 @@ async def test_bangla_digit_calculation_is_supported_against_english_rate() -> N
     result = await service.map_claims(
         "গণনা: **৭৫,০০০ \u00d7 ১০% = ৭,৫০০ টাকা** [1]",  # noqa: RUF001
         [_chunk(content="The current investment rebate is 10% of eligible investment.")],
+        user_input="BDT 75,000 eligible investment",
     )
 
     assert result.claims[0]["verification"] == "supported"
@@ -1172,7 +1263,8 @@ async def test_en_claim_to_matching_bn_evidence_is_supported() -> None:
         "exports, and vehicles."
     )
     service = GroundingService(
-        ChatConfig(minimum_claim_token_coverage=0.3),
+        entailment=_ApprovedAssertionEntailment({claim}),
+        config=ChatConfig(minimum_claim_token_coverage=0.3),
         embedder=_cluster_embedder({claim: "table", table: "table"}),
     )
 
@@ -1207,7 +1299,8 @@ async def test_english_purchases_claim_is_supported_by_bangla_span() -> None:
     purchases = "Companies must keep records of purchases and sales."
     assets = "Companies must keep records of assets and liabilities."
     service = GroundingService(
-        ChatConfig(minimum_claim_token_coverage=0.3),
+        entailment=_ApprovedAssertionEntailment({purchases, assets}),
+        config=ChatConfig(minimum_claim_token_coverage=0.3),
         embedder=_cluster_embedder(
             {
                 purchases: "records",
@@ -1965,7 +2058,8 @@ async def test_late_sentence_in_a_long_chunk_can_support_a_short_english_claim()
     evidence = f"{filler} {target}"
     claim = "Companies must keep records of purchases and sales."
     service = GroundingService(
-        ChatConfig(minimum_claim_token_coverage=0.3),
+        entailment=_ApprovedAssertionEntailment({claim}),
+        config=ChatConfig(minimum_claim_token_coverage=0.3),
         embedder=_cluster_embedder({claim: "table", target: "table"}),
     )
     result = await service.map_claims(f"{claim} [1]", [_chunk(content=evidence)])
@@ -2384,7 +2478,8 @@ async def test_english_paraphrase_of_cited_english_evidence_is_supported() -> No
     evidence = "Customer refunds are available for thirty days after purchase."
     claim = "Buyers can get their money back within a month of buying."
     service = GroundingService(
-        ChatConfig(minimum_claim_token_coverage=0.35),
+        entailment=_ApprovedAssertionEntailment({claim}),
+        config=ChatConfig(minimum_claim_token_coverage=0.35),
         embedder=_cluster_embedder({claim: "refund", evidence: "refund"}),
     )
 
@@ -2762,7 +2857,8 @@ async def test_bilingual_duration_is_bound_to_filing_not_appeal(days: int, expec
     claim = f"The filing deadline is {days} days."
     evidence = "রিটার্ন ৩০ দিনের মধ্যে দাখিল করতে হবে এবং আপিলের সময়সীমা ৯০ দিন।"
     result = await GroundingService(
-        ChatConfig(minimum_claim_semantic_score=0.7),
+        entailment=_ApprovedAssertionEntailment({"The filing deadline is 30 days."}),
+        config=ChatConfig(minimum_claim_semantic_score=0.7),
         embedder=_cluster_embedder({claim: "filing", evidence: "filing"}),
     ).map_claims(f"{claim} [1]", [_chunk(content=evidence)])
 
@@ -3133,3 +3229,29 @@ def test_separate_cited_runs_do_not_borrow_the_last_source() -> None:
         "First duty. First condition. [1] Second duty. Second condition. [2]"
     )
     assert [_citation_indexes(segment) for segment in segments] == [[1], [1], [2], [2]]
+
+
+@pytest.mark.parametrize(
+    "evidence",
+    [
+        "The annual fee for 2026 is Tk 500.",
+        "The annual fee for 2,026 employees is Tk 500.",
+        "The annual fee after 2026 days is Tk 500.",
+        "The annual fee after 2026% adjustment is Tk 500.",
+    ],
+)
+async def test_money_claim_cannot_borrow_year_count_duration_or_percent(
+    evidence: str,
+) -> None:
+    result = await GroundingService(ChatConfig()).map_claims(
+        "The annual fee is Tk 2026. [1]", [_chunk(content=evidence)]
+    )
+    assert result.claims[0]["verification"] == "unsupported"
+
+
+async def test_bare_bengali_money_and_scaled_claim_still_match() -> None:
+    result = await GroundingService(ChatConfig()).map_claims(
+        "The rebate cap is Tk 7.50 lac. [1]",
+        [_chunk(content="The rebate cap is \u09ed,\u09eb\u09e6,\u09e6\u09e6\u09e6.")],
+    )
+    assert result.claims[0]["verification"] == "supported"

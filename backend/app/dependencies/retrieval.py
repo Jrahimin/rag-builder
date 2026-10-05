@@ -53,6 +53,7 @@ def query_embedder_factory_for(settings: Settings) -> QueryEmbedderFactory:
             provider=identity.provider,
             model=identity.model,
             dimensions=identity.dimensions,
+            embedding_set_version=identity.embedding_set_version,
         )
 
     return factory

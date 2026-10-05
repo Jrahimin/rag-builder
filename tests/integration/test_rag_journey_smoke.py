@@ -281,6 +281,7 @@ async def test_tax_journey_subset_uses_production_diagnostics_and_cleans_up(
                 artifact_root=tmp_path / "artifacts",
                 configured_job_backend="inline",
             ),
+            acceptance_driver=_accept_isolated_fixture_build,
         )
     finally:
         get_settings.cache_clear()
@@ -398,6 +399,7 @@ async def test_business_journey_subset_ingests_and_cleans_up(
                 artifact_root=tmp_path / "artifacts",
                 configured_job_backend="inline",
             ),
+            acceptance_driver=_accept_isolated_fixture_build,
         )
     finally:
         get_settings.cache_clear()
@@ -453,6 +455,7 @@ async def test_business_sequence_harness_reuses_one_conversation(
                 artifact_root=tmp_path / "artifacts",
                 configured_job_backend="inline",
             ),
+            acceptance_driver=_accept_isolated_fixture_build,
         )
     finally:
         get_settings.cache_clear()
@@ -469,6 +472,24 @@ async def test_business_sequence_harness_reuses_one_conversation(
     assert sequence_cases[0]["conversation_id"] == sequence_cases[1]["conversation_id"]
     assert sequence_cases[1]["blocked"] is False
     await _assert_project_purged(settings, result["project_id"])
+
+
+async def _accept_isolated_fixture_build(session, project_id, build_id) -> None:
+    from app.models.index_build import IndexBuild, IndexBuildState
+    from app.modules.retrieval.workflows.index_build_workflow import activate_index_build
+    from tests.integration.build_acceptance_helpers import attest_fixture_build
+
+    project = await session.get(Project, project_id)
+    assert (
+        project is not None
+        and "Temporary local RAG journey project; run_token=" in project.description
+    )
+    build = await session.get(IndexBuild, build_id)
+    assert build is not None and build.project_id == project_id
+    if build.state is IndexBuildState.ACTIVE:
+        return
+    await attest_fixture_build(session, project_id, build_id)
+    await activate_index_build(session, project_id, build)
 
 
 async def _assert_project_purged(settings: Settings, project_id_value: str) -> None:

@@ -34,7 +34,13 @@ os.environ.setdefault("APE_LOGGING__RENDER_JSON", "false")
 _test_storage_root = Path(tempfile.mkdtemp(prefix="ape_test_storage_"))
 os.environ.setdefault("APE_STORAGE__BACKEND", "local")
 os.environ.setdefault("APE_STORAGE__LOCAL_ROOT", str(_test_storage_root))
-os.environ.setdefault("APE_EMBEDDING__BACKEND", "hash")
+os.environ["APE_LLM__BACKEND"] = "echo"
+os.environ["APE_EMBEDDING__BACKEND"] = "hash"
+os.environ["APE_RETRIEVAL__RERANKER_BACKEND"] = "noop"
+os.environ["APE_PROVIDER_COSTS__ENABLED"] = "false"
+os.environ["APE_PROVIDER_COSTS__CACHE_ENABLED"] = "false"
+os.environ["APE_PROVIDER_COSTS__ENFORCE_BUDGETS"] = "false"
+os.environ["APE_PROVIDER_COSTS__BUILD_COALESCE_SECONDS"] = "0"
 os.environ.setdefault("APE_EMBEDDING__DIMENSIONS", "1024")
 os.environ.setdefault("APE_RETRIEVAL__AUTO_BUILD_AFTER_PROCESS", "false")
 os.environ.setdefault("APE_JOBS__DISPATCHER_ENABLED", "false")
@@ -230,3 +236,26 @@ async def db_client(
     await transaction.rollback()
     await connection.close()
     await database.dispose()
+
+
+@pytest.fixture(autouse=True)
+def block_paid_http_transport(monkeypatch: pytest.MonkeyPatch):
+    """Mock/ASGI transports still work; real external HTTP is forbidden in ordinary tests."""
+    import httpx
+
+    original = httpx.AsyncHTTPTransport.handle_async_request
+
+    async def guarded(self, request):
+        if request.url.host not in {"localhost", "127.0.0.1", "::1"}:
+            raise AssertionError("Ordinary tests cannot contact external HTTP providers")
+        return await original(self, request)
+
+    original_sync = httpx.HTTPTransport.handle_request
+
+    def guarded_sync(self, request):
+        if request.url.host not in {"localhost", "127.0.0.1", "::1"}:
+            raise AssertionError("Ordinary tests cannot contact external HTTP providers")
+        return original_sync(self, request)
+
+    monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", guarded)
+    monkeypatch.setattr(httpx.HTTPTransport, "handle_request", guarded_sync)
