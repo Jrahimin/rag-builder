@@ -32,7 +32,14 @@ async def test_http_scope_stays_attached_through_sse_delivery_and_resets():
         observed.append(current_provider_scope())
 
     instance = SimpleNamespace(
-        state=SimpleNamespace(settings=settings, db=SimpleNamespace(session_factory=MagicMock()))
+        state=SimpleNamespace(
+            settings=settings,
+            db=SimpleNamespace(
+                session_factory=MagicMock(),
+                provider_accounting_session_factory=MagicMock(),
+                provider_cache_session_factory=MagicMock(),
+            ),
+        )
     )
     await ProviderWorkMiddleware(app)(
         {
@@ -69,6 +76,7 @@ def test_inline_qa_child_jobs_share_parent_budget_and_reset_scope():
             assert child.reference == "whole-run"
             assert child.workload == "evaluation"
             assert child.config is parent.config
+            assert child.store is parent.store
         assert current_provider_scope() is parent
     assert current_provider_scope() is None
 
@@ -114,3 +122,30 @@ def test_cli_requires_paid_flag_even_when_deployment_allows_evaluation(monkeypat
     monkeypatch.setattr(rag_journey_cli, "run_journey", run)
     assert rag_journey_cli.main([]) == 2
     run.assert_not_awaited()
+
+
+async def test_database_owns_lazy_provider_pools_and_closes_every_pool_on_shutdown(monkeypatch):
+    from sqlalchemy.ext.asyncio import AsyncEngine
+
+    from app.platform.db import session as module
+
+    engines = [MagicMock(spec=AsyncEngine) for _ in range(3)]
+    for engine in engines:
+        engine.dispose = AsyncMock()
+    factory = MagicMock(side_effect=engines)
+    monkeypatch.setattr(module, "create_async_engine", factory)
+    database = module.Database(Settings())
+    assert factory.call_count == 1
+    cache = database.provider_cache_session_factory
+    accounting = database.provider_accounting_session_factory
+    assert cache is database.provider_cache_session_factory
+    assert accounting is database.provider_accounting_session_factory
+    assert cache.kw["bind"] is not accounting.kw["bind"]
+    assert factory.call_count == 3
+    for call in factory.call_args_list[1:]:
+        assert call.kwargs["pool_size"] == 2 and call.kwargs["max_overflow"] == 0
+    engines[1].dispose.side_effect = RuntimeError("cache dispose failed")
+    with pytest.raises(RuntimeError, match="cache dispose failed"):
+        await database.dispose()
+    for engine in engines:
+        engine.dispose.assert_awaited_once()

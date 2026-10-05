@@ -12,6 +12,7 @@ from typing import Any, cast
 
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import set_committed_value
 
 from app.core.config import (
     ChatConfig,
@@ -93,10 +94,10 @@ from app.modules.conversations.services.message_execution_runner_service import 
 from app.modules.conversations.turn_resolution import (
     RequestFilters,
     normalize_request_scope,
+    requires_complex_execution_budget,
 )
 from app.platform.audit.contracts import AuditActorType, AuditEventType, AuditOutcome, AuditRecorder
 from app.platform.domain.lifecycle_service import get_or_raise, require_not_deleted
-from app.platform.domain.transactions import commit_refresh
 from app.platform.providers.contracts.embedding import BaseEmbeddingProvider
 from app.platform.providers.contracts.llm import BaseLLMProvider
 from app.platform.providers.contracts.web_search import (
@@ -237,6 +238,7 @@ class ChatService:
         conversation_id: uuid.UUID,
         request: MessageSendRequest,
     ) -> ChatTurnResponse:
+        self._begin_turn_work()
         with self._work.attached():
             self._work.evidence_snapshot.update(
                 {
@@ -254,9 +256,17 @@ class ChatService:
                     ).model_dump(mode="json"),
                 }
             )
-            self._work.deadline = min(self._work.deadline, self._work.started + 50.0)
+            self._work.configure_execution(
+                self._chat_config.execution_policy,
+                complex_question=requires_complex_execution_budget(
+                    normalize_request_scope(request.content)
+                ),
+            )
+            if self._work.execution_policy == "legacy":
+                self._work.deadline = min(self._work.deadline, self._work.started + 50.0)
             try:
-                async with asyncio.timeout(max(0.0, self._work.deadline - time.perf_counter())):
+                async with self._work.execution_timeout():
+                    await self._freeze_stage_estimates()
                     return await self._deliver_send_message(conversation_id, request)
             except (TimeoutError, ProviderTimeoutError) as exc:
                 conversation, user, assistant = await self._deadline_terminal(
@@ -452,6 +462,7 @@ class ChatService:
         should_cancel: ShouldCancelFn | None = None,
     ) -> AsyncIterator[str | dict[str, Any]]:
         """Yield SSE payload fragments: token strings, then final citations dict."""
+        self._begin_turn_work()
         with self._work.attached():
             self._work.evidence_snapshot.update(
                 {
@@ -469,9 +480,17 @@ class ChatService:
                     ).model_dump(mode="json"),
                 }
             )
-            self._work.deadline = min(self._work.deadline, self._work.started + 50.0)
+            self._work.configure_execution(
+                self._chat_config.execution_policy,
+                complex_question=requires_complex_execution_budget(
+                    normalize_request_scope(request.content)
+                ),
+            )
+            if self._work.execution_policy == "legacy":
+                self._work.deadline = min(self._work.deadline, self._work.started + 50.0)
             try:
-                async with asyncio.timeout(max(0.0, self._work.deadline - time.perf_counter())):
+                async with self._work.execution_timeout():
+                    await self._freeze_stage_estimates()
                     async with aclosing(
                         cast(
                             AsyncGenerator[str | dict[str, Any], None],
@@ -493,6 +512,23 @@ class ChatService:
                 yield assistant.content
                 yield self._done_event(assistant, conversation)
 
+    def _begin_turn_work(self) -> None:
+        self.__dict__.pop("_deadline_committed_assistant", None)
+        self.__dict__.pop("_deadline_committed_conversation", None)
+        self.__dict__.pop("_deadline_user_message", None)
+        if self._work.counts["execution_policy_frozen"]:
+            self._work = RequestWork(self._work.project_id)
+            self._runner._work = self._work
+
+    async def _freeze_stage_estimates(self) -> None:
+        if self._work.execution_policy != "adaptive_v1" or self._config_snapshot_id is None:
+            return
+        if not isinstance(self._message_repository, MessageRepository):
+            return
+        with self._work.stage("stage_estimate_read"):
+            samples = await self._message_repository.execution_samples(self._config_snapshot_id)
+        self._work.freeze_measured_stages(samples)
+
     async def _deadline_terminal(
         self,
         conversation_id: uuid.UUID,
@@ -506,6 +542,10 @@ class ChatService:
         )
         if cause not in {"request_deadline_exceeded", "recovery_deadline_exceeded"}:
             cause = "provider_timeout"
+        committed = getattr(self, "_deadline_committed_assistant", None)
+        if committed is not None:
+            # Telemetry finalization cannot replace or duplicate an acknowledged answer.
+            return self._deadline_committed_conversation, self._deadline_user_message, committed
         try:
             async with asyncio.timeout(max(0.0, self._work.request_deadline - time.perf_counter())):
                 await self._session.rollback()
@@ -556,7 +596,7 @@ class ChatService:
                     },
                     citations=[],
                     claims=[],
-                    grounded=None,
+                    grounded=result.grounded,
                     insufficient_evidence_reason=reason,
                     user_content_for_title=request.content,
                 )
@@ -890,15 +930,49 @@ class ChatService:
             non_knowledge_turn=non_knowledge_turn,
             clarification_turn=clarification_turn,
         )
-        persistence_started = time.perf_counter()
-        assistant = await self._commit_assistant_message(
-            conversation=conversation,
-            **result.persistence_payload(),
-            user_content_for_title=user_content_for_title,
-        )
-        self._work.timings["persistence"] += round(
-            (time.perf_counter() - persistence_started) * 1000
-        )
+        with self._work.stage("persistence"):
+            assistant = await self._commit_assistant_message(
+                conversation=conversation,
+                **result.persistence_payload(),
+                user_content_for_title=user_content_for_title,
+            )
+        self._work.complete_stage("persistence")
+        metadata = {
+            **dict(assistant.message_metadata or {}),
+            "lifecycle": {
+                **self._work.snapshot(),
+                "answer_persisted": True,
+                "persistence_completed": True,
+                "complete_turn_measurement_available": True,
+            },
+        }
+        if isinstance(self._message_repository, MessageRepository):
+            primary = {
+                entity: {
+                    key: value for key, value in vars(entity).items() if key != "_sa_instance_state"
+                }
+                for entity in (assistant, conversation)
+            }
+            try:
+                with self._work.purpose("persistence"):
+                    await self._message_repository.record_completed_persistence(assistant, metadata)
+                    await self._session.commit()
+                set_committed_value(assistant, "message_metadata", metadata)
+            except (Exception, asyncio.CancelledError) as exc:
+                # Rollback expires ORM rows. Restore the acknowledged projection
+                # from loaded primary values without an unbounded recovery read.
+                if not isinstance(exc, asyncio.CancelledError):
+                    await self._session.rollback()
+                for entity, values in primary.items():
+                    for key, value in values.items():
+                        set_committed_value(entity, key, value)
+                # The primary answer is already acknowledged; cancellation of
+                # optional telemetry cannot publish a second timeout/refusal.
+                logger.warning(
+                    "completed_persistence_measurement_unavailable", message_id=str(assistant.id)
+                )
+        else:
+            assistant.message_metadata = metadata
         return assistant
 
     async def _correct_answer_draft(
@@ -920,6 +994,11 @@ class ChatService:
         if prepared.preparation_error is None:
             return
         error = prepared.preparation_error
+        if isinstance(error, ProviderTimeoutError) and error.context.get("reason") in {
+            "request_deadline_exceeded",
+            "recovery_deadline_exceeded",
+        }:
+            raise error
         public_error = self._provider_unavailable(error)
         await self._record_failed_execution(
             conversation=conversation,
@@ -1024,6 +1103,9 @@ class ChatService:
         return {
             "event": "done",
             "assistant_message_id": str(message.id),
+            "content": response.content,
+            "execution_runtime_identity": response.metadata.get("execution_runtime_identity"),
+            "scope_review_fingerprint": response.metadata.get("scope_review_fingerprint"),
             "citations": [item.model_dump(mode="json") for item in response.citations],
             "claims": [item.model_dump(mode="json") for item in response.claims],
             "grounded": response.grounded,
@@ -1165,12 +1247,51 @@ class ChatService:
         model_override = model if model != conversation.model else None
 
         metadata = dict(metadata)
+        from app.platform.domain.runtime_identity import runtime_code_fingerprint
+
+        metadata["execution_runtime_identity"] = runtime_code_fingerprint()
+        if isinstance(self._message_repository, MessageRepository) and metadata.get(
+            "index_build_id"
+        ):
+            import hashlib
+            import json
+
+            from sqlalchemy import select
+
+            from app.models.index_scope_review import IndexScopeReview
+
+            review_rows = (
+                await self._session.scalars(
+                    select(IndexScopeReview)
+                    .where(
+                        IndexScopeReview.project_id == self._project_id,
+                        IndexScopeReview.build_id == uuid.UUID(str(metadata["index_build_id"])),
+                    )
+                    .order_by(IndexScopeReview.chunk_id)
+                )
+            ).all()
+            metadata["scope_review_fingerprint"] = hashlib.sha256(
+                json.dumps(
+                    [
+                        {"chunk_id": str(v.chunk_id), "review_hash": v.review_hash}
+                        for v in review_rows
+                    ],
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    ensure_ascii=False,
+                ).encode()
+            ).hexdigest()
         metadata["prompt_version"] = prompt_version
         metadata["provider_route"] = {"provider": provider, "model": model}
         diagnostic_payload = metadata.pop("operator_diagnostic", None)
         if "answer_draft" in metadata:
             metadata["answer_draft"] = public_draft_diagnostics(metadata["answer_draft"])
-        metadata["lifecycle"] = {**metadata.get("lifecycle", {}), "persistence_completed": True}
+        metadata["lifecycle"] = {
+            **metadata.get("lifecycle", {}),
+            "answer_persisted": True,
+            "persistence_completed": False,
+            "complete_turn_measurement_available": False,
+        }
         assistant = Message(
             project_id=self._project_id,
             conversation_id=conversation.id,
@@ -1226,7 +1347,13 @@ class ChatService:
                     resource_id=assistant.id,
                     outcome=AuditOutcome.SUCCESS,
                 )
-        return await commit_refresh(self._session, assistant)
+        await self._session.commit()
+        # Commit acknowledgement is the publication boundary. A refresh or the
+        # optional telemetry update may time out without creating another answer.
+        self._deadline_committed_assistant = assistant
+        self._deadline_committed_conversation = conversation
+        await self._session.refresh(assistant)
+        return assistant
 
     def _auto_title(self, user_content: str) -> str:
         stripped = " ".join(user_content.split())

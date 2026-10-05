@@ -57,7 +57,7 @@ class TurnIntent(ExecutionContract):
         )
 
 
-class Requirement(ExecutionContract):
+class EvidenceRequirement(ExecutionContract):
     requirement_id: str = Field(min_length=1, max_length=80)
     description: str = Field(min_length=1, max_length=1000)
     origin: Literal[
@@ -106,6 +106,9 @@ class Requirement(ExecutionContract):
         if self.origin == "optional_corroboration":
             object.__setattr__(self, "required", False)
         return self
+
+
+Requirement = EvidenceRequirement
 
 
 class RequirementGraph(ExecutionContract):
@@ -222,6 +225,7 @@ class FinalizationResult(ExecutionContract):
     fatal_event: dict[str, Any] | None = None
     recovery_stop: str | None = None
     correction_attempts: list[dict[str, Any]] = Field(default_factory=list)
+    calculations: dict[str, Any] = Field(default_factory=dict)
 
     def public_projection(self) -> dict[str, Any]:
         return {
@@ -295,7 +299,7 @@ def assertion_from_claim(
         verification_method=claim.get("verification_method"),
         deterministic_checks={
             k: claim[k]
-            for k in ("arithmetic", "quantity_checks", "deterministic_checks")
+            for k in ("arithmetic", "quantity_checks", "deterministic_checks", "verifier_failures")
             if k in claim
         },
     )
@@ -322,6 +326,45 @@ def scope_limitations(policy: dict[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
+def published_requirement_fulfillment(
+    graph: RequirementGraph, published: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """Only verified published factual assertions fulfill the resolved request graph."""
+    requirements = {r.id: r for r in graph.requirements}
+    bound = {
+        str(identity)
+        for claim in published
+        if claim.get("claim_kind") != "coverage_scope"
+        and claim.get("verification") == "supported"
+        and claim.get("grounded") is True
+        and claim.get("evidence")
+        for identity in claim.get("requirement_ids", [])
+        if str(identity) in requirements
+    }
+    # A published dependent cannot claim completion without its required prerequisites.
+    supported = set(bound)
+    while True:
+        resolved = {
+            identity
+            for identity in supported
+            if all(dependency in supported for dependency in requirements[identity].dependencies)
+        }
+        if resolved == supported:
+            break
+        supported = resolved
+    required = {r.id for r in graph.requirements if r.required}
+    pending = sorted(required - supported)
+    return {
+        "assessed": bool(requirements),
+        "supported_requirement_ids": sorted(supported),
+        "unresolved_requirement_ids": pending,
+        "omitted_requirements": [
+            {"requirement_id": identity, "description": requirements[identity].description}
+            for identity in pending
+        ],
+    }
+
+
 def build_finalization(
     prepared: PreparedExecution,
     published: list[dict[str, Any]],
@@ -341,14 +384,26 @@ def build_finalization(
         claim["assertion_id"] = assertion.id
         if assertion.verdict == "supported":
             verified.append(assertion)
-    verified_ids = {a.id for a in verified}
     return FinalizationResult(
         intent=prepared.intent,
         requirements=prepared.requirements,
         evidence=bundles,
         verified_assertions=verified,
-        limitations=scope_limitations(prepared.response_policy),
-        rejected_attempts=[a for a in attempts if a.id not in verified_ids],
+        limitations=scope_limitations(prepared.response_policy)
+        + list((diagnostics.get("answer_draft") or {}).get("notices") or []),
+        rejected_attempts=[
+            a
+            for a in attempts
+            if a.verdict != "supported"
+            or (a.id, a.text) not in {(item.id, item.text) for item in verified}
+        ],
+        calculations={
+            "status": "verified"
+            if all(claim.get("verification") == "supported" for claim in published) and published
+            else "unverified",
+            "graph": (diagnostics.get("answer_draft") or {}).get("calculations", {}),
+            "operands": (diagnostics.get("answer_draft") or {}).get("calculation_operands", {}),
+        },
         terminal=terminal,
         fatal_event={"stage": terminal.failure_stage, "reason": terminal.reason_code}
         if terminal.outcome in {"timed_out", "verification_failed"}

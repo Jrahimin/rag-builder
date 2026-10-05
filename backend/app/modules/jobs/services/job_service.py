@@ -105,7 +105,9 @@ class JobService(DurableJobSubmitter):
             await acquire_project_stage_lock(
                 self._session, project_id=self._project_id, stage="ingestion-coalesce"
             )
-            identity = configuration.index_output_digest()
+            identity = (
+                f"{configuration.index_output_digest()}:esv:{job.payload['embedding_set_version']}"
+            )
             pending = await self._session.scalar(
                 select(JobRun)
                 .where(
@@ -116,6 +118,9 @@ class JobService(DurableJobSubmitter):
                 )
                 .order_by(JobRun.created_at, JobRun.id)
                 .limit(1)
+                # Hold the queued row through the source/child commit. Worker claim
+                # updates it, and READ COMMITTED rechecks QUEUED after any wait.
+                .with_for_update()
             )
             if pending is not None:
                 return JobSubmission(job_id=pending.id, created=False)
@@ -333,6 +338,48 @@ class JobService(DurableJobSubmitter):
         await self._session.commit()
         return owned
 
+    async def stage_waiting_acceptance(
+        self,
+        job_id: uuid.UUID,
+        *,
+        worker_id: str,
+        payload: dict[str, object],
+        result: dict[str, object],
+    ) -> None:
+        run = await self._runs.lock_owned_run(job_id, worker_id=worker_id)
+        if run is None:
+            raise JobLeaseLostError("Acceptance suspension lease is no longer owned.")
+        if run.job_type not in {JobType.DOCUMENT_DELETE, JobType.DOCUMENT_PURGE}:
+            raise ValueError("Only document lifecycle work may await acceptance")
+        run.payload = payload
+        run.result = result
+        run.state = JobState.WAITING_ACCEPTANCE
+        run.stage = "awaiting_quality_acceptance"
+        run.progress = 90
+        run.completed_at = None
+        run.lease_owner = None
+        run.lease_expires_at = None
+        run.next_attempt_at = None
+        # The resumed continuation is the same business attempt, not a retry failure.
+        run.attempt_count = max(0, run.attempt_count - 1)
+        self._record_job_event(
+            run,
+            event_type=AuditEventType.JOB_DISPATCH_DEFERRED,
+            actor_type=AuditActorType.WORKER,
+            actor_id=worker_id,
+            outcome=AuditOutcome.DEFERRED,
+            detail={"reason": "quality_acceptance_required"},
+        )
+        await self._session.commit()
+
+    async def resume_accepted_waiting(self, *, limit: int = 100) -> int:
+        rows = await self._runs.accepted_waiting_for_update(limit=limit)
+        for run in rows:
+            run.state = JobState.QUEUED
+            run.stage = "quality_accepted_continuation"
+            self._outbox.add_intent(run.id)
+        return len(rows)
+
     async def stage_success(
         self,
         job_id: uuid.UUID,
@@ -441,6 +488,7 @@ class JobService(DurableJobSubmitter):
         return run, will_retry
 
     async def recover_expired(self, *, limit: int) -> RecoveryResult:
+        resumed = await self.resume_accepted_waiting(limit=limit)
         expired = await self._runs.list_expired_for_update(limit=limit)
         failed: list[JobRun] = []
         for run in expired:
@@ -479,7 +527,9 @@ class JobService(DurableJobSubmitter):
                         "failure_code": "job_attempts_exhausted",
                     },
                 )
-        return RecoveryResult(rescheduled=len(expired) - len(failed), failed=tuple(failed))
+        return RecoveryResult(
+            rescheduled=len(expired) - len(failed) + resumed, failed=tuple(failed)
+        )
 
     def _retry_delay(self, attempt_count: int) -> float:
         return min(

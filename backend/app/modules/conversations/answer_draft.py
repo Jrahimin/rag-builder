@@ -2,18 +2,34 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.modules.conversations.calculation_graph import CalculationGraph
 from app.platform.providers.contracts.llm import StructuredOutput
 
 
 class AnswerSegment(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    assertion_id: str | None = Field(default=None, min_length=1, max_length=80)
     text: str = Field(min_length=1, max_length=6000)
     requirement_ids: list[str] = Field(max_length=12)
+    proof_ids: list[str] = Field(max_length=24)
+    calculation_references: list[str] = Field(default_factory=list, max_length=32)
+
+    def stable_id(self, position: int) -> str:
+        return (
+            self.assertion_id
+            or "A" + hashlib.sha256((str(position) + ":" + self.text).encode()).hexdigest()[:20]
+        )
+
+
+class DraftNotice(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    kind: Literal["documentary_scope", "proposal_scope", "unresolved_applicability"]
     proof_ids: list[str] = Field(max_length=24)
 
 
@@ -21,6 +37,8 @@ class AnswerDraft(BaseModel):
     model_config = ConfigDict(extra="forbid")
     version: Literal["answer.draft.v1"] = "answer.draft.v1"
     segments: list[AnswerSegment] = Field(min_length=1, max_length=60)
+    notices: list[DraftNotice] = Field(default_factory=list, max_length=6)
+    calculations: CalculationGraph = Field(default_factory=CalculationGraph)
 
     @classmethod
     def contract(cls) -> StructuredOutput:
@@ -44,8 +62,16 @@ class AnswerDraft(BaseModel):
             + example.model_dump_json()
             + "\nEach factual segment must reference supplied approved requirement and proof IDs. "
             "Do not put citation markers in text; the renderer assigns them. "
-            "Do not invent IDs, assertions, exclusions or new proof. A nonfactual scope limitation "
-            "may have empty requirement_ids and proof_ids but must add no source assertion."
+            "Each segment contains one indivisible factual assertion. Preserve its assertion_id "
+            "during corrections. Do not invent IDs, assertions, exclusions or new proof. "
+            "Use typed notices for documentary/proposal/unresolved applicability scope; never "
+            "turn a limitation into a factual assertion that a proposal was never enacted. "
+            "Calculation operands must reference input:key, source:key or node:key supplied in "
+            "the prompt; calculations do not establish legal applicability. "
+            "A calculation segment must reference exactly one node and contain only its "
+            "canonical expression: addition/subtraction/multiplication/division use + - * /; "
+            "minimum, maximum and ordered_brackets use operation(operand, ...) = result. "
+            "Put legal applicability in a separate supported factual segment."
         )
 
 
@@ -79,3 +105,31 @@ def public_draft_diagnostics(value: Any) -> dict[str, Any] | None:
     # Draft bindings are candidate references, not approved evidence. The public
     # claims and citation snapshots carry the verified references separately.
     return result
+
+
+def render_verified_segments(
+    segments: list[dict[str, Any]], *, supported_ids: set[str], proof_indexes: dict[str, int]
+) -> str:
+    """Render each verified assertion once; preserve exact useful documentary text."""
+    rows = []
+    seen: set[str] = set()
+    rendered: set[tuple[str, tuple[str, ...]]] = set()
+    for segment in segments:
+        assertion_id = segment["assertion_id"]
+        if assertion_id not in supported_ids:
+            continue
+        if assertion_id in seen:
+            raise ValueError("Duplicate verified assertion ID")
+        seen.add(assertion_id)
+        proofs = list(dict.fromkeys(segment["proof_ids"]))
+        calculation = bool(segment.get("calculation_references"))
+        if (not proofs and not calculation) or any(proof not in proof_indexes for proof in proofs):
+            raise ValueError("Verified assertion has an unbound proof")
+        identity = (segment["text"].strip(), tuple(sorted(proofs)))
+        if identity in rendered:
+            continue
+        rendered.add(identity)
+        rows.append(
+            segment["text"].strip() + "".join(f" [{proof_indexes[proof]}]" for proof in proofs)
+        )
+    return "\n\n".join(rows)

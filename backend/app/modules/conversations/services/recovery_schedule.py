@@ -1,5 +1,6 @@
 """Finite request-local recovery actions; evidence validation stays in repair."""
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from time import monotonic
 from typing import Any
@@ -8,6 +9,8 @@ from typing import Any
 @dataclass
 class RecoverySchedule:
     deadline: float
+    enforce_reserves: bool = True
+    clock: Callable[[], float] = field(default_factory=lambda: monotonic)
     counts: dict[str, int] = field(default_factory=dict)
     actions: list[dict[str, Any]] = field(default_factory=list)
     fingerprints: set[tuple[str, str]] = field(default_factory=set)
@@ -24,13 +27,13 @@ class RecoverySchedule:
     @property
     def search_deadline(self) -> float:
         """Discovery cannot spend the last two seconds required for delta validation."""
-        return self.deadline - 2.0
+        return self.deadline - (2.0 if self.enforce_reserves else 0.0)
 
     def admit(
         self, kind: str, *, requirement_ids: list[str], fingerprint: str, expected_change: str
     ) -> bool:
         limits = self.action_limits
-        remaining = max(0.0, self.deadline - monotonic())
+        remaining = max(0.0, self.deadline - self.clock())
         # Every retrieval action needs a subsequent validated coverage review.
         required_seconds = {
             "search": 6.0,
@@ -39,7 +42,7 @@ class RecoverySchedule:
             "selector_correction": 2.0,
         }[kind]
         terminal = "admitted"
-        if remaining < required_seconds:
+        if remaining <= 0 or (self.enforce_reserves and remaining < required_seconds):
             terminal = "exhausted_budget"
         elif self.counts.get(kind, 0) >= limits[kind]:
             terminal = "action_limit_reached"

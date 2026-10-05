@@ -29,7 +29,12 @@ from app.core.exceptions import ServiceUnavailableError
 from app.models.conversation import Conversation
 from app.models.message import Message, MessageRole
 from app.modules.conversations import turn_resolution as turn_resolution_mod
-from app.modules.conversations.answer_draft import AnswerDraft, public_draft_diagnostics
+from app.modules.conversations.answer_draft import (
+    AnswerDraft,
+    public_draft_diagnostics,
+    render_verified_segments,
+)
+from app.modules.conversations.calculation_graph import CalculationGraph
 from app.modules.conversations.citation_snapshots import build_citation_snapshots
 from app.modules.conversations.context_builder import (
     ContextBuilder,
@@ -60,9 +65,11 @@ from app.modules.conversations.grounding_service import (
     EvidenceDecision,
     GroundingResult,
     GroundingService,
+    _answer_segments,
 )
 from app.modules.conversations.notices import (
     Notice,
+    draft_scope_notice,
     insufficient_evidence_notice,
     scope_excludes_effective_modifier_notice,
     unresolved_authority_notice,
@@ -85,6 +92,7 @@ from app.modules.conversations.prompts.registry import (
     PromptTemplate,
     require_prompt_template,
 )
+from app.modules.conversations.quantities import normalize_quantities
 from app.modules.conversations.schemas.message import (
     CitationSourceKind,
     InsufficientEvidenceReason,
@@ -131,10 +139,12 @@ from app.modules.conversations.turn_resolution import (
     TurnResolutionInput,
     bound_resolution_history,
     normalize_request_scope,
+    requires_complex_execution_budget,
 )
 from app.modules.conversations.turn_resolver import TurnResolver, bypass_resolution
 from app.platform.domain.content_hash import content_hash
 from app.platform.domain.language_detection import detect_language
+from app.platform.domain.publication_integrity import complete_publication_unit
 from app.platform.domain.text_tokenization import tokenize
 from app.platform.providers.contracts.embedding import BaseEmbeddingProvider
 from app.platform.providers.contracts.llm import (
@@ -338,6 +348,12 @@ class MessageExecutionRunner:
         self._active_prepared = None
         self._attempted_claims.clear()
         self._correction_attempts.clear()
+        self._work.configure_execution(
+            self._chat_config.execution_policy,
+            complex_question=requires_complex_execution_budget(
+                normalize_request_scope(request.content)
+            ),
+        )
         preparation_started = time.perf_counter()
         history_limit = self._chat_config.max_history_messages
         current_content = request.content
@@ -595,6 +611,7 @@ class MessageExecutionRunner:
         expansion_records = list(
             retrieval_result.diagnostics.get("modifies_expansion_records") or []
         )
+        self._work.evidence_snapshot["modifies_expansion_records"] = expansion_records
         context_builder = ContextBuilder(
             self._chat_config,
             evidence_approach=self._evidence_approach,
@@ -832,18 +849,32 @@ class MessageExecutionRunner:
                 presentation_only=presentation_only,
             )
             focused_recovery = bounded_recovery_profile == "focused"
+            sealed_empty = retrieval_result.diagnostics.get("indexed_corpus_empty") is True
+            if sealed_empty:
+                retrieval_result.diagnostics["knowledge_repair"] = {
+                    "status": "coverage_incomplete",
+                    "stop_reason": "known_corpus_gap",
+                    "coverage": {
+                        "complete": False,
+                        "missing": ["The pinned indexed corpus is empty"],
+                    },
+                }
             # An empty initial selection can still be recovered by a focused
             # query. Keep that opportunity before considering web fallback.
             if (
-                evidence.reason is InsufficientEvidenceReason.UNRESOLVED_AUTHORITY
-                or calculation_review
-                or applicability_review
-                or relevance_repair
-                or comparison_review
-                or compliance_review
-                or reuse_scope_revalidation
-                or focused_recovery
-            ) and scope_current_authority is None:
+                (
+                    evidence.reason is InsufficientEvidenceReason.UNRESOLVED_AUTHORITY
+                    or calculation_review
+                    or applicability_review
+                    or relevance_repair
+                    or comparison_review
+                    or compliance_review
+                    or reuse_scope_revalidation
+                    or focused_recovery
+                )
+                and scope_current_authority is None
+                and not sealed_empty
+            ):
                 pre_review_evidence = evidence
                 # Similarity to a worked example does not prove that its category,
                 # period or complete rule schedule applies to a new calculation.
@@ -895,6 +926,15 @@ class MessageExecutionRunner:
                         max_followup_queries = 2
                         max_followup_rounds = 2
                         recovery_profile = "legacy"
+                    if self._work.execution_policy == "adaptive_v1":
+                        # The dependency came from source review; provider latency
+                        # alone cannot buy a second budget or a fresh start.
+                        evidence_deadline = self._work.recovery_deadline
+                        repair_timeout_seconds = max(0.0, evidence_deadline - time.perf_counter())
+                        max_initial_queries = 2
+                        max_followup_queries = self._work.recovery_search_credits - 2
+                        max_followup_rounds = 2
+                        recovery_profile = "adaptive"
                     repair_timeout_seconds = min(
                         repair_timeout_seconds,
                         max(0.0, evidence_deadline - time.perf_counter()),
@@ -938,6 +978,22 @@ class MessageExecutionRunner:
                 repair_usage = repaired.usage
                 preparation_error = repaired.failure
                 repair_diagnostics = dict(repaired.diagnostics)
+                if (
+                    not repaired.selected
+                    and preparation_error is None
+                    and time.perf_counter() >= self._work.deadline
+                ):
+                    preparation_error = ProviderTimeoutError(
+                        "Request time limit expired before finalization",
+                        provider_name=llm.provider_name,
+                        context={
+                            "reason": "recovery_deadline_exceeded"
+                            if self._work.execution_policy == "legacy"
+                            else "request_deadline_exceeded",
+                            "phase": "coverage_review",
+                        },
+                    )
+                    repair_diagnostics["stop_reason"] = preparation_error.context["reason"]
                 # A local recovery deadline without validated proof is an
                 # evidence limitation, not a provider outage. Preserve other
                 # provider failures and keep the evidence gate closed.
@@ -1086,9 +1142,8 @@ class MessageExecutionRunner:
         web_chunks: list[ContextChunk] = []
         web_review_usage: ChatUsage | None = None
         scoped_request = bool(resolved.retrieval.suppress_web)
-        web_requested = (
-            preparation_error is None
-            and non_knowledge_response is None
+        web_policy_requested = (
+            non_knowledge_response is None
             and clarification_response is None
             and scope_current_authority is None
             and (
@@ -1096,14 +1151,15 @@ class MessageExecutionRunner:
                 or (mode is ResponseMode.INDEXED_THEN_WEB and grounding.blocks_generation(evidence))
             )
         )
+        web_requested = web_policy_requested and preparation_error is None
         await self._release_read_transaction()
-        if web_requested and scoped_request:
+        if web_policy_requested and scoped_request:
             web_diagnostics = {
                 "status": "suppressed_scoped_request",
                 "fallback_used": False,
             }
         elif (
-            web_requested
+            web_policy_requested
             and evidence.reason is InsufficientEvidenceReason.UNRESOLVED_AUTHORITY
             and unresolved_authority_obligation
         ):
@@ -1292,6 +1348,23 @@ class MessageExecutionRunner:
                 response_language=response_language,
                 presentation_only=presentation_only,
             )
+            if any(chunk.metadata.get("reviewed_proof") for chunk in selected):
+                operands = _calculation_operands(current_content, selected)
+                messages.append(
+                    ChatMessage(
+                        role=ChatRole.SYSTEM,
+                        content=(
+                            "Approved calculation operand references (arithmetic only; "
+                            "independently prove legal applicability): "
+                        )
+                        + json.dumps(
+                            {
+                                key: {name: str(value) for name, value in values.items()}
+                                for key, values in operands.items()
+                            }
+                        ),
+                    )
+                )
         budget = prompt_budget(
             messages,
             model=llm.model_name,
@@ -1487,6 +1560,23 @@ class MessageExecutionRunner:
             "operator_diagnostic": finalization.model_dump(mode="json"),
             "notices": notices,
             "evidence_summary": {"coverage": "incomplete", "claim_verification": "unverified"},
+            "web_search": (
+                self._active_prepared.web_search_diagnostics
+                if self._active_prepared
+                else snapshot.get("web_search")
+                or {
+                    "status": "not_attempted",
+                    "fallback_used": False,
+                }
+            ),
+            "response_policy": (
+                self._active_prepared.response_policy
+                if self._active_prepared
+                else snapshot.get("response_policy")
+                or {
+                    "answerable_scope": {"complete": False, "partial": False},
+                }
+            ),
         }
         return ExecutionResult(
             content=content,
@@ -1499,7 +1589,7 @@ class MessageExecutionRunner:
             metadata=metadata,
             citations=[],
             claims=[],
-            grounded=None,
+            grounded=False,
             insufficient_evidence_reason=legacy,
             finalization=finalization,
         )
@@ -1512,6 +1602,7 @@ class MessageExecutionRunner:
         should_cancel: Callable[[], Awaitable[bool]] | None = None,
     ) -> ChatCompletionResult:
         self._generation_content = ""
+        self._work.complete_stage("coverage")
         with self._work.stage("answer_generation"):
             if streamed:
                 contract = AnswerDraft.contract() if _requires_answer_draft(prepared) else None
@@ -1584,12 +1675,17 @@ class MessageExecutionRunner:
             result = await prepared.grounding.map_claims(content, chunks, **kwargs)
         except (TimeoutError, ProviderTimeoutError, asyncio.CancelledError):
             attempt["status"] = "timed_out"
-            self._attempted_claims.append(
+            rows = kwargs.get("draft_segments") or [{"text": content}]
+            self._attempted_claims.extend(
                 {
-                    "text": content,
+                    "text": row["text"],
+                    "assertion_id": row.get("assertion_id"),
+                    "requirement_ids": row.get("requirement_ids", []),
+                    "proof_ids": row.get("proof_ids", []),
                     "verification": "unverified",
                     "verification_reason": "verification_interrupted",
                 }
+                for row in rows
             )
             raise
         attempt["status"] = "completed"
@@ -1617,9 +1713,12 @@ class MessageExecutionRunner:
         non_knowledge_turn: bool = False,
         clarification_turn: bool = False,
     ) -> ExecutionResult:
+        self._work.complete_stage("generation")
         candidate_content = content
         draft = (
-            _render_structured_answer(content, prepared.selected, bundles=prepared.bundles)
+            _render_structured_answer(
+                content, prepared.selected, bundles=prepared.bundles, render_citations=False
+            )
             if generation_ran
             else None
         )
@@ -1634,11 +1733,47 @@ class MessageExecutionRunner:
             draft = await self._correct_answer_draft(prepared, content, draft)
         if draft is not None:
             content, draft_metadata = draft
+            if draft_metadata.get("status") in {"rendered", "rendered_partial"}:
+                try:
+                    graph = CalculationGraph.model_validate(
+                        draft_metadata.get("calculations") or {}
+                    )
+                    operands = _calculation_operands(user_content_for_title, prepared.selected)
+                    expressions = graph.expressions(operands["inputs"], operands["sources"])
+                    draft_metadata["calculation_operands"] = {
+                        kind: {key: str(value) for key, value in quantities.items()}
+                        for kind, quantities in operands.items()
+                    }
+                    for row in draft_metadata["segments"]:
+                        refs = row.get("calculation_references") or []
+                        if any(ref not in expressions for ref in refs):
+                            raise ValueError("Unknown calculation node")
+                        if not refs and re.search(
+                            r"\d[^\n]*[+*=\u00d7\u00f7/][^\n]*\d", row["text"]
+                        ):
+                            raise ValueError("Calculation assertion requires its audited graph")
+                        if refs:
+                            if len(refs) != 1 or _canonical_math(row["text"]) != _canonical_math(
+                                expressions[refs[0]]
+                            ):
+                                raise ValueError("Assertion is not the verified graph expression")
+                            row["text"] = expressions[refs[0]]
+                            row["calculation_verified"] = True
+                except ValueError:
+                    draft_metadata.update(
+                        status="failed_verification", reason="calculation_graph_invalid"
+                    )
             prepared.retrieval_diagnostics["answer_draft"] = draft_metadata
         verification_started = time.perf_counter()
         reason_value = str(insufficient_reason) if insufficient_reason is not None else None
         if draft is not None and draft[1].get("status") == "failed_verification":
             reason_value = str(InsufficientEvidenceReason.CLAIM_VERIFICATION_FAILED)
+            prepared.retrieval_diagnostics["rejected_draft"] = {
+                "candidate_count": len(draft[1].get("segments") or []),
+                "failed_count": len(draft[1].get("segments") or []),
+                "failure_reason_count": 1,
+                "reasons": [draft[1].get("reason") or "draft_verification_not_completed"],
+            }
         attempted_claims = self._attempted_claims
         verification_repair: dict[str, Any] | None = None
         if (
@@ -1668,81 +1803,172 @@ class MessageExecutionRunner:
                         or prepared.retrieval_diagnostics.get("knowledge_repair")
                     ),
                 )
-            partial_scope = bool(
-                (prepared.retrieval_diagnostics.get("knowledge_repair") or {}).get("partial_answer")
-                or (prepared.inherited_coverage or {}).get("coverage_partial")
-            )
-            if grounding.grounded is False and reason_value is None and generation_ran:
-                failed = [
-                    claim for claim in grounding.claims if claim.get("verification") != "supported"
-                ]
-                if (
-                    failed
-                    and all(
-                        claim.get("verification_reason") == "missing_citation" for claim in failed
+            if (
+                grounding.grounded is False
+                and reason_value is None
+                and generation_ran
+                # A failed verifier protocol is not a semantic rejection. Copying
+                # quotes cannot turn unavailable verification into a completed
+                # verifier stage or hide its failure from the publication gate.
+                and not any(
+                    claim.get("verification_reason")
+                    in {"verifier_schema_invalid", "verifier_unavailable"}
+                    for claim in grounding.claims
+                )
+                and self._work.claim_correction("semantic")
+            ):
+                # One deterministic repair retains proven independent facts and
+                # re-verifies exact approved source statements for rejected IDs.
+                rows = (prepared.retrieval_diagnostics.get("answer_draft") or {}).get(
+                    "segments"
+                ) or []
+                repaired_rows = []
+                for row in rows:
+                    claim = next(
+                        (
+                            c
+                            for c in grounding.claims
+                            if c.get("assertion_id") == row["assertion_id"]
+                        ),
+                        None,
                     )
-                    and re.sub(r"^\[[^\]]+\]\s*", "", content).strip().rstrip("?.")
-                    != user_content_for_title.strip().rstrip("?.")
-                ):
-                    coverage = prepared.inherited_coverage or prepared.retrieval_diagnostics.get(
-                        "knowledge_repair"
-                    )
-                    uncited = await self._verify_claims(
-                        prepared,
-                        content,
-                        prepared.selected,
-                        require_citations=False,
-                        user_input=user_content_for_title,
-                        coverage=coverage,
-                    )
-                    repaired_content = _repair_missing_citation_claims(
-                        content, failed, uncited.claims
-                    )
-                    if repaired_content:
+                    if claim and claim.get("verification") == "supported":
+                        repaired_rows.append(row)
+                        continue
+                    quotes = [
+                        item.get("quote")
+                        for bundle in prepared.bundles
+                        if str(bundle.chunk_id) in row["proof_ids"]
+                        for item in bundle.applicability_proof
+                        if item.get("requirement_id") in row["requirement_ids"]
+                        and item.get("quote")
+                        and str(item["quote"]) in bundle.text
+                    ]
+                    if quotes:
+                        repaired_rows.append(
+                            {**row, "text": " ".join(dict.fromkeys(str(q) for q in quotes))}
+                        )
+                if not rows:
+                    verified = [
+                        claim
+                        for claim in grounding.claims
+                        if claim.get("verification") == "supported"
+                    ]
+                    cited_ids = {
+                        str(item.get("chunk_id"))
+                        for claim in grounding.claims
+                        for item in claim.get("evidence", [])
+                    }
+                    repair_sources = [
+                        (index, chunk)
+                        for index, chunk in enumerate(prepared.selected, 1)
+                        if str(chunk.chunk_id) in cited_ids
+                    ]
+                    if not verified and repair_sources:
+                        repaired_content = "\n\n".join(
+                            chunk.content + f" [{index}]" for index, chunk in repair_sources
+                        )
+                        with self._work.stage("semantic_repair"):
+                            reviewed = await self._verify_claims(
+                                prepared,
+                                repaired_content,
+                                prepared.selected,
+                                user_input=user_content_for_title,
+                                coverage=prepared.inherited_coverage
+                                or prepared.retrieval_diagnostics.get("knowledge_repair"),
+                            )
+                        if reviewed.grounded is True:
+                            content, grounding = repaired_content, reviewed
+                            verification_repair = {
+                                "status": "deterministic_verified_facts",
+                                "attempts": 1,
+                            }
+                    if verified:
+                        content = "\n\n".join(
+                            str(claim["text"])
+                            + "".join(
+                                f" [{index}]"
+                                for index in dict.fromkeys(
+                                    item["citation_index"] for item in claim.get("evidence", [])
+                                )
+                            )
+                            for claim in verified
+                        )
+                        grounding = GroundingResult(
+                            claims=verified, grounded=True, citation_coverage=1.0
+                        )
+                        verification_repair = {"status": "retained_verified_facts", "attempts": 1}
+                        prepared.response_policy["answerable_scope"]["partial"] = True
+                        prepared.response_policy["answerable_scope"]["complete"] = False
+                if repaired_rows:
+                    for row in repaired_rows:
+                        refs = row.get("calculation_references") or []
+                        if refs:
+                            registry = _calculation_operands(
+                                user_content_for_title, prepared.selected
+                            )
+                            expressions = CalculationGraph.model_validate(
+                                prepared.retrieval_diagnostics["answer_draft"].get("calculations")
+                                or {}
+                            ).expressions(registry["inputs"], registry["sources"])
+                            if (
+                                len(refs) != 1
+                                or refs[0] not in expressions
+                                or _canonical_math(row["text"])
+                                != _canonical_math(expressions[refs[0]])
+                            ):
+                                row["calculation_verified"] = False
+                                repaired_rows = []
+                                break
+                if repaired_rows:
+                    with self._work.stage("semantic_repair"):
                         reviewed = await self._verify_claims(
                             prepared,
-                            repaired_content,
+                            "\n\n".join(row["text"] for row in repaired_rows),
                             prepared.selected,
+                            draft_segments=repaired_rows,
                             user_input=user_content_for_title,
-                            coverage=coverage,
+                            coverage=prepared.inherited_coverage
+                            or prepared.retrieval_diagnostics.get("knowledge_repair"),
                         )
-                        if reviewed.grounded is True:
-                            content = repaired_content
-                            grounding = reviewed
-                            verification_repair = {"status": "repaired_missing_citations"}
-            if partial_scope and grounding.grounded is False and reason_value is None:
-                pruned = _prune_unverified_partial_paragraphs(content, grounding.claims)
-                if pruned:
-                    reviewed = await self._verify_claims(
+                    if reviewed.grounded is True:
+                        grounding = reviewed
+                        prepared.retrieval_diagnostics["answer_draft"]["segments"] = repaired_rows
+                        verification_repair = {
+                            "status": "deterministic_verified_facts",
+                            "attempts": 1,
+                        }
+            if grounding.grounded is True and draft is not None:
+                verified_ids = {
+                    str(claim["assertion_id"])
+                    for claim in grounding.claims
+                    if claim.get("verification") == "supported"
+                    and isinstance(claim.get("assertion_id"), str)
+                }
+                rows = [
+                    row
+                    for row in prepared.retrieval_diagnostics["answer_draft"]["segments"]
+                    if row["assertion_id"] in verified_ids
+                ]
+                prepared.retrieval_diagnostics["answer_draft"]["segments"] = rows
+                indexes = {str(chunk.chunk_id): i for i, chunk in enumerate(prepared.selected, 1)}
+                content = render_verified_segments(
+                    rows, supported_ids=verified_ids, proof_indexes=indexes
+                )
+                for row in prepared.retrieval_diagnostics["answer_draft"].get("notices", []):
+                    prepared = replace(
                         prepared,
-                        pruned,
-                        prepared.selected,
-                        user_input=user_content_for_title,
-                        coverage=(
-                            prepared.inherited_coverage
-                            or prepared.retrieval_diagnostics.get("knowledge_repair")
+                        notices=(
+                            *prepared.notices,
+                            draft_scope_notice(
+                                kind=row["kind"],
+                                language=prepared.response_language,
+                                proof_ids=row["proof_ids"],
+                            ),
                         ),
                     )
-                    if reviewed.grounded is True:
-                        content = pruned
-                        grounding = reviewed
-                        verification_repair = {"status": "pruned_unverified_paragraphs"}
-            if grounding.grounded is False and reason_value is None and generation_ran:
-                fallback = _coverage_scope_fallback(
-                    prepared.retrieval_diagnostics.get("knowledge_repair"), prepared.selected
-                )
-                if fallback:
-                    reviewed = await self._verify_claims(
-                        prepared,
-                        fallback,
-                        prepared.selected,
-                        user_input=user_content_for_title,
-                        coverage=prepared.retrieval_diagnostics.get("knowledge_repair"),
-                    )
-                    if reviewed.grounded is True:
-                        content = fallback
-                        grounding = reviewed
-                        verification_repair = {"status": "verified_coverage_scope_fallback"}
+                    self._active_prepared = prepared
+            self._work.complete_stage("verification")
             if grounding.grounded is False and reason_value is None and generation_ran:
                 failed_claims = [
                     claim for claim in grounding.claims if claim.get("verification") != "supported"
@@ -1753,21 +1979,19 @@ class MessageExecutionRunner:
                         for claim in failed_claims
                     }
                 )
-                draft_status = (prepared.retrieval_diagnostics.get("answer_draft") or {}).get(
-                    "status"
-                )
-                # Ordinary lexical misses stay visible. Withhold only a reviewed
-                # draft or a model entailment/protocol failure.
-                model_rejected = draft_status == "rendered" or any(
-                    claim.get("verification_method")
-                    in {"source_entailment", "arithmetic_and_entailment"}
-                    or str(claim.get("verification_reason") or "").startswith("verifier_")
-                    for claim in failed_claims
-                )
+                # Publication requires supported assertions on both ordinary
+                # and reviewed paths; a similarity failure is still a rejection.
+                model_rejected = bool(failed_claims)
                 if model_rejected:
+                    retained_claims = [
+                        claim
+                        for claim in grounding.claims
+                        if claim.get("verification") == "supported"
+                    ]
                     prepared.retrieval_diagnostics["rejected_draft"] = {
                         "candidate_count": len(grounding.claims),
-                        "failed_count": len(failed_reasons),
+                        "failed_count": len(failed_claims),
+                        "failure_reason_count": len(failed_reasons),
                         "reasons": failed_reasons[:12],
                     }
                     if (
@@ -1777,15 +2001,44 @@ class MessageExecutionRunner:
                         prepared.retrieval_diagnostics["verification_failure"] = next(
                             item for item in failed_reasons if item.startswith("verifier_")
                         )
-                    content = "The generated answer could not be verified."
-                    reason_value = InsufficientEvidenceReason.CLAIM_VERIFICATION_FAILED.value
-                    grounding = GroundingResult(claims=[], grounded=False, citation_coverage=0.0)
-                    verification_repair = {
-                        "status": "withheld_unverified_answer",
-                        "failed_claim_reasons": failed_reasons,
-                    }
+                    if retained_claims:
+                        # A rejected requirement must not erase independent claims
+                        # that passed the same source and semantic verifier.
+                        grounding = GroundingResult(
+                            claims=retained_claims,
+                            grounded=True,
+                            citation_coverage=grounding.citation_coverage,
+                        )
+                        content = _render_supported_claims(retained_claims)
+                        if draft is not None:
+                            retained_ids = {c.get("assertion_id") for c in retained_claims}
+                            prepared.retrieval_diagnostics["answer_draft"]["segments"] = [
+                                row
+                                for row in prepared.retrieval_diagnostics["answer_draft"][
+                                    "segments"
+                                ]
+                                if row["assertion_id"] in retained_ids
+                            ]
+                        prepared.response_policy["answerable_scope"]["partial"] = True
+                        prepared.response_policy["answerable_scope"]["complete"] = False
+                        verification_repair = {
+                            "status": "retained_verified_facts",
+                            "failed_claim_reasons": failed_reasons,
+                        }
+                    else:
+                        content = "The generated answer could not be verified."
+                        reason_value = InsufficientEvidenceReason.CLAIM_VERIFICATION_FAILED.value
+                        grounding = GroundingResult(
+                            claims=[], grounded=False, citation_coverage=0.0
+                        )
+                        verification_repair = {
+                            "status": "withheld_unverified_answer",
+                            "failed_claim_reasons": failed_reasons,
+                        }
             if reason_value is not None:
-                grounding = type(grounding)(claims=[], grounded=False, citation_coverage=1.0)
+                grounding = type(grounding)(
+                    claims=[], grounded=False, citation_coverage=0.0, claims_status="not_applicable"
+                )
             elif non_knowledge_turn:
                 grounding = type(grounding)(claims=[], grounded=False, citation_coverage=0.0)
             # grounded=None is only valid when generation ran on admitted evidence
@@ -1806,6 +2059,7 @@ class MessageExecutionRunner:
                 attempted_claims.extend(
                     [
                         {
+                            "assertion_id": row.get("assertion_id"),
                             "text": str(row.get("text") or ""),
                             "requirement_ids": [str(v) for v in row.get("requirement_ids", [])],
                             "proof_ids": [str(v) for v in row.get("proof_ids", [])],
@@ -1816,13 +2070,60 @@ class MessageExecutionRunner:
                             ),
                             "verification_method": "draft_schema",
                         }
-                        for row in candidate["segments"][:60]
+                        for row in (draft[1].get("segments") or candidate["segments"])[:60]
                         if isinstance(row, dict)
                     ]
                 )
         verification_ms = round((time.perf_counter() - verification_started) * 1000)
         self._work.timings["generation"] = generation_ms
         total_ms += verification_ms
+        if generation_ran and grounding.grounded is True:
+            complete_claims = [
+                claim for claim in grounding.claims if _publication_claim_complete(claim, prepared)
+            ]
+            rejected_publication = [
+                claim for claim in grounding.claims if claim not in complete_claims
+            ]
+            if rejected_publication or finish_reason in {
+                "length",
+                "max_tokens",
+                "max_output_tokens",
+            }:
+                prepared.retrieval_diagnostics["publication_integrity"] = {
+                    "status": "partial" if complete_claims else "rejected",
+                    "reason": "incomplete_assertion_or_unknown_completeness",
+                    "rejected_assertion_ids": [
+                        claim.get("assertion_id") for claim in rejected_publication
+                    ],
+                }
+                prepared.response_policy["answerable_scope"].update(partial=True, complete=False)
+                for claim in rejected_publication:
+                    attempted_claims.append(
+                        {
+                            **claim,
+                            "grounded": False,
+                            "verification": "unverified",
+                            "verification_reason": "incomplete_publication",
+                        }
+                    )
+                grounding = GroundingResult(
+                    claims=complete_claims,
+                    grounded=bool(complete_claims),
+                    citation_coverage=1.0 if complete_claims else 0.0,
+                )
+                content = _render_supported_claims(complete_claims)
+                if not complete_claims:
+                    prepared.retrieval_diagnostics["verification_failure"] = (
+                        "incomplete_publication"
+                    )
+                    reason_value = InsufficientEvidenceReason.CLAIM_VERIFICATION_FAILED.value
+                if draft is not None:
+                    complete_ids = {claim.get("assertion_id") for claim in complete_claims}
+                    prepared.retrieval_diagnostics["answer_draft"]["segments"] = [
+                        row
+                        for row in prepared.retrieval_diagnostics["answer_draft"]["segments"]
+                        if row["assertion_id"] in complete_ids
+                    ]
         metadata = self._build_metadata(
             retrieval_ms=prepared.retrieval_ms,
             generation_ms=generation_ms,
@@ -1834,6 +2135,19 @@ class MessageExecutionRunner:
         )
         if verification_repair is not None:
             metadata["verification_repair"] = verification_repair
+        if grounding.grounded is True and _has_incomplete_trailing_fragment(content):
+            prepared.retrieval_diagnostics["verification_failure"] = "incomplete_publication"
+            prepared.retrieval_diagnostics["publication_integrity"] = {
+                "status": "rejected",
+                "reason": "incomplete_trailing_fragment",
+            }
+            content = "The generated answer ended mid-sentence and could not be verified."
+            reason_value = InsufficientEvidenceReason.CLAIM_VERIFICATION_FAILED.value
+            grounding = GroundingResult(claims=[], grounded=False, citation_coverage=0.0)
+            verification_repair = {
+                "status": "withheld_incomplete_answer",
+                "reason": "incomplete_trailing_fragment",
+            }
         factual_claims = [
             claim for claim in grounding.claims if claim.get("claim_kind") != "coverage_scope"
         ]
@@ -2055,8 +2369,11 @@ class MessageExecutionRunner:
             inherited_coverage.get("coverage_partial") is True
             or inherited_coverage.get("coverage") == "partial"
         )
-        repair_partial = bool(
-            (prepared.retrieval_diagnostics.get("knowledge_repair") or {}).get("partial_answer")
+        repair_partial = (
+            bool(
+                (prepared.retrieval_diagnostics.get("knowledge_repair") or {}).get("partial_answer")
+            )
+            or (prepared.response_policy.get("answerable_scope") or {}).get("partial") is True
         )
         metadata["evidence_summary"] = {
             "candidates": prepared.retrieval_diagnostics.get("retrieved_candidate_count")
@@ -2115,6 +2432,37 @@ class MessageExecutionRunner:
                 "or assumed membership.",
             },
         }
+        from app.modules.conversations.execution_contracts import published_requirement_fulfillment
+
+        publication = published_requirement_fulfillment(prepared.requirements, grounding.claims)
+        prepared.retrieval_diagnostics["published_requirements"] = publication
+        omitted = publication["omitted_requirements"]
+        publication_notices = []
+        if publication["assessed"] and omitted:
+            metadata["evidence_summary"]["coverage"] = (
+                "partial" if supported_claims else "incomplete"
+            )
+            for citation in citations:
+                citation["coverage_status"] = metadata["evidence_summary"]["coverage"]
+                citation["coverage_partial"] = bool(supported_claims)
+            descriptions = _format_user_facing_gap_details(
+                [item["description"] for item in omitted]
+            )
+            publication_notices.append(
+                {
+                    "kind": "unfulfilled_requirements",
+                    "language": prepared.response_language,
+                    "text": (
+                        "যাচাইকৃত উত্তরে এই অংশগুলো সম্পন্ন হয়নি: "
+                        if prepared.response_language == "bn"
+                        else "The verified answer does not complete these requested parts: "
+                    )
+                    + descriptions,
+                    "source": {"requirements": omitted},
+                }
+            )
+            metadata["notices"].extend(publication_notices)
+        metadata["published_requirements"] = publication
         prepared.retrieval_diagnostics["generation_ran"] = generation_ran
         outcome = terminal_outcome(
             reason=reason_value,
@@ -2128,14 +2476,39 @@ class MessageExecutionRunner:
         )
         if verification_repair is not None:
             prepared.retrieval_diagnostics["verification_repair"] = verification_repair
+        content, citations = _published_citations(content, citations, grounding.claims)
         finalization = build_finalization(prepared, grounding.claims, attempted_claims, outcome)
         finalization = finalization.model_copy(
             update={
+                "limitations": finalization.limitations + publication_notices,
                 "correction_attempts": list(self._correction_attempts)
-                + finalization.correction_attempts
+                + finalization.correction_attempts,
             }
         )
         metadata["execution"] = finalization.public_projection()
+        metadata["citation_coverage_status"] = (
+            "applicable" if finalization.verified_assertions else "not_applicable"
+        )
+        provenance_fields = {
+            "provider",
+            "model",
+            "reasoning",
+            "schema_mode",
+            "purpose",
+            "schema_name",
+            "schema_hash",
+            "endpoint_hash",
+            "capability_revision",
+            "capability_source",
+            "local_validation",
+            "span_id",
+            "status",
+        }
+        metadata["provider_provenance"] = [
+            {k: v for k, v in call.items() if k in provenance_fields}
+            for call in self._work.calls
+            if call.get("kind") == "llm"
+        ]
         metadata["operator_diagnostic"] = finalization.model_dump(mode="json")
         metadata["terminal_outcome"] = outcome.model_dump(mode="json")
         metadata["evidence_funnel"]["outcome"] = (
@@ -2180,16 +2553,18 @@ class MessageExecutionRunner:
     async def _correct_answer_draft(
         self, prepared: _PreparedTurn, content: str, failure: tuple[str, dict[str, Any]]
     ) -> tuple[str, dict[str, Any]]:
-        if (
-            self._work.counts["answer_shape_corrections"]
-            or self._work.deadline - time.perf_counter() < 12
-        ):
+        if self._work.phase_deadline(
+            "answer_shape_correction"
+        ) - time.perf_counter() < 2 or not self._work.claim_correction("malformed"):
             return failure
         self._work.counts["answer_shape_corrections"] += 1
         try:
             with self._work.stage("answer_shape_correction"):
                 async with asyncio.timeout(
-                    max(0.0, self._work.deadline - time.perf_counter() - 10)
+                    max(
+                        0.0,
+                        self._work.phase_deadline("answer_shape_correction") - time.perf_counter(),
+                    )
                 ):
                     result = await prepared.llm.generate_structured(
                         [
@@ -2208,7 +2583,9 @@ class MessageExecutionRunner:
                         temperature=None,
                         max_tokens=self._llm_max_tokens(),
                     )
-            repaired = _render_structured_answer(result.content, prepared.selected)
+            repaired = _render_structured_answer(
+                result.content, prepared.selected, bundles=prepared.bundles, render_citations=False
+            )
             if repaired is None:
                 return failure
             if repaired[1].get("status") == "rendered":
@@ -2219,7 +2596,48 @@ class MessageExecutionRunner:
                 original_segments = (
                     original.get("segments") if isinstance(original, dict) else original
                 )
-                keys = ("text", "requirement_ids", "proof_ids")
+                keys = (
+                    "assertion_id",
+                    "text",
+                    "requirement_ids",
+                    "proof_ids",
+                    "calculation_references",
+                )
+                if isinstance(original_segments, list):
+                    original_segments = [
+                        {
+                            **item,
+                            "calculation_references": item.get("calculation_references", []),
+                            "assertion_id": item.get("assertion_id")
+                            or "A"
+                            + hashlib.sha256(
+                                (str(i) + ":" + str(item.get("text", ""))).encode()
+                            ).hexdigest()[:20],
+                        }
+                        if isinstance(item, dict)
+                        else item
+                        for i, item in enumerate(original_segments)
+                    ]
+                    flattened = []
+                    for item in original_segments:
+                        if not isinstance(item, dict):
+                            flattened.append(item)
+                            continue
+                        atoms = [
+                            str(atom).strip()
+                            for atom in _answer_segments(str(item.get("text", "")))
+                            if str(atom).strip()
+                        ]
+                        flattened.extend(
+                            {
+                                **item,
+                                "text": atom,
+                                "assertion_id": item["assertion_id"]
+                                + (f".{j + 1}" if len(atoms) > 1 else ""),
+                            }
+                            for j, atom in enumerate(atoms)
+                        )
+                    original_segments = flattened
                 original_bindings = (
                     [tuple(item.get(key) for key in keys) for item in original_segments]
                     if isinstance(original_segments, list)
@@ -2229,7 +2647,16 @@ class MessageExecutionRunner:
                 repaired_bindings = [
                     tuple(item.get(key) for key in keys) for item in repaired[1]["segments"]
                 ]
-                if original_bindings is None or original_bindings != repaired_bindings:
+                changed_extra = isinstance(original, dict) and (
+                    original.get("notices", []) != repaired[1].get("notices", [])
+                    or original.get("calculations", {"nodes": []})
+                    != repaired[1].get("calculations", {"nodes": []})
+                )
+                if (
+                    original_bindings is None
+                    or original_bindings != repaired_bindings
+                    or changed_extra
+                ):
                     failure[1]["shape_correction"] = "rejected_assertion_or_proof_change"
                     return failure
             repaired[1]["shape_correction"] = "completed"
@@ -2300,9 +2727,24 @@ class MessageExecutionRunner:
     def _insufficient_content(self, prepared: _PreparedTurn, question: str) -> str:
         status = str(prepared.web_search_diagnostics.get("status") or "")
         bangla = detect_language(question).primary_language == "bn"
+        repair = prepared.retrieval_diagnostics.get("knowledge_repair") or {}
+        if repair.get("stop_reason") == "known_corpus_gap":
+            missing = (repair.get("coverage") or {}).get("missing") or []
+            details = _format_user_facing_gap_details(missing)
+            prefix = (
+                "সক্রিয় সূত্রসমষ্টিতে এই প্রমাণগুলো অনুপস্থিত: "
+                if bangla
+                else "The active corpus is missing this required proof: "
+            )
+            return prefix + details
+        missing = (repair.get("coverage") or {}).get("missing") or []
+        if missing and repair.get("status") in {"coverage_incomplete", "partial_answer"}:
+            return "The indexed evidence does not establish: " + _format_user_facing_gap_details(
+                missing
+            )
         if status == "search_timeout":
             return (
-                "ওয়েব অনুসন্ধানের সময়সীমা শেষ হয়েছে, তাই যথেষ্ট সূত্র যাচাই করা যায়নি। আবার চেষ্টা করুন।"
+                ("ওয়েব অনুসন্ধানের সময়সীমা শেষ হয়েছে, তাই যথেষ্ট সূত্র যাচাই করা যায়নি। আবার চেষ্টা করুন।")
                 if bangla
                 else "Web search reached its time limit before enough sources could be verified. "
                 "Please try again."
@@ -3400,8 +3842,228 @@ def _requires_answer_draft(prepared: _PreparedTurn) -> bool:
     )
 
 
+def _user_facing_gap_details(values: list[Any]) -> list[str]:
+    """Collapse coverage diagnostics into concise, non-identifier user language."""
+    clean: list[str] = []
+    seen: set[str] = set()
+    for raw in values:
+        value = re.sub(r"\s+", " ", str(raw)).strip(" ;\t\r\n")
+        value = re.sub(r"\bR\d+\s*:\s*", "", value)
+        value = re.sub(r"\bunproven governing dependency\s+R\d+\b", "", value, flags=re.I)
+        value = re.sub(r"\b(?:requirement|dependency)\s+R\d+\b", "", value, flags=re.I)
+        value = re.sub(r"\s+", " ", value).strip(" ;\t\r\n")
+        if not value.strip(" .;!?") or re.fullmatch(r"R\d+", value, flags=re.I):
+            continue
+        key = value.casefold().rstrip(" .;!?")
+        if key not in seen:
+            seen.add(key)
+            clean.append(value[:400])
+    return clean or ["the applicable source rule and its period"]
+
+
+def _format_user_facing_gap_details(values: list[Any]) -> str:
+    """Join complete gap descriptions without removing or duplicating punctuation."""
+    return " ".join(
+        detail if re.search(r"[.!?\u0964\u0965\u3002\uff01\uff1f]$", detail) else detail + "."
+        for detail in _user_facing_gap_details(values)
+    )
+
+
+def _has_incomplete_trailing_fragment(text: str) -> bool:
+    """Catch a one-character cut-off after a complete-looking generation result."""
+    # Strip rendered citation markers before inspecting the final prose, so a
+    # citation added by the renderer cannot conceal a cut-off source assertion.
+    text = re.sub(r"(?:\s*\[\d+\])+\s*$", "", text.strip())
+    return bool(
+        re.search(
+            r"\b(?:subsequent|increased|reduced|and|or|to|of|for|with|that|which)\s+"
+            r"[a-z]$|\b(?:and|or|to|of|for|with|that|which|because|including|subsequent)\s*$",
+            text.strip(),
+            re.I,
+        )
+    )
+
+
+def _render_supported_claims(claims: list[dict[str, Any]]) -> str:
+    """Render only the published verdict set, with its own evidence markers."""
+    return "\n\n".join(
+        re.sub(r"\s*\[\d+\]", "", str(claim["text"])).strip()
+        + "".join(
+            f" [{index}]"
+            for index in dict.fromkeys(item["citation_index"] for item in claim.get("evidence", []))
+        )
+        for claim in claims
+        if claim.get("verification") == "supported"
+    )
+
+
+def _publication_claim_complete(claim: dict[str, Any], prepared: _PreparedTurn) -> bool:
+    text = str(claim.get("text") or "")
+    if _has_incomplete_trailing_fragment(text):
+        return False
+    if claim.get("claim_kind") == "coverage_scope":
+        return True
+    # These are explicit structural closure signals, never a prose quality score.
+    structured = (
+        claim.get("verification_method") == "literal_source_identity"
+        and text.strip().startswith("|")
+        and re.sub(r"(?:\s*\[\d+\])+\s*$", "", text).strip().endswith("|")
+    ) or bool(
+        claim.get("calculation_references") and claim.get("arithmetic_verification") == "supported"
+    )
+    plain = re.sub(r"\s*\[\d+\]", "", text).strip()
+    if claim.get("verification_method") == "literal_source_identity":
+        cited_ids = {str(item.get("chunk_id")) for item in claim.get("evidence", [])}
+        for chunk in prepared.selected:
+            if str(chunk.chunk_id) not in cited_ids:
+                continue
+            for source_span in chunk.metadata.get("source_spans", []):
+                table = str(source_span.get("text") or "").strip()
+                rows = [
+                    row.strip().strip("|").split("|") for row in table.splitlines() if "|" in row
+                ]
+                if (
+                    source_span.get("role") == "table"
+                    and table
+                    and plain.endswith(table)
+                    and len(rows) >= 2
+                    and len({len(row) for row in rows}) == 1
+                    and all(all(cell.strip() for cell in row) for row in rows)
+                ):
+                    structured = True
+    semantic_complete = prepared.grounding.publication_completeness.get(
+        str(claim.get("assertion_id"))
+    )
+    if structured:
+        return complete_publication_unit(text, structured=True, semantic_complete=semantic_complete)
+    atoms = _answer_segments(text)
+    return bool(atoms) and all(
+        complete_publication_unit(str(atom), semantic_complete=semantic_complete)
+        and not _has_incomplete_trailing_fragment(str(atom))
+        for atom in atoms
+    )
+
+
+def _published_citations(
+    content: str, citations: list[dict[str, Any]], claims: list[dict[str, Any]]
+) -> tuple[str, list[dict[str, Any]]]:
+    """Persist only used citation records; bind previews to published claim spans.
+
+    The indexed evidence hashes and local offsets remain intact for replay.
+    User locators and previews come from the actual verified claim evidence.
+    """
+    used = {int(value) for value in re.findall(r"\[(\d+)\]", content)}
+    retained: list[dict[str, Any]] = []
+    remap: dict[int, int] = {}
+    for old_index, citation in enumerate(citations, 1):
+        if old_index not in used:
+            continue
+        remap[old_index] = len(retained) + 1
+        evidence = [
+            item
+            for claim in claims
+            if claim.get("verification") == "supported"
+            for item in claim.get("evidence", [])
+            if item.get("citation_index") == old_index
+        ]
+        snapshot = dict(citation)
+        if evidence:
+            excerpts = list(
+                dict.fromkeys(str(item["excerpt"]) for item in evidence if item.get("excerpt"))
+            )
+            snapshot["excerpt"] = " … ".join(excerpts) or None
+            requirements = {
+                identity
+                for claim in claims
+                if any(
+                    item.get("citation_index") == old_index for item in claim.get("evidence", [])
+                )
+                for identity in claim.get("requirement_ids", [])
+            }
+            snapshot["supporting_spans"] = [
+                item
+                for item in citation.get("supporting_spans", [])
+                if item.get("requirement_id") in requirements
+            ]
+            locations = {(item.get("char_start"), item.get("char_end")) for item in evidence}
+            if len(locations) == 1:
+                snapshot["char_start"], snapshot["char_end"] = next(iter(locations))
+            else:
+                snapshot["char_start"] = snapshot["char_end"] = None
+            pages = {item.get("page_number") for item in evidence}
+            snapshot["page_number"] = next(iter(pages)) if len(pages) == 1 else None
+            snapshot["provenance_precision"] = (
+                "exact_source_span"
+                if len(locations) == 1 and all(value is not None for value in next(iter(locations)))
+                else "multiple_source_spans"
+                if any(item.get("char_start") is not None for item in evidence)
+                else "unknown_source_locator"
+            )
+            if len(locations) > 1:
+                snapshot["supporting_spans"] += [
+                    {
+                        "role": "published_claim_span",
+                        "excerpt": item.get("excerpt"),
+                        "page_number": item.get("page_number"),
+                        "char_start": item.get("char_start"),
+                        "char_end": item.get("char_end"),
+                        "evidence_span_hash": item.get("evidence_span_hash"),
+                    }
+                    for item in evidence
+                ]
+        retained.append(snapshot)
+    content = re.sub(
+        r"\[(\d+)\]", lambda match: f"[{remap.get(int(match[1]), int(match[1]))}]", content
+    )
+    for claim in claims:
+        claim["text"] = re.sub(
+            r"\[(\d+)\]",
+            lambda match: f"[{remap.get(int(match[1]), int(match[1]))}]",
+            str(claim.get("text") or ""),
+        )
+        for item in claim.get("evidence", []):
+            if item.get("citation_index") in remap:
+                item["citation_index"] = remap[item["citation_index"]]
+    return content, retained
+
+
+def _calculation_operands(user_input: str, chunks: list[ContextChunk]) -> dict[str, dict[str, Any]]:
+    def values(text: str) -> dict[str, Any]:
+        return {
+            f"q{i}": item.value / 100 if item.kind == "rate" else item.value
+            for i, item in enumerate(normalize_quantities(text))
+            if item.kind not in {"period", "locator"}
+        }
+
+    return {
+        "inputs": values(user_input),
+        "sources": {
+            f"{chunk.chunk_id}:{key}": value
+            for chunk in chunks
+            if chunk.metadata.get("reviewed_proof")
+            for key, value in values(
+                " ".join(
+                    str(item.get("quote"))
+                    for item in chunk.metadata["reviewed_proof"]
+                    if item.get("quote") and str(item["quote"]) in chunk.content
+                )
+            ).items()
+        },
+    }
+
+
+def _canonical_math(text: str) -> str:
+    return re.sub(
+        r"\s+", "", text.replace("\u00d7", "*").replace("\u00f7", "/").replace("\u2212", "-")
+    )
+
+
 def _render_structured_answer(
-    content: str, chunks: list[ContextChunk], *, bundles: tuple[EvidenceBundle, ...] | None = None
+    content: str,
+    chunks: list[ContextChunk],
+    *,
+    bundles: tuple[EvidenceBundle, ...] | None = None,
+    render_citations: bool = True,
 ) -> tuple[str, dict[str, Any]] | None:
     """Canonical schema parsing and immutable approved proof references."""
     required = any(chunk.metadata.get("reviewed_proof") for chunk in chunks)
@@ -3425,7 +4087,23 @@ def _render_structured_answer(
             ],
             "candidate_count": 0,
         }
-    segments = [item.model_dump() for item in draft.segments]
+    segments: list[dict[str, Any]] = []
+    for i, item in enumerate(draft.segments):
+        atoms = [str(atom).strip() for atom in _answer_segments(item.text) if str(atom).strip()]
+        segments.extend(
+            {
+                **item.model_dump(),
+                "text": atom,
+                "assertion_id": item.stable_id(i) + (f".{j + 1}" if len(atoms) > 1 else ""),
+            }
+            for j, atom in enumerate(atoms)
+        )
+    if len({item["assertion_id"] for item in segments}) != len(segments):
+        return "The answer draft could not be verified.", {
+            "status": "failed_verification",
+            "reason": "duplicate_assertion_id",
+            "candidate_count": len(segments),
+        }
     indexes = {str(chunk.chunk_id): index for index, chunk in enumerate(chunks, 1)}
     admitted = (
         bundles if bundles is not None else tuple(EvidenceBundle.from_chunk(c) for c in chunks)
@@ -3436,28 +4114,65 @@ def _render_structured_answer(
         for item in bundle.applicability_proof
         if item.get("quote") and str(item["quote"]) in bundle.text
     }
+    # A proof reference outside the selected evidence set is a protocol/scope
+    # violation for the whole draft. Partial rendering is reserved for known
+    # evidence whose reviewed requirement proof is incomplete; it must never
+    # make a draft containing foreign evidence look like a safe partial answer.
+    if any(
+        str(proof_id) not in indexes for segment in segments for proof_id in segment["proof_ids"]
+    ):
+        return "The answer draft could not be verified.", {
+            "version": draft.version,
+            "status": "failed_verification",
+            "reason": "foreign_proof_reference",
+            "candidate_count": len(segments),
+        }
     rendered = []
-    for segment in draft.segments:
-        proof, requirements = segment.proof_ids, segment.requirement_ids
+    approved_segments: list[dict[str, Any]] = []
+    rejected_segment_count = 0
+    for segment in segments:
+        proof, requirements = segment["proof_ids"], segment["requirement_ids"]
         if (
             any(item not in indexes for item in proof)
             or bool(proof) != bool(requirements)
             or any(not any((item, source) in approved for source in proof) for item in requirements)
             or any(not any((item, source) in approved for item in requirements) for source in proof)
-            or re.search(r"\[\d+\]", segment.text)
+            or re.search(r"\[\d+\]", segment["text"])
         ):
-            return "The answer draft could not be verified.", {
-                "version": draft.version,
-                "status": "failed_verification",
-                "reason": "answer_draft_proof_invalid",
-                "candidate_count": len(segments),
-            }
+            rejected_segment_count += 1
+            continue
+        if not proof:
+            rejected_segment_count += 1
+            continue
+        approved_segments.append(segment)
         rendered.append(
-            segment.text.strip() + "".join(f" [{indexes[item]}]" for item in dict.fromkeys(proof))
+            segment["text"].strip()
+            + (
+                "".join(f" [{indexes[item]}]" for item in dict.fromkeys(proof))
+                if render_citations
+                else ""
+            )
         )
+    if not rendered:
+        return "The answer draft could not be verified.", {
+            "version": draft.version,
+            "status": "failed_verification",
+            "reason": "no_approved_assertions",
+            "candidate_count": len(segments),
+            "rejected_segment_count": rejected_segment_count,
+        }
+    if any(any(proof not in indexes for proof in notice.proof_ids) for notice in draft.notices):
+        return "The answer draft could not be verified.", {
+            "status": "failed_verification",
+            "reason": "notice_proof_invalid",
+            "candidate_count": len(segments),
+        }
     return "\n\n".join(rendered), {
         "version": draft.version,
-        "status": "rendered",
-        "segments": segments,
+        "status": "rendered_partial" if rejected_segment_count else "rendered",
+        "segments": approved_segments,
         "candidate_count": len(segments),
+        "rejected_segment_count": rejected_segment_count,
+        "notices": [item.model_dump() for item in draft.notices],
+        "calculations": draft.calculations.model_dump(mode="json"),
     }

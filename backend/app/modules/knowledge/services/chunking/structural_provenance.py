@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import hashlib
-import re
 from typing import Any
 
+from app.modules.knowledge.scope_facts import extract_scope_facts
 from app.modules.knowledge.services.chunking.models import DraftChunk
 from app.modules.knowledge.services.chunking.token_counting_service import TokenCountingService
 from app.platform.providers.contracts.document_parser import ParsedDocument, ParsedElementType
@@ -66,6 +66,8 @@ def annotate_structure(
                         "text": element.text.strip(),
                         "char_start": start if exact else None,
                         "char_end": end if exact else None,
+                        "page_start": element.page_start if exact else None,
+                        "page_end": element.page_end if exact else None,
                         "provenance": "exact_source_span" if exact else "chunk",
                     }
                 )
@@ -84,67 +86,8 @@ def annotate_structure(
         draft.metadata["structure_version"] = "structure.v1"
         draft.metadata["structural_unit_id"] = hashlib.sha256(draft.content.encode()).hexdigest()
         draft.metadata["source_spans"] = spans
-        scope_facts: list[dict[str, Any]] = []
-        for span in spans:
-            for match in re.finditer(
-                r"(?<![\d])(?:20[\d\u09e6-\u09ef]{2}|২\u09e6[\u09e6-\u09ef]{2})\s*[-\u2013/]\s*(?:20[\d\u09e6-\u09ef]{2}|২\u09e6[\u09e6-\u09ef]{2}|[\d\u09e6-\u09ef]{2})(?![\d])",
-                str(span["text"]),
-            ):
-                scope_facts.append(
-                    {
-                        "kind": "period",
-                        "value": match.group(),
-                        "source_span": span,
-                        "status": "source_attested",
-                    }
-                )
-            for match in re.finditer(
-                r"(?:section|article|rule|regulation|ধারা|বিধি)\s+[\d\u09e6-\u09ef]+(?:[A-Za-z()./-][\dA-Za-z()./-]*)?",
-                str(span["text"]),
-                re.I,
-            ):
-                scope_facts.append(
-                    {
-                        "kind": "provision",
-                        "value": match.group(),
-                        "source_span": span,
-                        "status": "source_attested",
-                    }
-                )
-        for span in spans:
-            text = str(span["text"]).translate(str.maketrans("০১২৩৪৫৬৭৮৯", "0123456789"))
-            for match in re.finditer(
-                r"(?P<label>assessment\s+year|tax\s+year|fiscal\s+year|financial\s+year|"
-                r"calendar\s+year|AY|FY|করবর্ষ|অর্থবছর)\s*[: -]?\s*(?P<start>20\d{2})"
-                r"(?:\s*[-\u2013/]\s*(?P<end>20\d{2}|\d{2}))?",
-                text,
-                re.I,
-            ):
-                start = int(match["start"])
-                end = int(match["end"]) if match["end"] else start
-                if end < 100:
-                    end += start // 100 * 100
-                    if end < start:
-                        end += 100
-                label = match["label"].casefold()
-                kind = (
-                    "assessment"
-                    if label in {"ay", "করবর্ষ", "assessment year", "tax year"}
-                    else "fiscal"
-                    if label in {"fy", "অর্থবছর", "fiscal year", "financial year"}
-                    else "calendar"
-                )
-                scope_facts.append(
-                    {
-                        "kind": "period",
-                        "legal_kind": kind,
-                        "start_year": start,
-                        "end_year": end,
-                        "value": match.group(),
-                        "source_span": span,
-                        "status": "source_attested",
-                    }
-                )
+        scope_facts = extract_scope_facts(spans, unit_id=draft.metadata["structural_unit_id"])
+        draft.metadata["scope_fact_version"] = "scope.v2"
         draft.metadata["scope_facts"] = scope_facts
         draft.metadata["provision_references"] = list(
             dict.fromkeys(fact["value"] for fact in scope_facts if fact["kind"] == "provision")

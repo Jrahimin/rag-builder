@@ -10,10 +10,15 @@ missing scenario inputs. If the planner included such a requirement, review its
 underlying factual topic under that ID using source proof. Never populate
 missing_inputs here; only the separate input reviewer may classify scenario inputs.
 Keep genuine unresolved factual gaps in missing.
+Inspect source text quality before certifying complete coverage. Garbled text,
+missing list items, broken words, or an unfinished procedure cannot establish a
+complete checklist. Preserve independently readable facts as partial proof and
+state the missing continuation or damaged extraction in unresolved_facets.
+Neither a source title nor its metadata repairs unreadable operative text.
 Return only JSON with exactly this schema:
 {"complete":false,"missing":["short missing requirement"],"checks":[
 {"requirement_id":"R1","description":"required fact or rule","supported":false,
-"fulfillment":"none","unresolved_facets":[],"answerable_scope":"",
+"fulfillment":"none","unresolved_facets":[],"resolved_gaps":[],"answerable_scope":"",
 "needs_adjacent_context":false,"evidence":[
 {"chunk_id":"provided ID","start_line":1,"end_line":3}]}]}
 Each source_lines record carries original start_line/end_line selectors beside its text.
@@ -180,3 +185,17 @@ Only propose a partial answer when it provides useful work for the original requ
 
 COVERAGE_PROMPT += CONDITION_FACET_INSTRUCTION
 DELTA_COVERAGE_PROMPT += CONDITION_FACET_INSTRUCTION
+
+# Explicit requirement-local closure is part of the active coverage protocol.
+_GAP_CLOSURE = (
+    "\nA changed check may list resolved_gaps only for exact previously reported gap labels\n"
+    "owned by that requirement. Supply full source-bound evidence for each closure.\n"
+    "Omitting a gap or replacing an unrelated requirement never resolves it.\n"
+)
+
+
+COVERAGE_PROMPT += _GAP_CLOSURE
+
+DELTA_COVERAGE_PROMPT += _GAP_CLOSURE
+
+PARTIAL_COVERAGE_PROMPT += _GAP_CLOSURE

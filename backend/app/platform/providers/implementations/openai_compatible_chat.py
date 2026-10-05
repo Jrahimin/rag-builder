@@ -11,6 +11,7 @@ import httpx
 from app.core.logging import get_logger
 from app.platform.providers.capabilities import (
     describe_llm_capability,
+    structured_output_capability,
     translate_generation_parameters,
 )
 from app.platform.providers.contracts.llm import (
@@ -53,6 +54,7 @@ class OpenAICompatibleChatProvider(BaseLLMProvider):
         model: str,
         provider_version: str,
         request_timeout_seconds: float,
+        schema_capabilities: list[dict[str, str]] | None = None,
     ) -> None:
         self._provider_name = provider_name
         self._api_key = api_key
@@ -60,6 +62,7 @@ class OpenAICompatibleChatProvider(BaseLLMProvider):
         self._model = model
         self._provider_version = provider_version
         self._timeout = request_timeout_seconds
+        self._schema_capabilities = schema_capabilities
 
     @property
     def provider_name(self) -> str:
@@ -104,7 +107,19 @@ class OpenAICompatibleChatProvider(BaseLLMProvider):
             )
         )
         body.update(_reasoning_parameters(self._model, max_tokens))
-        if capability.structured_output == "json_object" and (
+        structured = structured_output_capability(
+            self.provider_name, self.model_name, self._base_url, self._schema_capabilities
+        )
+        if output_contract is not None and structured["schema_mode"] == "json_schema":
+            body["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": output_contract.name,
+                    "strict": True,
+                    "schema": output_contract.schema,
+                },
+            }
+        elif structured["schema_mode"] == "json_object" and (
             output_contract is not None or current_request_purpose() in _JSON_REVIEW_PURPOSES
         ):
             body["response_format"] = {"type": "json_object"}
@@ -120,6 +135,28 @@ class OpenAICompatibleChatProvider(BaseLLMProvider):
             )
             body["messages"] = wire_messages
         return body
+
+    def request_provenance(
+        self, output_contract: StructuredOutput | None, max_tokens: int
+    ) -> dict[str, Any]:
+        structured = structured_output_capability(
+            self.provider_name, self.model_name, self._base_url, self._schema_capabilities
+        )
+        constrained = output_contract is not None or (
+            structured["schema_mode"] == "json_object"
+            and current_request_purpose() in _JSON_REVIEW_PURPOSES
+        )
+        return {
+            **structured,
+            "schema_mode": structured["schema_mode"] if constrained else "none",
+            "provider": self.provider_name,
+            "model": self.model_name,
+            "reasoning": _reasoning_parameters(self._model, max_tokens).get(
+                "reasoning_effort", "provider_default"
+            ),
+            "purpose": current_request_purpose() or "unspecified",
+            "local_validation": "consumer_schema_required" if constrained else "not_applicable",
+        }
 
     async def _http_error(
         self,
@@ -223,6 +260,7 @@ class OpenAICompatibleChatProvider(BaseLLMProvider):
             finish_reason=str(finish_reason) if finish_reason else None,
             usage=usage,
             provider_version=self._provider_version,
+            provenance=self.request_provenance(output_contract, max_tokens),
         )
 
     async def stream(

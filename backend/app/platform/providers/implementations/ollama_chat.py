@@ -9,6 +9,7 @@ import httpx
 
 from app.platform.providers.capabilities import (
     describe_llm_capability,
+    structured_output_capability,
     translate_generation_parameters,
 )
 from app.platform.providers.contracts.llm import (
@@ -18,6 +19,7 @@ from app.platform.providers.contracts.llm import (
     ChatMessage,
     ChatUsage,
     StructuredOutput,
+    constrained_messages,
 )
 from app.platform.providers.errors import ProviderError
 
@@ -34,11 +36,13 @@ class OllamaChatProvider(BaseLLMProvider):
         model: str,
         provider_version: str,
         request_timeout_seconds: float,
+        schema_capabilities: list[dict[str, str]] | None = None,
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._model = model
         self._provider_version = provider_version
         self._timeout = request_timeout_seconds
+        self._schema_capabilities = schema_capabilities
         self._context_window: int | None = None
 
     @property
@@ -52,6 +56,22 @@ class OllamaChatProvider(BaseLLMProvider):
     @property
     def provider_version(self) -> str:
         return self._provider_version
+
+    def request_provenance(
+        self, output_contract: StructuredOutput | None, max_tokens: int
+    ) -> dict[str, object]:
+        del max_tokens
+        capability = structured_output_capability(
+            self.provider_name, self.model_name, self._base_url, self._schema_capabilities
+        )
+        return {
+            **capability,
+            "schema_mode": capability["schema_mode"] if output_contract else "none",
+            "provider": self.provider_name,
+            "model": self.model_name,
+            "reasoning": "provider_default",
+            "local_validation": "consumer_schema_required",
+        }
 
     def _ollama_messages(self, messages: list[ChatMessage]) -> list[dict[str, str]]:
         return [{"role": message.role.value, "content": message.content} for message in messages]
@@ -93,12 +113,15 @@ class OllamaChatProvider(BaseLLMProvider):
         output_contract: StructuredOutput | None = None,
     ) -> ChatCompletionResult:
         url = f"{self._base_url}/api/chat"
+        mode = self.request_provenance(output_contract, max_tokens)["schema_mode"]
+        if output_contract is not None and mode == "prompt":
+            messages = constrained_messages(messages, output_contract)
         body: dict[str, object] = {
             "model": self._model,
             "messages": self._ollama_messages(messages),
             "stream": False,
         }
-        if output_contract is not None:
+        if output_contract is not None and mode == "json_schema":
             body["format"] = output_contract.schema
         body["options"] = translate_generation_parameters(
             describe_llm_capability(self.provider_name, self.model_name),
@@ -144,12 +167,15 @@ class OllamaChatProvider(BaseLLMProvider):
         output_contract: StructuredOutput | None = None,
     ) -> AsyncGenerator[ChatCompletionChunk, None]:
         url = f"{self._base_url}/api/chat"
+        mode = self.request_provenance(output_contract, max_tokens)["schema_mode"]
+        if output_contract is not None and mode == "prompt":
+            messages = constrained_messages(messages, output_contract)
         body: dict[str, object] = {
             "model": self._model,
             "messages": self._ollama_messages(messages),
             "stream": True,
         }
-        if output_contract is not None:
+        if output_contract is not None and mode == "json_schema":
             body["format"] = output_contract.schema
         body["options"] = translate_generation_parameters(
             describe_llm_capability(self.provider_name, self.model_name),

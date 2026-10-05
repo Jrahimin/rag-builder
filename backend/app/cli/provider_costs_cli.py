@@ -19,16 +19,29 @@ from app.core.config import get_settings
 from app.core.logging import configure_logging
 from app.models.document import Document, DocumentStatus
 from app.models.document_chunk import DocumentChunk
+from app.models.index_build import IndexBuild
+from app.models.job_configuration_snapshot import JobConfigurationSnapshot
+from app.models.job_run import JobRun
 from app.models.provider_work import ProviderUsageAttempt
+from app.modules.retrieval.embedding_identity import identity_from_manifest
 from app.platform.db.session import Database
 from app.platform.infra.providers.provider_work_repository import ProviderWorkRepository
+from app.platform.jobs.configuration import apply_job_configuration
+from app.platform.jobs.contracts import JobConfiguration
 from app.platform.providers.contracts.embedding import EmbeddingPurpose
-from app.platform.providers.implementations.embedding_factory import create_embedding_provider
+from app.platform.providers.implementations.embedding_factory import (
+    create_embedding_provider,
+    create_embedding_provider_for_identity,
+)
 from app.platform.providers.provider_work import cache_identity, cache_key, embedding_reservation
 
 
 async def report(
-    project_id: uuid.UUID, month: str, preview: bool, reference: str | None = None
+    project_id: uuid.UUID,
+    month: str,
+    preview: bool,
+    reference: str | None = None,
+    build_id: uuid.UUID | None = None,
 ) -> dict[str, Any]:
     settings = get_settings()
     start = datetime.strptime(month, "%Y-%m").replace(tzinfo=UTC)
@@ -118,10 +131,54 @@ async def report(
                         )
                     ).all()
                 )
-                provider = create_embedding_provider(settings)
-                identity = cache_identity(
-                    provider, settings.retrieval.embedding_set_version, EmbeddingPurpose.DOCUMENT
+                preview_settings = settings
+                preview_version = settings.retrieval.embedding_set_version
+                selected_build = None
+                if build_id is not None:
+                    selected_build = await session.scalar(
+                        select(IndexBuild).where(
+                            IndexBuild.id == build_id, IndexBuild.project_id == project_id
+                        )
+                    )
+                    if selected_build is None:
+                        raise ValueError("Preview build does not exist in this project")
+                    preview_version = selected_build.embedding_set_version
+                    job = None
+                    if selected_build.job_id:
+                        job = await session.scalar(
+                            select(JobRun).where(
+                                JobRun.id == selected_build.job_id, JobRun.project_id == project_id
+                            )
+                        )
+                        if job is None:
+                            raise ValueError("Preview build job does not exist in this project")
+                    if job is not None:
+                        snapshot = await session.scalar(
+                            select(JobConfigurationSnapshot).where(
+                                JobConfigurationSnapshot.id == job.configuration_snapshot_id,
+                                JobConfigurationSnapshot.project_id == project_id,
+                            )
+                        )
+                        if snapshot is None:
+                            raise ValueError("Preview build configuration snapshot is missing")
+                        preview_settings = apply_job_configuration(
+                            settings, JobConfiguration.model_validate(snapshot.configuration)
+                        )
+                selected_identity = (
+                    identity_from_manifest(selected_build) if selected_build else None
                 )
+                provider = (
+                    create_embedding_provider_for_identity(
+                        preview_settings,
+                        provider=selected_identity.provider,
+                        model=selected_identity.model,
+                        dimensions=selected_identity.dimensions,
+                        embedding_set_version=preview_version,
+                    )
+                    if selected_identity
+                    else create_embedding_provider(preview_settings)
+                )
+                identity = cache_identity(provider, preview_version, EmbeddingPurpose.DOCUMENT)
                 inputs = {cache_key(identity, text): text for text in chunks}
                 existing = (
                     await store.vectors(session, project_id, list(inputs))
@@ -148,6 +205,8 @@ async def report(
                 elif provider.provider_name == "hash":
                     estimate = 0
                 result["build_preview"] = {
+                    "build_id": str(build_id) if build_id else None,
+                    "embedding_set_version": preview_version,
                     "chunks": len(chunks),
                     "unique_inputs": len(inputs),
                     "uncached_inputs": len(uncached),
@@ -168,13 +227,20 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--month", default=datetime.now(UTC).strftime("%Y-%m"))
     parser.add_argument("--preview-build", action="store_true")
     parser.add_argument(
+        "--build-id",
+        type=uuid.UUID,
+        help="Use this building/active/retained build identity for preview",
+    )
+    parser.add_argument(
         "--reference", help="Restrict usage to one request, job or QA run reference."
     )
     args = parser.parse_args(argv)
     # Keep stdout valid JSON; lifecycle logs belong on stderr for CLI consumers.
     with redirect_stdout(sys.stderr):
         configure_logging(get_settings())
-        result = asyncio.run(report(args.project, args.month, args.preview_build, args.reference))
+        result = asyncio.run(
+            report(args.project, args.month, args.preview_build, args.reference, args.build_id)
+        )
     payload = json.dumps(result, indent=2)
     sys.stdout.write(f"{payload}\n")
     return 0

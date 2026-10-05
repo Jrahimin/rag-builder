@@ -68,6 +68,8 @@ async def test_complete_execution_owns_first_scoped_search_clock_and_consecutive
         turn_resolution, "utc_reference_datetime", lambda: datetime(2026, 10, 1, tzinfo=UTC)
     )
     calls = []
+    clock = [100.0]
+    monkeypatch.setattr("app.platform.providers.request_work.time.perf_counter", lambda: clock[0])
     settings = Settings()
 
     class ScopedSearch:
@@ -78,7 +80,8 @@ async def test_complete_execution_owns_first_scoped_search_clock_and_consecutive
             self.scope = scope
 
         async def search(self, request, **kwargs):
-            await asyncio.sleep(0.015)
+            clock[0] += 0.015
+            await asyncio.sleep(0)
             calls.append((request, dict(self.scope)))
             return SimpleNamespace(
                 results=[],

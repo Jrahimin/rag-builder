@@ -852,7 +852,7 @@ def normalize_request_scope(
         (
             "calculation",
             r"\b(?:calculat(?:e|ed|ing|ion|ions)|recalculat(?:e|ion)|"
-            r"comput(?:e|ing|ation)|breakdown)\b|\bhow much\b|"
+            r"comput(?:e|ing|ation)|estim(?:ate|ated|ating|ation)|breakdown)\b|\bhow much\b|"
             r"হিসাব|হিসেব|গণনা|পরিগণনা",
         ),
         ("comparison", r"compare|comparison|difference|তুলনা"),
@@ -861,7 +861,7 @@ def normalize_request_scope(
         ("explanation", r"explain|why|ব্যাখ্যা"),
     ):
         if label == "calculation" and re.search(
-            r"\b(?:do not|don't|no|without|not asking (?:you )?to)\s+"
+            r"\b(?:do not|don't|no|without|not asking (?:you )?to|not(?: a| personal)?)\s+"
             r"(?:\w+\s+){0,2}(?:calculat\w*|comput\w*|breakdown)",
             folded,
         ):
@@ -869,6 +869,8 @@ def normalize_request_scope(
         if re.search(pattern, folded, re.I):
             task = label
             break
+    if re.search(r"\brule lookup\b|\blook(?:\s+|-)up the (?:applicable )?rule\b", folded):
+        task = "lookup"
     eligibility_requested = eligibility_requested or task == "eligibility"
     if eligibility_requested and task not in {"calculation", "comparison"}:
         task = "eligibility"
@@ -1534,3 +1536,22 @@ def fallback_resolution(original_message: str) -> TurnResolution:
 
 
 MappingLike = dict[str, Any] | TurnResolution
+
+
+def requires_complex_execution_budget(scope: RequestScope) -> bool:
+    """Use explicit task/dependency scope, never provider latency, for classification."""
+    dependency_requested = any(
+        "finance" in name.casefold() or "amendment" in name.casefold()
+        for name in scope.named_instruments
+    ) or bool(
+        re.search(
+            r"amendment|effective[- ](?:date|period)|formula.*(?:maximum|limit)",
+            scope.subject,
+            re.I,
+        )
+    )
+    return scope.task_kind in {"calculation", "comparison"} or (
+        bool(scope.requested_periods)
+        and dependency_requested
+        and scope.temporal_basis == "applicable_rule"
+    )

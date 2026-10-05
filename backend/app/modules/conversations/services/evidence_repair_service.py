@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import time
 import uuid
 from collections.abc import Awaitable, Callable
 from contextlib import nullcontext
@@ -12,7 +13,7 @@ from contextvars import ContextVar
 from copy import deepcopy
 from dataclasses import asdict, dataclass, replace
 from datetime import date
-from time import monotonic
+from time import monotonic as _unbound_monotonic
 from typing import Any, cast
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
@@ -83,6 +84,11 @@ from app.platform.providers.contracts.llm import (
 from app.platform.providers.errors import ProviderError, ProviderTimeoutError
 from app.platform.providers.request_work import RequestWork, current_request_work
 
+
+def monotonic() -> float:
+    return time.perf_counter() if current_request_work() is not None else _unbound_monotonic()
+
+
 _RECOVERY_SCHEDULE: ContextVar[RecoverySchedule | None] = ContextVar(
     "recovery_schedule", default=None
 )
@@ -104,6 +110,10 @@ _SOURCE_CONTEXT_KEYS = (
     "authority_limitations",
     "heading_path",
     "section_title",
+    "parse_quality_score",
+    "partial_extraction",
+    "source_text_truncated",
+    "extraction_warnings",
 )
 _AUTHORITATIVE_SOURCE_CONTEXT_KEYS = tuple(
     key for key in _SOURCE_CONTEXT_KEYS if key not in {"source_work_key", "source_group_id"}
@@ -464,6 +474,14 @@ def _unproven_requested_scope(description: str, proof: str) -> list[str]:
     for year in other_years:
         if year not in cited:
             gaps.append(f"requested year {year}")
+    for label, pattern in {
+        "private company": r"private compan(?:y|ies)|প্রাইভেট\s*কোম্পান|বেসরকারি\s*কোম্পান",
+        "public company": r"public compan(?:y|ies)|পাবলিক\s*কোম্পান",
+        "separate treatment": r"separate|পৃথক",
+    }.items():
+        requested_pattern = r"separate" if label == "separate treatment" else pattern
+        if re.search(requested_pattern, requested, re.I) and not re.search(pattern, cited, re.I):
+            gaps.append(f"requested scope {label}")
     # Category and conditions are semantic facets reviewed against source quotes.
     # English label presence is not a multilingual completion test.
     return gaps
@@ -708,12 +726,27 @@ def _guard_review_fulfillment(
         gaps = _unproven_requested_scope(
             _question_scope_for_requirement(requirement.description, question), proof
         )
+        gaps = [
+            gap
+            for gap in gaps
+            if not (
+                gap.startswith("requested period ")
+                and any(
+                    gap.removeprefix("requested period ") in old for old in check.unresolved_facets
+                )
+            )
+        ]
         if gaps:
             check = check.model_copy(
                 update={
                     "fulfillment": "partial",
                     "needs_adjacent_context": check.needs_adjacent_context
-                    or any(gap.startswith(("requested period", "requested year")) for gap in gaps),
+                    or (
+                        _numeric_rule_question(requirement.description)
+                        and any(
+                            gap.startswith(("requested period", "requested year")) for gap in gaps
+                        )
+                    ),
                     "unresolved_facets": list(dict.fromkeys([*check.unresolved_facets, *gaps])),
                 }
             )
@@ -752,6 +785,16 @@ def _guard_review_fulfillment(
         scope_gaps = _unproven_requested_scope(
             _question_scope_for_requirement(description, question), proof
         )
+        scope_gaps = [
+            gap
+            for gap in scope_gaps
+            if not (
+                gap.startswith("requested period ")
+                and any(
+                    gap.removeprefix("requested period ") in old for old in check.unresolved_facets
+                )
+            )
+        ]
         if re.search(r"\bconditional\b|শর্ত", description, re.I) and (
             not check.condition_facets
             or any(
@@ -844,6 +887,7 @@ class _TurnProofMap:
         }
         self._known_authority_keys: set[tuple[str, ...]] = set()
         self._retained_gaps: list[str] = []
+        self._gap_owners: dict[str, set[str]] = {}
         self._validated_partial: PartialAnswerScope | None = None
 
     def canonical_ids(self) -> set[str]:
@@ -859,11 +903,23 @@ class _TurnProofMap:
         for record in records:
             self._known_authority_keys.add(_authority_dependency_key(record))
 
-    def remember_gaps(self, missing: list[str]) -> None:
+    def remember_gaps(self, missing: list[str], checks: list[_Check] | None = None) -> None:
+        for check in checks or []:
+            if check.requirement_id:
+                for gap in check.unresolved_facets:
+                    self._gap_owners.setdefault(gap, set()).add(check.requirement_id)
         for item in missing:
             text = str(item).strip()
             if text and text not in self._retained_gaps:
                 self._retained_gaps.append(text)
+            exact_owners = {
+                identity
+                for identity, facet in self._facets.items()
+                if text in {identity, facet.description}
+            }
+            if len(self._facets) == 1 and _candidate_only_source_gap(text):
+                exact_owners.update(self._facets)
+            self._gap_owners.setdefault(text, set()).update(exact_owners)
 
     def remember_partial(self, partial: PartialAnswerScope | None) -> None:
         if partial is not None:
@@ -1078,22 +1134,23 @@ class _TurnProofMap:
         for req_id in pending:
             if req_id not in returned:
                 self._mark_invalid(req_id)
-        if (
-            delta.complete
-            and not delta.missing
-            and not self.unresolved_ids()
-            and any(
-                self._facets[item].evidence_ids != prior_ids
-                for item, prior_ids in prior_proof_ids.items()
+        # A replacement witness closes only explicitly identified gaps of this
+        # reviewed requirement. Omitted or unrelated gaps remain unresolved.
+        closures = {
+            gap
+            for check in delta.checks
+            if check.requirement_id in pending
+            and self._facets[check.requirement_id].fulfilled
+            and self._facets[check.requirement_id].evidence_ids
+            != prior_proof_ids.get(check.requirement_id)
+            for gap in check.resolved_gaps
+            if self._gap_owners.get(gap) == {check.requirement_id}
+            and not _unproven_requested_scope(
+                gap, " ".join(quote.quote for quote in check.evidence)
             )
-        ):
-            # A reviewer can replace an inadequate discovery passage with a
-            # complete quoted proof. The earlier candidate-only objection is
-            # then stale; unrelated omitted duties remain retained gaps.
-            self._retained_gaps = [
-                gap for gap in self._retained_gaps if not _candidate_only_source_gap(gap)
-            ]
-        self.remember_gaps(list(delta.missing))
+        }
+        self._retained_gaps = [gap for gap in self._retained_gaps if gap not in closures]
+        self.remember_gaps(list(delta.missing), delta.checks)
         missing = self._reconciled_gaps(list(delta.missing))
         partial = delta.partial_answer
         if partial is not None and missing:
@@ -1137,6 +1194,7 @@ class _TurnProofMap:
                         evidence=[],
                     )
                 )
+        missing = self._reconciled_gaps(missing)
         complete = (
             bool(checks)
             and all(check.supported and check.evidence for check in checks)
@@ -1180,6 +1238,9 @@ class _TurnProofMap:
 
     def diagnostics(self) -> dict[str, Any]:
         return {
+            "unresolved_gap_owners": {
+                gap: sorted(self._gap_owners.get(gap, set())) for gap in self._retained_gaps
+            },
             "facets": [
                 {
                     "requirement_id": facet.requirement_id,
@@ -1193,7 +1254,7 @@ class _TurnProofMap:
                     "authority_keys": [list(key) for key in facet.authority_keys],
                 }
                 for facet in self._facets.values()
-            ]
+            ],
         }
 
 
@@ -1871,6 +1932,7 @@ async def _validated_completion(
                 and completion.finish_reason == "length"
                 and truncation_retry_tokens is not None
                 and truncation_retry_tokens > max_tokens
+                and (work is None or work.claim_correction("malformed"))
             ):
                 # Reasoning tokens share the output allowance on some providers.
                 # Restart the bounded JSON request; never salvage partial output.
@@ -2014,10 +2076,9 @@ async def _validated_completion(
                 expected_change="repair malformed selectors",
             ):
                 raise
-            if attempt or (work is not None and work.counts["malformed_correction_exchanges"] >= 1):
+            if attempt or (work is not None and not work.claim_correction("malformed")):
                 raise
             if work is not None:
-                work.counts["malformed_correction_exchanges"] += 1
                 work.counts["structured_response_retries"] += 1
                 work.validation_retries.append(
                     {
@@ -2306,12 +2367,18 @@ async def repair_knowledge_evidence(
     work = _request_work(llm)
     if work is not None:
         timeout_seconds = min(timeout_seconds, max(0.0, work.recovery_deadline - monotonic()))
-    schedule = RecoverySchedule(started + timeout_seconds)
+    schedule = RecoverySchedule(
+        started + timeout_seconds, enforce_reserves=work is not None, clock=monotonic
+    )
+    if work is not None and work.execution_policy == "adaptive_v1":
+        max_initial_queries = min(max_initial_queries, 2)
+        schedule.action_limits["search"] = work.recovery_search_credits
+        schedule.action_limits["delta_review"] = 4
     if compatibility_profile:
         schedule.action_limits = {
             "search": max_initial_queries + max_followup_queries * max_followup_rounds,
             "structure": 2,
-            "delta_review": max_followup_rounds,
+            "delta_review": max(2, max_followup_rounds),
             "selector_correction": 1,
         }
     schedule_token = _RECOVERY_SCHEDULE.set(schedule)
@@ -2432,7 +2499,12 @@ async def repair_knowledge_evidence(
     if any(value is None for value in snapshot):
         diagnostics["status"] = "snapshot_unavailable"
         return result
-    timeout_context = asyncio.timeout(timeout_seconds)
+    review_seconds = (
+        max(0.0, work.phase_deadline("coverage_review") - monotonic())
+        if work is not None and work.execution_policy == "adaptive_v1"
+        else timeout_seconds
+    )
+    timeout_context = asyncio.timeout(review_seconds)
     try:
         async with timeout_context:
             # An attempted call with missing usage (including a timeout) is
@@ -2447,6 +2519,21 @@ async def repair_knowledge_evidence(
                 for chunk in selected
                 if chunk.metadata.get("authority_status") != "unresolved"
             ]
+            if work is not None and work.execution_policy == "adaptive_v1" and not safe_selected:
+                safe_selected = ContextBuilder(
+                    chat_config, evidence_approach=evidence_approach
+                ).select(
+                    remove_superseded_provisions(
+                        initial.chunks,
+                        list(initial.diagnostics.get("modifies_expansion_records") or []),
+                        reference_date=authority_date,
+                    )
+                )
+                safe_selected = [
+                    chunk
+                    for chunk in safe_selected
+                    if chunk.metadata.get("authority_status") != "unresolved"
+                ]
             include_plan_proof = bool(safe_selected) and initial_decision is not None
             diagnostics["initial_coverage_review"] = (
                 "admitted_evidence" if include_plan_proof else "requires_recovery"
@@ -2548,7 +2635,7 @@ async def repair_knowledge_evidence(
                 list(initial.diagnostics.get("modifies_expansion_records") or [])
             )
             if plan.coverage is not None:
-                proof_map.remember_gaps(list(plan.coverage.missing))
+                proof_map.remember_gaps(list(plan.coverage.missing), plan.coverage.checks)
                 proof_map.remember_partial(plan.coverage.partial_answer)
                 for check in plan.coverage.checks:
                     for quote in check.evidence:
@@ -2704,6 +2791,51 @@ async def repair_knowledge_evidence(
                     _normalize_discovery_query(entry.query.strip(), inputs.query)
                 ]
             ]
+            if work is not None and work.execution_policy == "adaptive_v1":
+                gap_binding = initial.diagnostics.get("known_corpus_gap_binding") or {}
+                known_gap = (
+                    gap_binding.get("producer") == "source_metadata_dependency.v1"
+                    and gap_binding.get("index_build_id")
+                    == str(initial.diagnostics.get("index_build_id"))
+                    and gap_binding.get("source_metadata_generation")
+                    == initial.diagnostics.get("source_metadata_generation")
+                    and gap_binding.get("project_id") == str(work.project_id)
+                )
+                recoverable = bool(selected and queries and requirement_ids and not known_gap)
+                if recoverable and (
+                    len(requirement_ids - proof_map.proven_ids()) > 1
+                    or any(r.depends_on for r in requirements)
+                ):
+                    work.promote(
+                        next(
+                            iter(sorted(requirement_ids - proof_map.proven_ids())),
+                            "required_dependency",
+                        ),
+                        recoverable=True,
+                        required_seconds=6.0,
+                    )
+                    schedule.deadline = work.recovery_deadline
+                    timeout_context.reschedule(
+                        asyncio.get_running_loop().time()
+                        + max(0.0, work.phase_deadline("coverage_review") - monotonic())
+                    )
+                    schedule.action_limits["search"] = work.recovery_search_credits
+                if known_gap:
+                    diagnostics["status"] = "coverage_incomplete"
+                    diagnostics["stop_reason"] = "known_corpus_gap"
+                    diagnostics["queries"] = []
+                    diagnostics["coverage"] = {
+                        "missing": list(
+                            initial.diagnostics.get("known_corpus_gap_requirements")
+                            or [r.description for r in requirements]
+                        ),
+                        "complete": False,
+                        "quotes_validated": False,
+                    }
+                    if partial_checkpoint is not None:
+                        partial_checkpoint.diagnostics["stop_reason"] = "known_corpus_gap"
+                        return partial_checkpoint
+                    return result
             queries = queries[:max_initial_queries]
             query_requirement_ids = {
                 query: query_requirement_ids.get(query, []) for query in queries
@@ -2757,7 +2889,11 @@ async def repair_knowledge_evidence(
             pending_routes = dict.fromkeys(pending_queries, "search")
             adjacent_requests: dict[str, list[uuid.UUID]] = {}
             attempted_adjacent: set[tuple[str, uuid.UUID]] = set()
-            remaining_followup_queries = min(max_followup_queries, max(0, 3 - len(queries)))
+            remaining_followup_queries = (
+                max(0, work.recovery_search_credits - len(queries))
+                if work is not None and work.execution_policy == "adaptive_v1"
+                else min(max_followup_queries, max(0, 3 - len(queries)))
+            )
             reviewed_evidence: set[str] = set()
             last_verdict: CoverageVerdict | None = None
             last_partial_scope_validated = False
@@ -2825,10 +2961,15 @@ async def repair_knowledge_evidence(
                 if getattr(retrieval, "supports_batch_retrieval", False) is True and callable(
                     batch_retrieve
                 ):
-                    async with asyncio.timeout(max(0.0, schedule.search_deadline - monotonic())):
-                        if schedule.search_deadline <= monotonic():
-                            raise TimeoutError
-                        branches = await batch_retrieve(requests, snapshot=initial.diagnostics)
+                    if schedule.search_deadline <= monotonic():
+                        raise TimeoutError
+                    branches = await batch_retrieve(
+                        requests,
+                        snapshot={
+                            **initial.diagnostics,
+                            "discovery_deadline": schedule.search_deadline,
+                        },
+                    )
                 else:
                     # Compatibility ports can share a session and must remain sequential.
                     branches = []
@@ -2838,7 +2979,16 @@ async def repair_knowledge_evidence(
                         ):
                             if schedule.search_deadline <= monotonic():
                                 raise TimeoutError
-                            branch = await retrieval.retrieve(**request)
+                            try:
+                                branch = await retrieval.retrieve(**request)
+                            except (ProviderTimeoutError, TimeoutError):
+                                branch = ContextRetrievalResult(
+                                    chunks=[],
+                                    diagnostics={
+                                        **initial.diagnostics,
+                                        "branch_failure": "provider_or_deadline_failure",
+                                    },
+                                )
                         if (
                             tuple(
                                 branch.diagnostics.get(k)
@@ -3468,6 +3618,7 @@ async def repair_knowledge_evidence(
                     assert isinstance(parsed_review, CoverageVerdict)
                     verdict = parsed_review
                     if requirement_ids:
+                        proof_map.remember_gaps(verdict.missing, verdict.checks)
                         proof_map.observe_review_checks(verdict.checks, budgeted, records)
                 unfulfilled = [
                     facet
@@ -3662,7 +3813,7 @@ async def repair_knowledge_evidence(
                 # A follow-up needs retrieval and another coverage review. Do not
                 # spend the last seconds starting work that cannot finish while a
                 # validated, useful partial answer is ready for generation.
-                if partial_scope_validated and timeout_seconds - (monotonic() - started) < 12:
+                if partial_scope_validated and schedule.search_deadline - monotonic() < 6:
                     diagnostics["stop_reason"] = "insufficient_followup_budget"
                     _store_partial_answer(diagnostics, verdict)
                     break
@@ -4031,7 +4182,11 @@ async def repair_knowledge_evidence(
                         continue
                     pending_queries.append(query)
                     query_requirement_ids[query] = bound_ids
-                pending_queries = pending_queries[:remaining_followup_queries]
+                pending_queries = pending_queries[
+                    : min(remaining_followup_queries, 2)
+                    if work is not None and work.execution_policy == "adaptive_v1"
+                    else remaining_followup_queries
+                ]
                 if not pending_queries or any(not q or len(q) > 500 for q in pending_queries):
                     diagnostics["requirement_progress"] = {
                         **(diagnostics.get("requirement_progress") or {}),
@@ -4431,11 +4586,12 @@ def _handoff_reviewed_proof(
         for item in check.evidence:
             proof_by_chunk.setdefault(item.chunk_id, []).append(
                 {
-                    "requirement_id": check.requirement_id,
+                    "requirement_id": check.requirement_id or f"query-{check.query_index}",
                     "quote": item.quote,
                     "fulfillment": check.fulfillment,
                     "supported_scope": check.answerable_scope or check.description,
                     "unresolved_facets": check.unresolved_facets,
+                    "proof_unit_chunk_ids": list(dict.fromkeys(q.chunk_id for q in check.evidence)),
                 }
             )
     proof = [
@@ -4444,6 +4600,13 @@ def _handoff_reviewed_proof(
             metadata={
                 **chunk.metadata,
                 "reviewed_proof": proof_by_chunk.get(str(chunk.chunk_id), []),
+                "proof_unit_chunk_ids": list(
+                    dict.fromkeys(
+                        identity
+                        for item in proof_by_chunk.get(str(chunk.chunk_id), [])
+                        for identity in item["proof_unit_chunk_ids"]
+                    )
+                ),
             },
         )
         for chunk in proof

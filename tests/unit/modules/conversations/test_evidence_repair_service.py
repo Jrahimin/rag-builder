@@ -7,6 +7,7 @@ import json
 import uuid
 from dataclasses import replace
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -231,8 +232,10 @@ def test_search_plan_rejects_circular_or_unknown_dependencies(dependencies):
 
 
 async def test_supported_fragment_still_fetches_structural_continuation_before_partial():
-    continuation = chunk("Continuation without governing heading.")
-    predecessor = chunk("Section 36 opening applicability and return contents.")
+    continuation = chunk(
+        "Companies must hold an AGM; the filing provision continues without its heading."
+    )
+    predecessor = chunk("Section 36: a company must file its annual return within 30 days.")
     coverage = {
         "complete": False,
         "missing": ["filing deadline"],
@@ -242,6 +245,7 @@ async def test_supported_fragment_still_fetches_structural_continuation_before_p
                 "description": "Section 36 continuation",
                 "supported": True,
                 "needs_adjacent_context": True,
+                "unresolved_facets": ["filing deadline"],
                 "evidence": [
                     {"chunk_id": str(continuation.chunk_id), "quote": continuation.content}
                 ],
@@ -277,6 +281,7 @@ async def test_supported_fragment_still_fetches_structural_continuation_before_p
                     "requirement_id": "R1",
                     "description": "Section 36 continuation",
                     "supported": True,
+                    "resolved_gaps": ["filing deadline"],
                     "evidence": [
                         {"chunk_id": str(predecessor.chunk_id), "quote": predecessor.content}
                     ],
@@ -795,6 +800,7 @@ async def test_truncated_structured_request_restarts_once_with_bounded_budget(fi
         usage=ChatUsage(10, 1500),
     )
     llm = AsyncMock()
+    llm.supports_output_contract = True
     llm.generate.side_effect = [truncated, retried]
     messages = [ChatMessage(ChatRole.USER, "Review the evidence")]
     result = await _validated_completion(
@@ -875,6 +881,7 @@ async def test_blank_source_selector_gets_one_structural_correction_without_acce
         )
 
     llm = AsyncMock()
+    llm.supports_output_contract = True
     llm.generate.side_effect = [completion(2), replacement_completion(retry_line)]
     payload = {
         "original_question": "Select the evidence line",
@@ -2619,7 +2626,10 @@ async def test_adjacent_recovery_keeps_scope_and_rechecks_original_requirements(
     partial, anchor_supported, semantic_followups
 ):
     continuation = chunk("Continuation without governing heading.")
-    governing = chunk("The applicable rate is 10% for the current period.")
+    governing = chunk(
+        "Governing heading: the current rate is 10%; the separate"
+        " recordkeeping duty requires records."
+    )
     calls = []
     result, retrieval, inputs = await run_repair(
         [([continuation], {}), ([governing], {})],
@@ -2629,12 +2639,13 @@ async def test_adjacent_recovery_keeps_scope_and_rechecks_original_requirements(
         else None,
         coverage={
             "complete": False,
-            "missing": ["separate unrelated missing topic", "governing heading"],
+            "missing": ["separate recordkeeping duty", "governing heading"],
             "checks": [
                 {
                     "query_index": 0,
                     "supported": anchor_supported,
                     "needs_adjacent_context": True,
+                    "unresolved_facets": ["separate recordkeeping duty", "governing heading"],
                     "description": "Governing heading and scope for this continuation",
                     **({"requirement_id": "missing"} if partial else {}),
                     "evidence": [
@@ -2679,6 +2690,9 @@ async def test_adjacent_recovery_keeps_scope_and_rechecks_original_requirements(
                     "query_index": i,
                     **({"requirement_id": ("missing", "known")[i]} if partial else {}),
                     "supported": True,
+                    "resolved_gaps": ["separate recordkeeping duty", "governing heading"]
+                    if i == 0
+                    else [],
                     "evidence": [
                         {"chunk_id": str(governing.chunk_id), "start_line": 1, "end_line": 1}
                     ],
@@ -2762,14 +2776,20 @@ def test_publication_footer_does_not_prove_rate_schedule_year():
         _unproven_requested_scope,
     )
 
-    question = "What is the ordinary taxpayer threshold for assessment year 2026–27?"  # noqa: RUF001
+    question = "What is the ordinary taxpayer threshold for assessment year 2026\u201327?"
     description = _question_scope_for_requirement(
         "Confirm the ordinary taxpayer category and applicable assessment year.", question
     )
-    later_band = "সকল নিবাসী স্বাভাবিক ব্যক্তি করহার প্রথম ৫,০০,০০০ টাকা পর্যন্ত শূন্য। আয়কর পরিপত্র ২০২৬-২০২৭ ।৪"  # noqa: RUF001
+    later_band = (
+        "সকল নিবাসী স্বাভাবিক ব্যক্তি করহার প্রথম "
+        "\u09eb,\u09e6\u09e6,\u09e6\u09e6\u09e6 টাকা পর্যন্ত শূন্য। "
+        "আয়কর পরিপত্র \u09e8\u09e6\u09e8\u09ec-\u09e8\u09e6\u09e8\u09ed ।\u09ea"
+    )
     assert "requested period 2026-27" in _unproven_requested_scope(description, later_band)
     current_band = (
-        "স্বাভাবিক ব্যক্তি ও হিন্দু অবিভক্ত পরিবারের ২০২৬-২০২৭ করবর্ষের জন্য করহার। প্রথম ৪,০০,০০০ টাকা পর্যন্ত শূন্য।"  # noqa: RUF001
+        "স্বাভাবিক ব্যক্তি ও হিন্দু অবিভক্ত পরিবারের "
+        "\u09e8\u09e6\u09e8\u09ec-\u09e8\u09e6\u09e8\u09ed করবর্ষের জন্য করহার। "
+        "প্রথম \u09ea,\u09e6\u09e6,\u09e6\u09e6\u09e6 টাকা পর্যন্ত শূন্য।"
     )
     assert _unproven_requested_scope(description, current_band) == []
     source = chunk(later_band)
@@ -3277,7 +3297,9 @@ async def test_authoritative_partial_initial_proof_filters_proven_queries():
     assert {item.chunk_id for item in result.selected} == {selected[0].chunk_id, later.chunk_id}
 
 
-async def test_authoritative_initial_partial_proof_survives_later_deadline():
+async def test_authoritative_initial_partial_proof_survives_later_deadline(monkeypatch):
+    from app.modules.conversations.services import evidence_repair_service
+
     known = chunk("Private companies must hold an annual general meeting.")
     later = chunk("An unrelated discovery passage.")
     config = ChatConfig()
@@ -3285,9 +3307,38 @@ async def test_authoritative_initial_partial_proof_survives_later_deadline():
     decision = grounding.assess("What are the AGM and filing duties?", [known], rerank_status="off")
     selected = list(decision.admitted_units) or [known]
 
-    async def delay_coverage(messages):
+    clock = [0.0]
+    timeout_seconds = 0.02
+    timeout_scopes = []
+    timeout_delays = []
+    coverage_started = []
+    coverage_cancelled = []
+    native_timeout = asyncio.timeout
+
+    def controlled_timeout(delay):
+        # Keep native cancellation, but start expiry only at the intended stage.
+        timeout_delays.append(delay)
+        scope = native_timeout(None)
+        timeout_scopes.append(scope)
+        return scope
+
+    monkeypatch.setattr(evidence_repair_service, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(
+        evidence_repair_service,
+        "asyncio",
+        SimpleNamespace(**{**vars(asyncio), "timeout": controlled_timeout}),
+    )
+
+    async def expire_during_coverage(messages):
         if "Check whether supplied evidence" in messages[0].content:
-            await asyncio.sleep(0.05)
+            coverage_started.append(json.loads(messages[1].content))
+            clock[0] = timeout_seconds
+            timeout_scopes[0].reschedule(asyncio.get_running_loop().time())
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                coverage_cancelled.append(True)
+                raise
 
     result, retrieval, _ = await run_repair(
         [([later], {})],
@@ -3335,8 +3386,8 @@ async def test_authoritative_initial_partial_proof_survives_later_deadline():
                 "exclusions": ["Annual return filing duty"],
             },
         },
-        generation_hook=delay_coverage,
-        timeout_seconds=0.02,
+        generation_hook=expire_during_coverage,
+        timeout_seconds=timeout_seconds,
         user_query="What are the AGM and filing duties?",
         recovery_profile="broad",
         max_initial_queries=4,
@@ -3344,9 +3395,26 @@ async def test_authoritative_initial_partial_proof_survives_later_deadline():
         max_followup_rounds=1,
     )
 
+    assert len(coverage_started) == 1
+    assert coverage_cancelled == [True]
+    assert clock[0] == timeout_seconds
+    assert timeout_delays[0] == timeout_seconds
+    assert timeout_scopes[0].expired()
+    assert result.diagnostics["timeout_seconds"] == timeout_seconds
+    assert result.diagnostics["phase"] == "coverage_review"
     assert retrieval.retrieve.await_count == 1
+    assert retrieval.retrieve.call_args.kwargs["query"] == "annual return filing"
+    retrieval.retrieve_batch.assert_not_awaited()
     assert result.diagnostics["status"] == "partial_answer"
     assert result.diagnostics["initial_partial_checkpoint"] == "validated"
+    assert result.diagnostics["initial_coverage_review"] == "admitted_evidence"
+    assert result.diagnostics["partial_checkpoint_restored"] == "recovery_deadline_exceeded"
+    assert result.diagnostics["coverage"]["partial_scope_validated"] is True
+    assert result.diagnostics["coverage"]["full_coverage_validated"] is False
+    assert result.diagnostics["coverage"]["missing"] == ["Annual return filing duty"]
+    assert result.partial_answer is not None
+    assert result.partial_answer["requirement_ids"] == ["R2"]
+    assert result.partial_answer["pending"] == ["Annual return filing duty"]
     assert result.diagnostics["requirement_progress"]["stop_reason"] == (
         "recovery_deadline_exceeded"
     )
@@ -3627,7 +3695,10 @@ def test_mixed_full_and_partial_proof_keeps_partial_in_delta_and_focused_recover
         ),
         (
             "Conditional filing window for private companies",
-            "The conditional filing window for private companies ends 30 June.",
+            (
+                "For private companies with an approved extension certifi"
+                "cate, the conditional filing window ends 30 June."
+            ),
             False,
         ),
         (
@@ -3662,6 +3733,17 @@ def test_full_fulfillment_needs_selected_proof_for_requested_scope(
                     "description": requirement,
                     "supported": True,
                     "fulfillment": "full",
+                    "condition_facets": [
+                        {
+                            "who": "private companies",
+                            "action": "file",
+                            "when": "30 June",
+                            "condition": "approved extension certificate",
+                            "evidence_indexes": [0],
+                        }
+                    ]
+                    if "approved extension certificate" in proof
+                    else [],
                     "evidence": [{"chunk_id": str(source.chunk_id), "quote": proof}],
                 }
             ],
@@ -3854,6 +3936,13 @@ def test_replaced_full_proof_clears_only_stale_candidate_source_gap():
                     "description": "Operative tax-free limit",
                     "supported": True,
                     "fulfillment": "full",
+                    "resolved_gaps": [
+                        (
+                            "The admitted rate schedule is from a budget speech, not "
+                            "proof "
+                            "of the operative enacted schedule."
+                        )
+                    ],
                     "evidence": [{"chunk_id": str(enacted.chunk_id), "quote": enacted.content}],
                 }
             ],

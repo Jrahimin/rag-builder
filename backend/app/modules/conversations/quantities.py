@@ -41,8 +41,12 @@ _NUMBER = regex.compile(
 )
 _CURRENCY = r"(?:\b(?:BDT|Tk|taka|USD|EUR|GBP)\b|[৳$€£]|টাকা(?:র)?)"
 _MONEY_CUE = regex.compile(
-    r"\b(?:amount|fee|fine|penalty|payable|rebate|tax|income|investment|salary|"
-    r"threshold|limit|cap|price|cost|value|currency)\b|টাকা|আয়|আয়|কর|রেয়াত|রেয়াত|সীমা|মূল্য|জরিমানা",
+    (
+        "\\b(?:amount|fee|fine|penalty|payable|rebate|t"
+        "ax|income|investment|salary|threshold|limit|c"
+        "ap|price|cost|value|currency)\\b|টাকা|আয়|আয়|ক"
+        "র|রেয়াত|রেয়াত|সীমা|মূল্য|জরিমানা"
+    ),
     regex.I,
 )
 
@@ -63,10 +67,23 @@ def normalize_quantities(text: str) -> tuple[Quantity, ...]:
     # Digit folding and Markdown masking preserve character offsets.
     folded = "".join(str(int(c)) if c.isdecimal() else c for c in text)
     folded = folded.replace("*", " ").replace("_", " ").replace("`", " ")
+    # Recognize the complete period before classifying either endpoint. Currency
+    # in the next table cell/line must never turn the short endpoint into money.
+    period_spans = [
+        (m.start(), m.end())
+        for m in regex.finditer(
+            ("(?<!\\d)(?:18|19|20|21)\\d{2}\\s*[-\\u2013\\u2014/]\\s*\\d{2,4}(?!\\d)"), folded
+        )
+    ]
     quantities = []
     for match in _NUMBER.finditer(folded):
-        before = folded[max(0, match.start() - 65) : match.start()]
-        after = folded[match.end() : match.end() + 45]
+        line_start = (
+            max(folded.rfind("\n", 0, match.start()), folded.rfind("|", 0, match.start())) + 1
+        )
+        endings = [p for token in ("\n", "|") if (p := folded.find(token, match.end())) >= 0]
+        line_end = min(endings, default=len(folded))
+        before = folded[max(line_start, match.start() - 65) : match.start()]
+        after = folded[match.end() : min(line_end, match.end() + 45)]
         value = Decimal(match["number"].replace(",", "").replace("٬", ""))
         value *= _SCALES.get((match["scale"] or "").casefold(), 1)
         explicit = bool(
@@ -75,9 +92,17 @@ def normalize_quantities(text: str) -> tuple[Quantity, ...]:
         )
         kind: QuantityKind = "number"
         role = None
-        if explicit:
+        in_period = any(
+            start <= match.start() and match.end() <= end for start, end in period_spans
+        )
+        if in_period:
+            kind = "period"
+            explicit = False
+        elif explicit:
             kind = "money"
-        elif regex.search(r"(?:sections?|articles?|chapters?|s\.|ধারা|অনুচ্ছেদ)\s*$", before, regex.I):
+        elif regex.search(
+            ("(?:sections?|articles?|chapters?|s\\.|ধারা|অনুচ্ছেদ)\\s*$"), before, regex.I
+        ):
             kind = "locator"
         elif regex.match(r"\s*(?:%|percent\b|শতাংশ)", after, regex.I):
             kind = "rate"
@@ -89,7 +114,10 @@ def normalize_quantities(text: str) -> tuple[Quantity, ...]:
             kind = "count"
         elif (
             regex.search(
-                r"(?:\b(?:AY|FY|year|period|Act|Ordinance|Rules|Regulations|Code)|করবর্ষ|অর্থবছর)\s*[,.:]?\s*$",
+                (
+                    "(?:\\b(?:AY|FY|year|period|Act|Ordinance|Rules|Regulatio"
+                    "ns|Code)|করবর্ষ|অর্থবছর)\\s*[,.:]?\\s*$"
+                ),
                 before,
                 regex.I,
             )

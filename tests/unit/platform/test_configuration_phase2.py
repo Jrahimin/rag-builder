@@ -166,6 +166,7 @@ def test_every_preset_field_ignores_conflicting_raw_execution_settings() -> None
             _revision({"execution": {"profile_id": profile_id}}),
         )
         assert materialize_execution_values(resolution.configuration) == {
+            "execution_policy": "legacy",
             **execution_values(profile),
             "bounded_recovery_enabled": True,
             "focused_recovery_timeout_seconds": 15.0,

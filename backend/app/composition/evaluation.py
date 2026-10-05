@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import time
 import uuid
 from collections.abc import AsyncIterator
@@ -26,10 +25,15 @@ from app.modules.conversations.ports import ContextChunk, ContextRetrievalResult
 from app.modules.conversations.prompts.registry import (
     GROUNDED_PROMPT_VERSION,
 )
+from app.modules.conversations.repositories.message_repository import MessageRepository
 from app.modules.conversations.schemas.message import MessageSendRequest
 from app.modules.conversations.services.message_execution_runner_service import (
     MessageExecutionRunner,
     _combine_token_counts,
+)
+from app.modules.conversations.turn_resolution import (
+    normalize_request_scope,
+    requires_complex_execution_budget,
 )
 from app.modules.evaluation.ports import (
     EvaluationAnswerPort,
@@ -46,10 +50,14 @@ from app.modules.evaluation.repositories.evaluation_corpus_repository import (
 from app.modules.evaluation.repositories.evaluation_dataset_repository import (
     EvaluationDatasetRepository,
 )
+from app.modules.evaluation.repositories.evaluation_diagnostic_repository import (
+    EvaluationDiagnosticRepository,
+)
 from app.modules.evaluation.repositories.evaluation_run_repository import EvaluationRunRepository
 from app.modules.evaluation.services.evaluation_runner_service import EvaluationRunnerService
 from app.modules.evaluation.services.evaluation_service import EvaluationService
 from app.modules.retrieval.embedding_identity import EmbeddingIdentity
+from app.modules.retrieval.known_dependency_gap import known_dependency_gap
 from app.modules.retrieval.schemas.search import SearchRequest
 from app.modules.retrieval.services.search_service import SearchService
 from app.platform.config.project_ai import (
@@ -403,9 +411,13 @@ class _EvaluationMessageRetrieval:
         if not self.used_initial and not adjacent_to and not cited_chunk_ids:
             self.used_initial = True
             self.first_search = _quality_search_result(result)
+        diagnostics = result.diagnostics.model_dump(mode="json")
+        diagnostics.update(
+            known_dependency_gap(diagnostics, getattr(self.search, "_project_id", None))
+        )
         return ContextRetrievalResult(
             chunks=[ContextChunk.from_retrieval_result(hit) for hit in result.results],
-            diagnostics=result.diagnostics.model_dump(mode="json"),
+            diagnostics=diagnostics,
         )
 
     async def retrieve_exact(
@@ -513,7 +525,14 @@ class GroundedEvaluationAnswerAdapter(EvaluationAnswerPort):
         service = self._retrieval._services.get(profile) if self._retrieval else None
         retrieval = execution_retrieval or _EvaluationMessageRetrieval(None, hits, provenance)
         work = work or RequestWork(self._project_id)
-        work.deadline = min(work.deadline, work.started + 50.0)
+        work.configure_execution(
+            self._settings.chat.execution_policy,
+            complex_question=requires_complex_execution_budget(
+                normalize_request_scope(request.content)
+            ),
+        )
+        if work.execution_policy == "legacy":
+            work.deadline = min(work.deadline, work.started + 50.0)
         runner = MessageExecutionRunner(
             project_id=self._project_id,
             retrieval=retrieval,
@@ -531,7 +550,17 @@ class GroundedEvaluationAnswerAdapter(EvaluationAnswerPort):
         prepared = None
         try:
             with work.attached():
-                async with asyncio.timeout(max(0.0, work.deadline - time.perf_counter())):
+                async with work.execution_timeout():
+                    if work.execution_policy == "adaptive_v1" and self._session is not None:
+                        identity = provenance.get("configuration_hash")
+                        if identity is None and self._retrieval is not None:
+                            identity = getattr(self._retrieval, "_configuration_hash", None)
+                        if identity:
+                            with work.attached(), work.stage("stage_estimate_read"):
+                                samples = await MessageRepository(
+                                    self._session, self._project_id
+                                ).execution_samples(configuration_hash=str(identity))
+                                work.freeze_measured_stages(samples)
                     prepared = await runner.prepare(
                         request=request,
                         current_message_id=uuid.uuid4(),
@@ -627,6 +656,9 @@ class GroundedEvaluationAnswerAdapter(EvaluationAnswerPort):
             selected_chunk_ids=[chunk.chunk_id for chunk in prepared.selected] if prepared else [],
             evidence_gate=result.metadata.get("evidence_gate", {}),
             execution=result.finalization.public_projection(),
+            notices=result.metadata.get("notices", []),
+            lifecycle=work.snapshot(),
+            operator_diagnostic=result.finalization.model_dump(mode="json"),
             complete_turn_latency_ms=round((time.perf_counter() - started) * 1000),
         )
 
@@ -711,6 +743,7 @@ def build_evaluation_runner(
         retrieval=retrieval,
         answerer=answerer,
         config=settings.evaluation,
+        diagnostics=EvaluationDiagnosticRepository(session, project_id),
     )
 
 

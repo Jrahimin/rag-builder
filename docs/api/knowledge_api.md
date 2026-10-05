@@ -167,3 +167,20 @@ scope fact declares period_mode=range. Multi-period replacement scope may be est
 across separate pinned chunks of the same document, subject to project/build/generation
 and availability filters. Publication known-at cutoffs do not replace legal
 applicability. Source API writes and index activation behavior are unchanged.
+
+
+Source relationship requests/responses optionally carry `review_provenance`.
+The service records reviewer/source revision/content identity and target revision
+alongside validated exact supporting spans. Unknown effects and effective dates
+remain unknown. New chunk scope facts use `scope.v2`; legacy facts remain readable
+and nonexhaustive. Offline reconciliation decisions do not mutate source revisions
+or execute re-attestation/reprocessing/reacquisition.
+
+### Optional declared edition identity
+
+Source revision create/response schemas include optional `edition_key` (1–255
+characters). Declare it only for a distinct reviewed legal edition. Omission
+inherits the active edition within the same source group; explicit null uses
+legacy latest-correction semantics. It does not change `work_key`, replacement
+group constraints, dates, activation history, or project isolation. Historical
+retrieval selects corrected metadata within the edition before legal intervals.

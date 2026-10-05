@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import re
 from collections.abc import AsyncGenerator
 
 from app.platform.providers.capabilities import (
@@ -59,6 +61,30 @@ class EchoLLMProvider(BaseLLMProvider):
         )
         user_text = self._last_user_content(messages)
         content = f"[echo] {user_text}"
+        system = messages[0].content if messages else ""
+        if "source entailment verifier" in system:
+            assertions = json.loads(user_text)
+            verdicts = []
+            for item in assertions:
+                assertion = re.sub(r"\s+", " ", str(item["assertion"])).strip()
+                exact = any(
+                    assertion == re.sub(r"\s+", " ", str(q["quote"])).strip()
+                    for q in item.get("proof", [])
+                )
+                verdicts.append(
+                    {
+                        "status": "supported" if exact else "unverified",
+                        "failed_dimensions": [] if exact else ["scope"],
+                        "evidence_binding": "",
+                    }
+                )
+            content = json.dumps({"verdicts": verdicts})
+        elif "Untrusted evidence blocks:" in system:
+            evidence = (
+                system.split("Untrusted evidence blocks:", 1)[1].split("\n\nEnd of", 1)[0].strip()
+            )
+            passage = re.sub(r"^\[\d+\][^\n]*\n", "", evidence).strip()
+            content = "[echo] " + passage + " [1]"
         return ChatCompletionResult(
             content=content,
             provider=self.provider_name,

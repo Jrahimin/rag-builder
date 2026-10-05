@@ -25,10 +25,15 @@ def provider_work_scope(
     project_id: uuid.UUID,
     reference: str,
     workload: str,
+    *,
+    cache_sessions: async_sessionmaker[AsyncSession] | None = None,
+    accounting_sessions: async_sessionmaker[AsyncSession] | None = None,
 ) -> Iterator[ProviderWorkScope]:
     parent = current_provider_scope()
+    inherited_store = None
     if parent is not None and parent.workload == "evaluation" and parent.project_id == project_id:
         reference, workload = parent.reference, parent.workload
+        inherited_store = parent.store
         settings = settings.model_copy(update={"provider_costs": parent.config})
     scope = ProviderWorkScope(
         project_id=project_id,
@@ -37,7 +42,8 @@ def provider_work_scope(
         environment=settings.app.env.value,
         embedding_set_version=settings.retrieval.embedding_set_version,
         config=settings.provider_costs,
-        store=ProviderWorkRepository(sessions),
+        store=inherited_store
+        or ProviderWorkRepository(cache_sessions or sessions, accounting_sessions),
     )
     with attached_provider_scope(scope):
         yield scope
@@ -69,5 +75,15 @@ class ProviderWorkMiddleware:
             project_id,
             str(uuid.uuid4()),
             workload,
+            cache_sessions=(
+                app.state.db.provider_cache_session_factory
+                if app.state.settings.provider_costs.cache_enabled
+                else None
+            ),
+            accounting_sessions=(
+                app.state.db.provider_accounting_session_factory
+                if app.state.settings.provider_costs.enabled
+                else None
+            ),
         ):
             await self.app(scope, receive, send)

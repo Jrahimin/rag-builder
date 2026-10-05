@@ -618,6 +618,8 @@ class LLMConfig(BaseModel):
 
     backend: LLMBackend = LLMBackend.ECHO
     model: str = "gpt-4o-mini"
+    # Explicit offline/operational endpoint-model attestations, empty by default.
+    schema_capabilities: list[dict[str, str]] = Field(default_factory=list)
     temperature: float | None = Field(default=None, ge=0.0, le=2.0)
     # Reasoning and visible output share this ceiling. Leave room for a bounded
     # 4096 -> 8192 planning retry as well as multi-source answer generation.
@@ -844,6 +846,7 @@ class ChatConfig(BaseModel):
     # Default to bounded recovery so incomplete-evidence repair has a predictable
     # latency budget. Existing immutable snapshots retain their recorded policy.
     bounded_recovery_enabled: bool = True
+    execution_policy: Literal["legacy", "adaptive_v1"] = "legacy"
     focused_recovery_timeout_seconds: float = Field(default=15.0, ge=1.0, le=120.0)
     broad_recovery_timeout_seconds: float = Field(default=30.0, ge=1.0, le=180.0)
     focused_recovery_max_queries: int = Field(default=2, ge=1, le=8)

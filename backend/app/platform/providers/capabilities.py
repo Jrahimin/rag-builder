@@ -2,13 +2,61 @@
 
 from __future__ import annotations
 
+import hashlib
+import re
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urlsplit
 
 from app.core.config import EmbeddingBackend, EmbeddingConfig, LLMBackend, LLMConfig
 from app.core.exceptions import BadRequestError
 
 CAPABILITY_VERSION = "2026-08-16.v2"
+
+
+def endpoint_identity(endpoint: str) -> str:
+    """Credential-free identity for the exact configured endpoint path."""
+    parsed = urlsplit(endpoint.rstrip("/"))
+    safe = f"{parsed.scheme.lower()}://{parsed.hostname}:{parsed.port or ''}{parsed.path}"
+    return hashlib.sha256(safe.encode()).hexdigest()
+
+
+def structured_output_capability(
+    provider: str,
+    model: str,
+    endpoint: str,
+    declarations: list[dict[str, str]] | None = None,
+) -> dict[str, str]:
+    """Use only explicit endpoint/model certifications; unknown pairs use a prompt."""
+    identity = endpoint_identity(endpoint)
+    for item in declarations or []:
+        if (
+            item.get("provider") == provider
+            and item.get("model") == model
+            and item.get("endpoint_hash") == identity
+            and item.get("schema_mode") in {"json_schema", "json_object"}
+            and item.get("reviewer", "").strip()
+            and re.fullmatch(r"[a-f0-9]{64}", item.get("evidence_hash", ""))
+            and item.get("capability_revision")
+        ):
+            return {
+                "schema_mode": item["schema_mode"],
+                "endpoint_hash": identity,
+                "capability_revision": item["capability_revision"],
+                "capability_source": "explicit_endpoint_model_attestation",
+            }
+    # Preserve the existing official OpenAI JSON-object baseline. This is not a
+    # strict-schema certification and applies to no compatible/custom endpoint.
+    parsed = urlsplit(endpoint)
+    mode = (
+        "json_object" if provider == "openai" and parsed.hostname == "api.openai.com" else "prompt"
+    )
+    return {
+        "schema_mode": mode,
+        "endpoint_hash": identity,
+        "capability_revision": CAPABILITY_VERSION,
+        "capability_source": "portable_baseline",
+    }
 
 
 def llm_credential_configured(config: LLMConfig) -> bool | None:

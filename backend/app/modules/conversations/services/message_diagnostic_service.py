@@ -50,6 +50,7 @@ def bounded_payload(payload: dict[str, Any]) -> dict[str, Any]:
             "fatal_event",
             "recovery_stop",
             "correction_attempts",
+            "calculations",
         )
         if key in payload
     }

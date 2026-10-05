@@ -165,6 +165,7 @@ async def test_partial_custom_write_materializes_complete_bundle_and_stays_indep
     expected = {
         **execution_values(RAG_EXECUTION_PROFILES["standard"]),
         "retrieval_top_k": 7,
+        "execution_policy": "legacy",
         "bounded_recovery_enabled": True,
         "focused_recovery_timeout_seconds": 15.0,
         "broad_recovery_timeout_seconds": 30.0,

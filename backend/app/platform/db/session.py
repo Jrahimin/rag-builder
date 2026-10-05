@@ -8,6 +8,7 @@ through dependency injection (see ``app.dependencies.database``).
 
 from __future__ import annotations
 
+import asyncio
 import time
 from collections.abc import Awaitable, Callable, Mapping
 from contextvars import ContextVar, Token
@@ -150,6 +151,9 @@ class Database:
     def __init__(self, settings: Settings) -> None:
         db = settings.database
         self._embedding_dimensions = settings.embedding.dimensions
+        self._provider_db_config = db
+        self._provider_engines: dict[str, AsyncEngine] = {}
+        self._provider_sessions: dict[str, async_sessionmaker[AsyncSession]] = {}
         self._engine: AsyncEngine = create_async_engine(
             db.async_dsn,
             echo=db.echo,
@@ -174,6 +178,34 @@ class Database:
     @property
     def session_factory(self) -> async_sessionmaker[AsyncSession]:
         return self._session_factory
+
+    def _provider_session_factory(self, purpose: str) -> async_sessionmaker[AsyncSession]:
+        # Lazy pools: disabled controls open no additional connections. Cache lock
+        # waiters and business transactions cannot occupy accounting capacity.
+        if purpose not in self._provider_sessions:
+            db = self._provider_db_config
+            engine = create_async_engine(
+                db.async_dsn,
+                echo=db.echo,
+                pool_size=2,
+                max_overflow=0,
+                pool_timeout=db.pool_timeout,
+                pool_recycle=db.pool_recycle,
+                pool_pre_ping=True,
+            )
+            self._provider_engines[purpose] = engine
+            self._provider_sessions[purpose] = async_sessionmaker(
+                bind=engine, expire_on_commit=False, autoflush=False
+            )
+        return self._provider_sessions[purpose]
+
+    @property
+    def provider_cache_session_factory(self) -> async_sessionmaker[AsyncSession]:
+        return self._provider_session_factory("cache")
+
+    @property
+    def provider_accounting_session_factory(self) -> async_sessionmaker[AsyncSession]:
+        return self._provider_session_factory("accounting")
 
     async def check(self) -> None:
         """Verify connectivity, migration compatibility, and pgvector dimensions."""
@@ -237,5 +269,11 @@ class Database:
 
     async def dispose(self) -> None:
         """Dispose of the connection pool on shutdown."""
-        await self._engine.dispose()
+        results = await asyncio.gather(
+            *(engine.dispose() for engine in [*self._provider_engines.values(), self._engine]),
+            return_exceptions=True,
+        )
+        for result in results:
+            if isinstance(result, BaseException):
+                raise result
         log.info("database_disposed")

@@ -9,10 +9,13 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession
 from app.composition.jobs import build_job_service
 from app.core.config import get_settings
 from app.models.document import DocumentStatus
+from app.models.index_build import IndexBuild, IndexBuildState
 from app.models.job_run import JobType
 from app.modules.knowledge.repositories.document_repository import DocumentRepository
+from app.modules.retrieval.workflows.index_build_workflow import activate_index_build
 from app.platform.jobs.configuration import apply_job_configuration
 from app.platform.jobs.contracts import JobConfiguration, JobDefinition, JobQueue
+from app.platform.jobs.errors import PendingBuildAcceptance
 from app.platform.jobs.failure import classify_job_failure
 from app.platform.jobs.names import (
     CORPUS_REEMBED,
@@ -31,6 +34,7 @@ from app.worker.handlers.embedding import _embed
 from app.worker.handlers.evaluation import _evaluate
 from app.worker.handlers.indexing import _index
 from app.worker.handlers.storage_reconciliation import _reconcile
+from tests.integration.build_acceptance_helpers import attest_fixture_build
 
 
 class _CaptureQueue(JobQueue):
@@ -102,6 +106,24 @@ async def _execute(
                 child = await _reconcile(session, run, effective, service, reporter)  # type: ignore[arg-type]
             else:  # pragma: no cover - helper only dispatches the supported test jobs
                 raise AssertionError(f"Unsupported captured job type: {run.job_type.value}")
+            # Legacy journey fixtures explicitly earn a synthetic documentary receipt.
+            # Production workers never create or fabricate these offline certificates.
+            if (
+                run.job_type
+                in {
+                    JobType.DOCUMENT_EMBED,
+                    JobType.DOCUMENT_INDEX,
+                    JobType.DOCUMENT_DELETE,
+                    JobType.DOCUMENT_PURGE,
+                }
+                and run.result
+                and run.result.get("build_id")
+            ):
+                build_id = uuid.UUID(str(run.result["build_id"]))
+                build = await session.get(IndexBuild, build_id)
+                if build is not None and build.state is IndexBuildState.VALIDATED:
+                    await attest_fixture_build(session, project_id, build_id)
+                    await activate_index_build(session, project_id, build)
             submission = await service.stage_success(
                 run.id,
                 worker_id=worker_id,
@@ -109,6 +131,25 @@ async def _execute(
             )
             if submission is not None:
                 await service.dispatch(submission.job_id)
+        except PendingBuildAcceptance:
+            await service.stage_waiting_acceptance(
+                run.id,
+                worker_id=worker_id,
+                payload=dict(run.payload),
+                result=dict(run.result or {}),
+            )
+            build_id = uuid.UUID(str(run.payload["build_id"]))
+            await attest_fixture_build(session, project_id, build_id)
+            build = await session.get(IndexBuild, build_id)
+            assert build is not None
+            await activate_index_build(session, project_id, build)
+            assert await service.resume_accepted_waiting() == 1
+            await session.commit()
+            await service.dispatch(run.id)
+        except AssertionError:
+            # Expose invalid fixture proof immediately instead of laundering setup failure
+            # into a failed document that obscures all later retrieval assertions.
+            raise
         except Exception as exc:
             await session.rollback()
             failure = classify_job_failure(exc)
@@ -136,11 +177,15 @@ async def _run_named(
 ) -> None:
     pending = list(jobs)
     jobs.clear()
-    for delivery in pending:
+    while pending:
+        delivery = pending.pop(0)
         if delivery.name != name:
             jobs.append(delivery)
             continue
         await _execute(connection, delivery, jobs)
+        continuations = [job for job in jobs if job.name == name]
+        pending.extend(continuations)
+        jobs[:] = [job for job in jobs if job.name != name]
 
 
 async def run_captured_document_jobs(

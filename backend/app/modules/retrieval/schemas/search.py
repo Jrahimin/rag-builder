@@ -131,6 +131,7 @@ class SearchDiagnostics(BaseModel):
     post_rerank_unfilled_slots: int = 0
     evidence_funnel: dict[str, Any] = Field(default_factory=dict)
     identity_recall_status: str | None = None
+    indexed_corpus_empty: bool = False
 
 
 class SearchResponse(BaseModel):

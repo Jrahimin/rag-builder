@@ -39,3 +39,18 @@ Upload returns `201`; reprocess, embed, and index return `202`. Their Document
 response includes nullable `data.job_id`. Save this identity when
 you need detailed operational progress or explicit failure retry; continue using
 `Document.status` to decide when the corpus is product-ready.
+
+
+### Waiting for build quality acceptance
+
+Document delete/purge jobs can return `waiting_acceptance`, stage
+`awaiting_quality_acceptance`, unfinished result `destructive_work=not_started`
+and no `completed_at`. This is durable pending work. An accepted active candidate
+makes the dispatcher publish one continuation through the normal outbox and worker
+lease. Restarts/duplicate deliveries cannot publish success or remove data early.
+Only completed resumed work transitions to `succeeded`.
+
+Local journey tooling reports `waiting_acceptance` as an explicit job/build
+quality obligation immediately. It does not count that state as completed work or
+retry it as a provider failure. Approved activation plus the normal accepted-job
+resumption/outbox path is still required before purge can complete.

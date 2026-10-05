@@ -3,12 +3,7 @@
   "private": true,
   "version": "0.9.0",
   "type": "module",
-  "packageManager": "pnpm@9.15.4",
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "esbuild"
-    ]
-  },
+  "packageManager": "pnpm@11.22.0",
   "scripts": {
     "dev": "vite",
     "api:schema": "python scripts/generate_openapi_schema.py",

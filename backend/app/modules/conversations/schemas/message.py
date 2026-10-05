@@ -3,21 +3,29 @@
 from __future__ import annotations
 
 import uuid
-from datetime import date, datetime
+from datetime import datetime
 from enum import StrEnum
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.models.message import MessageRole
 from app.modules.conversations.answer_draft import public_draft_diagnostics
-
-
-class CitationSourceKind(StrEnum):
-    """Origin of one citation snapshot."""
-
-    KNOWLEDGE = "knowledge"
-    WEB = "web"
+from app.platform.domain.message_proof import (
+    AnswerClaim as AnswerClaim,
+)
+from app.platform.domain.message_proof import (
+    CitationSnapshot as CitationSnapshot,
+)
+from app.platform.domain.message_proof import (
+    CitationSourceKind as CitationSourceKind,
+)
+from app.platform.domain.message_proof import (
+    ClaimEvidence as ClaimEvidence,
+)
+from app.platform.domain.message_proof import (
+    ClaimVerification as ClaimVerification,
+)
 
 
 class SourceProvenance(StrEnum):
@@ -36,97 +44,6 @@ class SourceScope(StrEnum):
     INDEXED_ONLY = "indexed_only"
 
 
-class CitationSnapshot(BaseModel):
-    """Durable citation stored on assistant messages."""
-
-    source_kind: CitationSourceKind = CitationSourceKind.KNOWLEDGE
-    chunk_id: uuid.UUID | None = None
-    project_id: uuid.UUID | None = None
-    document_id: uuid.UUID | None = None
-    filename: str
-    chunk_index: int | None = None
-    page_number: int | None = None
-    char_start: int | None = None
-    char_end: int | None = None
-    score: float | None = None
-    chunk_hash: str | None = None
-    evidence_unit_id: str | None = None
-    evidence_span_hash: str | None = None
-    evidence_chunk_char_start: int | None = None
-    evidence_chunk_char_end: int | None = None
-    evidence_span_derivation: str | None = None
-    evidence_query_variant_id: str | None = None
-    excerpt: str | None = None
-    supporting_spans: list[dict[str, Any]] = Field(default_factory=list)
-    structural_context: list[str] = Field(default_factory=list)
-    provenance_precision: str | None = None
-    processing_version: int | None = None
-    index_build_id: uuid.UUID | None = None
-    source_metadata_generation: int | None = None
-    source_revision_id: uuid.UUID | None = None
-    source_group_id: uuid.UUID | None = None
-    source_title: str | None = None
-    source_type: str | None = None
-    source_revision_number: int | None = None
-    source_revision_label: str | None = None
-    source_published_date: date | None = None
-    source_effective_from: date | None = None
-    source_effective_to: date | None = None
-    source_lifecycle_status: str | None = None
-    source_role: str | None = None
-    source_relationships: list[dict[str, Any]] = Field(default_factory=list)
-    authority_status: str | None = None
-    authority_limitations: list[dict[str, Any]] = Field(default_factory=list)
-    relationship_recall_provenance: list[dict[str, Any]] = Field(default_factory=list)
-    authority_dependencies: list[dict[str, Any]] = Field(default_factory=list)
-    config_snapshot_id: uuid.UUID | None = None
-    configuration_hash: str | None = None
-    config_provenance: dict[str, Any] = Field(default_factory=dict)
-    prompt_version: str | None = None
-    web_url: str | None = None
-    web_title: str | None = None
-    web_retrieved_at: datetime | None = None
-    web_provider: str | None = None
-    evidence_provenance_version: str | None = None
-    indexed_chunk_hash: str | None = None
-    evidence_source_chunk_hash: str | None = None
-    evidence_corroboration_method: str | None = None
-    evidence_source_envelope: str | None = None
-    evidence_scope_document_id: uuid.UUID | None = None
-    evidence_scope_metadata_filter: dict[str, str] | None = None
-    evidence_scope_as_of: datetime | None = None
-    evidence_scope_snapshot_origin: str | None = None
-    originating_assistant_message_id: uuid.UUID | None = None
-    coverage_origin_message_id: uuid.UUID | None = None
-    coverage_status: str | None = None
-    coverage_partial: bool | None = None
-
-    @model_validator(mode="after")
-    def validate_source_identity(self) -> CitationSnapshot:
-        internal_identity = (self.chunk_id, self.document_id, self.project_id)
-        web_metadata = (
-            self.web_url,
-            self.web_title,
-            self.web_retrieved_at,
-            self.web_provider,
-        )
-        if self.source_kind is CitationSourceKind.KNOWLEDGE:
-            if any(value is None for value in internal_identity):
-                raise ValueError(
-                    "knowledge citations require Project, document, and chunk identity"
-                )
-            if any(value is not None for value in web_metadata):
-                raise ValueError("knowledge citations cannot carry web source metadata")
-        else:
-            if any(value is not None for value in internal_identity):
-                raise ValueError("web citations cannot expose internal document or chunk identity")
-            if self.chunk_index is not None or self.chunk_hash is not None:
-                raise ValueError("web citations cannot expose synthetic chunk identity")
-            if any(value is None for value in web_metadata):
-                raise ValueError("web citations require URL, title, retrieval time, and provider")
-        return self
-
-
 class InsufficientEvidenceReason(StrEnum):
     """Stable reasons for a correct no-answer outcome."""
 
@@ -141,14 +58,6 @@ class InsufficientEvidenceReason(StrEnum):
     REQUEST_DEADLINE_EXCEEDED = "request_deadline_exceeded"
     RECOVERY_DEADLINE_EXCEEDED = "recovery_deadline_exceeded"
     PROVIDER_TIMEOUT = "provider_timeout"
-
-
-class ClaimVerification(StrEnum):
-    """What the deterministic validator can establish about one claim."""
-
-    SUPPORTED = "supported"
-    UNVERIFIED = "unverified"
-    UNSUPPORTED = "unsupported"
 
 
 class ClaimVerificationReason(StrEnum):
@@ -170,97 +79,6 @@ class ClaimVerificationReason(StrEnum):
     COVERAGE_VERDICT_UNAVAILABLE = "coverage_verdict_unavailable"
     COVERAGE_TOPIC_NOT_MATCHED = "coverage_topic_not_matched"
     COVERAGE_STATEMENT_NOT_IN_VERDICT = "coverage_statement_not_in_verdict"
-
-
-class ClaimEvidence(BaseModel):
-    """One source location supporting an answer claim."""
-
-    citation_index: int = Field(ge=1)
-    chunk_id: uuid.UUID | None = None
-    document_id: uuid.UUID | None = None
-    filename: str
-    chunk_index: int | None = None
-    page_number: int | None = None
-    char_start: int | None = None
-    char_end: int | None = None
-    excerpt: str | None = None
-    evidence_unit_id: str | None = None
-    evidence_span_hash: str | None = None
-    source_kind: CitationSourceKind = CitationSourceKind.KNOWLEDGE
-    web_url: str | None = None
-    web_title: str | None = None
-    web_retrieved_at: datetime | None = None
-    web_provider: str | None = None
-
-    @model_validator(mode="after")
-    def validate_source_identity(self) -> ClaimEvidence:
-        if self.source_kind is CitationSourceKind.KNOWLEDGE:
-            if self.chunk_id is None or self.document_id is None or self.chunk_index is None:
-                raise ValueError("knowledge claim evidence requires internal source identity")
-            if any(
-                value is not None
-                for value in (
-                    self.web_url,
-                    self.web_title,
-                    self.web_retrieved_at,
-                    self.web_provider,
-                )
-            ):
-                raise ValueError("knowledge claim evidence cannot carry web source metadata")
-        else:
-            if (
-                self.chunk_id is not None
-                or self.document_id is not None
-                or self.chunk_index is not None
-            ):
-                raise ValueError("web claim evidence cannot expose synthetic chunk identity")
-            if any(
-                value is None
-                for value in (
-                    self.web_url,
-                    self.web_title,
-                    self.web_retrieved_at,
-                    self.web_provider,
-                )
-            ):
-                raise ValueError(
-                    "web claim evidence requires URL, title, retrieval time, and provider"
-                )
-        return self
-
-
-class AnswerClaim(BaseModel):
-    """A generated answer segment linked to zero or more evidence locations."""
-
-    evidence_support: ClaimVerification | None = None
-    authority_status: str = "not_assessed"
-    claim_kind: str = "source_assertion"
-    arithmetic_verification: ClaimVerification | None = None
-    verification_method: str | None = None
-    verification_reason: str | None = None
-    assertion_text: str | None = None
-
-    requirement_ids: list[str] = Field(default_factory=list)
-    claim_id: str
-    assertion_id: str | None = None
-    text: str
-    grounded: bool
-    verification: ClaimVerification
-    evidence: list[ClaimEvidence] = Field(default_factory=list)
-
-    @model_validator(mode="before")
-    @classmethod
-    def backfill_legacy_verification(cls, value: Any) -> Any:
-        if isinstance(value, dict) and "verification" not in value:
-            value = {
-                **value,
-                "verification": (
-                    ClaimVerification.SUPPORTED
-                    if value.get("grounded")
-                    else ClaimVerification.UNSUPPORTED
-                ),
-            }
-        return value
 
 
 class NoticeSchema(BaseModel):
@@ -300,6 +118,23 @@ class TerminalOutcome(BaseModel):
     unresolved_requirement_ids: list[str] = Field(default_factory=list)
 
 
+class ProviderStageProvenance(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    provider: str
+    model: str
+    purpose: str = "unspecified"
+    reasoning: str = "provider_default"
+    schema_mode: Literal["none", "prompt", "json_object", "json_schema"] = "none"
+    schema_name: str | None = None
+    schema_hash: str | None = None
+    endpoint_hash: str | None = None
+    capability_revision: str | None = None
+    capability_source: str | None = None
+    local_validation: str | None = None
+    span_id: str | None = None
+    status: str | None = None
+
+
 class MessageResponse(BaseModel):
     """Serialized message entity."""
 
@@ -323,6 +158,8 @@ class MessageResponse(BaseModel):
     retrieval_latency_ms: int | None = None
     provider_latency_ms: int | None = None
     total_latency_ms: int | None = None
+    provider_provenance: list[ProviderStageProvenance] = Field(default_factory=list)
+    citation_coverage_status: Literal["applicable", "not_applicable"] | None = None
     config_provenance: dict[str, Any] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict, validation_alias="message_metadata")
     citations: list[CitationSnapshot] = Field(default_factory=list)
@@ -367,6 +204,11 @@ class MessageResponse(BaseModel):
             update={
                 "source_provenance": source_provenance,
                 "metadata": metadata,
+                "provider_provenance": [
+                    ProviderStageProvenance.model_validate(item)
+                    for item in metadata.get("provider_provenance", [])
+                ],
+                "citation_coverage_status": metadata.get("citation_coverage_status"),
                 "notices": notices,
                 "terminal_outcome": TerminalOutcome.model_validate(metadata["terminal_outcome"])
                 if isinstance(metadata.get("terminal_outcome"), dict)

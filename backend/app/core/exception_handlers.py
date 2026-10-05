@@ -54,7 +54,14 @@ def _build_response(
             details=details or {},
         )
     )
-    return JSONResponse(status_code=status_code, content=payload.model_dump(exclude_none=True))
+    # Unexpected exceptions are handled outside user middleware by Starlette's
+    # ServerErrorMiddleware; its response never crosses the request-ID writer.
+    request_id = _request_id(request)
+    return JSONResponse(
+        status_code=status_code,
+        content=payload.model_dump(exclude_none=True),
+        headers={"X-Request-ID": request_id} if request_id else None,
+    )
 
 
 async def _handle_ape_error(request: Request, exc: APEError) -> JSONResponse:

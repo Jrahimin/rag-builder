@@ -66,6 +66,7 @@ class ChatCompletionResult:
     finish_reason: str | None
     usage: ChatUsage
     provider_version: str
+    provenance: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True, slots=True)

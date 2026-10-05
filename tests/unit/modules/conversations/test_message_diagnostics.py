@@ -108,3 +108,116 @@ def test_public_response_never_exposes_operator_assertions():
     public = MessageResponse.from_message(message).model_dump_json()
     assert "operator_diagnostic" not in public
     assert "private rejected assertion" not in public
+
+
+def test_phase2_graph_and_rejected_dimensions_remain_protected():
+    payload = {
+        "calculations": {
+            "status": "verified",
+            "graph": {
+                "nodes": [
+                    {
+                        "id": "N1",
+                        "operation": "minimum",
+                        "operands": ["input:investment", "source:cap"],
+                        "result": "100",
+                    }
+                ]
+            },
+        },
+        "rejected_attempts": [
+            {
+                "id": "A1",
+                "text": "Rejected private employee assertion",
+                "deterministic_checks": {
+                    "verifier_failures": [
+                        {
+                            "assertion_id": "A1",
+                            "dimension": "subject_category",
+                            "evidence_binding": ["bound-source"],
+                        }
+                    ]
+                },
+            }
+        ],
+        "raw_provider": "must not leak",
+    }
+    normal = diagnostic_record(
+        project_id=uuid.uuid4(),
+        message_id=uuid.uuid4(),
+        metadata={},
+        full_capture=False,
+        payload=payload,
+    )
+    captured = diagnostic_record(
+        project_id=uuid.uuid4(),
+        message_id=uuid.uuid4(),
+        metadata={},
+        full_capture=True,
+        payload=payload,
+    )
+    assert normal.payload is None
+    assert captured.payload["calculations"] == payload["calculations"]
+    assert captured.payload["rejected_attempts"] == payload["rejected_attempts"]
+    assert "raw_provider" not in captured.payload
+
+
+async def test_background_sweep_expires_inactive_evaluation_projects_with_scoped_updates():
+    from app.composition.message_diagnostic_retention import expire_message_diagnostics
+
+    expired_project, retained_project = uuid.uuid4(), uuid.uuid4()
+    now = datetime.now(UTC)
+    records = [
+        SimpleNamespace(
+            project_id=expired_project,
+            expires_at=now - timedelta(days=1),
+            payload={"terminal": "expired"},
+        ),
+        SimpleNamespace(
+            project_id=expired_project,
+            expires_at=now + timedelta(days=1),
+            payload={"terminal": "current"},
+        ),
+        SimpleNamespace(
+            project_id=retained_project,
+            expires_at=now + timedelta(days=1),
+            payload={"terminal": "other"},
+        ),
+    ]
+    updates = []
+
+    async def select_projects(statement):
+        sql = str(statement)
+        assert "DISTINCT" in sql and "payload IS NOT NULL" in sql and "expires_at <=" in sql
+        if "message_diagnostics" in sql:
+            return []  # No Message traffic or Message diagnostics for these Projects.
+        cutoff = statement.compile().params["expires_at_1"]
+        return list(
+            {r.project_id for r in records if r.payload is not None and r.expires_at <= cutoff}
+        )
+
+    async def clear_project(statement):
+        sql, params = str(statement), statement.compile().params
+        assert "evaluation_diagnostics.project_id =" in sql
+        assert "expires_at <=" in sql and "payload IS NOT NULL" in sql
+        assert params["payload"] is None
+        updates.append(params["project_id_1"])
+        for row in records:
+            if (
+                row.project_id == params["project_id_1"]
+                and row.expires_at <= params["expires_at_1"]
+            ):
+                row.payload = None
+
+    session = MagicMock()
+    session.scalars = AsyncMock(side_effect=select_projects)
+    session.execute = AsyncMock(side_effect=clear_project)
+    session.commit = AsyncMock()
+    session.__aenter__ = AsyncMock(return_value=session)
+    session.__aexit__ = AsyncMock(return_value=None)
+    await expire_message_diagnostics(lambda: session)
+    assert records[0].payload is None
+    assert records[1].payload == {"terminal": "current"}
+    assert records[2].payload == {"terminal": "other"}
+    assert updates == [expired_project]
+    session.commit.assert_awaited_once()

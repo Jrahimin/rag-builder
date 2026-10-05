@@ -18,6 +18,7 @@ from app.core.exceptions import BadRequestError, NotFoundError
 from app.models.chunk_keyword_index import ChunkKeywordIndex
 from app.models.document import Document
 from app.models.document_chunk import DocumentChunk
+from app.models.index_scope_review import IndexScopeReview
 from app.models.project import Project
 from app.models.source_metadata import (
     SourceActivationEvent,
@@ -399,6 +400,10 @@ def _canonical_source_scope(
             SourceMetadataRevision.title,
             SourceMetadataRevision.source_type,
             SourceMetadataRevision.work_key,
+            SourceMetadataRevision.edition_key,
+            SourceActivationEvent.generation.label("activation_generation"),
+            SourceActivationEvent.created_at.label("activation_created_at"),
+            SourceActivationEvent.id.label("activation_id"),
             SourceMetadataRevision.content_hash,
             SourceMetadataRevision.revision_number,
             SourceMetadataRevision.revision_label,
@@ -417,6 +422,20 @@ def _canonical_source_scope(
                 ),
             )
             .label("position"),
+            func.row_number()
+            .over(
+                partition_by=(
+                    SourceActivationEvent.document_id,
+                    SourceMetadataRevision.source_group_id,
+                    SourceMetadataRevision.edition_key,
+                ),
+                order_by=(
+                    SourceActivationEvent.generation.desc(),
+                    SourceActivationEvent.created_at.desc(),
+                    SourceActivationEvent.id.desc(),
+                ),
+            )
+            .label("edition_position"),
         )
         .where(
             SourceActivationEvent.project_id == project_id,
@@ -430,9 +449,56 @@ def _canonical_source_scope(
             ),
         )
     )
-    # Administrative corrections are selected at the pinned generation first.
-    # Legal intervals never resurrect obsolete metadata for the same edition.
+    # Correct each explicitly declared edition before choosing its legal interval.
+    # Null legacy identity remains latest-only; dates/labels never invent editions.
     ranked_activations = activation_candidates.cte("ranked_source_activations")
+    if historical:
+        latest = ranked_activations.alias("latest_declared_edition")
+        has_declared_current_edition = exists(
+            select(literal(1)).where(
+                latest.c.document_id == ranked_activations.c.document_id,
+                latest.c.position == 1,
+                latest.c.edition_key.is_not(None),
+            )
+        )
+        corrected = (
+            select(*ranked_activations.c)
+            .where(
+                ranked_activations.c.edition_position == 1,
+                or_(
+                    and_(
+                        ranked_activations.c.edition_key.is_not(None), has_declared_current_edition
+                    ),
+                    ranked_activations.c.position == 1,
+                ),
+            )
+            .cte("corrected_source_editions")
+        )
+        eligible_edition = and_(
+            corrected.c.lifecycle_status.in_(
+                [SourceLifecycleStatus.ACTIVE, SourceLifecycleStatus.RETIRED]
+            ),
+            or_(corrected.c.effective_from.is_(None), corrected.c.effective_from <= reference_date),
+            or_(corrected.c.effective_to.is_(None), corrected.c.effective_to >= reference_date),
+        )
+        selected = select(
+            *corrected.c,
+            func.row_number()
+            .over(
+                partition_by=corrected.c.document_id,
+                order_by=(
+                    case((eligible_edition, 0), else_=1),
+                    corrected.c.activation_generation.desc(),
+                    corrected.c.activation_created_at.desc(),
+                    corrected.c.activation_id.desc(),
+                ),
+            )
+            .label("historical_position"),
+        ).cte("historical_source_editions")
+        selection = selected.c.historical_position == 1
+        ranked_activations = selected
+    else:
+        selection = ranked_activations.c.position == 1
     state = (
         select(
             ranked_activations.c.document_id,
@@ -441,6 +507,7 @@ def _canonical_source_scope(
             ranked_activations.c.title,
             ranked_activations.c.source_type,
             ranked_activations.c.work_key,
+            ranked_activations.c.edition_key,
             ranked_activations.c.content_hash,
             ranked_activations.c.revision_number,
             ranked_activations.c.revision_label,
@@ -450,7 +517,7 @@ def _canonical_source_scope(
             ranked_activations.c.lifecycle_status,
             ranked_activations.c.source_role,
         )
-        .where(ranked_activations.c.position == 1)
+        .where(selection)
         .cte("active_source_state")
     )
     outgoing_relationships = (
@@ -474,6 +541,8 @@ def _canonical_source_scope(
                     SourceRevisionRelationship.replacement_scope_verified,
                     "supporting_spans",
                     SourceRevisionRelationship.supporting_spans,
+                    "review_provenance",
+                    SourceRevisionRelationship.review_provenance,
                     "direction",
                     literal("outgoing"),
                 )
@@ -505,6 +574,8 @@ def _canonical_source_scope(
                     SourceRevisionRelationship.replacement_scope_verified,
                     "supporting_spans",
                     SourceRevisionRelationship.supporting_spans,
+                    "review_provenance",
+                    SourceRevisionRelationship.review_provenance,
                     "direction",
                     literal("incoming"),
                 )
@@ -563,14 +634,38 @@ def _canonical_source_scope(
         replacement_interval_applies = and_(*overlaps)
         pinned_build = scope.get("index_build_id")
         if pinned_build:
-            facts = DocumentChunk.chunk_metadata["scope_facts"]
-            typed = facts.op("@?")(
-                cast('$[*] ? (@.kind == "period" && exists(@.legal_kind))', JSONPATH)
+            reviewed_envelope = (
+                select(IndexScopeReview.envelope)
+                .where(
+                    IndexScopeReview.project_id == project_id,
+                    IndexScopeReview.build_id == uuid.UUID(str(pinned_build)),
+                    IndexScopeReview.chunk_id == DocumentChunk.id,
+                    IndexScopeReview.source_generation == generation,
+                )
+                .correlate(DocumentChunk)
+                .scalar_subquery()
+            )
+            envelope = func.coalesce(reviewed_envelope, DocumentChunk.chunk_metadata)
+            facts = envelope["scope_facts"]
+            # Mentions and legacy facts are recall hints, never exhaustive scope.
+            governing = (
+                '@.version == "scope.v2" && @.kind == "period" && '
+                '@.scope == "governing" && @.locality == "document" && '
+                '@.effect == "operative" && @.exhaustive == true && '
+                '@.status == "reviewed" && '
+                '(@.legal_kind == "assessment" || @.legal_kind == "fiscal" || '
+                '@.legal_kind == "calendar") && '
+                "exists(@.review_provenance.reviewer) && "
+                "exists(@.review_provenance.evidence_hash) && "
+                "exists(@.review_provenance.reason) && "
+                '@.source_span.provenance == "exact_source_span"'
             )
             matches = [
                 facts.op("@?")(
                     cast(
-                        '$[*] ? (@.kind == "period" && @.legal_kind == "'
+                        "$[*] ? ("
+                        + governing
+                        + ' && @.legal_kind == "'
                         + str(period["kind"])
                         + '" && ((@.start_year == '
                         + str(int(period["start_year"]))
@@ -599,12 +694,21 @@ def _canonical_source_scope(
                             ChunkKeywordIndex.index_build_id == uuid.UUID(str(pinned_build)),
                         ),
                     )
-                    .where(DocumentChunk.project_id == project_id, predicate)
+                    .where(
+                        DocumentChunk.project_id == project_id,
+                        predicate,
+                        func.valid_source_scope_envelope(envelope, DocumentChunk.content),
+                    )
                     .distinct()
                     .cte()
                 )
 
-            typed_documents = period_documents(typed)
+            # Inventory presence is independent of the request's legal kind.
+            # A reviewed exhaustive FY-only scope is affirmative AY incompatibility;
+            # missing/malformed/local/unreviewed facts are still unknown.
+            inventory_documents = period_documents(
+                facts.op("@?")(cast("$[*] ? (" + governing + ")", JSONPATH))
+            )
             matching_documents = period_documents(or_(*matches))
             per_period_documents = [period_documents(match) for match in matches]
             replacing_documents = (
@@ -620,15 +724,13 @@ def _canonical_source_scope(
             replacement_interval_applies = or_(
                 state.c.document_id.in_(select(replacing_documents.c.document_id)),
                 and_(
-                    ~state.c.document_id.in_(select(typed_documents.c.document_id)),
+                    ~state.c.document_id.in_(select(inventory_documents.c.document_id)),
                     replacement_interval_applies,
                 ),
             )
             period_interval = or_(
                 state.c.document_id.in_(select(matching_documents.c.document_id)),
-                and_(
-                    ~state.c.document_id.in_(select(typed_documents.c.document_id)), period_interval
-                ),
+                ~state.c.document_id.in_(select(inventory_documents.c.document_id)),
             )
         interval_applies = period_interval
     replaced_revision = aliased(SourceMetadataRevision)
@@ -755,6 +857,7 @@ def _canonical_source_scope(
             state.c.title.label("source_title"),
             state.c.source_type.label("source_type"),
             state.c.work_key.label("source_work_key"),
+            state.c.edition_key.label("source_edition_key"),
             state.c.content_hash.label("source_content_hash"),
             state.c.revision_number.label("source_revision_number"),
             state.c.revision_label.label("source_revision_label"),

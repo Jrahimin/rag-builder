@@ -9,7 +9,7 @@ import statistics
 import time
 import unicodedata
 import uuid
-from collections.abc import AsyncIterator, Callable, Iterator, Mapping, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -2070,6 +2070,17 @@ async def _latest_document_job_id(
     return runs[0].id
 
 
+def _require_isolated_acceptance_driver(settings: Settings) -> None:
+    """The explicit callback is test-only and cannot authorize ordinary tooling."""
+    if not (
+        settings.app.env == "testing"
+        and settings.database.name == settings.test_database.name == "ape_test"
+        and settings.embedding.backend.value == "hash"
+        and settings.llm.backend.value == "echo"
+    ):
+        raise JourneyError("Fixture acceptance driver requires isolated ape_test with hash/echo.")
+
+
 async def _await_durable_job(
     session_factory: Any,
     *,
@@ -2078,6 +2089,7 @@ async def _await_durable_job(
     settings: Settings,
     timeout_seconds: float = 900.0,
     failure_prefix: str = "Durable job",
+    acceptance_driver: Callable[[Any, uuid.UUID, uuid.UUID], Awaitable[None]] | None = None,
 ) -> None:
     """Drain one inline durable job through retry and terminal states."""
     import asyncio
@@ -2098,12 +2110,40 @@ async def _await_durable_job(
             )
             run = (await service.get_detail(job_id)).run
             if run.state is JobState.SUCCEEDED:
+                result = run.result or {}
+                if result.get("state") == "validated" and result.get("build_id"):
+                    if acceptance_driver is None:
+                        raise JourneyError(
+                            f"{failure_prefix} completed build {result['build_id']}, which still "
+                            "requires project/build-bound quality acceptance and activation."
+                        )
+                    _require_isolated_acceptance_driver(settings)
+                    await acceptance_driver(session, project_id, uuid.UUID(str(result["build_id"])))
+                    await session.commit()
                 return
             if run.state is JobState.FAILED:
                 raise JourneyError(
                     f"{failure_prefix} failed "
                     f"({run.failure_code or 'unknown'}: {run.failure_message or 'no message'})."
                 )
+            if run.state is JobState.WAITING_ACCEPTANCE:
+                build_id = run.payload.get("build_id")
+                if acceptance_driver is None or not build_id:
+                    raise JourneyError(
+                        f"{failure_prefix} {job_id} is awaiting quality acceptance for build "
+                        f"{build_id or 'unknown'}; approve a project/build-bound receipt, activate "
+                        "the build, and resume the durable job before retrying cleanup."
+                    )
+                _require_isolated_acceptance_driver(settings)
+                await acceptance_driver(session, project_id, uuid.UUID(str(build_id)))
+                resumed = await service.resume_accepted_waiting()
+                await session.commit()
+                if resumed != 1:
+                    raise JourneyError(
+                        f"Fixture acceptance did not resume job {job_id} exactly once."
+                    )
+                await service.dispatch(job_id)
+                continue
             if run.state in {
                 JobState.RETRY_SCHEDULED,
                 JobState.QUEUED,
@@ -2126,6 +2166,7 @@ async def _ensure_indexed(
     project_id: uuid.UUID,
     document_ids: Mapping[str, uuid.UUID],
     settings: Settings,
+    acceptance_driver: Callable[[Any, uuid.UUID, uuid.UUID], Awaitable[None]] | None = None,
 ) -> dict[str, Any]:
     from app.composition.retrieval import build_indexing_service
     from app.models.document import DocumentStatus
@@ -2197,6 +2238,7 @@ async def _ensure_indexed(
                     job_id=embed_job_id,
                     settings=settings,
                     failure_prefix=f"Document {source_key!r} embed job",
+                    acceptance_driver=acceptance_driver,
                 )
 
         document = await current_document(source_key, document_id)
@@ -2234,6 +2276,7 @@ async def _ensure_indexed(
                     job_id=index_job_id,
                     settings=settings,
                     failure_prefix=f"Document {source_key!r} index job",
+                    acceptance_driver=acceptance_driver,
                 )
 
         document = await current_document(source_key, document_id)
@@ -3018,6 +3061,7 @@ async def _await_document_purge(
     job_id: uuid.UUID,
     settings: Settings,
     timeout_seconds: float = 900.0,
+    acceptance_driver: Callable[[Any, uuid.UUID, uuid.UUID], Awaitable[None]] | None = None,
 ) -> None:
     """Drain inline durable purge jobs through retry and terminal states."""
     await _await_durable_job(
@@ -3027,6 +3071,7 @@ async def _await_document_purge(
         settings=settings,
         timeout_seconds=timeout_seconds,
         failure_prefix="Document purge job",
+        acceptance_driver=acceptance_driver,
     )
 
 
@@ -3040,6 +3085,7 @@ async def _cleanup_project(
     settings: Settings,
     storage: Any,
     progress: Progress,
+    acceptance_driver: Callable[[Any, uuid.UUID, uuid.UUID], Awaitable[None]] | None = None,
 ) -> None:
     """Purge documents through production lifecycle, then remove the exact aggregate."""
     from sqlalchemy import select
@@ -3083,6 +3129,7 @@ async def _cleanup_project(
             project_id=project_id,
             job_id=job_id,
             settings=settings,
+            acceptance_driver=acceptance_driver,
         )
     remaining_keys = await storage.list_keys(f"{project_id}/")
     if remaining_keys:
@@ -3894,6 +3941,7 @@ async def run_journey(
     options: JourneyOptions,
     *,
     progress: Progress | None = None,
+    acceptance_driver: Callable[[Any, uuid.UUID, uuid.UUID], Awaitable[None]] | None = None,
 ) -> tuple[dict[str, Any], Path]:
     """Execute one fresh tax_v1 journey and always emit a local report."""
     from app.core.config import JobQueueBackend
@@ -3901,6 +3949,8 @@ async def run_journey(
     from app.platform.db.session import Database
     from app.platform.providers.implementations.storage_factory import create_storage_provider
 
+    if acceptance_driver is not None:
+        _require_isolated_acceptance_driver(settings)
     paid = (
         settings.embedding.backend.value == "cohere"
         or settings.retrieval.reranker_backend.value == "cohere"
@@ -3986,7 +4036,21 @@ async def run_journey(
         from app.composition.provider_work import provider_work_scope
 
         cost_scope = provider_work_scope(
-            settings, database.session_factory, project_id, str(run_uuid), "evaluation"
+            settings,
+            database.session_factory,
+            project_id,
+            str(run_uuid),
+            "evaluation",
+            cache_sessions=(
+                database.provider_cache_session_factory
+                if settings.provider_costs.cache_enabled
+                else None
+            ),
+            accounting_sessions=(
+                database.provider_accounting_session_factory
+                if settings.provider_costs.enabled
+                else None
+            ),
         )
         cost_scope.__enter__()
 
@@ -4041,6 +4105,7 @@ async def run_journey(
             project_id=project_id,
             document_ids=document_ids,
             settings=settings,
+            acceptance_driver=acceptance_driver,
         )
         chunks = await _runtime_chunks(
             database.session_factory,
@@ -4168,6 +4233,7 @@ async def run_journey(
                     settings=settings,
                     storage=storage,
                     progress=notify,
+                    acceptance_driver=acceptance_driver,
                 )
                 result["cleanup"] = {"status": "succeeded"}
             except Exception as exc:

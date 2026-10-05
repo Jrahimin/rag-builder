@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import uuid
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.index_scope_review import IndexScopeReview
 from app.modules.retrieval.repositories.retrieval_chunk_repository import RetrievalChunkRepository
 from app.modules.retrieval.repositories.retrieval_document_repository import (
     RetrievalDocumentRepository,
@@ -20,10 +22,17 @@ class ResultHydrator:
 
     def __init__(self, session: AsyncSession, project_id: uuid.UUID) -> None:
         self._project_id = project_id
+        self._session = session
         self._chunk_repository = RetrievalChunkRepository(session, project_id)
         self._document_repository = RetrievalDocumentRepository(session, project_id)
 
-    async def hydrate(self, candidates: list[CandidateHit]) -> list[RetrievalResult]:
+    async def hydrate(
+        self,
+        candidates: list[CandidateHit],
+        *,
+        index_build_id: uuid.UUID | None = None,
+        source_generation: int | None = None,
+    ) -> list[RetrievalResult]:
         if not candidates:
             return []
 
@@ -33,6 +42,17 @@ class ResultHydrator:
             {chunk.document_id for chunk in chunks.values()}
         )
 
+        reviews = {}
+        if index_build_id is not None:
+            rows = await self._session.scalars(
+                select(IndexScopeReview).where(
+                    IndexScopeReview.project_id == self._project_id,
+                    IndexScopeReview.build_id == index_build_id,
+                    IndexScopeReview.chunk_id.in_(chunk_ids),
+                    IndexScopeReview.source_generation == source_generation,
+                )
+            )
+            reviews = {row.chunk_id: row for row in rows}
         results: list[RetrievalResult] = []
         for candidate in candidates:
             chunk = chunks.get(candidate.chunk_id)
@@ -71,6 +91,12 @@ class ResultHydrator:
                     metadata={
                         **chunk.chunk_metadata,
                         **_public_candidate_metadata(candidate.metadata),
+                        **(reviews[chunk.id].envelope if chunk.id in reviews else {}),
+                        **(
+                            {"scope_review_hash": reviews[chunk.id].review_hash}
+                            if chunk.id in reviews
+                            else {}
+                        ),
                         "retrieval_source": candidate.source.value,
                         "processing_version": chunk.document_version,
                         "indexed_chunk_hash": content_hash(chunk.content),

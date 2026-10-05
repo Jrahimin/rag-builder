@@ -64,6 +64,9 @@ class QualityAnswer:
 
     execution: dict[str, Any] = field(default_factory=dict)
     complete_turn_latency_ms: int | None = None
+    notices: list[dict[str, Any]] = field(default_factory=list)
+    lifecycle: dict[str, Any] = field(default_factory=dict)
+    operator_diagnostic: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)

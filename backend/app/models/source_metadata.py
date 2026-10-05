@@ -100,6 +100,7 @@ class SourceMetadataRevision(Base, UUIDPrimaryKeyMixin, ProjectScopedMixin):
     title: Mapped[str] = mapped_column(String(512), nullable=False)
     source_type: Mapped[str | None] = mapped_column(String(128), nullable=True)
     work_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    edition_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
     published_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     effective_from: Mapped[date | None] = mapped_column(Date, nullable=True)
     effective_to: Mapped[date | None] = mapped_column(Date, nullable=True)
@@ -183,6 +184,9 @@ class SourceRevisionRelationship(Base, UUIDPrimaryKeyMixin, ProjectScopedMixin):
     )
     replacement_scope_verified: Mapped[bool] = mapped_column(
         nullable=False, default=False, server_default=text("false")
+    )
+    review_provenance: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
     )
     supporting_spans: Mapped[list[dict]] = mapped_column(
         JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")

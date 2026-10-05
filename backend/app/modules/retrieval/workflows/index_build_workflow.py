@@ -17,6 +17,7 @@ from app.models.document import Document, DocumentStatus
 from app.models.document_chunk import DocumentChunk
 from app.models.index_build import IndexBuild, IndexBuildState, ProjectIndexPointer
 from app.models.keyword_term_stats import KeywordCollectionStats, KeywordTermStats
+from app.modules.retrieval.build_acceptance import require_build_acceptance
 from app.modules.retrieval.keyword.fts import to_search_vector
 from app.modules.retrieval.keyword.tokenizer import (
     normalize_for_indexing,
@@ -24,7 +25,10 @@ from app.modules.retrieval.keyword.tokenizer import (
     tokenize,
 )
 from app.modules.retrieval.repositories.index_build_repository import IndexBuildRepository
-from app.modules.retrieval.structural_contract import verify_structural_build
+from app.modules.retrieval.structural_contract import (
+    verify_semantic_scope_snapshot,
+    verify_structural_build,
+)
 from app.platform.db.advisory_lock import acquire_project_stage_lock
 from app.platform.domain.content_hash import content_hash
 from app.platform.domain.language_detection import (
@@ -41,6 +45,7 @@ from app.platform.providers.contracts.embedding import (
     EmbeddingBatchResult,
     EmbeddingPurpose,
 )
+from app.platform.providers.provider_work import cache_identity
 
 
 class IndexBuildWorkflow:
@@ -105,6 +110,9 @@ class IndexBuildWorkflow:
                 "Structural intent requires a compatible producer.",
                 code="structural_worker_incompatible",
             )
+        embedding_origin: dict[str, object] | None = cache_identity(
+            self._embedder, self._embedding_set_version, EmbeddingPurpose.DOCUMENT
+        )
         if self._reuse_index_build_id:
             source_build = await self._builds.get_by_id(self._reuse_index_build_id)
             if (
@@ -120,6 +128,9 @@ class IndexBuildWorkflow:
                 self._session, self._project_id, source_build, allow_legacy_unit_hash=True
             )
             await self._validate_versions(source_build.manifest["documents"])
+            # Preserve source origin; a current endpoint is not proof of vector origin.
+            # Unlabeled legacy source vectors remain unproven after revalidation.
+            embedding_origin = source_build.manifest.get("embedding_origin")
         await self._clear_partial_rows(build.id)
         documents = await self._eligible_documents(exclude_document_id=exclude_document_id)
         manifest: list[dict[str, object]] = []
@@ -253,6 +264,7 @@ class IndexBuildWorkflow:
                         "structure_version",
                         "structural_unit_id",
                         "scope_facts",
+                        "scope_fact_version",
                         "source_spans",
                     )
                     if key in chunk.chunk_metadata
@@ -309,6 +321,7 @@ class IndexBuildWorkflow:
             "language_metadata_schema_version": LANGUAGE_METADATA_SCHEMA_VERSION,
             "chunk_language_counts": language_inventory["chunk_language_counts"],
             "document_language_counts": language_inventory["document_language_counts"],
+            "embedding_origin": embedding_origin,
             "embedding_set_version": self._embedding_set_version,
             "embedding_provider": self._embedder.provider_name,
             "embedding_model": self._embedder.model_name,
@@ -319,12 +332,20 @@ class IndexBuildWorkflow:
         ).hexdigest()
         await self._session.flush()
         await verify_structural_build(self._session, self._project_id, build)
+        await verify_semantic_scope_snapshot(self._session, self._project_id, build)
         build.validated_at = datetime.now(UTC)
         build.state = IndexBuildState.VALIDATED
         await self._report("validated", 90)
         if auto_activate:
-            await activate_index_build(self._session, self._project_id, build)
-            await self._report("active", 100)
+            try:
+                await activate_index_build(self._session, self._project_id, build)
+            except PermanentJobError as exc:
+                if exc.code != "index_acceptance_missing":
+                    raise
+                # A sealed candidate is successful build work, not permission to publish.
+                await self._report("validated_pending_quality_acceptance", 100)
+            else:
+                await self._report("active", 100)
         return build
 
     async def _eligible_documents(self, *, exclude_document_id: uuid.UUID | None) -> list[Document]:
@@ -552,17 +573,10 @@ async def mark_included_documents_ready(
 
 
 async def activate_index_build(
-    session: AsyncSession, project_id: uuid.UUID, build: IndexBuild
+    session: AsyncSession, project_id: uuid.UUID, build: IndexBuild, *, rollback: bool = False
 ) -> ProjectIndexPointer:
     """Atomically move the one authoritative pointer to a validated build."""
     await verify_structural_build(session, project_id, build)
-    await acquire_project_stage_lock(session, project_id=project_id, stage="index_activation")
-    repository = IndexBuildRepository(session, project_id)
-    pointer = await repository.get_pointer(for_update=True)
-    if pointer is None:
-        pointer = ProjectIndexPointer(project_id=project_id)
-        repository.add_pointer(pointer)
-        await session.flush()
     if (
         build.project_id != project_id
         or build.state not in {IndexBuildState.VALIDATED, IndexBuildState.RETAINED}
@@ -574,6 +588,17 @@ async def activate_index_build(
         raise PermanentJobError(
             "Only validated retained builds can be activated.", code="index_build_not_activatable"
         )
+    await acquire_project_stage_lock(session, project_id=project_id, stage="index_activation")
+    await require_build_acceptance(
+        session, project_id, build, **({"rollback": True} if rollback else {})
+    )
+    await verify_semantic_scope_snapshot(session, project_id, build)
+    repository = IndexBuildRepository(session, project_id)
+    pointer = await repository.get_pointer(for_update=True)
+    if pointer is None:
+        pointer = ProjectIndexPointer(project_id=project_id)
+        repository.add_pointer(pointer)
+        await session.flush()
     if pointer.active_build_id == build.id:
         await mark_included_documents_ready(session, project_id, build)
         await session.flush()

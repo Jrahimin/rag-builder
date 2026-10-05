@@ -250,4 +250,12 @@ def block_paid_http_transport(monkeypatch: pytest.MonkeyPatch):
             raise AssertionError("Ordinary tests cannot contact external HTTP providers")
         return await original(self, request)
 
+    original_sync = httpx.HTTPTransport.handle_request
+
+    def guarded_sync(self, request):
+        if request.url.host not in {"localhost", "127.0.0.1", "::1"}:
+            raise AssertionError("Ordinary tests cannot contact external HTTP providers")
+        return original_sync(self, request)
+
     monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", guarded)
+    monkeypatch.setattr(httpx.HTTPTransport, "handle_request", guarded_sync)

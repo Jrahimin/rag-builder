@@ -15,7 +15,7 @@ Return only JSON: {"queries": [{"query":"short query","requirement_ids":["R1"]}]
 "task_kind":"rule_lookup","depends_on":[]}],
 "coverage":{"complete":false,"missing":["short missing requirement"],"checks":[
 {"requirement_id":"R1","description":"necessary governing rule","supported":false,
-"fulfillment":"none","unresolved_facets":[],"answerable_scope":"",
+"fulfillment":"none","unresolved_facets":[],"resolved_gaps":[],"answerable_scope":"",
 "needs_adjacent_context":false,"evidence":[]}],"partial_answer":null}}.
 Coverage is optional. When admitted_evidence already proves one or more requirements,
 return exact inclusive start_line/end_line selectors copied from the supplied
@@ -186,7 +186,7 @@ can classify scenario inputs. Keep genuine unresolved factual gaps in missing.
 Return only JSON with exactly this schema:
 {"complete":false,"missing":["short missing requirement"],"checks":[
 {"requirement_id":"R1","description":"governing rule","supported":false,
-"fulfillment":"none","unresolved_facets":[],"answerable_scope":"",
+"fulfillment":"none","unresolved_facets":[],"resolved_gaps":[],"answerable_scope":"",
 "needs_adjacent_context":false,"evidence":[
 {"chunk_id":"provided ID","start_line":1,"end_line":3}]}]}
 Each content line is labeled L1, L2, etc. Select inclusive line numbers from the SAME
@@ -383,3 +383,15 @@ CONDITION_FACET_INSTRUCTION = condition_facet_instructions()
 
 AUTHORITATIVE_PLANNING_PROMPT += CONDITION_FACET_INSTRUCTION
 AUTHORITATIVE_COVERAGE_PROMPT += CONDITION_FACET_INSTRUCTION
+
+# Explicit requirement-local closure is part of the active coverage protocol.
+_GAP_CLOSURE = (
+    "\nA changed check may list resolved_gaps only for exact previously reported gap labels\n"
+    "owned by that requirement. Supply full source-bound evidence for each closure.\n"
+    "Omitting a gap or replacing an unrelated requirement never resolves it.\n"
+)
+
+
+AUTHORITATIVE_PLANNING_PROMPT += _GAP_CLOSURE
+
+AUTHORITATIVE_COVERAGE_PROMPT += _GAP_CLOSURE

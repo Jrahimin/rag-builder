@@ -278,6 +278,14 @@ class SourceMetadataService:
                 and active[1].source_group_id == group.id
                 else data.work_key
             ),
+            edition_key=(
+                active[1].edition_key
+                if active is not None
+                and "edition_key" not in data.model_fields_set
+                and not data.create_new_group
+                and active[1].source_group_id == group.id
+                else data.edition_key
+            ),
             published_date=data.published_date,
             effective_from=data.effective_from,
             effective_to=data.effective_to,
@@ -364,6 +372,14 @@ class SourceMetadataService:
                     target_provisions=relation.target_provisions,
                     provision_effect=relation.provision_effect,
                     replacement_scope_verified=relation.replacement_scope_verified,
+                    review_provenance={
+                        **relation.review_provenance,
+                        "reviewer": self._actor_id,
+                        "source_content_hash": revision.content_hash,
+                        "source_revision_id": str(revision.id),
+                        "target_revision_id": str(target.id),
+                        "reason": data.change_reason or "source relationship revision",
+                    },
                     supporting_spans=[
                         span.model_dump(mode="json") for span in relation.supporting_spans
                     ],
@@ -533,6 +549,7 @@ class SourceMetadataService:
             title=revision.title,
             source_type=revision.source_type,
             work_key=revision.work_key,
+            edition_key=revision.edition_key,
             published_date=revision.published_date,
             effective_from=revision.effective_from,
             effective_to=revision.effective_to,

@@ -21,9 +21,16 @@ from app.models.conversation_config_snapshot import ConversationConfigSnapshot  
 from app.models.document import Document  # noqa: F401
 from app.models.document_chunk import DocumentChunk  # noqa: F401
 from app.models.evaluation_dataset import EvaluationDataset  # noqa: F401
+from app.models.evaluation_diagnostic import EvaluationDiagnostic  # noqa: F401
 from app.models.evaluation_run import EvaluationRun  # noqa: F401
 from app.models.generation import Generation  # noqa: F401
+from app.models.index_acceptance import (  # noqa: F401
+    IndexAcceptance,
+    IndexAcceptanceReport,
+    IndexAcceptanceSet,
+)
 from app.models.index_build import IndexBuild, ProjectIndexPointer  # noqa: F401
+from app.models.index_scope_review import IndexScopeReview  # noqa: F401
 from app.models.job_configuration_snapshot import JobConfigurationSnapshot  # noqa: F401
 from app.models.job_outbox import JobOutbox  # noqa: F401
 from app.models.job_run import JobRun  # noqa: F401

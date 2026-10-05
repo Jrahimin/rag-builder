@@ -327,3 +327,88 @@ async def test_historical_selection_uses_corrected_metadata_without_reviving_nul
         row = next(item for item in rows if str(item["source_document_id"]) == document)
         assert str(row["source_revision_id"]) == expected
         assert row["source_policy_applicable"] is applicable
+
+
+async def test_explicit_editions_preserve_corrections_legacy_and_project_binding(
+    db_client: AsyncClient,
+    integration_connection: AsyncConnection,
+):
+    project = await _project_id(db_client)
+    other_project = await _project_id(db_client)
+    document = await _upload(db_client, project, "edition-history.txt", "Declared edition history")
+    other_document = await _upload(db_client, other_project, "other.txt", "Other project")
+    earlier = await _revision(
+        db_client,
+        project,
+        document,
+        {"edition_key": "edition.old", "work_key": "shared-work", "effective_from": None},
+    )
+    before = (await db_client.get(f"/api/v1/projects/{project}/sources")).json()["data"][
+        "generation"
+    ]
+    corrected = await _revision(
+        db_client,
+        project,
+        document,
+        {
+            "effective_from": "2020-01-01",
+            "effective_to": "2025-12-31",
+            "title": "Corrected old edition",
+        },
+    )
+    assert corrected["edition_key"] == "edition.old"
+    assert corrected["work_key"] == "shared-work"
+    current = await _revision(
+        db_client,
+        project,
+        document,
+        {
+            "edition_key": "edition.new",
+            "effective_from": "2026-01-01",
+            "relationships": [
+                {"relationship_type": "replaces", "target_revision_id": corrected["id"]}
+            ],
+        },
+    )
+    assert current["source_group_id"] == corrected["source_group_id"]
+    generation = (await db_client.get(f"/api/v1/projects/{project}/sources")).json()["data"][
+        "generation"
+    ]
+
+    async def row_at(year, captured=generation):
+        scope = _canonical_source_scope(
+            project_id=uuid.UUID(project),
+            generation=captured,
+            reference_date=date(year, 1, 1),
+            historical=True,
+        )
+        rows = (await integration_connection.execute(select(scope))).mappings().all()
+        assert {str(row["source_document_id"]) for row in rows} == {document}
+        assert other_document not in {str(row["source_document_id"]) for row in rows}
+        return rows[0]
+
+    row = await row_at(2024)
+    assert str(row["source_revision_id"]) == corrected["id"]
+    assert row["source_policy_applicable"] is True
+    row = await row_at(2010)
+    assert str(row["source_revision_id"]) != earlier["id"]
+    assert row["source_policy_applicable"] is False
+    row = await row_at(2010, before)
+    assert str(row["source_revision_id"]) == earlier["id"]
+    assert row["source_policy_applicable"] is True
+    legacy = await _revision(
+        db_client,
+        project,
+        document,
+        {
+            "edition_key": None,
+            "effective_from": "2027-01-01",
+            "title": "Unknown edition correction",
+        },
+    )
+    generation = (await db_client.get(f"/api/v1/projects/{project}/sources")).json()["data"][
+        "generation"
+    ]
+    row = await row_at(2024, generation)
+    assert str(row["source_revision_id"]) == legacy["id"]
+    assert row["source_policy_applicable"] is False

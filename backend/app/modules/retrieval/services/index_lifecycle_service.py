@@ -25,6 +25,7 @@ from app.platform.jobs.contracts import (
     JobDefinition,
     RetryPolicy,
 )
+from app.platform.jobs.errors import PermanentJobError
 from app.platform.jobs.names import (
     CORPUS_REEMBED,
     CORPUS_REINDEX,
@@ -209,7 +210,10 @@ class IndexLifecycleService:
             unlabeled_code="index_activate_identity_unlabeled",
             incompatible_code="index_activate_identity_incompatible",
         )
-        await activate_index_build(self._session, self._project_id, build)
+        try:
+            await activate_index_build(self._session, self._project_id, build)
+        except PermanentJobError as exc:
+            raise BadRequestError(exc.message, code=exc.code, context=exc.context) from exc
         self._record(AuditEventType.INDEX_BUILD_ACTIVATED, build)
         await self._session.commit()
         await self._session.refresh(build)
@@ -234,7 +238,10 @@ class IndexLifecycleService:
             unlabeled_code="index_rollback_identity_unlabeled",
             incompatible_code="index_rollback_identity_incompatible",
         )
-        await activate_index_build(self._session, self._project_id, target)
+        try:
+            await activate_index_build(self._session, self._project_id, target, rollback=True)
+        except PermanentJobError as exc:
+            raise BadRequestError(exc.message, code=exc.code, context=exc.context) from exc
         self._record(AuditEventType.INDEX_BUILD_ROLLED_BACK, target)
         await self._session.commit()
         await self._session.refresh(target)

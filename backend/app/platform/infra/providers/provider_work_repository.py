@@ -21,8 +21,13 @@ from app.platform.providers.provider_work import ProviderBudgetError, ProviderWo
 
 
 class ProviderWorkRepository:
-    def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
+    def __init__(
+        self,
+        sessions: async_sessionmaker[AsyncSession],
+        accounting_sessions: async_sessionmaker[AsyncSession] | None = None,
+    ) -> None:
         self.sessions = sessions
+        self.accounting_sessions = accounting_sessions or sessions
 
     @asynccontextmanager
     async def cache_session(self, project_id: uuid.UUID) -> AsyncIterator[AsyncSession]:
@@ -57,10 +62,10 @@ class ProviderWorkRepository:
         identity: dict[str, Any],
         inputs: dict[str, str],
     ) -> dict[str, list[float]]:
-        if identity["purpose"] != "document" or identity["namespace"] != "https://api.cohere.com":
+        if identity["purpose"] != "document":
             return {}
-        # Existing sealed rows prove DOCUMENT purpose; old adapters without endpoint provenance
-        # are only reusable for the canonical Cohere endpoint and exact vector identity.
+        # Source manifests must prove immutable vector origin. Legacy vectors fail closed
+        # even if the current destination happens to be canonical Cohere.
         rows = await session.execute(
             select(ChunkEmbedding.input_content_hash, ChunkEmbedding.embedding)
             .join(IndexBuild, IndexBuild.id == ChunkEmbedding.index_build_id)
@@ -70,6 +75,7 @@ class ProviderWorkRepository:
                 IndexBuild.state.in_(
                     [IndexBuildState.ACTIVE, IndexBuildState.VALIDATED, IndexBuildState.RETAINED]
                 ),
+                IndexBuild.manifest["embedding_origin"].op("@>")(identity),
                 ChunkEmbedding.provider == identity["provider"],
                 ChunkEmbedding.model == identity["model"],
                 ChunkEmbedding.dimensions == identity["dimensions"],
@@ -123,7 +129,7 @@ class ProviderWorkRepository:
     async def reserve(
         self, scope: ProviderWorkScope, endpoint: str, model: str, purpose: str, estimate: int
     ) -> uuid.UUID:
-        async with self.sessions() as session, session.begin():
+        async with self.accounting_sessions() as session, session.begin():
             # One deployment-wide admission lock includes in-flight and unknown-cost attempts.
             await session.execute(text("SELECT pg_advisory_xact_lock(728160203801)"))
             cfg = scope.config
@@ -180,7 +186,7 @@ class ProviderWorkRepository:
         units: int | None,
         cost: int | None,
     ) -> None:
-        async with self.sessions() as session, session.begin():
+        async with self.accounting_sessions() as session, session.begin():
             await session.execute(
                 update(ProviderUsageAttempt)
                 .where(ProviderUsageAttempt.id == attempt)

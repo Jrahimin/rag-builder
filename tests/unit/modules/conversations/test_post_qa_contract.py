@@ -16,6 +16,7 @@ from pydantic import ValidationError
 
 from app.core.config import ChatConfig, LLMBackend, LLMConfig, RetrievalConfig
 from app.models.conversation import Conversation
+from app.models.message_diagnostic import MessageDiagnostic
 from app.modules.conversations.answer_draft import AnswerDraft
 from app.modules.conversations.ports import ContextChunk, ContextRetrievalResult
 from app.modules.conversations.prompts.authoritative_compatibility import (
@@ -27,6 +28,7 @@ from app.modules.conversations.services.evidence_coverage import CoverageVerdict
 from app.modules.conversations.services.evidence_repair_service import _validated_completion
 from app.modules.conversations.services.recovery_schedule import RecoverySchedule
 from app.modules.conversations.turn_resolution import normalize_request_scope
+from app.platform.providers.capabilities import endpoint_identity
 from app.platform.providers.contracts.llm import (
     ChatCompletionChunk,
     ChatCompletionResult,
@@ -75,6 +77,17 @@ class CapturedProvider(OpenAICompatibleChatProvider):
             model="gpt-6-luna",
             provider_version="fixture",
             request_timeout_seconds=1,
+            schema_capabilities=[
+                {
+                    "provider": "openai",
+                    "model": "gpt-6-luna",
+                    "endpoint_hash": endpoint_identity("https://example.test"),
+                    "schema_mode": "json_object",
+                    "reviewer": "controlled-wire-fixture",
+                    "evidence_hash": "a" * 64,
+                    "capability_revision": "fixture.json-object.v1",
+                }
+            ],
         )
         self.source = source
         self.kind = kind
@@ -331,7 +344,20 @@ async def test_captured_threshold_split_and_combined_repair_paths_are_equivalent
 
 @pytest.mark.parametrize("failure", ["prose", "array", "foreign", "verifier_schema"])
 async def test_generation_protocol_failures_are_distinct_and_never_publish_failed_drafts(failure):
-    service, provider, conversation, _, question = journey(failure=failure)
+    service, provider, conversation, messages, question = journey(failure=failure)
+    diagnostics = SimpleNamespace(expire_payloads=AsyncMock(), add=MagicMock())
+    if failure == "verifier_schema":
+        # Full payloads are opt-in and stored separately from public messages.
+        # Capture the MessageDiagnostic produced by the actual production writer.
+        service._diagnostic_repository = diagnostics
+        service._diagnostic_capture = True
+
+        async def assign_message_identity():
+            message = messages.add.call_args.args[0]
+            if message.id is None:
+                message.id = uuid.uuid4()
+
+        messages.flush.side_effect = assign_message_identity
     turn = await service.send_message(conversation.id, MessageSendRequest(content=question))
     answer = turn.assistant_message
     assert answer.terminal_outcome.outcome == "verification_failed"
@@ -342,6 +368,22 @@ async def test_generation_protocol_failures_are_distinct_and_never_publish_faile
         "claim_verification" if failure == "verifier_schema" else "draft_schema"
     )
     assert provider.purposes.count("answer_shape_correction") <= 1
+    if failure == "verifier_schema":
+        assert "claim_verification" in provider.purposes
+        assert service._work.counts["semantic_repairs"] == 0
+        assert "verifier_schema_invalid" in answer.metadata["rejected_draft"]["reasons"]
+        diagnostics.expire_payloads.assert_awaited_once()
+        diagnostics.add.assert_called_once()
+        record = diagnostics.add.call_args.args[0]
+        assert isinstance(record, MessageDiagnostic)
+        assert record.project_id == conversation.project_id and record.message_id == answer.id
+        assert record.payload is not None and record.expires_at is not None
+        rejected = record.payload["rejected_attempts"]
+        assert rejected and all(
+            row["id"] and row["reason"] == "verifier_schema_invalid" for row in rejected
+        )
+        assert "operator_diagnostic" not in answer.metadata
+        assert "operator_diagnostic" not in messages.add.call_args.args[0].message_metadata
 
 
 async def test_extra_assertion_does_not_reuse_approved_requirement_as_proof():
@@ -519,10 +561,23 @@ async def test_expired_provider_phase_preserves_terminal_persistence_and_languag
 def test_other_adapter_and_unknown_compatible_constrained_intent():
     contract = AnswerDraft.contract()
     message = [ChatMessage(role=ChatRole.USER, content="Answer from approved proof")]
+    from app.platform.providers.capabilities import endpoint_identity
+
     gemini = GeminiChatProvider(
         api_key="fixture",
         base_url="https://example.test",
         model="gemini-2.5-flash",
+        schema_capabilities=[
+            {
+                "provider": "gemini",
+                "model": "gemini-2.5-flash",
+                "endpoint_hash": endpoint_identity("https://example.test"),
+                "schema_mode": "json_schema",
+                "reviewer": "offline-fixture",
+                "evidence_hash": "a" * 64,
+                "capability_revision": "fixture.v1",
+            }
+        ],
         provider_version="fixture",
         request_timeout_seconds=1,
     )

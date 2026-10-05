@@ -34,6 +34,7 @@ from app.modules.conversations.services.conversation_service import Conversation
 from app.modules.projects.repositories.project_ai_config_repository import (
     ProjectAIConfigRepository,
 )
+from app.modules.retrieval.known_dependency_gap import known_dependency_gap
 from app.modules.retrieval.schemas.search import SearchRequest
 from app.modules.retrieval.services.search_service import SearchService
 from app.platform.config.project_ai import (
@@ -51,7 +52,7 @@ from app.platform.infra.recovery_capacity import recovery_slot
 from app.platform.providers.contracts.embedding import BaseEmbeddingProvider, EmbeddingPurpose
 from app.platform.providers.contracts.llm import BaseLLMProvider
 from app.platform.providers.contracts.web_search import BaseWebSearchProvider
-from app.platform.providers.errors import ProviderError
+from app.platform.providers.errors import ProviderError, ProviderTimeoutError
 from app.platform.providers.implementations.embedding_factory import get_embedding_provider
 from app.platform.providers.implementations.llm_factory import (
     create_llm_provider_for_conversation,
@@ -111,7 +112,21 @@ class SearchServiceRetrievalAdapter:
         if work is not None:
             work.counts["recovery_attempts"] += 1
         if self._branch_factory is None or self._session_factory is None:
-            return [await self.retrieve(**request) for request in requests]
+            completed: list[ContextRetrievalResult] = []
+            for request in requests:
+                try:
+                    completed.append(await self.retrieve(**request))
+                except (ProviderTimeoutError, TimeoutError):
+                    completed.append(
+                        ContextRetrievalResult(
+                            chunks=[],
+                            diagnostics={
+                                **snapshot,
+                                "branch_failure": "provider_or_deadline_failure",
+                            },
+                        )
+                    )
+            return completed
         # The initial search resolved the active build's embedding identity. Warm
         # only that turn-local cache; branches still resolve and verify their own
         # pinned snapshots and execute all retrieval/admission checks as before.
@@ -158,9 +173,47 @@ class SearchServiceRetrievalAdapter:
                 return result
 
         tasks = [asyncio.create_task(branch(request)) for request in requests]
+        deadline = snapshot.get("discovery_deadline")
+        if not isinstance(deadline, (float, int)):
+            deadline = work.recovery_deadline if work is not None else time.perf_counter() + 30
         try:
-            # gather preserves planned order. Failure cancels siblings; no lost dependency.
-            return list(await asyncio.gather(*tasks))
+            pending = set(tasks)
+            fatal = None
+            while pending:
+                done, pending = await asyncio.wait(
+                    pending,
+                    timeout=max(0.0, deadline - time.perf_counter()),
+                    return_when=asyncio.FIRST_EXCEPTION,
+                )
+                fatal = next(
+                    (
+                        task.exception()
+                        for task in done
+                        if not task.cancelled()
+                        and task.exception() is not None
+                        and not isinstance(task.exception(), (ProviderTimeoutError, TimeoutError))
+                    ),
+                    None,
+                )
+                if fatal is not None or not done or time.perf_counter() >= deadline:
+                    break
+                # A recoverable independent timeout does not consume the
+                # remaining sibling's discovery window.
+            for task in pending:
+                task.cancel()
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            if fatal is not None:
+                # Snapshot identity and provider integrity errors never become empty
+                # successful branches. Recovery orchestrates safe partial checkpoints.
+                raise fatal
+            return [
+                result
+                if isinstance(result, ContextRetrievalResult)
+                else ContextRetrievalResult(
+                    [], {**snapshot, "branch_failure": "discovery_deadline_exceeded"}
+                )
+                for result in results
+            ]
         finally:
             for task in tasks:
                 if not task.done():
@@ -205,9 +258,13 @@ class SearchServiceRetrievalAdapter:
             adjacent_to=adjacent_to,
             cited_chunk_ids=cited_chunk_ids,
         )
+        diagnostics = response.diagnostics.model_dump(mode="json")
+        diagnostics.update(
+            known_dependency_gap(diagnostics, getattr(self._search_service, "_project_id", None))
+        )
         return ContextRetrievalResult(
             chunks=[ContextChunk.from_retrieval_result(result) for result in response.results],
-            diagnostics=response.diagnostics.model_dump(mode="json"),
+            diagnostics=diagnostics,
         )
 
     async def retrieve_exact(

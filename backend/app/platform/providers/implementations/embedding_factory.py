@@ -96,12 +96,16 @@ def create_embedding_provider(
     backend: EmbeddingBackend | None = None,
     model: str | None = None,
     dimensions: int | None = None,
+    embedding_set_version: int | None = None,
 ) -> BaseEmbeddingProvider:
     provider = _create_embedding_provider(
         settings, backend=backend, model=model, dimensions=dimensions
     )
     if settings.provider_costs.cache_enabled and provider.provider_name == "cohere":
-        return CachedEmbeddingProvider(provider)
+        return CachedEmbeddingProvider(
+            provider,
+            embedding_set_version=embedding_set_version or settings.retrieval.embedding_set_version,
+        )
     return provider
 
 
@@ -111,6 +115,7 @@ def create_embedding_provider_for_identity(
     provider: str,
     model: str,
     dimensions: int,
+    embedding_set_version: int | None = None,
 ) -> BaseEmbeddingProvider:
     """Construct the query embedder that matches an active or retained build."""
     try:
@@ -125,6 +130,7 @@ def create_embedding_provider_for_identity(
         backend=backend,
         model=model,
         dimensions=dimensions,
+        embedding_set_version=embedding_set_version,
     )
 
 

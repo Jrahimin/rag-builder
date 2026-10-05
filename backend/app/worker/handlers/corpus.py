@@ -59,7 +59,9 @@ async def execute_index_build(
             )
         staged_configuration = JobConfiguration.model_validate(snapshot.configuration)
         embedding_set_version = (
-            embedding_set_version_from_configuration(staged_configuration) or embedding_set_version
+            _positive_embedding_set_version(run.payload.get("embedding_set_version"))
+            or embedding_set_version_from_configuration(staged_configuration)
+            or embedding_set_version
         )
         build = IndexBuild(
             structural_contract_version="structure.v1"
@@ -126,7 +128,9 @@ async def execute_index_build(
         from app.platform.db.advisory_lock import acquire_project_stage_lock
 
         await acquire_project_stage_lock(session, project_id=run.project_id, stage="corpus-build")
-    embedder = create_embedding_provider(settings)
+    embedder = create_embedding_provider(
+        settings, embedding_set_version=build.embedding_set_version
+    )
     private = (
         PrivateStructuralGeneration(
             session,

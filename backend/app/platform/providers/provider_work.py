@@ -15,6 +15,7 @@ from typing import Any, Protocol
 from uuid import UUID
 
 import httpx
+import structlog
 
 from app.core.config import ProviderCostsConfig
 from app.platform.providers.contracts.embedding import (
@@ -23,6 +24,8 @@ from app.platform.providers.contracts.embedding import (
     EmbeddingPurpose,
 )
 from app.platform.providers.errors import ProviderError
+
+logger = structlog.get_logger(__name__)
 
 
 class ProviderBudgetError(ProviderError):
@@ -167,7 +170,22 @@ async def metered_cohere_post(
         return response
     finally:
         # Even malformed responses, timeouts and cancelled turns retain a billing attempt.
-        await asyncio.shield(scope.store.complete(attempt, status, tokens, units, cost))
+        completion = asyncio.create_task(scope.store.complete(attempt, status, tokens, units, cost))
+        try:
+            await asyncio.shield(completion)
+        except asyncio.CancelledError:
+            # Never leave an unowned transaction using a pool past its lifespan.
+            completion.cancel()
+            with suppress(asyncio.CancelledError, Exception):
+                await completion
+            raise
+        except Exception:
+            # Admission is durable. Keep its conservative charge and the usable
+            # response; a bookkeeping failure must not discard a paid batch.
+            scope.counts["accounting_completion_failures"] = (
+                scope.counts.get("accounting_completion_failures", 0) + 1
+            )
+            logger.warning("provider_accounting_completion_failed", attempt_id=str(attempt))
 
 
 def cache_identity(
@@ -201,8 +219,11 @@ def validate_vectors(vectors: list[list[float]], dimensions: int, provider: str)
 class CachedEmbeddingProvider(BaseEmbeddingProvider):
     """Cache exact inputs only; no answer/evidence-result caching."""
 
-    def __init__(self, provider: BaseEmbeddingProvider) -> None:
+    def __init__(
+        self, provider: BaseEmbeddingProvider, *, embedding_set_version: int | None = None
+    ) -> None:
         self.provider = provider
+        self.embedding_set_version = embedding_set_version
 
     @property
     def cache_namespace(self) -> str:
@@ -240,7 +261,9 @@ class CachedEmbeddingProvider(BaseEmbeddingProvider):
         billed: int | None = 0
         for offset in range(0, len(texts), 96):
             batch = texts[offset : offset + 96]
-            identity = cache_identity(self, scope.embedding_set_version, purpose)
+            identity = cache_identity(
+                self, self.embedding_set_version or scope.embedding_set_version, purpose
+            )
             keys = [cache_key(identity, text) for text in batch]
             async with scope.store.cache_session(scope.project_id) as session:
                 found = await scope.store.vectors(session, scope.project_id, keys)

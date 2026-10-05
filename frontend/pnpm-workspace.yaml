@@ -1,0 +1,3 @@
+verifyDepsBeforeRun: error
+allowBuilds:
+  esbuild: true

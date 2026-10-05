@@ -36,6 +36,9 @@ class NoticeKind:
     UNRESOLVED_AUTHORITY = "unresolved_authority"
 
     VERIFICATION_FAILED = "verification_failed"
+    DOCUMENTARY_SCOPE = "documentary_scope"
+    PROPOSAL_SCOPE = "proposal_scope"
+    UNRESOLVED_APPLICABILITY = "unresolved_applicability"
     """Relevant evidence was found, but a bounded verification step failed."""
 
 
@@ -67,6 +70,16 @@ class Notice:
 # ---------------------------------------------------------------------------
 
 _EN_TEXTS: dict[str, str] = {
+    NoticeKind.DOCUMENTARY_SCOPE: (
+        "This answer describes the supplied document; its current"
+        " legal applicability is not assessed here."
+    ),
+    NoticeKind.PROPOSAL_SCOPE: (
+        "This answer describes the document's proposal; its legal effect is not assessed here."
+    ),
+    NoticeKind.UNRESOLVED_APPLICABILITY: (
+        "The legal applicability of the described source statements remains unresolved."
+    ),
     NoticeKind.UNRESOLVED_AUTHORITY: (
         "Some source amendments could not be resolved. The affected source text "
         "does not establish a currently applicable rule."
@@ -89,6 +102,13 @@ _EN_TEXTS: dict[str, str] = {
 }
 
 _BN_TEXTS: dict[str, str] = {
+    NoticeKind.DOCUMENTARY_SCOPE: (
+        "এই উত্তর সরবরাহ করা নথির বিষয়বস্তু বর্ণনা করে; বর্তমান আইনি প্রযোজ্যতা এখানে নির্ধারণ করা হয়নি।"
+    ),
+    NoticeKind.PROPOSAL_SCOPE: (
+        "এই উত্তর নথির প্রস্তাব বর্ণনা করে; এর আইনি কার্যকারিতা এখানে নির্ধারণ করা হয়নি।"
+    ),
+    NoticeKind.UNRESOLVED_APPLICABILITY: "বর্ণিত উৎসের বক্তব্যের আইনি প্রযোজ্যতা এখনো অনির্ধারিত।",
     NoticeKind.UNRESOLVED_AUTHORITY: (
         "কিছু উৎসের সংশোধনীর প্রযোজ্যতা নির্ধারণ করা যায়নি। সংশ্লিষ্ট উৎসের পাঠ "
         "বর্তমানে প্রযোজ্য বিধান নিশ্চিত করে না।"
@@ -112,6 +132,16 @@ _BN_TEXTS: dict[str, str] = {
 def _notice_text(kind: str, language: str) -> str:
     texts = _BN_TEXTS if language == "bn" else _EN_TEXTS
     return texts.get(kind, kind)
+
+
+def draft_scope_notice(*, kind: str, language: str, proof_ids: list[str]) -> Notice:
+    if kind not in {
+        NoticeKind.DOCUMENTARY_SCOPE,
+        NoticeKind.PROPOSAL_SCOPE,
+        NoticeKind.UNRESOLVED_APPLICABILITY,
+    }:
+        raise ValueError("Unknown draft scope notice")
+    return Notice(kind, language, _notice_text(kind, language), {"proof_ids": list(proof_ids)})
 
 
 # ---------------------------------------------------------------------------

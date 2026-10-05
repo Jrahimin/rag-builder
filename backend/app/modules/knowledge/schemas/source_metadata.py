@@ -30,6 +30,7 @@ class SourceRelationshipCreate(BaseModel):
     target_revision_id: uuid.UUID
     provision_effect: Literal["unknown", "replaces", "adds", "amends", "savings"] = "unknown"
     replacement_scope_verified: bool = False
+    review_provenance: dict[str, str] = Field(default_factory=dict, max_length=20)
     supporting_spans: list[RelationshipSourceSpan] = Field(default_factory=list, max_length=20)
     target_provisions: list[str] = Field(default_factory=list, max_length=100)
 
@@ -66,6 +67,7 @@ class SourceRevisionCreate(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=512)
     source_type: str | None = Field(default=None, max_length=128)
     work_key: str | None = Field(default=None, min_length=1, max_length=255)
+    edition_key: str | None = Field(default=None, min_length=1, max_length=255)
     published_date: date | None = None
     effective_from: date | None = None
     effective_to: date | None = None
@@ -75,7 +77,9 @@ class SourceRevisionCreate(BaseModel):
     change_reason: str | None = Field(default=None, max_length=2000)
     activate: bool = False
 
-    @field_validator("revision_label", "title", "source_type", "change_reason", "work_key")
+    @field_validator(
+        "revision_label", "title", "source_type", "change_reason", "work_key", "edition_key"
+    )
     @classmethod
     def strip_text(cls, value: str | None) -> str | None:
         if value is None:
@@ -115,6 +119,7 @@ class SourceRelationshipResponse(BaseModel):
     target_revision_id: uuid.UUID
     provision_effect: Literal["unknown", "replaces", "adds", "amends", "savings"] = "unknown"
     replacement_scope_verified: bool = False
+    review_provenance: dict[str, str] = Field(default_factory=dict, max_length=20)
     supporting_spans: list[RelationshipSourceSpan] = Field(default_factory=list, max_length=20)
     target_provisions: list[str] = Field(default_factory=list)
     created_at: datetime
@@ -132,6 +137,7 @@ class SourceRevisionResponse(BaseModel):
     title: str
     source_type: str | None
     work_key: str | None = None
+    edition_key: str | None = None
     published_date: date | None
     effective_from: date | None
     effective_to: date | None

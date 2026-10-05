@@ -476,3 +476,26 @@ Temporary Projects are tagged `rag-journey:<uuid>` and purged unless
 - [Safe corpus/index lifecycle](./safe_corpus_index_lifecycle.md)
 - [ADR-018 multilingual retrieval](../architecture/adr/018-multilingual-retrieval-v1.md)
 - [Conversation RAG journey (learning)](../learning/conversation_rag_journey.md)
+
+### Quality acceptance and bounded cleanup
+
+The journey harness does not certify ordinary builds automatically. A sealed
+setup build or cleanup job awaiting quality acceptance produces a precise job/build
+obligation immediately, rather than polling for 900 seconds with no completion
+actor. Keep the temporary project until its scoped receipt is approved and build
+activated; the normal durable dispatcher resumes accepted waiting jobs.
+
+Integration tests explicitly pass an in-process acceptance driver, guarded by
+`testing`, disposable `ape_test`, configured hash embeddings and echo LLM. The
+driver verifies actual quotations, stores the project/build-bound receipt, invokes
+the common activation gate, then resumes and dispatches the real durable job.
+The named deterministic `fixture-concept` manifest identity is retained; it is
+accepted only in this isolated testing environment and cannot certify production,
+paid-provider or relabeled builds. No CLI option enables this test callback.
+
+
+Disposable quality attestation selects source quotations deterministically by content
+hash and verifies genuine supported factual claims through production GroundingService.
+A heading-only corpus cannot obtain a fixture receipt. This selection avoids relying
+on random chunk UUID order; it does not establish the historical cleanup failure's
+inner cause. Durable acceptance continuation and actual purge assertions remain required.

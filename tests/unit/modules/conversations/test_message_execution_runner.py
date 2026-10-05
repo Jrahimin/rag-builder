@@ -265,32 +265,36 @@ async def test_later_verification_timeout_preserves_completed_attempts_and_proof
 
     source = (await FakeRetrieval().retrieve()).chunks[0]
     statement = "Customers can request a refund within 30 days of purchase."
+    source = replace(
+        source,
+        metadata={
+            "reviewed_proof": [
+                {"requirement_id": "R1", "quote": source.content, "fulfillment": "full"}
+            ]
+        },
+    )
     mapping = AsyncMock(
         side_effect=[
             GroundingResult(
                 claims=[
                     {
                         "claim_id": "C1",
+                        "assertion_id": "A1",
                         "text": statement,
                         "verification": "unsupported",
                         "verification_reason": "missing_citation",
                         "evidence": [],
-                    }
+                    },
+                    {
+                        "claim_id": "C2",
+                        "assertion_id": "A2",
+                        "text": source.content,
+                        "verification": "supported",
+                        "evidence": [{"chunk_id": str(source.chunk_id), "citation_index": 1}],
+                    },
                 ],
                 grounded=False,
                 citation_coverage=0.0,
-            ),
-            GroundingResult(
-                claims=[
-                    {
-                        "claim_id": "C1",
-                        "text": statement,
-                        "verification": "supported",
-                        "evidence": [{"chunk_id": str(source.chunk_id), "citation_index": 1}],
-                    }
-                ],
-                grounded=True,
-                citation_coverage=1.0,
             ),
             ProviderTimeoutError(
                 "deadline",
@@ -300,7 +304,25 @@ async def test_later_verification_timeout_preserves_completed_attempts_and_proof
         ]
     )
     monkeypatch.setattr(GroundingService, "map_claims", mapping)
-    service = _service(session, conversation_repository, message_repository, CitedLLM(statement))
+    draft = json.dumps(
+        {
+            "segments": [
+                {
+                    "assertion_id": "A1",
+                    "text": statement,
+                    "requirement_ids": ["R1"],
+                    "proof_ids": [str(source.chunk_id)],
+                },
+                {
+                    "assertion_id": "A2",
+                    "text": source.content,
+                    "requirement_ids": ["R1"],
+                    "proof_ids": [str(source.chunk_id)],
+                },
+            ]
+        }
+    )
+    service = _service(session, conversation_repository, message_repository, CitedLLM(draft))
     service._retrieval = AsyncMock()
     service._retrieval.query_embedder = None
     service._retrieval.retrieve.return_value = ContextRetrievalResult(
@@ -317,6 +339,7 @@ async def test_later_verification_timeout_preserves_completed_attempts_and_proof
     assert [c.verdict for c in retained.rejected_attempts] == [
         "unsupported",
         "supported",
+        "unverified",
         "unverified",
     ]
     assert retained.correction_attempts[-1]["status"] == "timed_out"

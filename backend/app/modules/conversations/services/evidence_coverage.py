@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, model_validator
 from pydantic_core import PydanticCustomError
 
 from app.modules.conversations.ports import ContextChunk
+from app.platform.domain.publication_integrity import damaged_source_text
 
 # Up to four rule facets with separate user/source-language discovery routes.
 MAX_REPAIR_DEPENDENCIES = 8
@@ -128,6 +129,7 @@ class _Check(BaseModel):
     # that proof answers the original requirement in the active review.
     fulfillment: Literal["full", "partial", "none"] | None = None
     unresolved_facets: list[str] = Field(default_factory=list, max_length=12)
+    resolved_gaps: list[str] = Field(default_factory=list, max_length=12)
     condition_facets: list[ConditionFacet] = Field(default_factory=list, max_length=12)
     answerable_scope: str = Field(default="", max_length=1000)
     needs_adjacent_context: bool = False
@@ -321,6 +323,13 @@ class CoverageVerdict(BaseModel):
         ):
             return False
         sources = {str(c.chunk_id): _quote_tokens(c.content) for c in context}
+        damaged = {
+            str(chunk.chunk_id)
+            for chunk in context
+            if chunk.metadata.get("source_text_truncated") is True
+            or chunk.metadata.get("partial_extraction") is True
+            or damaged_source_text(chunk.content)
+        }
         for check in self.checks:
             if (
                 not check.supported
@@ -332,6 +341,7 @@ class CoverageVerdict(BaseModel):
             for item in check.evidence:
                 if (
                     item.chunk_id not in sources
+                    or (check.fulfillment == "full" and item.chunk_id in damaged)
                     or not item.quote.strip()
                     or not _contains_quote(sources[item.chunk_id], item.quote)
                 ):

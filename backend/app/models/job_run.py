@@ -44,6 +44,7 @@ class JobState(StrEnum):
     QUEUED = "queued"
     RUNNING = "running"
     RETRY_SCHEDULED = "retry_scheduled"
+    WAITING_ACCEPTANCE = "waiting_acceptance"
     SUCCEEDED = "succeeded"
     FAILED = "failed"
 

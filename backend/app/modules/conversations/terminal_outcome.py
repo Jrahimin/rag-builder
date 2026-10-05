@@ -56,6 +56,13 @@ def terminal_outcome(
         if isinstance(item, dict) and item.get("requirement_id")
     }
     unresolved = sorted(set(unresolved) | (known_ids - set(supported)))
+    publication = diagnostics.get("published_requirements")
+    if isinstance(publication, dict) and publication.get("assessed"):
+        supported = list(publication["supported_requirement_ids"])
+        unresolved = list(publication["unresolved_requirement_ids"])
+        if unresolved:
+            partial = bool(supported_claims)
+            coverage = "partial" if supported_claims else "incomplete"
     common: dict[str, Any] = {
         "requested_scope": request_scope,
         "supported_requirement_ids": supported,
@@ -166,6 +173,15 @@ def terminal_outcome(
             next_action="retry",
             **common,
         )
+    if repair.get("stop_reason") == "known_corpus_gap" and not supported_claims:
+        return TerminalOutcome(
+            outcome="insufficient_evidence",
+            reason_code="known_corpus_gap",
+            failure_stage="coverage",
+            next_action="review_source",
+            retryable=False,
+            **common,
+        )
     authority_unresolved = (
         diagnostics.get("modifies_authority_scope_status") == "unresolved"
         or (diagnostics.get("scope_current_authority") or {}).get("status")
@@ -216,7 +232,7 @@ def terminal_content(result: TerminalOutcome, language: str) -> str | None:
     if result.outcome == "verification_failed":
         if result.failure_stage == "coverage":
             return (
-                "অভ্যন্তরীণ যাচাই সমস্যার কারণে উৎস পর্যালোচনা সম্পন্ন হয়নি। এর অর্থ এই নয় যে চাওয়া তথ্য নেই।"
+                ("অভ্যন্তরীণ যাচাই সমস্যার কারণে উৎস পর্যালোচনা সম্পন্ন হয়নি। এর অর্থ এই নয় যে চাওয়া তথ্য নেই।")
                 if language == "bn"
                 else "The source review could not be completed because of an internal validation "
                 "problem. This does not show that the requested information is missing."
@@ -230,14 +246,14 @@ def terminal_content(result: TerminalOutcome, language: str) -> str | None:
         )
     if result.outcome == "timed_out":
         return (
-            "সময়সীমার মধ্যে উত্তর যাচাই সম্পন্ন হয়নি। কোনো চূড়ান্ত পরিমাণ বা তথ্য প্রত্যয়ন করা হয়নি।"
+            ("সময়সীমার মধ্যে উত্তর যাচাই সম্পন্ন হয়নি। কোনো চূড়ান্ত পরিমাণ বা তথ্য প্রত্যয়ন করা হয়নি।")
             if language == "bn"
             else "I could not finish verifying the requested answer within the time limit. "
             "No final amount or factual answer has been certified."
         )
     if result.outcome == "unresolved_authority":
         return (
-            "প্রাসঙ্গিক উৎস পাওয়া গেছে, কিন্তু অনুরোধের সময়কালের জন্য কোন বিধান প্রযোজ্য তা প্রতিষ্ঠা করা যায়নি।"
+            ("প্রাসঙ্গিক উৎস পাওয়া গেছে, কিন্তু অনুরোধের সময়কালের জন্য কোন বিধান প্রযোজ্য তা প্রতিষ্ঠা করা যায়নি।")
             if language == "bn"
             else "I found relevant source material, but could not establish which rule "
             "governs the provision for the period you asked about."

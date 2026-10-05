@@ -24,7 +24,7 @@ from app.modules.retrieval.repositories.index_build_repository import IndexBuild
 from app.platform.db.session import Database
 from app.platform.jobs.configuration import apply_job_configuration
 from app.platform.jobs.contracts import JobConfiguration, JobDefinition
-from app.platform.jobs.errors import JobLeaseLostError, PermanentJobError
+from app.platform.jobs.errors import JobLeaseLostError, PendingBuildAcceptance, PermanentJobError
 from app.platform.jobs.failure import classify_job_failure
 from app.platform.jobs.implementations.job_queue_factory import create_job_queue
 
@@ -151,6 +151,16 @@ async def run_durable_job(
                     project_uuid,
                     str(job_uuid),
                     "evaluation" if run.job_type is JobType.EVALUATION_RUN else run.job_type.value,
+                    cache_sessions=(
+                        database.provider_cache_session_factory
+                        if effective_settings.provider_costs.cache_enabled
+                        else None
+                    ),
+                    accounting_sessions=(
+                        database.provider_accounting_session_factory
+                        if effective_settings.provider_costs.enabled
+                        else None
+                    ),
                 ):
                     child = await operation(session, run, effective_settings, service, reporter)
                 submission = await service.stage_success(
@@ -162,6 +172,13 @@ async def run_durable_job(
                 )
                 if submission is not None:
                     await service.dispatch(submission.job_id)
+            except PendingBuildAcceptance:
+                await service.stage_waiting_acceptance(
+                    run_id,
+                    worker_id=worker_id,
+                    payload=dict(run.payload),
+                    result=dict(run.result or {}),
+                )
             except Exception as exc:
                 await session.rollback()
                 failure = classify_job_failure(exc)

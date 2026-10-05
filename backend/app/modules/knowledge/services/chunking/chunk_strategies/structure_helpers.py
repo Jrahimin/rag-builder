@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import hashlib
-import re
 from dataclasses import replace
 
+from app.modules.knowledge.scope_facts import extract_scope_facts
 from app.modules.knowledge.services.chunking.models import ChunkingContext, DraftChunk
 from app.modules.knowledge.services.chunking.token_counting_service import TokenCountingService
 from app.platform.providers.contracts.document_parser import ParsedElement, ParsedElementType
@@ -389,33 +389,8 @@ def chunk_by_sections(
         draft.metadata["structure_version"] = "structure.v1"
         draft.metadata["structural_unit_id"] = hashlib.sha256(draft.content.encode()).hexdigest()
         draft.metadata["source_spans"] = spans
-        scope_facts = []
-        for span in spans:
-            for match in re.finditer(
-                r"(?<![\d])(?:20[\d\u09e6-\u09ef]{2}|২\u09e6[\u09e6-\u09ef]{2})\s*[-\u2013/]\s*(?:20[\d\u09e6-\u09ef]{2}|২\u09e6[\u09e6-\u09ef]{2}|[\d\u09e6-\u09ef]{2})(?![\d])",
-                str(span["text"]),
-            ):
-                scope_facts.append(
-                    {
-                        "kind": "period",
-                        "value": match.group(),
-                        "source_span": span,
-                        "status": "source_attested",
-                    }
-                )
-            for match in re.finditer(
-                r"(?:section|article|rule|regulation|ধারা|বিধি)\s+[\d\u09e6-\u09ef]+(?:[A-Za-z()./-][\dA-Za-z()./-]*)?",
-                str(span["text"]),
-                re.I,
-            ):
-                scope_facts.append(
-                    {
-                        "kind": "provision",
-                        "value": match.group(),
-                        "source_span": span,
-                        "status": "source_attested",
-                    }
-                )
+        scope_facts = extract_scope_facts(spans, unit_id=draft.metadata["structural_unit_id"])
+        draft.metadata["scope_fact_version"] = "scope.v2"
         draft.metadata["scope_facts"] = scope_facts
         draft.metadata["provision_references"] = list(
             dict.fromkeys(fact["value"] for fact in scope_facts if fact["kind"] == "provision")

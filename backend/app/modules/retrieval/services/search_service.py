@@ -204,6 +204,28 @@ class SearchService:
             )
 
         identity, query_embedder = await self._resolve_query_embedder(active_build)
+        if (
+            active_build.validated_at is not None
+            and active_build.chunk_count
+            == active_build.keyword_count
+            == active_build.vector_count
+            == 0
+            and (active_build.manifest or {}).get("documents") == []
+        ):
+            return self._empty_search_response(
+                request,
+                top_k=top_k,
+                strategy=strategy,
+                started=started,
+                diagnostics=diagnostics,
+                source_scope=source_scope,
+                source_policy_status=source_policy_status,
+                rerank_status="empty_corpus",
+                embedding_identity_status="matched",
+                identity=identity,
+                index_build_id=active_build.id,
+                indexed_corpus_empty=True,
+            )
         if self._work is not None:
             self._work.evidence_snapshot.update(
                 {
@@ -341,7 +363,9 @@ class SearchService:
             configuration_hash=self._configuration_hash,
             config_provenance=self._config_provenance,
         )
-        hydrated_results = await self._hydrator.hydrate(candidates)
+        hydrated_results = await self._hydrator.hydrate(
+            candidates, index_build_id=active_build.id, source_generation=source_scope.generation
+        )
         candidate_trace = [
             _result_trace(result, rank=index)
             for index, result in enumerate(hydrated_results, start=1)
@@ -717,7 +741,9 @@ class SearchService:
             configuration_hash=self._configuration_hash,
             config_provenance=self._config_provenance,
         )
-        hydrated_results = await self._hydrator.hydrate(provenanced)
+        hydrated_results = await self._hydrator.hydrate(
+            provenanced, index_build_id=active_build.id, source_generation=source_scope.generation
+        )
         by_id = {result.chunk_id: result for result in hydrated_results}
         results = [by_id[item.chunk_id] for item in provenanced if item.chunk_id in by_id]
         (
@@ -997,6 +1023,7 @@ class SearchService:
         skipped_reason: str | None = None,
         identity: EmbeddingIdentity | None = None,
         index_build_id: uuid.UUID | None = None,
+        indexed_corpus_empty: bool = False,
     ) -> SearchResponse:
         elapsed_ms = int((time.perf_counter() - started) * 1000)
         return SearchResponse(
@@ -1009,6 +1036,7 @@ class SearchService:
                 rerank_requested=False,
                 rerank_status=rerank_status,
                 skipped_reason=skipped_reason,
+                indexed_corpus_empty=indexed_corpus_empty,
                 reranker_provider=None,
                 reranker_model=None,
                 reranker_version=None,

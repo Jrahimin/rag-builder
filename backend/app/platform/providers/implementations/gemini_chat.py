@@ -9,6 +9,7 @@ import httpx
 
 from app.platform.providers.capabilities import (
     describe_llm_capability,
+    structured_output_capability,
     translate_generation_parameters,
 )
 from app.platform.providers.contracts.llm import (
@@ -19,6 +20,7 @@ from app.platform.providers.contracts.llm import (
     ChatRole,
     ChatUsage,
     StructuredOutput,
+    constrained_messages,
 )
 from app.platform.providers.errors import ProviderError
 
@@ -41,12 +43,14 @@ class GeminiChatProvider(BaseLLMProvider):
         model: str,
         provider_version: str,
         request_timeout_seconds: float,
+        schema_capabilities: list[dict[str, str]] | None = None,
     ) -> None:
         self._api_key = api_key
         self._base_url = base_url.rstrip("/")
         self._model = model
         self._provider_version = provider_version
         self._timeout = request_timeout_seconds
+        self._schema_capabilities = schema_capabilities
 
     @property
     def provider_name(self) -> str:
@@ -86,6 +90,9 @@ class GeminiChatProvider(BaseLLMProvider):
         max_tokens: int,
         output_contract: StructuredOutput | None = None,
     ) -> dict[str, object]:
+        mode = self.request_provenance(output_contract, max_tokens)["schema_mode"]
+        if output_contract is not None and mode == "prompt":
+            messages = constrained_messages(messages, output_contract)
         system_instruction, contents = self._split_messages(messages)
         generation_config: dict[str, object] = {}
         generation_config.update(
@@ -95,7 +102,7 @@ class GeminiChatProvider(BaseLLMProvider):
                 max_tokens=max_tokens,
             )
         )
-        if output_contract is not None:
+        if output_contract is not None and mode == "json_schema":
             generation_config["responseMimeType"] = "application/json"
             generation_config["responseJsonSchema"] = output_contract.schema
         body: dict[str, object] = {
@@ -105,6 +112,22 @@ class GeminiChatProvider(BaseLLMProvider):
         if system_instruction:
             body["systemInstruction"] = {"parts": [{"text": system_instruction}]}
         return body
+
+    def request_provenance(
+        self, output_contract: StructuredOutput | None, max_tokens: int
+    ) -> dict[str, object]:
+        del max_tokens
+        capability = structured_output_capability(
+            self.provider_name, self.model_name, self._base_url, self._schema_capabilities
+        )
+        return {
+            **capability,
+            "schema_mode": capability["schema_mode"] if output_contract else "none",
+            "provider": self.provider_name,
+            "model": self.model_name,
+            "reasoning": "provider_default",
+            "local_validation": "consumer_schema_required",
+        }
 
     def _url(self, *, stream: bool) -> str:
         action = "streamGenerateContent" if stream else "generateContent"
