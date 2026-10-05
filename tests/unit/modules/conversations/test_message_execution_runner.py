@@ -6,7 +6,6 @@ import hashlib
 import json
 from dataclasses import replace
 from datetime import UTC, datetime
-from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
@@ -19,7 +18,9 @@ from app.modules.conversations.ports import ContextRetrievalResult
 from app.modules.conversations.schemas.message import MessageResponse, MessageSendRequest
 from app.modules.conversations.terminal_outcome import terminal_outcome
 from app.modules.evaluation.ports import QualityHit
+from tests.unit.modules.conversations import captured_fixture_helpers
 from tests.unit.modules.conversations import test_chat_service as chat_test
+from tests.unit.modules.conversations.captured_fixture_helpers import load_captured_fixture
 from tests.unit.modules.conversations.test_chat_service import (
     CitedLLM,
     FakeRetrieval,
@@ -48,14 +49,12 @@ def fixture_message_repository():
 
 
 pytestmark = pytest.mark.unit
-ROOT = Path(__file__).parents[4]
-FIXTURE = ROOT / "tests/fixtures/evaluation/message_journey_failures_20261001_v1.json"
-CASES = json.loads(FIXTURE.read_text(encoding="utf-8"))["cases"]
+CASES = load_captured_fixture("message_journey_failures_20261001_v1.json")["cases"]
 
 
 @pytest.mark.parametrize("case", CASES, ids=lambda case: case["id"])
 def test_saved_failure_has_truthful_terminal_stage(case):
-    assert hashlib.sha256((ROOT / case["raw_path"]).read_bytes()).hexdigest() == case["raw_sha256"]
+    assert case in load_captured_fixture("message_journey_failures_20261001_v1.json")["cases"]
     result = terminal_outcome(
         reason="claim_verification_failed"
         if case["rejected_draft"]
@@ -345,3 +344,29 @@ async def test_later_verification_timeout_preserves_completed_attempts_and_proof
     assert retained.correction_attempts[-1]["status"] == "timed_out"
     assert "operator_diagnostic" not in turn.assistant_message.metadata
     assert statement not in turn.assistant_message.content
+
+
+@pytest.mark.parametrize("name", captured_fixture_helpers.CAPTURE_FIXTURE_SHA256)
+@pytest.mark.parametrize("newline", [b"\n", b"\r\n"], ids=["LF", "CRLF"])
+def test_captured_fixture_integrity_survives_checkout_line_endings(
+    name, newline, tmp_path, monkeypatch
+):
+    expected = load_captured_fixture(name)
+    payload = (captured_fixture_helpers.FIXTURE_ROOT / name).read_bytes()
+    payload = payload.replace(b"\r\n", b"\n").replace(b"\n", newline)
+    (tmp_path / name).write_bytes(payload)
+    monkeypatch.setattr(captured_fixture_helpers, "FIXTURE_ROOT", tmp_path)
+    assert load_captured_fixture(name) == expected
+
+
+@pytest.mark.parametrize("name", captured_fixture_helpers.CAPTURE_FIXTURE_SHA256)
+def test_captured_fixture_integrity_rejects_changed_test_data(name, tmp_path, monkeypatch):
+    data = load_captured_fixture(name)
+    if "live_calls_made" in data:
+        data["live_calls_made"] = True
+    else:
+        data["cases"][0]["repair"]["stop_reason"] = "changed"
+    (tmp_path / name).write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    monkeypatch.setattr(captured_fixture_helpers, "FIXTURE_ROOT", tmp_path)
+    with pytest.raises(AssertionError, match="Captured fixture changed"):
+        load_captured_fixture(name)

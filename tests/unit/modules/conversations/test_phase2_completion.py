@@ -7,7 +7,6 @@ import hashlib
 import json
 import uuid
 from decimal import Decimal
-from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -38,11 +37,13 @@ from app.modules.evaluation.ports import QualityHit
 from app.platform.config.project_ai import ConfigRevisionRecord, resolve_project_ai_config
 from app.platform.providers.contracts.llm import ChatCompletionResult, ChatUsage
 from app.platform.providers.request_work import RequestWork
+from tests.unit.modules.conversations.captured_fixture_helpers import (
+    load_captured_fixture,
+    recorded_repair_for_case,
+)
 from tests.unit.modules.conversations.test_post_qa_contract import journey
 
 pytestmark = pytest.mark.unit
-FIXTURES = Path(__file__).parents[3] / "fixtures/evaluation"
-ROOT = Path(__file__).parents[4]
 
 
 def test_live_qa_rule_lookup_intent_and_publication_integrity_regressions():
@@ -223,9 +224,7 @@ def test_typed_notice_is_separate_from_negative_enactment_fact():
 
 
 def budget_sources():
-    data = json.loads(
-        (FIXTURES / "phase2_captured_budget_speech_v1.json").read_text(encoding="utf-8")
-    )
+    data = load_captured_fixture("phase2_captured_budget_speech_v1.json")
     provenance = data["provenance"]
     ids = [str(row["id"]) for row in data["rows"] if row["chunk_index"] in (180, 181)]
     return [
@@ -260,13 +259,7 @@ def budget_sources():
 
 
 def test_captured_budget_speech_and_table_units_are_indivisible():
-    data = json.loads(
-        (FIXTURES / "phase2_captured_budget_speech_v1.json").read_text(encoding="utf-8")
-    )
-    assert (
-        hashlib.sha256((ROOT / data["source_path"]).read_bytes()).hexdigest()
-        == data["source_sha256"]
-    )
+    data = load_captured_fixture("phase2_captured_budget_speech_v1.json")
     for row in data["rows"]:
         assert (
             hashlib.sha256(row["content"].encode()).hexdigest() == row["extracted_content_sha256"]
@@ -498,12 +491,9 @@ def test_two_initial_recovery_searches_and_separate_structure_credits(complex_qu
 
 @pytest.mark.parametrize("case_index,total_ms", [(0, 27986), (1, 28226), (2, 29984), (3, 28011)])
 def test_recorded_q1_q4_budget_replay_preserves_stage_reserves(case_index, total_ms):
-    data = json.loads(
-        (FIXTURES / "phase2_recorded_q1_q4_timings_v1.json").read_text(encoding="utf-8")
-    )
+    data = load_captured_fixture("phase2_recorded_q1_q4_timings_v1.json")
     case = data["cases"][case_index]
-    source_body = (ROOT / case["source_file"]).read_bytes()
-    assert hashlib.sha256(source_body).hexdigest() == case["source_file_sha256"].lower()
+    recorded_repair_for_case(case)
     assert case["server_total_latency_ms"] == total_ms
     work = RequestWork(uuid.uuid4())
     assert requires_complex_execution_budget(normalize_request_scope(case["question"]))
@@ -946,12 +936,9 @@ async def test_recorded_q1_q4_actual_production_completed_limitation(
     from app.platform.providers.errors import ProviderTimeoutError
     from app.platform.providers.request_work import current_request_purpose
 
-    data = json.loads(
-        (FIXTURES / "phase2_recorded_q1_q4_timings_v1.json").read_text(encoding="utf-8")
-    )
+    data = load_captured_fixture("phase2_recorded_q1_q4_timings_v1.json")
     case = data["cases"][case_index]
-    body = json.loads((ROOT / case["source_file"]).read_text(encoding="utf-8"))
-    original_repair = body["data"]["assistant_message"]["metadata"]["knowledge_repair"]
+    original_repair = recorded_repair_for_case(case)
     requirements = original_repair["requirements"]
     missing = [item["description"] for item in requirements]
     coverage = {
