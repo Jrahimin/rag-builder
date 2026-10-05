@@ -5,16 +5,18 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass, replace
 from decimal import Decimal
-from typing import Any
+from typing import Any, cast
 
 import regex
 
 from app.core.config import ChatConfig, EvidenceGateMode, GroundingMode
+from app.modules.conversations.citation_snapshots import proof_preview
 from app.modules.conversations.ports import (
     CandidateEvidenceAssessment,
     ContextChunk,
     EvidenceUnit,
 )
+from app.modules.conversations.quantities import NUMBER_TOKEN, Quantity, normalize_quantities
 from app.modules.conversations.schemas.message import (
     AnswerClaim,
     CitationSourceKind,
@@ -23,6 +25,7 @@ from app.modules.conversations.schemas.message import (
     ClaimVerificationReason,
     InsufficientEvidenceReason,
 )
+from app.modules.conversations.services.claim_entailment_service import ClaimEntailmentService
 from app.platform.domain.content_hash import content_hash
 from app.platform.domain.evidence_contracts import (
     RERANKER_RELEVANCE_CALIBRATION_ID,
@@ -123,9 +126,8 @@ _SCENARIO_INPUT_PATTERN = regex.compile(
     regex.IGNORECASE,
 )
 _CURRENCY_TOKEN = r"(?:[A-Za-z]{1,6}\s+|৳\s*)?"
-_AMOUNT_PATTERN = regex.compile(r"\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?")
+_NUMBER = NUMBER_TOKEN
 _EVIDENCE_RATE_PATTERN = regex.compile(r"(\d+(?:\.\d+)?)\s*%")
-_NUMBER = r"\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?"
 _BAND_WIDTH_PATTERN = regex.compile(
     r"(?:\bnext|পরবর্তী)\s+(?:[A-Z]{3}\s+)?(?P<width>\d[\d,]*(?:\.\d+)?)"
     r"[^|\n%]{0,40}\|\s*(?P<rate>\d+(?:\.\d+)?)\s*%",
@@ -341,6 +343,7 @@ class _ClaimDraft:
     evidence_chunks: list[tuple[int, ContextChunk]]
     has_valid_citation: bool
     kind_hint: str | None = None
+    assertion_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -360,9 +363,12 @@ class GroundingService:
         self,
         config: ChatConfig,
         embedder: BaseEmbeddingProvider | None = None,
+        entailment: ClaimEntailmentService | None = None,
     ) -> None:
+        self._entailment = entailment
         self._config = config
         self._embedder = embedder
+        self.publication_completeness: dict[str, bool | None] = {}
 
     def assess(
         self,
@@ -918,18 +924,23 @@ class GroundingService:
         require_citations: bool = True,
         user_input: str = "",
         coverage: dict[str, Any] | None = None,
+        draft_segments: list[dict[str, Any]] | None = None,
     ) -> GroundingResult:
         drafts: list[_ClaimDraft] = []
         semantic_pairs: list[tuple[str, str]] = []
         spans_by_chunk: dict[uuid.UUID, list[_SelectedSpan]] = {}
-        segments = _answer_segments(_normalize_page_citations(answer, chunks))
+        segments = (
+            [str(item["text"]) for item in draft_segments]
+            if draft_segments
+            else _answer_segments(_normalize_page_citations(answer, chunks))
+        )
         for index, raw_segment in enumerate(segments, start=1):
             segment = raw_segment.strip()
             if not segment:
                 continue
             citation_indexes = [int(value) for value in _CITATION_PATTERN.findall(segment)]
             claim_text = _CITATION_PATTERN.sub("", segment).strip()
-            if (
+            if not draft_segments and (
                 not claim_text
                 or not regex.search(r"[\p{L}\p{N}]", claim_text)
                 or _is_leading_table_header(segments, index - 1)
@@ -950,11 +961,48 @@ class GroundingService:
                 segments, index - 1, claim_text
             ):
                 kind_hint = "coverage_scope"
+            if draft_segments:
+                # Typed draft rows are assertions. Operational scope belongs to
+                # DraftNotice and cannot acquire a coverage-verdict bypass here.
+                kind_hint = None
+                assertion = claim_text
             evidence_chunks = [
                 (citation_index, chunks[citation_index - 1])
                 for citation_index in dict.fromkeys(citation_indexes)
                 if 1 <= citation_index <= len(chunks)
             ]
+            if draft_segments:
+                bound = draft_segments[index - 1]
+                allowed = set(bound.get("requirement_ids", [])) if bound else set()
+                proof_ids = set(bound.get("proof_ids", []))
+                evidence_chunks = [
+                    (i, chunk)
+                    for i, chunk in enumerate(chunks, 1)
+                    if str(chunk.chunk_id) in proof_ids
+                ]
+                evidence_chunks = [
+                    (
+                        citation_index,
+                        replace(
+                            chunk,
+                            metadata={
+                                **chunk.metadata,
+                                **(
+                                    {
+                                        "reviewed_proof": [
+                                            item
+                                            for item in chunk.metadata.get("reviewed_proof", [])
+                                            if item.get("requirement_id") in allowed
+                                        ]
+                                    }
+                                    if "reviewed_proof" in chunk.metadata
+                                    else {}
+                                ),
+                            },
+                        ),
+                    )
+                    for citation_index, chunk in evidence_chunks
+                ]
             has_valid_citation = bool(evidence_chunks)
             if kind_hint != "coverage_scope" and not evidence_chunks and not require_citations:
                 best = _best_evidence(assertion, chunks)
@@ -968,6 +1016,9 @@ class GroundingService:
                     evidence_chunks=evidence_chunks,
                     has_valid_citation=has_valid_citation,
                     kind_hint=kind_hint,
+                    assertion_id=str(draft_segments[index - 1]["assertion_id"])
+                    if draft_segments
+                    else f"A{index}",
                 )
             )
             if kind_hint != "coverage_scope":
@@ -978,9 +1029,87 @@ class GroundingService:
                         for key in keys:
                             semantic_pairs.append((key, span.text))
         similarities = await self._claim_similarities(semantic_pairs)
-
-        claims: list[AnswerClaim] = []
+        entailment_inputs: list[dict[str, object]] = []
         for draft in drafts:
+            proof: list[dict[str, object]] = []
+            for _, chunk in draft.evidence_chunks:
+                reviewed = [
+                    item
+                    for item in chunk.metadata.get("reviewed_proof", [])
+                    if item.get("quote")
+                    and str(item["quote"]) in chunk.content
+                    and (
+                        not draft_segments
+                        or item.get("requirement_id")
+                        in draft_segments[draft.index - 1].get("requirement_ids", [])
+                    )
+                ]
+                proof.extend(
+                    [
+                        {
+                            "quote": item["quote"],
+                            "chunk_id": str(chunk.chunk_id),
+                            "requirement_id": item.get("requirement_id"),
+                            "supported_scope": item.get("supported_scope", ""),
+                        }
+                        for item in reviewed
+                    ]
+                    if "reviewed_proof" in chunk.metadata
+                    else [{"quote": chunk.content, "chunk_id": str(chunk.chunk_id)}]
+                )
+            entailment_inputs.append(
+                {
+                    "assertion_id": draft.assertion_id or f"claim-{draft.index}",
+                    "assertion": draft.assertion,
+                    "proof": proof,
+                    "scenario_input": user_input,
+                }
+            )
+        entailments = ["unverified"] * len(drafts)
+        pending: list[int] = []
+        # Every non-identical assertion takes source entailment, including
+        # ordinary passages. Similarity only locates candidate source spans.
+        raw_positions: set[int] = set()
+        exact_positions: set[int] = set()
+        for position, draft in enumerate(drafts):
+            proof_items = cast(list[dict[str, object]], entailment_inputs[position]["proof"])
+            assertion = " ".join(_plain_claim_text(draft.assertion).split()).strip()
+            exact = any(
+                assertion
+                == " ".join(_plain_claim_text(str(proof.get("quote", ""))).split()).strip()
+                for proof in proof_items
+            )
+            joined_proof = " ".join(
+                _plain_claim_text(str(item.get("quote", ""))) for item in proof_items
+            )
+            exact = exact or assertion == " ".join(joined_proof.split()).strip()
+            if draft.kind_hint == "coverage_scope":
+                continue
+            if exact and assertion:
+                # Whole-assertion identity is reusable proof; substring/embedding
+                # similarity, a category change or any additional clause is not.
+                entailments[position] = "supported"
+                exact_positions.add(position)
+            elif proof_items:
+                pending.append(position)
+            if self._entailment is None:
+                raw_positions.add(position)
+        if self._entailment and pending:
+            verdicts = await self._entailment.verify([entailment_inputs[i] for i in pending])
+            for position, verdict in zip(pending, verdicts, strict=True):
+                entailments[position] = verdict
+
+        verifier_failure = getattr(self._entailment, "last_failure", None)
+        structured_verdicts = getattr(self._entailment, "last_verdicts", [])
+        verdict_by_position = dict(zip(pending, structured_verdicts, strict=False))
+        self.publication_completeness = {
+            str(draft.assertion_id or f"claim-{draft.index}"): verdict_by_position.get(
+                position, {}
+            ).get("publication_complete")
+            for position, draft in enumerate(drafts)
+        }
+        claims: list[AnswerClaim] = []
+        for draft_position, draft in enumerate(drafts):
             kind = draft.kind_hint or _claim_kind(draft.assertion, user_input, display=draft.text)
             supporting_spans: dict[uuid.UUID, _SelectedSpan] = {}
             verification_method: str | None = None
@@ -1000,32 +1129,55 @@ class GroundingService:
                     draft.assertion,
                     draft.evidence_chunks,
                     similarities,
-                    spans_by_chunk,
+                    {
+                        chunk.chunk_id: _claim_candidate_spans(chunk)
+                        for _, chunk in draft.evidence_chunks
+                    },
                     display=draft.text,
                 )
                 supporting_spans = selected_spans
                 span_texts = [span.text for span in selected_spans.values()]
                 evidence_texts = [chunk.content for _, chunk in draft.evidence_chunks]
                 full_evidence = " ".join(evidence_texts)
+                model_entailment = (
+                    self._entailment is not None and draft_position not in raw_positions
+                )
                 # Quantity binding needs all cited clauses.  The single semantic
                 # locator span may omit a neighbouring deadline, exception, or
                 # sanction clause from the same bounded source passage.
-                quantity_evidence = " ".join(
-                    _quantity_aligned_evidence(draft.assertion, evidence_texts)
+                indivisible_proof = any(
+                    chunk.metadata.get("proof_unit_chunk_ids") for _, chunk in draft.evidence_chunks
+                )
+                quantity_evidence = (
+                    full_evidence
+                    if indivisible_proof
+                    else " ".join(_quantity_aligned_evidence(draft.assertion, evidence_texts))
                 )
                 duration_evidence = quantity_evidence
                 neighbor = _nearest_matching_cited_calculation(segments, draft.index - 1)
                 adjacent_texts = (segments[neighbor],) if neighbor is not None else ()
-                derived = _derived_calculation_verification(
-                    draft.assertion,
-                    evidence_texts,
-                    adjacent_texts=adjacent_texts,
-                    extra_bases=_setup_amounts(segments),
+                derived = (
+                    None
+                    if draft_segments
+                    else _derived_calculation_verification(
+                        draft.assertion,
+                        evidence_texts,
+                        adjacent_texts=adjacent_texts,
+                        extra_bases=tuple(_currency_amounts(user_input)),
+                        authorized_operands=_amount_set(user_input + " " + full_evidence),
+                    )
                 )
-                unsupported_composite = "=" in draft.assertion and regex.search(
-                    r"\d\s*[+\u2212-]\s*\d|\b(?:min|max|sum)\s*\(",
-                    draft.assertion,
-                    regex.IGNORECASE,
+                graph_verified = bool(
+                    draft_segments and draft_segments[draft.index - 1].get("calculation_verified")
+                )
+                unsupported_composite = (
+                    not graph_verified
+                    and "=" in draft.assertion
+                    and regex.search(
+                        r"\d\s*[+\u2212-]\s*\d|\b(?:min|max|sum)\s*\(",
+                        draft.assertion,
+                        regex.IGNORECASE,
+                    )
                 )
                 contested_generalization = regex.search(
                     r"\b(?:consensus|majority|unanimous)\b|"
@@ -1035,27 +1187,46 @@ class GroundingService:
                     draft.assertion,
                     regex.IGNORECASE,
                 )
-                if _missing_duration(draft.assertion, duration_evidence) and (
+                if draft_position in exact_positions:
+                    verification = ClaimVerification.SUPPORTED
+                    verification_method = "literal_source_identity"
+                elif _missing_duration(draft.assertion, duration_evidence) and (
                     _duration_context_related(draft.assertion, duration_evidence)
                     or _quantity_scope_conflict(draft.assertion, full_evidence)
                 ):
                     verification = ClaimVerification.UNSUPPORTED
                     verification_method = "duration"
                     verification_reason = ClaimVerificationReason.DURATION_MISMATCH
+                elif graph_verified:
+                    verification = ClaimVerification(entailments[draft_position])
+                    verification_method = "calculation_graph_and_entailment"
                 elif unsupported_composite or contested_generalization:
                     # Similarity does not prove a consensus or a count across works.
                     verification = ClaimVerification.UNVERIFIED
                     verification_reason = ClaimVerificationReason.CONTESTED_GENERALIZATION
+                elif derived is not None and draft_segments and draft_position in pending:
+                    # New drafts must bind their calculation to the audited graph.
+                    # Legacy standalone claim mapping remains readable.
+                    verification = ClaimVerification.UNVERIFIED
+                    verification_method = "calculation_graph_required"
+                    verification_reason = ClaimVerificationReason.DERIVED_QUANTITY
                 elif derived is not None:
-                    verification = derived
-                    verification_method = "arithmetic"
+                    # Decimal equality proves only arithmetic. Every legal scope
+                    # and additional assertion must also pass source entailment.
+                    semantic_verdict = ClaimVerification(entailments[draft_position])
+                    verification = (
+                        derived
+                        if derived is not ClaimVerification.SUPPORTED or not model_entailment
+                        else semantic_verdict
+                    )
+                    verification_method = "arithmetic_and_entailment"
                 elif regex.search(
                     r"(?:\b(?:BDT|Tk|fee|fine|amount|payable)\b|৳)",
                     draft.assertion,
                     regex.IGNORECASE,
                 ) and any(
                     not _amounts_include(
-                        _currency_amounts(quantity_evidence)
+                        _evidence_money_amounts(quantity_evidence, claim=draft.assertion)
                         | (
                             _currency_amounts(user_input)
                             if kind in {"scenario_input", "arithmetic"}
@@ -1087,12 +1258,15 @@ class GroundingService:
                     verification = ClaimVerification.UNVERIFIED
                     verification_reason = ClaimVerificationReason.DERIVED_QUANTITY
                 elif regex.search(
-                    r"\b(total|payable|liability|net|remaining|after|calculated|result)\b|মোট|প্রদেয়",
+                    (
+                        "\\b(total|payable|liability|net|remaining|after|calculat"
+                        "ed|result)\\b|মোট|প্রদেয়"
+                    ),
                     draft.assertion,
                     regex.IGNORECASE,
                 ) and any(
                     not _amounts_include(
-                        _money_amounts(quantity_evidence) | _currency_amounts(quantity_evidence),
+                        _evidence_money_amounts(quantity_evidence, claim=draft.assertion),
                         amount,
                     )
                     for amount in _money_amounts(draft.assertion)
@@ -1119,10 +1293,25 @@ class GroundingService:
                         if not uses_lexical or embedder_usable
                         else None
                     )
-                    verification = _combine_claim_verification(lexical, semantic)
-                    verification_method = "lexical" if uses_lexical else "semantic"
+                    # Embeddings only align spans. Reviewed proof takes a fresh
+                    # batch entailment on ordinary and reviewed passages alike.
+                    if model_entailment:
+                        semantic = ClaimVerification(entailments[draft_position])
+                        verification = semantic
+                    else:
+                        if score is not None and score < self._config.claim_semantic_reject_floor:
+                            semantic = ClaimVerification.UNSUPPORTED
+                        verification = _combine_claim_verification(lexical, semantic)
+                    verification_method = (
+                        "source_entailment"
+                        if model_entailment
+                        else "lexical"
+                        if uses_lexical
+                        else "semantic"
+                    )
                     if (
-                        uses_lexical
+                        not model_entailment
+                        and uses_lexical
                         and lexical is ClaimVerification.UNSUPPORTED
                         and semantic is ClaimVerification.SUPPORTED
                     ):
@@ -1146,7 +1335,7 @@ class GroundingService:
                     entailment_guard = _bounded_entailment_guard(
                         draft.assertion, entailment_evidence
                     )
-                    if verification is ClaimVerification.SUPPORTED and entailment_guard is not None:
+                    if entailment_guard is not None:
                         verification = entailment_guard
                         verification_method = "bounded_entailment"
                         verification_reason = (
@@ -1191,11 +1380,45 @@ class GroundingService:
                         verification_reason = verification_reason or (
                             ClaimVerificationReason.DURATION_NOT_IN_EVIDENCE
                         )
+            if (
+                verifier_failure
+                and verification is not ClaimVerification.SUPPORTED
+                and draft_position in pending
+            ):
+                verification_reason = verifier_failure["reason"]
+                verification_method = "source_entailment"
+            if draft_position not in exact_positions and _bound_period_amount_conflict(
+                draft.assertion, evidence_texts
+            ):
+                verification = ClaimVerification.UNSUPPORTED
+                verification_reason = ClaimVerificationReason.UNVERIFIED_AMOUNT
+                verification_method = "period_amount_binding"
+            proposal = any(
+                chunk.metadata.get("source_type") == "budget_speech"
+                or "proposal" in str(chunk.metadata.get("source_title", "")).casefold()
+                for _, chunk in draft.evidence_chunks
+            )
+            if proposal and _proposal_quantity_role_conflict(draft.assertion, evidence_texts):
+                verification = ClaimVerification.UNSUPPORTED
+                verification_reason = ClaimVerificationReason.UNRELATED_OR_INSUFFICIENT_EVIDENCE
+                verification_method = "proposal_quantity_role"
+            if proposal and regex.search(
+                r"\b(?:enacted|current law|operative law|never enacted|not enacted)\b",
+                draft.assertion,
+                regex.IGNORECASE,
+            ):
+                verification = ClaimVerification.UNSUPPORTED
+                verification_reason = ClaimVerificationReason.UNRELATED_OR_INSUFFICIENT_EVIDENCE
+                verification_method = "proposal_legal_effect"
             # Lexical/semantic similarity and correct arithmetic do not resolve
             # amendment scope. Do not give these claims a false green status.
             evidence_support = verification
-            arithmetic = _arithmetic_consistency(draft.assertion)
-            if arithmetic is ClaimVerification.UNSUPPORTED:
+            arithmetic = (
+                ClaimVerification.SUPPORTED
+                if draft_segments and draft_segments[draft.index - 1].get("calculation_verified")
+                else _arithmetic_consistency(draft.assertion)
+            )
+            if arithmetic is not None and arithmetic is not ClaimVerification.SUPPORTED:
                 verification = ClaimVerification.UNSUPPORTED
                 verification_reason = ClaimVerificationReason.ARITHMETIC_MISMATCH
             authority_unresolved = any(
@@ -1216,6 +1439,43 @@ class GroundingService:
                         None if verification_reason is None else str(verification_reason)
                     ),
                     assertion_text=draft.assertion if draft.assertion != draft.text else None,
+                    assertion_id=draft.assertion_id,
+                    verifier_failures=[
+                        {
+                            "assertion_id": draft.assertion_id or f"claim-{draft.index}",
+                            "dimension": dimension,
+                            "evidence_binding": [
+                                str(chunk.chunk_id) for _, chunk in draft.evidence_chunks
+                            ],
+                        }
+                        for dimension in (
+                            verdict_by_position.get(draft_position, {}).get("failed_dimensions")
+                            or [
+                                "quantity_role"
+                                if verification_method in {"numeric", "duration", "arithmetic"}
+                                else "scope"
+                            ]
+                        )
+                    ]
+                    if verification is not ClaimVerification.SUPPORTED
+                    else [],
+                    calculation_references=list(
+                        draft_segments[draft.index - 1].get("calculation_references", [])
+                    )
+                    if draft_segments
+                    else [],
+                    requirement_ids=list(
+                        dict.fromkeys(
+                            draft_segments[draft.index - 1].get("requirement_ids", [])
+                            if draft_segments
+                            else (
+                                str(item["requirement_id"])
+                                for _, chunk in draft.evidence_chunks
+                                for item in chunk.metadata.get("reviewed_proof", [])
+                                if item.get("requirement_id")
+                            )
+                        )
+                    ),
                     claim_id=f"claim-{draft.index}",
                     text=draft.text,
                     grounded=verification is ClaimVerification.SUPPORTED,
@@ -1225,9 +1485,18 @@ class GroundingService:
                             citation_index,
                             chunk,
                             self._config,
-                            span=supporting_spans.get(chunk.chunk_id),
+                            span=proof_span,
                         )
                         for citation_index, chunk in draft.evidence_chunks
+                        for proof_span in _reviewed_claim_spans(
+                            chunk,
+                            supporting_spans.get(chunk.chunk_id),
+                            requirement_ids=set(
+                                draft_segments[draft.index - 1].get("requirement_ids", [])
+                            )
+                            if draft_segments
+                            else None,
+                        )
                     ],
                 )
             )
@@ -1557,6 +1826,21 @@ def _evidence_unit(
     query_variant_id: str,
     corroboration_method: str,
 ) -> EvidenceUnit:
+    if (
+        chunk.metadata.get("table_id")
+        or chunk.metadata.get("table_context")
+        or chunk.metadata.get("table_row_group")
+        or chunk.metadata.get("element_type") == "table"
+    ):
+        # Headers, category/period cells, continuation and footnotes in the
+        # hydrated bounded chunk travel together; ranking cannot detach a row.
+        span = replace(
+            span,
+            text=chunk.content,
+            char_start=0,
+            char_end=len(chunk.content),
+            derivation="structured_table_proof",
+        )
     span_hash = content_hash(span.text)
     unit_id = content_hash(
         f"evidence-unit:v1:{chunk.chunk_id}:{span.char_start}:{span.char_end}:{span_hash}"
@@ -1582,6 +1866,7 @@ def _evidence_unit(
         "evidence_unit_id": unit_id,
         "evidence_span_hash": span_hash,
         "evidence_source_chunk_hash": chunk.chunk_hash,
+        "source_chunk_char_end": chunk.char_end,
         "evidence_chunk_char_start": span.char_start,
         "evidence_chunk_char_end": span.char_end,
         "evidence_span_derivation": span.derivation,
@@ -1725,6 +2010,7 @@ def _assessment_diagnostic(assessment: CandidateEvidenceAssessment) -> dict[str,
 
 def _quantity_number_words() -> dict[str, int]:
     words = {
+        "zero": 0,
         "one": 1,
         "two": 2,
         "three": 3,
@@ -1753,6 +2039,7 @@ def _quantity_number_words() -> dict[str, int]:
         "eighty": 80,
         "ninety": 90,
         "এক": 1,
+        "শূন্য": 0,
         "দুই": 2,
         "তিন": 3,
         "চার": 4,
@@ -1797,6 +2084,20 @@ def _quantity_number_words() -> dict[str, int]:
     return words
 
 
+def _parenthetical_number_value(spelling: str, words: dict[str, int]) -> Decimal | None:
+    """Parse a complete integer or digit-spelled decimal inside source parentheses."""
+    normalized = spelling.strip().casefold()
+    if normalized in words:
+        return Decimal(words[normalized])
+    parts = regex.split(r"\s+(?:decimal|point|দশমিক)\s+", normalized)
+    if len(parts) != 2 or parts[0] not in words:
+        return None
+    fraction = parts[1].split()
+    if not fraction or any(word not in words or not 0 <= words[word] <= 9 for word in fraction):
+        return None
+    return Decimal(f"{words[parts[0]]}.{''.join(str(words[word]) for word in fraction)}")
+
+
 def _spelled_number_values(text: str) -> set[int]:
     """Recognize isolated integer spellings without truncating larger numbers.
 
@@ -1809,7 +2110,7 @@ def _spelled_number_values(text: str) -> set[int]:
     words.pop("বার", None)
     alternatives = "|".join(regex.escape(word) for word in sorted(words, key=len, reverse=True))
     scales = (
-        r"(?:hundred|thousand|million|billion|lakh|crore|[\p{L}\p{M}]*(?:শত|শো)|হাজার|লক্ষ|লাখ|কোটি)"
+        "(?:hundred|thousand|million|billion|lakh|crore|[\\p{L}\\p{M}]*(?:শত|শো)|হাজার|লক্ষ|লাখ|কোটি)"
     )
     values = set()
     for match in regex.finditer(
@@ -2217,8 +2518,8 @@ def _uncited_factual_in_direction(segments: list[str], index: int, direction: in
     return False
 
 
-def _setup_amounts(segments: list[str]) -> tuple[float, ...]:
-    amounts: list[float] = []
+def _setup_amounts(segments: list[str]) -> tuple[Decimal, ...]:
+    amounts: list[Decimal] = []
     for segment in segments:
         if _is_quantity_setup_segment(segment):
             amounts.extend(sorted(_money_amounts(segment)))
@@ -2226,10 +2527,10 @@ def _setup_amounts(segments: list[str]) -> tuple[float, ...]:
 
 
 def _restates_cited_calculation(
-    amounts: set[float],
-    base: float,
-    rate: float,
-    result: float,
+    amounts: set[Decimal],
+    base: Decimal,
+    rate: Decimal,
+    result: Decimal,
 ) -> bool:
     """Accept a wrap-up that repeats the result, not an unrelated shared base."""
     if not _arithmetic_matches(base, rate, result):
@@ -2274,8 +2575,61 @@ def _fold_indic_digits(text: str) -> str:
     return text.translate(_BENGALI_DIGIT_FOLD)
 
 
+def _proposal_quantity_role_conflict(assertion: str, sources: list[str]) -> bool:
+    if not _currency_amounts(assertion):
+        return False
+    proof = " ".join(sources).casefold()
+    claim = assertion.casefold()
+    if "tax-free" not in proof and "tax free" not in proof:
+        return False
+    roles = ("filing fee", "penalty", "rebate", "deduction certificate")
+    categories = ("women", "senior citizens", "third-gender", "freedom fighters")
+    return any(role in claim and role not in proof for role in (*roles, *categories))
+
+
+def _bound_period_amount_conflict(assertion: str, sources: list[str]) -> bool:
+    """Keep a flattened table's complete period cell bound to its following amount."""
+
+    def fold(text: str) -> str:
+        return text.translate(_BENGALI_DIGIT_FOLD).replace("\u2013", "-").replace("\u2014", "-")
+
+    period_pattern = regex.compile(r"(?<!\d)(20\d{2})-(20\d{2}|\d{2})(?!\d)")
+
+    def periods(text: str) -> set[str]:
+        return {
+            a + "-" + (b if len(b) == 4 else a[:2] + b)
+            for a, b in period_pattern.findall(fold(text))
+        }
+
+    def canonical(text: str) -> str:
+        return " ".join(_plain_claim_text(text).split()).casefold()
+
+    if any(canonical(assertion) == canonical(text) for text in sources) or (
+        canonical(assertion) == canonical(" ".join(sources))
+    ):
+        return False
+    requested = periods(assertion)
+    amounts = _currency_amounts(assertion)
+    if not requested or not amounts:
+        return False
+    bindings: dict[str, set[Decimal]] = {}
+    for source_text in sources:
+        active: set[str] = set()
+        for line in fold(source_text).splitlines():
+            labels = periods(line)
+            if labels:
+                active = labels
+            values = _currency_amounts(line)
+            if active and values:
+                for label in active:
+                    bindings.setdefault(label, set()).update(values)
+                active = set()
+    return any(label in bindings and not amounts.issubset(bindings[label]) for label in requested)
+
+
 def _plain_claim_text(text: str) -> str:
     stripped = _CITATION_PATTERN.sub("", text).replace(_TABLE_HEADER_SENTINEL, "")
+    stripped = stripped.removeprefix("[echo] ").strip()
     return regex.sub(r"[*_`]+", "", stripped).strip()
 
 
@@ -2335,7 +2689,7 @@ def _arithmetic_consistency(text: str) -> ClaimVerification | None:
             base, rate, result = (
                 Decimal(match.group(key).replace(",", "")) for key in ("base", "rate", "result")
             )
-            results.append(abs(base * rate / 100 - result) <= Decimal("0.5"))
+            results.append(abs(base * rate / 100 - result) <= _amount_tolerance(result))
     binary = regex.compile(
         rf"(?<![\d,.])(?P<left>{_NUMBER})\s*(?P<op>[+\u2212-])\s*"
         rf"{_CURRENCY_TOKEN}(?P<right>{_NUMBER})\s*=\s*"
@@ -2350,7 +2704,7 @@ def _arithmetic_consistency(text: str) -> ClaimVerification | None:
             Decimal(match.group(key).replace(",", "")) for key in ("left", "right", "result")
         )
         expected = left + right if match.group("op") == "+" else left - right
-        results.append(abs(expected - result) <= Decimal("0.5"))
+        results.append(abs(expected - result) <= _amount_tolerance(result))
     if not results:
         return ClaimVerification.UNVERIFIED
     if not all(results):
@@ -2361,49 +2715,93 @@ def _arithmetic_consistency(text: str) -> ClaimVerification | None:
     return ClaimVerification.SUPPORTED
 
 
-def _parse_amount(value: str) -> float:
-    return float(value.replace(",", ""))
+def _parse_amount(value: str) -> Decimal:
+    return Decimal(value.replace(",", "").replace("٬", ""))
 
 
-def _amount_tolerance(value: float) -> float:
-    # Allow rounding to a whole currency unit, not a percentage-sized arithmetic error.
-    return 0.5
+def _amount_tolerance(value: Decimal) -> Decimal:
+    # A displayed whole unit may round by 0.5; two decimals by 0.005.
+    exponent = value.as_tuple().exponent
+    if not isinstance(exponent, int):
+        raise ValueError("Cannot round a non-finite amount")
+    return Decimal("0.5").scaleb(min(exponent, 0))
 
 
-def _arithmetic_matches(base: float, rate: float, result: float) -> bool:
-    expected = base * rate / 100.0
-    return abs(expected - result) <= _amount_tolerance(expected)
+def _arithmetic_matches(base: Decimal, rate: Decimal, result: Decimal) -> bool:
+    expected = base * rate / Decimal(100)
+    return abs(expected - result) <= _amount_tolerance(result)
 
 
-def _amount_set(text: str) -> set[float]:
-    folded = _fold_indic_digits(_plain_claim_text(text))
-    return {_parse_amount(match) for match in _AMOUNT_PATTERN.findall(folded)}
+def _amount_set(text: str) -> set[Decimal]:
+    """Decimal quantities retain grouped decimals and their original spans."""
+    return {item.value for item in normalize_quantities(_plain_claim_text(text))}
 
 
-def _money_amounts(text: str) -> set[float]:
-    """Amounts large enough to be scenario money, not days or bare percents."""
-    # Provision identifiers are locators, not monetary operands. Keep explicit
-    # currency expressions untouched so an unsupported fine still fails review.
-    without_locators = regex.sub(
-        r"\b(?:sections?|articles?|chapters?|s\.)\s*\d+[a-z]?(?:\(\d+\))*"
-        r"|(?:ধারা|অনুচ্ছেদ)\s*\d+[ক-হ]?(?:\(\d+\))*",
-        "",
-        text,
-        flags=regex.IGNORECASE,
+def _money_amounts(text: str) -> set[Decimal]:
+    """Use typed monetary values, plus complete spelled currency expressions."""
+    return {item.value for item in _numeric_money_quantities(text, allow_untyped=True)} | (
+        _currency_amounts(text)
     )
-    without_locators = regex.sub(
-        r"\b(?:Act|Ordinance|Rules|Regulations|Code)\s*,?\s*(?:18|19|20)\d{2}\b",
-        "",
-        without_locators,
-        flags=regex.IGNORECASE,
-    )
-    return {amount for amount in _amount_set(without_locators) if amount >= 100}
 
 
-def _currency_amounts(text: str) -> set[float]:
+def _evidence_money_amounts(text: str, *, claim: str = "") -> set[Decimal]:
+    """Only monetary evidence with a compatible locally stated amount role."""
+    text = regex.sub(r"\[footnote\s+\d+\]", "", text, flags=regex.IGNORECASE)
+    claim_roles = {
+        role
+        for item in _numeric_money_quantities(claim)
+        if (role := _money_role(item.role)) is not None
+    }
+    return {
+        item.value
+        for item in _numeric_money_quantities(text)
+        if not claim_roles or (role := _money_role(item.role)) is None or role in claim_roles
+    } | _spelled_currency_amounts(text)
+
+
+def _money_role(role: str | None) -> str | None:
+    """Normalize only distinctive monetary subjects; generic units stay neutral."""
+    if role in {"fine", "penalty", "জরিমানা"}:
+        return "fine"
+    if role in {"fee", "price", "cost"}:
+        return "fee"
+    if role in {"income", "salary", "আয়", "আয়"}:
+        return "income"
+    if role in {"rebate", "রেয়াত", "রেয়াত"}:
+        return "rebate"
+    return None
+
+
+def _numeric_money_quantities(text: str, *, allow_untyped: bool = False) -> tuple[Quantity, ...]:
+    """Keep numeric roles and reject a conflicting parenthetical spelling."""
+    words = _quantity_number_words()
+    for word, number in list(words.items()):
+        if word.isascii() and 1 <= number <= 9:
+            words[f"{word} hundred"] = number * 100
+    values: list[Quantity] = []
+    for item in normalize_quantities(text):
+        if not (
+            (item.kind == "money" and (item.explicit_currency or item.value >= 100))
+            or (allow_untyped and item.kind == "number" and item.value >= 100)
+        ):
+            continue
+        spelling = regex.match(r"\s*\((?P<words>[\p{L}\p{M} -]+)\)", text[item.end :])
+        if spelling and _parenthetical_number_value(spelling.group("words"), words) != item.value:
+            continue
+        values.append(item)
+    return tuple(values)
+
+
+def _currency_amounts(text: str) -> set[Decimal]:
+    return {
+        item.value for item in _numeric_money_quantities(text) if item.explicit_currency
+    } | _spelled_currency_amounts(text)
+
+
+def _spelled_currency_amounts(text: str) -> set[Decimal]:
     folded = _fold_indic_digits(text)
     currency = r"(?:\b(?:BDT|Tk|taka)\b|৳|টাকা(?:র)?)"
-    values: set[float] = set()
+    values: set[Decimal] = set()
     # Only complete currency expressions qualify. Do not pull a small component
     # out of a compound amount (e.g. "one hundred fifty taka"). Semantic claim
     # verification still establishes what the amount applies to.
@@ -2432,6 +2830,7 @@ def _currency_amounts(text: str) -> set[float]:
         "million": 1000000,
         "billion": 1000000000,
         "lakh": 100000,
+        "lac": 100000,
         "crore": 10000000,
         "শত": 100,
         "হাজার": 1000,
@@ -2440,17 +2839,21 @@ def _currency_amounts(text: str) -> set[float]:
         "কোটি": 10000000,
     }
     scale_pattern = "|".join(scales)
-    numeric = (
-        rf"(?P<number>{_NUMBER})(?:\s*\((?P<spelling>[\p{{L}}\p{{M}} -]+)\))?"
-        rf"(?:\s+(?P<scale>{scale_pattern})(?![\p{{L}}\p{{M}}]))?"
+    numeric_with_spelling = (
+        rf"(?P<number>{_NUMBER})\s*\((?P<spelling>[\p{{L}}\p{{M}} -]+)\)"
+        rf"\s*\]?(?:\s*(?P<scale>{scale_pattern})(?![\p{{L}}\p{{M}}]))?"
     )
-    for pattern in (rf"{currency}\s*{numeric}", rf"{numeric}\s*{currency}"):
+    # The typed parser cannot see through a parenthetical spelling between the
+    # digits and currency unit. Admit that narrow legacy form only when it agrees.
+    for pattern in (
+        rf"{currency}\s*{numeric_with_spelling}",
+        rf"{numeric_with_spelling}\s*{currency}",
+    ):
         for match in regex.finditer(pattern, folded, regex.IGNORECASE):
             amount = _parse_amount(match.group("number"))
-            spelling = match.group("spelling")
-            if spelling and words.get(spelling.strip().lower()) != amount:
-                continue  # Do not silently resolve conflicting or unknown spell-outs.
-            values.add(amount * scales.get((match.group("scale") or "").lower(), 1))
+            if _parenthetical_number_value(match.group("spelling"), words) != amount:
+                continue
+            values.add(amount * scales.get((match.group("scale") or "").casefold(), 1))
     alternatives = "|".join(regex.escape(word) for word in sorted(words, key=len, reverse=True))
     for match in regex.finditer(
         rf"(?<![\p{{L}}\p{{M}}\d])(?P<words>{alternatives})"
@@ -2468,18 +2871,18 @@ def _currency_amounts(text: str) -> set[float]:
         ):
             continue
         values.add(
-            float(words[match.group("words").lower()])
+            Decimal(words[match.group("words").lower()])
             * scales.get((match.group("scale") or "").lower(), 1)
         )
     return values
 
 
-def _amounts_include(amounts: set[float], value: float) -> bool:
+def _amounts_include(amounts: set[Decimal], value: Decimal) -> bool:
     tolerance = _amount_tolerance(value)
     return any(abs(value - other) <= tolerance for other in amounts)
 
 
-def _parse_calculation(text: str) -> tuple[float, float, float] | None:
+def _parse_calculation(text: str) -> tuple[Decimal, Decimal, Decimal] | None:
     folded = _fold_indic_digits(_plain_claim_text(text))
     for pattern in _CALCULATION_PATTERNS:
         match = pattern.search(folded)
@@ -2493,20 +2896,20 @@ def _parse_calculation(text: str) -> tuple[float, float, float] | None:
     return None
 
 
-def _rate_in_evidence(rate: float, evidence_texts: list[str]) -> bool:
+def _rate_in_evidence(rate: Decimal, evidence_texts: list[str]) -> bool:
     folded_evidence = _fold_indic_digits(" ".join(evidence_texts))
     rendered = f"{rate:g}"
     markers = (f"{rendered}%", f"{rendered} %")
     return any(marker in folded_evidence for marker in markers)
 
 
-def _rates_in_evidence(evidence_texts: list[str]) -> tuple[float, ...]:
+def _rates_in_evidence(evidence_texts: list[str]) -> tuple[Decimal, ...]:
     folded_evidence = _fold_indic_digits(" ".join(evidence_texts))
     found = (_parse_amount(match) for match in _EVIDENCE_RATE_PATTERN.findall(folded_evidence))
     return tuple(dict.fromkeys(found))
 
 
-def _exceeds_explicit_band(base: float, rate: float, evidence_texts: list[str]) -> bool:
+def _exceeds_explicit_band(base: Decimal, rate: Decimal, evidence_texts: list[str]) -> bool:
     """Reject a per-band calculation exceeding an explicit tabular 'next' width.
 
     This is a narrow contradiction check, not a tax parser or applicability proof.
@@ -2516,9 +2919,9 @@ def _exceeds_explicit_band(base: float, rate: float, evidence_texts: list[str]) 
         _parse_amount(match.group("width"))
         for source in evidence_texts
         for match in _BAND_WIDTH_PATTERN.finditer(_fold_indic_digits(source))
-        if abs(_parse_amount(match.group("rate")) - rate) < 1e-9
+        if _parse_amount(match.group("rate")) == rate
     ]
-    return bool(widths) and base > max(widths) + 1e-9
+    return bool(widths) and base > max(widths)
 
 
 def _derived_calculation_verification(
@@ -2526,7 +2929,8 @@ def _derived_calculation_verification(
     evidence_texts: list[str],
     *,
     adjacent_texts: tuple[str, ...] = (),
-    extra_bases: tuple[float, ...] = (),
+    extra_bases: tuple[Decimal, ...] = (),
+    authorized_operands: set[Decimal] | None = None,
 ) -> ClaimVerification | None:
     """Verify rate x amount arithmetic against cited evidence.
 
@@ -2544,12 +2948,15 @@ def _derived_calculation_verification(
         for base, rate, result in calculations:
             if (
                 not _arithmetic_matches(base, rate, result)
+                or (authorized_operands is not None and base not in authorized_operands)
                 or not _rate_in_evidence(rate, evidence_texts)
                 or _exceeds_explicit_band(base, rate, evidence_texts)
             ):
                 return ClaimVerification.UNSUPPORTED
         return ClaimVerification.SUPPORTED
-    pair = _derived_amount_pair_verification(text, evidence_texts, extra_bases=extra_bases)
+    pair = _derived_amount_pair_verification(
+        text, evidence_texts, extra_bases=extra_bases, authorized_operands=authorized_operands
+    )
     if pair is not None:
         return pair
     return _derived_adjacent_result_verification(text, evidence_texts, adjacent_texts)
@@ -2585,7 +2992,8 @@ def _derived_amount_pair_verification(
     text: str,
     evidence_texts: list[str],
     *,
-    extra_bases: tuple[float, ...] = (),
+    extra_bases: tuple[Decimal, ...] = (),
+    authorized_operands: set[Decimal] | None = None,
 ) -> ClaimVerification | None:
     claim_amounts = _money_amounts(text)
     if not claim_amounts:
@@ -2595,6 +3003,8 @@ def _derived_amount_pair_verification(
         return None
     bases = tuple(dict.fromkeys((*claim_amounts, *extra_bases)))
     for base in bases:
+        if authorized_operands is not None and base not in authorized_operands:
+            continue
         for result in claim_amounts:
             if abs(base - result) <= _amount_tolerance(result):
                 continue
@@ -3102,16 +3512,16 @@ def _durations_equivalent(left: tuple[int, str], right: tuple[int, str]) -> bool
     return False
 
 
-def _explained_quantity_values(claim: str, evidence: str) -> set[float]:
+def _explained_quantity_values(claim: str, evidence: str) -> set[Decimal]:
     """Numbers in the claim that evidence already accounts for, including equivalent durations."""
     values = set(_amount_set(evidence))
-    values.update(float(value) for value in _spelled_number_values(evidence))
+    values.update(Decimal(value) for value in _spelled_number_values(evidence))
     values.update(_currency_amounts(evidence))
     evidence_durations = _duration_quantities(evidence)
-    values.update(float(number) for number, _ in evidence_durations)
+    values.update(Decimal(number) for number, _ in evidence_durations)
     for duration in _duration_quantities(claim):
         if any(_durations_equivalent(duration, other) for other in evidence_durations):
-            values.add(float(duration[0]))
+            values.add(Decimal(duration[0]))
     return values
 
 
@@ -3439,7 +3849,21 @@ def _quantity_aligned_evidence(claim: str, evidence_texts: list[str]) -> list[st
     claim_tokens = _significant_tokens(claim)
     claim_durations = _duration_quantities(claim)
     selected: list[str] = []
+    zero_rate_claim = "tax" in claim_subjects and bool(
+        regex.search(r"\b(?:tax.free|zero.rate|first\s+Tk)\b|\b0\s*%", claim, regex.IGNORECASE)
+    )
     for evidence in evidence_texts:
+        if zero_rate_claim:
+            # A rate-table row may omit the word "tax" even though its heading
+            # supplies that subject. Keep only the explicitly first, zero-rate
+            # row; later bands cannot validate a tax-free threshold.
+            selected.extend(
+                line.strip()
+                for line in evidence.splitlines()
+                if regex.search(r"(?:প্রথম|\bfirst\b)", line, regex.IGNORECASE)
+                and regex.search(r"(?:শূন্য|\bzero\b|\b0\s*%)", line, regex.IGNORECASE)
+                and _numeric_money_quantities(line)
+            )
         clauses = [
             piece.strip()
             for piece in regex.split(
@@ -3499,6 +3923,17 @@ def _quantity_aligned_evidence(claim: str, evidence_texts: list[str]) -> list[st
             for score, _position, clause in ranked
             if score >= (1.0 if claim_subjects else 0.2)
         )
+        anchored_positions = {-position for score, position, _ in ranked if score >= 1.0}
+        for position in sorted(anchored_positions):
+            for continuation in clauses[position + 1 :]:
+                if continuation.casefold() in {"or", "বা"}:
+                    continue
+                if not regex.match(r"^\([\p{L}\p{N}]{1,4}\)\s+", continuation):
+                    break
+                subjects = _quantity_subjects(continuation)
+                if subjects and claim_subjects.isdisjoint(subjects):
+                    break
+                selected.append(continuation)
     return selected
 
 
@@ -3834,6 +4269,29 @@ def _grounding_result_from_claims(
     )
 
 
+def _reviewed_claim_spans(
+    chunk: ContextChunk,
+    fallback: _SelectedSpan | None,
+    *,
+    requirement_ids: set[str] | None = None,
+) -> list[_SelectedSpan | None]:
+    """Retain all reviewed heading, row and exception spans, with exact offsets."""
+    spans: list[_SelectedSpan | None] = []
+    seen: set[str] = set()
+    for item in chunk.metadata.get("reviewed_proof", []):
+        if requirement_ids is not None and item.get("requirement_id") not in requirement_ids:
+            continue
+        quote = item.get("quote")
+        if not isinstance(quote, str) or not quote or quote in seen:
+            continue
+        start = chunk.content.find(quote)
+        if start < 0:
+            continue
+        seen.add(quote)
+        spans.append(_SelectedSpan(quote, start, start + len(quote), "reviewed_proof", None, False))
+    return spans or [fallback]
+
+
 def _evidence_snapshot(
     citation_index: int,
     chunk: ContextChunk,
@@ -3842,7 +4300,7 @@ def _evidence_snapshot(
 ) -> ClaimEvidence:
     source = span.text if span is not None else chunk.content
     excerpt = (
-        source[: config.citation_excerpt_max_chars]
+        proof_preview(source, config.citation_excerpt_max_chars)
         if config.citation_excerpt_max_chars > 0
         else None
     )
@@ -3856,27 +4314,16 @@ def _evidence_snapshot(
             else chunk.metadata.get("evidence_span_hash")
         )
     )
+    page_number, source_start, source_end = _proof_locator(chunk, span)
     return ClaimEvidence(
         citation_index=citation_index,
         chunk_id=None if is_web else chunk.chunk_id,
         document_id=None if is_web else chunk.document_id,
         filename=chunk.filename,
         chunk_index=None if is_web else chunk.chunk_index,
-        page_number=None if is_web else chunk.page_number,
-        char_start=(
-            None
-            if is_web or chunk.char_start is None
-            else chunk.char_start + (span.char_start if span is not None else 0)
-        ),
-        char_end=(
-            None
-            if is_web
-            else (
-                chunk.char_start + span.char_end
-                if span is not None and chunk.char_start is not None
-                else chunk.char_end
-            )
-        ),
+        page_number=None if is_web else page_number,
+        char_start=None if is_web else source_start,
+        char_end=None if is_web else source_end,
         excerpt=excerpt,
         evidence_unit_id=None if is_web else chunk.metadata.get("evidence_unit_id"),
         evidence_span_hash=span_hash,
@@ -3885,6 +4332,51 @@ def _evidence_snapshot(
         web_title=chunk.metadata.get("web_title") if is_web else None,
         web_retrieved_at=chunk.metadata.get("web_retrieved_at") if is_web else None,
         web_provider=chunk.metadata.get("web_provider") if is_web else None,
+    )
+
+
+def _proof_locator(
+    chunk: ContextChunk, span: _SelectedSpan | None
+) -> tuple[int | None, int | None, int | None]:
+    """Locate the quoted proof, never a repeated/reconstructed chunk heading."""
+    text = span.text if span is not None else chunk.content
+    matches: set[tuple[int | None, int, int]] = set()
+    for item in chunk.metadata.get("source_spans", []):
+        if not isinstance(item, dict) or item.get("provenance") != "exact_source_span":
+            continue
+        source = item.get("text")
+        start, end = item.get("char_start"), item.get("char_end")
+        if (
+            not isinstance(source, str)
+            or not isinstance(start, int)
+            or not isinstance(end, int)
+            or end - start != len(source)
+        ):
+            continue
+        position = source.find(text)
+        if position < 0 or source.find(text, position + 1) >= 0:
+            continue
+        page_start, page_end = item.get("page_start"), item.get("page_end")
+        page = page_start if isinstance(page_start, int) and page_start == page_end else None
+        matches.add((page, start + position, start + position + len(text)))
+    if len(matches) == 1:
+        return next(iter(matches))
+    reconstructed = (
+        chunk.metadata.get("evidence_source_envelope") == "reconstructed_context"
+        or chunk.metadata.get("provenance_precision") == "chunk_with_source_spans"
+        or chunk.metadata.get("heading_context_status") == "preserved"
+        or bool(chunk.metadata.get("table_context") or chunk.metadata.get("table_row_group"))
+    )
+    if reconstructed or len(matches) > 1:
+        return None, None, None
+    return (
+        chunk.page_number,
+        chunk.char_start + (span.char_start if span is not None else 0)
+        if chunk.char_start is not None
+        else None,
+        chunk.char_start + span.char_end
+        if span is not None and chunk.char_start is not None
+        else chunk.char_end,
     )
 
 
@@ -3904,8 +4396,10 @@ def _uses_lexical_verification(claim: str, evidence_texts: list[str]) -> bool:
 
 
 def _same_language(claim: str, evidence: str) -> bool:
-    claim_language = detect_language(claim)
-    evidence_language = detect_language(evidence)
+    # Indic digit glyphs alone do not make otherwise English passages
+    # cross-language evidence; token and amount checks already fold them.
+    claim_language = detect_language(_fold_indic_digits(claim))
+    evidence_language = detect_language(_fold_indic_digits(evidence))
     if claim_language.is_mixed or evidence_language.is_mixed:
         return False
     if claim_language.primary_language is None or evidence_language.primary_language is None:

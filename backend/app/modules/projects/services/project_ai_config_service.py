@@ -125,6 +125,7 @@ class ProjectAdministrationService:
                 # use the original behavior-preserving defaults when upgrading
                 # them, while retaining every value that was actually stored.
                 legacy_recovery_defaults = {
+                    "execution_policy": "legacy",
                     "bounded_recovery_enabled": False,
                     "focused_recovery_timeout_seconds": 15.0,
                     "broad_recovery_timeout_seconds": 30.0,

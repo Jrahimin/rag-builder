@@ -1,4 +1,4 @@
-FROM node:22-alpine AS build
+FROM node:24.18.0-alpine AS build
 ARG APP_VERSION=0.9.0
 ARG VITE_API_ORIGIN=
 LABEL org.opencontainers.image.title="RAG Builder operator console" \
@@ -7,7 +7,7 @@ LABEL org.opencontainers.image.title="RAG Builder operator console" \
 WORKDIR /app
 ENV VITE_API_ORIGIN=$VITE_API_ORIGIN
 RUN corepack enable
-COPY package.json pnpm-lock.yaml ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 RUN pnpm install --frozen-lockfile
 COPY . .
 RUN pnpm build

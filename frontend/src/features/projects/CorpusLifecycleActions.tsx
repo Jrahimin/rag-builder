@@ -24,7 +24,7 @@ export type LifecycleNotice = {
   result?: Record<string, unknown> | null;
 };
 
-type LifecycleAction = "rebuild" | "reconcile" | "rollback";
+type LifecycleAction = "rebuild" | "private" | "reconcile" | "rollback";
 
 function isLifecycleJob(value: LifecycleJob | IndexBuild): value is LifecycleJob {
   return "job_id" in value;
@@ -280,6 +280,8 @@ export function CorpusLifecycleActions({
   const confirmationCopy: Record<LifecycleAction, string> = {
     rebuild:
       "Build a complete new vector and keyword snapshot from current chunks. The current active build stays searchable until you activate this one.",
+    private:
+      "Reprocess document structure into a private preview. Review it in Test Lab before any activation.",
     reconcile:
       "Compare database expectations with storage artifacts and return expected, actual, missing, orphan, and consistency facts.",
     rollback: previous
@@ -318,6 +320,18 @@ export function CorpusLifecycleActions({
             <span>
               <strong>Rebuild index</strong>
               <small>Vectors and keywords</small>
+            </span>
+          </button>
+          <button
+            className="lifecycle-action lifecycle-action--embed"
+            type="button"
+            disabled={action.isPending}
+            onClick={() => setPendingConfirmation("private")}
+          >
+            <RefreshCw aria-hidden="true" />
+            <span>
+              <strong>Build private preview</strong>
+              <small>Reprocess document structure</small>
             </span>
           </button>
           <button

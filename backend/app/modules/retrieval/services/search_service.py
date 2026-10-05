@@ -94,7 +94,9 @@ class SearchService:
         query_embedder_factory: QueryEmbedderFactory | None = None,
         work: RequestWork | None = None,
         pinned_reference_date: str | None = None,
+        normalized_scope: dict[str, Any] | None = None,
     ) -> None:
+        self._request_scope = dict(normalized_scope or {})
         self._session = session
         self._work = work
         self._pinned_reference_date = pinned_reference_date
@@ -118,6 +120,29 @@ class SearchService:
         self._embeddings = ChunkEmbeddingRepository(session, project_id)
         self._duplicate_suppression = DuplicateSuppressionService(retrieval_config)
         self.resolved_query_embedder: BaseEmbeddingProvider | None = None
+
+    def set_request_scope(self, scope: dict[str, Any]) -> None:
+        self._request_scope = dict(scope)
+
+    async def pin_validated_preview(self, build_id: uuid.UUID) -> None:
+        """Use a sealed Project build for acceptance without changing activation."""
+        build = await self._builds.get_by_id(build_id)
+        if build is None or str(build.state) != "validated" or build.validated_at is None:
+            raise ServiceUnavailableError(
+                message="Preview requires a validated Project index build.",
+                code="preview_build_unavailable",
+            )
+        from app.modules.retrieval.structural_contract import verify_structural_build
+        from app.platform.jobs.errors import PermanentJobError
+
+        try:
+            await verify_structural_build(self._session, self._project_id, build)
+        except PermanentJobError as error:
+            raise ServiceUnavailableError(
+                message="Preview build failed structural validation.",
+                code="preview_build_unavailable",
+            ) from error
+        self._pinned_index_build_id = build.id
 
     @observe_stage("retrieval")
     async def search(
@@ -158,9 +183,12 @@ class SearchService:
             if self._pinned_index_build_id is not None
             else await self._builds.get_active()
         )
+        if active_build is not None:
+            self._request_scope = {**self._request_scope, "index_build_id": str(active_build.id)}
         source_scope, source_policy_status = await self._capture_source_scope(
             request.as_of,
             scoped_document_id=request.document_id,
+            query=request.query,
         )
         if active_build is None:
             return self._empty_search_response(
@@ -176,6 +204,42 @@ class SearchService:
             )
 
         identity, query_embedder = await self._resolve_query_embedder(active_build)
+        if (
+            active_build.validated_at is not None
+            and active_build.chunk_count
+            == active_build.keyword_count
+            == active_build.vector_count
+            == 0
+            and (active_build.manifest or {}).get("documents") == []
+        ):
+            return self._empty_search_response(
+                request,
+                top_k=top_k,
+                strategy=strategy,
+                started=started,
+                diagnostics=diagnostics,
+                source_scope=source_scope,
+                source_policy_status=source_policy_status,
+                rerank_status="empty_corpus",
+                embedding_identity_status="matched",
+                identity=identity,
+                index_build_id=active_build.id,
+                indexed_corpus_empty=True,
+            )
+        if self._work is not None:
+            self._work.evidence_snapshot.update(
+                {
+                    "index_build_id": str(active_build.id),
+                    "source_metadata_generation": source_scope.generation,
+                    "embedding_set_version": active_build.embedding_set_version,
+                    "normalized_scope": dict(self._request_scope),
+                    "retrieval_as_of": source_scope.explicit_as_of.isoformat()
+                    if source_scope.explicit_as_of
+                    else None,
+                    "retrieval_reference_date": source_scope.reference_date,
+                    "retrieval_configuration_hash": self._configuration_hash,
+                }
+            )
         if self._work is not None:
             query_embedder = self._work.wrap(query_embedder)
         self.resolved_query_embedder = query_embedder
@@ -299,7 +363,9 @@ class SearchService:
             configuration_hash=self._configuration_hash,
             config_provenance=self._config_provenance,
         )
-        hydrated_results = await self._hydrator.hydrate(candidates)
+        hydrated_results = await self._hydrator.hydrate(
+            candidates, index_build_id=active_build.id, source_generation=source_scope.generation
+        )
         candidate_trace = [
             _result_trace(result, rank=index)
             for index, result in enumerate(hydrated_results, start=1)
@@ -595,9 +661,17 @@ class SearchService:
         """Hydrate bounded indexed identities without ranked retrieval."""
         started = time.perf_counter()
         strategy = self._config.strategy
+        active_build = (
+            await self._builds.get_by_id(self._pinned_index_build_id)
+            if self._pinned_index_build_id is not None
+            else await self._builds.get_active()
+        )
+        if active_build is not None:
+            self._request_scope = {**self._request_scope, "index_build_id": str(active_build.id)}
         source_scope, source_policy_status = await self._capture_source_scope(
             as_of,
             scoped_document_id=document_id,
+            query=query,
         )
         identities = list(dict.fromkeys(chunk_ids))[:24]
         if not identities:
@@ -613,11 +687,6 @@ class SearchService:
                 skipped_reason="empty_identity_restriction",
                 rerank_status="skipped",
             )
-        active_build = (
-            await self._builds.get_by_id(self._pinned_index_build_id)
-            if self._pinned_index_build_id is not None
-            else await self._builds.get_active()
-        )
         if active_build is None:
             return self._identity_recall_response(
                 query=query,
@@ -672,7 +741,9 @@ class SearchService:
             configuration_hash=self._configuration_hash,
             config_provenance=self._config_provenance,
         )
-        hydrated_results = await self._hydrator.hydrate(provenanced)
+        hydrated_results = await self._hydrator.hydrate(
+            provenanced, index_build_id=active_build.id, source_generation=source_scope.generation
+        )
         by_id = {result.chunk_id: result for result in hydrated_results}
         results = [by_id[item.chunk_id] for item in provenanced if item.chunk_id in by_id]
         (
@@ -770,6 +841,7 @@ class SearchService:
         as_of: datetime | None,
         *,
         scoped_document_id: uuid.UUID | None = None,
+        query: str = "",
     ) -> tuple[SourceMetadataScope, str]:
         if (
             as_of is None
@@ -824,6 +896,11 @@ class SearchService:
                 as_of=as_of,
                 generation=self._pinned_source_metadata_generation,
                 scoped_document_id=scoped_document_id,
+                **(
+                    {"request_scope": self._request_scope}
+                    if getattr(self._source_metadata, "supports_period_scope", False)
+                    else {}
+                ),
             )
         except SQLAlchemyError as exc:
             if effective_mode is SourcePolicyMode.ENFORCE:
@@ -865,6 +942,7 @@ class SearchService:
         status: str,
     ) -> dict[str, Any]:
         return {
+            "normalized_scope": dict(self._request_scope),
             "reference_date": scope.reference_date,
             "index_build_id": index_build_id,
             "source_metadata_generation": scope.generation,
@@ -906,6 +984,11 @@ class SearchService:
                 generation=source_scope.generation,
                 as_of=source_scope.explicit_as_of or as_of,
                 index_build_id=index_build_id,
+                **(
+                    {"request_scope": self._request_scope}
+                    if getattr(self._source_metadata, "supports_period_scope", False)
+                    else {}
+                ),
             )
         except Exception:
             logger.warning(
@@ -940,6 +1023,7 @@ class SearchService:
         skipped_reason: str | None = None,
         identity: EmbeddingIdentity | None = None,
         index_build_id: uuid.UUID | None = None,
+        indexed_corpus_empty: bool = False,
     ) -> SearchResponse:
         elapsed_ms = int((time.perf_counter() - started) * 1000)
         return SearchResponse(
@@ -952,6 +1036,7 @@ class SearchService:
                 rerank_requested=False,
                 rerank_status=rerank_status,
                 skipped_reason=skipped_reason,
+                indexed_corpus_empty=indexed_corpus_empty,
                 reranker_provider=None,
                 reranker_model=None,
                 reranker_version=None,

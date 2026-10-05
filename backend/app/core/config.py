@@ -442,7 +442,7 @@ class OcrBackend(StrEnum):
 
 
 class OcrConfig(BaseModel):
-    """OCR provider configuration — disabled by default.
+    """OCR provider configuration â€” disabled by default.
 
     Enable in production when scanned or Bangla/custom-font PDFs need Google
     Vision. Native parse still runs first except for Bangla OCR-first pages.
@@ -544,7 +544,7 @@ class RetrievalConfig(BaseModel):
     Hybrid dense + BM25 + RRF is the production path. ``rerank_mode`` is the
     platform default (Always); Projects override with Inherit / Always /
     Cross-language / Off. ``embedding_set_version`` identifies the active
-    vector representation — bump it when changing embedding provider or model.
+    vector representation â€” bump it when changing embedding provider or model.
     """
 
     auto_build_after_process: bool = True
@@ -618,6 +618,8 @@ class LLMConfig(BaseModel):
 
     backend: LLMBackend = LLMBackend.ECHO
     model: str = "gpt-4o-mini"
+    # Explicit offline/operational endpoint-model attestations, empty by default.
+    schema_capabilities: list[dict[str, str]] = Field(default_factory=list)
     temperature: float | None = Field(default=None, ge=0.0, le=2.0)
     # Reasoning and visible output share this ceiling. Leave room for a bounded
     # 4096 -> 8192 planning retry as well as multi-source answer generation.
@@ -844,6 +846,7 @@ class ChatConfig(BaseModel):
     # Default to bounded recovery so incomplete-evidence repair has a predictable
     # latency budget. Existing immutable snapshots retain their recorded policy.
     bounded_recovery_enabled: bool = True
+    execution_policy: Literal["legacy", "adaptive_v1"] = "legacy"
     focused_recovery_timeout_seconds: float = Field(default=15.0, ge=1.0, le=120.0)
     broad_recovery_timeout_seconds: float = Field(default=30.0, ge=1.0, le=180.0)
     focused_recovery_max_queries: int = Field(default=2, ge=1, le=8)
@@ -1023,6 +1026,29 @@ class AIConfigPolicy(BaseModel):
         return value
 
 
+class ProviderCostsConfig(BaseModel):
+    """Live operational controls; never part of vector or answer identity."""
+
+    enabled: bool = False
+    cache_enabled: bool = False
+    enforce_budgets: bool = False
+    monthly_budget_usd: float = Field(default=30.0, gt=0, allow_inf_nan=False)
+    operation_budget_usd: float = Field(default=2.0, gt=0, allow_inf_nan=False)
+    evaluation_budget_usd: float = Field(default=1.0, gt=0, allow_inf_nan=False)
+    paid_evaluation_enabled: bool = False
+    cache_ttl_days: int = Field(default=30, ge=1, le=365)
+    embedding_usd_per_million: float = Field(default=0.12, gt=0, allow_inf_nan=False)
+    rerank_usd_per_unit: float = Field(default=0.0025, gt=0, allow_inf_nan=False)
+    price_version: str = "cohere-v4-2026-09"
+    build_coalesce_seconds: int = Field(default=0, ge=0, le=300)
+
+    @model_validator(mode="after")
+    def require_accounting_for_enforcement(self) -> ProviderCostsConfig:
+        if self.enforce_budgets and not self.enabled:
+            raise ValueError("Provider budget enforcement requires accounting enabled")
+        return self
+
+
 class Settings(BaseSettings):
     """Root settings object aggregating all configuration sections."""
 
@@ -1058,6 +1084,7 @@ class Settings(BaseSettings):
     web_search: WebSearchConfig = Field(default_factory=WebSearchConfig)
     query_translation: QueryTranslationConfig = Field(default_factory=QueryTranslationConfig)
     cohere: CohereConfig = Field(default_factory=CohereConfig)
+    provider_costs: ProviderCostsConfig = Field(default_factory=ProviderCostsConfig)
     reranker: RerankerProviderConfig = Field(default_factory=RerankerProviderConfig)
     generation: GenerationConfig = Field(default_factory=GenerationConfig)
     chat: ChatConfig = Field(default_factory=ChatConfig)

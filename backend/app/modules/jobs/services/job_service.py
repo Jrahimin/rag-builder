@@ -14,7 +14,7 @@ from app.core.config import JobsConfig
 from app.core.exceptions import BadRequestError, NotFoundError
 from app.models.document import Document
 from app.models.job_configuration_snapshot import JobConfigurationSnapshot
-from app.models.job_run import JobRun, JobState
+from app.models.job_run import JobRun, JobState, JobType
 from app.modules.jobs.repositories.job_configuration_repository import (
     JobConfigurationRepository,
 )
@@ -27,6 +27,7 @@ from app.platform.audit.contracts import (
     AuditOutcome,
     AuditRecorder,
 )
+from app.platform.db.advisory_lock import acquire_project_stage_lock
 from app.platform.http.pagination import PaginatedResult
 from app.platform.jobs.contracts import (
     DurableJobSubmitter,
@@ -94,6 +95,48 @@ class JobService(DurableJobSubmitter):
         if job.project_id != self._project_id:
             msg = "Job project_id does not match service scope"
             raise ValueError(msg)
+        available_at = None
+        coalesce_seconds = job.payload.get("coalesce_seconds", 0)
+        if (
+            job.name == "document.embed"
+            and isinstance(coalesce_seconds, int)
+            and coalesce_seconds > 0
+        ):
+            await acquire_project_stage_lock(
+                self._session, project_id=self._project_id, stage="ingestion-coalesce"
+            )
+            identity = (
+                f"{configuration.index_output_digest()}:esv:{job.payload['embedding_set_version']}"
+            )
+            pending = await self._session.scalar(
+                select(JobRun)
+                .where(
+                    JobRun.project_id == self._project_id,
+                    JobRun.job_type == JobType.CORPUS_REEMBED,
+                    JobRun.state == JobState.QUEUED,
+                    JobRun.payload["coalesce_identity"].astext == identity,
+                )
+                .order_by(JobRun.created_at, JobRun.id)
+                .limit(1)
+                # Hold the queued row through the source/child commit. Worker claim
+                # updates it, and READ COMMITTED rechecks QUEUED after any wait.
+                .with_for_update()
+            )
+            if pending is not None:
+                return JobSubmission(job_id=pending.id, created=False)
+            available_at = datetime.now(UTC) + timedelta(seconds=coalesce_seconds)
+            job = job.model_copy(
+                update={
+                    "name": "corpus.reembed",
+                    "document_id": None,
+                    "idempotency_key": f"ingestion.batch:{self._project_id}:{uuid.uuid4()}",
+                    "payload": {
+                        "coalesce_identity": identity,
+                        "auto_activate": True,
+                        "embedding_set_version": job.payload["embedding_set_version"],
+                    },
+                }
+            )
         if configuration_snapshot_id is None:
             snapshot = await self._snapshots.get_or_create(configuration)
             configuration_snapshot_id = snapshot.id
@@ -108,7 +151,10 @@ class JobService(DurableJobSubmitter):
             retry_of_job_id=retry_of_job_id,
         )
         if created:
-            self._outbox.add_intent(run.id)
+            if available_at is None:
+                self._outbox.add_intent(run.id)
+            else:
+                self._outbox.add_intent(run.id, available_at=available_at)
             self._record_job_event(
                 run,
                 event_type=AuditEventType.JOB_SUBMITTED,
@@ -292,6 +338,48 @@ class JobService(DurableJobSubmitter):
         await self._session.commit()
         return owned
 
+    async def stage_waiting_acceptance(
+        self,
+        job_id: uuid.UUID,
+        *,
+        worker_id: str,
+        payload: dict[str, object],
+        result: dict[str, object],
+    ) -> None:
+        run = await self._runs.lock_owned_run(job_id, worker_id=worker_id)
+        if run is None:
+            raise JobLeaseLostError("Acceptance suspension lease is no longer owned.")
+        if run.job_type not in {JobType.DOCUMENT_DELETE, JobType.DOCUMENT_PURGE}:
+            raise ValueError("Only document lifecycle work may await acceptance")
+        run.payload = payload
+        run.result = result
+        run.state = JobState.WAITING_ACCEPTANCE
+        run.stage = "awaiting_quality_acceptance"
+        run.progress = 90
+        run.completed_at = None
+        run.lease_owner = None
+        run.lease_expires_at = None
+        run.next_attempt_at = None
+        # The resumed continuation is the same business attempt, not a retry failure.
+        run.attempt_count = max(0, run.attempt_count - 1)
+        self._record_job_event(
+            run,
+            event_type=AuditEventType.JOB_DISPATCH_DEFERRED,
+            actor_type=AuditActorType.WORKER,
+            actor_id=worker_id,
+            outcome=AuditOutcome.DEFERRED,
+            detail={"reason": "quality_acceptance_required"},
+        )
+        await self._session.commit()
+
+    async def resume_accepted_waiting(self, *, limit: int = 100) -> int:
+        rows = await self._runs.accepted_waiting_for_update(limit=limit)
+        for run in rows:
+            run.state = JobState.QUEUED
+            run.stage = "quality_accepted_continuation"
+            self._outbox.add_intent(run.id)
+        return len(rows)
+
     async def stage_success(
         self,
         job_id: uuid.UUID,
@@ -400,6 +488,7 @@ class JobService(DurableJobSubmitter):
         return run, will_retry
 
     async def recover_expired(self, *, limit: int) -> RecoveryResult:
+        resumed = await self.resume_accepted_waiting(limit=limit)
         expired = await self._runs.list_expired_for_update(limit=limit)
         failed: list[JobRun] = []
         for run in expired:
@@ -438,7 +527,9 @@ class JobService(DurableJobSubmitter):
                         "failure_code": "job_attempts_exhausted",
                     },
                 )
-        return RecoveryResult(rescheduled=len(expired) - len(failed), failed=tuple(failed))
+        return RecoveryResult(
+            rescheduled=len(expired) - len(failed) + resumed, failed=tuple(failed)
+        )
 
     def _retry_delay(self, attempt_count: int) -> float:
         return min(

@@ -6,9 +6,10 @@ import uuid
 
 import pytest
 from httpx import AsyncClient
-from sqlalchemy.ext.asyncio import AsyncConnection
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession
 
 from app.platform.jobs.contracts import JobDefinition
+from tests.integration.build_acceptance_helpers import attest_fixture_build
 from tests.integration.knowledge_helpers import (
     run_captured_document_jobs,
     run_captured_embed_jobs,
@@ -70,6 +71,15 @@ async def test_bad_build_isolated_then_activation_and_rollback_are_atomic(
         next(item for item in validated["items"] if item["id"] == new_build)["state"] == "validated"
     )
 
+    unaccepted = await db_client.post(f"{builds_path}/{new_build}/activate")
+    assert unaccepted.status_code == 400
+    assert unaccepted.json()["error"]["code"] == "index_acceptance_missing"
+    async with AsyncSession(
+        bind=integration_connection,
+        expire_on_commit=False,
+        join_transaction_mode="create_savepoint",
+    ) as session:
+        await attest_fixture_build(session, uuid.UUID(project_id), uuid.UUID(new_build))
     activated = await db_client.post(f"{builds_path}/{new_build}/activate")
     assert activated.status_code == 200
     after_activation = (await db_client.get(builds_path)).json()["data"]

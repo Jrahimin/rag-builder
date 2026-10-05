@@ -14,6 +14,140 @@
         "title": "AIConfigNormalizationStatus",
         "type": "object"
       },
+      "AcceptanceCase": {
+        "additionalProperties": false,
+        "properties": {
+          "actual": {
+            "enum": [
+              "answered",
+              "partial",
+              "insufficient_evidence",
+              "unresolved_authority",
+              "verification_failed",
+              "timed_out"
+            ],
+            "title": "Actual",
+            "type": "string"
+          },
+          "assertions_verified": {
+            "title": "Assertions Verified",
+            "type": "boolean"
+          },
+          "case_id": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Case Id",
+            "type": "string"
+          },
+          "evidence_hash": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Evidence Hash",
+            "type": "string"
+          },
+          "expected": {
+            "enum": [
+              "answered",
+              "partial",
+              "insufficient_evidence",
+              "unresolved_authority"
+            ],
+            "title": "Expected",
+            "type": "string"
+          },
+          "repetition": {
+            "maximum": 3.0,
+            "minimum": 1.0,
+            "title": "Repetition",
+            "type": "integer"
+          },
+          "scope_verified": {
+            "title": "Scope Verified",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "case_id",
+          "repetition",
+          "expected",
+          "actual",
+          "evidence_hash",
+          "assertions_verified",
+          "scope_verified"
+        ],
+        "title": "AcceptanceCase",
+        "type": "object"
+      },
+      "AcceptanceSetDefinition": {
+        "additionalProperties": false,
+        "properties": {
+          "build_id": {
+            "format": "uuid",
+            "title": "Build Id",
+            "type": "string"
+          },
+          "case_expectations": {
+            "additionalProperties": {
+              "enum": [
+                "answered",
+                "partial",
+                "insufficient_evidence",
+                "unresolved_authority"
+              ],
+              "type": "string"
+            },
+            "maxProperties": 1000,
+            "minProperties": 1,
+            "title": "Case Expectations",
+            "type": "object"
+          },
+          "certification": {
+            "enum": [
+              "offline_fixture",
+              "production"
+            ],
+            "title": "Certification",
+            "type": "string"
+          },
+          "project_id": {
+            "format": "uuid",
+            "title": "Project Id",
+            "type": "string"
+          },
+          "repetitions": {
+            "maximum": 3.0,
+            "minimum": 1.0,
+            "title": "Repetitions",
+            "type": "integer"
+          },
+          "require_comparison": {
+            "default": true,
+            "title": "Require Comparison",
+            "type": "boolean"
+          },
+          "revision": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Revision",
+            "type": "string"
+          },
+          "version": {
+            "const": "acceptance.set.v1",
+            "default": "acceptance.set.v1",
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "project_id",
+          "build_id",
+          "revision",
+          "certification",
+          "case_expectations",
+          "repetitions"
+        ],
+        "title": "AcceptanceSetDefinition",
+        "type": "object"
+      },
       "ActiveConfiguration": {
         "properties": {
           "application_version": {
@@ -321,6 +455,17 @@
               }
             ]
           },
+          "assertion_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assertion Id"
+          },
           "assertion_text": {
             "anyOf": [
               {
@@ -336,6 +481,13 @@
             "default": "not_assessed",
             "title": "Authority Status",
             "type": "string"
+          },
+          "calculation_references": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Calculation References",
+            "type": "array"
           },
           "claim_id": {
             "title": "Claim Id",
@@ -367,6 +519,13 @@
             "title": "Grounded",
             "type": "boolean"
           },
+          "requirement_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Requirement Ids",
+            "type": "array"
+          },
           "text": {
             "title": "Text",
             "type": "string"
@@ -395,6 +554,14 @@
               }
             ],
             "title": "Verification Reason"
+          },
+          "verifier_failures": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Verifier Failures",
+            "type": "array"
           }
         },
         "required": [
@@ -905,6 +1072,48 @@
           }
         },
         "title": "ApiResponse[ApiKeySecretResponse]",
+        "type": "object"
+      },
+      "ApiResponse_BuildAcceptanceResponse_": {
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BuildAcceptanceResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          },
+          "meta": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ResponseMeta"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "success": {
+            "default": true,
+            "title": "Success",
+            "type": "boolean"
+          }
+        },
+        "title": "ApiResponse[BuildAcceptanceResponse]",
         "type": "object"
       },
       "ApiResponse_ChatTurnResponse_": {
@@ -1537,6 +1746,48 @@
         "title": "ApiResponse[LivenessStatus]",
         "type": "object"
       },
+      "ApiResponse_MessageDiagnosticResponse_": {
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MessageDiagnosticResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          },
+          "meta": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ResponseMeta"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "success": {
+            "default": true,
+            "title": "Success",
+            "type": "boolean"
+          }
+        },
+        "title": "ApiResponse[MessageDiagnosticResponse]",
+        "type": "object"
+      },
       "ApiResponse_MetricsSnapshot_": {
         "properties": {
           "data": {
@@ -1613,6 +1864,48 @@
           }
         },
         "title": "ApiResponse[NoneType]",
+        "type": "object"
+      },
+      "ApiResponse_ObservedAcceptanceReportResponse_": {
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ObservedAcceptanceReportResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          },
+          "meta": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ResponseMeta"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "success": {
+            "default": true,
+            "title": "Success",
+            "type": "boolean"
+          }
+        },
+        "title": "ApiResponse[ObservedAcceptanceReportResponse]",
         "type": "object"
       },
       "ApiResponse_OperatorOverview_": {
@@ -2455,6 +2748,48 @@
         "title": "ApiResponse[ReadinessStatus]",
         "type": "object"
       },
+      "ApiResponse_ScopeReviewResponse_": {
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ScopeReviewResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          },
+          "meta": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ResponseMeta"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "success": {
+            "default": true,
+            "title": "Success",
+            "type": "boolean"
+          }
+        },
+        "title": "ApiResponse[ScopeReviewResponse]",
+        "type": "object"
+      },
       "ApiResponse_SearchResponse_": {
         "properties": {
           "data": {
@@ -2917,6 +3252,50 @@
         "title": "ApiResponse[WorkerOverview]",
         "type": "object"
       },
+      "ApiResponse_dict_str__Any__": {
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Data"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          },
+          "meta": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ResponseMeta"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "success": {
+            "default": true,
+            "title": "Success",
+            "type": "boolean"
+          }
+        },
+        "title": "ApiResponse[dict[str, Any]]",
+        "type": "object"
+      },
       "ApiResponse_list_AuditEventResponse__": {
         "properties": {
           "data": {
@@ -2961,6 +3340,52 @@
           }
         },
         "title": "ApiResponse[list[AuditEventResponse]]",
+        "type": "object"
+      },
+      "ApiResponse_list_BuildAcceptanceResponse__": {
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/BuildAcceptanceResponse"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Data"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          },
+          "meta": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ResponseMeta"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "success": {
+            "default": true,
+            "title": "Success",
+            "type": "boolean"
+          }
+        },
+        "title": "ApiResponse[list[BuildAcceptanceResponse]]",
         "type": "object"
       },
       "ApiResponse_list_EvaluationDatasetResponse__": {
@@ -3239,6 +3664,53 @@
         "title": "ApiResponse[list[SourceRevisionResponse]]",
         "type": "object"
       },
+      "ApiResponse_list_dict_str__Any___": {
+        "properties": {
+          "data": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Data"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Message"
+          },
+          "meta": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ResponseMeta"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "success": {
+            "default": true,
+            "title": "Success",
+            "type": "boolean"
+          }
+        },
+        "title": "ApiResponse[list[dict[str, Any]]]",
+        "type": "object"
+      },
       "ApiResponse_list_dict_str__object___": {
         "properties": {
           "data": {
@@ -3405,6 +3877,8 @@
           "project.ownership_confirmed",
           "project_config.revision_created",
           "project_config.revision_restored",
+          "message_diagnostic.read",
+          "message_diagnostic.capture",
           "conversation.config_updated",
           "source_metadata.revision_created",
           "source_metadata.revision_activated",
@@ -3416,6 +3890,9 @@
           "job.failed",
           "job.recovered",
           "job.dispatch_deferred",
+          "evaluation.diagnostic.capture",
+          "evaluation.diagnostic.read",
+          "index_build.accepted",
           "index_build.activated",
           "index_build.rolled_back",
           "document.delete_requested",
@@ -3538,6 +4015,232 @@
         "title": "BranchScoreType",
         "type": "string"
       },
+      "BuildAcceptanceArtifact": {
+        "additionalProperties": false,
+        "properties": {
+          "acceptance_set_hash": {
+            "anyOf": [
+              {
+                "pattern": "^[a-f0-9]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Acceptance Set Hash"
+          },
+          "acceptance_set_revision": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Acceptance Set Revision",
+            "type": "string"
+          },
+          "build_id": {
+            "format": "uuid",
+            "title": "Build Id",
+            "type": "string"
+          },
+          "build_manifest_hash": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Build Manifest Hash",
+            "type": "string"
+          },
+          "cases": {
+            "items": {
+              "$ref": "#/components/schemas/AcceptanceCase"
+            },
+            "maxItems": 3000,
+            "minItems": 1,
+            "title": "Cases",
+            "type": "array"
+          },
+          "certification": {
+            "enum": [
+              "offline_fixture",
+              "production"
+            ],
+            "title": "Certification",
+            "type": "string"
+          },
+          "code_fingerprint": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Code Fingerprint",
+            "type": "string"
+          },
+          "compared_active_build_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Compared Active Build Id"
+          },
+          "comparison_report_hash": {
+            "anyOf": [
+              {
+                "pattern": "^[a-f0-9]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Comparison Report Hash"
+          },
+          "configuration_hash": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Configuration Hash",
+            "type": "string"
+          },
+          "corpus_fingerprint": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Corpus Fingerprint",
+            "type": "string"
+          },
+          "embedding_identity": {
+            "additionalProperties": true,
+            "title": "Embedding Identity",
+            "type": "object"
+          },
+          "index_configuration_hash": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Index Configuration Hash",
+            "type": "string"
+          },
+          "observed_report_hash": {
+            "anyOf": [
+              {
+                "pattern": "^[a-f0-9]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Observed Report Hash"
+          },
+          "observed_report_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Observed Report Id"
+          },
+          "project_config_revision_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Config Revision Id"
+          },
+          "project_id": {
+            "format": "uuid",
+            "title": "Project Id",
+            "type": "string"
+          },
+          "report_hash": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Report Hash",
+            "type": "string"
+          },
+          "semantic_structure_hash": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Semantic Structure Hash",
+            "type": "string"
+          },
+          "source_generation": {
+            "minimum": 0.0,
+            "title": "Source Generation",
+            "type": "integer"
+          },
+          "version": {
+            "const": "build.acceptance.v1",
+            "default": "build.acceptance.v1",
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "certification",
+          "project_id",
+          "build_id",
+          "code_fingerprint",
+          "configuration_hash",
+          "project_config_revision_id",
+          "index_configuration_hash",
+          "source_generation",
+          "corpus_fingerprint",
+          "build_manifest_hash",
+          "semantic_structure_hash",
+          "embedding_identity",
+          "acceptance_set_revision",
+          "report_hash",
+          "cases"
+        ],
+        "title": "BuildAcceptanceArtifact",
+        "type": "object"
+      },
+      "BuildAcceptanceResponse": {
+        "properties": {
+          "artifact": {
+            "$ref": "#/components/schemas/BuildAcceptanceArtifact"
+          },
+          "artifact_hash": {
+            "title": "Artifact Hash",
+            "type": "string"
+          },
+          "build_id": {
+            "format": "uuid",
+            "title": "Build Id",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by": {
+            "title": "Created By",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "project_id": {
+            "format": "uuid",
+            "title": "Project Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "project_id",
+          "build_id",
+          "artifact_hash",
+          "artifact",
+          "created_by",
+          "created_at"
+        ],
+        "title": "BuildAcceptanceResponse",
+        "type": "object"
+      },
       "CanonicalRerankMode": {
         "enum": [
           "always",
@@ -3545,6 +4248,53 @@
         ],
         "title": "CanonicalRerankMode",
         "type": "string"
+      },
+      "CapturedTurn": {
+        "additionalProperties": false,
+        "properties": {
+          "assistant_message_id": {
+            "format": "uuid",
+            "title": "Assistant Message Id",
+            "type": "string"
+          },
+          "build_id": {
+            "format": "uuid",
+            "title": "Build Id",
+            "type": "string"
+          },
+          "case_id": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Case Id",
+            "type": "string"
+          },
+          "raw_message": {
+            "additionalProperties": true,
+            "title": "Raw Message",
+            "type": "object"
+          },
+          "repetition": {
+            "maximum": 3.0,
+            "minimum": 1.0,
+            "title": "Repetition",
+            "type": "integer"
+          },
+          "user_message_id": {
+            "format": "uuid",
+            "title": "User Message Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "case_id",
+          "repetition",
+          "build_id",
+          "user_message_id",
+          "assistant_message_id",
+          "raw_message"
+        ],
+        "title": "CapturedTurn",
+        "type": "object"
       },
       "ChatTurnResponse": {
         "description": "User + assistant messages from one chat turn.",
@@ -4102,6 +4852,17 @@
             ],
             "title": "Prompt Version"
           },
+          "provenance_precision": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provenance Precision"
+          },
           "relationship_recall_provenance": {
             "items": {
               "additionalProperties": true,
@@ -4269,6 +5030,21 @@
               }
             ],
             "title": "Source Type"
+          },
+          "structural_context": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Structural Context",
+            "type": "array"
+          },
+          "supporting_spans": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Supporting Spans",
+            "type": "array"
           },
           "web_provider": {
             "anyOf": [
@@ -5500,6 +6276,15 @@
             "$ref": "#/components/schemas/EvidenceGateMode",
             "default": "enforce"
           },
+          "execution_policy": {
+            "default": "legacy",
+            "enum": [
+              "legacy",
+              "adaptive_v1"
+            ],
+            "title": "Execution Policy",
+            "type": "string"
+          },
           "focused_recovery_max_queries": {
             "default": 2,
             "title": "Focused Recovery Max Queries",
@@ -6093,6 +6878,23 @@
             "title": "Expected No Answer",
             "type": "boolean"
           },
+          "expected_outcome": {
+            "anyOf": [
+              {
+                "enum": [
+                  "answered",
+                  "partial",
+                  "insufficient_evidence",
+                  "unresolved_authority"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Outcome"
+          },
           "hard_negative_evidence_phrases": {
             "items": {
               "type": "string"
@@ -6338,6 +7140,18 @@
             "format": "uuid",
             "title": "Dataset Id",
             "type": "string"
+          },
+          "preview_index_build_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Preview Index Build Id"
           },
           "top_k": {
             "anyOf": [
@@ -7323,6 +8137,17 @@
           "state": {
             "$ref": "#/components/schemas/IndexBuildState"
           },
+          "structural_contract_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Structural Contract Version"
+          },
           "updated_at": {
             "format": "date-time",
             "title": "Updated At",
@@ -7391,7 +8216,11 @@
           "no_retrieval_results",
           "below_relevance_threshold",
           "context_selection_empty",
-          "unresolved_authority"
+          "unresolved_authority",
+          "claim_verification_failed",
+          "request_deadline_exceeded",
+          "recovery_deadline_exceeded",
+          "provider_timeout"
         ],
         "title": "InsufficientEvidenceReason",
         "type": "string"
@@ -7989,6 +8818,7 @@
           "queued",
           "running",
           "retry_scheduled",
+          "waiting_acceptance",
           "succeeded",
           "failed"
         ],
@@ -8003,6 +8833,7 @@
           "evaluation.run",
           "corpus.reembed",
           "corpus.reindex",
+          "corpus.structure.v1",
           "document.delete",
           "document.purge",
           "storage.reconcile"
@@ -8125,9 +8956,81 @@
         "title": "LivenessStatus",
         "type": "object"
       },
+      "MessageDiagnosticResponse": {
+        "properties": {
+          "expired": {
+            "title": "Expired",
+            "type": "boolean"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "message_id": {
+            "format": "uuid",
+            "title": "Message Id",
+            "type": "string"
+          },
+          "payload": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payload"
+          },
+          "project_id": {
+            "format": "uuid",
+            "title": "Project Id",
+            "type": "string"
+          },
+          "summary": {
+            "additionalProperties": true,
+            "title": "Summary",
+            "type": "object"
+          }
+        },
+        "required": [
+          "message_id",
+          "project_id",
+          "summary",
+          "payload",
+          "expires_at",
+          "expired"
+        ],
+        "title": "MessageDiagnosticResponse",
+        "type": "object"
+      },
       "MessageResponse": {
         "description": "Serialized message entity.",
         "properties": {
+          "citation_coverage_status": {
+            "anyOf": [
+              {
+                "enum": [
+                  "applicable",
+                  "not_applicable"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Citation Coverage Status"
+          },
           "citations": {
             "items": {
               "$ref": "#/components/schemas/CitationSnapshot"
@@ -8316,6 +9219,13 @@
             ],
             "title": "Provider Latency Ms"
           },
+          "provider_provenance": {
+            "items": {
+              "$ref": "#/components/schemas/ProviderStageProvenance"
+            },
+            "title": "Provider Provenance",
+            "type": "array"
+          },
           "retrieval_latency_ms": {
             "anyOf": [
               {
@@ -8344,6 +9254,16 @@
           "source_provenance": {
             "$ref": "#/components/schemas/SourceProvenance",
             "default": "none"
+          },
+          "terminal_outcome": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TerminalOutcome"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "total_latency_ms": {
             "anyOf": [
@@ -8424,6 +9344,18 @@
             },
             "title": "Metadata Filter",
             "type": "object"
+          },
+          "preview_index_build_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Preview Index Build Id"
           },
           "source_scope": {
             "$ref": "#/components/schemas/SourceScope",
@@ -8528,6 +9460,109 @@
           "text"
         ],
         "title": "NoticeSchema",
+        "type": "object"
+      },
+      "ObservedAcceptanceReportCreate": {
+        "additionalProperties": false,
+        "properties": {
+          "compared_active_build_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Compared Active Build Id"
+          },
+          "comparison_mode": {
+            "default": "active_candidate",
+            "enum": [
+              "active_candidate",
+              "first_build"
+            ],
+            "title": "Comparison Mode",
+            "type": "string"
+          },
+          "labels": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/ReviewedCaseLabel"
+            },
+            "maxProperties": 100,
+            "minProperties": 1,
+            "title": "Labels",
+            "type": "object"
+          },
+          "parity": {
+            "items": {
+              "$ref": "#/components/schemas/ParityCapture"
+            },
+            "maxItems": 20,
+            "minItems": 2,
+            "title": "Parity",
+            "type": "array"
+          },
+          "turns": {
+            "items": {
+              "$ref": "#/components/schemas/CapturedTurn"
+            },
+            "maxItems": 600,
+            "minItems": 1,
+            "title": "Turns",
+            "type": "array"
+          },
+          "version": {
+            "const": "acceptance.observed.v1",
+            "default": "acceptance.observed.v1",
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "labels",
+          "turns",
+          "parity"
+        ],
+        "title": "ObservedAcceptanceReportCreate",
+        "type": "object"
+      },
+      "ObservedAcceptanceReportResponse": {
+        "properties": {
+          "build_id": {
+            "format": "uuid",
+            "title": "Build Id",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "project_id": {
+            "format": "uuid",
+            "title": "Project Id",
+            "type": "string"
+          },
+          "report": {
+            "additionalProperties": true,
+            "title": "Report",
+            "type": "object"
+          },
+          "report_hash": {
+            "title": "Report Hash",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "project_id",
+          "build_id",
+          "report_hash",
+          "report"
+        ],
+        "title": "ObservedAcceptanceReportResponse",
         "type": "object"
       },
       "OperatorOverview": {
@@ -9054,6 +10089,36 @@
         "title": "PaginatedResult[WebhookEndpointResponse]",
         "type": "object"
       },
+      "ParityCapture": {
+        "additionalProperties": false,
+        "properties": {
+          "assistant_message_id": {
+            "format": "uuid",
+            "title": "Assistant Message Id",
+            "type": "string"
+          },
+          "raw_message": {
+            "additionalProperties": true,
+            "title": "Raw Message",
+            "type": "object"
+          },
+          "transport": {
+            "enum": [
+              "sse",
+              "get"
+            ],
+            "title": "Transport",
+            "type": "string"
+          }
+        },
+        "required": [
+          "assistant_message_id",
+          "transport",
+          "raw_message"
+        ],
+        "title": "ParityCapture",
+        "type": "object"
+      },
       "ProjectAIConfig": {
         "additionalProperties": false,
         "description": "Canonical V2 Project contract used for every new write and ordinary restore.",
@@ -9462,6 +10527,21 @@
               }
             ],
             "title": "Deduplicate By Content Hash"
+          },
+          "execution_policy": {
+            "anyOf": [
+              {
+                "enum": [
+                  "legacy",
+                  "adaptive_v1"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Execution Policy"
           },
           "focused_recovery_max_queries": {
             "anyOf": [
@@ -10130,6 +11210,133 @@
         "title": "ProviderConfiguration",
         "type": "object"
       },
+      "ProviderStageProvenance": {
+        "properties": {
+          "capability_revision": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Capability Revision"
+          },
+          "capability_source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Capability Source"
+          },
+          "endpoint_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Endpoint Hash"
+          },
+          "local_validation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Local Validation"
+          },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          },
+          "purpose": {
+            "default": "unspecified",
+            "title": "Purpose",
+            "type": "string"
+          },
+          "reasoning": {
+            "default": "provider_default",
+            "title": "Reasoning",
+            "type": "string"
+          },
+          "schema_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Schema Hash"
+          },
+          "schema_mode": {
+            "default": "none",
+            "enum": [
+              "none",
+              "prompt",
+              "json_object",
+              "json_schema"
+            ],
+            "title": "Schema Mode",
+            "type": "string"
+          },
+          "schema_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Schema Name"
+          },
+          "span_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Span Id"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          }
+        },
+        "required": [
+          "provider",
+          "model"
+        ],
+        "title": "ProviderStageProvenance",
+        "type": "object"
+      },
       "QualitySummary": {
         "properties": {
           "acceptance_thresholds": {
@@ -10390,6 +11597,40 @@
           "failed_at"
         ],
         "title": "RecentFailure",
+        "type": "object"
+      },
+      "RelationshipSourceSpan": {
+        "additionalProperties": false,
+        "properties": {
+          "char_end": {
+            "exclusiveMinimum": 0.0,
+            "title": "Char End",
+            "type": "integer"
+          },
+          "char_start": {
+            "minimum": 0.0,
+            "title": "Char Start",
+            "type": "integer"
+          },
+          "chunk_id": {
+            "format": "uuid",
+            "title": "Chunk Id",
+            "type": "string"
+          },
+          "quote": {
+            "maxLength": 6000,
+            "minLength": 1,
+            "title": "Quote",
+            "type": "string"
+          }
+        },
+        "required": [
+          "chunk_id",
+          "quote",
+          "char_start",
+          "char_end"
+        ],
+        "title": "RelationshipSourceSpan",
         "type": "object"
       },
       "RerankMode": {
@@ -10667,6 +11908,360 @@
         "title": "RetrievalStrategy",
         "type": "string"
       },
+      "ReviewedCaseLabel": {
+        "additionalProperties": false,
+        "properties": {
+          "expected": {
+            "enum": [
+              "answered",
+              "partial",
+              "insufficient_evidence",
+              "unresolved_authority"
+            ],
+            "title": "Expected",
+            "type": "string"
+          },
+          "inventory_hash": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Inventory Hash",
+            "type": "string"
+          },
+          "missing_requirements": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 100,
+            "title": "Missing Requirements",
+            "type": "array"
+          },
+          "question": {
+            "maxLength": 32000,
+            "minLength": 1,
+            "title": "Question",
+            "type": "string"
+          },
+          "reason": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          },
+          "spans": {
+            "items": {
+              "$ref": "#/components/schemas/ReviewedSourceSpan"
+            },
+            "maxItems": 100,
+            "title": "Spans",
+            "type": "array"
+          }
+        },
+        "required": [
+          "question",
+          "expected",
+          "reason",
+          "inventory_hash"
+        ],
+        "title": "ReviewedCaseLabel",
+        "type": "object"
+      },
+      "ReviewedSourceSpan": {
+        "additionalProperties": false,
+        "properties": {
+          "char_end": {
+            "exclusiveMinimum": 0.0,
+            "title": "Char End",
+            "type": "integer"
+          },
+          "char_start": {
+            "minimum": 0.0,
+            "title": "Char Start",
+            "type": "integer"
+          },
+          "chunk_hash": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Chunk Hash",
+            "type": "string"
+          },
+          "chunk_id": {
+            "format": "uuid",
+            "title": "Chunk Id",
+            "type": "string"
+          },
+          "quote": {
+            "maxLength": 6000,
+            "minLength": 1,
+            "title": "Quote",
+            "type": "string"
+          }
+        },
+        "required": [
+          "chunk_id",
+          "chunk_hash",
+          "quote",
+          "char_start",
+          "char_end"
+        ],
+        "title": "ReviewedSourceSpan",
+        "type": "object"
+      },
+      "ScopeFact": {
+        "additionalProperties": false,
+        "properties": {
+          "effect": {
+            "default": "unknown",
+            "enum": [
+              "unknown",
+              "operative",
+              "proposal",
+              "example"
+            ],
+            "title": "Effect",
+            "type": "string"
+          },
+          "end_year": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "End Year"
+          },
+          "exhaustive": {
+            "default": false,
+            "title": "Exhaustive",
+            "type": "boolean"
+          },
+          "kind": {
+            "enum": [
+              "period",
+              "provision"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "legal_kind": {
+            "anyOf": [
+              {
+                "enum": [
+                  "assessment",
+                  "fiscal",
+                  "calendar"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Legal Kind"
+          },
+          "locality": {
+            "default": "span",
+            "enum": [
+              "document",
+              "provision",
+              "table",
+              "span"
+            ],
+            "title": "Locality",
+            "type": "string"
+          },
+          "locality_id": {
+            "title": "Locality Id",
+            "type": "string"
+          },
+          "period_mode": {
+            "default": "single",
+            "enum": [
+              "single",
+              "range"
+            ],
+            "title": "Period Mode",
+            "type": "string"
+          },
+          "review_provenance": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Review Provenance",
+            "type": "object"
+          },
+          "scope": {
+            "default": "mention",
+            "enum": [
+              "mention",
+              "governing"
+            ],
+            "title": "Scope",
+            "type": "string"
+          },
+          "source_span": {
+            "additionalProperties": true,
+            "title": "Source Span",
+            "type": "object"
+          },
+          "start_year": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start Year"
+          },
+          "status": {
+            "default": "source_attested",
+            "enum": [
+              "source_attested",
+              "reviewed"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "value": {
+            "title": "Value",
+            "type": "string"
+          },
+          "version": {
+            "const": "scope.v2",
+            "default": "scope.v2",
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "value",
+          "locality_id",
+          "source_span"
+        ],
+        "title": "ScopeFact",
+        "type": "object"
+      },
+      "ScopeReviewCreate": {
+        "additionalProperties": false,
+        "properties": {
+          "chunk_hash": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Chunk Hash",
+            "type": "string"
+          },
+          "chunk_id": {
+            "format": "uuid",
+            "title": "Chunk Id",
+            "type": "string"
+          },
+          "facts": {
+            "items": {
+              "$ref": "#/components/schemas/ScopeFact"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Facts",
+            "type": "array"
+          },
+          "source_content_hash": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Source Content Hash",
+            "type": "string"
+          },
+          "source_generation": {
+            "minimum": 0.0,
+            "title": "Source Generation",
+            "type": "integer"
+          },
+          "source_revision_id": {
+            "format": "uuid",
+            "title": "Source Revision Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "chunk_id",
+          "source_revision_id",
+          "source_generation",
+          "source_content_hash",
+          "chunk_hash",
+          "facts"
+        ],
+        "title": "ScopeReviewCreate",
+        "type": "object"
+      },
+      "ScopeReviewResponse": {
+        "properties": {
+          "build_id": {
+            "format": "uuid",
+            "title": "Build Id",
+            "type": "string"
+          },
+          "chunk_hash": {
+            "title": "Chunk Hash",
+            "type": "string"
+          },
+          "chunk_id": {
+            "format": "uuid",
+            "title": "Chunk Id",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by": {
+            "title": "Created By",
+            "type": "string"
+          },
+          "envelope": {
+            "additionalProperties": true,
+            "title": "Envelope",
+            "type": "object"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "project_id": {
+            "format": "uuid",
+            "title": "Project Id",
+            "type": "string"
+          },
+          "review_hash": {
+            "title": "Review Hash",
+            "type": "string"
+          },
+          "source_generation": {
+            "title": "Source Generation",
+            "type": "integer"
+          },
+          "source_revision_id": {
+            "format": "uuid",
+            "title": "Source Revision Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "project_id",
+          "build_id",
+          "chunk_id",
+          "source_revision_id",
+          "source_generation",
+          "chunk_hash",
+          "review_hash",
+          "envelope",
+          "created_by",
+          "created_at"
+        ],
+        "title": "ScopeReviewResponse",
+        "type": "object"
+      },
       "SearchDiagnostics": {
         "description": "Sanitized execution facts used by quality evaluation and operators.",
         "properties": {
@@ -10872,6 +12467,11 @@
             ],
             "title": "Index Build Id"
           },
+          "indexed_corpus_empty": {
+            "default": false,
+            "title": "Indexed Corpus Empty",
+            "type": "boolean"
+          },
           "language_routing_status": {
             "anyOf": [
               {
@@ -10917,6 +12517,11 @@
             "default": "disabled",
             "title": "Modifies Expansion Status",
             "type": "string"
+          },
+          "normalized_scope": {
+            "additionalProperties": true,
+            "title": "Normalized Scope",
+            "type": "object"
           },
           "passage_score_method": {
             "anyOf": [
@@ -11501,8 +13106,41 @@
       "SourceRelationshipCreate": {
         "additionalProperties": false,
         "properties": {
+          "provision_effect": {
+            "default": "unknown",
+            "enum": [
+              "unknown",
+              "replaces",
+              "adds",
+              "amends",
+              "savings"
+            ],
+            "title": "Provision Effect",
+            "type": "string"
+          },
           "relationship_type": {
             "$ref": "#/components/schemas/SourceRelationshipType"
+          },
+          "replacement_scope_verified": {
+            "default": false,
+            "title": "Replacement Scope Verified",
+            "type": "boolean"
+          },
+          "review_provenance": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "maxProperties": 20,
+            "title": "Review Provenance",
+            "type": "object"
+          },
+          "supporting_spans": {
+            "items": {
+              "$ref": "#/components/schemas/RelationshipSourceSpan"
+            },
+            "maxItems": 20,
+            "title": "Supporting Spans",
+            "type": "array"
           },
           "target_provisions": {
             "items": {
@@ -11537,8 +13175,41 @@
             "title": "Id",
             "type": "string"
           },
+          "provision_effect": {
+            "default": "unknown",
+            "enum": [
+              "unknown",
+              "replaces",
+              "adds",
+              "amends",
+              "savings"
+            ],
+            "title": "Provision Effect",
+            "type": "string"
+          },
           "relationship_type": {
             "$ref": "#/components/schemas/SourceRelationshipType"
+          },
+          "replacement_scope_verified": {
+            "default": false,
+            "title": "Replacement Scope Verified",
+            "type": "boolean"
+          },
+          "review_provenance": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "maxProperties": 20,
+            "title": "Review Provenance",
+            "type": "object"
+          },
+          "supporting_spans": {
+            "items": {
+              "$ref": "#/components/schemas/RelationshipSourceSpan"
+            },
+            "maxItems": 20,
+            "title": "Supporting Spans",
+            "type": "array"
           },
           "target_provisions": {
             "items": {
@@ -11611,6 +13282,19 @@
             "default": false,
             "title": "Create New Group",
             "type": "boolean"
+          },
+          "edition_key": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Edition Key"
           },
           "effective_from": {
             "anyOf": [
@@ -11782,6 +13466,17 @@
             "format": "uuid",
             "title": "Document Id",
             "type": "string"
+          },
+          "edition_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Edition Key"
           },
           "effective_from": {
             "anyOf": [
@@ -11998,6 +13693,107 @@
           "effect_timing"
         ],
         "title": "StructuredOrigin",
+        "type": "object"
+      },
+      "TerminalOutcome": {
+        "additionalProperties": false,
+        "description": "Message delivery is distinct from successful factual answering.",
+        "properties": {
+          "coverage": {
+            "default": "not_assessed",
+            "enum": [
+              "complete",
+              "partial",
+              "incomplete",
+              "not_assessed"
+            ],
+            "title": "Coverage",
+            "type": "string"
+          },
+          "failure_stage": {
+            "anyOf": [
+              {
+                "enum": [
+                  "retrieval",
+                  "coverage",
+                  "draft_schema",
+                  "claim_verification",
+                  "persistence"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure Stage"
+          },
+          "next_action": {
+            "default": "none",
+            "enum": [
+              "retry",
+              "supply_input",
+              "review_source",
+              "contact_operator",
+              "none"
+            ],
+            "title": "Next Action",
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "answered",
+              "partial",
+              "needs_input",
+              "insufficient_evidence",
+              "unresolved_authority",
+              "verification_failed",
+              "timed_out"
+            ],
+            "title": "Outcome",
+            "type": "string"
+          },
+          "reason_code": {
+            "maxLength": 100,
+            "title": "Reason Code",
+            "type": "string"
+          },
+          "requested_scope": {
+            "additionalProperties": true,
+            "title": "Requested Scope",
+            "type": "object"
+          },
+          "retryable": {
+            "default": false,
+            "title": "Retryable",
+            "type": "boolean"
+          },
+          "supported_requirement_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Supported Requirement Ids",
+            "type": "array"
+          },
+          "unresolved_requirement_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Unresolved Requirement Ids",
+            "type": "array"
+          },
+          "version": {
+            "const": "answer.outcome.v1",
+            "default": "answer.outcome.v1",
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "outcome",
+          "reason_code"
+        ],
+        "title": "TerminalOutcome",
         "type": "object"
       },
       "TokenUsageMetrics": {
@@ -18044,6 +19840,22 @@
             }
           },
           {
+            "in": "header",
+            "name": "X-APE-Diagnostic-Capture",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Ape-Diagnostic-Capture"
+            }
+          },
+          {
             "in": "cookie",
             "name": "ape_admin_access",
             "required": false,
@@ -18134,6 +19946,22 @@
             }
           },
           {
+            "in": "header",
+            "name": "X-APE-Diagnostic-Capture",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Ape-Diagnostic-Capture"
+            }
+          },
+          {
             "in": "cookie",
             "name": "ape_admin_access",
             "required": false,
@@ -18192,6 +20020,96 @@
           }
         ],
         "summary": "Send a message and stream the grounded answer (SSE)",
+        "tags": [
+          "conversations"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/conversations/{conversation_id}/messages/{message_id}/diagnostic": {
+      "get": {
+        "operationId": "get_message_diagnostic_api_v1_projects__project_id__conversations__conversation_id__messages__message_id__diagnostic_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "message_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Message Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "ape_admin_access",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Ape Admin Access"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_MessageDiagnosticResponse_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "AdminCookie": []
+          },
+          {
+            "OrganizationBearer": []
+          },
+          {
+            "OrganizationApiKey": []
+          }
+        ],
+        "summary": "Read an expiring operator message diagnostic",
         "tags": [
           "conversations"
         ]
@@ -19467,6 +21385,86 @@
         ]
       }
     },
+    "/api/v1/projects/{project_id}/evaluations/runs/captured": {
+      "post": {
+        "operationId": "create_captured_run_api_v1_projects__project_id__evaluations_runs_captured_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "ape_admin_access",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Ape Admin Access"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EvaluationRunCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_EvaluationRunResponse_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "AdminCookie": []
+          },
+          {
+            "OrganizationBearer": []
+          },
+          {
+            "OrganizationApiKey": []
+          }
+        ],
+        "summary": "Create Captured Run",
+        "tags": [
+          "evaluations"
+        ]
+      }
+    },
     "/api/v1/projects/{project_id}/evaluations/runs/{run_id}": {
       "get": {
         "operationId": "get_run_api_v1_projects__project_id__evaluations_runs__run_id__get",
@@ -19542,6 +21540,86 @@
           }
         ],
         "summary": "Get one quality run and its exact versions",
+        "tags": [
+          "evaluations"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/evaluations/runs/{run_id}/diagnostics": {
+      "get": {
+        "operationId": "get_evaluation_diagnostics_api_v1_projects__project_id__evaluations_runs__run_id__diagnostics_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "run_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Run Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "ape_admin_access",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Ape Admin Access"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_list_dict_str__Any___"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "AdminCookie": []
+          },
+          {
+            "OrganizationBearer": []
+          },
+          {
+            "OrganizationApiKey": []
+          }
+        ],
+        "summary": "Get Evaluation Diagnostics",
         "tags": [
           "evaluations"
         ]
@@ -20007,6 +22085,76 @@
         ]
       }
     },
+    "/api/v1/projects/{project_id}/index-builds/reprocess-private": {
+      "post": {
+        "operationId": "reprocess_private_corpus_api_v1_projects__project_id__index_builds_reprocess_private_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "ape_admin_access",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Ape Admin Access"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_LifecycleJobResponse_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "AdminCookie": []
+          },
+          {
+            "OrganizationBearer": []
+          },
+          {
+            "OrganizationApiKey": []
+          }
+        ],
+        "summary": "Reprocess Private Corpus",
+        "tags": [
+          "index-builds"
+        ]
+      }
+    },
     "/api/v1/projects/{project_id}/index-builds/rollback": {
       "post": {
         "operationId": "rollback_index_build_api_v1_projects__project_id__index_builds_rollback_post",
@@ -20072,6 +22220,434 @@
           }
         ],
         "summary": "Rollback Index Build",
+        "tags": [
+          "index-builds"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/index-builds/{build_id}/acceptance": {
+      "get": {
+        "operationId": "list_build_acceptance_api_v1_projects__project_id__index_builds__build_id__acceptance_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "build_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Build Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "ape_admin_access",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Ape Admin Access"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_list_BuildAcceptanceResponse__"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "AdminCookie": []
+          },
+          {
+            "OrganizationBearer": []
+          },
+          {
+            "OrganizationApiKey": []
+          }
+        ],
+        "summary": "List Build Acceptance",
+        "tags": [
+          "index-builds"
+        ]
+      },
+      "post": {
+        "operationId": "attest_build_acceptance_api_v1_projects__project_id__index_builds__build_id__acceptance_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "build_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Build Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "ape_admin_access",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Ape Admin Access"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BuildAcceptanceArtifact"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_BuildAcceptanceResponse_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "AdminCookie": []
+          },
+          {
+            "OrganizationBearer": []
+          },
+          {
+            "OrganizationApiKey": []
+          }
+        ],
+        "summary": "Attest Build Acceptance",
+        "tags": [
+          "index-builds"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/index-builds/{build_id}/acceptance-identity": {
+      "get": {
+        "operationId": "build_acceptance_identity_api_v1_projects__project_id__index_builds__build_id__acceptance_identity_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "build_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Build Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "ape_admin_access",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Ape Admin Access"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_dict_str__Any__"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "AdminCookie": []
+          },
+          {
+            "OrganizationBearer": []
+          },
+          {
+            "OrganizationApiKey": []
+          }
+        ],
+        "summary": "Build Acceptance Identity",
+        "tags": [
+          "index-builds"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/index-builds/{build_id}/acceptance-reports": {
+      "post": {
+        "operationId": "publish_observed_acceptance_api_v1_projects__project_id__index_builds__build_id__acceptance_reports_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "build_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Build Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "ape_admin_access",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Ape Admin Access"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ObservedAcceptanceReportCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_ObservedAcceptanceReportResponse_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "AdminCookie": []
+          },
+          {
+            "OrganizationBearer": []
+          },
+          {
+            "OrganizationApiKey": []
+          }
+        ],
+        "summary": "Publish Observed Acceptance",
+        "tags": [
+          "index-builds"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/index-builds/{build_id}/acceptance-set": {
+      "post": {
+        "operationId": "define_acceptance_set_api_v1_projects__project_id__index_builds__build_id__acceptance_set_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "build_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Build Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "ape_admin_access",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Ape Admin Access"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AcceptanceSetDefinition"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_dict_str__Any__"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "AdminCookie": []
+          },
+          {
+            "OrganizationBearer": []
+          },
+          {
+            "OrganizationApiKey": []
+          }
+        ],
+        "summary": "Define Acceptance Set",
         "tags": [
           "index-builds"
         ]
@@ -20152,6 +22728,176 @@
           }
         ],
         "summary": "Activate Index Build",
+        "tags": [
+          "index-builds"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/index-builds/{build_id}/revalidate-private": {
+      "post": {
+        "operationId": "revalidate_private_corpus_api_v1_projects__project_id__index_builds__build_id__revalidate_private_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "build_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Build Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "ape_admin_access",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Ape Admin Access"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_LifecycleJobResponse_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "AdminCookie": []
+          },
+          {
+            "OrganizationBearer": []
+          },
+          {
+            "OrganizationApiKey": []
+          }
+        ],
+        "summary": "Revalidate Private Corpus",
+        "tags": [
+          "index-builds"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/index-builds/{build_id}/scope-reviews": {
+      "post": {
+        "operationId": "publish_scope_review_api_v1_projects__project_id__index_builds__build_id__scope_reviews_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "build_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Build Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "ape_admin_access",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Ape Admin Access"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScopeReviewCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_ScopeReviewResponse_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "AdminCookie": []
+          },
+          {
+            "OrganizationBearer": []
+          },
+          {
+            "OrganizationApiKey": []
+          }
+        ],
+        "summary": "Publish Scope Review",
         "tags": [
           "index-builds"
         ]

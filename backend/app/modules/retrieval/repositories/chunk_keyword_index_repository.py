@@ -6,13 +6,15 @@ import uuid
 from dataclasses import dataclass
 from typing import Any
 
-from sqlalchemy import delete, func, select, text
+from sqlalchemy import Float, cast, delete, func, literal, select, text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql.elements import ColumnElement
 
 from app.models.chunk_keyword_index import ChunkKeywordIndex
+from app.models.keyword_term_stats import KeywordCollectionStats, KeywordTermStats
 from app.modules.retrieval.keyword.fts import (
     keyword_candidate_predicate,
-    plain_query,
     to_search_vector,
 )
 from app.modules.retrieval.keyword.tokenizer import (
@@ -37,6 +39,7 @@ class KeywordCandidateRow:
     term_frequencies: dict[str, Any]
     metadata_snapshot: dict[str, Any]
     source_metadata: dict[str, Any]
+    score: float | None = None
 
 
 class ChunkKeywordIndexRepository(ProjectScopedRepository[ChunkKeywordIndex]):
@@ -124,10 +127,58 @@ class ChunkKeywordIndexRepository(ProjectScopedRepository[ChunkKeywordIndex]):
         source_scope: SourceMetadataScope | None = None,
         language_scope: LanguageScope | None = None,
     ) -> list[KeywordCandidateRow]:
-        """FTS or tokenizer-key overlap — BM25 scoring happens in the retriever."""
+        """Rank all scoped matches with BM25 before applying the candidate limit."""
         normalized_query = normalize_for_query(query)
         query_terms = tokenize(query, for_query=True)
-        ts_query = plain_query(self._fts_regconfig, normalized_query)
+        query_terms = list(dict.fromkeys(query_terms))
+        if not query_terms:
+            return []
+        collection = select(KeywordCollectionStats).where(
+            KeywordCollectionStats.project_id == self._project_id,
+            KeywordCollectionStats.embedding_set_version == embedding_set_version,
+        )
+        if index_build_id is not None:
+            collection = collection.where(KeywordCollectionStats.index_build_id == index_build_id)
+        stats = collection.subquery("bm25_collection")
+        total = func.greatest(func.coalesce(stats.c.total_documents, 1), 1)
+        average = func.greatest(func.coalesce(stats.c.avg_doc_length, 1.0), 1.0)
+        term_stats = (
+            select(
+                KeywordTermStats.index_build_id,
+                cast(
+                    func.jsonb_object_agg(
+                        KeywordTermStats.term,
+                        func.ln(
+                            1.0
+                            + (total - KeywordTermStats.document_frequency + 0.5)
+                            / (KeywordTermStats.document_frequency + 0.5)
+                        ),
+                    ),
+                    JSONB,
+                ).label("frequencies"),
+            )
+            .outerjoin(stats, stats.c.index_build_id == KeywordTermStats.index_build_id)
+            .where(
+                KeywordTermStats.project_id == self._project_id,
+                KeywordTermStats.embedding_set_version == embedding_set_version,
+                KeywordTermStats.term.in_(query_terms),
+            )
+        )
+        if index_build_id is not None:
+            term_stats = term_stats.where(KeywordTermStats.index_build_id == index_build_id)
+        query_stats = (
+            term_stats.group_by(KeywordTermStats.index_build_id)
+            .cte("bm25_query_statistics")
+            .prefix_with("MATERIALIZED")
+        )
+        relevance: ColumnElement[float] = literal(0.0)
+        for term in query_terms:
+            frequency = cast(query_stats.c.frequencies[term].astext, Float)
+            tf = cast(func.coalesce(self.model.term_frequencies[term].astext, "0"), Float)
+            idf = func.coalesce(frequency, func.ln(1.0 + (total - 1 + 0.5) / (1 + 0.5)))
+            relevance = relevance + idf * tf * 2.5 / (
+                tf + 1.5 * (0.25 + 0.75 * self.model.token_count / average)
+            )
         candidate_match = keyword_candidate_predicate(
             self.model.search_vector,
             self.model.term_frequencies,
@@ -141,14 +192,16 @@ class ChunkKeywordIndexRepository(ProjectScopedRepository[ChunkKeywordIndex]):
             else []
         )
         stmt = (
-            select(self.model, *source_columns)
+            select(self.model, *source_columns, relevance.label("bm25_score"))
+            .outerjoin(stats, stats.c.index_build_id == self.model.index_build_id)
+            .outerjoin(query_stats, query_stats.c.index_build_id == self.model.index_build_id)
             .where(
                 self.model.project_id == self._project_id,
                 self.model.embedding_set_version == embedding_set_version,
                 candidate_match,
             )
             .order_by(
-                func.ts_rank_cd(self.model.search_vector, ts_query).desc(),
+                relevance.desc(),
                 self.model.chunk_id,
             )
             .limit(top_k)
@@ -183,6 +236,7 @@ class ChunkKeywordIndexRepository(ProjectScopedRepository[ChunkKeywordIndex]):
                 term_frequencies=dict(row[0].term_frequencies),
                 metadata_snapshot=dict(row[0].metadata_snapshot),
                 source_metadata=source_metadata_from_row(row),
+                score=float(row.bm25_score),
             )
             for row in result.all()
         ]

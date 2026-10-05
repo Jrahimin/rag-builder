@@ -7,6 +7,7 @@ import json
 import uuid
 from dataclasses import replace
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -16,9 +17,12 @@ from app.modules.conversations.grounding_service import GroundingService
 from app.modules.conversations.ports import ContextChunk, ContextRetrievalResult
 from app.modules.conversations.services.evidence_coverage import CoverageVerdict
 from app.modules.conversations.services.evidence_repair_service import (
+    EvidenceRequirement,
     _discovery_excerpts,
+    _mandatory_partial_ids,
     _review_evidence_key,
     _search_language_instruction,
+    _SearchPlan,
     _source_hints,
     _source_line_records,
     _unique_authority_records,
@@ -172,6 +176,7 @@ async def test_missing_rule_gets_one_focused_retry_before_partial_acceptance():
             "exclusions": ["Annual return filing duty"],
         },
     }
+    calls = []
     result, retrieval, _ = await run_repair(
         [([known], {}), ([later], {})],
         queries=["company AGM"],
@@ -182,19 +187,55 @@ async def test_missing_rule_gets_one_focused_retry_before_partial_acceptance():
         coverage=coverage,
         followup_queries=["annual list summary"],
         final_coverage=coverage,
+        calls=calls,
     )
     assert result.diagnostics["status"] == "partial_answer"
     assert result.diagnostics["focused_queries"] == ["annual list summary"]
     assert "R1" in result.diagnostics["focused_requirement_ids"]
     assert result.diagnostics["coverage"]["partial_scope_validated"] is True
+    focused_call = next(
+        call for call in calls if "Find governing evidence missed" in call.args[0][0].content
+    )
+    focused_input = json.loads(focused_call.args[0][1].content)
+    assert focused_input["missing_requirements"] == [
+        {"requirement_id": "R1", "description": "Annual return filing duty"}
+    ]
+    assert focused_input["missing_gaps"] == ["Annual return filing duty"]
     assert result.diagnostics["coverage"]["full_coverage_validated"] is False
     assert [item.chunk_id for item in result.selected] == [known.chunk_id]
     assert retrieval.retrieve.await_count == 2
 
 
+@pytest.mark.parametrize(
+    "dependencies",
+    [
+        [["R2"], ["R1"]],
+        [["R3"], []],
+        [["R1"], []],
+    ],
+)
+def test_search_plan_rejects_circular_or_unknown_dependencies(dependencies):
+    with pytest.raises(ValueError, match=r"dependency|cycle"):
+        _SearchPlan.model_validate(
+            {
+                "queries": [],
+                "requirements": [
+                    {
+                        "requirement_id": requirement_id,
+                        "description": requirement_id,
+                        "depends_on": depends_on,
+                    }
+                    for requirement_id, depends_on in zip(("R1", "R2"), dependencies, strict=True)
+                ],
+            }
+        )
+
+
 async def test_supported_fragment_still_fetches_structural_continuation_before_partial():
-    continuation = chunk("Continuation without governing heading.")
-    predecessor = chunk("Section 36 opening applicability and return contents.")
+    continuation = chunk(
+        "Companies must hold an AGM; the filing provision continues without its heading."
+    )
+    predecessor = chunk("Section 36: a company must file its annual return within 30 days.")
     coverage = {
         "complete": False,
         "missing": ["filing deadline"],
@@ -204,6 +245,7 @@ async def test_supported_fragment_still_fetches_structural_continuation_before_p
                 "description": "Section 36 continuation",
                 "supported": True,
                 "needs_adjacent_context": True,
+                "unresolved_facets": ["filing deadline"],
                 "evidence": [
                     {"chunk_id": str(continuation.chunk_id), "quote": continuation.content}
                 ],
@@ -239,6 +281,7 @@ async def test_supported_fragment_still_fetches_structural_continuation_before_p
                     "requirement_id": "R1",
                     "description": "Section 36 continuation",
                     "supported": True,
+                    "resolved_gaps": ["filing deadline"],
                     "evidence": [
                         {"chunk_id": str(predecessor.chunk_id), "quote": predecessor.content}
                     ],
@@ -263,6 +306,100 @@ async def test_supported_fragment_still_fetches_structural_continuation_before_p
         continuation.chunk_id,
         predecessor.chunk_id,
     }
+
+
+async def test_table_context_overflow_triggers_adjacent_completion_before_authority_refusal():
+    table = chunk(
+        "Taxable income | Rate\n1,000,000 | 10%",
+        element_type="table",
+        table_context_status="context_exceeds_budget",
+    )
+    heading = chunk("Ordinary individual assessment year thresholds.")
+    result, retrieval, _ = await run_repair(
+        [([table], {}), ([heading], {})],
+        queries=["ordinary individual tax threshold"],
+        adjacent=True,
+        user_query="What is the ordinary individual tax threshold?",
+        max_followup_queries=0,
+        max_followup_rounds=0,
+        recovery_profile="focused",
+    )
+
+    assert retrieval.retrieve.await_count == 2
+    assert retrieval.retrieve.call_args_list[1].kwargs["adjacent_to"] == [table.chunk_id]
+    assert result.diagnostics["structural_completion_rounds"] == 1
+
+
+def test_active_authoritative_prompt_requires_task_scoped_dependencies():
+    from app.modules.conversations.prompts.authoritative_compatibility import (
+        AUTHORITATIVE_PLANNING_PROMPT,
+    )
+
+    assert '"task_kind":"rule_lookup","depends_on":[]' in AUTHORITATIVE_PLANNING_PROMPT
+    assert "depends only on its own governing category, period" in AUTHORITATIVE_PLANNING_PROMPT
+    normalized_prompt = " ".join(AUTHORITATIVE_PLANNING_PROMPT.split())
+    assert "independently proven rule or duty may be reported" in normalized_prompt
+
+
+def test_nonnumeric_partial_answer_checks_dependencies_and_keeps_independent_claim():
+    from app.modules.conversations.services.evidence_repair_service import (
+        _mandatory_partial_ids,
+    )
+
+    question = "What filing duty applies, and when must a company hold its annual meeting?"
+    requirements = [
+        EvidenceRequirement(
+            requirement_id="scope",
+            description="Applicable company category",
+            origin="necessary_applicability",
+            materiality="governing_applicability",
+            task_kind="rule_lookup",
+        ),
+        EvidenceRequirement(
+            requirement_id="filing",
+            description="Annual filing duty",
+            origin="explicit_user_request",
+            materiality="central_rule",
+            task_kind="rule_lookup",
+            depends_on=["scope"],
+        ),
+        EvidenceRequirement(
+            requirement_id="meeting",
+            description="Annual meeting timing",
+            origin="explicit_user_request",
+            materiality="central_rule",
+            task_kind="rule_lookup",
+        ),
+    ]
+    dependency_map = _mandatory_partial_ids(question, requirements)
+    assert dependency_map == {"scope": set(), "filing": {"scope"}, "meeting": set()}
+
+    source = chunk("Companies must hold an annual meeting within the stated period.")
+    verdict = CoverageVerdict.model_validate(
+        {
+            "complete": False,
+            "missing": ["Applicable category and filing duty remain unresolved."],
+            "checks": [
+                {"requirement_id": "scope", "supported": False, "evidence": []},
+                {"requirement_id": "filing", "supported": False, "evidence": []},
+                {
+                    "requirement_id": "meeting",
+                    "supported": True,
+                    "fulfillment": "full",
+                    "evidence": [{"chunk_id": str(source.chunk_id), "quote": source.content}],
+                },
+            ],
+            "partial_answer": {
+                "scope": "Annual meeting timing",
+                "requirement_ids": ["meeting"],
+                "exclusions": ["Applicable category and filing duty"],
+            },
+        }
+    )
+
+    assert verdict.partial_validates([source], {"scope", "filing", "meeting"}, dependency_map)
+    verdict.partial_answer.requirement_ids = ["filing"]
+    assert not verdict.partial_validates([source], {"scope", "filing", "meeting"}, dependency_map)
 
 
 async def test_focused_anchor_can_trigger_structural_recovery_in_final_round():
@@ -295,13 +432,6 @@ async def test_focused_anchor_can_trigger_structural_recovery_in_final_round():
             "requirement_ids": ["R2"],
             "exclusions": ["Annual return deadline"],
         },
-    }
-    anchor_coverage = {
-        **initial_coverage,
-        "checks": [
-            proof("R1", "Annual return deadline", anchor, supported=False),
-            proof("R2", "Annual return duty", known),
-        ],
     }
     complete = {
         "complete": True,
@@ -336,8 +466,7 @@ async def test_focused_anchor_can_trigger_structural_recovery_in_final_round():
         ],
         coverage=initial_coverage,
         followup_queries=[{"query": "annual return deadline", "requirement_ids": ["R1"]}],
-        final_coverage=anchor_coverage,
-        second_final_coverage=complete,
+        final_coverage=complete,
         late_adjacent=True,
         user_query="What are the annual return duty and deadline?",
     )
@@ -671,6 +800,7 @@ async def test_truncated_structured_request_restarts_once_with_bounded_budget(fi
         usage=ChatUsage(10, 1500),
     )
     llm = AsyncMock()
+    llm.supports_output_contract = True
     llm.generate.side_effect = [truncated, retried]
     messages = [ChatMessage(ChatRole.USER, "Review the evidence")]
     result = await _validated_completion(
@@ -751,6 +881,7 @@ async def test_blank_source_selector_gets_one_structural_correction_without_acce
         )
 
     llm = AsyncMock()
+    llm.supports_output_contract = True
     llm.generate.side_effect = [completion(2), replacement_completion(retry_line)]
     payload = {
         "original_question": "Select the evidence line",
@@ -895,6 +1026,14 @@ def test_source_hints_retain_languages_after_repeated_top_source():
     other = chunk("other", language="bn")
     hints = _source_hints([first] * 12 + [other])
     assert [hint["source"]["language"] for hint in hints] == ["en", "bn"]
+
+
+def test_source_hints_reserve_a_slot_for_later_source_language():
+    english = [chunk(f"English work {i}", language="en") for i in range(6)]
+    bangla = chunk("বাংলা আইন", language="bn")
+    hints = _source_hints([*english, bangla])
+    assert len(hints) == 6
+    assert [hint["source"]["language"] for hint in hints[:2]] == ["en", "bn"]
 
 
 def test_concept_language_does_not_infer_governing_work_from_recency():
@@ -2482,11 +2621,15 @@ async def test_source_range_materialization_preserves_punctuation_and_numbers():
 
 @pytest.mark.parametrize("partial", [False, True])
 @pytest.mark.parametrize("anchor_supported", [False, True])
+@pytest.mark.parametrize("semantic_followups", [0, 2])
 async def test_adjacent_recovery_keeps_scope_and_rechecks_original_requirements(
-    partial, anchor_supported
+    partial, anchor_supported, semantic_followups
 ):
     continuation = chunk("Continuation without governing heading.")
-    governing = chunk("The applicable rate is 10% for the current period.")
+    governing = chunk(
+        "Governing heading: the current rate is 10%; the separate"
+        " recordkeeping duty requires records."
+    )
     calls = []
     result, retrieval, inputs = await run_repair(
         [([continuation], {}), ([governing], {})],
@@ -2496,12 +2639,13 @@ async def test_adjacent_recovery_keeps_scope_and_rechecks_original_requirements(
         else None,
         coverage={
             "complete": False,
-            "missing": ["separate unrelated missing topic", "governing heading"],
+            "missing": ["separate recordkeeping duty", "governing heading"],
             "checks": [
                 {
                     "query_index": 0,
                     "supported": anchor_supported,
                     "needs_adjacent_context": True,
+                    "unresolved_facets": ["separate recordkeeping duty", "governing heading"],
                     "description": "Governing heading and scope for this continuation",
                     **({"requirement_id": "missing"} if partial else {}),
                     "evidence": [
@@ -2546,6 +2690,9 @@ async def test_adjacent_recovery_keeps_scope_and_rechecks_original_requirements(
                     "query_index": i,
                     **({"requirement_id": ("missing", "known")[i]} if partial else {}),
                     "supported": True,
+                    "resolved_gaps": ["separate recordkeeping duty", "governing heading"]
+                    if i == 0
+                    else [],
                     "evidence": [
                         {"chunk_id": str(governing.chunk_id), "start_line": 1, "end_line": 1}
                     ],
@@ -2555,6 +2702,8 @@ async def test_adjacent_recovery_keeps_scope_and_rechecks_original_requirements(
         },
         adjacent=True,
         calls=calls,
+        max_followup_queries=semantic_followups,
+        max_followup_rounds=semantic_followups,
     )
     assert result.diagnostics["status"] == "recovered"
     # An unfinished continuation cannot qualify for input-gap review even when
@@ -2569,6 +2718,201 @@ async def test_adjacent_recovery_keeps_scope_and_rechecks_original_requirements(
     review = json.loads(calls[1].args[0][1].content)
     assert "unrelated future years" not in json.dumps(review)
     assert review["original_question"] == inputs.query
+
+
+async def test_adjacent_recovery_uses_planned_query_in_bangla_source_language():
+    continuation = chunk("২০২৬-২০২৭ করবর্ষে করমুক্ত আয়ের সীমার ধারাবাহিকতা।")
+    alternate_work = chunk("২০২৬-২০২৭ করবর্ষে স্বাভাবিক ব্যক্তি করদাতার করহার।")
+    governing = chunk("২০২৬-২০২৭ করবর্ষে সাধারণ করদাতার করমুক্ত আয়ের সীমা।")
+    query = "২০২৬-২০২৭ করবর্ষ সাধারণ করদাতা করমুক্ত আয়ের সীমা"
+    requirement = "Establish the operative individual threshold for the tax year."
+    result, retrieval, _ = await run_repair(
+        [([continuation, alternate_work], {}), ([governing], {})],
+        queries=[{"query": query, "requirement_ids": ["threshold"]}],
+        requirements=[{"requirement_id": "threshold", "description": requirement}],
+        coverage={
+            "complete": False,
+            "missing": [requirement],
+            "checks": [
+                {
+                    "requirement_id": "threshold",
+                    "description": requirement,
+                    "supported": False,
+                    "needs_adjacent_context": True,
+                    "evidence": [
+                        {"chunk_id": str(continuation.chunk_id), "start_line": 1, "end_line": 1}
+                    ],
+                }
+            ],
+        },
+        final_coverage={
+            "complete": True,
+            "missing": [],
+            "checks": [
+                {
+                    "requirement_id": "threshold",
+                    "description": requirement,
+                    "supported": True,
+                    "evidence": [
+                        {"chunk_id": str(governing.chunk_id), "start_line": 1, "end_line": 1}
+                    ],
+                }
+            ],
+        },
+        adjacent=True,
+    )
+    assert result.diagnostics["status"] == "recovered"
+    assert retrieval.retrieve.call_args_list[1].kwargs["query"] == query
+    assert retrieval.retrieve.call_args_list[1].kwargs["adjacent_to"] == [
+        continuation.chunk_id,
+        alternate_work.chunk_id,
+    ]
+
+
+def test_publication_footer_does_not_prove_rate_schedule_year():
+    from app.modules.conversations.services.evidence_repair_service import (
+        _guard_review_fulfillment,
+        _question_scope_for_requirement,
+        _unproven_requested_scope,
+    )
+
+    question = "What is the ordinary taxpayer threshold for assessment year 2026\u201327?"
+    description = _question_scope_for_requirement(
+        "Confirm the ordinary taxpayer category and applicable assessment year.", question
+    )
+    later_band = (
+        "সকল নিবাসী স্বাভাবিক ব্যক্তি করহার প্রথম "
+        "\u09eb,\u09e6\u09e6,\u09e6\u09e6\u09e6 টাকা পর্যন্ত শূন্য। "
+        "আয়কর পরিপত্র \u09e8\u09e6\u09e8\u09ec-\u09e8\u09e6\u09e8\u09ed ।\u09ea"
+    )
+    assert "requested period 2026-27" in _unproven_requested_scope(description, later_band)
+    current_band = (
+        "স্বাভাবিক ব্যক্তি ও হিন্দু অবিভক্ত পরিবারের "
+        "\u09e8\u09e6\u09e8\u09ec-\u09e8\u09e6\u09e8\u09ed করবর্ষের জন্য করহার। "
+        "প্রথম \u09ea,\u09e6\u09e6,\u09e6\u09e6\u09e6 টাকা পর্যন্ত শূন্য।"
+    )
+    assert _unproven_requested_scope(description, current_band) == []
+    source = chunk(later_band)
+    review = CoverageVerdict.model_validate(
+        {
+            "complete": True,
+            "missing": [],
+            "checks": [
+                {
+                    "requirement_id": "period",
+                    "description": "Applicable assessment-year rate schedule",
+                    "supported": True,
+                    "fulfillment": "full",
+                    "evidence": [{"chunk_id": str(source.chunk_id), "quote": source.content}],
+                }
+            ],
+        }
+    )
+    guarded = _guard_review_fulfillment(
+        review,
+        [
+            EvidenceRequirement(
+                requirement_id="period", description="Applicable assessment-year rate schedule"
+            )
+        ],
+        [source],
+        question,
+    )
+    assert guarded.checks[0].fulfillment == "partial"
+    assert guarded.checks[0].needs_adjacent_context is True
+
+
+async def test_adjacent_recovery_can_anchor_previously_selected_context():
+    clipped = chunk("An admitted schedule continuation without its heading.")
+    discovered = chunk("Another search hit about the tax schedule.")
+    heading = chunk("The governing assessment-year heading and first band.")
+    result, retrieval, _ = await run_repair(
+        [([discovered], {}), ([heading], {})],
+        queries=[{"query": "assessment year schedule", "requirement_ids": ["period"]}],
+        requirements=[{"requirement_id": "period", "description": "Governing schedule period"}],
+        selected_context=[clipped],
+        coverage={
+            "complete": False,
+            "missing": ["Governing schedule period"],
+            "checks": [
+                {
+                    "requirement_id": "period",
+                    "description": "Governing schedule period",
+                    "supported": False,
+                    "needs_adjacent_context": True,
+                    "evidence": [
+                        {"chunk_id": str(clipped.chunk_id), "start_line": 1, "end_line": 1}
+                    ],
+                }
+            ],
+        },
+        final_coverage={
+            "complete": True,
+            "missing": [],
+            "checks": [
+                {
+                    "requirement_id": "period",
+                    "description": "Governing schedule period",
+                    "supported": True,
+                    "evidence": [
+                        {"chunk_id": str(heading.chunk_id), "start_line": 1, "end_line": 1}
+                    ],
+                }
+            ],
+        },
+        adjacent=True,
+    )
+    assert result.diagnostics["status"] == "recovered"
+    assert clipped.chunk_id in retrieval.retrieve.call_args_list[1].kwargs["adjacent_to"]
+
+
+async def test_adjacent_recovery_anchors_earlier_passage_in_same_work():
+    later = chunk("Later schedule band without its governing year.")
+    later = replace(later, chunk_index=35)
+    earlier = replace(
+        chunk("Earlier passage near the governing heading."),
+        document_id=later.document_id,
+        chunk_index=32,
+    )
+    heading = chunk("Governing year and zero-rate band.")
+    result, retrieval, _ = await run_repair(
+        [([later, earlier], {}), ([heading], {})],
+        queries=[{"query": "governing rate", "requirement_ids": ["rate"]}],
+        requirements=[{"requirement_id": "rate", "description": "Governing rate"}],
+        coverage={
+            "complete": False,
+            "missing": ["Governing rate"],
+            "checks": [
+                {
+                    "requirement_id": "rate",
+                    "description": "Governing rate",
+                    "supported": False,
+                    "needs_adjacent_context": True,
+                    "evidence": [{"chunk_id": str(later.chunk_id), "start_line": 1, "end_line": 1}],
+                }
+            ],
+        },
+        final_coverage={
+            "complete": True,
+            "missing": [],
+            "checks": [
+                {
+                    "requirement_id": "rate",
+                    "description": "Governing rate",
+                    "supported": True,
+                    "evidence": [
+                        {"chunk_id": str(heading.chunk_id), "start_line": 1, "end_line": 1}
+                    ],
+                }
+            ],
+        },
+        adjacent=True,
+    )
+    assert result.diagnostics["status"] == "recovered"
+    assert retrieval.retrieve.call_args_list[1].kwargs["adjacent_to"][:2] == [
+        later.chunk_id,
+        earlier.chunk_id,
+    ]
 
 
 async def test_contradictory_complete_verdict_gets_one_format_retry():
@@ -2953,7 +3297,9 @@ async def test_authoritative_partial_initial_proof_filters_proven_queries():
     assert {item.chunk_id for item in result.selected} == {selected[0].chunk_id, later.chunk_id}
 
 
-async def test_authoritative_initial_partial_proof_survives_later_deadline():
+async def test_authoritative_initial_partial_proof_survives_later_deadline(monkeypatch):
+    from app.modules.conversations.services import evidence_repair_service
+
     known = chunk("Private companies must hold an annual general meeting.")
     later = chunk("An unrelated discovery passage.")
     config = ChatConfig()
@@ -2961,9 +3307,38 @@ async def test_authoritative_initial_partial_proof_survives_later_deadline():
     decision = grounding.assess("What are the AGM and filing duties?", [known], rerank_status="off")
     selected = list(decision.admitted_units) or [known]
 
-    async def delay_coverage(messages):
+    clock = [0.0]
+    timeout_seconds = 0.02
+    timeout_scopes = []
+    timeout_delays = []
+    coverage_started = []
+    coverage_cancelled = []
+    native_timeout = asyncio.timeout
+
+    def controlled_timeout(delay):
+        # Keep native cancellation, but start expiry only at the intended stage.
+        timeout_delays.append(delay)
+        scope = native_timeout(None)
+        timeout_scopes.append(scope)
+        return scope
+
+    monkeypatch.setattr(evidence_repair_service, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(
+        evidence_repair_service,
+        "asyncio",
+        SimpleNamespace(**{**vars(asyncio), "timeout": controlled_timeout}),
+    )
+
+    async def expire_during_coverage(messages):
         if "Check whether supplied evidence" in messages[0].content:
-            await asyncio.sleep(0.05)
+            coverage_started.append(json.loads(messages[1].content))
+            clock[0] = timeout_seconds
+            timeout_scopes[0].reschedule(asyncio.get_running_loop().time())
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                coverage_cancelled.append(True)
+                raise
 
     result, retrieval, _ = await run_repair(
         [([later], {})],
@@ -3011,8 +3386,8 @@ async def test_authoritative_initial_partial_proof_survives_later_deadline():
                 "exclusions": ["Annual return filing duty"],
             },
         },
-        generation_hook=delay_coverage,
-        timeout_seconds=0.02,
+        generation_hook=expire_during_coverage,
+        timeout_seconds=timeout_seconds,
         user_query="What are the AGM and filing duties?",
         recovery_profile="broad",
         max_initial_queries=4,
@@ -3020,9 +3395,26 @@ async def test_authoritative_initial_partial_proof_survives_later_deadline():
         max_followup_rounds=1,
     )
 
+    assert len(coverage_started) == 1
+    assert coverage_cancelled == [True]
+    assert clock[0] == timeout_seconds
+    assert timeout_delays[0] == timeout_seconds
+    assert timeout_scopes[0].expired()
+    assert result.diagnostics["timeout_seconds"] == timeout_seconds
+    assert result.diagnostics["phase"] == "coverage_review"
     assert retrieval.retrieve.await_count == 1
+    assert retrieval.retrieve.call_args.kwargs["query"] == "annual return filing"
+    retrieval.retrieve_batch.assert_not_awaited()
     assert result.diagnostics["status"] == "partial_answer"
     assert result.diagnostics["initial_partial_checkpoint"] == "validated"
+    assert result.diagnostics["initial_coverage_review"] == "admitted_evidence"
+    assert result.diagnostics["partial_checkpoint_restored"] == "recovery_deadline_exceeded"
+    assert result.diagnostics["coverage"]["partial_scope_validated"] is True
+    assert result.diagnostics["coverage"]["full_coverage_validated"] is False
+    assert result.diagnostics["coverage"]["missing"] == ["Annual return filing duty"]
+    assert result.partial_answer is not None
+    assert result.partial_answer["requirement_ids"] == ["R2"]
+    assert result.partial_answer["pending"] == ["Annual return filing duty"]
     assert result.diagnostics["requirement_progress"]["stop_reason"] == (
         "recovery_deadline_exceeded"
     )
@@ -3303,7 +3695,10 @@ def test_mixed_full_and_partial_proof_keeps_partial_in_delta_and_focused_recover
         ),
         (
             "Conditional filing window for private companies",
-            "The conditional filing window for private companies ends 30 June.",
+            (
+                "For private companies with an approved extension certifi"
+                "cate, the conditional filing window ends 30 June."
+            ),
             False,
         ),
         (
@@ -3338,6 +3733,17 @@ def test_full_fulfillment_needs_selected_proof_for_requested_scope(
                     "description": requirement,
                     "supported": True,
                     "fulfillment": "full",
+                    "condition_facets": [
+                        {
+                            "who": "private companies",
+                            "action": "file",
+                            "when": "30 June",
+                            "condition": "approved extension certificate",
+                            "evidence_indexes": [0],
+                        }
+                    ]
+                    if "approved extension certificate" in proof
+                    else [],
                     "evidence": [{"chunk_id": str(source.chunk_id), "quote": proof}],
                 }
             ],
@@ -3498,6 +3904,52 @@ def test_delta_omission_does_not_delete_a_retained_gap_or_disagree_with_snapshot
 
     assert merged.complete is snapshot.complete is False
     assert merged.missing == snapshot.missing == ["penalty schedule"]
+
+
+def test_replaced_full_proof_clears_only_stale_candidate_source_gap():
+    from app.modules.conversations.services.evidence_coverage import CoverageDelta
+    from app.modules.conversations.services.evidence_repair_service import (
+        EvidenceRequirement,
+        _TurnProofMap,
+    )
+
+    earlier = chunk("A budget speech proposes a rate.")
+    enacted = chunk("The enacted schedule sets the first 400,000 at zero tax.")
+    proof = _TurnProofMap(
+        [EvidenceRequirement(requirement_id="R1", description="Operative tax-free limit")]
+    )
+    proof.accept_check(_supported_check("R1", earlier), [earlier], [])
+    proof.remember_gaps(
+        [
+            "The admitted rate schedule is from a budget speech, not proof "
+            "of the operative enacted schedule.",
+            "Separate eligibility exception remains unknown.",
+        ]
+    )
+    delta = CoverageDelta.model_validate(
+        {
+            "complete": True,
+            "missing": [],
+            "checks": [
+                {
+                    "requirement_id": "R1",
+                    "description": "Operative tax-free limit",
+                    "supported": True,
+                    "fulfillment": "full",
+                    "resolved_gaps": [
+                        (
+                            "The admitted rate schedule is from a budget speech, not "
+                            "proof "
+                            "of the operative enacted schedule."
+                        )
+                    ],
+                    "evidence": [{"chunk_id": str(enacted.chunk_id), "quote": enacted.content}],
+                }
+            ],
+        }
+    )
+    merged = proof.merge_delta(delta, {"R1"}, [earlier, enacted], [])
+    assert merged.missing == ["Separate eligibility exception remains unknown."]
 
 
 def test_similar_gap_label_is_not_closed_by_fuzzy_overlap_alone():
@@ -4570,6 +5022,195 @@ def test_independent_records_duty_survives_missing_penalty_but_dependency_blocks
     blocked = verdict.model_copy(deep=True)
     blocked.checks[0].needs_adjacent_context = True
     assert not blocked.partial_validates([source], {"records", "penalty"})
+
+
+def test_focused_numeric_rule_requires_subject_and_governing_period_for_partial() -> None:
+    source = chunk("Telecom companies receive a conditional ten percent rebate.")
+    requirements = [
+        EvidenceRequirement(
+            requirement_id="individual",
+            description="Applicable individual taxpayer category and period",
+            materiality="governing_applicability",
+        ),
+        EvidenceRequirement(
+            requirement_id="rebate",
+            description="Individual rebate rate",
+            origin="explicit_user_request",
+            materiality="central_rule",
+        ),
+        EvidenceRequirement(
+            requirement_id="telecom",
+            description="Conditional telecom company rebate",
+            materiality="adjacent_rule",
+        ),
+    ]
+    mandatory = _mandatory_partial_ids("What is the rebate rate?", requirements)
+    assert mandatory == {"individual", "rebate"}
+    verdict = CoverageVerdict.model_validate(
+        {
+            "complete": False,
+            "missing": ["Individual category and rebate unresolved"],
+            "checks": [
+                {"requirement_id": "individual", "supported": False, "evidence": []},
+                {"requirement_id": "rebate", "supported": False, "evidence": []},
+                {
+                    "requirement_id": "telecom",
+                    "supported": True,
+                    "fulfillment": "full",
+                    "answerable_scope": "Conditional telecom rebate",
+                    "evidence": [{"chunk_id": str(source.chunk_id), "quote": source.content}],
+                },
+            ],
+        }
+    )
+    verdict.retain_answerable_scopes()
+    assert verdict.partial_validates([source], {"individual", "rebate", "telecom"})
+    assert not verdict.partial_validates([source], {"individual", "rebate", "telecom"}, mandatory)
+
+
+def test_compound_topics_without_dependencies_cannot_bypass_applicability() -> None:
+    requirements = [
+        EvidenceRequirement(
+            requirement_id=topic,
+            description=topic,
+            origin="explicit_user_request",
+            materiality="central_rule",
+        )
+        for topic in ("rebate", "filing")
+    ]
+    assert _mandatory_partial_ids(
+        "What are the rebate rate and filing deadline?", requirements
+    ) == {"rebate", "filing", "__governing_applicability_required__"}
+
+
+def test_compound_partial_requires_each_retained_claim_dependencies() -> None:
+    requirements = [
+        EvidenceRequirement(
+            requirement_id="scope",
+            description="Current individual category",
+            materiality="governing_applicability",
+        ),
+        EvidenceRequirement(
+            requirement_id="rebate",
+            description="Rebate rule",
+            materiality="central_rule",
+            depends_on=["scope"],
+        ),
+        EvidenceRequirement(
+            requirement_id="filing",
+            description="Filing rule",
+            materiality="central_rule",
+            depends_on=["scope"],
+        ),
+    ]
+    mandatory = _mandatory_partial_ids("Rebate rate and filing deadline?", requirements)
+    source = chunk("Current individuals have a rebate of 10 percent.")
+    verdict = CoverageVerdict.model_validate(
+        {
+            "complete": False,
+            "missing": ["Filing rule"],
+            "partial_answer": {
+                "scope": "Rebate only",
+                "requirement_ids": ["scope", "rebate"],
+                "exclusions": ["Filing rule"],
+            },
+            "checks": [
+                {
+                    "requirement_id": key,
+                    "supported": key != "filing",
+                    "fulfillment": "full" if key != "filing" else "none",
+                    "evidence": (
+                        [{"chunk_id": str(source.chunk_id), "quote": source.content}]
+                        if key != "filing"
+                        else []
+                    ),
+                }
+                for key in ("scope", "rebate", "filing")
+            ],
+        }
+    )
+    assert verdict.partial_validates([source], {"scope", "rebate", "filing"}, mandatory)
+    verdict.partial_answer.requirement_ids = ["rebate"]
+    assert not verdict.partial_validates([source], {"scope", "rebate", "filing"}, mandatory)
+
+
+async def test_numeric_partial_retains_proven_formula_when_eligibility_detail_is_partial():
+    source = chunk(
+        "For assessment year 2026-27, resident individuals receive the lower of "
+        "3% of income, 10% of qualifying investment, or Tk 750000. "
+        "The actual investment must qualify."
+    )
+    requirements = [
+        {
+            "requirement_id": "period",
+            "description": "Individual category and 2026-27 assessment period",
+            "materiality": "governing_applicability",
+        },
+        {
+            "requirement_id": "formula",
+            "description": "Current individual rebate formula",
+            "materiality": "central_rule",
+            "depends_on": ["period"],
+        },
+        {
+            "requirement_id": "eligibility",
+            "description": "Detailed personal eligibility conditions",
+            "materiality": "central_rule",
+            "depends_on": ["period"],
+        },
+    ]
+    coverage = {
+        "complete": False,
+        "missing": ["Detailed qualifying investment categories are unverified"],
+        "checks": [
+            {
+                "requirement_id": requirement_id,
+                "description": description,
+                "supported": True,
+                "fulfillment": fulfillment,
+                "answerable_scope": description,
+                "unresolved_facets": facets,
+                "evidence": [{"chunk_id": str(source.chunk_id), "quote": source.content}],
+            }
+            for requirement_id, description, fulfillment, facets in (
+                ("period", "Individual category and 2026-27 assessment period", "full", []),
+                ("formula", "Current individual rebate formula", "full", []),
+                ("eligibility", "Detailed personal eligibility conditions", "partial", ["items"]),
+            )
+        ],
+    }
+    result, _, _ = await run_repair(
+        [([source], {})],
+        queries=[{"query": "individual rebate", "requirement_ids": ["period", "formula"]}],
+        requirements=requirements,
+        coverage=coverage,
+        max_followup_rounds=0,
+        user_query="What is the rebate formula, and which conditions need personal facts?",
+    )
+    assert result.diagnostics["status"] == "partial_answer"
+    assert result.partial_answer["requirement_ids"] == ["period", "formula"]
+    assert "Detailed personal eligibility conditions" in result.partial_answer["exclusions"]
+    assert [item.chunk_id for item in result.selected] == [source.chunk_id]
+
+
+def test_proof_scope_change_invalidates_dependent_claim_but_not_unrelated_proof():
+    from app.modules.conversations.services.evidence_repair_service import _TurnProofMap
+
+    scope = chunk("The applicable category is ordinary individuals.")
+    rate = chunk("The rate is ten percent.")
+    other = chunk("The filing deadline is June.")
+    proof = _TurnProofMap(
+        [
+            EvidenceRequirement(requirement_id="scope", description="Category"),
+            EvidenceRequirement(requirement_id="rate", description="Rate", depends_on=["scope"]),
+            EvidenceRequirement(requirement_id="other", description="Deadline"),
+        ]
+    )
+    for key, source in (("scope", scope), ("rate", rate), ("other", other)):
+        proof.accept_check(_supported_check(key, source, key), [scope, rate, other], [])
+    changed = replace(scope, metadata={**scope.metadata, "applicable_period": "2026-27"})
+    assert proof.invalidate_changed([changed, rate, other], []) == {"scope", "rate"}
+    assert proof.proven_ids() == {"other"}
 
 
 async def test_parallel_overview_deadline_cancels_both_provider_calls():

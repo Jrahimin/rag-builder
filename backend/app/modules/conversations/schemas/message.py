@@ -3,20 +3,29 @@
 from __future__ import annotations
 
 import uuid
-from datetime import date, datetime
+from datetime import datetime
 from enum import StrEnum
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.models.message import MessageRole
-
-
-class CitationSourceKind(StrEnum):
-    """Origin of one citation snapshot."""
-
-    KNOWLEDGE = "knowledge"
-    WEB = "web"
+from app.modules.conversations.answer_draft import public_draft_diagnostics
+from app.platform.domain.message_proof import (
+    AnswerClaim as AnswerClaim,
+)
+from app.platform.domain.message_proof import (
+    CitationSnapshot as CitationSnapshot,
+)
+from app.platform.domain.message_proof import (
+    CitationSourceKind as CitationSourceKind,
+)
+from app.platform.domain.message_proof import (
+    ClaimEvidence as ClaimEvidence,
+)
+from app.platform.domain.message_proof import (
+    ClaimVerification as ClaimVerification,
+)
 
 
 class SourceProvenance(StrEnum):
@@ -35,94 +44,6 @@ class SourceScope(StrEnum):
     INDEXED_ONLY = "indexed_only"
 
 
-class CitationSnapshot(BaseModel):
-    """Durable citation stored on assistant messages."""
-
-    source_kind: CitationSourceKind = CitationSourceKind.KNOWLEDGE
-    chunk_id: uuid.UUID | None = None
-    project_id: uuid.UUID | None = None
-    document_id: uuid.UUID | None = None
-    filename: str
-    chunk_index: int | None = None
-    page_number: int | None = None
-    char_start: int | None = None
-    char_end: int | None = None
-    score: float | None = None
-    chunk_hash: str | None = None
-    evidence_unit_id: str | None = None
-    evidence_span_hash: str | None = None
-    evidence_chunk_char_start: int | None = None
-    evidence_chunk_char_end: int | None = None
-    evidence_span_derivation: str | None = None
-    evidence_query_variant_id: str | None = None
-    excerpt: str | None = None
-    processing_version: int | None = None
-    index_build_id: uuid.UUID | None = None
-    source_metadata_generation: int | None = None
-    source_revision_id: uuid.UUID | None = None
-    source_group_id: uuid.UUID | None = None
-    source_title: str | None = None
-    source_type: str | None = None
-    source_revision_number: int | None = None
-    source_revision_label: str | None = None
-    source_published_date: date | None = None
-    source_effective_from: date | None = None
-    source_effective_to: date | None = None
-    source_lifecycle_status: str | None = None
-    source_role: str | None = None
-    source_relationships: list[dict[str, Any]] = Field(default_factory=list)
-    authority_status: str | None = None
-    authority_limitations: list[dict[str, Any]] = Field(default_factory=list)
-    relationship_recall_provenance: list[dict[str, Any]] = Field(default_factory=list)
-    authority_dependencies: list[dict[str, Any]] = Field(default_factory=list)
-    config_snapshot_id: uuid.UUID | None = None
-    configuration_hash: str | None = None
-    config_provenance: dict[str, Any] = Field(default_factory=dict)
-    prompt_version: str | None = None
-    web_url: str | None = None
-    web_title: str | None = None
-    web_retrieved_at: datetime | None = None
-    web_provider: str | None = None
-    evidence_provenance_version: str | None = None
-    indexed_chunk_hash: str | None = None
-    evidence_source_chunk_hash: str | None = None
-    evidence_corroboration_method: str | None = None
-    evidence_source_envelope: str | None = None
-    evidence_scope_document_id: uuid.UUID | None = None
-    evidence_scope_metadata_filter: dict[str, str] | None = None
-    evidence_scope_as_of: datetime | None = None
-    evidence_scope_snapshot_origin: str | None = None
-    originating_assistant_message_id: uuid.UUID | None = None
-    coverage_origin_message_id: uuid.UUID | None = None
-    coverage_status: str | None = None
-    coverage_partial: bool | None = None
-
-    @model_validator(mode="after")
-    def validate_source_identity(self) -> CitationSnapshot:
-        internal_identity = (self.chunk_id, self.document_id, self.project_id)
-        web_metadata = (
-            self.web_url,
-            self.web_title,
-            self.web_retrieved_at,
-            self.web_provider,
-        )
-        if self.source_kind is CitationSourceKind.KNOWLEDGE:
-            if any(value is None for value in internal_identity):
-                raise ValueError(
-                    "knowledge citations require Project, document, and chunk identity"
-                )
-            if any(value is not None for value in web_metadata):
-                raise ValueError("knowledge citations cannot carry web source metadata")
-        else:
-            if any(value is not None for value in internal_identity):
-                raise ValueError("web citations cannot expose internal document or chunk identity")
-            if self.chunk_index is not None or self.chunk_hash is not None:
-                raise ValueError("web citations cannot expose synthetic chunk identity")
-            if any(value is None for value in web_metadata):
-                raise ValueError("web citations require URL, title, retrieval time, and provider")
-        return self
-
-
 class InsufficientEvidenceReason(StrEnum):
     """Stable reasons for a correct no-answer outcome."""
 
@@ -133,14 +54,10 @@ class InsufficientEvidenceReason(StrEnum):
     # candidates; CONTEXT_SELECTION_EMPTY covers any remaining empty-after-admit case.
     CONTEXT_SELECTION_EMPTY = "context_selection_empty"
     UNRESOLVED_AUTHORITY = "unresolved_authority"
-
-
-class ClaimVerification(StrEnum):
-    """What the deterministic validator can establish about one claim."""
-
-    SUPPORTED = "supported"
-    UNVERIFIED = "unverified"
-    UNSUPPORTED = "unsupported"
+    CLAIM_VERIFICATION_FAILED = "claim_verification_failed"
+    REQUEST_DEADLINE_EXCEEDED = "request_deadline_exceeded"
+    RECOVERY_DEADLINE_EXCEEDED = "recovery_deadline_exceeded"
+    PROVIDER_TIMEOUT = "provider_timeout"
 
 
 class ClaimVerificationReason(StrEnum):
@@ -164,95 +81,6 @@ class ClaimVerificationReason(StrEnum):
     COVERAGE_STATEMENT_NOT_IN_VERDICT = "coverage_statement_not_in_verdict"
 
 
-class ClaimEvidence(BaseModel):
-    """One source location supporting an answer claim."""
-
-    citation_index: int = Field(ge=1)
-    chunk_id: uuid.UUID | None = None
-    document_id: uuid.UUID | None = None
-    filename: str
-    chunk_index: int | None = None
-    page_number: int | None = None
-    char_start: int | None = None
-    char_end: int | None = None
-    excerpt: str | None = None
-    evidence_unit_id: str | None = None
-    evidence_span_hash: str | None = None
-    source_kind: CitationSourceKind = CitationSourceKind.KNOWLEDGE
-    web_url: str | None = None
-    web_title: str | None = None
-    web_retrieved_at: datetime | None = None
-    web_provider: str | None = None
-
-    @model_validator(mode="after")
-    def validate_source_identity(self) -> ClaimEvidence:
-        if self.source_kind is CitationSourceKind.KNOWLEDGE:
-            if self.chunk_id is None or self.document_id is None or self.chunk_index is None:
-                raise ValueError("knowledge claim evidence requires internal source identity")
-            if any(
-                value is not None
-                for value in (
-                    self.web_url,
-                    self.web_title,
-                    self.web_retrieved_at,
-                    self.web_provider,
-                )
-            ):
-                raise ValueError("knowledge claim evidence cannot carry web source metadata")
-        else:
-            if (
-                self.chunk_id is not None
-                or self.document_id is not None
-                or self.chunk_index is not None
-            ):
-                raise ValueError("web claim evidence cannot expose synthetic chunk identity")
-            if any(
-                value is None
-                for value in (
-                    self.web_url,
-                    self.web_title,
-                    self.web_retrieved_at,
-                    self.web_provider,
-                )
-            ):
-                raise ValueError(
-                    "web claim evidence requires URL, title, retrieval time, and provider"
-                )
-        return self
-
-
-class AnswerClaim(BaseModel):
-    """A generated answer segment linked to zero or more evidence locations."""
-
-    evidence_support: ClaimVerification | None = None
-    authority_status: str = "not_assessed"
-    claim_kind: str = "source_assertion"
-    arithmetic_verification: ClaimVerification | None = None
-    verification_method: str | None = None
-    verification_reason: str | None = None
-    assertion_text: str | None = None
-
-    claim_id: str
-    text: str
-    grounded: bool
-    verification: ClaimVerification
-    evidence: list[ClaimEvidence] = Field(default_factory=list)
-
-    @model_validator(mode="before")
-    @classmethod
-    def backfill_legacy_verification(cls, value: Any) -> Any:
-        if isinstance(value, dict) and "verification" not in value:
-            value = {
-                **value,
-                "verification": (
-                    ClaimVerification.SUPPORTED
-                    if value.get("grounded")
-                    else ClaimVerification.UNSUPPORTED
-                ),
-            }
-        return value
-
-
 class NoticeSchema(BaseModel):
     """One system-rendered notice attached to an assistant message."""
 
@@ -260,6 +88,51 @@ class NoticeSchema(BaseModel):
     language: str
     text: str
     source: dict[Any, Any] = Field(default_factory=dict)
+
+
+class TerminalOutcome(BaseModel):
+    """Message delivery is distinct from successful factual answering."""
+
+    model_config = ConfigDict(extra="forbid")
+    version: Literal["answer.outcome.v1"] = "answer.outcome.v1"
+    outcome: Literal[
+        "answered",
+        "partial",
+        "needs_input",
+        "insufficient_evidence",
+        "unresolved_authority",
+        "verification_failed",
+        "timed_out",
+    ]
+    reason_code: str = Field(max_length=100)
+    failure_stage: (
+        Literal["retrieval", "coverage", "draft_schema", "claim_verification", "persistence"] | None
+    ) = None
+    requested_scope: dict[str, Any] = Field(default_factory=dict)
+    coverage: Literal["complete", "partial", "incomplete", "not_assessed"] = "not_assessed"
+    retryable: bool = False
+    next_action: Literal["retry", "supply_input", "review_source", "contact_operator", "none"] = (
+        "none"
+    )
+    supported_requirement_ids: list[str] = Field(default_factory=list)
+    unresolved_requirement_ids: list[str] = Field(default_factory=list)
+
+
+class ProviderStageProvenance(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    provider: str
+    model: str
+    purpose: str = "unspecified"
+    reasoning: str = "provider_default"
+    schema_mode: Literal["none", "prompt", "json_object", "json_schema"] = "none"
+    schema_name: str | None = None
+    schema_hash: str | None = None
+    endpoint_hash: str | None = None
+    capability_revision: str | None = None
+    capability_source: str | None = None
+    local_validation: str | None = None
+    span_id: str | None = None
+    status: str | None = None
 
 
 class MessageResponse(BaseModel):
@@ -285,12 +158,15 @@ class MessageResponse(BaseModel):
     retrieval_latency_ms: int | None = None
     provider_latency_ms: int | None = None
     total_latency_ms: int | None = None
+    provider_provenance: list[ProviderStageProvenance] = Field(default_factory=list)
+    citation_coverage_status: Literal["applicable", "not_applicable"] | None = None
     config_provenance: dict[str, Any] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict, validation_alias="message_metadata")
     citations: list[CitationSnapshot] = Field(default_factory=list)
     claims: list[AnswerClaim] = Field(default_factory=list)
     grounded: bool | None = None
     insufficient_evidence_reason: InsufficientEvidenceReason | None = None
+    terminal_outcome: TerminalOutcome | None = None
     notices: list[NoticeSchema] = Field(default_factory=list)
     source_provenance: SourceProvenance = SourceProvenance.NONE
     created_at: datetime
@@ -309,7 +185,10 @@ class MessageResponse(BaseModel):
             base = base.model_copy(update={"provider": conversation_provider})
         if message.model is None and conversation_model is not None:
             base = base.model_copy(update={"model": conversation_model})
-        metadata = getattr(message, "message_metadata", None) or {}
+        metadata = dict(getattr(message, "message_metadata", None) or {})
+        metadata.pop("operator_diagnostic", None)
+        if "answer_draft" in metadata:
+            metadata["answer_draft"] = public_draft_diagnostics(metadata["answer_draft"])
         provenance = metadata.get("source_provenance", SourceProvenance.NONE.value)
         try:
             source_provenance = SourceProvenance(provenance)
@@ -321,12 +200,28 @@ class MessageResponse(BaseModel):
             for item in raw_notices
             if isinstance(item, (dict, NoticeSchema))
         ]
-        base = base.model_copy(update={"source_provenance": source_provenance, "notices": notices})
+        base = base.model_copy(
+            update={
+                "source_provenance": source_provenance,
+                "metadata": metadata,
+                "provider_provenance": [
+                    ProviderStageProvenance.model_validate(item)
+                    for item in metadata.get("provider_provenance", [])
+                ],
+                "citation_coverage_status": metadata.get("citation_coverage_status"),
+                "notices": notices,
+                "terminal_outcome": TerminalOutcome.model_validate(metadata["terminal_outcome"])
+                if isinstance(metadata.get("terminal_outcome"), dict)
+                else None,
+            }
+        )
         return base
 
 
 class MessageSendRequest(BaseModel):
     """Send a user message in a conversation."""
+
+    preview_index_build_id: uuid.UUID | None = None
 
     model_config = ConfigDict(extra="forbid")
 
@@ -342,3 +237,12 @@ class ChatTurnResponse(BaseModel):
 
     user_message: MessageResponse
     assistant_message: MessageResponse
+
+
+class MessageDiagnosticResponse(BaseModel):
+    message_id: uuid.UUID
+    project_id: uuid.UUID
+    summary: dict[str, Any]
+    payload: dict[str, Any] | None
+    expires_at: datetime | None
+    expired: bool

@@ -47,6 +47,7 @@ def _build_llm_provider(
             model=model,
             provider_version=LLM_ADAPTER_VERSION,
             request_timeout_seconds=timeout,
+            schema_capabilities=llm.schema_capabilities,
         )
     if backend is LLMBackend.OPENAI:
         if not llm.openai_api_key:
@@ -58,6 +59,7 @@ def _build_llm_provider(
             model=model,
             provider_version=LLM_ADAPTER_VERSION,
             request_timeout_seconds=timeout,
+            schema_capabilities=llm.schema_capabilities,
         )
     if backend is LLMBackend.OPENAI_COMPATIBLE:
         if not llm.openai_api_key:
@@ -70,6 +72,7 @@ def _build_llm_provider(
             model=model,
             provider_version=LLM_ADAPTER_VERSION,
             request_timeout_seconds=timeout,
+            schema_capabilities=llm.schema_capabilities,
         )
     if backend is LLMBackend.GEMINI:
         if not llm.gemini_api_key:
@@ -81,6 +84,7 @@ def _build_llm_provider(
             model=model,
             provider_version=LLM_ADAPTER_VERSION,
             request_timeout_seconds=timeout,
+            schema_capabilities=llm.schema_capabilities,
         )
     msg = f"Unsupported LLM backend: {backend!r}"
     raise ProviderError(msg, provider_name="llm_factory")

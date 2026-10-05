@@ -238,3 +238,12 @@ Chat integrates through `RetrievalPort` without module coupling (ADR-008).
 - [ADR-007](../architecture/adr/007-staged-retrieval-delivery.md)
 - [ADR-009](../architecture/adr/009-retrieval-v2-hybrid-search.md)
 - [Hybrid retrieval journey](../learning/hybrid-retrieval-journey.md)
+
+
+## Tokenizer-compatible SQL ranking
+
+Keyword candidate selection computes BM25 over all eligible tokenizer matches in PostgreSQL before LIMIT, using immutable build-scoped term/collection statistics. UUID breaks equal-score ties only. Migration 20260930_0034 adds a JSONB GIN term-frequency index. Legal-period recall can include historical editions without inventing a date; final source-span proof establishes applicability.
+
+Private structural reprocessing: POST `/api/v1/projects/{project_id}/index-builds/reprocess-private`; see [private structural builds](../features/private_structural_builds.md). Migration0035 isolates chunk generations; it never automatically activates.
+
+Private structural builds use persisted `structure.v1` intent and durable `corpus.structure.v1`. POST `index-builds/{build_id}/revalidate-private` copies exact final rows and compatible vectors into a new private build; preview/replay/activation verify the structural manifest and vector input identity. Apply migration0036 before use. See [private structural acceptance](../features/private_structural_builds.md).

@@ -488,6 +488,33 @@ test("bounded recovery is a Project setting without changing the selected RAG pr
   });
 });
 
+test("adaptive execution saves independently and can return to inherited policy", async () => {
+  mockProjectShell();
+  const create = setupAI(effectiveConfig(null));
+  renderOperatorComponent(
+    <OperatorConsoleApp />,
+    `/projects?project=${projectFixture.id}&section=ai-config`,
+  );
+  const standard = await screen.findByRole("radio", { name: "Standard RAG profile" });
+  await userEvent.click(standard);
+  const policy = screen.getByLabelText("Message execution policy");
+  expect(policy).toHaveValue("legacy");
+  await userEvent.selectOptions(policy, "adaptive_v1");
+  expect(standard).toBeChecked();
+  expect(screen.queryByText(/Custom · based on/)).not.toBeInTheDocument();
+  await userEvent.click(
+    screen.getByRole("button", { name: "Message execution policy: Use Global" }),
+  );
+  expect(policy).toHaveValue("legacy");
+  await userEvent.selectOptions(policy, "adaptive_v1");
+  await saveRevision();
+  await waitFor(() => expect(create).toHaveBeenCalledOnce());
+  expect(create.mock.calls[0]?.[1].execution).toEqual({
+    profile_id: "standard",
+    execution_policy: "adaptive_v1",
+  });
+});
+
 test("selecting the Global behavior option restores Global source", async () => {
   mockProjectShell();
   const create = setupAI(effectiveConfig(null));

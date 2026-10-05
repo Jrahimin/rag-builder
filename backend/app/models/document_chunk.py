@@ -36,6 +36,8 @@ class DocumentChunk(Base, UUIDPrimaryKeyMixin, TimestampMixin, ProjectScopedMixi
             "document_id",
             "document_version",
             "chunk_index",
+            "generation_id",
+            postgresql_nulls_not_distinct=True,
             name="uq_document_chunks_document_version_index",
         ),
         Index("ix_document_chunks_project_document", "project_id", "document_id"),
@@ -50,6 +52,7 @@ class DocumentChunk(Base, UUIDPrimaryKeyMixin, TimestampMixin, ProjectScopedMixi
     document_version: Mapped[int] = mapped_column(
         Integer, nullable=False, default=1, server_default="1"
     )
+    generation_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
     chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     page_number: Mapped[int | None] = mapped_column(Integer, nullable=True)

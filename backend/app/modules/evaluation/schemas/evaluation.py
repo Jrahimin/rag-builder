@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 from enum import StrEnum
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -35,6 +35,9 @@ class EvaluationCase(BaseModel):
     as_of: datetime | None = None
     expected_answer_tokens: list[str] = Field(default_factory=list)
     expected_no_answer: bool = False
+    expected_outcome: (
+        Literal["answered", "partial", "insufficient_evidence", "unresolved_authority"] | None
+    ) = None
     query_language: str | None = Field(default=None, min_length=2, max_length=35)
     expected_evidence_language: str | None = Field(default=None, min_length=2, max_length=35)
     hard_negative_evidence_phrases: list[str] = Field(default_factory=list)
@@ -44,6 +47,11 @@ class EvaluationCase(BaseModel):
 
     @model_validator(mode="after")
     def validate_expectation(self) -> EvaluationCase:
+        if self.expected_outcome is not None:
+            self.expected_no_answer = self.expected_outcome in {
+                "insufficient_evidence",
+                "unresolved_authority",
+            }
         if self.expected_no_answer:
             return self
         if (
@@ -85,6 +93,7 @@ class EvaluationRunCreate(BaseModel):
 
     dataset_id: uuid.UUID
     top_k: int | None = Field(default=None, ge=1, le=100)
+    preview_index_build_id: uuid.UUID | None = None
 
 
 class EvaluationRunResponse(BaseModel):

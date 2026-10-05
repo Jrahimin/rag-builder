@@ -75,3 +75,31 @@ boundary. Source-aware retrieval, durable source citation snapshots, and Operato
 reuse the same Project/config/index/source provenance captured by conversations, generations,
 jobs, and evaluations. Natural-language temporal inference, per-Project embedding or chunking
 policy, billing, and quotas remain intentionally outside this contract.
+
+
+The additive `execution.execution_policy` field selects `legacy` or `adaptive_v1`
+for future immutable revisions. Omitted historical fields resolve to `legacy`,
+independent of later deployment defaults. The value is materialized in effective
+execution settings and recorded in configuration provenance; changing it requires
+the ordinary revision and conversation snapshot refresh workflow. See
+`conversation_module.md` for reserves, promotion and correction allowances.
+
+Measured adaptive reserves use project-scoped completed Message samples from
+the exact immutable configuration hash and budget class. A conversation snapshot
+ID resolves that hash; evaluation uses its captured effective configuration hash.
+Estimates freeze once, require at least twenty qualifying samples, and record
+bounded sample provenance. Refreshing policy remains the existing explicit
+immutable revision/snapshot operation; this correction activates no policy or build.
+
+### Selecting the message execution policy
+
+Project AI settings expose **Message execution policy** separately from retrieval
+profiles and bounded recovery. Choosing Adaptive saves `execution.execution_policy`
+as `adaptive_v1` in a new immutable revision; Use Global removes the override.
+Legacy remains the default. Simple requests have a 45-second hard ceiling and
+30-second p95 target; complex requests have a 120-second ceiling and 90-second p95
+target. The existing admission/reserve policy bounds recovery and can promote a
+required recoverable dependency once. No ceiling is increased by this UI control.
+Existing conversations retain their saved configuration snapshot. Start a new
+conversation after saving a revision to exercise the new policy. Configuration
+selection and code checks do not prove live acceptance or source applicability.

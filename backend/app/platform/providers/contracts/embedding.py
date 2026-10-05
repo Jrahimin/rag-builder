@@ -29,6 +29,7 @@ class EmbeddingBatchResult:
     model: str
     dimensions: int
     provider_version: str
+    billed_input_tokens: int | None = None
 
 
 def coerce_embedding_vector(
@@ -52,6 +53,11 @@ def coerce_embedding_vector(
 
 class BaseEmbeddingProvider(ABC):
     """Generate dense vectors for text inputs."""
+
+    @property
+    def cache_namespace(self) -> str:
+        """Endpoint identity, excluding credentials."""
+        return "default"
 
     @property
     @abstractmethod

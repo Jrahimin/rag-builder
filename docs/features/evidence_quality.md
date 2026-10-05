@@ -298,3 +298,51 @@ Ordered RAG Journey sequences remain a separate harness and are not merged into 
 
 No agents, GraphRAG, fine-tuning, automatic configuration mutation, external evaluation service,
 long-term metrics warehouse, corpus/index lifecycle changes, or customer-facing evaluation UI.
+
+
+## Complete message quality metrics
+
+Case results expose `search_latency_ms` separately from `complete_turn_latency_ms`.
+Profile metrics expose separate p50/p95 series and a complete-turn sample count;
+missing complete-turn observations remain null. Legacy `latency_ms` and
+`latency_p50_ms/latency_p95_ms` retain search-only meaning for compatibility.
+
+Optional dataset `expected_outcome` distinguishes answered, partial, completed
+insufficient evidence and unresolved authority. It determines the applicable
+expected-no-answer flag. Full/partial/abstention rates use their own eligible case
+denominators. Verification failures and timeouts are separate execution failures,
+never successful abstentions. Assertion counts distinguish attempted, rejected
+and published assertions. No factual assertions means citation coverage is
+`not_applicable` with numeric 0.0; it is excluded from factual coverage aggregation.
+
+Quality runs use the shared production runner. Hash/echo smoke and deterministic
+fixtures remain offline evidence, not live source-sufficiency certification.
+
+Detailed evaluation proof is opt-in operator capture with audited access, bounded
+payloads and seven-day expiry. The application sweep runs every 60 seconds and
+physically clears expired Message and evaluation payloads through project-scoped
+repositories, including inactive projects; capture/read cleanup remains in place. Ordinary metrics and run responses are sanitized,
+including legacy inline diagnostic fields. Historical database records are retained;
+no retrospective retention cleanup is claimed by the additive migration.
+
+### Private candidate evaluation
+
+Super Admin `POST .../evaluations/runs/captured` accepts optional
+`preview_index_build_id` to evaluate a sealed private candidate without moving the
+active pointer. The ordinary `/runs` endpoint rejects this field with
+`preview_requires_admin`. The candidate must belong to the Project, be `validated`,
+pass structural integrity verification and match the resolved embedding provider,
+model and embedding-set version. Invalid candidates return `preview_build_unavailable`;
+incompatible embedding identity returns `preview_embedding_mismatch`.
+
+The durable run pins the candidate in its immutable provenance and passes that pin
+through retrieval and shared Message execution. Its corpus fingerprint includes
+published scope review hashes. Candidate evaluation retains protected capture and
+seven-day diagnostic retention; it does not create persisted conversation Messages.
+Production build acceptance also requires observed chat response evidence.
+
+
+Search diagnostics add indexed_corpus_empty=true only for a sealed pinned build whose
+manifest has no documents and whose keyword/vector/chunk counts are all zero. This
+attested inventory gap completes an indexed-only limitation without further LLM
+planning; an ordinary query miss does not establish corpus absence.

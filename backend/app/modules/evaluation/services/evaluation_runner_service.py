@@ -12,13 +12,25 @@ from pydantic import TypeAdapter
 from app.core.config import EvaluationConfig
 from app.core.exceptions import NotFoundError
 from app.modules.evaluation.errors import EvaluationCorpusChangedError
-from app.modules.evaluation.metrics import compute_profile_metrics, rank_metrics
-from app.modules.evaluation.ports import EvaluationAnswerPort, EvaluationRetrievalPort
+from app.modules.evaluation.metrics import (
+    completed_abstention,
+    compute_profile_metrics,
+    execution_failed,
+    rank_metrics,
+)
+from app.modules.evaluation.ports import (
+    EvaluationAnswerPort,
+    EvaluationCaseInput,
+    EvaluationRetrievalPort,
+)
 from app.modules.evaluation.repositories.evaluation_corpus_repository import (
     EvaluationCorpusRepository,
 )
 from app.modules.evaluation.repositories.evaluation_dataset_repository import (
     EvaluationDatasetRepository,
+)
+from app.modules.evaluation.repositories.evaluation_diagnostic_repository import (
+    EvaluationDiagnosticRepository,
 )
 from app.modules.evaluation.repositories.evaluation_run_repository import EvaluationRunRepository
 from app.modules.evaluation.schemas.evaluation import EvaluationCase
@@ -41,6 +53,7 @@ class EvaluationRunnerService:
         retrieval: EvaluationRetrievalPort,
         answerer: EvaluationAnswerPort,
         config: EvaluationConfig,
+        diagnostics: EvaluationDiagnosticRepository | None = None,
     ) -> None:
         self._runs = runs
         self._datasets = datasets
@@ -48,6 +61,7 @@ class EvaluationRunnerService:
         self._retrieval = retrieval
         self._answerer = answerer
         self._config = config
+        self._diagnostics = diagnostics
 
     async def run(
         self,
@@ -62,6 +76,15 @@ class EvaluationRunnerService:
                 message="Evaluation run not found.",
                 code="evaluation_run_not_found",
             )
+        from app.platform.domain.runtime_identity import runtime_code_fingerprint
+        from app.platform.jobs.errors import PermanentJobError
+
+        captured_runtime = run.versions.get("runtime_identity")
+        if captured_runtime is not None and captured_runtime != runtime_code_fingerprint():
+            raise PermanentJobError(
+                "Executing runtime differs from queued evaluation.",
+                code="evaluation_runtime_mismatch",
+            )
         dataset = await self._datasets.get_by_id(run.dataset_id)
         if dataset is None:  # pragma: no cover - protected by FK
             raise NotFoundError(
@@ -73,6 +96,15 @@ class EvaluationRunnerService:
             embedding_set_version=int(captured_corpus["embedding_set_version"]),
             embedding_provider=str(captured_corpus["embedding_provider"]),
             embedding_model=str(captured_corpus["embedding_model"]),
+            **(
+                {
+                    "preview_index_build_id": uuid.UUID(
+                        str(run.config_provenance["preview_index_build_id"])
+                    )
+                }
+                if run.config_provenance.get("preview_index_build_id")
+                else {}
+            ),
         )
         if current_corpus["fingerprint"] != captured_corpus["fingerprint"]:
             raise EvaluationCorpusChangedError(
@@ -89,19 +121,39 @@ class EvaluationRunnerService:
 
         for case in cases:
             for profile in self._retrieval.profiles:
-                search = await self._retrieval.search(
-                    profile=profile,
-                    query=case.query,
-                    top_k=run.top_k,
-                    document_id=case.document_id,
-                    metadata_filter=case.metadata_filter,
-                    as_of=case.as_of,
-                )
-                answer = await self._answerer.answer(
-                    profile=profile,
-                    question=case.query,
-                    hits=search.hits,
-                )
+                production_execution = getattr(self._answerer, "execute_case", None)
+                if callable(production_execution):
+                    execution = await production_execution(
+                        profile=profile,
+                        case=EvaluationCaseInput(
+                            query=case.query,
+                            top_k=run.top_k,
+                            document_id=case.document_id,
+                            metadata_filter=case.metadata_filter,
+                            as_of=case.as_of,
+                        ),
+                    )
+                    search, answer = execution.search, execution.answer
+                else:
+                    search = await self._retrieval.search(
+                        profile=profile,
+                        query=case.query,
+                        top_k=run.top_k,
+                        document_id=case.document_id,
+                        metadata_filter=case.metadata_filter,
+                        as_of=case.as_of,
+                    )
+                    answer = await self._answerer.answer(
+                        profile=profile, question=case.query, hits=search.hits
+                    )
+                if (
+                    run.versions.get("diagnostic_full_capture") is True
+                    and self._diagnostics is not None
+                    and answer.operator_diagnostic
+                ):
+                    await self._diagnostics.capture(
+                        run.id, case.key, profile, answer.operator_diagnostic
+                    )
                 all_results.append(_case_result(case, profile, search, answer))
                 completed_steps += 1
                 if on_progress is not None:
@@ -256,6 +308,7 @@ def _case_result(case: EvaluationCase, profile: str, search: Any, answer: Any) -
         "query_language": case.query_language,
         "expected_evidence_language": case.expected_evidence_language,
         "expected_no_answer": case.expected_no_answer,
+        "expected_outcome": case.expected_outcome,
         "result_chunk_ids": [str(hit.chunk_id) for hit in search.hits],
         "result_document_ids": [str(hit.document_id) for hit in search.hits],
         "result_source_metadata": [
@@ -326,6 +379,7 @@ def _case_result(case: EvaluationCase, profile: str, search: Any, answer: Any) -
         "executed_branches": (search.provenance or {}).get("executed_branches"),
         "filter_correct": filter_correct,
         "latency_ms": search.latency_ms,
+        "search_latency_ms": search.latency_ms,
         "rerank_status": search.rerank_status,
         "reranker_provider": search.reranker_provider,
         "reranker_model": search.reranker_model,
@@ -353,6 +407,12 @@ def _case_result(case: EvaluationCase, profile: str, search: Any, answer: Any) -
         "winning_rank_score": answer.evidence_gate.get("winning_rank_score"),
         "grounded": answer.grounded,
         "citation_coverage": answer.citation_coverage,
+        "citation_coverage_status": "applicable" if answer.claims else "not_applicable",
+        "attempted_assertion_count": answer.execution.get(
+            "attempted_assertions", len(answer.claims)
+        ),
+        "rejected_assertion_count": answer.execution.get("rejected_assertions", 0),
+        "published_assertion_count": len(answer.claims),
         "claims": answer.claims,
         "unverified_claim_rate": _unverified_claim_rate(answer.claims),
         "answer_token_coverage": token_coverage,
@@ -362,6 +422,10 @@ def _case_result(case: EvaluationCase, profile: str, search: Any, answer: Any) -
         "input_tokens": answer.input_tokens,
         "output_tokens": answer.output_tokens,
         "provider_latency_ms": answer.provider_latency_ms,
+        "execution": answer.execution,
+        "notices": answer.notices,
+        "lifecycle": answer.lifecycle,
+        "complete_turn_latency_ms": answer.complete_turn_latency_ms,
     }
 
 
@@ -494,7 +558,10 @@ def _failed_cases(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
     failed: list[dict[str, Any]] = []
     for result in results:
         reasons: list[str] = []
-        refused = result["insufficient_evidence_reason"] is not None
+        failed_execution = execution_failed(result)
+        refused = completed_abstention(result)
+        if failed_execution:
+            reasons.append("execution_failed")
         if bool(result["expected_no_answer"]) != refused:
             reasons.append("refusal_mismatch")
         if not result["expected_no_answer"] and not result["relevant_retrieved"]:

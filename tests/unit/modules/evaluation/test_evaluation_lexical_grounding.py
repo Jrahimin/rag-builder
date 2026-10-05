@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -16,6 +17,7 @@ from app.platform.domain.evidence_contracts import (
     QueryVariant,
     QueryVariantKind,
 )
+from app.platform.providers.contracts.llm import ChatCompletionResult, ChatUsage
 from app.platform.providers.implementations.echo_chat import EchoLLMProvider
 
 pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
@@ -47,19 +49,33 @@ def _lexical_hit(*, semantic_score: float | None) -> QualityHit:
 
 async def test_reranked_lexical_evaluation_requires_citations_like_chat() -> None:
     hit = _lexical_hit(semantic_score=None)
-    answer = await _adapter().answer(
+    # Echo now deliberately returns cited source text. An uncited provider
+    # output must remain an uncited draft, rather than relying on Echo's old shape.
+    adapter = _adapter()
+    adapter._llm.generate = AsyncMock(
+        return_value=ChatCompletionResult(
+            content=_CONTENT,
+            provider="echo",
+            model="echo-test",
+            provider_version="1",
+            finish_reason="stop",
+            usage=ChatUsage(1, 1),
+        )
+    )
+    answer = await adapter.answer(
         profile="reranked_lexical",
         question="cobalt escalation matrix",
         hits=[hit],
     )
 
-    assert answer.insufficient_evidence_reason is None
+    assert answer.insufficient_evidence_reason == "claim_verification_failed"
     assert answer.generation_ran is True
     assert answer.grounded is False
     assert answer.citation_coverage == 0.0
-    assert answer.claims
-    assert answer.claims[0]["evidence"] == []
-    assert answer.claims[0]["verification"] == "unsupported"
+    assert answer.claims == []
+    rejected = answer.operator_diagnostic["rejected_attempts"]
+    assert rejected and rejected[0]["verdict"] == "unsupported"
+    assert rejected[0]["bundle_ids"] == []
 
 
 async def test_candidate_wise_evaluation_prompts_admitted_evidence_units() -> None:

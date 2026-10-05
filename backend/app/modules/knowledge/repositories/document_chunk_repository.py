@@ -22,10 +22,12 @@ class DocumentChunkRepository(ProjectScopedRepository[DocumentChunk]):
         limit: int,
         offset: int,
         document_version: int | None = None,
+        generation_id: uuid.UUID | None = None,
     ) -> list[DocumentChunk]:
         stmt = (
             self._scoped()
             .where(self.model.document_id == document_id)
+            .where(self.model.generation_id == generation_id)
             .order_by(self.model.chunk_index)
             .limit(limit)
             .offset(offset)
@@ -36,13 +38,18 @@ class DocumentChunkRepository(ProjectScopedRepository[DocumentChunk]):
         return list(result.scalars().all())
 
     async def count_by_document(
-        self, document_id: uuid.UUID, *, document_version: int | None = None
+        self,
+        document_id: uuid.UUID,
+        *,
+        document_version: int | None = None,
+        generation_id: uuid.UUID | None = None,
     ) -> int:
         stmt = (
             select(func.count())
             .select_from(self.model)
             .where(self.model.project_id == self._project_id)
             .where(self.model.document_id == document_id)
+            .where(self.model.generation_id == generation_id)
         )
         if document_version is not None:
             stmt = stmt.where(self.model.document_version == document_version)
@@ -63,6 +70,7 @@ class DocumentChunkRepository(ProjectScopedRepository[DocumentChunk]):
             self.model.project_id == self._project_id,
             self.model.document_id == document_id,
             self.model.document_version == document_version,
+            self.model.generation_id.is_(None),
         )
         await self._session.execute(stmt)
         await self._session.flush()

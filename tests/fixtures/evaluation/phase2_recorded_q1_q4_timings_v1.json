@@ -1,0 +1,325 @@
+{
+  "artifact": "recorded-q1-q4-timings",
+  "captured_from": "saved public Message API response bodies",
+  "live_calls_made": false,
+  "created_at_local": "2026-10-01T22:15:55.8006812+06:00",
+  "interpretation": "Q1-Q4 are the first four cases from the frozen broad-income-tax manifest. Retrieval spans before the first recovery_planning span are initial; later retrieval spans are recovery. Stage spans overlap and must not be summed as serial wall-clock time.",
+  "provenance": {
+    "manifest_file": "artifacts/cursor-runs/post-qa-remediation-2026-09-30/browser-qa/broad-income-tax-2026-10-01/manifest.json",
+    "manifest_sha256": "AC7F769A519D2677388DD86C6BE0F7A155B193F8CFF1DEBEBCFEEF9AE8C2656E",
+    "report_file": "artifacts/cursor-runs/post-qa-remediation-2026-09-30/browser-qa/broad-income-tax-2026-10-01/report.md",
+    "report_sha256": "6DD9D27F98E5EE43876A438EEEFCF41DC43972FBDFAA6AF960A4980520F6870C",
+    "transport": "regular (non-streaming); Network POST /api/v1/projects/{project_id}/conversations/{conversation_id}/messages",
+    "response_capture": "Chrome DevTools Protocol Network.getResponseBody; exact JSON response text, no request headers or CSRF token included",
+    "project": {
+      "name": "Income Tax & Budget",
+      "id": "2ee2756f-ad27-44df-a9d3-1316b10ccbb1",
+      "active_config_revision": 45,
+      "config_revision_id": "51ff5404-2b4e-47e5-8503-48882ba3e13e",
+      "source_metadata_generation": 35,
+      "index_build_id": "8eb1595a-8e38-41e9-96c5-0ba419e79bee",
+      "generation_model": "openai/gpt-6-luna"
+    }
+  },
+  "cases": [
+    {
+      "id": "01",
+      "name": "01-current-threshold",
+      "request_id": "12964.174",
+      "conversation_id": "d35d4338-be01-4ff1-8455-883d14cfc27c",
+      "http_status": 200,
+      "question": "Using only the active indexed corpus, for AY 2026–27, what is the general tax-free income threshold for a resident ordinary individual? State the governing statutory provision, any applicable Finance Act amendment, and the effective period. If applicability of a 2026 change cannot be established from the evidence, identify the missing proof instead of assuming.",
+      "server_total_latency_ms": 27986,
+      "terminal_outcome": "timed_out",
+      "terminal_reason": "recovery_deadline_exceeded",
+      "terminal_failure_stage": "retrieval",
+      "recovery_reason": "recovery_deadline_exceeded",
+      "timing_spans": [
+        {
+          "name": "retrieval",
+          "phase": "initial",
+          "classification_basis": "first recovery_planning span position; initial retrieval precedes it, later retrieval is recovery",
+          "start_offset_ms": 95,
+          "elapsed_ms": 10013,
+          "outcome": "completed",
+          "purpose": "retrieval",
+          "parent_id": "84aa867d7a4c",
+          "id": "18f9fa64cbd5"
+        },
+        {
+          "name": "recovery_planning",
+          "phase": null,
+          "classification_basis": null,
+          "start_offset_ms": 10137,
+          "elapsed_ms": 11604,
+          "outcome": "completed",
+          "purpose": "recovery_planning",
+          "parent_id": "233090f896c2",
+          "id": "78effb95b5a3"
+        },
+        {
+          "name": "retrieval",
+          "phase": "recovery",
+          "classification_basis": "first recovery_planning span position; initial retrieval precedes it, later retrieval is recovery",
+          "start_offset_ms": 22483,
+          "elapsed_ms": 5534,
+          "outcome": "cancelled",
+          "purpose": "retrieval",
+          "parent_id": "233090f896c2",
+          "id": "d044f0a3630e"
+        },
+        {
+          "name": "retrieval",
+          "phase": "recovery",
+          "classification_basis": "first recovery_planning span position; initial retrieval precedes it, later retrieval is recovery",
+          "start_offset_ms": 22484,
+          "elapsed_ms": 5522,
+          "outcome": "cancelled",
+          "purpose": "retrieval",
+          "parent_id": "233090f896c2",
+          "id": "6b8e20fab72e"
+        },
+        {
+          "name": "retrieval",
+          "phase": "recovery",
+          "classification_basis": "first recovery_planning span position; initial retrieval precedes it, later retrieval is recovery",
+          "start_offset_ms": 22485,
+          "elapsed_ms": 5522,
+          "outcome": "cancelled",
+          "purpose": "retrieval",
+          "parent_id": "233090f896c2",
+          "id": "a207c83a0486"
+        }
+      ],
+      "source_file": "artifacts/cursor-runs/post-qa-remediation-2026-09-30/browser-qa/broad-income-tax-2026-10-01/01-current-threshold-response.json",
+      "source_file_sha256": "BE0C7A76B5AFD0BB1CE4B473A5F01F9D7D9862B89AAFA8936BD499CD83A9ABF4"
+    },
+    {
+      "id": "02",
+      "name": "02-historical-threshold",
+      "request_id": "12964.187",
+      "conversation_id": "69491940-8be1-4dd2-8f61-17c8e0102c04",
+      "http_status": 200,
+      "question": "Using only the indexed corpus, what was the general tax-free income threshold for a resident ordinary individual in AY 2025–26? Cite the governing source and period. Keep that historical rule separate from AY 2026–27, and identify any unresolved amendment or effective-date link rather than applying the newest publication automatically.",
+      "server_total_latency_ms": 28226,
+      "terminal_outcome": "timed_out",
+      "terminal_reason": "recovery_deadline_exceeded",
+      "terminal_failure_stage": "retrieval",
+      "recovery_reason": "recovery_deadline_exceeded",
+      "timing_spans": [
+        {
+          "name": "retrieval",
+          "phase": "initial",
+          "classification_basis": "first recovery_planning span position; initial retrieval precedes it, later retrieval is recovery",
+          "start_offset_ms": 4916,
+          "elapsed_ms": 9128,
+          "outcome": "completed",
+          "purpose": "retrieval",
+          "parent_id": "2473d2a5c519",
+          "id": "165953c38f0b"
+        },
+        {
+          "name": "recovery_planning",
+          "phase": null,
+          "classification_basis": null,
+          "start_offset_ms": 14072,
+          "elapsed_ms": 8776,
+          "outcome": "completed",
+          "purpose": "recovery_planning",
+          "parent_id": "62e85466e6e7",
+          "id": "56326642e12c"
+        },
+        {
+          "name": "retrieval",
+          "phase": "recovery",
+          "classification_basis": "first recovery_planning span position; initial retrieval precedes it, later retrieval is recovery",
+          "start_offset_ms": 23363,
+          "elapsed_ms": 4876,
+          "outcome": "cancelled",
+          "purpose": "retrieval",
+          "parent_id": "62e85466e6e7",
+          "id": "8fb495fe0d27"
+        },
+        {
+          "name": "retrieval",
+          "phase": "recovery",
+          "classification_basis": "first recovery_planning span position; initial retrieval precedes it, later retrieval is recovery",
+          "start_offset_ms": 23364,
+          "elapsed_ms": 4870,
+          "outcome": "cancelled",
+          "purpose": "retrieval",
+          "parent_id": "62e85466e6e7",
+          "id": "056221d6683e"
+        },
+        {
+          "name": "retrieval",
+          "phase": "recovery",
+          "classification_basis": "first recovery_planning span position; initial retrieval precedes it, later retrieval is recovery",
+          "start_offset_ms": 23365,
+          "elapsed_ms": 4879,
+          "outcome": "cancelled",
+          "purpose": "retrieval",
+          "parent_id": "62e85466e6e7",
+          "id": "24868979e558"
+        }
+      ],
+      "source_file": "artifacts/cursor-runs/post-qa-remediation-2026-09-30/browser-qa/broad-income-tax-2026-10-01/02-historical-threshold-response.json",
+      "source_file_sha256": "1F5D78F4A9B24937B9137A27CA5245A386F5637F02F47783F71663E28D6309F5"
+    },
+    {
+      "id": "03",
+      "name": "03-investment-rebate",
+      "request_id": "12964.196",
+      "conversation_id": "82188e52-de5f-4825-8809-fa79bd212595",
+      "http_status": 200,
+      "question": "For AY 2026–27, explain the income-tax rebate formula and maximum limit for eligible investment for an ordinary resident individual. This is a rule lookup, not a personal calculation, so no personal investment amount is needed. Cite the governing provision and applicable effective period; if the corpus cannot establish which rule governs this AY, identify that gap.",
+      "server_total_latency_ms": 29984,
+      "terminal_outcome": "timed_out",
+      "terminal_reason": "recovery_deadline_exceeded",
+      "terminal_failure_stage": "coverage",
+      "recovery_reason": "recovery_deadline_exceeded",
+      "timing_spans": [
+        {
+          "name": "retrieval",
+          "phase": "initial",
+          "classification_basis": "first recovery_planning span position; initial retrieval precedes it, later retrieval is recovery",
+          "start_offset_ms": 54,
+          "elapsed_ms": 8693,
+          "outcome": "completed",
+          "purpose": "retrieval",
+          "parent_id": "83dd80d8a62c",
+          "id": "d6b2ca3172c2"
+        },
+        {
+          "name": "recovery_planning",
+          "phase": null,
+          "classification_basis": null,
+          "start_offset_ms": 8782,
+          "elapsed_ms": 7697,
+          "outcome": "completed",
+          "purpose": "recovery_planning",
+          "parent_id": "069bdc82e5c9",
+          "id": "8af09610d1ce"
+        },
+        {
+          "name": "retrieval",
+          "phase": "recovery",
+          "classification_basis": "first recovery_planning span position; initial retrieval precedes it, later retrieval is recovery",
+          "start_offset_ms": 17008,
+          "elapsed_ms": 8908,
+          "outcome": "completed",
+          "purpose": "retrieval",
+          "parent_id": "069bdc82e5c9",
+          "id": "29599e800961"
+        },
+        {
+          "name": "retrieval",
+          "phase": "recovery",
+          "classification_basis": "first recovery_planning span position; initial retrieval precedes it, later retrieval is recovery",
+          "start_offset_ms": 17009,
+          "elapsed_ms": 7477,
+          "outcome": "completed",
+          "purpose": "retrieval",
+          "parent_id": "069bdc82e5c9",
+          "id": "11e156f9fd0c"
+        },
+        {
+          "name": "retrieval",
+          "phase": "recovery",
+          "classification_basis": "first recovery_planning span position; initial retrieval precedes it, later retrieval is recovery",
+          "start_offset_ms": 17010,
+          "elapsed_ms": 8453,
+          "outcome": "completed",
+          "purpose": "retrieval",
+          "parent_id": "069bdc82e5c9",
+          "id": "3cf2ec562cfd"
+        },
+        {
+          "name": "coverage_review",
+          "phase": null,
+          "classification_basis": null,
+          "start_offset_ms": 25982,
+          "elapsed_ms": 4020,
+          "outcome": "cancelled",
+          "purpose": "coverage_review",
+          "parent_id": "069bdc82e5c9",
+          "id": "a0d85fc9e028"
+        }
+      ],
+      "source_file": "artifacts/cursor-runs/post-qa-remediation-2026-09-30/browser-qa/broad-income-tax-2026-10-01/03-investment-rebate-response.json",
+      "source_file_sha256": "6A188D92149E2302EE112796BDBB73AEA124F31DB15CCEAF575B6AF1F910485F"
+    },
+    {
+      "id": "04",
+      "name": "04-synthetic-salary",
+      "request_id": "12964.205",
+      "conversation_id": "707d5b1a-b8f2-483e-bbee-df4f845f5705",
+      "http_status": 200,
+      "question": "Synthetic scenario only: assume AY 2026–27, a resident ordinary individual under 65 with no special category, gross salary BDT 1,200,000, and eligible investment BDT 100,000. No other income, TDS, or asset facts are supplied. Give a provisional income-tax estimate before TDS and wealth-based surcharge. Show salary-to-taxable income, the complete applicable tax bands, investment rebate and cap, minimum-tax comparison, and governing citations. Do not request optional refinements before giving the supported estimate; if a legal rule or effective-period link is missing, provide the supported partial calculation and name the precise gap.",
+      "server_total_latency_ms": 28011,
+      "terminal_outcome": "timed_out",
+      "terminal_reason": "recovery_deadline_exceeded",
+      "terminal_failure_stage": "retrieval",
+      "recovery_reason": "recovery_deadline_exceeded",
+      "timing_spans": [
+        {
+          "name": "retrieval",
+          "phase": "initial",
+          "classification_basis": "first recovery_planning span position; initial retrieval precedes it, later retrieval is recovery",
+          "start_offset_ms": 50,
+          "elapsed_ms": 10345,
+          "outcome": "completed",
+          "purpose": "retrieval",
+          "parent_id": "93d0df658abb",
+          "id": "1bb8d35838a2"
+        },
+        {
+          "name": "recovery_planning",
+          "phase": null,
+          "classification_basis": null,
+          "start_offset_ms": 10422,
+          "elapsed_ms": 9882,
+          "outcome": "completed",
+          "purpose": "recovery_planning",
+          "parent_id": "b9874bcbd653",
+          "id": "e606e7e9c35c"
+        },
+        {
+          "name": "retrieval",
+          "phase": "recovery",
+          "classification_basis": "first recovery_planning span position; initial retrieval precedes it, later retrieval is recovery",
+          "start_offset_ms": 20839,
+          "elapsed_ms": 7186,
+          "outcome": "cancelled",
+          "purpose": "retrieval",
+          "parent_id": "b9874bcbd653",
+          "id": "247804000cc7"
+        },
+        {
+          "name": "retrieval",
+          "phase": "recovery",
+          "classification_basis": "first recovery_planning span position; initial retrieval precedes it, later retrieval is recovery",
+          "start_offset_ms": 20840,
+          "elapsed_ms": 7185,
+          "outcome": "cancelled",
+          "purpose": "retrieval",
+          "parent_id": "b9874bcbd653",
+          "id": "fa469380566b"
+        },
+        {
+          "name": "retrieval",
+          "phase": "recovery",
+          "classification_basis": "first recovery_planning span position; initial retrieval precedes it, later retrieval is recovery",
+          "start_offset_ms": 20841,
+          "elapsed_ms": 7184,
+          "outcome": "cancelled",
+          "purpose": "retrieval",
+          "parent_id": "b9874bcbd653",
+          "id": "5fe212d257e2"
+        }
+      ],
+      "source_file": "artifacts/cursor-runs/post-qa-remediation-2026-09-30/browser-qa/broad-income-tax-2026-10-01/04-synthetic-salary-response.json",
+      "source_file_sha256": "3728622AEA9E589E8B846F8904778E6C7F572A4B4CAF40F313216C3F258CFFDF"
+    }
+  ]
+}

@@ -13,9 +13,10 @@ from app.platform.providers.implementations.gemini_embedding import GeminiEmbedd
 from app.platform.providers.implementations.hash_embedding import HashEmbeddingProvider
 from app.platform.providers.implementations.ollama_embedding import OllamaEmbeddingProvider
 from app.platform.providers.implementations.openai_embedding import OpenAIEmbeddingProvider
+from app.platform.providers.provider_work import CachedEmbeddingProvider
 
 
-def create_embedding_provider(
+def _create_embedding_provider(
     settings: Settings,
     *,
     backend: EmbeddingBackend | None = None,
@@ -89,12 +90,32 @@ def create_embedding_provider(
     raise ProviderError(msg, provider_name="embedding_factory")
 
 
+def create_embedding_provider(
+    settings: Settings,
+    *,
+    backend: EmbeddingBackend | None = None,
+    model: str | None = None,
+    dimensions: int | None = None,
+    embedding_set_version: int | None = None,
+) -> BaseEmbeddingProvider:
+    provider = _create_embedding_provider(
+        settings, backend=backend, model=model, dimensions=dimensions
+    )
+    if settings.provider_costs.cache_enabled and provider.provider_name == "cohere":
+        return CachedEmbeddingProvider(
+            provider,
+            embedding_set_version=embedding_set_version or settings.retrieval.embedding_set_version,
+        )
+    return provider
+
+
 def create_embedding_provider_for_identity(
     settings: Settings,
     *,
     provider: str,
     model: str,
     dimensions: int,
+    embedding_set_version: int | None = None,
 ) -> BaseEmbeddingProvider:
     """Construct the query embedder that matches an active or retained build."""
     try:
@@ -109,6 +130,7 @@ def create_embedding_provider_for_identity(
         backend=backend,
         model=model,
         dimensions=dimensions,
+        embedding_set_version=embedding_set_version,
     )
 
 

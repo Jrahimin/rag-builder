@@ -83,7 +83,9 @@ async def test_rollback_activates_retained_previous_build() -> None:
     ) as activate:
         result = await service.rollback()
     assert result is retained
-    activate.assert_awaited_once_with(service._session, service._project_id, retained)
+    activate.assert_awaited_once_with(
+        service._session, service._project_id, retained, rollback=True
+    )
     service._audit.record.assert_called()
 
 

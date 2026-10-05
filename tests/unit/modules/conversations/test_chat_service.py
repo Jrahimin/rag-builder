@@ -29,12 +29,14 @@ from app.modules.conversations.context_builder import ContextBuilder
 from app.modules.conversations.grounded_context import select_exact_recalled_knowledge
 from app.modules.conversations.ports import ContextChunk, ContextRetrievalResult
 from app.modules.conversations.prompts.registry import GROUNDED_PROMPT_VERSION
-from app.modules.conversations.schemas.message import MessageSendRequest
+from app.modules.conversations.schemas.message import MessageResponse, MessageSendRequest
 from app.modules.conversations.services.chat_service import (
     ChatService,
     _assemble_response_policy,
     _bounded_recovery_profile,
     _coverage_verification_failed,
+    _prune_unverified_partial_paragraphs,
+    _repair_missing_citation_claims,
     _requires_calculation_coverage,
     _requires_current_rule_coverage,
     _reviewed_web_fallback_eligible,
@@ -62,19 +64,61 @@ from app.platform.providers.contracts.web_search import (
 )
 from app.platform.providers.errors import ProviderError, ProviderQuotaError, ProviderTimeoutError
 from app.platform.providers.implementations.echo_chat import EchoLLMProvider
-from app.platform.providers.request_work import current_request_work
+from app.platform.providers.request_work import current_request_purpose, current_request_work
+
+
+def test_partial_answer_pruning_drops_entire_unverified_paragraph() -> None:
+    content = (
+        "The rebate is the lowest of three source-proved amounts. [1]\n\n"
+        "Your investments qualify. [1] The reviewed evidence does not establish "
+        "the detailed eligibility rules."
+    )
+    claims = [
+        {
+            "text": "The rebate is the lowest of three source-proved amounts.",
+            "verification": "supported",
+        },
+        {"text": "Your investments qualify.", "verification": "unsupported"},
+    ]
+
+    assert _prune_unverified_partial_paragraphs(content, claims) == (
+        "The rebate is the lowest of three source-proved amounts. [1]"
+    )
+    assert (
+        _prune_unverified_partial_paragraphs(
+            content, [{"text": "unlocatable claim", "verification": "unsupported"}]
+        )
+        == ""
+    )
+
+
+def test_citation_repair_requires_independent_support_for_each_list_item() -> None:
+    content = "The rebate is the lowest of:\n\n- 3% of income;\n- 10% of investment.\n\n[1]"
+    failed = [
+        {"claim_id": "claim-1", "text": "- 3% of income;"},
+        {"claim_id": "claim-2", "text": "- 10% of investment."},
+    ]
+    independently_supported = [
+        {
+            "claim_id": claim["claim_id"],
+            "verification": "supported",
+            "evidence": [{"citation_index": 1}],
+        }
+        for claim in failed
+    ]
+    assert _repair_missing_citation_claims(content, failed, independently_supported) == (
+        "The rebate is the lowest of:\n\n- 3% of income; [1]\n- 10% of investment. [1]\n\n[1]"
+    )
+    independently_supported[1]["verification"] = "unsupported"
+    assert _repair_missing_citation_claims(content, failed, independently_supported) == ""
+
 
 pytestmark = pytest.mark.unit
 
 
-@pytest.mark.parametrize(
-    ("question", "detector"),
-    [
-        ("Calculate the tax payable for this period.", _requires_calculation_coverage),
-        ("What is the current tax rate?", _requires_current_rule_coverage),
-    ],
-)
-def test_empty_retrieval_task_detection_keeps_broad_recovery_budget(question, detector) -> None:
+def test_empty_retrieval_calculation_keeps_broad_recovery_budget() -> None:
+    question = "Calculate the tax payable for this period."
+    detector = _requires_calculation_coverage
     broad_task = detector(question, [])
     assert broad_task is True
     assert (
@@ -85,6 +129,27 @@ def test_empty_retrieval_task_detection_keeps_broad_recovery_budget(question, de
             presentation_only=False,
         )
         == "broad"
+    )
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "What is the rebate rate?",
+        "What is the current rebate rate?",
+        "What is the rebate rate for AY 2026-27?",
+    ],
+)
+def test_equivalent_focused_rule_wording_uses_focused_budget(question: str) -> None:
+    assert _requires_current_rule_coverage(question, [])
+    assert (
+        _bounded_recovery_profile(
+            enabled=True,
+            blocks_generation=True,
+            broad_task=False,
+            presentation_only=False,
+        )
+        == "focused"
     )
 
 
@@ -108,6 +173,32 @@ def test_focused_and_supported_controls_do_not_take_broad_budget() -> None:
             presentation_only=False,
         )
         is None
+    )
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "What is the tax rebate rate?",
+        "What is the tax-free income limit?",
+        "What is the tax-free income limit for assessment year 2024-25?",
+        "করমুক্ত আয়ের সীমা কত?",
+        "Please show the rebate rate.",
+        "Rebate rate",
+        "কর ছাড়ের হার",
+        "করমুক্ত আয়ের সীমা",
+    ],
+)
+def test_yearless_and_historical_changing_rules_require_applicability(question: str) -> None:
+    assert _requires_current_rule_coverage(question, [])
+    assert (
+        _bounded_recovery_profile(
+            enabled=True,
+            blocks_generation=True,
+            broad_task=False,
+            presentation_only=False,
+        )
+        == "focused"
     )
 
 
@@ -255,12 +346,76 @@ class AltModelLLM(EchoLLMProvider):
         super().__init__(model="alt-model", provider_version="1")
 
 
+def fixture_entailment(messages, expected_answer, *, translation_source=None):
+    """Explicit fixture gold translation/paraphrase, tied to the supplied proof."""
+    import re
+
+    gold = re.sub(r"\[\d+\]", "", expected_answer).strip().rstrip(".")
+    rows = json.loads(messages[1].content)
+    verdicts = []
+    for row in rows:
+        assertion = row["assertion"].strip().rstrip(".")
+        supplied = " ".join(str(q["quote"]) for q in row.get("proof", []))
+
+        # These doubles define a known gold answer; unrelated provider output
+        # still fails. Real wrong-dimension negatives use their own verifier.
+        def normalized(text):
+            plain = re.sub(r"^\s*(?:[-*+]\s+|\d+[.)]\s+)", "", text)
+            return " ".join(plain.casefold().split()).rstrip(".")
+
+        exact_source = normalized(assertion) in normalized(supplied)
+        # Explicit controlled equivalences, rather than approval of arbitrary
+        # expected output against any nonempty source.
+        refund_paraphrase = normalized(supplied) == "refund within 30 days" and normalized(
+            assertion
+        ) in {
+            "refunds are available within 30 days",
+            "a refund may be requested within 30 days",
+            "grounded answer",
+            "the knowledge policy allows refunds within 30 days",
+        }
+        translated = (
+            translation_source is not None
+            and normalized(supplied) == normalized(translation_source)
+            and normalized(assertion) == normalized(gold)
+        )
+        web_paraphrase = (
+            normalized(supplied) == "current web guidance limits refunds to 14 days"
+            and normalized(assertion) == "current web guidance reports 14 days"
+        )
+        comparison = (
+            normalized(assertion) == "these sources conflict"
+            and normalized(supplied)
+            == "refund within 30 days current web guidance limits refunds to 14 days"
+        )
+        supported = bool(supplied) and (
+            exact_source or refund_paraphrase or web_paraphrase or comparison or translated
+        )
+        verdicts.append(
+            {
+                "status": "supported" if supported else "unsupported",
+                "failed_dimensions": [] if supported else ["scope"],
+                "evidence_binding": "",
+            }
+        )
+    return ChatCompletionResult(
+        content=json.dumps({"verdicts": verdicts}),
+        provider="echo",
+        model="test",
+        finish_reason="stop",
+        usage=ChatUsage(0, 0),
+        provider_version="1",
+    )
+
+
 class CitedLLM(EchoLLMProvider):
     def __init__(self, content: str) -> None:
         super().__init__(model="test", provider_version="1")
         self.content = content
 
     async def generate(self, messages, *, temperature, max_tokens):
+        if current_request_purpose() == "claim_verification":
+            return fixture_entailment(messages, self.content)
         content = self.content
         if (
             messages
@@ -444,7 +599,7 @@ def _service(
     )
 
 
-async def test_cited_counts_and_authority_use_answer_markers_without_renumbering_snapshots(
+async def test_published_citations_remap_markers_with_source_identity_and_persisted_get_parity(
     session,
     conversation_repository,
     message_repository,
@@ -476,9 +631,31 @@ async def test_cited_counts_and_authority_use_answer_markers_without_renumbering
         conversation.id, MessageSendRequest(content="What is the refund policy?")
     )
     answer = turn.assistant_message
-    assert len(answer.citations) == 2
-    assert answer.citations[1].chunk_id == second.chunk_id
-    assert "[2]" in answer.content
+    assert len(answer.citations) == 1
+    citation = answer.citations[0]
+    assert citation.chunk_id == second.chunk_id
+    assert citation.document_id == second.document_id
+    assert citation.chunk_hash == content_hash(second.content)
+    assert citation.evidence_span_hash == citation.chunk_hash
+    assert citation.evidence_source_chunk_hash == second.chunk_hash
+    assert citation.indexed_chunk_hash is None
+    assert citation.excerpt == second.content
+    assert first.chunk_id not in {item.chunk_id for item in answer.citations}
+    assert "[1]" in answer.content and "[2]" not in answer.content
+    assert len(answer.claims) == 1 and answer.claims[0].verification == "supported"
+    proof = answer.claims[0].evidence[0]
+    assert proof.citation_index == 1
+    assert proof.chunk_id == citation.chunk_id and proof.document_id == citation.document_id
+    assert proof.excerpt == second.content
+    assert proof.evidence_span_hash == content_hash(second.content)
+    # GET uses the same saved-row serializer, without retrieval or index rebuilding.
+    saved_row = message_repository.add.call_args.args[0]
+    saved = MessageResponse.from_message(saved_row)
+    assert saved.content == answer.content
+    assert saved.citations == answer.citations and saved.claims == answer.claims
+    assert saved.terminal_outcome == answer.terminal_outcome
+    assert saved_row.citations[0]["chunk_id"] == str(second.chunk_id)
+    assert saved_row.claims[0]["evidence"][0]["evidence_span_hash"] == content_hash(second.content)
     assert answer.metadata["evidence_summary"]["context_passages"] == 2
     assert answer.metadata["evidence_summary"]["cited_passages"] == 1
     assert answer.metadata["evidence_summary"]["factual_claims"] == 1
@@ -790,11 +967,17 @@ async def test_send_message_commits_user_before_assistant(
     conversation_repository: AsyncMock,
     message_repository: AsyncMock,
 ) -> None:
+    committed_roles: list[MessageRole] = []
+
+    async def record_commit() -> None:
+        committed_roles.append(message_repository.add.call_args.args[0].role)
+
+    session.commit.side_effect = record_commit
     service = _service(
         session,
         conversation_repository,
         message_repository,
-        EchoLLMProvider(model="test", provider_version="1"),
+        CitedLLM("Refunds are available within 30 days. [1]"),
     )
     turn = await service.send_message(
         conversation_repository.get_by_id.return_value.id,
@@ -803,9 +986,53 @@ async def test_send_message_commits_user_before_assistant(
     assert session.commit.await_count == 2
     assert session.rollback.await_count >= 1
     assert turn.user_message.content == "What is the refund policy?"
-    assert turn.assistant_message.content.startswith("[echo]")
-    assert turn.assistant_message.citations
+    assert committed_roles == [MessageRole.USER, MessageRole.ASSISTANT]
+    answer = turn.assistant_message
+    assert answer.content == "Refunds are available within 30 days. [1]"
+    assert answer.grounded is True and answer.terminal_outcome.outcome == "answered"
+    assert answer.claims[0].verification == "supported"
+    assert answer.claims[0].evidence[0].citation_index == 1
+    assert answer.claims[0].evidence[0].chunk_id == answer.citations[0].chunk_id
+    saved = MessageResponse.from_message(message_repository.add.call_args.args[0])
+    assert saved.content == answer.content and saved.claims == answer.claims
+    assert saved.terminal_outcome == answer.terminal_outcome
     assert conversation_repository.get_by_id.return_value.title is not None
+
+
+@pytest.mark.parametrize("provider_output", ["echo", "unpunctuated"])
+async def test_unverified_or_incomplete_provider_output_persists_truthful_failure(
+    session: AsyncMock,
+    conversation_repository: AsyncMock,
+    message_repository: AsyncMock,
+    provider_output: str,
+) -> None:
+    llm = (
+        EchoLLMProvider(model="test", provider_version="1")
+        if provider_output == "echo"
+        else CitedLLM("Refunds are available within 30 days [1]")
+    )
+    service = _service(session, conversation_repository, message_repository, llm)
+    turn = await service.send_message(
+        conversation_repository.get_by_id.return_value.id,
+        MessageSendRequest(content="What is the refund policy?"),
+    )
+    answer = turn.assistant_message
+    assert session.commit.await_count == 2
+    assert turn.user_message.content == "What is the refund policy?"
+    assert answer.grounded is False
+    assert answer.insufficient_evidence_reason == "claim_verification_failed"
+    assert answer.terminal_outcome.outcome == "verification_failed"
+    assert answer.terminal_outcome.failure_stage == "claim_verification"
+    assert answer.terminal_outcome.coverage != "complete"
+    assert not answer.citations
+    assert "[echo]" not in answer.content and "[1]" not in answer.content
+    assert "Refunds are available within 30 days" not in answer.content
+    saved = MessageResponse.from_message(message_repository.add.call_args.args[0])
+    assert saved.content == answer.content and saved.citations == answer.citations
+    assert saved.terminal_outcome == answer.terminal_outcome
+    if provider_output == "unpunctuated":
+        assert answer.terminal_outcome.reason_code == "incomplete_publication"
+        assert not answer.claims
 
 
 async def test_send_message_llm_failure_persists_failed_execution(
@@ -959,7 +1186,12 @@ async def test_observe_mode_generates_when_cosine_gate_would_refuse(
         calls = 0
 
         async def generate(self, messages, *, temperature, max_tokens):
-            self.calls += 1
+            if current_request_purpose() == "claim_verification":
+                # Explicit source-copy fixture support; observe mode still
+                # cannot bypass publication verification.
+                return fixture_entailment(messages, "Parking permits are issued on Tuesdays only.")
+            if current_request_purpose() == "answer_generation":
+                self.calls += 1
             return await super().generate(
                 messages,
                 temperature=temperature,
@@ -1294,10 +1526,12 @@ async def test_stream_cancel_skips_assistant_persist(
         message_repository,
         EchoLLMProvider(model="test", provider_version="1"),
     )
-    cancel_after_first = False
 
     async def should_cancel() -> bool:
-        return cancel_after_first
+        return any(
+            span["name"] == "answer_generation"
+            for span in service._work.snapshot()["spans"]["items"]
+        )
 
     events: list[str | dict] = []
     async for item in service.stream_message(
@@ -1305,8 +1539,6 @@ async def test_stream_cancel_skips_assistant_persist(
         MessageSendRequest(content="one two three"),
         should_cancel=should_cancel,
     ):
-        if isinstance(item, str):
-            cancel_after_first = True
         events.append(item)
     assert session.commit.await_count == 1
     assert not any(isinstance(item, dict) and item["event"] == "done" for item in events)
@@ -1425,6 +1657,8 @@ async def test_cited_english_answer_is_grounded_when_query_embedder_confirms(
 
     class CitedLLM(EchoLLMProvider):
         async def generate(self, messages, *, temperature, max_tokens):
+            if current_request_purpose() == "claim_verification":
+                return fixture_entailment(messages, claim, translation_source=table)
             del messages, temperature, max_tokens
             return ChatCompletionResult(
                 content=f"{claim} [1]",
@@ -1563,7 +1797,7 @@ async def test_persisted_web_diagnostics_keep_partial_scope_review_nested(
         )
 
     monkeypatch.setattr(
-        "app.modules.conversations.services.chat_service.review_web_evidence",
+        "app.modules.conversations.services.message_execution_runner_service.review_web_evidence",
         AsyncMock(side_effect=partial_review),
     )
 
@@ -1610,7 +1844,7 @@ async def test_web_search_timeout_uses_search_timeout_status(
     assert "web_search" in turn.assistant_message.metadata["lifecycle"]["stages_ms"]
 
 
-async def test_bounded_deadline_can_use_reviewed_web_for_unscoped_factual_question(
+async def test_bounded_deadline_keeps_unresolved_indexed_authority_closed(
     session,
     conversation_repository,
     message_repository,
@@ -1633,7 +1867,10 @@ async def test_bounded_deadline_can_use_reviewed_web_for_unscoped_factual_questi
     service._retrieval = UnresolvedRuleRetrieval()
     service._web_search = web
     monkeypatch.setattr(
-        "app.modules.conversations.services.chat_service.repair_knowledge_evidence",
+        (
+            "app.modules.conversations.services.message_execution_run"
+            "ner_service.repair_knowledge_evidence"
+        ),
         AsyncMock(
             return_value=EvidenceRepairResult(
                 [],
@@ -1653,13 +1890,18 @@ async def test_bounded_deadline_can_use_reviewed_web_for_unscoped_factual_questi
         MessageSendRequest(content="What is the refund policy?"),
     )
 
-    assert len(web.calls) == 1
-    assert turn.assistant_message.finish_reason != "error"
-    assert turn.assistant_message.source_provenance == "web"
+    assert not web.calls
+    assert turn.assistant_message.finish_reason == "recovery_deadline_exceeded"
+    assert turn.assistant_message.insufficient_evidence_reason == "recovery_deadline_exceeded"
     assert turn.assistant_message.metadata["knowledge_repair"]["fallback_route"] == (
-        "web_after_recovery_deadline"
+        "insufficient_evidence_after_recovery_deadline"
     )
-    assert turn.assistant_message.metadata["web_search"]["status"] == "evidence_accepted"
+    assert turn.assistant_message.metadata["web_search"]["status"] == (
+        "suppressed_unresolved_authority"
+    )
+
+    assert turn.assistant_message.terminal_outcome.outcome == "timed_out"
+    assert turn.assistant_message.terminal_outcome.reason_code == "recovery_deadline_exceeded"
 
 
 async def test_scoped_bounded_recovery_deadline_persists_insufficient_evidence_without_web(
@@ -1695,7 +1937,11 @@ async def test_scoped_bounded_recovery_deadline_persists_insufficient_evidence_w
         )
     )
     monkeypatch.setattr(
-        "app.modules.conversations.services.chat_service.repair_knowledge_evidence", repair
+        (
+            "app.modules.conversations.services.message_execution_run"
+            "ner_service.repair_knowledge_evidence"
+        ),
+        repair,
     )
 
     turn = await service.send_message(
@@ -1705,8 +1951,8 @@ async def test_scoped_bounded_recovery_deadline_persists_insufficient_evidence_w
 
     assistant = turn.assistant_message
     assert repair.await_count == 1
-    assert assistant.finish_reason == "insufficient_evidence"
-    assert assistant.insufficient_evidence_reason == "unresolved_authority"
+    assert assistant.finish_reason == "recovery_deadline_exceeded"
+    assert assistant.insufficient_evidence_reason == "recovery_deadline_exceeded"
     assert assistant.metadata["web_search"]["status"] == "suppressed_scoped_request"
     assert assistant.metadata["source_scope"]["effective"] == "indexed_only"
     assert assistant.metadata["knowledge_repair"]["fallback_route"] == (
@@ -1714,14 +1960,18 @@ async def test_scoped_bounded_recovery_deadline_persists_insufficient_evidence_w
     )
     assert not web.calls
     assert message_repository.add.call_args_list[-1].args[0].finish_reason == (
-        "insufficient_evidence"
+        "recovery_deadline_exceeded"
     )
+
+    assert assistant.terminal_outcome.outcome == "timed_out"
+    assert assistant.terminal_outcome.reason_code == "recovery_deadline_exceeded"
 
 
 @pytest.mark.parametrize(
     ("question", "expected_trigger"),
     [
         ("What is the current refund policy?", "focused_lookup"),
+        ("What is the refund rate?", "focused_lookup"),
         ("Calculate the tax payable for this period.", "calculation_completeness"),
     ],
 )
@@ -1760,20 +2010,164 @@ async def test_current_and_calculation_deadline_guards_suppress_web_fallback(
         )
     )
     monkeypatch.setattr(
-        "app.modules.conversations.services.chat_service.repair_knowledge_evidence", repair
+        (
+            "app.modules.conversations.services.message_execution_run"
+            "ner_service.repair_knowledge_evidence"
+        ),
+        repair,
     )
 
     turn = await service.send_message(conversation.id, MessageSendRequest(content=question))
 
     assistant = turn.assistant_message
     assert repair.await_count == 1
-    assert assistant.finish_reason == "insufficient_evidence"
+    assert assistant.finish_reason == "recovery_deadline_exceeded"
     assert assistant.metadata["knowledge_repair"]["trigger"] == expected_trigger
     assert assistant.metadata["knowledge_repair"]["fallback_route"] == (
         "insufficient_evidence_after_recovery_deadline"
     )
     assert assistant.metadata["web_search"]["status"] == "suppressed_unresolved_authority"
     assert not web.calls
+
+    assert assistant.terminal_outcome.outcome == "timed_out"
+    assert assistant.terminal_outcome.reason_code == "recovery_deadline_exceeded"
+
+
+@pytest.mark.parametrize("mode", [ResponseMode.INDEXED_THEN_WEB, ResponseMode.INDEXED_AND_WEB])
+@pytest.mark.parametrize(
+    ("question", "expected_profile", "expected_trigger"),
+    [
+        ("Rebate rate", "focused", "current_rule_applicability"),
+        ("কর ছাড়ের হার", "focused", "current_rule_applicability"),
+        ("Calculate tax payable for 100 units.", "broad", "calculation_completeness"),
+    ],
+)
+@pytest.mark.parametrize("recovery_found_source", [False, True])
+async def test_empty_recall_current_fact_timeout_does_not_escape_to_web(
+    session,
+    conversation_repository,
+    message_repository,
+    conversation,
+    monkeypatch,
+    mode: ResponseMode,
+    question: str,
+    expected_profile: str,
+    expected_trigger: str,
+    recovery_found_source: bool,
+) -> None:
+    web = FakeWebSearch()
+    service = _service(
+        session,
+        conversation_repository,
+        message_repository,
+        CitedLLM("The obsolete rebate rate is 15% [1]."),
+        chat_config=ChatConfig(response_mode=mode, bounded_recovery_enabled=True),
+    )
+    service._retrieval = EmptyRetrieval()
+    service._web_search = web
+    discovered = (
+        [
+            replace(
+                chunk,
+                metadata={**chunk.metadata, "authority_status": "unresolved"},
+            )
+            for chunk in (await FakeRetrieval().retrieve()).chunks
+        ]
+        if recovery_found_source
+        else []
+    )
+    repair = AsyncMock(
+        return_value=EvidenceRepairResult(
+            discovered,
+            None,
+            {"status": "repair_unavailable", "stop_reason": "recovery_deadline_exceeded"},
+            failure=ProviderTimeoutError(
+                "Recovery deadline exceeded",
+                provider_name="echo",
+                context={"reason": "recovery_deadline_exceeded"},
+            ),
+        )
+    )
+    monkeypatch.setattr(
+        (
+            "app.modules.conversations.services.message_execution_run"
+            "ner_service.repair_knowledge_evidence"
+        ),
+        repair,
+    )
+
+    turn = await service.send_message(conversation.id, MessageSendRequest(content=question))
+
+    assert repair.await_count == 1
+    assert repair.call_args.kwargs["recovery_profile"] == expected_profile
+    if expected_profile == "focused":
+        assert repair.call_args.kwargs["max_followup_rounds"] == 0
+    assert turn.assistant_message.finish_reason == "recovery_deadline_exceeded"
+    assert turn.assistant_message.metadata["knowledge_repair"]["trigger"] == expected_trigger
+    assert turn.assistant_message.metadata["web_search"]["status"] == (
+        "suppressed_unresolved_authority"
+    )
+    assert not web.calls
+
+    assert turn.assistant_message.terminal_outcome.outcome == "timed_out"
+    assert turn.assistant_message.terminal_outcome.reason_code == "recovery_deadline_exceeded"
+
+
+@pytest.mark.parametrize("mode", [ResponseMode.INDEXED_THEN_WEB, ResponseMode.INDEXED_AND_WEB])
+async def test_recovery_discovered_unresolved_source_blocks_web_in_factual_mode(
+    session,
+    conversation_repository,
+    message_repository,
+    conversation,
+    monkeypatch,
+    mode: ResponseMode,
+) -> None:
+    web = FakeWebSearch()
+    service = _service(
+        session,
+        conversation_repository,
+        message_repository,
+        CitedLLM("An obsolete source says the answer is 15 [1]."),
+        chat_config=ChatConfig(response_mode=mode, bounded_recovery_enabled=True),
+    )
+    service._evidence_approach = "factual"
+    service._retrieval = EmptyRetrieval()
+    service._web_search = web
+    discovered = replace(
+        (await FakeRetrieval().retrieve()).chunks[0],
+        metadata={"authority_status": "unresolved"},
+    )
+    monkeypatch.setattr(
+        (
+            "app.modules.conversations.services.message_execution_run"
+            "ner_service.repair_knowledge_evidence"
+        ),
+        AsyncMock(
+            return_value=EvidenceRepairResult(
+                [discovered],
+                None,
+                {"status": "repair_unavailable", "stop_reason": "recovery_deadline_exceeded"},
+                failure=ProviderTimeoutError(
+                    "Recovery deadline exceeded",
+                    provider_name="echo",
+                    context={"reason": "recovery_deadline_exceeded"},
+                ),
+            )
+        ),
+    )
+
+    turn = await service.send_message(
+        conversation.id, MessageSendRequest(content="What is the capital of Japan?")
+    )
+
+    assert turn.assistant_message.finish_reason == "recovery_deadline_exceeded"
+    assert turn.assistant_message.metadata["web_search"]["status"] == (
+        "suppressed_unresolved_authority"
+    )
+    assert not web.calls
+
+    assert turn.assistant_message.terminal_outcome.outcome == "timed_out"
+    assert turn.assistant_message.terminal_outcome.reason_code == "recovery_deadline_exceeded"
 
 
 async def test_provider_timeout_during_bounded_recovery_still_persists_failure(
@@ -1809,7 +2203,11 @@ async def test_provider_timeout_during_bounded_recovery_still_persists_failure(
         )
     )
     monkeypatch.setattr(
-        "app.modules.conversations.services.chat_service.repair_knowledge_evidence", repair
+        (
+            "app.modules.conversations.services.message_execution_run"
+            "ner_service.repair_knowledge_evidence"
+        ),
+        repair,
     )
 
     with pytest.raises(ServiceUnavailableError):
@@ -1841,9 +2239,10 @@ async def test_broad_compliance_with_no_safe_indexed_proof_attempts_recovery_bef
 ) -> None:
     offset = [0.0]
     real_counter = time.perf_counter
+    clock = SimpleNamespace(perf_counter=lambda: real_counter() + offset[0])
+    monkeypatch.setattr("app.modules.conversations.services.chat_service.time", clock)
     monkeypatch.setattr(
-        "app.modules.conversations.services.chat_service.time",
-        SimpleNamespace(perf_counter=lambda: real_counter() + offset[0]),
+        "app.modules.conversations.services.message_execution_runner_service.time", clock
     )
     conversation.system_prompt_version = "v5"
     web = FakeWebSearch(
@@ -1892,7 +2291,11 @@ async def test_broad_compliance_with_no_safe_indexed_proof_attempts_recovery_bef
 
     repair = AsyncMock(side_effect=consume_recovery_budget)
     monkeypatch.setattr(
-        "app.modules.conversations.services.chat_service.repair_knowledge_evidence", repair
+        (
+            "app.modules.conversations.services.message_execution_run"
+            "ner_service.repair_knowledge_evidence"
+        ),
+        repair,
     )
 
     turn = await service.send_message(
@@ -1901,14 +2304,31 @@ async def test_broad_compliance_with_no_safe_indexed_proof_attempts_recovery_bef
     )
 
     repair.assert_awaited_once()
-    assert len(web.calls) == 1
-    assert turn.assistant_message.metadata["knowledge_repair"]["fallback_route"] == (
-        "web_after_incomplete_review" if completed_review else "web_after_recovery_deadline"
+    assert not web.calls
+    timed_out = not completed_review or elapsed_before_web > 0
+    assert turn.assistant_message.finish_reason == (
+        "recovery_deadline_exceeded" if timed_out else "insufficient_evidence"
     )
+    assert turn.assistant_message.insufficient_evidence_reason == (
+        "recovery_deadline_exceeded" if timed_out else "unresolved_authority"
+    )
+    assert turn.assistant_message.metadata["web_search"]["status"] == (
+        "suppressed_unresolved_authority"
+    )
+    if not completed_review:
+        assert turn.assistant_message.metadata["knowledge_repair"]["fallback_route"] == (
+            "insufficient_evidence_after_recovery_deadline"
+        )
     scope = turn.assistant_message.metadata["response_policy"]["answerable_scope"]
     assert scope["complete"] is False
-    assert scope["partial"] is True
-    assert scope["unresolved_facets"]
+    assert scope["partial"] is False
+
+    assert turn.assistant_message.terminal_outcome.outcome == (
+        "timed_out" if timed_out else "insufficient_evidence"
+    )
+    assert turn.assistant_message.terminal_outcome.reason_code == (
+        "recovery_deadline_exceeded" if timed_out else "source_review_incomplete"
+    )
 
 
 @pytest.mark.parametrize(
@@ -2163,7 +2583,24 @@ async def test_repaired_evidence_reaches_generation_without_old_rule_or_web(
                 if coverage_complete and missing_inputs
                 else []
             ),
-            answer,
+            replace(
+                answer,
+                content=json.dumps(
+                    {
+                        "version": "answer.draft.v1",
+                        "segments": [
+                            {
+                                "text": (
+                                    "Current refund entitlement is 45 days for eligible purchases."
+                                ),
+                                "requirement_ids": ["query-0"],
+                                "proof_ids": [str(current.chunk_id)],
+                            }
+                        ],
+                    }
+                ),
+            ),
+            replace(answer, content='{"verdicts":["supported"]}', usage=ChatUsage(0, 0)),
         ]
     )
     service = _service(
@@ -2198,7 +2635,7 @@ async def test_repaired_evidence_reaches_generation_without_old_rule_or_web(
         assert (
             turn.assistant_message.metadata["knowledge_repair"]["status"] == "coverage_incomplete"
         )
-        assert llm.generate.await_count == 3
+        assert llm.generate.await_count == (3 if initial_kind == "calculation" else 2)
         return
     assert turn.assistant_message.citations[0].chunk_id == current.chunk_id
     assert turn.assistant_message.input_tokens == 30
@@ -2212,7 +2649,12 @@ async def test_repaired_evidence_reaches_generation_without_old_rule_or_web(
     assert ("retrieval" in repair["branches"][0]) is store_trace
     assert repair["coverage"]["quotes_validated"] is True
     assert "quote" not in repair["coverage"]["checks"][0]
-    messages = llm.generate.call_args_list[-1].args[0]
+    messages = next(
+        call.args[0]
+        for call in llm.generate.call_args_list
+        if "Unresolved scenario inputs" in call.args[0][0].content
+        or "Generation protocol (platform instruction)" in call.args[0][0].content
+    )
     prompt = "\n".join(message.content for message in messages)
     assert current.content in prompt
     assert initial.chunks[0].content not in prompt
@@ -2561,7 +3003,19 @@ async def test_validated_partial_cannot_alter_indexed_web_policy(
             },
         ),
     ]
-    llm = CitedLLM("Current refund entitlement is 45 days for eligible purchases [1].")
+    draft_content = json.dumps(
+        {
+            "segments": [
+                {
+                    "assertion_id": "refund",
+                    "text": current.content,
+                    "requirement_ids": ["R2"],
+                    "proof_ids": [str(current.chunk_id)],
+                }
+            ]
+        }
+    )
+    llm = CitedLLM(draft_content)
     generate = llm.generate
     answer = await generate([], temperature=None, max_tokens=100)
     llm.generate = AsyncMock(
@@ -2623,11 +3077,6 @@ async def test_validated_partial_cannot_alter_indexed_web_policy(
                         },
                     }
                 ),
-            ),
-            *(
-                [replace(answer, content=json.dumps({"queries": []}))]
-                if mode is ResponseMode.INDEXED_ONLY
-                else []
             ),
             answer,
         ]
@@ -2728,12 +3177,15 @@ async def test_authoritative_compliance_deadline_does_not_promote_unreviewed_evi
         ),
     )
 
-    assert turn.assistant_message.finish_reason == "insufficient_evidence"
+    assert turn.assistant_message.finish_reason == "recovery_deadline_exceeded"
     assert turn.assistant_message.grounded is False
     repair = turn.assistant_message.metadata["knowledge_repair"]
     assert not repair.get("admitted_evidence_timeout_fallback")
     assert repair["stop_reason"] == "recovery_deadline_exceeded"
     assert llm.generate.await_count == 1
+
+    assert turn.assistant_message.terminal_outcome.outcome == "timed_out"
+    assert turn.assistant_message.terminal_outcome.reason_code == "recovery_deadline_exceeded"
 
 
 async def test_modifies_expansion_survives_combined_rerank_and_skips_web(
@@ -3152,7 +3604,7 @@ async def test_indexed_and_web_keeps_provenance_separate(
         message_repository,
         CitedLLM(
             "The knowledge policy allows refunds within 30 days [1]. "
-            "Current web guidance reports 14 days [2]. These sources conflict."
+            "Current web guidance reports 14 days [2]. These sources conflict [1][2]."
         ),
         chat_config=ChatConfig(
             response_mode=ResponseMode.INDEXED_AND_WEB,
@@ -3419,6 +3871,8 @@ class ScriptedResolutionLLM(EchoLLMProvider):
         )
 
     async def generate(self, messages, *, temperature, max_tokens):
+        if current_request_purpose() == "claim_verification":
+            return fixture_entailment(messages, self.answer)
         self.generate_calls += 1
         if self._is_resolver(messages):
             self.resolver_calls += 1
@@ -3465,6 +3919,29 @@ def _reusable_chunk(
             "processing_version": 1,
         },
     )
+
+
+def test_coverage_scope_fallback_uses_only_complete_proven_scopes():
+    from app.modules.conversations.services.chat_service import _coverage_scope_fallback
+
+    source = _reusable_chunk("The first 400,000 is taxed at zero.")
+    repair = {
+        "coverage": {
+            "complete": True,
+            "checks": [
+                {
+                    "supported": True,
+                    "fulfillment": "full",
+                    "unresolved_facets": [],
+                    "answerable_scope": "The first 400,000 is taxed at zero.",
+                    "chunk_ids": [str(source.chunk_id)],
+                }
+            ],
+        }
+    }
+    assert _coverage_scope_fallback(repair, [source]) == ("The first 400,000 is taxed at zero. [1]")
+    repair["coverage"]["complete"] = False
+    assert _coverage_scope_fallback(repair, [source]) == ""
 
 
 def _reusable_citation(chunk: ContextChunk, **overrides: object) -> dict[str, object]:
@@ -3574,7 +4051,10 @@ async def test_explicit_presentation_rewrite_reuses_only_visible_prior_citations
     message_repository,
     conversation,
 ):
-    cited_chunk = _reusable_chunk()
+    cited_chunk = _reusable_chunk(
+        "A customer may request a refund. The refund request must be made within "
+        "30 days. The 30-day period begins on the purchase date."
+    )
     prior_user, prior_assistant = _history_messages(
         conversation,
         user_content="What is the refund period?",
@@ -3600,9 +4080,9 @@ async def test_explicit_presentation_rewrite_reuses_only_visible_prior_citations
             effective_question="Rewrite that as exactly three short bullets in English.",
         ),
         answer=(
-            "- Refunds may be requested. [1]\n"
-            "- The period is 30 days. [1]\n"
-            "- It runs from purchase. [1]"
+            "- A customer may request a refund. [1]\n"
+            "- The refund request must be made within 30 days. [1]\n"
+            "- The 30-day period begins on the purchase date. [1]"
         ),
     )
     service = _service(session, conversation_repository, message_repository, llm)
@@ -3956,7 +4436,7 @@ async def test_bangla_presentation_rewrite_uses_exact_recall(
     service._retrieval = retrieval
     turn = await service.send_message(
         conversation.id,
-        MessageSendRequest(content="আগের উত্তরটি সহজ বাংলায় তিনটি বুলেটে বলুন। নতুন তথ্য যোগ করবেন না।"),
+        MessageSendRequest(content=("আগের উত্তরটি সহজ বাংলায় তিনটি বুলেটে বলুন। নতুন তথ্য যোগ করবেন না।")),
     )
     assert retrieval.exact_calls and not retrieval.retrieve_calls
     assert llm.resolver_calls == 0
@@ -4240,7 +4720,9 @@ async def test_ranked_cited_fallback_admits_chunk_when_relevance_rejects(
 ):
     from app.modules.conversations.grounding_service import EvidenceDecision
     from app.modules.conversations.schemas.message import InsufficientEvidenceReason
-    from app.modules.conversations.services import chat_service as chat_service_mod
+    from app.modules.conversations.services import (
+        message_execution_runner_service as chat_service_mod,
+    )
 
     cited_chunk = _reusable_chunk()
     prior_user, prior_assistant = _history_messages(
@@ -4786,7 +5268,10 @@ async def test_resolver_timeout_falls_back_without_using_interpretation(
     )
     message_repository.list_recent_for_conversation.return_value = [prior_user, prior_assistant]
     monkeypatch.setattr(
-        "app.modules.conversations.services.chat_service.RESOLUTION_TIMEOUT_SECONDS",
+        (
+            "app.modules.conversations.services.message_execution_run"
+            "ner_service.RESOLUTION_TIMEOUT_SECONDS"
+        ),
         0.05,
     )
 
@@ -5035,6 +5520,8 @@ async def test_stream_wrapper_awaits_nested_delivery_cleanup_in_owner_task():
 
     service = object.__new__(ChatService)
     service._work = RequestWork(uuid.uuid4())
+    service._chat_config = ChatConfig()
+    service._config_snapshot_id = None
     cleanup: list[tuple[object, object]] = []
 
     async def delivery(*_args, **_kwargs):
@@ -5044,7 +5531,7 @@ async def test_stream_wrapper_awaits_nested_delivery_cleanup_in_owner_task():
             cleanup.append((asyncio.current_task(), current_request_work()))
 
     service._deliver_stream_message = delivery
-    stream = service.stream_message(uuid.uuid4(), None)
+    stream = service.stream_message(uuid.uuid4(), MessageSendRequest(content="Cleanup probe"))
     assert await anext(stream) == "token"
     owner = asyncio.current_task()
     await stream.aclose()
@@ -5241,7 +5728,7 @@ async def test_rewrite_carries_validated_partial_scope_into_generation_and_polic
     message_repository,
     conversation,
 ):
-    cited_chunk = _reusable_chunk()
+    cited_chunk = _reusable_chunk("Private companies must hold an AGM.")
     prior_user, prior_assistant = _history_messages(
         conversation,
         user_content="What AGM and filing rules apply?",
@@ -5508,6 +5995,9 @@ async def test_search_adapter_exact_recall_rejects_changed_modifier_scope(
     message_repository.list_recent_for_conversation.return_value = [prior_user, prior_assistant]
 
     class FakeSearch:
+        def set_request_scope(self, scope):
+            self.request_scope = scope
+
         def __init__(self) -> None:
             self.exact_calls: list[dict[str, object]] = []
             self.search_calls: list[object] = []
@@ -5715,7 +6205,7 @@ async def test_governed_presentation_rewrite_reuses_real_authority_snapshots(
     service = _service(session, conversation_repository, message_repository, llm)
     service._retrieval = retrieval
     first = await service.send_message(
-        conversation.id, MessageSendRequest(content="What is the rebate limit?")
+        conversation.id, MessageSendRequest(content="Explain the rebate provision.")
     )
     saved = message_repository.add.call_args_list[-1].args[0]
     citations = list(saved.citations or [])

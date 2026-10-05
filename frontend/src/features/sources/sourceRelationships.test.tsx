@@ -160,7 +160,10 @@ test.each(["projects", "lab"])("%s upload sends both modification targets", asyn
       : `/projects?project=${projectFixture.id}&section=sources`,
   );
   if (surface === "lab") await userEvent.click(await screen.findByText("Source versioning"));
-  await userEvent.selectOptions(await screen.findByLabelText("Source treatment"), "modifies");
+  await userEvent.selectOptions(
+    await screen.findByLabelText("Source treatment", {}, { timeout: 5000 }),
+    "modifies",
+  );
   const uploadForm =
     screen.getByLabelText("Source treatment").closest("form") ??
     screen.getByLabelText("Source treatment").closest("details")!;

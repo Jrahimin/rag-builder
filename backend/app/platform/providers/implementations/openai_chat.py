@@ -18,6 +18,7 @@ class OpenAIChatProvider(OpenAICompatibleChatProvider):
         provider_version: str,
         base_url: str = "https://api.openai.com",
         request_timeout_seconds: float = 120.0,
+        schema_capabilities: list[dict[str, str]] | None = None,
     ) -> None:
         super().__init__(
             provider_name="openai",
@@ -26,4 +27,5 @@ class OpenAIChatProvider(OpenAICompatibleChatProvider):
             model=model,
             provider_version=provider_version,
             request_timeout_seconds=request_timeout_seconds,
+            schema_capabilities=schema_capabilities,
         )

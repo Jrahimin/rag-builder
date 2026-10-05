@@ -158,6 +158,23 @@ class StartupPreflightService:
         action: str,
         failure_state: DependencyState = DependencyState.DOWN,
     ) -> DependencyHealth:
+        if self._settings.provider_costs.enabled and (
+            (name == "embedding_provider" and self._settings.embedding.backend.value == "cohere")
+            or (
+                name == "reranker_provider"
+                and self._settings.retrieval.reranker_backend.value == "cohere"
+            )
+        ):
+            return DependencyHealth(
+                name=name,
+                state=DependencyState.SKIPPED,
+                detail=(
+                    "Paid startup probe skipped by provider expense controls; "
+                    "capability is unverified."
+                ),
+                action="Verify through an explicitly scoped, budgeted project operation.",
+                checked_at=datetime.now(UTC),
+            )
         started = perf_counter()
         try:
             await asyncio.wait_for(operation(), timeout=check_timeout)

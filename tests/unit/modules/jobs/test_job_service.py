@@ -47,6 +47,7 @@ def _service(run: JobRun, queue: AsyncMock | None = None) -> JobService:
         audit=AsyncMock(spec=AuditRecorder),
     )
     service._runs.lock_owned_run = AsyncMock(return_value=run)
+    service._runs.accepted_waiting_for_update = AsyncMock(return_value=[])
     service._outbox.add_intent = MagicMock()
     return service
 
@@ -195,3 +196,23 @@ async def test_success_applies_detached_operation_payload_and_result() -> None:
     assert run.payload == payload
     assert run.result == result
     service._session.commit.assert_awaited_once()
+
+
+async def test_recovery_counts_accepted_waiting_and_expired_jobs_together() -> None:
+    retryable = _run(attempt_count=1)
+    waiting = _run(attempt_count=0)
+    waiting.project_id = retryable.project_id
+    waiting.state = JobState.WAITING_ACCEPTANCE
+    waiting.lease_owner = None
+    waiting.lease_expires_at = None
+    service = _service(retryable)
+    service._runs.accepted_waiting_for_update = AsyncMock(return_value=[waiting])
+    service._runs.list_expired_for_update = AsyncMock(return_value=[retryable])
+    result = await service.recover_expired(limit=10)
+    assert result.rescheduled == 2 and result.failed == ()
+    assert waiting.state is JobState.QUEUED
+    assert waiting.stage == "quality_accepted_continuation"
+    assert waiting.attempt_count == 0
+    assert retryable.state is JobState.RETRY_SCHEDULED
+    assert service._outbox.add_intent.call_count == 2
+    service._runs.accepted_waiting_for_update.assert_awaited_once_with(limit=10)
