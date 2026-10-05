@@ -125,3 +125,5 @@ artifacts/
 # Held-out turn-resolution examples stay outside the repo until freeze.
 tests/fixtures/journeys/held_out/**
 !tests/fixtures/journeys/held_out/README.md
+/.qa-capture-inbox/
+/qa_capture_sink.py
