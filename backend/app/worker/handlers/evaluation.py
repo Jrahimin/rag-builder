@@ -55,6 +55,7 @@ async def _evaluate(
         config_provenance=dict(evaluation_run.config_provenance),
         domain_instructions=str(captured_configuration.get("domain_instructions") or ""),
         prompt_profile=str(captured_configuration.get("prompt_profile") or "default"),
+        evidence_approach=str(captured_configuration.get("evidence_approach") or "authoritative"),
     )
     await runner.run(evaluation_run_id, on_progress=reporter.report)
     return None

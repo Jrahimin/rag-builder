@@ -19,6 +19,9 @@ from app.models.project import Project
 from app.models.source_metadata import SourceMetadataRevision
 from app.modules.knowledge.schemas.scope_review import ScopeReviewCreate
 from app.modules.knowledge.scope_facts import extract_scope_facts
+from app.modules.knowledge.services.chunking.structural_provenance import (
+    span_belongs_to_table_group,
+)
 from app.modules.knowledge.source_metadata_read import _canonical_source_scope
 from app.platform.audit.contracts import AuditActorType, AuditEventType, AuditOutcome, AuditRecorder
 from app.platform.domain.content_hash import content_hash
@@ -29,6 +32,32 @@ def digest(value: object) -> str:
     return hashlib.sha256(
         json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
     ).hexdigest()
+
+
+def _attested_review_span(chunk: DocumentChunk, span: dict) -> bool:
+    start, end = span.get("char_start"), span.get("char_end")
+    if type(start) is not int or type(end) is not int or start < 0 or end <= start:
+        return False
+    metadata = chunk.chunk_metadata or {}
+    if (
+        not metadata.get("table_row_group")
+        and chunk.char_start is not None
+        and chunk.char_start <= start < end <= chunk.char_start + len(chunk.content)
+        and chunk.content[start - chunk.char_start : end - chunk.char_start] == span.get("text")
+    ):
+        return True
+    return any(
+        item.get("element_id")
+        and span_belongs_to_table_group(item, metadata)
+        and item.get("provenance") == "exact_source_span"
+        and item.get("char_start") == start
+        and item.get("char_end") == end
+        and item.get("text") == span.get("text")
+        and end - start == len(str(span.get("text", "")))
+        and item.get("span_hash") == content_hash(str(span.get("text", "")))
+        and str(item.get("text") or "") in chunk.content
+        for item in metadata.get("source_spans", [])
+    )
 
 
 class ScopeReviewService:
@@ -103,18 +132,9 @@ class ScopeReviewService:
         for fact in request.facts:
             span = fact.source_span
             # Offsets are document offsets, bound to this exact final chunk.
-            start, end = span.get("char_start"), span.get("char_end")
-            if (
-                chunk.char_start is None
-                or type(start) is not int
-                or type(end) is not int
-                or chunk.content[start - chunk.char_start : end - chunk.char_start]
-                != span.get("text")
-                or start < chunk.char_start
-                or end > chunk.char_start + len(chunk.content)
-            ):
+            if not _attested_review_span(chunk, span):
                 raise BadRequestError(
-                    "Review requires exact chunk-relative source offsets.",
+                    "Review requires an exact contiguous or parser-attested constituent span.",
                     code="scope_review_invalid_span",
                 )
             if (

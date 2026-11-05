@@ -174,6 +174,95 @@ test("restores a selected Test Lab conversation and exposes a replayable URL", a
   );
 });
 
+test.each(["regular response", "saved GET"])(
+  "shows structured answer notices from %s without exposing diagnostic source fields",
+  async (path) => {
+    mockLabBase({ conversations: [conversationFixture] });
+    const assistant: Message = {
+      id: "cccccccc-cccc-cccc-cccc-cccccccccccc",
+      project_id: projectFixture.id,
+      conversation_id: conversationFixture.id,
+      role: "assistant",
+      content: "## Supported source text\n\nAn independently verified portion.",
+      finish_reason: "stop",
+      input_tokens: null,
+      output_tokens: null,
+      prompt_version: null,
+      embedding_set_version: null,
+      provider: null,
+      model: null,
+      metadata: {},
+      source_provenance: "none",
+      citations: [],
+      claims: [],
+      grounded: null,
+      insufficient_evidence_reason: null,
+      notices: [
+        {
+          kind: "unfulfilled_requirements",
+          text: "The earlier year's governing source is still unverified.",
+          language: "en",
+          source: { private_trace: "MUST NOT BE RENDERED" },
+        },
+        {
+          kind: "recovery_timeout",
+          text: "The remaining source review reached its time limit.",
+          language: "en",
+        },
+        {
+          kind: "request_timeout",
+          text: "The remaining source review reached its time limit.",
+          language: "en",
+        },
+        { kind: "recovery_timeout", text: "A different limitation remains.", language: "en" },
+        { kind: "unresolved_authority", text: "<img src=x onerror=alert(1)>", language: "en" },
+      ],
+      created_at: now,
+      updated_at: now,
+    };
+    const userMessage: Message = {
+      ...assistant,
+      id: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+      role: "user",
+      content: "Compare the indexed evidence.",
+      notices: [],
+    };
+    vi.spyOn(operatorApiClient, "getMessages").mockResolvedValue({
+      items: path === "saved GET" ? [assistant] : [],
+      total: path === "saved GET" ? 1 : 0,
+      limit: 200,
+      offset: 0,
+    });
+    const send = vi.spyOn(operatorApiClient, "sendMessage").mockResolvedValue({
+      user_message: userMessage,
+      assistant_message: assistant,
+    });
+    renderOperatorComponent(
+      <OperatorConsoleApp />,
+      `/lab?project=${projectFixture.id}&tab=messages&conversation=${conversationFixture.id}`,
+    );
+    if (path === "regular response") {
+      await userEvent.type(await screen.findByLabelText("Message"), userMessage.content);
+      await userEvent.click(screen.getByRole("button", { name: "Regular" }));
+      await userEvent.click(screen.getByRole("button", { name: "Send message" }));
+      await waitFor(() => expect(send).toHaveBeenCalledTimes(1));
+    }
+    const notices = await screen.findByRole("status", { name: "Answer notices" });
+    expect(within(notices).getAllByRole("listitem")).toHaveLength(4);
+    expect(
+      within(notices).getByText("The earlier year's governing source is still unverified."),
+    ).toBeInTheDocument();
+    expect(
+      within(notices).getByText("The remaining source review reached its time limit."),
+    ).toBeInTheDocument();
+    expect(within(notices).getByText("A different limitation remains.")).toBeInTheDocument();
+    expect(within(notices).getByText("<img src=x onerror=alert(1)>")).toBeInTheDocument();
+    expect(notices.querySelector("img")).toBeNull();
+    expect(screen.queryByText("MUST NOT BE RENDERED")).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Supported source text" })).toBeInTheDocument();
+  },
+);
+
 test("labels persisted server processing separately from unavailable client round trip", () => {
   const message: Message = {
     id: "cccccccc-cccc-cccc-cccc-cccccccccccc",
@@ -789,11 +878,8 @@ test("requires the exact filename before enabling irreversible purge and shows A
 test("keeps Bangla filenames matchable for purge confirmation", async () => {
   const banglaName = "অর্থ সংক্রান্ত কতিপয় আইন (দ্বিতীয় সংশোধন) অধ্যাদেশ, ২০২৫.pdf";
   mockLabBase({ documents: [{ ...documentFixture, filename: banglaName }] });
-  const writeText = vi.fn().mockResolvedValue(undefined);
-  Object.defineProperty(navigator, "clipboard", {
-    configurable: true,
-    value: { writeText },
-  });
+  const user = userEvent.setup();
+  const writeText = vi.spyOn(navigator.clipboard, "writeText");
   renderOperatorComponent(
     <OperatorConsoleApp />,
     `/lab?project=${projectFixture.id}&tab=documents`,
@@ -801,14 +887,17 @@ test("keeps Bangla filenames matchable for purge confirmation", async () => {
   expect(await screen.findByRole("heading", { name: banglaName })).toBeInTheDocument();
   const purge = await screen.findByRole("button", { name: "Purge" });
   expect(purge).toBeDisabled();
-  await userEvent.click(screen.getByRole("button", { name: "Copy filename" }));
+  await user.click(screen.getByRole("button", { name: "Copy filename" }));
   expect(writeText).toHaveBeenCalledWith(banglaName);
-  await userEvent.type(screen.getByLabelText("Purge confirmation"), banglaName);
+  await user.click(screen.getByLabelText("Purge confirmation"));
+  await user.paste();
+  expect(screen.getByLabelText("Purge confirmation")).toHaveValue(banglaName);
   expect(purge).toBeEnabled();
 });
 
 test("uploads a file as the latest revision of an existing source", async () => {
   mockLabBase();
+  const user = userEvent.setup();
   const revisionId = "55555555-5555-5555-5555-555555555555";
   vi.spyOn(operatorApiClient, "getSourceState").mockResolvedValue({
     project_id: projectFixture.id,
@@ -860,26 +949,28 @@ test("uploads a file as the latest revision of an existing source", async () => 
     <OperatorConsoleApp />,
     `/lab?project=${projectFixture.id}&tab=documents`,
   );
-  await userEvent.click(await screen.findByText("Source versioning"));
-  await userEvent.selectOptions(
+  await user.click(await screen.findByText("Source versioning"));
+  await user.selectOptions(
     screen.getByLabelText("Source treatment"),
-    "Newer edition replacing an existing source",
+    "Whole-document replacement (excludes the earlier edition)",
   );
-  await userEvent.selectOptions(screen.getByLabelText("Existing source"), revisionId);
-  await userEvent.selectOptions(screen.getByLabelText("Source role"), "supporting");
-  await userEvent.selectOptions(screen.getByLabelText("Source lifecycle"), "draft");
-  await userEvent.type(screen.getByLabelText("Source type"), "Ordinance");
+  await user.selectOptions(screen.getByLabelText("Existing source"), revisionId);
+  await user.selectOptions(screen.getByLabelText("Source role"), "supporting");
+  await user.selectOptions(screen.getByLabelText("Source lifecycle"), "draft");
+  await user.click(screen.getByLabelText("Source type"));
+  await user.paste("Ordinance");
   fireEvent.change(screen.getByLabelText("Published"), { target: { value: "2023-07-01" } });
   fireEvent.change(screen.getByLabelText("Effective from"), { target: { value: "2023-07-01" } });
   fireEvent.change(screen.getByLabelText("Effective to"), { target: { value: "2024-06-30" } });
-  await userEvent.type(screen.getByLabelText("Change reason"), "Annual update");
+  await user.click(screen.getByLabelText("Change reason"));
+  await user.paste("Annual update");
   const picker = screen.getByText("Drop a document here").closest("label")!;
   const fileInput = picker.querySelector("input[type=file]") as HTMLInputElement;
-  await userEvent.upload(
+  await user.upload(
     fileInput,
     new File(["revised ordinance"], "ordinance-v2.pdf", { type: "application/pdf" }),
   );
-  await userEvent.click(screen.getByRole("button", { name: "Submit document" }));
+  await user.click(screen.getByRole("button", { name: "Submit document" }));
   expect(upload).toHaveBeenCalledWith(
     projectFixture.id,
     expect.any(File),
@@ -895,13 +986,20 @@ test("uploads a file as the latest revision of an existing source", async () => 
       effective_from: "2023-07-01",
       effective_to: "2024-06-30",
       change_reason: "Annual update",
-      relationships: [{ relationship_type: "replaces", target_revision_id: revisionId }],
+      relationships: [
+        {
+          relationship_type: "replaces",
+          target_revision_id: revisionId,
+          review_provenance: { whole_document_replacement: "declared" },
+        },
+      ],
     }),
   );
 });
 
 test("corrects source treatment in Test Lab without triggering document processing", async () => {
   mockLabBase();
+  const user = userEvent.setup();
   const sourceState: SourceState = {
     project_id: projectFixture.id,
     generation: 1,
@@ -955,12 +1053,10 @@ test("corrects source treatment in Test Lab without triggering document processi
     `/lab?project=${projectFixture.id}&tab=documents`,
   );
 
-  await userEvent.click(await screen.findByRole("button", { name: "Correct metadata" }));
-  await userEvent.type(
-    screen.getByPlaceholderText("Why this metadata was corrected"),
-    "Correct treatment",
-  );
-  await userEvent.click(screen.getByRole("button", { name: "Save metadata correction" }));
+  await user.click(await screen.findByRole("button", { name: "Correct metadata" }));
+  await user.click(screen.getByPlaceholderText("Why this metadata was corrected"));
+  await user.paste("Correct treatment");
+  await user.click(screen.getByRole("button", { name: "Save metadata correction" }));
 
   await waitFor(() => expect(createRevision).toHaveBeenCalledTimes(1));
   expect(createRevision).toHaveBeenCalledWith(

@@ -49,6 +49,9 @@ class ModifierExpansionOutcome(StrEnum):
     SOURCE_CAP_EXCEEDED = "source_cap_exceeded"
     CANDIDATE_CAP_EXCEEDED = "candidate_cap_exceeded"
     ALREADY_IN_RECALL = "already_in_recall"
+    DEPTH_LIMIT = "depth_limit"
+    DISCOVERY_UNAVAILABLE = "discovery_unavailable"
+    RELATIONSHIP_LIMIT = "relationship_limit"
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,12 +76,18 @@ class ModifierExpansionRecord:
     provision_effect: str = "unknown"
     replacement_scope_verified: bool = False
     supporting_spans: tuple[dict[str, Any], ...] = ()
+    scope_hash: str | None = None
+    applicable: bool | None = None
+    depth: int = 1
 
     def diagnostic(self) -> dict[str, Any]:
         return {
             "relationship_id": str(self.relationship_id),
             "relationship_type": "modifies",
-            "depth": 1,
+            "depth": self.depth,
+            "scope_hash": self.scope_hash,
+            "applicability_version": "source.applicability.v2" if self.scope_hash else None,
+            "applicable": self.applicable,
             "base_revision_id": str(self.base_revision_id),
             "base_document_id": str(self.base_document_id),
             "modifier_revision_id": str(self.modifier_revision_id),
@@ -143,6 +152,7 @@ class SourceMetadataReadPort(Protocol):
         generation: int,
         as_of: datetime | None,
         index_build_id: uuid.UUID,
+        request_scope: dict[str, Any] | None = None,
     ) -> list[ModifierExpansionRecord]: ...
 
 

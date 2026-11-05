@@ -284,7 +284,7 @@ async def test_passage_scoring_keeps_raw_cosine_and_winning_offsets() -> None:
     chunk_id = uuid.uuid4()
     retriever = HybridRetriever.__new__(HybridRetriever)
     retriever._content_loader = AsyncMock()
-    retriever._content_loader.load_texts.return_value = {
+    retriever._content_loader.load_raw_texts.return_value = {
         chunk_id: " ".join(f"token-{index}" for index in range(40))
     }
     retriever._embedder = AsyncMock()

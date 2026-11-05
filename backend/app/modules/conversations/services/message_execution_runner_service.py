@@ -9,8 +9,11 @@ import re
 import time
 import uuid
 from collections.abc import Awaitable, Callable
+from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime
+from decimal import Decimal
+from itertools import pairwise
 from pathlib import Path
 from typing import Any
 
@@ -50,9 +53,11 @@ from app.modules.conversations.execution_contracts import (
     FinalizationResult,
     RequirementGraph,
     TurnIntent,
+    VerifiedAnswerCheckpoint,
     assertion_from_claim,
     build_finalization,
     claim_counts,
+    published_requirement_fulfillment,
     scope_limitations,
 )
 from app.modules.conversations.grounded_context import (
@@ -66,6 +71,7 @@ from app.modules.conversations.grounding_service import (
     GroundingResult,
     GroundingService,
     _answer_segments,
+    _plain_claim_text,
 )
 from app.modules.conversations.notices import (
     Notice,
@@ -92,6 +98,7 @@ from app.modules.conversations.prompts.registry import (
     PromptTemplate,
     require_prompt_template,
 )
+from app.modules.conversations.publication_approval import PublicationApproval, publication_binding
 from app.modules.conversations.quantities import normalize_quantities
 from app.modules.conversations.schemas.message import (
     CitationSourceKind,
@@ -101,7 +108,10 @@ from app.modules.conversations.schemas.message import (
     SourceScope,
 )
 from app.modules.conversations.services.claim_entailment_service import ClaimEntailmentService
-from app.modules.conversations.services.evidence_repair_service import repair_knowledge_evidence
+from app.modules.conversations.services.evidence_repair_service import (
+    _value_has_local_period,
+    repair_knowledge_evidence,
+)
 from app.modules.conversations.services.rewrite_retrieval import (
     citation_scopes_conflict,
     citations_have_exact_reuse_provenance,
@@ -117,10 +127,12 @@ from app.modules.conversations.services.rewrite_retrieval import (
     used_citations_include_web,
 )
 from app.modules.conversations.services.web_evidence_review import (
+    independent_web_requirements,
     review_web_evidence,
     scoped_web_query,
 )
 from app.modules.conversations.terminal_outcome import (
+    missing_input_questions,
     terminal_outcome,
     terminal_projection,
 )
@@ -240,6 +252,9 @@ class _PreparedTurn:
     originating_assistant_message_id: uuid.UUID | None = None
     inherited_coverage: dict[str, Any] | None = None
     response_policy: dict[str, Any] = field(default_factory=dict)
+    publication_owner: uuid.UUID = field(default_factory=uuid.uuid4)
+    publication_context: str | None = None
+    publication_approvals: dict[str, PublicationApproval] = field(default_factory=dict)
 
     execution_intent: TurnIntent | None = None
     intent: TurnIntent = field(init=False)
@@ -301,6 +316,7 @@ class MessageExecutionRunner:
         translation_enabled: bool | None = None,
         work: RequestWork | None = None,
     ) -> None:
+        self._verified_checkpoint: VerifiedAnswerCheckpoint | None = None
         self._active_prepared: _PreparedTurn | None = None
         self._attempted_claims: list[dict[str, Any]] = []
         self._correction_attempts: list[dict[str, Any]] = []
@@ -346,6 +362,7 @@ class MessageExecutionRunner:
         temperature: float | None,
     ) -> _PreparedTurn:
         self._active_prepared = None
+        self._verified_checkpoint = None
         self._attempted_claims.clear()
         self._correction_attempts.clear()
         self._work.configure_execution(
@@ -438,6 +455,7 @@ class MessageExecutionRunner:
                             source_scope=resolved.retrieval.requested_source_scope,
                         ),
                         project_defaults=self._domain_instructions,
+                        calendar_policy=self._chat_config.calendar_policy,
                     )
                 }
             ),
@@ -470,7 +488,9 @@ class MessageExecutionRunner:
             "normalized_scope": normalized_scope.model_dump(mode="json"),
             "history_truncated": history_truncated,
         }
-        clarification_response: str | None = None
+        clarification_response: str | None = (
+            "Which year or period should I use?" if normalized_scope.period_ambiguous else None
+        )
         if non_knowledge_response is None and resolved.resolution.outcome is TurnOutcome.CLARIFY:
             clarification_response = (
                 resolved.resolution.clarification_question
@@ -584,6 +604,20 @@ class MessageExecutionRunner:
                 "routing_origin": "deterministic",
                 "new_coverage_review": False,
             }
+        build_id = retrieval_result.diagnostics.get("index_build_id")
+        if build_id:
+            normalized_scope = normalized_scope.model_copy(
+                update={"index_build_id": uuid.UUID(str(build_id))}
+            )
+            intent = intent.model_copy(update={"scope": normalized_scope})
+            resolved = replace(
+                resolved,
+                retrieval=resolved.retrieval.model_copy(
+                    update={"normalized_scope": normalized_scope}
+                ),
+            )
+            diagnostics["normalized_scope"] = normalized_scope.model_dump(mode="json")
+            self._work.evidence_snapshot["normalized_scope"] = diagnostics["normalized_scope"]
         chunks = retrieval_result.chunks
         retrieval_ms = int((time.perf_counter() - retrieval_started) * 1000)
         self._work.timings["initial_retrieval"] += retrieval_ms
@@ -926,7 +960,7 @@ class MessageExecutionRunner:
                         max_followup_queries = 2
                         max_followup_rounds = 2
                         recovery_profile = "legacy"
-                    if self._work.execution_policy == "adaptive_v1":
+                    if self._work.execution_policy == "adaptive_v1" or self._work.is_bounded:
                         # The dependency came from source review; provider latency
                         # alone cannot buy a second budget or a fresh start.
                         evidence_deadline = self._work.recovery_deadline
@@ -934,7 +968,19 @@ class MessageExecutionRunner:
                         max_initial_queries = 2
                         max_followup_queries = self._work.recovery_search_credits - 2
                         max_followup_rounds = 2
-                        recovery_profile = "adaptive"
+                        recovery_profile = (
+                            self._work.execution_policy if self._work.is_bounded else "adaptive"
+                        )
+                    guarded_legacy_recovery = (
+                        self._work.execution_policy == "legacy"
+                        and bounded_recovery
+                        and self._evidence_approach == "authoritative"
+                        and (applicability_review or comparison_review)
+                    )
+                    if guarded_legacy_recovery:
+                        self._work.extend_guarded_legacy_recovery()
+                        evidence_deadline = self._work.recovery_deadline
+                        repair_timeout_seconds = max(0.0, evidence_deadline - time.perf_counter())
                     repair_timeout_seconds = min(
                         repair_timeout_seconds,
                         max(0.0, evidence_deadline - time.perf_counter()),
@@ -955,6 +1001,7 @@ class MessageExecutionRunner:
                         max_followup_queries=max_followup_queries,
                         max_followup_rounds=max_followup_rounds,
                         recovery_profile=recovery_profile,
+                        reserve_guarded_review=guarded_legacy_recovery,
                         domain_instructions=self._domain_instructions,
                         initial_decision=(pre_review_evidence if compliance_review else evidence),
                         required_coverage=inherited if reuse_scope_revalidation else None,
@@ -1098,15 +1145,15 @@ class MessageExecutionRunner:
                         ),
                     }
                 )
+                retained_missing_inputs = (
+                    tuple(str(item) for item in (inherited or {}).get("missing_inputs") or [])
+                    if reuse_scope_revalidation
+                    else ()
+                )
+                missing_inputs = tuple(
+                    dict.fromkeys([*repaired.missing_inputs, *retained_missing_inputs])
+                )
                 if repaired.decision is not None:
-                    retained_missing_inputs = (
-                        tuple(str(item) for item in (inherited or {}).get("missing_inputs") or [])
-                        if reuse_scope_revalidation
-                        else ()
-                    )
-                    missing_inputs = tuple(
-                        dict.fromkeys([*repaired.missing_inputs, *retained_missing_inputs])
-                    )
                     partial_answer = repaired.partial_answer
                     evidence = repaired.decision
                     knowledge_selected = repaired.selected
@@ -1151,6 +1198,40 @@ class MessageExecutionRunner:
                 or (mode is ResponseMode.INDEXED_THEN_WEB and grounding.blocks_generation(evidence))
             )
         )
+        repair_diagnostics = retrieval_result.diagnostics.get("knowledge_repair") or {}
+        web_checks = (repair_diagnostics.get("coverage") or {}).get("checks", [])
+        fulfilled_web_ids = {
+            str(row.get("requirement_id"))
+            for row in web_checks
+            if row.get("fulfillment") == "full" and not row.get("unresolved_facets")
+        }
+        all_web_requirements = list(repair_diagnostics.get("requirements", []))
+        if unresolved_authority_obligation:
+            affected = {
+                str(chunk.metadata.get("source_revision_id"))
+                for chunk in chunks
+                if chunk.metadata.get("authority_status") == "unresolved"
+            }
+            affected.update(
+                str(record.get("base_revision_id"))
+                for record in retrieval_result.diagnostics.get("modifies_expansion_records", [])
+                if record.get("outcome") not in {"inactive", "not_applicable"}
+            )
+            eligible_web = independent_web_requirements(
+                all_web_requirements,
+                web_checks,
+                chunks,
+                affected,
+                discovery_complete=retrieval_result.diagnostics.get("relationship_discovery_status")
+                == "complete",
+            )
+        else:
+            eligible_web = all_web_requirements
+        web_requirements = [
+            row
+            for row in eligible_web
+            if row.get("requirement_id") not in fulfilled_web_ids and row.get("required", True)
+        ]
         web_requested = web_policy_requested and preparation_error is None
         await self._release_read_transaction()
         if web_policy_requested and scoped_request:
@@ -1162,6 +1243,7 @@ class MessageExecutionRunner:
             web_policy_requested
             and evidence.reason is InsufficientEvidenceReason.UNRESOLVED_AUTHORITY
             and unresolved_authority_obligation
+            and not web_requirements
         ):
             # Web snippet relevance cannot establish commencement, amendment
             # precedence or all dependencies of a governed calculation. Until
@@ -1184,8 +1266,11 @@ class MessageExecutionRunner:
                         "Web search provider is unavailable",
                         provider_name="web_search",
                     )
+                requirement_query = "\n".join(
+                    str(row.get("description") or "") for row in web_requirements
+                )
                 web_query = scoped_web_query(
-                    retrieval_query,
+                    requirement_query or retrieval_query,
                     self._domain_instructions,
                     (resolved.retrieval.as_of or payload.reference_time).date(),
                 )
@@ -1229,6 +1314,14 @@ class MessageExecutionRunner:
                                 resolved.retrieval.as_of or payload.reference_time
                             ).date(),
                             timeout_seconds=review_budget,
+                            missing_requirements=web_requirements,
+                            canonical_scope=normalized_scope.model_dump(mode="json"),
+                            require_official_authority=bool(web_requirements)
+                            and bool(
+                                unresolved_authority_obligation
+                                or normalized_scope.current_reference_time
+                                or normalized_scope.requested_periods
+                            ),
                         )
                 web_chunks = _web_context_chunks(accepted_evidence, web_result.provider)
                 discovered_source_count = (
@@ -1336,7 +1429,7 @@ class MessageExecutionRunner:
                 prompt_profile=self._prompt_profile,
                 interpretation=resolved.interpretation,
                 reference_date=(resolved.retrieval.as_of or payload.reference_time).date(),
-                missing_inputs=missing_inputs if knowledge_usable else (),
+                missing_inputs=missing_inputs,
                 partial_answer=partial_answer if knowledge_usable or web_only_answer else None,
                 reviewed_scopes=(
                     (retrieval_result.diagnostics.get("answerable_scope") or {}).get(
@@ -1489,7 +1582,68 @@ class MessageExecutionRunner:
     def deadline_result(
         self, request: MessageSendRequest, *, reason: str, failure_phase: str | None = None
     ) -> ExecutionResult:
+        if self._verified_checkpoint is not None:
+            saved = self._verified_checkpoint.restore(
+                self._active_prepared.intent.scope if self._active_prepared else None
+            )
+            diagnostic = {**saved.metadata, "failure_stage": failure_phase or "claim_verification"}
+            outcome = terminal_outcome(
+                reason=reason,
+                supported_claims=len(saved.claims),
+                partial=True,
+                missing_inputs=missing_input_questions(diagnostic),
+                diagnostics=diagnostic,
+                coverage="partial",
+            )
+            finalization = saved.finalization.model_copy(
+                update={
+                    "terminal": outcome,
+                    "fatal_event": {"stage": failure_phase, "reason": reason},
+                    # Publication remains the immutable checkpoint. Diagnostics
+                    # also retain work completed or interrupted after capture.
+                    "rejected_attempts": [
+                        assertion
+                        for i, claim in enumerate(self._attempted_claims)
+                        if (
+                            assertion := assertion_from_claim(
+                                claim, i, list(saved.finalization.evidence)
+                            )
+                        ).verdict
+                        != "supported"
+                        or (assertion.id, assertion.text)
+                        not in {
+                            (item.id, item.text) for item in saved.finalization.verified_assertions
+                        }
+                    ],
+                    "correction_attempts": [dict(item) for item in self._correction_attempts],
+                    "limitations": [
+                        *saved.finalization.limitations,
+                        {"kind": "unfinished_verification", "reason": reason},
+                    ],
+                }
+            )
+            return replace(
+                saved,
+                finish_reason=outcome.reason_code,
+                insufficient_evidence_reason=None,
+                finalization=finalization,
+                metadata={
+                    **diagnostic,
+                    "terminal_outcome": outcome.model_dump(mode="json"),
+                    "execution": finalization.public_projection(),
+                    "operator_diagnostic": finalization.model_dump(mode="json"),
+                    "verified_checkpoint": self._verified_checkpoint.payload_hash,
+                },
+            )
         snapshot = self._work.evidence_snapshot
+        if self._active_prepared is not None:
+            # Reviewed source coverage is not publication when no assertion checkpoint exists.
+            snapshot = {
+                **snapshot,
+                "published_requirements": published_requirement_fulfillment(
+                    self._active_prepared.requirements, []
+                ),
+            }
         phases = [
             span["name"]
             for span in self._work.snapshot()["spans"]["items"]
@@ -1505,7 +1659,7 @@ class MessageExecutionRunner:
             reason=reason,
             supported_claims=0,
             partial=False,
-            missing_inputs=[],
+            missing_inputs=missing_input_questions(snapshot),
             diagnostics={**snapshot, "failure_stage": phase},
             coverage="incomplete",
         )
@@ -1552,6 +1706,7 @@ class MessageExecutionRunner:
             finish_reason=reason,
             legacy_reason=reason,
             notices=list(snapshot.get("notices") or []),
+            missing_inputs=missing_input_questions(snapshot),
         )
         metadata = {
             **snapshot,
@@ -1603,6 +1758,17 @@ class MessageExecutionRunner:
     ) -> ChatCompletionResult:
         self._generation_content = ""
         self._work.complete_stage("coverage")
+        assessment = _complete_initial_assessment_draft(prepared)
+        if assessment is not None:
+            self._work.counts["initial_draft_reused"] += 1
+            return ChatCompletionResult(
+                content=assessment.model_dump_json(),
+                provider=prepared.llm.provider_name,
+                model=prepared.llm.model_name,
+                finish_reason="stop",
+                usage=ChatUsage(0, 0),
+                provider_version=prepared.llm.provider_version,
+            )
         with self._work.stage("answer_generation"):
             if streamed:
                 contract = AnswerDraft.contract() if _requires_answer_draft(prepared) else None
@@ -1649,6 +1815,11 @@ class MessageExecutionRunner:
     async def _verify_claims(
         self, prepared: _PreparedTurn, content: str, chunks: list[ContextChunk], **kwargs: Any
     ) -> GroundingResult:
+        kwargs["canonical_scope"] = prepared.intent.scope.model_dump(mode="json")
+        context = _publication_context(prepared)
+        if prepared.publication_context is None:
+            object.__setattr__(prepared, "publication_context", context)
+        kwargs["publication_context"] = context
         coverage = kwargs.get("coverage")
         if isinstance(coverage, dict) and prepared.requirements.requirements:
             kwargs["coverage"] = {
@@ -1689,8 +1860,100 @@ class MessageExecutionRunner:
             )
             raise
         attempt["status"] = "completed"
+        for approval in prepared.grounding.publication_approvals:
+            if approval.context == prepared.publication_context:
+                # Approval is immutable. A later absent or contrary verdict cannot
+                # replace the decision for the same request/assertion/proof identity.
+                prepared.publication_approvals.setdefault(approval.binding, approval)
         self._attempted_claims.extend(dict(c) for c in result.claims)
+        self._checkpoint_claims(prepared, result.claims)
         return result
+
+    def _checkpoint_claims(self, prepared: _PreparedTurn, claims: list[dict[str, Any]]) -> None:
+        supported = _publication_claims(
+            prepared,
+            [
+                c
+                for c in claims
+                if c.get("verification") == "supported"
+                and c.get("grounded") is True
+                and c.get("evidence")
+                and _publication_claim_complete(c, prepared)
+            ],
+        )
+        if not supported:
+            return
+        publication = published_requirement_fulfillment(prepared.requirements, supported)
+        diagnostics = {**prepared.retrieval_diagnostics, "published_requirements": publication}
+        outcome = terminal_outcome(
+            reason=None,
+            supported_claims=len(supported),
+            partial=True,
+            missing_inputs=missing_input_questions(diagnostics),
+            diagnostics=diagnostics,
+            coverage="partial",
+        )
+        citations = self._citations_for(
+            prepared.selected,
+            recalled_chunks=prepared.chunks,
+            prompt_version=prepared.prompt_version,
+            evidence_scope=prepared.evidence_scope,
+            originating_assistant_message_id=prepared.originating_assistant_message_id,
+            inherited_coverage=prepared.inherited_coverage,
+            knowledge_repair=prepared.retrieval_diagnostics.get("knowledge_repair"),
+            expansion_records=prepared.retrieval_diagnostics.get("modifies_expansion_records"),
+        )
+        content, citations = _published_citations(
+            _render_supported_claims(supported), citations, supported
+        )
+        content, _, _, input_notices = terminal_projection(
+            outcome,
+            language=prepared.response_language,
+            content=content,
+            finish_reason="verified_partial",
+            legacy_reason=None,
+            notices=[
+                *[notice.to_dict() for notice in prepared.notices],
+                *[
+                    draft_scope_notice(
+                        kind=row["kind"],
+                        language=prepared.response_language,
+                        proof_ids=row["proof_ids"],
+                    ).to_dict()
+                    for row in (prepared.retrieval_diagnostics.get("answer_draft") or {}).get(
+                        "notices", []
+                    )
+                ],
+            ],
+            missing_inputs=missing_input_questions(diagnostics),
+        )
+        finalization = build_finalization(
+            prepared, supported, list(self._attempted_claims), outcome
+        )
+        checkpoint = ExecutionResult(
+            content=content,
+            finish_reason="verified_partial",
+            input_tokens=None,
+            output_tokens=None,
+            prompt_version=prepared.prompt_version,
+            provider=prepared.llm.provider_name,
+            model=prepared.llm.model_name,
+            citations=citations,
+            claims=supported,
+            grounded=True,
+            insufficient_evidence_reason=None,
+            finalization=finalization,
+            metadata={
+                **diagnostics,
+                "notices": input_notices,
+                "terminal_outcome": outcome.model_dump(mode="json"),
+                "execution": finalization.public_projection(),
+                "operator_diagnostic": finalization.model_dump(mode="json"),
+                "response_policy": prepared.response_policy,
+                "evidence_summary": {"coverage": "partial", "claim_verification": "supported"},
+            },
+        )
+        self._verified_checkpoint = VerifiedAnswerCheckpoint.capture(checkpoint)
 
     async def finalize(
         self,
@@ -1739,26 +2002,64 @@ class MessageExecutionRunner:
                         draft_metadata.get("calculations") or {}
                     )
                     operands = _calculation_operands(user_content_for_title, prepared.selected)
-                    expressions = graph.expressions(operands["inputs"], operands["sources"])
-                    draft_metadata["calculation_operands"] = {
-                        kind: {key: str(value) for key, value in quantities.items()}
-                        for kind, quantities in operands.items()
-                    }
+                    expressions, failed_nodes = graph.component_expressions(
+                        operands["inputs"],
+                        operands["sources"],
+                        operands["bindings"],
+                        comparison_operand_pairs=_verified_comparison_pairs(
+                            prepared.retrieval_diagnostics
+                        ),
+                    )
+                    draft_metadata["calculation_operands"] = operands["bindings"]
+                    draft_metadata["calculation_failures"] = failed_nodes
+                    retained_rows = []
+                    node_ids = {node.id for node in graph.nodes}
                     for row in draft_metadata["segments"]:
                         refs = row.get("calculation_references") or []
-                        if any(ref not in expressions for ref in refs):
+                        if any(ref not in node_ids for ref in refs):
                             raise ValueError("Unknown calculation node")
-                        if not refs and re.search(
-                            r"\d[^\n]*[+*=\u00d7\u00f7/][^\n]*\d", row["text"]
-                        ):
-                            raise ValueError("Calculation assertion requires its audited graph")
+                        invalid = (
+                            any(ref in failed_nodes for ref in refs)
+                            or (
+                                not refs
+                                and re.search(r"\d[^\n]*[+*=\u00d7\u00f7/][^\n]*\d", row["text"])
+                            )
+                            or (
+                                refs
+                                and (
+                                    len(refs) != 1
+                                    or _canonical_math(row["text"])
+                                    != _canonical_math(expressions[refs[0]])
+                                )
+                            )
+                        )
+                        if invalid:
+                            self._attempted_claims.append(
+                                {
+                                    **row,
+                                    "verification": "unsupported",
+                                    "verification_reason": "calculation_graph_invalid",
+                                    "grounded": False,
+                                }
+                            )
+                            draft_metadata["rejected_segment_count"] = (
+                                draft_metadata.get("rejected_segment_count", 0) + 1
+                            )
+                            continue
                         if refs:
-                            if len(refs) != 1 or _canonical_math(row["text"]) != _canonical_math(
-                                expressions[refs[0]]
-                            ):
-                                raise ValueError("Assertion is not the verified graph expression")
                             row["text"] = expressions[refs[0]]
                             row["calculation_verified"] = True
+                        retained_rows.append(row)
+                    draft_metadata["segments"] = retained_rows
+                    if not retained_rows:
+                        draft_metadata.update(
+                            status="failed_verification", reason="calculation_graph_invalid"
+                        )
+                    elif draft_metadata.get("rejected_segment_count"):
+                        draft_metadata["status"] = "rendered_partial"
+                        prepared.response_policy["answerable_scope"]["partial"] = True
+                        prepared.response_policy["answerable_scope"]["complete"] = False
+                        content = "\n\n".join(row["text"] for row in retained_rows)
                 except ValueError:
                     draft_metadata.update(
                         status="failed_verification", reason="calculation_graph_invalid"
@@ -1803,8 +2104,9 @@ class MessageExecutionRunner:
                         or prepared.retrieval_diagnostics.get("knowledge_repair")
                     ),
                 )
+            omitted_rows = _omitted_proven_deliverable_rows(prepared, grounding.claims)
             if (
-                grounding.grounded is False
+                (grounding.grounded is False or omitted_rows)
                 and reason_value is None
                 and generation_ran
                 # A failed verifier protocol is not a semantic rejection. Copying
@@ -1814,6 +2116,14 @@ class MessageExecutionRunner:
                     claim.get("verification_reason")
                     in {"verifier_schema_invalid", "verifier_unavailable"}
                     for claim in grounding.claims
+                )
+                and (
+                    not omitted_rows
+                    or min(
+                        self._work.phase_deadline("semantic_repair"),
+                        self._work.phase_deadline("claim_verification"),
+                    )
+                    > time.perf_counter()
                 )
                 and self._work.claim_correction("semantic")
             ):
@@ -1833,7 +2143,8 @@ class MessageExecutionRunner:
                         None,
                     )
                     if claim and claim.get("verification") == "supported":
-                        repaired_rows.append(row)
+                        if _publication_claim_complete(claim, prepared):
+                            repaired_rows.append(row)
                         continue
                     quotes = [
                         item.get("quote")
@@ -1848,11 +2159,13 @@ class MessageExecutionRunner:
                         repaired_rows.append(
                             {**row, "text": " ".join(dict.fromkeys(str(q) for q in quotes))}
                         )
+                repaired_rows.extend(omitted_rows)
                 if not rows:
                     verified = [
                         claim
                         for claim in grounding.claims
                         if claim.get("verification") == "supported"
+                        and _publication_claim_complete(claim, prepared)
                     ]
                     cited_ids = {
                         str(item.get("chunk_id"))
@@ -1884,16 +2197,7 @@ class MessageExecutionRunner:
                                 "attempts": 1,
                             }
                     if verified:
-                        content = "\n\n".join(
-                            str(claim["text"])
-                            + "".join(
-                                f" [{index}]"
-                                for index in dict.fromkeys(
-                                    item["citation_index"] for item in claim.get("evidence", [])
-                                )
-                            )
-                            for claim in verified
-                        )
+                        content = _render_supported_claims(verified)
                         grounding = GroundingResult(
                             claims=verified, grounded=True, citation_coverage=1.0
                         )
@@ -1901,37 +2205,105 @@ class MessageExecutionRunner:
                         prepared.response_policy["answerable_scope"]["partial"] = True
                         prepared.response_policy["answerable_scope"]["complete"] = False
                 if repaired_rows:
-                    for row in repaired_rows:
-                        refs = row.get("calculation_references") or []
-                        if refs:
-                            registry = _calculation_operands(
-                                user_content_for_title, prepared.selected
-                            )
-                            expressions = CalculationGraph.model_validate(
-                                prepared.retrieval_diagnostics["answer_draft"].get("calculations")
-                                or {}
-                            ).expressions(registry["inputs"], registry["sources"])
-                            if (
-                                len(refs) != 1
-                                or refs[0] not in expressions
-                                or _canonical_math(row["text"])
-                                != _canonical_math(expressions[refs[0]])
-                            ):
-                                row["calculation_verified"] = False
-                                repaired_rows = []
-                                break
-                if repaired_rows:
-                    with self._work.stage("semantic_repair"):
-                        reviewed = await self._verify_claims(
-                            prepared,
-                            "\n\n".join(row["text"] for row in repaired_rows),
-                            prepared.selected,
-                            draft_segments=repaired_rows,
-                            user_input=user_content_for_title,
-                            coverage=prepared.inherited_coverage
-                            or prepared.retrieval_diagnostics.get("knowledge_repair"),
+                    registry = _calculation_operands(user_content_for_title, prepared.selected)
+                    expressions, _failures = CalculationGraph.model_validate(
+                        prepared.retrieval_diagnostics["answer_draft"].get("calculations") or {}
+                    ).component_expressions(
+                        registry["inputs"],
+                        registry["sources"],
+                        registry["bindings"],
+                        comparison_operand_pairs=_verified_comparison_pairs(
+                            prepared.retrieval_diagnostics
+                        ),
+                    )
+                    repaired_rows = [
+                        row
+                        for row in repaired_rows
+                        if not row.get("calculation_references")
+                        or (
+                            len(row["calculation_references"]) == 1
+                            and row["calculation_references"][0] in expressions
+                            and _canonical_math(row["text"])
+                            == _canonical_math(expressions[row["calculation_references"][0]])
                         )
-                    if reviewed.grounded is True:
+                    ]
+                if repaired_rows:
+                    retained_claims = [
+                        claim
+                        for claim in grounding.claims
+                        if claim.get("verification") == "supported"
+                        and claim.get("grounded") is True
+                        and _publication_claim_complete(claim, prepared)
+                    ]
+                    retained_ids = {claim.get("assertion_id") for claim in retained_claims}
+                    # Immutable approval already binds retained assertions to
+                    # this request, display, scope and proof. Correction work
+                    # reviews only the remaining assertions in either route.
+                    correction_rows = [
+                        row for row in repaired_rows if row["assertion_id"] not in retained_ids
+                    ]
+                    reviewed = GroundingResult(claims=[], grounded=False, citation_coverage=0.0)
+                    if correction_rows:
+                        with self._work.stage("semantic_repair"):
+                            reviewed = await self._verify_claims(
+                                prepared,
+                                "\n\n".join(row["text"] for row in correction_rows),
+                                prepared.selected,
+                                draft_segments=correction_rows,
+                                user_input=user_content_for_title,
+                                coverage=prepared.inherited_coverage
+                                or prepared.retrieval_diagnostics.get("knowledge_repair"),
+                            )
+                    if omitted_rows or retained_claims:
+                        # A correction cannot revoke independent support already obtained.
+                        accepted = [
+                            claim
+                            for claim in reviewed.claims
+                            if claim.get("verification") == "supported"
+                            and claim.get("grounded") is True
+                            and _publication_claim_complete(claim, prepared)
+                        ]
+                        failed = [claim for claim in reviewed.claims if claim not in accepted]
+                        if any(
+                            claim.get("verification_reason")
+                            in {"verifier_schema_invalid", "verifier_unavailable"}
+                            for claim in failed
+                        ):
+                            accepted = []
+                        if failed:
+                            prepared.retrieval_diagnostics["omission_correction_rejections"] = (
+                                sorted(
+                                    {
+                                        str(
+                                            claim.get("verification_reason")
+                                            or claim.get("verification")
+                                        )
+                                        for claim in failed
+                                    }
+                                )
+                            )
+                        grounding = GroundingResult(
+                            claims=[*retained_claims, *accepted],
+                            grounded=bool(retained_claims or accepted),
+                            citation_coverage=grounding.citation_coverage,
+                        )
+                        if not grounding.claims:
+                            content = "The generated answer could not be verified."
+                            reason_value = (
+                                InsufficientEvidenceReason.CLAIM_VERIFICATION_FAILED.value
+                            )
+                            prepared.retrieval_diagnostics["verification_failure"] = (
+                                "incomplete_publication"
+                            )
+                        prepared.retrieval_diagnostics["answer_draft"]["segments"] = repaired_rows
+                        self._checkpoint_claims(prepared, grounding.claims)
+                        verification_repair = {
+                            "status": "omitted_deliverable_review"
+                            if omitted_rows
+                            else "deterministic_verified_facts",
+                            "attempts": 1,
+                        }
+                    elif reviewed.grounded is True:
                         grounding = reviewed
                         prepared.retrieval_diagnostics["answer_draft"]["segments"] = repaired_rows
                         verification_repair = {
@@ -1993,6 +2365,21 @@ class MessageExecutionRunner:
                         "failed_count": len(failed_claims),
                         "failure_reason_count": len(failed_reasons),
                         "reasons": failed_reasons[:12],
+                        "failed_dimensions": sorted(
+                            {
+                                str(item["dimension"])
+                                for claim in failed_claims
+                                for item in (claim.get("verifier_failures") or [])
+                                if item.get("dimension")
+                            }
+                        ),
+                        "verification_methods": sorted(
+                            {
+                                str(claim["verification_method"])
+                                for claim in failed_claims
+                                if claim.get("verification_method")
+                            }
+                        ),
                     }
                     if (
                         "verifier_schema_invalid" in failed_reasons
@@ -2148,6 +2535,7 @@ class MessageExecutionRunner:
                 "status": "withheld_incomplete_answer",
                 "reason": "incomplete_trailing_fragment",
             }
+        grounding = replace(grounding, claims=_publication_claims(prepared, grounding.claims))
         factual_claims = [
             claim for claim in grounding.claims if claim.get("claim_kind") != "coverage_scope"
         ]
@@ -2342,6 +2730,9 @@ class MessageExecutionRunner:
         metadata["effective_behavior"] = {
             "evidence_approach": self._evidence_approach,
             "translation_enabled": self._translation_enabled,
+            "execution_policy": self._chat_config.execution_policy,
+            "configuration_hash": prepared.retrieval_diagnostics.get("configuration_hash"),
+            "execution_profile_id": self._config_provenance.get("execution_profile_id"),
             "response_language": prepared.response_language,
             "config_snapshot_id": str(self._config_snapshot_id)
             if self._config_snapshot_id
@@ -2412,15 +2803,16 @@ class MessageExecutionRunner:
             "unverified_factual_claims": unverified_claims,
             "unsupported_factual_claims": unsupported_claims,
             "input_provenance": {
-                "unresolved_inputs": (
-                    list(inherited_coverage.get("missing_inputs") or [])
-                    if reused_cited_passages and isinstance(inherited_coverage, dict)
-                    else (
-                        (prepared.retrieval_diagnostics.get("knowledge_repair") or {})
-                        .get("coverage", {})
-                        .get("missing_inputs", [])
-                        if validated_coverage
-                        else []
+                "unresolved_inputs": list(
+                    dict.fromkeys(
+                        [
+                            *missing_input_questions(prepared.retrieval_diagnostics),
+                            *(
+                                list(inherited_coverage.get("missing_inputs") or [])
+                                if reused_cited_passages and isinstance(inherited_coverage, dict)
+                                else []
+                            ),
+                        ]
                     )
                 ),
                 "supplied_values": "current_user_message_and_validated_conversation_context",
@@ -2533,8 +2925,9 @@ class MessageExecutionRunner:
             finish_reason=finish_reason,
             legacy_reason=reason_value,
             notices=metadata.get("notices") or [],
+            missing_inputs=metadata["evidence_summary"]["input_provenance"]["unresolved_inputs"],
         )
-        return ExecutionResult(
+        result = ExecutionResult(
             content=content,
             finish_reason=finish_reason,
             input_tokens=input_tokens,
@@ -2549,10 +2942,33 @@ class MessageExecutionRunner:
             insufficient_evidence_reason=reason_value,
             finalization=finalization,
         )
+        if result.grounded and result.finalization.verified_assertions and result.citations:
+            self._verified_checkpoint = VerifiedAnswerCheckpoint.capture(result)
+        return result
 
     async def _correct_answer_draft(
         self, prepared: _PreparedTurn, content: str, failure: tuple[str, dict[str, Any]]
     ) -> tuple[str, dict[str, Any]]:
+        # Shape repair cannot preserve an inventory which cannot be decoded.
+        try:
+            original = json.loads(content)
+        except (ValueError, TypeError):
+            failure[1]["shape_correction"] = "ineligible_missing_inventory"
+            return failure
+        inventory = original.get("segments") if isinstance(original, dict) else original
+        if (
+            not isinstance(inventory, list)
+            or not inventory
+            or any(
+                not isinstance(row, dict)
+                or not isinstance(row.get("text"), str)
+                or not isinstance(row.get("proof_ids"), list)
+                or not isinstance(row.get("requirement_ids"), list)
+                for row in inventory
+            )
+        ):
+            failure[1]["shape_correction"] = "ineligible_missing_inventory"
+            return failure
         if self._work.phase_deadline(
             "answer_shape_correction"
         ) - time.perf_counter() < 2 or not self._work.claim_correction("malformed"):
@@ -3007,6 +3423,9 @@ class MessageExecutionRunner:
             "normalized_scope": retrieval_diagnostics.get("normalized_scope", {}),
             "answer_draft": public_draft_diagnostics(retrieval_diagnostics.get("answer_draft")),
             "retrieval_configuration_hash": retrieval_diagnostics.get("configuration_hash"),
+            "scope_review_fingerprint": self._work.evidence_snapshot.get(
+                "scope_review_fingerprint"
+            ),
         }
 
     def _llm_max_tokens(self) -> int:
@@ -3068,7 +3487,7 @@ def _web_context_chunks(
                 content=item.content,
                 score=0.0,
                 filename=item.title or item.url,
-                chunk_hash=item.evidence_id,
+                chunk_hash=hashlib.sha256(item.content.encode("utf-8")).hexdigest(),
                 char_start=0,
                 char_end=len(item.content),
                 metadata={
@@ -3835,6 +4254,33 @@ def _repair_missing_citation_claims(
     return repaired if repaired != content else ""
 
 
+def _complete_initial_assessment_draft(prepared: _PreparedTurn) -> AnswerDraft | None:
+    """Skip redundant drafting only; this output still enters normal final verification."""
+    repair = prepared.retrieval_diagnostics.get("knowledge_repair") or {}
+    assessment = repair.get("initial_assessment") or {}
+    if repair.get("status") != "initial_evidence_complete" or not assessment.get(
+        "coverage_validated"
+    ):
+        return None
+    try:
+        draft = AnswerDraft.model_validate(assessment.get("answer_draft"))
+    except ValidationError:
+        return None
+    proof_ids = {
+        str(chunk.chunk_id) for chunk in prepared.selected if chunk.metadata.get("reviewed_proof")
+    }
+    requirements = {r.requirement_id for r in prepared.requirements.requirements}
+    if any(
+        not segment.proof_ids
+        or not segment.requirement_ids
+        or not set(segment.proof_ids) <= proof_ids
+        or not set(segment.requirement_ids) <= requirements
+        for segment in draft.segments
+    ):
+        return None
+    return draft
+
+
 def _requires_answer_draft(prepared: _PreparedTurn) -> bool:
     return prepared.generation_mode == "structured_draft" or (
         prepared.generation_mode == "auto"
@@ -3884,10 +4330,41 @@ def _has_incomplete_trailing_fragment(text: str) -> bool:
     )
 
 
+def _publication_claims(
+    prepared: _PreparedTurn, claims: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Own publication evidence and its proof annotations before citation remapping."""
+    published = deepcopy(claims)
+    for claim in published:
+        if claim.get("verification") != "supported" or claim.get("grounded") is not True:
+            continue
+        cited = {str(item.get("chunk_id")) for item in claim.get("evidence", [])}
+        claim["fulfilled_proof_requirements"] = sorted(
+            {
+                str(item.get("requirement_id"))
+                for chunk in prepared.selected
+                if str(chunk.chunk_id) in cited
+                for item in chunk.metadata.get("reviewed_proof", [])
+                if item.get("fulfillment") == "full"
+                and bool(item.get("quote"))
+                and str(item["quote"]) in chunk.content
+            }
+        )
+    return published
+
+
 def _render_supported_claims(claims: list[dict[str, Any]]) -> str:
-    """Render only the published verdict set, with its own evidence markers."""
+    """Retain each verified assertion's context and its own evidence markers."""
     return "\n\n".join(
-        re.sub(r"\s*\[\d+\]", "", str(claim["text"])).strip()
+        re.sub(
+            r"\s*\[\d+\]",
+            "",
+            str(
+                claim["assertion_text"]
+                if claim.get("assertion_text") is not None
+                else claim["text"]
+            ),
+        ).strip()
         + "".join(
             f" [{index}]"
             for index in dict.fromkeys(item["citation_index"] for item in claim.get("evidence", []))
@@ -3897,8 +4374,79 @@ def _render_supported_claims(claims: list[dict[str, Any]]) -> str:
     )
 
 
+def _publication_context(prepared: _PreparedTurn) -> str:
+    """Bind private approval to this request, canonical scope and exact source state."""
+    return content_hash(
+        json.dumps(
+            {
+                "owner": str(prepared.publication_owner),
+                "scope": prepared.intent.scope.model_dump(mode="json"),
+                "evidence_scope": prepared.evidence_scope,
+                "runtime": {
+                    key: prepared.retrieval_diagnostics.get(key)
+                    for key in (
+                        "index_build_id",
+                        "source_metadata_generation",
+                        "configuration_hash",
+                        "config_snapshot_id",
+                    )
+                },
+                "sources": [
+                    {
+                        "chunk_id": str(chunk.chunk_id),
+                        "project_id": str(chunk.project_id),
+                        "document_id": str(chunk.document_id),
+                        "content_hash": content_hash(chunk.content),
+                        "chunk_hash": chunk.chunk_hash,
+                        "metadata": chunk.metadata,
+                    }
+                    for chunk in prepared.selected
+                ],
+            },
+            sort_keys=True,
+            ensure_ascii=False,
+            default=str,
+        )
+    )
+
+
 def _publication_claim_complete(claim: dict[str, Any], prepared: _PreparedTurn) -> bool:
     text = str(claim.get("text") or "")
+    # Raw claims can inherit a heading, list preamble or table header. Bind
+    # that verified assertion separately from its unchanged public display.
+    assertion = claim.get("assertion_text")
+    binding = publication_binding(
+        claim,
+        " ".join(_plain_claim_text(text).split()),
+        " ".join(_plain_claim_text(text if assertion is None else str(assertion)).split()),
+    )
+    approval = prepared.publication_approvals.get(binding)
+    if (
+        approval is None
+        or not approval.supported
+        or approval.context != prepared.publication_context
+        or prepared.publication_context != _publication_context(prepared)
+    ):
+        return False
+    cited_ids = {str(item.get("chunk_id")) for item in claim.get("evidence", [])}
+    requirement_ids = set(claim.get("requirement_ids") or [])
+    for chunk in prepared.selected:
+        if str(chunk.chunk_id) not in cited_ids:
+            continue
+        # A calculation may link two otherwise independent source passages.
+        # Only the proof units for this claim's requirements must travel with it.
+        proof_units = [
+            item["proof_unit_chunk_ids"]
+            for item in chunk.metadata.get("reviewed_proof") or []
+            if item.get("requirement_id") in requirement_ids and item.get("proof_unit_chunk_ids")
+        ]
+        required = (
+            {identity for unit in proof_units for identity in unit}
+            if proof_units
+            else set(chunk.metadata.get("proof_unit_chunk_ids") or [])
+        )
+        if not required <= cited_ids:
+            return False
     if _has_incomplete_trailing_fragment(text):
         return False
     if claim.get("claim_kind") == "coverage_scope":
@@ -3931,9 +4479,18 @@ def _publication_claim_complete(claim: dict[str, Any], prepared: _PreparedTurn) 
                     and all(all(cell.strip() for cell in row) for row in rows)
                 ):
                     structured = True
-    semantic_complete = prepared.grounding.publication_completeness.get(
-        str(claim.get("assertion_id"))
-    )
+    if claim.get("verification") == "supported":
+        for chunk in prepared.selected:
+            if str(chunk.chunk_id) not in cited_ids:
+                continue
+            if any(
+                span.get("provenance") == "exact_source_span"
+                and span.get("element_id")
+                and str(span.get("text") or "").strip() == plain
+                for span in chunk.metadata.get("source_spans", [])
+            ):
+                structured = True
+    semantic_complete = approval.complete
     if structured:
         return complete_publication_unit(text, structured=True, semantic_complete=semantic_complete)
     atoms = _answer_segments(text)
@@ -4027,34 +4584,294 @@ def _published_citations(
     return content, retained
 
 
-def _calculation_operands(user_input: str, chunks: list[ContextChunk]) -> dict[str, dict[str, Any]]:
-    def values(text: str) -> dict[str, Any]:
-        return {
-            f"q{i}": item.value / 100 if item.kind == "rate" else item.value
-            for i, item in enumerate(normalize_quantities(text))
-            if item.kind not in {"period", "locator"}
-        }
-
+def _verified_comparison_pairs(diagnostics: dict[str, Any]) -> set[frozenset[str]]:
+    repair = diagnostics.get("knowledge_repair") or {}
+    if not (repair.get("coverage") or {}).get("full_coverage_validated"):
+        return set()
     return {
-        "inputs": values(user_input),
-        "sources": {
-            f"{chunk.chunk_id}:{key}": value
-            for chunk in chunks
-            if chunk.metadata.get("reviewed_proof")
-            for key, value in values(
-                " ".join(
-                    str(item.get("quote"))
-                    for item in chunk.metadata["reviewed_proof"]
-                    if item.get("quote") and str(item["quote"]) in chunk.content
-                )
-            ).items()
-        },
+        frozenset(dependencies)
+        for item in repair.get("requirements") or []
+        if item.get("task_kind") == "comparison"
+        and len(dependencies := item.get("depends_on", [])) == 2
+        and all(
+            (item.get("dependency_purposes") or {}).get(dep) == "calculation_operand"
+            for dep in dependencies
+        )
     }
 
 
+def _calculation_operands(user_input: str, chunks: list[ContextChunk]) -> dict[str, dict[str, Any]]:
+    registry: dict[str, dict[str, Any]] = {"inputs": {}, "sources": {}, "bindings": {}}
+    user_scope = normalize_request_scope(user_input)
+    requested_periods = {
+        f"{period.kind}:{period.start_year}-{period.end_year}": (period.start_year, period.end_year)
+        for period in user_scope.requested_periods
+    }
+
+    def has_untyped_period_range(text: str) -> bool:
+        folded = "".join(str(int(c)) if c.isdecimal() else c for c in text)
+        attested_years = {
+            (period.start_year, period.end_year)
+            for period in normalize_request_scope(text).requested_periods
+        }
+        for match in re.finditer(
+            r"(?<!\d)(?:18|19|20|21)\d{2}\s*[-\u2013\u2014/]\s*\d{2,4}(?!\d)", folded
+        ):
+            ranges = normalize_request_scope("for " + match.group()).requested_periods
+            if not ranges or any(
+                (period.start_year, period.end_year) not in attested_years for period in ranges
+            ):
+                return True
+        return False
+
+    def add(
+        text: str,
+        *,
+        kind: str,
+        prefix: str,
+        chunk: ContextChunk | None = None,
+        source_offset: int = 0,
+        quantity_offset: int = 0,
+        context_has_period: bool = False,
+        attested_period: str | None = None,
+        comparison_requirement_ids: tuple[str, ...] = (),
+    ) -> int:
+        # A sentence, semicolon clause or table row can attest its own period.
+        # Decimal points stay inside the clause. Multiple periods in one clause
+        # are unresolved; proximity is not evidence of which year owns a value.
+        quantities = normalize_quantities(text)
+        boundaries = [0]
+        boundaries.extend(
+            match.end()
+            for match in re.finditer(r"[;\n!?।]+|\.(?!\d)(?=\s|$)", text)
+            # A line wrap inside an attested number-and-scale span is not a
+            # clause boundary. Keep its exact value and raw offsets together;
+            # all boundaries outside the quantity retain their local scope.
+            if not any(item.start < match.end() < item.end for item in quantities)
+        )
+        boundaries.append(len(text))
+        clauses = [
+            (start, end, normalize_request_scope(text[start:end]))
+            for start, end in pairwise(boundaries)
+        ]
+        context_has_period = context_has_period or any(
+            scope.requested_periods
+            or scope.period_ambiguous
+            or has_untyped_period_range(text[start:end])
+            for start, end, scope in clauses
+        )
+        for i, item in enumerate(quantities):
+            if item.kind in {"period", "locator"}:
+                continue
+            clause_start, clause_end, scope = next(
+                clause for clause in clauses if clause[0] <= item.start and item.end <= clause[1]
+            )
+            periods = scope.requested_periods
+            unresolved = (
+                scope.period_ambiguous
+                or len(periods) > 1
+                or has_untyped_period_range(text[clause_start:clause_end])
+                or (not periods and context_has_period and not attested_period)
+            )
+            period = None
+            if len(periods) == 1:
+                period = f"{periods[0].kind}:{periods[0].start_year}-{periods[0].end_year}"
+            elif not unresolved and attested_period:
+                period = attested_period
+            elif not unresolved and chunk:
+                period = chunk.metadata.get("applicable_period")
+                unresolved = bool(period and ";" in period)
+            if unresolved:
+                period = None
+            start, end = item.start + source_offset, item.end + source_offset
+            key = f"{prefix}q{quantity_offset + i}"
+            value = item.value / 100 if item.kind == "rate" else item.value
+            registry[kind][key] = value
+            ref = ("input:" if kind == "inputs" else "source:") + key
+            source_text = chunk.content if chunk else user_input
+            registry["bindings"][ref] = {
+                "value": str(value),
+                "role": item.role or "unspecified",
+                "unit": item.unit,
+                "period": period,
+                "period_unresolved": unresolved,
+                "period_quote": text[clause_start:clause_end],
+                "category": chunk.metadata.get("subject_category")
+                if chunk
+                else user_scope.category,
+                "origin": "source" if chunk else "user",
+                "source_hash": chunk.chunk_hash if chunk else content_hash(user_input),
+                "span_hash": content_hash(source_text[start:end]),
+                "quote": source_text[start:end],
+                "char_start": start,
+                "char_end": end,
+                **(
+                    {"comparison_requirement_ids": comparison_requirement_ids}
+                    if comparison_requirement_ids and period == attested_period
+                    else {}
+                ),
+                **(
+                    {
+                        "proof_quote_hash": content_hash(text),
+                        "proof_char_start": source_offset,
+                        "proof_char_end": source_offset + len(text),
+                    }
+                    if chunk
+                    else {}
+                ),
+            }
+        return len(quantities)
+
+    add(user_input, kind="inputs", prefix="")
+    for chunk in chunks:
+        quotes: dict[tuple[str, int], dict[str, set[str]]] = {}
+        for proof in chunk.metadata.get("reviewed_proof") or []:
+            quote = str(proof.get("quote") or "")
+            start = chunk.content.find(quote) if quote else -1
+            if start < 0 or chunk.content.find(quote, start + 1) >= 0:
+                continue  # An ambiguous occurrence cannot bind an arithmetic operand.
+            periods = quotes.setdefault((quote, start), {})
+            period = proof.get("operand_period")
+            requirement_id = proof.get("requirement_id")
+            if (
+                isinstance(period, str)
+                and period in requested_periods
+                and isinstance(requirement_id, str)
+                and _value_has_local_period(quote, {requested_periods[period]})
+            ):
+                periods.setdefault(period, set()).add(requirement_id)
+        context_has_period = any(
+            normalize_request_scope(quote).requested_periods
+            or normalize_request_scope(quote).period_ambiguous
+            or has_untyped_period_range(quote)
+            for quote, _ in quotes
+        )
+        quantity_offset = 0
+        for (quote, start), periods in quotes.items():
+            period = next(iter(periods)) if len(periods) == 1 else None
+            quantity_offset += add(
+                quote,
+                kind="sources",
+                prefix=f"{chunk.chunk_id}:",
+                chunk=chunk,
+                source_offset=start,
+                quantity_offset=quantity_offset,
+                context_has_period=context_has_period,
+                attested_period=period,
+                comparison_requirement_ids=tuple(sorted(periods[period])) if period else (),
+            )
+    return registry
+
+
 def _canonical_math(text: str) -> str:
-    return re.sub(
-        r"\s+", "", text.replace("\u00d7", "*").replace("\u00f7", "/").replace("\u2212", "-")
+    text = text.replace("\u00d7", "*").replace("\u00f7", "/").replace("\u2212", "-")
+    tokens = re.findall(r"\d+(?:\.\d+)?|[A-Za-z_]+|[^\s]", text)
+    for index, token in enumerate(tokens):
+        if re.fullmatch(r"\d+(?:\.\d+)?", token):
+            # Fixed-point formatting preserves every digit without context rounding.
+            value = format(Decimal(token), "f")
+            tokens[index] = value.rstrip("0").rstrip(".") if "." in value else value
+    # Keep token boundaries: whitespace must never join separate numeric literals.
+    return " ".join(tokens)
+
+
+def _omitted_proven_deliverable_rows(
+    prepared: _PreparedTurn, claims: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Propose only omitted requested rules with full exact independently reviewed proof.
+
+    These are candidates, never publication approval. Use the ordinary schema,
+    canonical-scope entailment and publication guards before admitting an assertion.
+    """
+    repair = prepared.retrieval_diagnostics.get("knowledge_repair") or {}
+    draft = prepared.retrieval_diagnostics.get("answer_draft") or {}
+    if not (repair.get("coverage") or {}).get("quotes_validated") or draft.get("status") not in {
+        "rendered",
+        "rendered_partial",
+    }:
+        return []
+    emitted = {
+        str(identity)
+        for row in draft.get("segments", [])
+        for identity in row.get("requirement_ids", [])
+    }
+    pending = set(
+        published_requirement_fulfillment(
+            prepared.requirements, _publication_claims(prepared, claims)
+        )["unresolved_requirement_ids"]
+    )
+    by_id = {requirement.id: requirement for requirement in prepared.requirements.requirements}
+    selected = {str(chunk.chunk_id): chunk for chunk in prepared.selected}
+    slots: dict[str, list[tuple[EvidenceBundle, dict[str, Any]]]] = {}
+    personal = {
+        str(identity)
+        for obligation in (repair.get("initial_assessment") or {}).get("input_obligations", [])
+        for identity in obligation.get("requirement_ids", [])
+    }
+    for bundle in prepared.bundles:
+        chunk = selected.get(str(bundle.chunk_id))
+        if (
+            chunk is None
+            or chunk.content != bundle.text
+            or chunk.metadata.get("authority_status") == "unresolved"
+        ):
+            continue
+        for proof in bundle.applicability_proof:
+            if (
+                proof.get("fulfillment") == "full"
+                and proof.get("quote")
+                and str(proof["quote"]) in bundle.text
+            ):
+                slots.setdefault(str(proof.get("requirement_id")), []).append((bundle, proof))
+
+    def full_closure(identity: str, visiting: set[str]) -> bool:
+        requirement = by_id.get(identity)
+        return bool(
+            requirement is not None
+            and identity not in visiting
+            and identity not in personal
+            and requirement.task_kind in {"rule_lookup", "comparison"}
+            and slots.get(identity)
+            and all(
+                full_closure(dependency, visiting | {identity})
+                for dependency in requirement.dependencies
+            )
+        )
+
+    candidates = []
+    for identity in sorted(pending - emitted):
+        requirement = by_id[identity]
+        if requirement.task_kind not in {"rule_lookup", "comparison"} or not full_closure(
+            identity, set()
+        ):
+            continue
+        proof_slots = slots[identity]
+        text = " ".join(
+            dict.fromkeys(
+                str(proof.get("supported_scope") or proof["quote"]).strip()
+                for _, proof in proof_slots
+            )
+        )
+        candidates.append(
+            {
+                "assertion_id": "O" + content_hash(identity + ":" + text)[:20],
+                "text": text,
+                "requirement_ids": [identity],
+                "proof_ids": list(dict.fromkeys(str(bundle.chunk_id) for bundle, _ in proof_slots)),
+            }
+        )
+    if not candidates:
+        return []
+    parsed = _render_structured_answer(
+        json.dumps({"version": "answer.draft.v1", "segments": candidates}),
+        prepared.selected,
+        bundles=prepared.bundles,
+        render_citations=False,
+    )
+    return (
+        parsed[1]["segments"]
+        if parsed is not None and parsed[1].get("status") == "rendered"
+        else []
     )
 
 

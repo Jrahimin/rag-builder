@@ -726,3 +726,47 @@ def test_expired_modifier_is_not_applied_after_its_effective_interval() -> None:
         [base_chunk, modifier_chunk], records, reference_date=date(2020, 6, 1)
     )
     assert "15%" not in during[0].content
+
+
+@pytest.mark.parametrize("effect", ["adds", "amends", "savings"])
+@pytest.mark.parametrize("present", [True, False])
+def test_reviewed_compound_proof_requires_all_exact_modifier_spans(effect, present):
+    from dataclasses import replace
+
+    base_id, modifier_id = uuid.uuid4(), uuid.uuid4()
+    base = _chunk(revision=base_id, content="Section 21 — Rule\nThe rule applies.")
+    modifier = _chunk(
+        revision=modifier_id, content="Section 21 applies subject to the saving condition."
+    )
+    common = {"index_build_id": str(uuid.uuid4()), "source_metadata_generation": 7}
+    base = replace(base, metadata={**base.metadata, **common})
+    modifier = replace(modifier, metadata={**modifier.metadata, **common})
+    record = {
+        "base_revision_id": str(base_id),
+        "modifier_revision_id": str(modifier_id),
+        "outcome": "expanded",
+        "target_provisions": ["Section 21"],
+        "provision_effect": effect,
+        "replacement_scope_verified": True,
+        "scope_hash": "a" * 64,
+        "applicable": True,
+        "supporting_spans": [
+            {
+                "chunk_id": str(modifier.chunk_id),
+                "char_start": 0,
+                "char_end": len(modifier.content),
+                "quote": modifier.content,
+            }
+        ],
+    }
+    chunks = [base, modifier] if present else [base]
+    resolved = annotate_authority_limitations(chunks, [record])
+    assert (resolved[0].metadata.get("authority_status") == "unresolved") is (not present)
+    if present:
+        assert set(resolved[0].metadata["proof_unit_chunk_ids"]) == {
+            str(base.chunk_id),
+            str(modifier.chunk_id),
+        }
+        assert cited_authority_summary(resolved, [record])["status"] == "resolved"
+    else:
+        assert cited_authority_summary(resolved, [record])["status"] == "unresolved"

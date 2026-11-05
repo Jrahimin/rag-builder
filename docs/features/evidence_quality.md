@@ -156,6 +156,12 @@ alone is not `supported`. Hash embeddings are not used for cross-language claim
 verification. The compatibility `grounded` flag is true only when every claim is
 `supported`. `unverified` is reported separately and does not count as fully grounded.
 
+For typed source-entailment assertions, bounded quantity, negation and exception guards
+consume the same approved proof quotes passed to the verifier. An unrelated lexical locator
+cannot override that proof. Source-entailment `unverified` remains unverified and reports
+insufficient evidence; `embedding_unavailable` is reserved for an unavailable embedding
+check. Exact approved-span identity continues to bypass redundant similarity embeddings.
+
 The SSE `done` event carries the same citations, claims, grounded flag, and refusal reason.
 
 ## Reranker decision
@@ -315,7 +321,7 @@ never successful abstentions. Assertion counts distinguish attempted, rejected
 and published assertions. No factual assertions means citation coverage is
 `not_applicable` with numeric 0.0; it is excluded from factual coverage aggregation.
 
-Quality runs use the shared production runner. Hash/echo smoke and deterministic
+Quality runs use the shared production runner. Optional conversation history can carry actual Message citation snapshots; evaluation uses chat's resolver identity projection and keeps the complete assistant-owned proof snapshots for recall. Inline and separately supplied snapshots must agree. Malformed or foreign citation identities fail before execution; identity-only legacy history remains supported. Hash/echo smoke and deterministic
 fixtures remain offline evidence, not live source-sufficiency certification.
 
 Detailed evaluation proof is opt-in operator capture with audited access, bounded
@@ -346,3 +352,75 @@ Search diagnostics add indexed_corpus_empty=true only for a sealed pinned build 
 manifest has no documents and whose keyword/vector/chunk counts are all zero. This
 attested inventory gap completes an indexed-only limitation without further LLM
 planning; an ordinary query miss does not establish corpus absence.
+
+### Split-table and verifier boundary evidence
+
+Split table chunks carry the exact parser table identity, body row indices and offsets for their own row group. Caption/header context is explicitly shared; identical rows in sibling groups cannot supply a scope-review span. Final annotation and review reject out-of-group inventory entries, including oversized-row fallback fragments. A private candidate must be rebuilt and inspected to establish these identities on actual corpus chunks; source edits do not update the active build.
+
+Offline capacity regressions enforce a conservative JSON-byte output bound for 12 assertions with two proofs, 20 assertions with one proof and multiple-proof batches. They verify reordering, missing/duplicate/foreign bindings, failed partitions, absolute-cutoff admission and preservation through the actual grounding consumer. These fixtures establish protocol boundaries; they do not measure provider latency or certify corpus sufficiency or live answer quality.
+
+Arithmetic period evidence belongs to the operand's exact user clause or reviewed
+source clause/table row. Aggregating reviewed quotes preserves their offsets and
+hashes without sharing period labels across quotes. Multiple local periods,
+unlabelled table year ranges and unattached values in period-scoped context remain
+unresolved. Cross-period or unresolved components and their descendants fail;
+independent compatible components retain ordinary unit, currency, origin and final
+scope checks. Formula displays accept exact decimal value equivalence without
+rounding, while preserving operator order and numeric token boundaries. Accepted
+formulas use the graph rendering and still require final source/scope verification.
+Offline regressions exercise the actual operand registry and graph
+consumer with ASCII/Bangla digits; they do not establish live answer acceptance.
+
+Wrapped-quantity regressions pair spaces, LF and CRLF with English/Bangla scales,
+exact source/user offsets, cross-year failures, actual calculation finalization,
+and regular/SSE persisted terminal projections. Relationship-review regressions
+cover all server-owned provenance fields, trusted sparse copies and changed-proof
+invalidation. These offline results leave corpus and live provider acceptance open.
+
+The first recovery coverage review can reuse full requirement facets from a validated
+initial partial assessment. It reviews only changed or unresolved requirements when
+their dependency set is closed within that review. A changed source span, applicability
+scope, revision or affecting authority invalidates retained proof; an unresolved
+requirement that depends on a retained check still receives the full review. This uses
+the existing delta merge and final quote/authority validation, preserving query limits,
+review allowances and absolute deadlines. It does not turn assessment evidence into
+publication: assertion verification and immutable publication approval remain required.
+
+Recovery prompts carry project defaults in the canonical request scope. They
+include a separate project instruction when its text differs from those defaults.
+The same scope remains available for proof checks and diagnostics.
+
+If the remaining budget cannot reserve both discovery and validation, the scheduler
+records the blocked action, remaining time and required reserve. The phase stays
+at the last stage entered. A completed coverage review can still leave too little
+time for structural retrieval and produce a recovery timeout without validated
+partial proof.
+
+Timeout restoration checks the same source text/scope/revision/authority fingerprint
+as ordinary proof invalidation, so identical words with changed applicability cannot
+restore a stale evidence checkpoint. Saved AGM/comparison regressions bind source
+captures by hash and use controlled provider outputs and virtual delays with native
+asyncio cancellation. They demonstrate removal of duplicate review work and preserve
+the genuine comparison timeout when review does not complete. Cancelled provider
+outputs are absent from the captures; these fixtures establish neither live latency
+improvement nor current legal force or missing corpus content.
+
+For period-specific numeric rules, coverage distinguishes a publication footer
+from the operative period and checks that the selected amount belongs to the
+applicable schedule. A comparison uses the exact proof of its independently
+reviewed operands from the same source snapshot. Recovery searches for unresolved
+operands and leaves subtraction to calculation verification.
+If the planner omits an explicit subtraction between two years with distinct
+amount requirements, recovery retains it as a derived requirement and composes
+its proof from the two annual checks. When the planner includes it as a
+calculation, coverage applies the same comparison proof checks. Publication
+verifies each claim against its own proof unit so a
+derived difference retains both sources while each operand can cite its own.
+Coverage can use exact numbered lines from a document with failed extraction
+elsewhere when hash-checked spans attest every selected line on that page. An
+extra closing parenthesis elsewhere in a chunk does not disqualify a complete,
+separately bounded paragraph. Truncated or corrupt proof stays ineligible.
+When a PDF table continues across a page break, the preceding indexed chunk can
+limit the row to its assessment years. The lookup requires the same project,
+build, document version and extraction generation. It supplies review context
+and does not certify an amount or replace a citation.

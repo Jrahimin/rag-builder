@@ -175,6 +175,7 @@ async def test_current_historical_replacement_modifier_hybrid_and_legacy_behavio
                 {
                     "relationship_type": "replaces",
                     "target_revision_id": old_revision["id"],
+                    "review_provenance": {"whole_document_replacement": "declared"},
                 }
             ],
             "change_reason": "Replace the retired policy",
@@ -256,6 +257,7 @@ async def test_current_historical_replacement_modifier_hybrid_and_legacy_behavio
                 {
                     "relationship_type": "replaces",
                     "target_revision_id": timeline_retired["id"],
+                    "review_provenance": {"whole_document_replacement": "declared"},
                 }
             ],
             "change_reason": "Supersede metadata on the same indexed document",

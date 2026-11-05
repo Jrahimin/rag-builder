@@ -42,6 +42,7 @@ class RetrievalResult(BaseModel):
     passage_char_start: int | None = None
     passage_char_end: int | None = None
     passage_score_method: str | None = None
+    project_id: uuid.UUID | None = None
     filename: str
     page_number: int | None = None
     char_start: int | None = None
@@ -118,6 +119,8 @@ class SearchDiagnostics(BaseModel):
     reranker_usage: dict[str, Any] = Field(default_factory=dict)
     modifies_expansion_status: str = "disabled"
     modifies_expansion_depth: int = 1
+    relationship_discovery_status: str = "not_assessed"
+    unresolved_frontier_ids: list[str] = Field(default_factory=list)
     modifies_expansion_records: list[dict[str, Any]] = Field(default_factory=list)
     modifies_expansion_exclusion_reasons: dict[str, int] = Field(default_factory=dict)
     modifies_authority_scope_status: str = "not_applicable"

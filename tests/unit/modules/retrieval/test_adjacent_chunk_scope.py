@@ -16,6 +16,29 @@ def _row(**values):
     return SimpleNamespace(**values)
 
 
+async def test_preceding_page_is_in_same_build_document_version_and_generation():
+    session = AsyncMock()
+    project, build, anchor = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    rows = MagicMock()
+    rows.tuples.return_value.all.return_value = [(anchor, "AY 2030-31")]
+    session.execute.return_value = rows
+    found = await RetrievalChunkRepository(session, project).preceding_indexed_text(
+        [anchor], index_build_id=build
+    )
+    assert found == {anchor: "AY 2030-31"}
+    sql = str(
+        session.execute.call_args.args[0].compile(
+            dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}
+        )
+    )
+    assert str(project) in sql and str(anchor) in sql
+    assert sql.count(str(build)) == 2
+    assert "document_version" in sql and "generation_id IS NOT DISTINCT FROM" in sql
+    assert "chunk_index - 1" in sql and "page_number) - 1" in sql
+    assert "coalesce(document_chunks_2.page_end, document_chunks_2.page_number) BETWEEN" in sql
+    assert "coalesce(document_chunks_2.page_start, document_chunks_2.page_number) <" in sql
+
+
 async def test_adjacent_sql_preserves_scope_and_bounds_page_discovery():
     session = AsyncMock()
     project, build = uuid.uuid4(), uuid.uuid4()

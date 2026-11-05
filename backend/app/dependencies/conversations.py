@@ -2,25 +2,24 @@
 
 from __future__ import annotations
 
-import asyncio
 import time
 import uuid
-from collections.abc import AsyncIterator, Callable
-from contextlib import asynccontextmanager
-from datetime import datetime
 from typing import Annotated, Any
 
 from fastapi import Depends, Header, Path, Request
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.composition.audit import DatabaseAuditRecorder
+from app.composition.message_retrieval import (
+    SearchServiceRetrievalAdapter as SearchServiceRetrievalAdapter,
+)
 from app.composition.source_metadata import KnowledgeRetrievalSourceMetadataAdapter
 from app.core.config import ResponseMode, get_settings
 from app.dependencies.access import AdminOrOrganizationDep
 from app.dependencies.common import DbSessionDep
 from app.dependencies.retrieval import get_search_service, query_embedder_factory_for
 from app.models.conversation import Conversation
-from app.modules.conversations.ports import ContextChunk, ContextRetrievalResult, RetrievalPort
+from app.modules.conversations.ports import RetrievalPort
 from app.modules.conversations.repositories.config_snapshot_repository import (
     ConversationConfigSnapshotRepository,
 )
@@ -34,8 +33,6 @@ from app.modules.conversations.services.conversation_service import Conversation
 from app.modules.projects.repositories.project_ai_config_repository import (
     ProjectAIConfigRepository,
 )
-from app.modules.retrieval.known_dependency_gap import known_dependency_gap
-from app.modules.retrieval.schemas.search import SearchRequest
 from app.modules.retrieval.services.search_service import SearchService
 from app.platform.config.project_ai import (
     ConfigProvenance,
@@ -48,11 +45,10 @@ from app.platform.config.project_ai import (
     resolve_project_ai_config,
 )
 from app.platform.db.session import ObservedAsyncSession
-from app.platform.infra.recovery_capacity import recovery_slot
-from app.platform.providers.contracts.embedding import BaseEmbeddingProvider, EmbeddingPurpose
+from app.platform.providers.contracts.embedding import BaseEmbeddingProvider
 from app.platform.providers.contracts.llm import BaseLLMProvider
 from app.platform.providers.contracts.web_search import BaseWebSearchProvider
-from app.platform.providers.errors import ProviderError, ProviderTimeoutError
+from app.platform.providers.errors import ProviderError
 from app.platform.providers.implementations.embedding_factory import get_embedding_provider
 from app.platform.providers.implementations.llm_factory import (
     create_llm_provider_for_conversation,
@@ -65,239 +61,8 @@ from app.platform.providers.implementations.web_search_factory import (
     create_web_search_provider,
 )
 from app.platform.providers.request_work import (
-    CachedEmbeddingProvider,
     RequestWork,
-    current_request_work,
 )
-
-
-class SearchServiceRetrievalAdapter:
-    """Maps retrieval SearchService to the conversations RetrievalPort."""
-
-    supports_adjacent_retrieval = True
-    supports_cited_retrieval = True
-    supports_batch_retrieval = True
-    supports_exact_recall = True
-
-    def __init__(
-        self,
-        search_service: SearchService,
-        *,
-        branch_factory: Callable[[AsyncSession, dict[str, Any]], SearchService] | None = None,
-        session_factory: async_sessionmaker[AsyncSession] | None = None,
-        redis_dsn: str | None = None,
-    ) -> None:
-        self._search_service = search_service
-        self._branch_factory = branch_factory
-        self._session_factory = session_factory
-        self._redis_dsn = redis_dsn
-
-    def _request_work(self) -> RequestWork | None:
-        embedder = getattr(self._search_service, "resolved_query_embedder", None)
-        work = getattr(embedder, "work", None)
-        if isinstance(work, RequestWork):
-            return work
-        return current_request_work()
-
-    def set_request_scope(self, scope: dict[str, Any]) -> None:
-        self._search_service.set_request_scope(scope)
-
-    async def pin_validated_preview(self, build_id: uuid.UUID) -> None:
-        await self._search_service.pin_validated_preview(build_id)
-
-    async def retrieve_batch(
-        self, requests: list[dict[str, Any]], *, snapshot: dict[str, Any]
-    ) -> list[ContextRetrievalResult]:
-        work = self._request_work()
-        if work is not None:
-            work.counts["recovery_attempts"] += 1
-        if self._branch_factory is None or self._session_factory is None:
-            completed: list[ContextRetrievalResult] = []
-            for request in requests:
-                try:
-                    completed.append(await self.retrieve(**request))
-                except (ProviderTimeoutError, TimeoutError):
-                    completed.append(
-                        ContextRetrievalResult(
-                            chunks=[],
-                            diagnostics={
-                                **snapshot,
-                                "branch_failure": "provider_or_deadline_failure",
-                            },
-                        )
-                    )
-            return completed
-        # The initial search resolved the active build's embedding identity. Warm
-        # only that turn-local cache; branches still resolve and verify their own
-        # pinned snapshots and execute all retrieval/admission checks as before.
-        embedder = getattr(self._search_service, "resolved_query_embedder", None)
-        if isinstance(embedder, CachedEmbeddingProvider) and snapshot.get("strategy") in {
-            "hybrid",
-            "semantic",
-        }:
-            queries = list(dict.fromkeys(request["query"] for request in requests))
-            if queries:
-                await embedder.embed_texts(queries, purpose=EmbeddingPurpose.QUERY)
-                embedder.work.counts["recovery_query_embedding_batches"] += 1
-        branch_factory, session_factory = self._branch_factory, self._session_factory
-        # Eight bounded overview searches complete in two waves. The shared
-        # process and deployment limits still constrain aggregate concurrency.
-        limiter = asyncio.Semaphore(4)
-
-        async def branch(request: dict[str, Any]) -> ContextRetrievalResult:
-            async with (
-                _hold_semaphore(work, limiter, "recovery_batch_semaphore"),
-                _hold_semaphore(work, _RECOVERY_LIMIT, "process_recovery_semaphore"),
-                self._deployment_slot(work),
-                session_factory() as session,
-            ):
-                if isinstance(session, ObservedAsyncSession):
-                    await session.connection()
-                adapter = SearchServiceRetrievalAdapter(branch_factory(session, snapshot))
-                result = await adapter.retrieve(**request)
-                for key in (
-                    "index_build_id",
-                    "source_metadata_generation",
-                    "configuration_hash",
-                    "reference_date",
-                ):
-                    if (
-                        snapshot.get(key) is not None
-                        and result.diagnostics.get(key) != snapshot[key]
-                    ):
-                        raise ProviderError(
-                            "Recovery snapshot changed",
-                            provider_name="retrieval",
-                            context={"reason": f"snapshot_mismatch_{key}"},
-                        )
-                return result
-
-        tasks = [asyncio.create_task(branch(request)) for request in requests]
-        deadline = snapshot.get("discovery_deadline")
-        if not isinstance(deadline, (float, int)):
-            deadline = work.recovery_deadline if work is not None else time.perf_counter() + 30
-        try:
-            pending = set(tasks)
-            fatal = None
-            while pending:
-                done, pending = await asyncio.wait(
-                    pending,
-                    timeout=max(0.0, deadline - time.perf_counter()),
-                    return_when=asyncio.FIRST_EXCEPTION,
-                )
-                fatal = next(
-                    (
-                        task.exception()
-                        for task in done
-                        if not task.cancelled()
-                        and task.exception() is not None
-                        and not isinstance(task.exception(), (ProviderTimeoutError, TimeoutError))
-                    ),
-                    None,
-                )
-                if fatal is not None or not done or time.perf_counter() >= deadline:
-                    break
-                # A recoverable independent timeout does not consume the
-                # remaining sibling's discovery window.
-            for task in pending:
-                task.cancel()
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-            if fatal is not None:
-                # Snapshot identity and provider integrity errors never become empty
-                # successful branches. Recovery orchestrates safe partial checkpoints.
-                raise fatal
-            return [
-                result
-                if isinstance(result, ContextRetrievalResult)
-                else ContextRetrievalResult(
-                    [], {**snapshot, "branch_failure": "discovery_deadline_exceeded"}
-                )
-                for result in results
-            ]
-        finally:
-            for task in tasks:
-                if not task.done():
-                    task.cancel()
-            await asyncio.gather(*tasks, return_exceptions=True)
-
-    @asynccontextmanager
-    async def _deployment_slot(self, work: RequestWork | None = None) -> AsyncIterator[None]:
-        del work
-        if self._redis_dsn is None:
-            yield
-            return
-        async with recovery_slot(self._redis_dsn):
-            yield
-
-    @property
-    def query_embedder(self) -> BaseEmbeddingProvider | None:
-        return self._search_service.resolved_query_embedder
-
-    async def retrieve(
-        self,
-        *,
-        query: str,
-        top_k: int,
-        document_id: uuid.UUID | None = None,
-        metadata_filter: dict[str, str] | None = None,
-        as_of: datetime | None = None,
-        adjacent_to: list[uuid.UUID] | None = None,
-        cited_chunk_ids: list[uuid.UUID] | None = None,
-    ) -> ContextRetrievalResult:
-        work = self._request_work()
-        if work is not None:
-            work.counts["ranked_retrieval_calls"] += 1
-        response = await self._search_service.search(
-            SearchRequest(
-                query=query,
-                top_k=top_k,
-                document_id=document_id,
-                metadata_filter=metadata_filter or {},
-                as_of=as_of,
-            ),
-            adjacent_to=adjacent_to,
-            cited_chunk_ids=cited_chunk_ids,
-        )
-        diagnostics = response.diagnostics.model_dump(mode="json")
-        diagnostics.update(
-            known_dependency_gap(diagnostics, getattr(self._search_service, "_project_id", None))
-        )
-        return ContextRetrievalResult(
-            chunks=[ContextChunk.from_retrieval_result(result) for result in response.results],
-            diagnostics=diagnostics,
-        )
-
-    async def retrieve_exact(
-        self,
-        *,
-        chunk_ids: list[uuid.UUID],
-        query: str = "",
-        document_id: uuid.UUID | None = None,
-        metadata_filter: dict[str, str] | None = None,
-        as_of: datetime | None = None,
-    ) -> ContextRetrievalResult:
-        identities = list(dict.fromkeys(chunk_ids))
-        if not identities:
-            return ContextRetrievalResult(
-                chunks=[],
-                diagnostics={
-                    "identity_recall_status": "empty_restriction",
-                    "skipped_reason": "empty_identity_restriction",
-                    "rerank_status": "skipped",
-                    "retrieved_candidate_count": 0,
-                },
-            )
-        response = await self._search_service.recall_indexed_identities(
-            chunk_ids=identities,
-            query=query,
-            document_id=document_id,
-            metadata_filter=metadata_filter,
-            as_of=as_of,
-        )
-        return ContextRetrievalResult(
-            chunks=[ContextChunk.from_retrieval_result(result) for result in response.results],
-            diagnostics=response.diagnostics.model_dump(mode="json"),
-        )
 
 
 def get_conversation_repository(
@@ -450,12 +215,8 @@ async def get_chat_service(
             configured_source_policy_mode=(resolution.provenance.configured_source_policy_mode),
             configuration_hash=resolution.configuration_hash,
             config_provenance=resolution.provenance.model_dump(mode="json"),
-            query_translator=translator if pinned is None else None,
-            query_translation_config=(
-                effective_settings.query_translation
-                if pinned is None
-                else effective_settings.query_translation.model_copy(update={"enabled": False})
-            ),
+            query_translator=translator,
+            query_translation_config=effective_settings.query_translation,
             query_embedder_factory=query_embedder_factory_for(settings),
             pinned_index_build_id=uuid.UUID(pinned["index_build_id"]) if pinned else None,
             pinned_source_metadata_generation=pinned["source_metadata_generation"]
@@ -516,24 +277,3 @@ async def get_chat_service(
 
 ConversationServiceDep = Annotated[ConversationService, Depends(get_conversation_service)]
 ChatServiceDep = Annotated[ChatService, Depends(get_chat_service)]
-
-# Worker-process wide bound in addition to the per-turn concurrency of three.
-_RECOVERY_LIMIT = asyncio.Semaphore(12)
-
-
-@asynccontextmanager
-async def _hold_semaphore(
-    work: RequestWork | None, semaphore: asyncio.Semaphore, name: str
-) -> AsyncIterator[None]:
-    """Acquire a semaphore, ending the wait span before the protected operation."""
-
-    if work is None:
-        async with semaphore:
-            yield
-        return
-    async with work.wait(name):
-        await semaphore.acquire()
-    try:
-        yield
-    finally:
-        semaphore.release()

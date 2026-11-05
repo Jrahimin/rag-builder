@@ -128,15 +128,32 @@ async def test_table_retains_parent_period_and_child_category() -> None:
         char_start=50,
         page_start=2,
     )
-    parsed = replace(table, elements=(parent, child, *table.elements))
+    full_text = parent.text + "\n\n" + child.text + "\n\n" + table.text
+    table_start = len(parent.text) + len(child.text) + 4
+    parsed = replace(
+        table,
+        text=full_text,
+        elements=(
+            replace(parent, char_end=len(parent.text)),
+            replace(child, char_start=len(parent.text) + 2, char_end=table_start - 2),
+            *(
+                replace(
+                    e,
+                    char_start=(e.char_start or 0) + table_start,
+                    char_end=(e.char_end or len(e.text)) + table_start,
+                )
+                for e in table.elements
+            ),
+        ),
+    )
     chunks, _ = await ChunkingService(
         config=ChunkingConfig(strategy=ChunkingStrategy.STRUCTURE)
     ).split_document(parsed)
     table_chunk = next(c for c in chunks if c.chunk_metadata.get("element_type") == "table")
     assert "2028 renewals" in table_chunk.content
     assert "Enterprise customers" in table_chunk.content
-    assert table_chunk.char_start is None
-    assert table_chunk.chunk_metadata["provenance_precision"] == "chunk_with_source_spans"
+    assert table_chunk.char_start == 0
+    assert table_chunk.chunk_metadata["provenance_precision"] == "exact_source_span"
     assert table_chunk.page_start == 1
 
 

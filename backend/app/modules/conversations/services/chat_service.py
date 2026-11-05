@@ -521,7 +521,9 @@ class ChatService:
             self._runner._work = self._work
 
     async def _freeze_stage_estimates(self) -> None:
-        if self._work.execution_policy != "adaptive_v1" or self._config_snapshot_id is None:
+        if (
+            self._work.execution_policy != "adaptive_v1" and not self._work.is_bounded
+        ) or self._config_snapshot_id is None:
             return
         if not isinstance(self._message_repository, MessageRepository):
             return
@@ -568,16 +570,16 @@ class ChatService:
                     result.finish_reason,
                     result.insufficient_evidence_reason,
                 )
-                notices = result.metadata["notices"]
+                notices = list(result.metadata.get("notices") or [])
                 assistant = await self._commit_assistant_message(
                     conversation=conversation,
                     content=content,
                     finish_reason=finish_reason,
                     input_tokens=None,
                     output_tokens=None,
-                    prompt_version="deadline.terminal.v1",
-                    provider=conversation.provider or self._llm_config.backend.value,
-                    model=conversation.model or self._llm_config.model,
+                    prompt_version=result.prompt_version,
+                    provider=result.provider,
+                    model=result.model,
                     metadata={
                         **result.metadata,
                         "retrieval_time_ms": self._work.timings.get(
@@ -585,17 +587,12 @@ class ChatService:
                         ),
                         "generation_time_ms": self._work.timings.get("answer_generation", 0),
                         "total_time_ms": round((time.perf_counter() - self._work.started) * 1000),
-                        "terminal_result": "exhausted_budget",
-                        "evidence_summary": {
-                            "coverage": "incomplete",
-                            "claim_verification": "unverified",
-                        },
                         "lifecycle": self._work.snapshot(),
                         "terminal_outcome": outcome.model_dump(mode="json"),
                         "notices": notices,
                     },
-                    citations=[],
-                    claims=[],
+                    citations=result.citations,
+                    claims=result.claims,
                     grounded=result.grounded,
                     insufficient_evidence_reason=reason,
                     user_content_for_title=request.content,
@@ -1250,37 +1247,9 @@ class ChatService:
         from app.platform.domain.runtime_identity import runtime_code_fingerprint
 
         metadata["execution_runtime_identity"] = runtime_code_fingerprint()
-        if isinstance(self._message_repository, MessageRepository) and metadata.get(
-            "index_build_id"
-        ):
-            import hashlib
-            import json
-
-            from sqlalchemy import select
-
-            from app.models.index_scope_review import IndexScopeReview
-
-            review_rows = (
-                await self._session.scalars(
-                    select(IndexScopeReview)
-                    .where(
-                        IndexScopeReview.project_id == self._project_id,
-                        IndexScopeReview.build_id == uuid.UUID(str(metadata["index_build_id"])),
-                    )
-                    .order_by(IndexScopeReview.chunk_id)
-                )
-            ).all()
-            metadata["scope_review_fingerprint"] = hashlib.sha256(
-                json.dumps(
-                    [
-                        {"chunk_id": str(v.chunk_id), "review_hash": v.review_hash}
-                        for v in review_rows
-                    ],
-                    sort_keys=True,
-                    separators=(",", ":"),
-                    ensure_ascii=False,
-                ).encode()
-            ).hexdigest()
+        metadata["scope_review_fingerprint"] = self._work.evidence_snapshot.get(
+            "scope_review_fingerprint"
+        )
         metadata["prompt_version"] = prompt_version
         metadata["provider_route"] = {"provider": provider, "model": model}
         diagnostic_payload = metadata.pop("operator_diagnostic", None)
@@ -1328,7 +1297,8 @@ class ChatService:
         from app.modules.conversations.services.message_diagnostic_service import diagnostic_record
 
         if self._diagnostic_repository is not None:
-            await self._diagnostic_repository.expire_payloads()
+            # The application retention sweep and expiry-on-read enforce TTL.
+            # Keep the answer transaction limited to this message.
             self._diagnostic_repository.add(
                 diagnostic_record(
                     project_id=self._project_id,

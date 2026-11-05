@@ -153,3 +153,123 @@ def test_web_query_finds_scope_facts_after_style_instructions_and_across_paragra
     assert "2026-27" in query
     assert "official sources" in query
     assert "concise bullet points" not in query
+
+
+@pytest.mark.parametrize(
+    "requirement_id,accepted", [("R2", True), ("R1", False), ("foreign", False)]
+)
+async def test_web_review_binds_only_missing_requirement_ids(requirement_id, accepted):
+    item = source("An official rule applies to the requested period.")
+    llm = AsyncMock()
+    llm.generate.return_value = ChatCompletionResult(
+        json.dumps(
+            {
+                "accepted": [
+                    {"source_index": 0, "quote": item.content, "requirement_ids": [requirement_id]}
+                ]
+            }
+        ),
+        "fixture",
+        "fixture",
+        "stop",
+        ChatUsage(1, 1),
+        "1",
+    )
+    result, diagnostics, _ = await review_web_evidence(
+        llm=llm,
+        query="Which rule?",
+        evidence=[item],
+        domain_instructions="",
+        reference_date=date(2026, 10, 1),
+        missing_requirements=[{"requirement_id": "R2", "description": "Missing independent rule"}],
+        canonical_scope={"temporal_basis": "known_at", "exact_as_of": "2026-10-01"},
+    )
+    assert bool(result) is accepted
+    payload = json.loads(llm.generate.call_args.args[0][1].content)
+    assert payload["canonical_scope"]["temporal_basis"] == "known_at"
+    assert diagnostics["requested_requirement_ids"] == ["R2"]
+
+
+@pytest.mark.parametrize("corruption", [None, "authority", "applicability", "scope"])
+async def test_official_web_admission_requires_exact_authority_and_applicability(corruption):
+    import hashlib
+
+    scope = {"requested_periods": [{"kind": "assessment", "start_year": 2026, "end_year": 2027}]}
+    quote = "Official published rule. Applies to assessment year 2026-27."
+    item = source(quote)
+    proof = {
+        "source_index": 0,
+        "quote": quote,
+        "requirement_ids": ["R1"],
+        "official_authority_quote": "Official published rule.",
+        "applicability_quote": "Applies to assessment year 2026-27.",
+        "scope_hash": hashlib.sha256(
+            json.dumps(scope, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+        ).hexdigest(),
+    }
+    if corruption:
+        proof[
+            {
+                "authority": "official_authority_quote",
+                "applicability": "applicability_quote",
+                "scope": "scope_hash",
+            }[corruption]
+        ] = "foreign"
+    llm = AsyncMock()
+    llm.generate.return_value = ChatCompletionResult(
+        json.dumps({"accepted": [proof]}), "fixture", "fixture", "stop", ChatUsage(1, 1), "1"
+    )
+    accepted, diagnostics, _ = await review_web_evidence(
+        llm=llm,
+        query="Which rule?",
+        evidence=[item],
+        domain_instructions="",
+        reference_date=date(2026, 10, 1),
+        missing_requirements=[{"requirement_id": "R1"}],
+        canonical_scope=scope,
+        require_official_authority=True,
+    )
+    assert bool(accepted) is (corruption is None)
+    if corruption is None:
+        assert diagnostics["proof_bindings"][0]["scope_hash"] == proof["scope_hash"]
+
+
+@pytest.mark.parametrize(
+    "corruption", [None, "affected", "missing_scope", "discovery", "dependency"]
+)
+def test_independent_web_requirement_cannot_escape_unresolved_dependency(corruption):
+    from dataclasses import replace
+
+    from app.modules.conversations.services.web_evidence_review import independent_web_requirements
+    from tests.unit.modules.conversations.test_phase2_completion import source
+
+    chunk = source("Independent operative rule.")
+    chunk = replace(
+        chunk,
+        metadata={
+            "source_revision_id": "clear-revision",
+            "source_policy_applicable": corruption != "missing_scope",
+            "index_build_id": "build",
+            "source_metadata_generation": 2,
+        },
+    )
+    requirement = {
+        "requirement_id": "R",
+        "depends_on": ["missing"] if corruption == "dependency" else [],
+    }
+    checks = [
+        {
+            "requirement_id": "R",
+            "supported": True,
+            "fulfillment": "partial",
+            "evidence": [{"chunk_id": str(chunk.chunk_id), "quote": chunk.content}],
+        }
+    ]
+    rows = independent_web_requirements(
+        [requirement],
+        checks,
+        [chunk],
+        {"clear-revision"} if corruption == "affected" else {"unresolved-revision"},
+        discovery_complete=corruption != "discovery",
+    )
+    assert bool(rows) is (corruption is None)

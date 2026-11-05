@@ -25,7 +25,9 @@ from app.modules.knowledge.repositories.source_metadata_repository import (
 )
 from app.modules.knowledge.schemas.source_metadata import (
     ActiveSourceResponse,
+    GovernanceReviewProposal,
     SourceActivationResponse,
+    SourceRelationshipCreate,
     SourceRelationshipResponse,
     SourceRevisionCreate,
     SourceRevisionCreateResponse,
@@ -38,6 +40,7 @@ from app.platform.audit.contracts import (
     AuditOutcome,
     AuditRecorder,
 )
+from app.platform.domain.content_hash import content_hash
 
 _PROJECT_NOT_FOUND = {"message": "Project not found.", "code": "project_not_found"}
 _DOCUMENT_NOT_FOUND = {"message": "Document not found.", "code": "document_not_found"}
@@ -200,6 +203,36 @@ class SourceMetadataService:
             document_id=document_id, limit=limit, offset=offset
         )
 
+    async def review_queue(
+        self, *, limit: int = 100, offset: int = 0
+    ) -> list[GovernanceReviewProposal]:
+        """Read untrusted ingestion proposals; acceptance uses versioned review APIs."""
+        rows = (
+            await self._session.scalars(
+                select(DocumentChunk)
+                .join(Document, Document.id == DocumentChunk.document_id)
+                .where(
+                    DocumentChunk.project_id == self._repository.project_id,
+                    Document.deleted_at.is_(None),
+                    DocumentChunk.document_version == Document.version,
+                    DocumentChunk.chunk_metadata["governance_review_queue"].is_not(None),
+                )
+                .order_by(DocumentChunk.document_id, DocumentChunk.chunk_index)
+                .offset(offset)
+                .limit(limit)
+            )
+        ).all()
+        return [
+            GovernanceReviewProposal(
+                document_id=chunk.document_id,
+                chunk_id=chunk.id,
+                chunk_hash=content_hash(chunk.content),
+                **proposal,
+            )
+            for chunk in rows
+            for proposal in (chunk.chunk_metadata or {}).get("governance_review_queue", [])
+        ]
+
     async def state(self, generation: int | None = None) -> SourceStateResponse:
         project = await self._require_project()
         resolved = project.source_metadata_generation if generation is None else generation
@@ -254,6 +287,44 @@ class SourceMetadataService:
             self._repository.add(group)
             await self._repository.flush()
 
+        if (
+            active is not None
+            and active[1].source_group_id == group.id
+            and (
+                "edition_key" not in data.model_fields_set
+                or data.edition_key == active[1].edition_key
+            )
+        ):
+            # Sparse corrections preserve existing metadata; explicit null remains a reset.
+            carried_metadata = {
+                field: getattr(active[1], field)
+                for field in (
+                    "title",
+                    "source_type",
+                    "revision_label",
+                    "published_date",
+                    "effective_from",
+                    "effective_to",
+                    "lifecycle_status",
+                    "source_role",
+                )
+                if field not in data.model_fields_set
+                and not (
+                    field == "lifecycle_status"
+                    and active[1].lifecycle_status == SourceLifecycleStatus.UNSPECIFIED
+                )
+            }
+            original_fields = set(data.model_fields_set)
+            data = SourceRevisionCreate.model_validate(
+                {
+                    **data.model_dump(),
+                    **carried_metadata,
+                    # Keep nested field-presence information: omitted proof
+                    # fields must remain distinguishable from explicit resets.
+                    "relationships": data.relationships,
+                }
+            )
+            object.__setattr__(data, "__pydantic_fields_set__", original_fields)
         next_number = await self._repository.next_revision_number(group.id)
         if data.revision_number is not None and data.revision_number != next_number:
             raise ConflictError(
@@ -298,8 +369,101 @@ class SourceMetadataService:
         self._repository.add(revision)
         await self._repository.flush()
 
+        # Only the currently selected revision is a compatibility source. Never
+        # resurrect proof from an arbitrary historical revision.
+        prior_edges = (
+            (await self._repository.relationships_for([active[1].id])).get(active[1].id, [])
+            if active is not None
+            else []
+        )
+        prior_by_key = {
+            (edge.relationship_type, edge.target_revision_id): edge for edge in prior_edges
+        }
+        relationships = list(data.relationships)
+        if "relationships" not in data.model_fields_set:
+            relationships = [
+                SourceRelationshipCreate.model_validate(
+                    {field: getattr(edge, field) for field in SourceRelationshipCreate.model_fields}
+                )
+                for edge in prior_edges
+            ]
         target_groups: set[uuid.UUID] = set()
-        for relation in data.relationships:
+        for relation in relationships:
+            request_supplied_provenance = (
+                "relationships" in data.model_fields_set
+                and "review_provenance" in relation.model_fields_set
+            )
+            prior = prior_by_key.get((relation.relationship_type, relation.target_revision_id))
+            unchanged_identity = bool(
+                active is not None
+                and active[1].content_hash == revision.content_hash
+                and active[1].effective_from == revision.effective_from
+                and active[1].effective_to == revision.effective_to
+                and active[1].source_group_id == revision.source_group_id
+                and active[1].work_key == revision.work_key
+                and active[1].edition_key == revision.edition_key
+            )
+            if prior is not None and unchanged_identity:
+                carried = {
+                    field: getattr(prior, field)
+                    for field in (
+                        "provision_effect",
+                        "replacement_scope_verified",
+                        "supporting_spans",
+                        "review_provenance",
+                        "target_provisions",
+                    )
+                    if field not in relation.model_fields_set
+                }
+                relation = SourceRelationshipCreate.model_validate(
+                    {**relation.model_dump(), **carried}
+                )
+            proof_changed = (
+                prior is None
+                and any(
+                    edge.review_provenance
+                    and edge.review_provenance == relation.review_provenance
+                    and edge.replacement_scope_verified
+                    for edge in prior_edges
+                )
+            ) or (
+                prior is not None
+                and (
+                    not unchanged_identity
+                    or prior.target_provisions != relation.target_provisions
+                    or prior.provision_effect != relation.provision_effect
+                    or prior.supporting_spans
+                    != [span.model_dump(mode="json") for span in relation.supporting_spans]
+                )
+            )
+            if proof_changed:
+                # A new review can be submitted in a later explicit revision. An
+                # identity-changing correction cannot silently reuse old approval.
+                relation = relation.model_copy(
+                    update={
+                        "replacement_scope_verified": False,
+                        "review_provenance": {"invalidated_reason": "proof_identity_changed"},
+                    }
+                )
+            preserve_review = bool(
+                prior is not None
+                and unchanged_identity
+                and not proof_changed
+                and not request_supplied_provenance
+                and prior.replacement_scope_verified == relation.replacement_scope_verified
+            )
+            if (
+                relation.relationship_type == SourceRelationshipType.REPLACES
+                and prior is None
+                and relation.review_provenance.get("whole_document_replacement") != "declared"
+            ):
+                raise BadRequestError(
+                    message=(
+                        "Declare whole-document replacement explicitly; this excludes the earlier "
+                        "edition from current retrieval. Use modifies for a partial change."
+                    ),
+                    code="source_replacement_declaration_required",
+                )
             target = await self._repository.get_revision(relation.target_revision_id)
             if target is None:
                 raise NotFoundError(
@@ -352,6 +516,7 @@ class SourceMetadataService:
                         DocumentChunk.id == span.chunk_id,
                         DocumentChunk.project_id == self._repository.project_id,
                         DocumentChunk.document_id == document.id,
+                        DocumentChunk.document_version == document.version,
                     )
                 )
                 if (
@@ -372,14 +537,31 @@ class SourceMetadataService:
                     target_provisions=relation.target_provisions,
                     provision_effect=relation.provision_effect,
                     replacement_scope_verified=relation.replacement_scope_verified,
-                    review_provenance={
-                        **relation.review_provenance,
-                        "reviewer": self._actor_id,
-                        "source_content_hash": revision.content_hash,
-                        "source_revision_id": str(revision.id),
-                        "target_revision_id": str(target.id),
-                        "reason": data.change_reason or "source relationship revision",
-                    },
+                    # Stored proof carried by a sparse correction retains the
+                    # original authenticated review. Request-supplied metadata
+                    # is a new review and cannot replace server-owned identity.
+                    review_provenance=(
+                        dict(prior.review_provenance)
+                        if preserve_review and prior is not None
+                        else {
+                            **{
+                                key: value
+                                for key, value in relation.review_provenance.items()
+                                if key != "invalidated_reason"
+                            },
+                            "reviewer": self._actor_id,
+                            "source_content_hash": revision.content_hash,
+                            "source_revision_id": str(revision.id),
+                            "target_revision_id": str(target.id),
+                            "target_content_hash": target.content_hash,
+                            "reason": data.change_reason or "source relationship revision",
+                            **(
+                                {"invalidated_reason": "proof_identity_changed"}
+                                if proof_changed
+                                else {}
+                            ),
+                        }
+                    ),
                     supporting_spans=[
                         span.model_dump(mode="json") for span in relation.supporting_spans
                     ],
@@ -393,7 +575,7 @@ class SourceMetadataService:
                 "document_id": str(document.id),
                 "source_group_id": str(group.id),
                 "revision_number": next_number,
-                "relationship_count": len(data.relationships),
+                "relationship_count": len(relationships),
             },
         )
         return revision
@@ -527,6 +709,12 @@ class SourceMetadataService:
             warnings.append("modifies_requires_effective_from_for_retrieval")
         if any(not edge.target_provisions for edge in modifiers):
             warnings.append("modifies_scope_unresolved_requires_current_rule_evidence")
+        if any(
+            edge.relationship_type == SourceRelationshipType.REPLACES
+            and edge.review_provenance.get("whole_document_replacement") != "declared"
+            for edge in revision_relationships
+        ):
+            warnings.append("whole_document_replacement_scope_requires_review")
         has_overlap = (
             revision.id in overlaps
             if overlaps is not None

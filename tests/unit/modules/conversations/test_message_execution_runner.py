@@ -6,7 +6,7 @@ import hashlib
 import json
 from dataclasses import replace
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -257,12 +257,26 @@ def test_requirement_contract_keeps_optional_origin_scope_and_span_identity():
     assert original[bundle.local_char_start : bundle.local_char_end] == bundle.text
 
 
+@pytest.mark.parametrize(
+    "approval_state",
+    ["unapproved", "approved", "incomplete", "display", "assertion", "proof", "scope"],
+)
+@pytest.mark.parametrize("correction", ["timeout", "reject"])
 async def test_later_verification_timeout_preserves_completed_attempts_and_proof(
-    session, conversation, conversation_repository, message_repository, monkeypatch
+    session,
+    conversation,
+    conversation_repository,
+    message_repository,
+    monkeypatch,
+    approval_state,
+    correction,
 ):
     from app.platform.providers.errors import ProviderTimeoutError
 
-    source = (await FakeRetrieval().retrieve()).chunks[0]
+    source = replace(
+        (await FakeRetrieval().retrieve()).chunks[0],
+        content="Refund requests must be made within 30 days.",
+    )
     statement = "Customers can request a refund within 30 days of purchase."
     source = replace(
         source,
@@ -272,37 +286,86 @@ async def test_later_verification_timeout_preserves_completed_attempts_and_proof
             ]
         },
     )
-    mapping = AsyncMock(
-        side_effect=[
-            GroundingResult(
+    original_map = GroundingService.map_claims
+    batches = []
+    approved = approval_state == "approved"
+
+    async def map_claims(self, content, chunks, **kwargs):
+        rows = kwargs["draft_segments"]
+        batches.append([row["assertion_id"] for row in rows])
+        if len(batches) > 1:
+            if correction == "reject":
+                return GroundingResult(
+                    claims=[
+                        {
+                            **row,
+                            "grounded": False,
+                            "verification": "unsupported",
+                            "verification_reason": "unrelated_or_insufficient_evidence",
+                            "evidence": [],
+                        }
+                        for row in rows
+                    ],
+                    grounded=False,
+                    citation_coverage=0.0,
+                )
+            raise ProviderTimeoutError(
+                "deadline",
+                provider_name="echo",
+                context={"reason": "request_deadline_exceeded", "phase": "claim_verification"},
+            )
+        # The positive control obtains immutable approval from the real mapper.
+        # A synthetic supported label in the negative control cannot publish.
+        supported = (
+            await original_map(
+                self, rows[1]["text"], chunks, **{**kwargs, "draft_segments": rows[1:]}
+            )
+            if approval_state != "unapproved"
+            else GroundingResult(
                 claims=[
-                    {
-                        "claim_id": "C1",
-                        "assertion_id": "A1",
-                        "text": statement,
-                        "verification": "unsupported",
-                        "verification_reason": "missing_citation",
-                        "evidence": [],
-                    },
                     {
                         "claim_id": "C2",
                         "assertion_id": "A2",
                         "text": source.content,
                         "verification": "supported",
                         "evidence": [{"chunk_id": str(source.chunk_id), "citation_index": 1}],
-                    },
+                    }
                 ],
                 grounded=False,
                 citation_coverage=0.0,
-            ),
-            ProviderTimeoutError(
-                "deadline",
-                provider_name="echo",
-                context={"reason": "request_deadline_exceeded", "phase": "claim_verification"},
-            ),
-        ]
-    )
-    monkeypatch.setattr(GroundingService, "map_claims", mapping)
+            )
+        )
+        if approval_state in {"incomplete", "scope"}:
+            self.publication_approvals = tuple(
+                replace(approval, complete=False)
+                if approval_state == "incomplete"
+                else replace(approval, context="foreign-request-scope")
+                for approval in self.publication_approvals
+            )
+        claim = supported.claims[0]
+        if approval_state == "display":
+            claim["text"] += " An unverified condition applies."
+        elif approval_state == "assertion":
+            claim["assertion_text"] = "An unverified condition applies."
+        elif approval_state == "proof":
+            claim["evidence"][0]["evidence_span_hash"] = "foreign-span"
+        return GroundingResult(
+            claims=[
+                {
+                    "claim_id": "C1",
+                    "assertion_id": "A1",
+                    "text": statement,
+                    "verification": "unsupported",
+                    "verification_reason": "missing_citation",
+                    "evidence": [],
+                },
+                *supported.claims,
+            ],
+            grounded=False,
+            citation_coverage=0.0,
+        )
+
+    monkeypatch.setattr(GroundingService, "map_claims", map_claims)
     draft = json.dumps(
         {
             "segments": [
@@ -323,25 +386,46 @@ async def test_later_verification_timeout_preserves_completed_attempts_and_proof
     )
     service = _service(session, conversation_repository, message_repository, CitedLLM(draft))
     service._retrieval = AsyncMock()
+    service._retrieval.set_request_scope = MagicMock()
     service._retrieval.query_embedder = None
     service._retrieval.retrieve.return_value = ContextRetrievalResult(
         chunks=[source], diagnostics={}
     )
     request = MessageSendRequest(content="What is the refund period?")
     turn = await service.send_message(conversation.id, request)
-    assert turn.assistant_message.terminal_outcome.outcome == "timed_out"
-    assert not turn.assistant_message.claims and not turn.assistant_message.citations
-    retained = service._runner.deadline_result(
+    assert batches == [["A1", "A2"], ["A1"]]
+    checkpoint = service._runner.deadline_result(
         request, reason="request_deadline_exceeded", failure_phase="claim_verification"
-    ).finalization
+    )
+    retained = checkpoint.finalization
     assert len(retained.evidence) == 1
-    assert [c.verdict for c in retained.rejected_attempts] == [
-        "unsupported",
-        "supported",
-        "unverified",
-        "unverified",
+    later_verdict = "unverified" if correction == "timeout" else "unsupported"
+    assert [(c.id, c.verdict) for c in retained.rejected_attempts] == (
+        [("A1", "unsupported"), ("A1", later_verdict)]
+        if approved
+        else [
+            ("A1", "unsupported"),
+            ("A2", "supported"),
+            ("A1", later_verdict),
+            *([("A2", "unverified")] if correction == "reject" else []),
+        ]
+    )
+    assert [row["status"] for row in retained.correction_attempts] == [
+        "completed",
+        "timed_out" if correction == "timeout" else "completed",
     ]
-    assert retained.correction_attempts[-1]["status"] == "timed_out"
+    if approved:
+        assert turn.assistant_message.claims and turn.assistant_message.citations
+        assert [c.assertion_id for c in turn.assistant_message.claims] == ["A2"]
+        assert source.content in checkpoint.content
+        assert [c.id for c in retained.verified_assertions] == ["A2"]
+    else:
+        assert turn.assistant_message.terminal_outcome.outcome == (
+            "timed_out" if correction == "timeout" else "verification_failed"
+        )
+        assert not turn.assistant_message.claims and not turn.assistant_message.citations
+        assert source.content not in checkpoint.content
+        assert not retained.verified_assertions
     assert "operator_diagnostic" not in turn.assistant_message.metadata
     assert statement not in turn.assistant_message.content
 

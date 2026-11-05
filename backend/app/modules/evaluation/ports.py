@@ -76,6 +76,10 @@ class EvaluationCaseInput:
     document_id: uuid.UUID | None = None
     metadata_filter: dict[str, str] = field(default_factory=dict)
     as_of: datetime | None = None
+    source_scope: str = "project_default"
+    history: list[dict[str, Any]] = field(default_factory=list)
+    prior_citations: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
+    prior_metadata: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)

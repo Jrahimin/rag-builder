@@ -1,3 +1,4 @@
+import useGlobalPayload from "../../../../tests/fixtures/project_ai_use_global_payload.json";
 import { fireEvent, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, vi } from "vitest";
@@ -680,7 +681,7 @@ test("sparse payload contains only explicitly overridden behavior", async () => 
   await waitFor(() => expect(create).toHaveBeenCalledTimes(1));
   expect(create.mock.calls[0]?.[1]).toEqual({
     behavior: { translation_policy: "enabled" },
-    execution: {},
+    execution: { profile_id: "inherit" },
   });
 });
 
@@ -713,4 +714,49 @@ test("origin summary reports Custom execution instead of a leaf override count",
     await screen.findByRole("button", { name: /Custom execution · 3 behavior overrides/ }),
   ).toBeInTheDocument();
   expect(screen.queryByText(/\d+ Project overrides/)).not.toBeInTheDocument();
+});
+
+test("Use Global clears persisted independent execution overrides in the save payload", async () => {
+  mockProjectShell();
+  const stored = revisionFor({
+    behavior: {},
+    execution: {
+      profile_id: "standard",
+      execution_policy: "adaptive_v1",
+      bounded_recovery_enabled: false,
+    },
+  });
+  const config = effectiveConfig(stored.id);
+  config.configuration.chat.execution_policy = "adaptive_v1";
+  config.configuration.chat.bounded_recovery_enabled = false;
+  // Deployment defaults remain the separate Global baseline.
+  const deployment = config.deployment_configuration;
+  if (!deployment) throw new Error("Fixture requires deployment configuration");
+  config.deployment_configuration = {
+    ...deployment,
+    chat: {
+      ...deployment.chat,
+      execution_policy: "legacy",
+      bounded_recovery_enabled: true,
+    },
+  };
+  const create = setupAI(config, stored);
+  renderOperatorComponent(
+    <OperatorConsoleApp />,
+    `/projects?project=${projectFixture.id}&section=ai-config`,
+  );
+  expect(await screen.findByLabelText("Message execution policy")).toHaveValue("adaptive_v1");
+  expect(screen.getByLabelText("Bounded evidence recovery")).toHaveValue("false");
+  await userEvent.click(
+    screen.getByRole("button", { name: "Message execution policy: Use Global" }),
+  );
+  await userEvent.click(
+    screen.getByRole("button", { name: "Bounded evidence recovery: Use Global" }),
+  );
+  expect(screen.getByLabelText("Message execution policy")).toHaveValue("legacy");
+  expect(screen.getByLabelText("Bounded evidence recovery")).toHaveValue("true");
+  await saveRevision();
+  await waitFor(() => expect(create).toHaveBeenCalledOnce());
+  // The backend regression consumes this identical payload through save/read/resolve.
+  expect(create.mock.calls[0]?.[1]).toEqual(useGlobalPayload);
 });

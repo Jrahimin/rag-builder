@@ -45,7 +45,12 @@ class RecursiveFallbackChunkStrategy:
                     page_end=page_end,
                     section_title=section_title,
                     heading_level=heading_level,
-                    metadata=metadata,
+                    metadata={
+                        **metadata,
+                        "source_spans": _split_spans(
+                            metadata.get("source_spans", []), text, start, end
+                        ),
+                    },
                 )
             )
         return chunks
@@ -93,3 +98,27 @@ class RecursiveFallbackChunkStrategy:
         if current:
             chunks.append(" ".join(current))
         return chunks
+
+
+def _split_spans(spans: list[dict], text: str, start: int, end: int) -> list[dict]:
+    result = []
+    for span in spans:
+        source = str(span.get("text") or "")
+        offset = text.find(source) if source else -1
+        if (
+            offset < 0
+            or text.find(source, offset + 1) >= 0
+            or type(span.get("char_start")) is not int
+        ):
+            continue
+        lo, hi = max(start, offset), min(end, offset + len(source))
+        if lo < hi:
+            result.append(
+                {
+                    **span,
+                    "text": text[lo:hi],
+                    "char_start": span["char_start"] + lo - offset,
+                    "char_end": span["char_start"] + hi - offset,
+                }
+            )
+    return result

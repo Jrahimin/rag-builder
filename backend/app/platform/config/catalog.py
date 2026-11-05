@@ -77,6 +77,7 @@ for _path in (
     "project.v2.behavior.domain_instructions",
     "project.v2.behavior.translation_policy",
     "project.v2.behavior.generation_model_id",
+    "project.v2.behavior.calendar_policy",
 ):
     _entry(
         _path,

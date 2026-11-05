@@ -194,3 +194,14 @@ class SourceStateResponse(BaseModel):
 class SourceRevisionCreateResponse(BaseModel):
     revision: SourceRevisionResponse
     activation: SourceActivationResponse | None = None
+
+
+class GovernanceReviewProposal(BaseModel):
+    document_id: uuid.UUID
+    chunk_id: uuid.UUID
+    chunk_hash: str
+    kind: Literal["work_identity", "period", "relationship"]
+    status: Literal["untrusted"] = "untrusted"
+    candidate: str | None = None
+    source_span: dict = Field(default_factory=dict)
+    accept_via: Literal["source_metadata_revision", "index_scope_review"]

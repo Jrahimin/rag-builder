@@ -81,6 +81,7 @@ scores are not confidence probabilities.
     "results": [
       {
         "chunk_id": "…",
+        "project_id": "…",
         "document_id": "…",
         "chunk_index": 0,
         "content": "…",
@@ -352,3 +353,18 @@ Search diagnostics add indexed_corpus_empty=true only for a sealed pinned build 
 manifest has no documents and whose keyword/vector/chunk counts are all zero. This
 attested inventory gap completes an indexed-only limitation without further LLM
 planning; an ordinary query miss does not establish corpus absence.
+
+## Reliability provenance
+
+Internal `RetrievalContext.request_scope` carries canonical period/known-at/source/build
+semantics through ordinary, related, exact, adjacent and recovery routes. Search diagnostics
+expose `relationship_discovery_status` (complete/unavailable/truncated), affected frontier
+identities and canonical modifier decisions. A complete discovery pass does not certify
+reviewed authority. Passage evidence binds raw-source hash, span hash and exact offsets;
+normalized search text never becomes the citation source.
+
+Scope-review selectors may use parser-attested constituent spans on a noncontiguous chunk.
+The same source revision, content hash, build membership and source generation checks apply.
+See [source governance](../features/source_governance.md) for review semantics.
+
+Hydrated search hits add nullable `project_id` for compatibility; ordinary project-scoped retrieval sets it from the trusted search owner. Metadata `project_id`, `index_build_id` and `source_metadata_generation` are rebound from that owner and pinned build/generation, overriding stored or candidate metadata. Failed exact modifier discovery returns `discovery_unavailable` records for affected base revisions, so presentation reuse cannot interpret an unavailable authority graph as empty.

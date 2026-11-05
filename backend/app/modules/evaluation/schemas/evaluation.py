@@ -21,6 +21,14 @@ class EvaluationCaseKind(StrEnum):
     CITATION = "citation"
 
 
+class EvaluationHistoryMessage(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: uuid.UUID
+    role: Literal["user", "assistant"]
+    content: str = Field(min_length=1, max_length=32000)
+    citations: list[dict[str, Any]] = Field(default_factory=list, max_length=100)
+
+
 class EvaluationCase(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -33,6 +41,10 @@ class EvaluationCase(BaseModel):
     document_id: uuid.UUID | None = None
     metadata_filter: dict[str, str] = Field(default_factory=dict)
     as_of: datetime | None = None
+    source_scope: Literal["project_default", "indexed_only"] = "project_default"
+    history: list[EvaluationHistoryMessage] = Field(default_factory=list, max_length=50)
+    prior_citations: dict[str, list[dict[str, Any]]] = Field(default_factory=dict)
+    prior_metadata: dict[str, dict[str, Any]] = Field(default_factory=dict)
     expected_answer_tokens: list[str] = Field(default_factory=list)
     expected_no_answer: bool = False
     expected_outcome: (
@@ -47,6 +59,11 @@ class EvaluationCase(BaseModel):
 
     @model_validator(mode="after")
     def validate_expectation(self) -> EvaluationCase:
+        identities = {str(item.id) for item in self.history}
+        if len(identities) != len(self.history):
+            raise ValueError("History message identities must be unique")
+        if (set(self.prior_citations) | set(self.prior_metadata)) - identities:
+            raise ValueError("Prior evidence must belong to supplied history messages")
         if self.expected_outcome is not None:
             self.expected_no_answer = self.expected_outcome in {
                 "insufficient_evidence",

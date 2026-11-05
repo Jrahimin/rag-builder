@@ -29,6 +29,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 from sqlalchemy import URL
 
+from app.core.calendar import ProjectCalendarPolicy
+
 
 def _settings_env_files() -> tuple[str, ...] | None:
     """Load backend/.env even when the process cwd is the repository root."""
@@ -382,7 +384,7 @@ class ChunkingConfig(BaseModel):
     long_block_token_threshold: int = Field(default=600, ge=100, le=8192)
     similarity_drop_threshold: float = Field(default=0.35, ge=0.0, le=1.0)
     semantic_batch_size: int = Field(default=32, ge=1, le=256)
-    chunker_version: str = "3.3.0"
+    chunker_version: str = "3.4.0"
     token_count_method: str = "unicode_property_v1"
     ocr_confidence_threshold: float = Field(default=0.5, ge=0.0, le=1.0)
 
@@ -691,7 +693,7 @@ class QueryTranslationConfig(BaseModel):
     enabled: bool = False
     backend: LLMBackend = LLMBackend.OPENAI
     model: str = "gpt-5-nano"
-    prompt_version: str = "retrieval-translation-v2"
+    prompt_version: str = "retrieval-translation-v3"
     min_output_tokens: int = Field(default=1024, ge=16, le=2048)
     max_output_tokens: int = Field(default=4096, ge=16, le=8192)
     request_timeout_seconds: float = Field(default=45.0, ge=1.0, le=180.0)
@@ -803,6 +805,7 @@ _RETIRED_CHAT_KEYS = frozenset(
 
 
 class ChatConfig(BaseModel):
+    calendar_policy: ProjectCalendarPolicy | None = None
     """Chat / RAG orchestration defaults.
 
     Evidence gate: when a true reranker applied, its relevance is the only
@@ -846,7 +849,9 @@ class ChatConfig(BaseModel):
     # Default to bounded recovery so incomplete-evidence repair has a predictable
     # latency budget. Existing immutable snapshots retain their recorded policy.
     bounded_recovery_enabled: bool = True
-    execution_policy: Literal["legacy", "adaptive_v1"] = "legacy"
+    execution_policy: Literal["legacy", "adaptive_v1", "bounded_v2", "bounded_extended_v2"] = (
+        "legacy"
+    )
     focused_recovery_timeout_seconds: float = Field(default=15.0, ge=1.0, le=120.0)
     broad_recovery_timeout_seconds: float = Field(default=30.0, ge=1.0, le=180.0)
     focused_recovery_max_queries: int = Field(default=2, ge=1, le=8)

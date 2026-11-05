@@ -176,6 +176,14 @@ remain unknown. New chunk scope facts use `scope.v2`; legacy facts remain readab
 and nonexhaustive. Offline reconciliation decisions do not mutate source revisions
 or execute re-attestation/reprocessing/reacquisition.
 
+For new relationship reviews, `reviewer`, `source_revision_id`,
+`source_content_hash`, `target_revision_id`, `target_content_hash` and `reason`
+are established by the service; request values cannot override them.
+`invalidated_reason` is service-owned. An unchanged relationship copied by a sparse
+metadata correction preserves its stored historical provenance. Supplying explicit
+review provenance records a new authenticated review instead of trusting caller
+identities. Changed proof or source identity invalidates the previous approval.
+
 ### Optional declared edition identity
 
 Source revision create/response schemas include optional `edition_key` (1–255

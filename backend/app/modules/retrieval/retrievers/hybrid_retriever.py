@@ -32,6 +32,7 @@ from app.modules.retrieval.source_policy import (
     ModifierExpansionOutcome,
     ModifierExpansionRecord,
 )
+from app.platform.domain.content_hash import content_hash
 from app.platform.domain.evidence_contracts import (
     RERANKER_RELEVANCE_CALIBRATION_ID,
     BranchScoreType,
@@ -178,7 +179,9 @@ class HybridRetriever(BaseRetriever):
         )
         expansion_diagnostics: dict[str, object] = {
             "modifies_expansion_status": "disabled",
-            "modifies_expansion_depth": 1,
+            "modifies_expansion_depth": 0,
+            "relationship_discovery_status": "not_assessed",
+            "unresolved_frontier_ids": [],
             "modifies_expansion_records": [],
             "modifies_expansion_exclusion_reasons": {},
             "related_source_count": 0,
@@ -344,16 +347,18 @@ class HybridRetriever(BaseRetriever):
                 is not None
             )
         )
-        if reader is None or not base_revision_ids:
-            status = "unavailable" if reader is None else "no_retrieved_governed_bases"
-            return [], {}, _expansion_diagnostics(status=status, records=[])
+        if not base_revision_ids:
+            return [], {}, _expansion_diagnostics(status="no_retrieved_governed_bases", records=[])
         try:
+            if reader is None:
+                raise RuntimeError("Relationship reader unavailable")
             records = await reader.incoming_modifiers(
                 project_id=context.project_id,
                 base_revision_ids=base_revision_ids,
                 generation=getattr(context.source_scope, "generation", 0),
                 as_of=getattr(context.source_scope, "explicit_as_of", None),
                 index_build_id=context.index_build_id,
+                request_scope=context.request_scope.model_dump(mode="json"),
             )
         except Exception as exc:
             logger.warning(
@@ -361,7 +366,29 @@ class HybridRetriever(BaseRetriever):
                 project_id=str(context.project_id),
                 error_type=type(exc).__name__,
             )
-            return [], {}, _expansion_diagnostics(status="unavailable", records=[])
+            unavailable = [
+                ModifierExpansionRecord(
+                    relationship_id=uuid.uuid5(revision, "discovery_unavailable"),
+                    base_revision_id=revision,
+                    base_document_id=next(
+                        (
+                            _uuid_value(hit.metadata.get("source_document_id"))
+                            for hit in base_fused
+                            if _uuid_value(hit.metadata.get("source_revision_id")) == revision
+                        ),
+                        None,
+                    )
+                    or uuid.UUID(int=0),
+                    modifier_revision_id=uuid.UUID(int=0),
+                    modifier_document_id=uuid.UUID(int=0),
+                    modifier_effective_from=None,
+                    modifier_published_date=None,
+                    modifier_revision_number=None,
+                    outcome=ModifierExpansionOutcome.DISCOVERY_UNAVAILABLE,
+                )
+                for revision in base_revision_ids
+            ]
+            return [], {}, _expansion_diagnostics(status="unavailable", records=unavailable)
         bounded = _bound_modifier_records(
             records,
             base_revision_ids=set(base_revision_ids),
@@ -437,6 +464,36 @@ class HybridRetriever(BaseRetriever):
             ]
             branch_counts = {item.branch_id: len(item.hits) for item in related_lists}
 
+        for record in selected:
+            if not record.target_provisions:
+                continue
+            target_query = " ".join(record.target_provisions)
+            target_context = replace(
+                related_context,
+                query=target_query,
+                filters=replace(
+                    related_context.filters, document_ids=(record.modifier_document_id,)
+                ),
+            )
+            hits = await self._keyword.retrieve(target_context)
+            variant = QueryVariant(
+                variant_id=f"provision:{record.relationship_id}",
+                kind=QueryVariantKind.ORIGINAL,
+                language="und",
+                text=target_query,
+            )
+            branch_id = f"related_provision:{record.relationship_id}"
+            related_lists.append(
+                RankedList(
+                    hits=_annotate_related_hits(hits, record_by_document),
+                    weight=context.keyword_weight,
+                    branch_id=branch_id,
+                    family=BRANCH_ORIGINAL_LEXICAL,
+                    score_type=BranchScoreType.KEYWORD_BM25,
+                    query_variant=variant,
+                )
+            )
+            branch_counts[branch_id] = len(hits)
         raw_ids_by_document: dict[uuid.UUID, set[uuid.UUID]] = {}
         for ranked in related_lists:
             for hit in ranked.hits:
@@ -619,7 +676,7 @@ class HybridRetriever(BaseRetriever):
         *,
         query_vector: list[float],
     ) -> list[CandidateHit]:
-        texts = await self._content_loader.load_texts(
+        texts = await self._content_loader.load_raw_texts(
             [candidate.chunk_id for candidate in candidates]
         )
         try:
@@ -653,7 +710,9 @@ class HybridRetriever(BaseRetriever):
                         "passage_semantic_score": score,
                         "passage_char_start": passage.char_start,
                         "passage_char_end": passage.char_end,
-                        "passage_score_method": "bounded_token_max_v1",
+                        "passage_score_method": "raw_span_v2",
+                        "passage_source_hash": content_hash(texts[candidate.chunk_id]),
+                        "passage_span_hash": content_hash(passage.text),
                         "passage_score_status": "applied",
                     }
                 )
@@ -905,12 +964,43 @@ def _expansion_diagnostics(
             ModifierExpansionOutcome.SOURCE_CAP_EXCEEDED,
             ModifierExpansionOutcome.CANDIDATE_CAP_EXCEEDED,
             ModifierExpansionOutcome.CYCLE,
+            ModifierExpansionOutcome.DEPTH_LIMIT,
+            ModifierExpansionOutcome.DISCOVERY_UNAVAILABLE,
+            ModifierExpansionOutcome.RELATIONSHIP_LIMIT,
         }
         for item in records
     )
     return {
         "modifies_expansion_status": status,
-        "modifies_expansion_depth": 1,
+        "modifies_expansion_depth": max((item.depth for item in records), default=0),
+        "relationship_discovery_status": "unavailable"
+        if status == "unavailable"
+        else "truncated"
+        if any(
+            item.outcome
+            in {
+                ModifierExpansionOutcome.SOURCE_CAP_EXCEEDED,
+                ModifierExpansionOutcome.CANDIDATE_CAP_EXCEEDED,
+                ModifierExpansionOutcome.CYCLE,
+                ModifierExpansionOutcome.DEPTH_LIMIT,
+                ModifierExpansionOutcome.RELATIONSHIP_LIMIT,
+            }
+            for item in records
+        )
+        else "complete",
+        "unresolved_frontier_ids": [
+            str(item.modifier_revision_id)
+            for item in records
+            if item.outcome
+            in {
+                ModifierExpansionOutcome.DEPTH_LIMIT,
+                ModifierExpansionOutcome.CANDIDATE_CAP_EXCEEDED,
+                ModifierExpansionOutcome.CYCLE,
+                ModifierExpansionOutcome.DISCOVERY_UNAVAILABLE,
+                ModifierExpansionOutcome.RELATIONSHIP_LIMIT,
+                ModifierExpansionOutcome.SOURCE_CAP_EXCEEDED,
+            }
+        ],
         "modifies_expansion_records": [item.diagnostic() for item in records],
         "modifies_expansion_exclusion_reasons": exclusions,
         "modifies_authority_scope_status": (

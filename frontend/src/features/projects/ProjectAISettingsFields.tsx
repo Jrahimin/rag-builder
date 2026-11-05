@@ -30,6 +30,7 @@ export type ProjectConfigForm = {
   execution: Record<string, unknown>;
   recovery: Record<string, unknown>;
   behavior: ProjectBehaviorForm;
+  calendarPolicy?: NonNullable<ProjectAIConfig["behavior"]>["calendar_policy"];
   reason: string;
 };
 
@@ -50,7 +51,11 @@ export const emptyProjectConfigForm: ProjectConfigForm = {
 };
 
 function hasValue(value: object | undefined, key: string) {
-  return value !== undefined && Object.prototype.hasOwnProperty.call(value, key);
+  return (
+    value !== undefined &&
+    Object.prototype.hasOwnProperty.call(value, key) &&
+    (value as Record<string, unknown>)[key] != null
+  );
 }
 
 const RECOVERY_EXECUTION_KEYS = new Set([
@@ -160,6 +165,7 @@ export function configFormFromEffective(
         : { ...resolvedExecution, ...(profile?.values ?? {}) };
   return {
     profileId,
+    calendarPolicy: behavior?.calendar_policy,
     customBaseProfileId: null,
     execution,
     recovery,
@@ -215,6 +221,7 @@ export function inheritedFormFromEffective(
 
 export function buildSparseProjectConfig(form: ProjectConfigForm): ProjectAIConfig {
   const behavior: Record<string, unknown> = {};
+  if (form.calendarPolicy !== undefined) behavior.calendar_policy = form.calendarPolicy;
   if (form.behavior.evidenceApproach.source === "project") {
     behavior.evidence_approach = form.behavior.evidenceApproach.value;
   }
@@ -234,8 +241,7 @@ export function buildSparseProjectConfig(form: ProjectConfigForm): ProjectAIConf
     behavior.domain_instructions = form.behavior.domain.value;
   }
 
-  const execution: Record<string, unknown> = {};
-  if (form.profileId !== "inherit") execution.profile_id = form.profileId;
+  const execution: Record<string, unknown> = { profile_id: form.profileId };
   if (form.profileId === "custom") Object.assign(execution, form.execution);
   Object.assign(execution, form.recovery);
   return { behavior, execution };
@@ -244,7 +250,9 @@ export function buildSparseProjectConfig(form: ProjectConfigForm): ProjectAIConf
 export function sparseHasOverrides(configuration: ProjectAIConfig): boolean {
   return (
     Object.keys(configuration.behavior ?? {}).length > 0 ||
-    Object.keys(configuration.execution ?? {}).length > 0
+    Object.entries(configuration.execution ?? {}).some(
+      ([key, value]) => key !== "profile_id" || value !== "inherit",
+    )
   );
 }
 
@@ -645,7 +653,10 @@ export function ProjectAISettingsFields({
   const globalExecutionPolicy = globalConfig?.chat.execution_policy ?? "legacy";
   const storedExecutionPolicy = form.recovery.execution_policy;
   const executionPolicy =
-    storedExecutionPolicy === "legacy" || storedExecutionPolicy === "adaptive_v1"
+    storedExecutionPolicy === "legacy" ||
+    storedExecutionPolicy === "adaptive_v1" ||
+    storedExecutionPolicy === "bounded_v2" ||
+    storedExecutionPolicy === "bounded_extended_v2"
       ? storedExecutionPolicy
       : globalExecutionPolicy;
   const executionPolicySource: SettingSource = hasValue(form.recovery, "execution_policy")
@@ -654,7 +665,7 @@ export function ProjectAISettingsFields({
   const chooseExecutionPolicy = (value: string) => {
     setForm((current) => {
       const recovery = { ...current.recovery };
-      if (value === "inherit") delete recovery.execution_policy;
+      if (value === "inherit") recovery.execution_policy = null;
       else recovery.execution_policy = value;
       return { ...current, recovery };
     });
@@ -677,7 +688,7 @@ export function ProjectAISettingsFields({
   const resetRecoveryToGlobal = () => {
     setForm((current) => {
       const recovery = { ...current.recovery };
-      delete recovery.bounded_recovery_enabled;
+      recovery.bounded_recovery_enabled = null;
       return { ...current, recovery };
     });
   };
@@ -745,7 +756,7 @@ export function ProjectAISettingsFields({
           <header className="ai-config-section__header">
             <div>
               <p className="eyebrow">Retrieval profile</p>
-              <h3 id="rag-execution-heading">Choose a certified profile</h3>
+              <h3 id="rag-execution-heading">Choose a retrieval profile</h3>
               <p className="profile-lane__lede">
                 These cards own retrieval. Leave the packed values unless you need a Custom profile.
               </p>
@@ -818,6 +829,7 @@ export function ProjectAISettingsFields({
                   {PROFILE_INTENTS[profile.id] ?? "Predefined execution template"}
                 </span>
                 <span className="profile-card__summary">{executionSummary(profile.values)}</span>
+                <small>Certification: {displayName(profile.certification_status)}</small>
               </button>
             ))}
           </div>
@@ -958,9 +970,21 @@ export function ProjectAISettingsFields({
               onChange={(event) => chooseExecutionPolicy(event.target.value)}
             >
               <option value="legacy">Legacy</option>
-              <option value="adaptive_v1">Adaptive</option>
+              <option value="adaptive_v1">Adaptive (v1)</option>
+              <option value="bounded_v2">Bounded standard (60 seconds)</option>
+              <option value="bounded_extended_v2">Bounded extended (120 seconds)</option>
             </select>
           </BehaviorSetting>
+          {(executionPolicy === "bounded_v2" || executionPolicy === "bounded_extended_v2") && (
+            <p>
+              Absolute cutoffs from request start: evidence{" "}
+              {executionPolicy === "bounded_v2" ? "30" : "90"} s; draft{" "}
+              {executionPolicy === "bounded_v2" ? "40" : "100"} s; verification{" "}
+              {executionPolicy === "bounded_v2" ? "58" : "118"} s; persistence{" "}
+              {executionPolicy === "bounded_v2" ? "60" : "120"} s. Legacy recovery durations do not
+              apply.
+            </p>
+          )}
           <BehaviorSetting
             label="Bounded evidence recovery"
             hint="On uses short, task-aware recovery budgets instead of the legacy 300-second repair path. It does not relax grounding or citation requirements."
@@ -969,6 +993,9 @@ export function ProjectAISettingsFields({
           >
             <select
               aria-label="Bounded evidence recovery"
+              disabled={
+                executionPolicy === "bounded_v2" || executionPolicy === "bounded_extended_v2"
+              }
               value={recoveryEnabled ? "true" : "false"}
               onChange={(event) => chooseRecoveryEnabled(event.target.value === "true")}
             >

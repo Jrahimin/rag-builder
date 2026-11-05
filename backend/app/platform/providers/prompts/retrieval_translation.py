@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-PROMPT_VERSION = "retrieval-translation-v2"
+PROMPT_VERSION = "retrieval-translation-v3"
 LEGACY_PROMPT_VERSION = "retrieval-translation-v1"
 
 SYSTEM_PROMPT_V2 = (
@@ -38,7 +38,15 @@ SYSTEM_PROMPT_V1 = (
     "- Do not add facts, commentary, or extra clauses.\n"
 )
 
-SYSTEM_PROMPT = SYSTEM_PROMPT_V2
+SYSTEM_PROMPT_V3 = SYSTEM_PROMPT_V2.replace(
+    "Return only the translated retrieval query. No quotes, labels, or explanation.",
+    (
+        "Return one JSON object with exactly one string field translated_query containing "
+        "the COMPLETE translated query, including all conditions and lines. "
+        "No extra fields or commentary."
+    ),
+)
+SYSTEM_PROMPT = SYSTEM_PROMPT_V3
 
 
 def translation_messages(
@@ -49,7 +57,13 @@ def translation_messages(
     prompt_version: str | None = None,
 ) -> list[dict[str, str]]:
     version = prompt_version or PROMPT_VERSION
-    system = SYSTEM_PROMPT_V1 if version == LEGACY_PROMPT_VERSION else SYSTEM_PROMPT_V2
+    system = (
+        SYSTEM_PROMPT_V1
+        if version == LEGACY_PROMPT_VERSION
+        else SYSTEM_PROMPT_V2
+        if version == "retrieval-translation-v2"
+        else SYSTEM_PROMPT_V3
+    )
     user = (
         f"Source query profile: {source_profile}\n"
         f"Target language: {target_language}\n"

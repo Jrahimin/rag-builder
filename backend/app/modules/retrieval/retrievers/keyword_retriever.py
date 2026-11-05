@@ -1,4 +1,4 @@
-"""BM25 keyword retriever — returns candidate hits only."""
+"""BM25 keyword retriever â€” returns candidate hits only."""
 
 from __future__ import annotations
 
@@ -78,19 +78,23 @@ class KeywordRetriever(BaseRetriever):
             rows = [row for row in rows if _passes_ocr_threshold(row.metadata_snapshot, threshold)]
 
         unique_terms = list(dict.fromkeys(query_terms))
-        document_frequencies = await self._term_stats_repository.map_document_frequencies(
-            unique_terms,
-            index_build_id=context.index_build_id,
-            embedding_set_version=context.embedding_set_version,
-        )
-        collection_stats = await self._collection_stats_repository.get_for_version(
-            context.embedding_set_version,
-            index_build_id=context.index_build_id,
-        )
-        total_documents = (
-            collection_stats.total_documents if collection_stats else max(len(rows), 1)
-        )
-        avg_doc_length = collection_stats.avg_doc_length if collection_stats else 1.0
+        document_frequencies: dict[str, int] = {}
+        total_documents = max(len(rows), 1)
+        avg_doc_length = 1.0
+        if any(row.score is None for row in rows):
+            document_frequencies = await self._term_stats_repository.map_document_frequencies(
+                unique_terms,
+                index_build_id=context.index_build_id,
+                embedding_set_version=context.embedding_set_version,
+            )
+            collection_stats = await self._collection_stats_repository.get_for_version(
+                context.embedding_set_version,
+                index_build_id=context.index_build_id,
+            )
+            total_documents = (
+                collection_stats.total_documents if collection_stats else max(len(rows), 1)
+            )
+            avg_doc_length = collection_stats.avg_doc_length if collection_stats else 1.0
 
         scored: list[tuple[uuid.UUID, float, dict]] = []
         for row in rows:

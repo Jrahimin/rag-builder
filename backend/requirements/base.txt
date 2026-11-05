@@ -12,6 +12,7 @@ python-multipart==0.0.20
 pydantic==2.13.4
 pydantic-settings==2.14.2
 jsonschema==4.23.0
+tzdata==2026.6
 
 # --- Database (async PostgreSQL) ---
 sqlalchemy[asyncio]==2.0.51

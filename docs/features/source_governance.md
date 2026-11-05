@@ -111,3 +111,38 @@ cannot publish governing, exhaustive or operative scope.
 
 Additive migration `20261003_0042` creates immutable `index_scope_reviews` and
 `index_acceptance_reports`; previous migrations and historical snapshots remain intact.
+
+## Reviewed relationships and ingestion proposals
+
+A metadata-only correction carries the complete current reviewed relationship payload,
+including target provisions, effect, supporting spans, conditions and reviewer evidence.
+Content, target, operation, affected-scope or supporting chunk/quote/offset changes invalidate review. Title-only corrections preserve identical reviewed proof. Sparse corrections retain the selected edition interval; an explicitly changed edition starts with its supplied interval instead of inheriting the prior edition end date. The first governing revision replaces the ingestion-only unspecified lifecycle with the revision default. A newly declared
+whole-document `replaces` relationship requires
+`review_provenance.whole_document_replacement = "declared"`; the operator form explains
+that it supersedes the entire target edition. A title containing “amendment” is only a
+review suggestion. Historical relationships and revisions remain readable.
+
+Sparse corrections preserve omitted nested relationship fields and copy unchanged
+stored review provenance exactly. Work/edition identity changes also invalidate
+the prior approval. Explicit request provenance constitutes a new review: the
+service owns reviewer, source/target revision IDs and content hashes, review reason
+and invalidation status. Caller metadata cannot overwrite those fields; declared
+replacement scope and supporting evidence metadata remain accepted inputs.
+
+Ingestion emits untrusted work-identity, period and relationship proposals. Operators
+can read `GET /api/v1/projects/{project_id}/sources/review-queue` and review original text;
+acceptance still uses the existing versioned revision and sealed-candidate scope-review
+APIs. Proposals cannot establish authority. Noncontiguous chunks may be reviewed using
+exact parser-attested constituent spans with element identity, original offsets and hash.
+Contiguous chunks retain their existing exact-offset review path.
+
+Modifier discovery is bounded to two hops, eight added sources and twenty relationship
+candidates. Discovery reports complete/unavailable/truncated separately from authority
+completeness. Missing or capped frontier identities remain visible. Reviewed additions,
+amendments and savings effects require both original base and exact modifying passages;
+the system does not generate a consolidated statutory source.
+
+Corpus correction remains a separate reviewed operation: retain base/historical editions,
+identify translated representations, and verify commencement and savings against originals.
+The [reliability matrix](rag_reliability_contract.md#corpus-and-operational-boundary) records
+this implementation's evidence and remaining review boundary.

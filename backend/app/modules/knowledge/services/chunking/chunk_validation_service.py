@@ -167,7 +167,15 @@ class ChunkValidationService:
             section_title=left.section_title or right.section_title,
             heading_level=left.heading_level or right.heading_level,
             chunk_order=left.chunk_order,
-            metadata={**left.metadata, **right.metadata, "merged": True},
+            metadata={
+                **left.metadata,
+                **right.metadata,
+                "merged": True,
+                "source_spans": [
+                    *left.metadata.get("source_spans", []),
+                    *right.metadata.get("source_spans", []),
+                ],
+            },
         )
 
     def _reindex(self, chunks: list[DraftChunk]) -> list[DraftChunk]:

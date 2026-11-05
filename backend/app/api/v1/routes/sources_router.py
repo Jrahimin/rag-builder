@@ -10,6 +10,7 @@ from app.core.http.envelopes import ApiResponse
 from app.dependencies.knowledge import SourceMetadataServiceDep
 from app.modules.knowledge.schemas.source_metadata import (
     ActiveSourceResponse,
+    GovernanceReviewProposal,
     SourceActivationResponse,
     SourceRevisionActivation,
     SourceRevisionCreate,
@@ -19,6 +20,17 @@ from app.modules.knowledge.schemas.source_metadata import (
 )
 
 router = APIRouter()
+
+
+@router.get("/review-queue", response_model=ApiResponse[list[GovernanceReviewProposal]])
+async def get_governance_review_queue(
+    project_id: uuid.UUID,
+    service: SourceMetadataServiceDep,
+    limit: int = Query(default=100, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+) -> ApiResponse[list[GovernanceReviewProposal]]:
+    del project_id
+    return ApiResponse.ok(await service.review_queue(limit=limit, offset=offset))
 
 
 @router.get("", response_model=ApiResponse[SourceStateResponse])

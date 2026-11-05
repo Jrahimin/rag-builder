@@ -193,10 +193,10 @@ def test_model_cannot_invent_single_named_assessment_year() -> None:
 
 
 def test_year_range_parser_excludes_iso_dates_and_handles_century_rollover() -> None:
-    from app.modules.conversations.turn_resolution import _year_ranges
+    from app.modules.conversations.turn_resolution import extract_year_ranges
 
-    assert _year_ranges("as of 2024-01-01") == set()
-    assert _year_ranges("assessment year 1999-00") == {(1999, 2000)}
+    assert extract_year_ranges("as of 2024-01-01") == set()
+    assert extract_year_ranges("assessment year 1999-00") == {(1999, 2000)}
 
 
 @pytest.mark.parametrize(

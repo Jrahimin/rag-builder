@@ -76,3 +76,56 @@ def decide_reconciliation(
     else:
         action = "re_attest"
     return ReconciliationDecision(action=action, proof=proof, obligations=tuple(obligations))
+
+
+def governance_proposals(
+    *, content: str, source_spans: list[dict], scope_facts: list[dict]
+) -> list[dict]:
+    """Ingestion review tasks only; no proposed value is authoritative.
+
+    Work/relationship identities need human resolution. Exact source excerpts
+    merely make that review actionable without guessing titles or effective dates.
+    """
+    import re
+
+    proposals = []
+    for fact in scope_facts:
+        if fact.get("kind") == "period":
+            proposals.append(
+                {
+                    "kind": "period",
+                    "status": "untrusted",
+                    "candidate": fact.get("value"),
+                    "source_span": fact.get("source_span"),
+                    "accept_via": "index_scope_review",
+                }
+            )
+    for span in source_spans:
+        text = str(span.get("text") or "")
+        if span.get("provenance") != "exact_source_span":
+            continue
+        if re.search(
+            r"\b(?:amend|repeal|replace|savings|substitut)\w*|সংশোধ|রহিত|প্রতিস্থাপ", text, re.I
+        ):
+            proposals.append(
+                {
+                    "kind": "relationship",
+                    "status": "untrusted",
+                    "candidate": None,
+                    "source_span": span,
+                    "accept_via": "source_metadata_revision",
+                }
+            )
+        if span.get("role") == "heading" and not any(
+            item["kind"] == "work_identity" for item in proposals
+        ):
+            proposals.append(
+                {
+                    "kind": "work_identity",
+                    "status": "untrusted",
+                    "candidate": None,
+                    "source_span": span,
+                    "accept_via": "source_metadata_revision",
+                }
+            )
+    return proposals[:20]

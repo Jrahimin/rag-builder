@@ -1,0 +1,193 @@
+{
+  "capture_sha256": "b40422e53b39bf612f2033cb3e2c4fd9006827e789582be0bf9f6cd728a58e8a",
+  "message_id": "8c47108c-6e13-4485-9fb1-d4b61984f48d",
+  "candidate_build_id": "64689e64-e241-4ea8-b106-c84921d98e72",
+  "source_metadata_generation": 37,
+  "question": "Compare the indexed evidence for the resident-individual tax-free threshold in AY 2025–26 and AY 2026–27 in a two-row table. Give each year’s source and calculate the difference only if both years are established; do not substitute a later schedule for a missing year.",
+  "outcome": "insufficient_evidence",
+  "requirements": [
+    {
+      "requirement_id": "R1",
+      "description": "Establish the applicable ordinary resident-individual category and assessment year for AY 2025–26.",
+      "origin": "necessary_applicability",
+      "materiality": "governing_applicability",
+      "required": true,
+      "dependency_purposes": {},
+      "deliverable": false,
+      "depends_on": [],
+      "task_kind": "rule_lookup"
+    },
+    {
+      "requirement_id": "R3",
+      "description": "Establish the applicable ordinary resident-individual category and assessment year for AY 2026–27.",
+      "origin": "necessary_applicability",
+      "materiality": "governing_applicability",
+      "required": true,
+      "dependency_purposes": {},
+      "deliverable": false,
+      "depends_on": [],
+      "task_kind": "rule_lookup"
+    },
+    {
+      "requirement_id": "R2",
+      "description": "Establish the resident-individual tax-free threshold for AY 2025–26.",
+      "origin": "explicit_user_request",
+      "materiality": "central_rule",
+      "required": true,
+      "dependency_purposes": {
+        "R1": "applicability"
+      },
+      "deliverable": true,
+      "depends_on": [
+        "R1"
+      ],
+      "task_kind": "comparison"
+    },
+    {
+      "requirement_id": "R4",
+      "description": "Establish the resident-individual tax-free threshold for AY 2026–27.",
+      "origin": "explicit_user_request",
+      "materiality": "central_rule",
+      "required": true,
+      "dependency_purposes": {
+        "R3": "applicability"
+      },
+      "deliverable": true,
+      "depends_on": [
+        "R3"
+      ],
+      "task_kind": "comparison"
+    },
+    {
+      "requirement_id": "R5",
+      "description": "Calculate the difference between the two thresholds only if both are established.",
+      "origin": "explicit_user_request",
+      "materiality": "central_rule",
+      "required": true,
+      "dependency_purposes": {
+        "R2": "calculation_operand",
+        "R4": "calculation_operand"
+      },
+      "deliverable": true,
+      "depends_on": [
+        "R2",
+        "R4"
+      ],
+      "task_kind": "calculation"
+    }
+  ],
+  "checks": [
+    {
+      "requirement_id": "R1",
+      "description": "Establish the applicable ordinary resident-individual category and assessment year for AY 2025–26.",
+      "answerable_scope": "The 2025–26 tax-year schedule applies to individuals other than non-resident individuals who are not Bangladeshi.",
+      "source_ranges": [
+        {
+          "chunk_id": "64362002-003c-4f4f-ab7e-bdfb2d59557c",
+          "end_line": 7,
+          "start_line": 1
+        }
+      ],
+      "fulfillment": "full",
+      "unresolved_facets": []
+    },
+    {
+      "requirement_id": "R3",
+      "description": "Establish the applicable ordinary resident-individual category and assessment year for AY 2026–27.",
+      "answerable_scope": "The 2026–27 schedule applies to all individuals, including non-resident Bangladeshis, and therefore includes resident individuals.",
+      "source_ranges": [
+        {
+          "chunk_id": "84830e90-94c6-4873-9140-d22505141b66",
+          "end_line": 61,
+          "start_line": 51
+        }
+      ],
+      "fulfillment": "full",
+      "unresolved_facets": []
+    },
+    {
+      "requirement_id": "R2",
+      "description": "Establish the resident-individual tax-free threshold for AY 2025–26.",
+      "answerable_scope": "The ordinary resident-individual tax-free threshold for AY 2025–26 is BDT 350,000, as shown in the 2025–26 rate schedule.",
+      "source_ranges": [
+        {
+          "chunk_id": "64362002-003c-4f4f-ab7e-bdfb2d59557c",
+          "end_line": 9,
+          "start_line": 1
+        },
+        {
+          "chunk_id": "64362002-003c-4f4f-ab7e-bdfb2d59557c",
+          "end_line": 7,
+          "start_line": 1
+        }
+      ],
+      "fulfillment": "full",
+      "unresolved_facets": []
+    },
+    {
+      "requirement_id": "R4",
+      "description": "Establish the resident-individual tax-free threshold for AY 2026–27.",
+      "answerable_scope": "The ordinary resident-individual tax-free threshold for AY 2026–27 is BDT 400,000, as shown in the enacted Finance Act 2026 schedule.",
+      "source_ranges": [
+        {
+          "chunk_id": "84830e90-94c6-4873-9140-d22505141b66",
+          "end_line": 63,
+          "start_line": 51
+        },
+        {
+          "chunk_id": "84830e90-94c6-4873-9140-d22505141b66",
+          "end_line": 61,
+          "start_line": 51
+        }
+      ],
+      "fulfillment": "full",
+      "unresolved_facets": []
+    },
+    {
+      "requirement_id": "R5",
+      "description": "Calculate the difference between the two thresholds only if both are established.",
+      "answerable_scope": "The difference between the two established thresholds can be calculated from their separately scoped amounts.",
+      "source_ranges": [
+        {
+          "chunk_id": "64362002-003c-4f4f-ab7e-bdfb2d59557c",
+          "end_line": 9,
+          "start_line": 5
+        },
+        {
+          "chunk_id": "84830e90-94c6-4873-9140-d22505141b66",
+          "end_line": 63,
+          "start_line": 51
+        }
+      ],
+      "fulfillment": "partial",
+      "unresolved_facets": [
+        "unproven governing dependency R2",
+        "unproven governing dependency R4"
+      ]
+    }
+  ],
+  "sources": [
+    {
+      "id": "64362002-003c-4f4f-ab7e-bdfb2d59557c",
+      "filename": "NBR-Circular-2025-2026-official.pdf",
+      "content": "অর্থ আইন , ২০২৪ এ বর্ণিত করহারের তফসিল -৩ অনুযায়ী প্রত্যেক স্বাভাবিক ব্যক্তি\n\n( বাংলাদেশী নন এরূপ বাংলাদেশে অনিবাসী স্বাভাবিক ব্যক্তি ব্যতীত ) , হিন্দু অবিভক্ত\n\nপরিবার ও ফার্মের মোট আয়ের উপর ২০২৫-২০২৬ করবর্ষের জন্য আয়করের হার\n\nনিম্নরূপ :\nমোট আয় | হার\n( ক ) প্রথম ৩,৫০,০০০ টাকা পর্যন্ত মোট আয়ের উপর -- | শূন্য\n( খ ) পরবর্তী ১,০০,০০০ টাকা পর্যন্ত মোট আয়ের উপর -- | ৫ %\n( গ ) পরবর্তী ৪,০০,০০০ টাকা পর্যন্ত মোট আয়ের উপর -- | ১০ %\n( ঘ ) পরবর্তী ৫,০০,০০০ টাকা পর্যন্ত মোট আয়ের উপর -- | ১৫ %\n( ঙ ) পরবর্তী ৫,০০,০০০ টাকা পর্যন্ত মোট আয়ের উপর-- | ২০ %\n( চ ) পরবর্তী ২০,০০,০০০ টাকা পর্যন্ত মোট আয়ের উপর-- | ২৫ %\n( ছ ) অবশিষ্ট মোট আয়ের উপর -- | ৩০ %",
+      "chunk_index": 34,
+      "page_number": 15
+    },
+    {
+      "id": "84830e90-94c6-4873-9140-d22505141b66",
+      "filename": "Finance Act 2026 Bangla.pdf",
+      "content": "প্রতিস্থাপিত হইবে , যথা : -\n\n- Other , presented in the form of systems\n\n8471.49.10 --- Personal Desktop Computer u 0 % Free\n\n8471.49.90 --- Other u 5 % Free\n\nProcessing units other than those of\n\nsubheading 8471.41 or 8471.49 , whether\n\nor not containing in the same housing one\n\nor two of the following types of unit :\n\nstorage units , input units , output units\n\n8471.50.10 Processing Unit for Personal Desktop = 0 % Free\n\nComputer\n\n8471.50.90 --- Other u 5 % Free\n\nবাংলাদেশ গেজেট , অতিরিক্ত , জুন ৩০ , ২০২৬ ২০৪২৩\n\nপঞ্চম অধ্যায়\n\nতফসিল -১\n\n[ ধারা ১৭৯ দ্রষ্টব্য ]\n\n[ কাস্টমস আইন , ২০২৩ ( ২০২৩ সনের ৫৭ নং আইন ) এর প্রথম তফসিল ]\n\n\" প্রথম তফসিল\n\n[ বাংলাদেশ কাস্টমস ট্যারিফ ]\n\n[ কাস্টমস আইন , ২০২৩ এর ধারা ১৮ ( ১ ) দ্রষ্টব্য ]\n\n( পৃথকভাবে মুদ্রিত ) \"\n\n২০৪২৪ বাংলাদেশ গেজেট , অতিরিক্ত , জুন ৩০ , ২০২৬\n\nতফসিল -২\n\n[ ধারা ১৬০ দ্রষ্টব্য ]\n\nপ্ৰথম অংশ\n\n২০২৬-২০২৭ হইতে ২০৩০-২০৩১ করবর্ষের ( ৫ বৎসরের ) জন্য করহার\n\nঅনুচ্ছেদ - ক\n\n২০২৬-২০২৭ এবং ২০২৭-২০২৮ করবর্ষের জন্য করহার\n\nআয়কর আইন , ২০২৩ ( ২০২৩ সনের ১২ নং আইন ) এর ধারা ২ ( ৬৯ ) এ সংজ্ঞায়িত\n\nব্যক্তিগণের ( persons ) মধ্যে অনিবাসী বাংলাদেশিসহ সকল স্বাভাবিক ব্যক্তি ( individual ) ও হিন্দু\n\nঅবিভক্ত পরিবারের ক্ষেত্রে মোট আয়ের উপর করহার নিম্নরূপ হইবে , যথা : -\nকরধাপ | করহার\n৪,০০,০০০ টাকা পর্যন্ত | শূন্য\nপরবর্তী ৩,০০,০০০ টাকা পর্যন্ত | ১০ %\nপরবর্তী ৪,০০,০০০ টাকা পর্যন্ত | ১৫ %\nপরবর্তী ৫,০০,০০০ টাকা পর্যন্ত | ২০ %\nপরবর্তী ২০,০০,০০০ টাকা পর্যন্ত | 25 %\nঅবশিষ্ট টাকার উপর | ৩০ %",
+      "chunk_index": 245,
+      "page_number": 140
+    }
+  ],
+  "queries": [
+    {
+      "query": "স্বাভাবিক ব্যক্তি ২০২৫-২০২৬ করবর্ষ প্রথম শূন্য করহার",
+      "requirement_ids": [
+        "R2"
+      ]
+    }
+  ]
+}

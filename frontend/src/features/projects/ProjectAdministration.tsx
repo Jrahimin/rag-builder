@@ -1085,7 +1085,10 @@ function ProjectConfig({ project }: { project: Project }) {
               : "Inherited deployment defaults"}
           </h3>
           <p className="muted-copy">
-            Effective hash {effective?.effective_value_hash?.slice(0, 12) ?? "—"}
+            Requested execution{" "}
+            {activeRevision?.configuration?.execution?.execution_policy ?? "inherit"}
+            {" · "}resolved {effective?.configuration.chat.execution_policy ?? "Unavailable"}
+            {" · "}Effective hash {effective?.effective_value_hash?.slice(0, 12) ?? "—"}
             {" · "}resolution {effective?.resolution_fingerprint?.slice(0, 12) ?? "—"}
           </p>
         </div>
@@ -1465,7 +1468,9 @@ function ProjectSources({ project }: { project: Project }) {
               }}
             >
               <option value="independent">Independent account or new source</option>
-              <option value="revision">Newer edition replacing an existing source</option>
+              <option value="revision">
+                Whole-document replacement (excludes the earlier edition)
+              </option>
               <option value="modifies">Amendment to one or more sources</option>
             </select>
           </label>
@@ -1848,7 +1853,9 @@ function ProjectSources({ project }: { project: Project }) {
                       >
                         <option value="keep">Keep this source's current treatment</option>
                         <option value="independent">Independent account or new source</option>
-                        <option value="revision">Newer edition replacing an existing source</option>
+                        <option value="revision">
+                          Whole-document replacement (excludes the earlier edition)
+                        </option>
                         <option value="modifies">Modifies one or more sources</option>
                       </select>
                     </label>

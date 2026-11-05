@@ -20,6 +20,7 @@ from app.modules.knowledge.repositories.document_chunk_repository import Documen
 from app.modules.knowledge.repositories.document_repository import DocumentRepository
 from app.modules.knowledge.services.chunking.models import ChunkingRunMetadata
 from app.modules.knowledge.services.chunking_service import ChunkingService
+from app.modules.knowledge.source_reconciliation import governance_proposals
 from app.platform.db.advisory_lock import acquire_document_stage_lock
 from app.platform.domain.transactions import flush_commit_refresh
 from app.platform.jobs.contracts import JobProgressCallback
@@ -158,7 +159,14 @@ class DocumentProcessingWorkflow:
                 char_start=chunk.char_start,
                 char_end=chunk.char_end,
                 token_count=chunk.token_count,
-                chunk_metadata=chunk.chunk_metadata,
+                chunk_metadata={
+                    **chunk.chunk_metadata,
+                    "governance_review_queue": governance_proposals(
+                        content=chunk.content,
+                        source_spans=chunk.chunk_metadata.get("source_spans", []),
+                        scope_facts=chunk.chunk_metadata.get("scope_facts", []),
+                    ),
+                },
             )
             for chunk in text_chunks
         ]

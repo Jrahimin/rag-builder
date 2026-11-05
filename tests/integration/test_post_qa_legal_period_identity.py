@@ -70,7 +70,11 @@ async def test_adjacent_ay_replacement_cannot_suppress_requested_historical_peri
             "published_date": "2026-07-01",
             "source_group_id": previous["source_group_id"],
             "relationships": [
-                {"relationship_type": "replaces", "target_revision_id": previous["id"]}
+                {
+                    "relationship_type": "replaces",
+                    "target_revision_id": previous["id"],
+                    "review_provenance": {"whole_document_replacement": "declared"},
+                }
             ],
         },
     )
@@ -259,7 +263,11 @@ async def test_replacement_periods_in_separate_chunks_apply_to_the_whole_documen
             "effective_from": "2025-01-01",
             "source_group_id": previous["source_group_id"],
             "relationships": [
-                {"relationship_type": "replaces", "target_revision_id": previous["id"]}
+                {
+                    "relationship_type": "replaces",
+                    "target_revision_id": previous["id"],
+                    "review_provenance": {"whole_document_replacement": "declared"},
+                }
             ],
         },
     )

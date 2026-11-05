@@ -42,6 +42,7 @@ class ContextChunk:
     score: float
     filename: str
     chunk_hash: str
+    project_id: uuid.UUID | None = None
     semantic_score: float | None = None
     rank_score: float | None = None
     rerank_relevance_score: float | None = None
@@ -71,6 +72,7 @@ class ContextChunk:
         evidence_method = getattr(result, "evidence_score_method", None)
         return cls(
             chunk_id=result.chunk_id,
+            project_id=getattr(result, "project_id", None),
             document_id=result.document_id,
             chunk_index=int(result.chunk_index),
             content=content,
@@ -250,3 +252,11 @@ class ExactRecallRetrievalPort(Protocol):
         metadata_filter: dict[str, str] | None = None,
         as_of: datetime | None = None,
     ) -> ContextRetrievalResult: ...
+
+
+class PrecedingScopeRetrievalPort(Protocol):
+    """Optional same-build source continuity for scope checks."""
+
+    async def preceding_indexed_text(
+        self, chunk_ids: list[uuid.UUID], *, index_build_id: str
+    ) -> dict[uuid.UUID, str]: ...

@@ -40,6 +40,11 @@ class CandidateContentLoader:
         self._work.content.update({(self._project_id, key): value for key, value in loaded.items()})
         return {**found, **loaded}
 
+    async def load_raw_texts(self, chunk_ids: list[uuid.UUID]) -> dict[uuid.UUID, str]:
+        """Proof offsets always address DocumentChunk.content, never the lexical index."""
+        chunks = await self._chunk_repository.map_by_ids(chunk_ids)
+        return {identity: chunk.content for identity, chunk in chunks.items()}
+
     async def _load_uncached(self, chunk_ids: list[uuid.UUID]) -> dict[uuid.UUID, str]:
         from_keyword = await self._keyword_repository.map_content_by_ids(chunk_ids)
         missing = [chunk_id for chunk_id in chunk_ids if chunk_id not in from_keyword]

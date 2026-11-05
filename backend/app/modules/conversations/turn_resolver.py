@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 import uuid
 from dataclasses import dataclass
@@ -17,19 +18,25 @@ from app.modules.conversations.turn_resolution import (
     RESOLUTION_MAX_OUTPUT_TOKENS,
     RESOLUTION_TIMEOUT_SECONDS,
     TURN_RESOLUTION_VERSION,
+    BindingKind,
+    BindingOrigin,
     EffectiveRetrievalInputs,
     EffectiveSnapshot,
     FollowupMode,
+    ReferenceBinding,
     SnapshotOrigin,
     TemporalIntent,
+    TemporalIntentKind,
     TurnOutcome,
     TurnRelation,
     TurnResolution,
     TurnResolutionError,
     TurnResolutionInput,
+    _literal_value_present,
     effective_retrieval_inputs,
     fallback_resolution,
     normalize_request_scope,
+    parse_iso_calendar_date,
     parse_resolver_json,
     referenced_message_ids,
     resolve_effective_as_of,
@@ -139,18 +146,42 @@ class TurnResolver:
                     usage=usage,
                 )
             if validated.outcome is TurnOutcome.STANDALONE and payload.history:
+                # A standalone question may keep its own validated literals, but
+                # cannot adopt bindings from unrelated earlier messages.
+                current_bindings = [
+                    binding
+                    for binding in validated.active_bindings
+                    if binding.origin
+                    in {BindingOrigin.USER_LITERAL, BindingOrigin.USER_ADOPTED_ASSISTANT}
+                    and any(
+                        reference.message_id == payload.current_message_id
+                        and reference.field == "content"
+                        and _literal_value_present(
+                            binding.active_value, reference.excerpt or payload.current_message
+                        )
+                        for reference in binding.references
+                    )
+                ]
                 validated = TurnResolution(
                     outcome=TurnOutcome.STANDALONE,
                     relation=TurnRelation.STANDALONE,
                     effective_question=payload.current_message,
                     reason=validated.reason,
+                    active_bindings=current_bindings,
+                    temporal_intent=(
+                        validated.temporal_intent
+                        if _current_temporal_intent_attested(
+                            validated.temporal_intent, payload.current_message, current_bindings
+                        )
+                        else TemporalIntent()
+                    ),
                 )
             snapshot = resolve_effective_as_of(
                 request_as_of=payload.request_filters.as_of,
                 temporal_intent=(
                     validated.temporal_intent
                     if validated.outcome is TurnOutcome.RESOLVED
-                    or (validated.outcome is TurnOutcome.STANDALONE and not payload.history)
+                    or validated.outcome is TurnOutcome.STANDALONE
                     else TemporalIntent()
                 ),
                 bindings=validated.active_bindings,
@@ -504,3 +535,28 @@ def _diagnostics(
 
 def _elapsed_ms(started: float) -> int:
     return int((time.perf_counter() - started) * 1000)
+
+
+def _current_temporal_intent_attested(
+    intent: TemporalIntent, message: str, bindings: list[ReferenceBinding]
+) -> bool:
+    if intent.kind is TemporalIntentKind.TODAY:
+        return bool(re.search(r"\b(?:today|current|now)\b|আজ|বর্তমান|এখন", message, re.I))
+    if intent.kind is TemporalIntentKind.YESTERDAY:
+        return bool(re.search(r"\byesterday\b|গতকাল", message, re.I))
+    if intent.kind in {
+        TemporalIntentKind.EXACT_DATE,
+        TemporalIntentKind.DAY_BEFORE_IDENTIFIED_DATE,
+    }:
+        # The resolver already validated each retained literal against the
+        # current user message, including normalized Bangla numerals. Scope
+        # normalization is not an exact/day-before anchor parser.
+        for binding in bindings:
+            if binding.kind is BindingKind.PERIOD_DATE:
+                try:
+                    if parse_iso_calendar_date(binding.active_value) == intent.anchor_date:
+                        return True
+                except TurnResolutionError:
+                    continue
+        return False
+    return intent.kind in {TemporalIntentKind.NONE, TemporalIntentKind.UNBOUNDED}

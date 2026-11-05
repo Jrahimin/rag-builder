@@ -73,11 +73,11 @@ both previous and target Organization IDs.
 Source revisions and activation history now provide the immutable Project source-generation
 boundary. Source-aware retrieval, durable source citation snapshots, and Operator usage reporting
 reuse the same Project/config/index/source provenance captured by conversations, generations,
-jobs, and evaluations. Natural-language temporal inference, per-Project embedding or chunking
-policy, billing, and quotas remain intentionally outside this contract.
+jobs, and evaluations. Per-Project embedding or chunking policy, billing, and quotas remain outside this contract.
+The optional typed calendar mapping below resolves current-period intent.
 
 
-The additive `execution.execution_policy` field selects `legacy` or `adaptive_v1`
+The additive `execution.execution_policy` field selects `legacy`, `adaptive_v1`, `bounded_v2`, or `bounded_extended_v2`
 for future immutable revisions. Omitted historical fields resolve to `legacy`,
 independent of later deployment defaults. The value is materialized in effective
 execution settings and recorded in configuration provenance; changing it requires
@@ -96,10 +96,43 @@ immutable revision/snapshot operation; this correction activates no policy or bu
 Project AI settings expose **Message execution policy** separately from retrieval
 profiles and bounded recovery. Choosing Adaptive saves `execution.execution_policy`
 as `adaptive_v1` in a new immutable revision; Use Global removes the override.
-Legacy remains the default. Simple requests have a 45-second hard ceiling and
+The configured deployment policy supplies the default for new revisions. Adaptive simple requests have a 45-second hard ceiling and
 30-second p95 target; complex requests have a 120-second ceiling and 90-second p95
 target. The existing admission/reserve policy bounds recovery and can promote a
 required recoverable dependency once. No ceiling is increased by this UI control.
 Existing conversations retain their saved configuration snapshot. Start a new
 conversation after saving a revision to exercise the new policy. Configuration
 selection and code checks do not prove live acceptance or source applicability.
+
+## Independent recovery and calendar policy
+
+Retrieval profile selection (`inherit`, `fast`, `standard`, `high_recall`, or `custom`)
+and execution/recovery overrides are independent. Preset and inherited profiles retain
+explicit recovery overrides; an execution-only legacy write no longer infers Custom.
+The operator form always sends its profile selection. Use Global sends explicit null for execution policy and bounded recovery to clear their saved overrides. Omitted independent fields retain their previous overrides during a profile switch.
+New configurations resolve the configured deployment execution default; historical
+materialized snapshots retain their stored policy. Profile certification is displayed
+from the catalog rather than implied by the selector label.
+
+`bounded_v2` and `bounded_extended_v2` select absolute evidence/draft/verification/persistence
+cutoffs of **30/40/58/60** and **90/100/118/120 seconds** respectively. Legacy focus/broad
+controls do not change these schedules. Frozen measured latency admits work within the
+cutoffs; measured generation throughput sizes output without extending them. The
+console shows requested policy, resolved policy and pinned conversation identity/hash.
+Saving settings does not refresh an existing conversation automatically.
+
+Optional `behavior.calendar_policy` has `timezone`, `period_kind` (`assessment`,
+`fiscal`, or `calendar`), `boundary_month`, `boundary_day`,
+`label_start_offset`, `label_year_span`, and `default_for_current`. Explicit user periods
+win. A mapping applies only to an established period kind or explicit project default;
+it records `period_origin=project_calendar`. Material ambiguity prompts clarification.
+Calendar mapping never proves a source's legal applicability.
+
+Runtime dependencies include pinned `tzdata` for IANA timezone data on systems
+without a system database, including Windows. Install the backend requirements
+into the backend virtualenv before using calendar policies; `ZoneInfo("UTC")`
+and `ZoneInfo("Asia/Dhaka")` should both resolve. Unknown timezone names remain
+validation errors.
+
+See [the reliability acceptance matrix](rag_reliability_contract.md) for versioned
+proof contracts, local coverage and pending operational acceptance.

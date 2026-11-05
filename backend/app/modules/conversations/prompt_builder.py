@@ -160,6 +160,10 @@ class PromptBuilder:
                 + "\nUse the supported scope for each requirement and its proof IDs. "
                 "Keep listed exclusions unresolved. A full review of one requirement "
                 "does not establish an omitted facet of another requirement."
+                " If current legal force is an unresolved facet, explicitly attribute each "
+                "independently supported statement about statutory wording to the cited indexed "
+                "edition in both the assertion and the displayed sentence. Keep the current-force "
+                "limitation separate."
             )
 
         if partial_answer and partial_answer.get("review_status") == "admitted_only":

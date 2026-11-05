@@ -247,3 +247,33 @@ Keyword candidate selection computes BM25 over all eligible tokenizer matches in
 Private structural reprocessing: POST `/api/v1/projects/{project_id}/index-builds/reprocess-private`; see [private structural builds](../features/private_structural_builds.md). Migration0035 isolates chunk generations; it never automatically activates.
 
 Private structural builds use persisted `structure.v1` intent and durable `corpus.structure.v1`. POST `index-builds/{build_id}/revalidate-private` copies exact final rows and compatible vectors into a new private build; preview/replay/activation verify the structural manifest and vector input identity. Apply migration0036 before use. See [private structural acceptance](../features/private_structural_builds.md).
+
+## Canonical scope and immutable evidence spans
+
+Every retrieval route receives the same typed request scope, including requested legal
+period, known-at cutoff, source restriction and pinned build. Modifier selection consumes
+the ordinary source applicability decision and records its scope identity instead of
+re-evaluating against today's date. Relationship discovery failure is distinct from an
+empty amendment set; unresolved authority limits dependent claims only.
+
+Passage scoring runs after source policy and final candidate selection on immutable raw
+chunk text. Scores carry source hash, exact span hash and offsets; mismatches are rejected.
+Normalized text remains a separate search representation. Tables preserve header and
+exception context. Parser element identities and source spans survive transformations;
+chunking version **3.4** derives/validates structure once at the final boundary.
+
+`unicode_numeral_alias_v2` adds ASCII numeral aliases to query/index lexical text while
+retaining originals. A newly built lexical index and statistics are needed to consume the
+index-side change; this does not change embedding space. No build is activated by this
+code change. Translation v3 returns a structured, complete query; ordered dates, years,
+section/subsection identifiers and value/unit pairs must survive. Failure retains the
+original query. Romanized Bangla uses available corpus languages; a mixed query receives
+at most one validated recovery rewrite. At most two strongly reranked, provenance-valid
+cross-language candidates may enter semantic confirmation, still subject to scope,
+authority and strict final proof checks. Existing relevance thresholds are unchanged.
+
+Production and evaluation share retrieval composition, concurrency, recovery translation
+and provider accounting. SQL-supplied BM25 scores avoid redundant keyword-stat reads.
+Immutable build/config/scope fingerprints are reused within the request.
+
+Hydration carries a typed trusted Project identity and pins metadata build/generation, including zero, across retrieval and conversation proof. Exact identity recall emits per-base `discovery_unavailable` records on relationship-reader failure. These records invalidate reuse of affected governed proof while preserving independently valid evidence. Passage rescue binds both the indexed text hash and exact chosen span hash before it can support a claim.

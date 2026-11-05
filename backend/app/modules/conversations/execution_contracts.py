@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import uuid
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol
@@ -70,6 +71,19 @@ class EvidenceRequirement(ExecutionContract):
     assigned_scope: dict[str, Any] = Field(default_factory=dict)
     required: bool = True
 
+    dependency_purposes: dict[
+        str,
+        Literal[
+            "structural",
+            "definition",
+            "applicability",
+            "amendment",
+            "exception",
+            "calculation_operand",
+        ],
+    ] = Field(default_factory=dict)
+    deliverable: bool = True
+
     # Internal only: stable requirement IDs governing this particular claim.
     depends_on: list[str] = Field(default_factory=list, max_length=12)
     task_kind: Literal["rule_lookup", "personal_eligibility", "calculation", "comparison"] = (
@@ -103,12 +117,34 @@ class EvidenceRequirement(ExecutionContract):
 
     @model_validator(mode="after")
     def retain_optional_origin(self) -> Requirement:
+        if set(self.dependency_purposes) - set(self.depends_on):
+            raise ValueError("Dependency purposes must reference declared prerequisites")
         if self.origin == "optional_corroboration":
             object.__setattr__(self, "required", False)
         return self
 
 
 Requirement = EvidenceRequirement
+
+
+class PersonalInputObligation(ExecutionContract):
+    """A question about user facts; never a source gap or an authorized assumption."""
+
+    kind: Literal["period", "amount", "category", "event_date", "location", "personal_fact"]
+    question: str = Field(min_length=1, max_length=500, pattern=r"\S")
+    requirement_ids: list[str] = Field(min_length=1, max_length=12)
+    request_quote: str = Field(min_length=1, max_length=1000, pattern=r"\S")
+
+
+class InitialEvidenceAssessment(ExecutionContract):
+    version: Literal["evidence.assessment.v2"] = "evidence.assessment.v2"
+    requirements: list[EvidenceRequirement]
+    evidence_bindings: list[dict[str, Any]] = Field(default_factory=list)
+    missing_source_evidence: list[str] = Field(default_factory=list)
+    missing_user_inputs: list[str] = Field(default_factory=list)
+    input_obligations: list[PersonalInputObligation] = Field(default_factory=list, max_length=12)
+    answer_draft: dict[str, Any] | None = None
+    coverage_validated: bool = False
 
 
 class RequirementGraph(ExecutionContract):
@@ -137,6 +173,8 @@ class RequirementGraph(ExecutionContract):
                     depends_on=[
                         str(v) for v in (row.get("dependencies") or row.get("depends_on") or [])
                     ],
+                    dependency_purposes=dict(row.get("dependency_purposes") or {}),
+                    deliverable=row.get("deliverable", True),
                     assigned_scope=dict(
                         row.get("assigned_scope")
                         or row.get("scope")
@@ -343,6 +381,13 @@ def published_requirement_fulfillment(
     }
     # A published dependent cannot claim completion without its required prerequisites.
     supported = set(bound)
+    for claim in published:
+        if claim.get("verification") == "supported" and claim.get("grounded") is True:
+            supported.update(
+                str(value)
+                for value in claim.get("fulfilled_proof_requirements", [])
+                if str(value) in requirements and not requirements[str(value)].deliverable
+            )
     while True:
         resolved = {
             identity
@@ -352,7 +397,7 @@ def published_requirement_fulfillment(
         if resolved == supported:
             break
         supported = resolved
-    required = {r.id for r in graph.requirements if r.required}
+    required = {r.id for r in graph.requirements if r.required and r.deliverable}
     pending = sorted(required - supported)
     return {
         "assessed": bool(requirements),
@@ -379,7 +424,7 @@ def build_finalization(
     verified = []
     for i, claim in enumerate(published):
         assertion = assertion_from_claim(claim, i, bundles)
-        if assertion.text in by_text:
+        if not claim.get("assertion_id") and assertion.text in by_text:
             assertion = assertion.model_copy(update={"id": by_text[assertion.text]})
         claim["assertion_id"] = assertion.id
         if assertion.verdict == "supported":
@@ -448,3 +493,42 @@ class ExecutionResult:
         return {
             key: getattr(self, key) for key in self.__dataclass_fields__ if key != "finalization"
         }
+
+
+class VerifiedAnswerCheckpoint(ExecutionContract):
+    """Sealed publication state; mutable drafts and evidence-only state cannot enter."""
+
+    version: Literal["verified.answer.checkpoint.v1"] = "verified.answer.checkpoint.v1"
+    payload_json: str
+    payload_hash: str
+
+    @classmethod
+    def capture(cls, result: ExecutionResult) -> VerifiedAnswerCheckpoint:
+        if (
+            not result.grounded
+            or not result.finalization.verified_assertions
+            or not result.citations
+        ):
+            raise ValueError("Checkpoint requires verified assertions and published citations")
+        if any(
+            claim.get("verification") != "supported" or not claim.get("grounded")
+            for claim in result.claims
+        ):
+            raise ValueError("Unverified claims cannot enter a checkpoint")
+        payload = {
+            **result.persistence_payload(),
+            "finalization": result.finalization.model_dump(mode="json"),
+        }
+        encoded = json.dumps(
+            payload, sort_keys=True, ensure_ascii=False, separators=(",", ":"), default=str
+        )
+        return cls(payload_json=encoded, payload_hash=hashlib.sha256(encoded.encode()).hexdigest())
+
+    def restore(self, scope: RequestScope | None = None) -> ExecutionResult:
+        if hashlib.sha256(self.payload_json.encode()).hexdigest() != self.payload_hash:
+            raise ValueError("Checkpoint identity changed")
+        payload = json.loads(self.payload_json)
+        finalization = FinalizationResult.model_validate(payload.pop("finalization"))
+        if scope is not None and finalization.intent.scope != scope:
+            raise ValueError("Checkpoint scope changed")
+        return ExecutionResult(**payload, finalization=finalization)

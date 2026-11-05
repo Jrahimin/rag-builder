@@ -191,6 +191,7 @@ class AnswerClaim(BaseModel):
     calculation_references: list[str] = Field(default_factory=list)
 
     requirement_ids: list[str] = Field(default_factory=list)
+    fulfilled_proof_requirements: list[str] = Field(default_factory=list)
     claim_id: str
     assertion_id: str | None = None
     text: str

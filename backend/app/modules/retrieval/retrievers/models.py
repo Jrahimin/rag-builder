@@ -9,6 +9,7 @@ from typing import Any
 
 from app.core.config import ModifiesExpansionMode, RerankMode, RetrievalStrategy
 from app.platform.domain.evidence_contracts import BranchContribution, QueryVariant
+from app.platform.domain.request_scope import RequestScope
 
 
 class CandidateSource(StrEnum):
@@ -77,6 +78,7 @@ class RetrievalContext:
     passage_overlap_tokens: int = 24
     passage_min_tokens: int = 32
     metadata: dict[str, Any] = field(default_factory=dict)
+    request_scope: RequestScope = field(default_factory=RequestScope)
     source_scope: Any | None = None
     language_scope: Any | None = None
     rerank_candidate_window: int = 25

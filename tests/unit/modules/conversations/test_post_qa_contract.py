@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import time
 import uuid
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -52,6 +54,7 @@ def captured_source(identity):
     row = next(item for item in data["rows"] if item["id"] == identity)
     return ContextChunk(
         chunk_id=uuid.UUID(row["id"]),
+        project_id=uuid.UUID(row["metadata"]["project_id"]),
         document_id=uuid.UUID(row["document_id"]),
         chunk_index=row["chunk_index"],
         content=row["content"],
@@ -203,12 +206,21 @@ class CapturedProvider(OpenAICompatibleChatProvider):
                 allowed = [item["answerable_scope"] for item in self.review()[1]["checks"]]
                 content = json.dumps(
                     {
+                        "version": "claim.entailment.v2",
                         "verdicts": [
-                            "supported"
-                            if any(item["assertion"].strip() == text for text in allowed)
-                            else "unsupported"
+                            {
+                                "assertion_id": item["assertion_id"],
+                                "proof_hashes": item["proof_hashes"],
+                                "scope_hash": item["scope_hash"],
+                                "failed_dimensions": [],
+                                "evidence_binding": "controlled fixture",
+                                "status": "supported"
+                                if any(item["assertion"].strip() == text for text in allowed)
+                                else "unsupported",
+                                "publication_complete": True,
+                            }
                             for item in assertions
-                        ]
+                        ],
                     }
                 )
         else:
@@ -307,6 +319,251 @@ def journey(kind="agm", failure=None, combined=False):
     return service, provider, conversation, messages, question
 
 
+@pytest.mark.parametrize("both_operands_cited", [True, False])
+@pytest.mark.parametrize("omitted_difference", [True, False])
+async def test_saved_cross_page_calculation_publishes_both_citations_and_difference(
+    both_operands_cited,
+    omitted_difference,
+):
+    """Replay the captured selectors with controlled provider completions."""
+    name = (
+        "omitted_tax_difference_20261105.json"
+        if omitted_difference
+        else "cross_page_comparison_r5_20261105.json"
+    )
+    case = json.loads(FIXTURE.with_name(name).read_bytes())
+    assert case["outcome"] == "insufficient_evidence"
+    difference_id = "requested_period_difference" if omitted_difference else "R5"
+    if omitted_difference:
+        assert {item["requirement_id"] for item in case["requirements"]} == {"R1", "R2", "R3", "R4"}
+        assert all(item["fulfillment"] == "full" for item in case["checks"])
+    else:
+        assert case["requirements"][-1]["task_kind"] == "calculation"
+        assert case["checks"][-1]["unresolved_facets"] == [
+            "unproven governing dependency R2",
+            "unproven governing dependency R4",
+        ]
+    service, provider, conversation, repository, _ = journey()
+    snapshot = {
+        "index_build_id": case["candidate_build_id"],
+        "source_metadata_generation": case["source_metadata_generation"],
+    }
+    sources = [
+        ContextChunk(
+            chunk_id=uuid.UUID(row["id"]),
+            project_id=conversation.project_id,
+            document_id=uuid.uuid5(uuid.NAMESPACE_URL, row["filename"]),
+            chunk_index=row["chunk_index"],
+            content=row["content"],
+            score=1.0,
+            semantic_score=1.0,
+            filename=row["filename"],
+            chunk_hash=hashlib.sha256(row["content"].encode()).hexdigest(),
+            page_number=row["page_number"],
+            metadata={**snapshot, **row.get("metadata", {})},
+        )
+        for row in case["sources"]
+    ]
+    service._retrieval.retrieve.return_value = ContextRetrievalResult(
+        chunks=sources, diagnostics=snapshot
+    )
+    service._retrieval.pin_validated_preview = AsyncMock()
+    # Persisted R5 reflects server downgrades. Reconstruct the affirmative reviewer
+    # verdict from its saved proof ranges and scope, keeping the original plan label.
+    checks = [
+        {
+            "requirement_id": row["requirement_id"],
+            "description": row["description"],
+            "supported": True,
+            "fulfillment": "full",
+            "answerable_scope": row["answerable_scope"],
+            "evidence": row["source_ranges"],
+        }
+        for row in case["checks"]
+    ]
+    equation = "400000 - 350000 = 50000"
+    if not omitted_difference:
+        checks[-1]["answerable_scope"] = equation
+    provider.review = lambda: (
+        case["requirements"],
+        {"complete": True, "missing": [], "checks": checks},
+    )
+    original_generate = provider.generate
+
+    async def generate(messages, **kwargs):
+        purpose = current_request_purpose()
+        if purpose == "recovery_planning":
+            planned = await original_generate(messages, **kwargs)
+            return replace(
+                planned,
+                content=json.dumps(
+                    {
+                        "requirements": case["requirements"],
+                        "queries": case["queries"],
+                    }
+                ),
+            )
+        if omitted_difference and purpose == "claim_verification":
+            response = await original_generate(messages, **kwargs)
+            payload = json.loads(response.content)
+            for item, verdict in zip(
+                json.loads(messages[1].content), payload["verdicts"], strict=True
+            ):
+                if item["assertion"].strip() == equation:
+                    verdict["status"] = "supported"
+            return replace(response, content=json.dumps(payload))
+        if purpose != "answer_generation":
+            return await original_generate(messages, **kwargs)
+        if omitted_difference:
+            assert any(difference_id in message.content for message in messages)
+        registry = json.loads(
+            next(
+                message.content.split("): ", 1)[1]
+                for message in messages
+                if message.content.startswith("Approved calculation operand references")
+            )
+        )
+        source_refs = {}
+        for chunk, amount in zip(sources[:2], ("350000", "400000"), strict=True):
+            source_refs[amount] = next(
+                f"source:{key}"
+                for key, value in registry["sources"].items()
+                if key.startswith(f"{chunk.chunk_id}:") and value == amount
+            )
+        segments = [
+            {
+                "text": check["answerable_scope"],
+                "requirement_ids": [check["requirement_id"]],
+                "proof_ids": list(dict.fromkeys(span["chunk_id"] for span in check["evidence"])),
+            }
+            for check in checks
+        ]
+        if omitted_difference:
+            segments.append(
+                {
+                    "text": equation,
+                    "requirement_ids": [difference_id],
+                    "proof_ids": [str(source.chunk_id) for source in sources],
+                }
+            )
+        segments[-1]["calculation_references"] = ["difference"]
+        if not both_operands_cited:
+            segments[-1]["proof_ids"] = segments[-1]["proof_ids"][:1]
+        return ChatCompletionResult(
+            content=json.dumps(
+                {
+                    "version": "answer.draft.v1",
+                    "segments": segments,
+                    "calculations": {
+                        "nodes": [
+                            {
+                                "id": "difference",
+                                "operation": "subtraction",
+                                "operands": [source_refs["400000"], source_refs["350000"]],
+                                "result": "50000",
+                            }
+                        ]
+                    },
+                }
+            ),
+            provider=provider.provider_name,
+            model=provider.model_name,
+            provider_version="fixture",
+            finish_reason="stop",
+            usage=ChatUsage(10, 5),
+        )
+
+    provider.generate = generate
+    turn = await service.send_message(
+        conversation.id,
+        MessageSendRequest(
+            content=case["question"], preview_index_build_id=uuid.UUID(case["candidate_build_id"])
+        ),
+    )
+    answer = turn.assistant_message
+    assert "coverage_review" in provider.purposes
+    assert answer.grounded
+    assert "350,000" in answer.content and "400,000" in answer.content
+    assert {citation.chunk_id for citation in answer.citations} == {
+        source.chunk_id for source in sources
+    }
+    assert {citation.page_number for citation in answer.citations} == (
+        {15, 140, 142} if omitted_difference else {15, 140}
+    )
+    for requirement, supporting_sources in (("R2", sources[:1]), ("R4", sources[1:])):
+        claim = next(claim for claim in answer.claims if requirement in claim.requirement_ids)
+        assert claim.verification == "supported"
+        assert {evidence.chunk_id for evidence in claim.evidence} == {
+            source.chunk_id for source in supporting_sources
+        }
+    if not both_operands_cited:
+        assert answer.terminal_outcome.outcome == "partial"
+        assert equation not in answer.content
+        assert not any(difference_id in claim.requirement_ids for claim in answer.claims)
+        return
+    assert answer.terminal_outcome.outcome == "answered", answer.content
+    assert equation in answer.content
+    difference = next(claim for claim in answer.claims if difference_id in claim.requirement_ids)
+    assert difference.verification == "supported"
+    assert difference.arithmetic_verification == "supported"
+    assert {evidence.chunk_id for evidence in difference.evidence} == {
+        source.chunk_id for source in sources
+    }
+    saved = MessageResponse.from_message(repository.add.call_args.args[0])
+    assert saved.content == answer.content and saved.citations == answer.citations
+
+
+@pytest.mark.parametrize("defect", ["no_spans", "wrong_hash", "truncated", "open_paragraph"])
+def test_saved_tax_ranges_reject_unattested_or_incomplete_proof(defect):
+    case = json.loads(FIXTURE.with_name("omitted_tax_difference_20261105.json").read_bytes())
+    page = 142 if defect == "open_paragraph" else 15
+    row = next(item for item in case["sources"] if item["page_number"] == page)
+    metadata = row["metadata"]
+    if defect == "no_spans":
+        metadata.pop("source_spans")
+    elif defect == "wrong_hash":
+        for span in metadata["source_spans"]:
+            span["span_hash"] = "wrong"
+    elif defect == "truncated":
+        metadata["source_text_truncated"] = True
+    source = ContextChunk(
+        chunk_id=uuid.UUID(row["id"]),
+        document_id=uuid.uuid4(),
+        chunk_index=row["chunk_index"],
+        content=row["content"],
+        score=1.0,
+        semantic_score=1.0,
+        filename=row["filename"],
+        chunk_hash=hashlib.sha256(row["content"].encode()).hexdigest(),
+        page_number=page,
+        metadata=metadata,
+    )
+    proof = next(
+        span
+        for check in case["checks"]
+        for span in check["source_ranges"]
+        if span["chunk_id"] == row["id"]
+    )
+    if defect == "open_paragraph":
+        proof["end_line"] -= 1
+    verdict = CoverageVerdict.model_validate(
+        {
+            "complete": True,
+            "missing": [],
+            "checks": [
+                {
+                    "requirement_id": "R",
+                    "supported": True,
+                    "fulfillment": "full",
+                    "evidence": [proof],
+                }
+            ],
+        }
+    )
+    assert verdict.resolve_source_ranges([source])
+    assert not verdict.validates([], [source], {"R"})
+
+
 @pytest.mark.parametrize("repetition", range(3))
 async def test_captured_agm_composed_prompt_provider_parser_verifier_persistence(repetition):
     service, provider, conversation, repository, question = journey()
@@ -372,7 +629,7 @@ async def test_generation_protocol_failures_are_distinct_and_never_publish_faile
         assert "claim_verification" in provider.purposes
         assert service._work.counts["semantic_repairs"] == 0
         assert "verifier_schema_invalid" in answer.metadata["rejected_draft"]["reasons"]
-        diagnostics.expire_payloads.assert_awaited_once()
+        diagnostics.expire_payloads.assert_not_awaited()
         diagnostics.add.assert_called_once()
         record = diagnostics.add.call_args.args[0]
         assert isinstance(record, MessageDiagnostic)

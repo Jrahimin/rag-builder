@@ -1496,6 +1496,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{project_id}/sources/review-queue": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Governance Review Queue */
+        get: operations["get_governance_review_queue_api_v1_projects__project_id__sources_review_queue_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{project_id}/sources/revisions/{revision_id}": {
         parameters: {
             query?: never;
@@ -1895,6 +1912,8 @@ export interface components {
             /** Evidence */
             evidence?: components["schemas"]["ClaimEvidence"][];
             evidence_support?: components["schemas"]["ClaimVerification"] | null;
+            /** Fulfilled Proof Requirements */
+            fulfilled_proof_requirements?: string[];
             /** Grounded */
             grounded: boolean;
             /** Requirement Ids */
@@ -2783,6 +2802,19 @@ export interface components {
              */
             success?: boolean;
         };
+        /** ApiResponse[list[GovernanceReviewProposal]] */
+        ApiResponse_list_GovernanceReviewProposal__: {
+            /** Data */
+            data?: components["schemas"]["GovernanceReviewProposal"][] | null;
+            /** Message */
+            message?: string | null;
+            meta?: components["schemas"]["ResponseMeta"] | null;
+            /**
+             * Success
+             * @default true
+             */
+            success?: boolean;
+        };
         /** ApiResponse[list[ProjectAIConfigRevisionResponse]] */
         ApiResponse_list_ProjectAIConfigRevisionResponse__: {
             /** Data */
@@ -3662,6 +3694,7 @@ export interface components {
              * @default 30
              */
             broad_recovery_timeout_seconds?: number;
+            calendar_policy?: components["schemas"]["ProjectCalendarPolicy"] | null;
             /** Citation Excerpt Max Chars */
             citation_excerpt_max_chars: number;
             /** Context Char Budget */
@@ -3678,7 +3711,7 @@ export interface components {
              * @default legacy
              * @enum {string}
              */
-            execution_policy?: "legacy" | "adaptive_v1";
+            execution_policy?: "legacy" | "adaptive_v1" | "bounded_v2" | "bounded_extended_v2";
             /**
              * Focused Recovery Max Queries
              * @default 2
@@ -3951,6 +3984,8 @@ export interface components {
             expected_outcome?: ("answered" | "partial" | "insufficient_evidence" | "unresolved_authority") | null;
             /** Hard Negative Evidence Phrases */
             hard_negative_evidence_phrases?: string[];
+            /** History */
+            history?: components["schemas"]["EvaluationHistoryMessage"][];
             /** Key */
             key: string;
             kind: components["schemas"]["EvaluationCaseKind"];
@@ -3960,6 +3995,18 @@ export interface components {
             };
             /** Previous User Query */
             previous_user_query?: string | null;
+            /** Prior Citations */
+            prior_citations?: {
+                [key: string]: {
+                    [key: string]: unknown;
+                }[];
+            };
+            /** Prior Metadata */
+            prior_metadata?: {
+                [key: string]: {
+                    [key: string]: unknown;
+                };
+            };
             /** Query */
             query: string;
             /** Query Form */
@@ -3972,6 +4019,12 @@ export interface components {
             relevant_document_ids?: string[];
             /** Relevant Evidence Phrases */
             relevant_evidence_phrases?: string[];
+            /**
+             * Source Scope
+             * @default project_default
+             * @enum {string}
+             */
+            source_scope?: "project_default" | "indexed_only";
             /** User Parameter Tokens */
             user_parameter_tokens?: string[];
         };
@@ -4025,6 +4078,25 @@ export interface components {
             schema_version: number;
             /** Version */
             version: string;
+        };
+        /** EvaluationHistoryMessage */
+        EvaluationHistoryMessage: {
+            /** Citations */
+            citations?: {
+                [key: string]: unknown;
+            }[];
+            /** Content */
+            content: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "user" | "assistant";
         };
         /** EvaluationRunCreate */
         EvaluationRunCreate: {
@@ -4302,6 +4374,43 @@ export interface components {
             output_tokens: number | null;
             /** Total Tokens */
             total_tokens: number | null;
+        };
+        /** GovernanceReviewProposal */
+        GovernanceReviewProposal: {
+            /**
+             * Accept Via
+             * @enum {string}
+             */
+            accept_via: "source_metadata_revision" | "index_scope_review";
+            /** Candidate */
+            candidate?: string | null;
+            /** Chunk Hash */
+            chunk_hash: string;
+            /**
+             * Chunk Id
+             * Format: uuid
+             */
+            chunk_id: string;
+            /**
+             * Document Id
+             * Format: uuid
+             */
+            document_id: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "work_identity" | "period" | "relationship";
+            /** Source Span */
+            source_span?: {
+                [key: string]: unknown;
+            };
+            /**
+             * Status
+             * @default untrusted
+             * @constant
+             */
+            status?: "untrusted";
         };
         /**
          * GroundingMode
@@ -5186,11 +5295,9 @@ export interface components {
             /** Source Schema Version */
             source_schema_version: number;
         };
-        /**
-         * ProjectBehaviorV2
-         * @description Normal Project-owned behavior; provider and safety controls are intentionally absent.
-         */
+        /** ProjectBehaviorV2 */
         ProjectBehaviorV2: {
+            calendar_policy?: components["schemas"]["ProjectCalendarPolicy"] | null;
             /** Domain Instructions */
             domain_instructions?: string | null;
             /** Evidence Approach */
@@ -5201,6 +5308,35 @@ export interface components {
             response_mode?: components["schemas"]["ResponseMode"] | null;
             /** @default inherit */
             translation_policy?: components["schemas"]["TranslationPolicy"];
+        };
+        /** ProjectCalendarPolicy */
+        ProjectCalendarPolicy: {
+            /** Boundary Day */
+            boundary_day: number;
+            /** Boundary Month */
+            boundary_month: number;
+            /**
+             * Default For Current
+             * @default false
+             */
+            default_for_current?: boolean;
+            /**
+             * Label Start Offset
+             * @default 0
+             */
+            label_start_offset?: number;
+            /**
+             * Label Year Span
+             * @default 1
+             */
+            label_year_span?: number;
+            /**
+             * Period Kind
+             * @enum {string}
+             */
+            period_kind: "assessment" | "fiscal" | "calendar";
+            /** Timezone */
+            timezone: string;
         };
         /**
          * ProjectCreate
@@ -5234,7 +5370,7 @@ export interface components {
             /** Deduplicate By Content Hash */
             deduplicate_by_content_hash?: boolean | null;
             /** Execution Policy */
-            execution_policy?: ("legacy" | "adaptive_v1") | null;
+            execution_policy?: ("legacy" | "adaptive_v1" | "bounded_v2" | "bounded_extended_v2") | null;
             /** Focused Recovery Max Queries */
             focused_recovery_max_queries?: number | null;
             /** Focused Recovery Timeout Seconds */
@@ -5660,6 +5796,8 @@ export interface components {
             passage_score_method?: string | null;
             /** Passage Semantic Score */
             passage_semantic_score?: number | null;
+            /** Project Id */
+            project_id?: string | null;
             /**
              * Query Variants
              * @default []
@@ -5996,6 +6134,11 @@ export interface components {
              * @default 0
              */
             relationship_candidate_count?: number;
+            /**
+             * Relationship Discovery Status
+             * @default not_assessed
+             */
+            relationship_discovery_status?: string;
             /** Rerank Failure Reason */
             rerank_failure_reason?: string | null;
             /** Rerank Requested */
@@ -6101,6 +6244,8 @@ export interface components {
             };
             /** Translation Validation Reasons */
             translation_validation_reasons?: string[];
+            /** Unresolved Frontier Ids */
+            unresolved_frontier_ids?: string[];
         };
         /**
          * SearchRequest
@@ -10778,6 +10923,42 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApiResponse_SourceRevisionCreateResponse_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_governance_review_queue_api_v1_projects__project_id__sources_review_queue_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: {
+                ape_admin_access?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_list_GovernanceReviewProposal__"];
                 };
             };
             /** @description Validation Error */

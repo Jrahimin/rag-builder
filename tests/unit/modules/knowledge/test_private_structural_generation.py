@@ -53,7 +53,7 @@ async def test_private_generation_keeps_active_document_immutable():
         DocumentStatus.READY,
         original_generation,
     )
-    assert rows[0].chunk_metadata["structure_version"] == "structure.v1"
+    assert rows[0].chunk_metadata["structure_version"] == "structure.v2"
     cleanup = str(
         session.execute.call_args.args[0].compile(
             dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}

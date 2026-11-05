@@ -196,7 +196,12 @@ per-request and non-sticky. Adopted prior results are scenario inputs, not
 proof that the previous answer was correct.
 
 When bounded recovery is enabled, one monotonic deadline covers planning, queue waits, retrieval,
-structured-output retries, review, and the permitted follow-up. Deadline expiry can restore an
+structured-output retries, review, and the permitted follow-up. Under legacy execution,
+authoritative applicability and comparison turns use a recovery cutoff of 60 seconds from
+request start, including initial retrieval. The draft, verification,
+and persistence cutoffs move together, preserving their reserves. Discovery leaves 10 seconds
+for the first coverage review and 7 for a follow-up review on these turns. Focused planning must
+also leave time for its search and review. Deadline expiry can restore an
 already validated partial checkpoint, while client cancellation propagates and stops the turn.
 When an unscoped, non-calculation turn has no authority-safe indexed passage for a broad compliance
 overview, bounded recovery gets its configured opportunity first. If it reaches its deadline
@@ -589,9 +594,10 @@ not overlap just because their numeric endpoints touch. Explicit legal-period
 ranges require period_mode=range. Multi-period requests preserve earlier editions
 when a replacement covers only a later requested period.
 
-One monotonic request deadline provides a 60-second outer window. Normal work ends
-by 50 seconds, recovery by 30 seconds, reserving 10 seconds each for generation,
-claim verification and deterministic terminal persistence. Action admission reserves
+The standard legacy deadline provides a 60-second outer window. Normal work ends
+by 50 seconds and recovery by 30 seconds, with the guarded extension above when needed.
+The schedule reserves 10 seconds each for generation, claim verification and deterministic
+terminal persistence. Action admission reserves
 subsequent validation; query deduplication also includes normalized scope, unresolved
 IDs, build/source identity, anchor IDs and evidence hashes. Actions become completed
 only after validated completion; cancelled correction remains cancelled.
@@ -894,7 +900,7 @@ Completeness is checked per published assertion and per contained text unit befo
 concatenation. A complete later sentence cannot conceal an unfinished earlier
 unit. Corrupt Unicode and broken conditions are rejected. Unpunctuated prose needs
 an explicit internal verifier completeness verdict; absence is unknown and that
-assertion is withheld. Independently complete siblings remain partial. Audited
+assertion is withheld. A completeness verdict binds the exact verified assertion text; a later text change cannot reuse that verdict. Independently complete siblings remain partial. Audited
 calculations and exact, reviewed table structures use structural closure, preserving
 pipe schedules without treating separators as prose corruption. Punctuation alone
 is a conservative boundary signal, not proof of grammar, spelling or legal truth.
@@ -916,3 +922,60 @@ verification or completeness: complete supported output can publish, while incom
 or unverified output persists a truthful verification failure under the same contract.
 Gap notices preserve description punctuation and all distinct material gaps, joining
 complete sentences without duplicate terminal punctuation.
+
+## Versioned proof and bounded completion
+
+An initial evidence assessment records requirements, exact proof bindings, missing source
+facts and missing personal inputs separately. A complete, schema-valid draft with approved
+identities proceeds directly to the ordinary final verifier. Independently proved rule
+material survives missing personal eligibility facts and later recovery failures.
+
+Dependency purpose distinguishes structural table/header continuity from legal definition,
+applicability, amendment, exception and calculation operands. Only structural dependencies
+require the same table. Cross-document legal dependencies require reviewed relationship,
+trusted typed Project identity, source/build generation (including generation zero) and scope identity. Failed relationship discovery marks each affected governed base unavailable and blocks exact presentation reuse for those proofs; unrelated proof remains eligible. Proof prerequisites need not become separate paragraphs:
+published assertions must retain their full proof closure.
+
+`claim.entailment.v2` requires exact assertion ID, approved proof hashes and canonical-scope
+hash for every verdict. Missing, duplicate, unexpected or foreign bindings fail closed;
+legacy verdict decoding is diagnostic compatibility only. Arithmetic operands carry role,
+unit, period, category and source/user origin. Units distinguish day/month/year/hour and explicit currencies; unspecified currency or unsupported conversion cannot certify arithmetic. Rate-times-money retains the currency regardless of operand order, so later operations check the derived dimension. A local failed arithmetic component does not
+invalidate independent components; foreign references remain fatal. Exact approved spans
+skip redundant similarity embeddings before the semantic verifier.
+
+Each arithmetic operand binds its period to its own user clause or exact reviewed
+source clause/table row. Reviewed quotes retain separate source offsets and hashes;
+their period labels are never joined into a union. A clause naming several periods,
+an unlabelled table year range, or a periodless value in period-scoped context stays
+unresolved. That component and its descendants cannot certify arithmetic, while an
+independent component with compatible periods can survive. Final claim scope and
+source applicability verification still run before publication.
+
+A whitespace line wrap inside a normalized number-and-scale span (for example,
+`1` followed by `lakh` on the next line) retains the complete value, original
+quote and offsets. Only the boundary inside that attested quantity is suppressed;
+surrounding clauses and table rows keep independent period ownership.
+
+Formula display matching accepts exact decimal value equivalence (for example,
+`200` and `200.0`) and then publishes the verified graph's rendering. Operators,
+operand order and token boundaries must still match; no rounding or tolerance is
+used. Changed values, unsupported syntax and foreign proof references remain
+rejected, and final source/scope verification is still required.
+
+The shared bounded schedule and terminal reducer serve POST, SSE and evaluation. An
+immutable verified answer checkpoint is written only after verified finalization and binds
+text, assertions, proof/citations, scope, completeness and limitations. Timeout may return
+that checkpoint with explicit unfinished-work limitations. Chat persistence preserves its claims, citations, evidence summary and optional notices across regular, SSE and saved GET responses. Evidence-only states and drafts
+cannot be published as checkpoints. Shape repair is skipped when no immutable assertion
+inventory can be recovered.
+
+Web recovery targets missing requirements only. Indexed-only/document restrictions prevail.
+An unresolved authority chain cannot be replaced by a snippet: independent recovery first
+requires exact reviewed anchors and dependency closure disjoint from affected revisions,
+complete discovery, and valid scope/build identity. Official rule admission then requires
+exact authority/applicability quotations and canonical scope; final claim verification still
+runs. Missing evidence of independence keeps fallback suppressed.
+
+Usage remains purpose-specific through completed persistence. Persistence no longer runs
+project-wide diagnostic expiration: the existing application retention task runs every
+60 seconds, and read-time expiry remains enforced.

@@ -150,3 +150,17 @@ candidate pins with `preview_requires_admin`. Run `index_build_id`, `versions` a
 The shared execution result's completion now reflects verified published required
 assertions and dependencies, with exact omitted-requirement notices. Source coverage
 alone cannot turn an incomplete generated or repaired answer into a complete result.
+
+## Optional conversation scenarios
+
+Each `EvaluationCase` optionally accepts `history` (up to 50 typed records with UUID `id`,
+`role: user|assistant`, `content`, and citations), `prior_citations` and `prior_metadata`
+mapped by supplied history message ID, and `source_scope: project_default|indexed_only`.
+Duplicate history identities and prior evidence belonging to absent messages are rejected.
+Existing `document_id`, `metadata_filter`, and `as_of` restrictions remain available. Omitted
+scenario fields retain single-turn compatibility. History citations may use real `MessageResponse.citations` snapshots. Evaluation projects only the visible citation identities through the same conversion as chat, while retaining complete snapshots under their assistant message IDs for exact recall. `prior_citations` may supply those snapshots separately; inline and separate snapshots must agree when both are present. Legacy resolver identities remain supported with matching message ownership. Malformed source identities/dates, foreign message or Project ownership and prior citations attached to user messages are rejected before execution.
+
+Evaluation uses production retrieval composition and the captured effective evidence
+approach, translation and web settings. Its first scoped retrieval, recovery, final verifier
+and terminal result share the request clock. This is offline implementation parity; actual
+POST/SSE/persisted GET acceptance is separately recorded for a pinned project/build/config.

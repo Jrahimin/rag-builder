@@ -70,10 +70,13 @@ async def test_wrapped_translation_is_accepted() -> None:
     assert result.attempts == 1
 
 
-def test_clean_translation_strips_labels_and_uses_first_line() -> None:
+def test_clean_translation_strips_labels_and_preserves_all_lines() -> None:
     assert _clean_translation("Translation: উৎসে কর") == "উৎসে কর"
     assert _clean_translation("Translation:\nউৎসে কর") == "উৎসে কর"
-    assert _clean_translation("উৎসে কর\nThis is an explanation.") == "উৎসে কর"
+    assert (
+        _clean_translation("উৎসে কর\nDoes an extension apply?")
+        == "উৎসে কর Does an extension apply?"
+    )
 
 
 def test_clean_translation_keeps_page_length_multiline() -> None:

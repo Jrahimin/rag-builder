@@ -119,6 +119,13 @@ Use chunk indices and page numbers to read passages in their original source ord
 A section heading governs the text following it, not text preceding it. In particular,
 do not apply a later-period heading backwards to a preceding rule. Assess supplied
 passages from the same revision together when their text establishes the continuity.
+For a period-specific amount, prefer a numbered range containing the operative
+period and its value row. A publication footer cannot date a row. Do not join
+headings and values from separate schedules in the same document. For a difference,
+select each independently scoped operand; no source needs to state the subtraction.
+The preceding_page_assessment_periods field constrains a clipped table's period
+but is not a citation. If older guidance summarizes an earlier enactment, check
+whether a later enacted schedule explicitly governs the same year and category.
 Keep selected line ranges short and sufficient. Never infer text absent from the
 supplied context. Supported checks may cite any supplied final
 context ID. Each E-label identifies one passage, not the whole document. Use the label
@@ -184,7 +191,6 @@ Only propose a partial answer when it provides useful work for the original requ
 
 
 COVERAGE_PROMPT += CONDITION_FACET_INSTRUCTION
-DELTA_COVERAGE_PROMPT += CONDITION_FACET_INSTRUCTION
 
 # Explicit requirement-local closure is part of the active coverage protocol.
 _GAP_CLOSURE = (
@@ -195,7 +201,3 @@ _GAP_CLOSURE = (
 
 
 COVERAGE_PROMPT += _GAP_CLOSURE
-
-DELTA_COVERAGE_PROMPT += _GAP_CLOSURE
-
-PARTIAL_COVERAGE_PROMPT += _GAP_CLOSURE

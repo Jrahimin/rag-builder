@@ -153,6 +153,7 @@ async def test_source_revisions_activation_history_and_generation_resolution(
                 {
                     "relationship_type": "replaces",
                     "target_revision_id": first_revision["id"],
+                    "review_provenance": {"whole_document_replacement": "declared"},
                 }
             ],
             "change_reason": "Publish the 2026 edition",

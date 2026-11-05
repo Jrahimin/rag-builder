@@ -127,7 +127,7 @@ async def test_translation_failure_keeps_original_branches() -> None:
     assert plan.diagnostics["translation_failure_reason"] == "missing_literals"
     assert plan.diagnostics["translation_provider"] == "openai"
     assert plan.diagnostics["translation_model"] == "gpt-5-nano"
-    assert plan.diagnostics["translation_prompt_version"] == "retrieval-translation-v2"
+    assert plan.diagnostics["translation_prompt_version"] == "retrieval-translation-v3"
     assert plan.diagnostics["translation_target_language"] == "en"
     assert plan.diagnostics["translation_attempts"] == 2
     assert plan.diagnostics["translation_validation_reasons"] == [

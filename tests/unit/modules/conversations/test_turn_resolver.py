@@ -423,3 +423,24 @@ def test_bypass_resolution_records_fallback_routing_origin():
     assert result.diagnostics["routing_origin"] == "fallback"
     assert result.resolution.outcome is TurnOutcome.STANDALONE
     assert result.attempted is False
+
+
+@pytest.mark.parametrize("term", ["today", "yesterday"])
+async def test_standalone_with_history_keeps_current_message_attested_relative_date(term):
+    payload = _payload().model_copy(update={"current_message": f"What rate applies {term}?"})
+    result = await TurnResolver(
+        JsonLLM(
+            {
+                "outcome": "standalone",
+                "relation": "standalone",
+                "effective_question": payload.current_message,
+                "temporal_intent": {"kind": term, "requires_snapshot": True},
+            }
+        ),
+        timeout_seconds=2,
+        max_output_tokens=256,
+    ).resolve(payload)
+    assert result.resolution.outcome is TurnOutcome.STANDALONE
+    assert result.retrieval.query == payload.current_message
+    assert result.retrieval.as_of is not None
+    assert result.diagnostics["filter_changed"] is True

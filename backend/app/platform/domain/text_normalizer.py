@@ -72,14 +72,25 @@ def normalize_for_storage(text: str) -> str:
     return _collapse_whitespace(normalized)
 
 
+LEXICAL_NORMALIZATION_VERSION = "unicode_numeral_alias_v2"
+
+
 def normalize_for_indexing(text: str) -> str:
-    """Keyword index and FTS input — same rules as storage."""
-    return normalize_for_storage(text)
+    """Separate lexical representation retains original numerals plus ASCII aliases."""
+    original = normalize_for_storage(text)
+    aliases = []
+    for token in regex.findall(r"[\p{Letter}\p{Number}\p{Mark}]+", original):
+        alias = "".join(
+            str(unicodedata.decimal(char)) if char.isdecimal() else char for char in token
+        )
+        if alias != token:
+            aliases.append(alias)
+    return " ".join([original, *aliases]).strip()
 
 
 def normalize_for_query(text: str) -> str:
-    """Search query path — identical normalization to indexing."""
-    return normalize_for_storage(text)
+    """Search query path uses the same versioned numeral aliases as indexing."""
+    return normalize_for_indexing(text)
 
 
 def normalize_text(text: str) -> str:

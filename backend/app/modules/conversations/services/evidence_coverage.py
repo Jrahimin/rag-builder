@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, model_validator
 from pydantic_core import PydanticCustomError
 
 from app.modules.conversations.ports import ContextChunk
+from app.platform.domain.content_hash import content_hash
 from app.platform.domain.publication_integrity import damaged_source_text
 
 # Up to four rule facets with separate user/source-language discovery routes.
@@ -73,6 +74,64 @@ class _Quote(BaseModel):
         elif not self.quote.strip():
             raise ValueError("A source quote or line range is required")
         return self
+
+
+def _intact_selected_range(chunk: ContextChunk, item: _Quote, *, damaged: bool) -> bool:
+    """Distinguish document-level extraction gaps from damage in the selected proof."""
+    if chunk.metadata.get("source_text_truncated") is True:
+        return False
+    partial = chunk.metadata.get("partial_extraction") is True
+    if not partial and not damaged:
+        return True
+    if item._resolved_range is None or damaged_source_text(item.quote):
+        return False
+    start, end = item._resolved_range
+    lines = chunk.content.splitlines(keepends=True)
+    if "".join(lines[start - 1 : end]) != item.quote:
+        return False
+    if partial:
+        # A document can have failed pages while this page has exact extracted spans.
+        source_spans = chunk.metadata.get("source_spans")
+        if damaged or not isinstance(source_spans, list):
+            return False
+        spans = [
+            span["text"]
+            for span in source_spans
+            if isinstance(span, dict)
+            and span.get("provenance") == "exact_source_span"
+            and span.get("element_id")
+            and isinstance(span.get("text"), str)
+            and chunk.page_number is not None
+            and span.get("page_start") == span.get("page_end") == chunk.page_number
+            and content_hash(span["text"]) == span.get("span_hash")
+            and not damaged_source_text(span["text"])
+        ]
+        tokens = [_quote_tokens(span) for span in spans]
+        return all(
+            any(_contains_quote(span, line) for span in tokens)
+            for line in item.quote.splitlines()
+            if line.strip()
+        )
+    # A closed, line-selected paragraph can be intact even if another paragraph
+    # has an extra closing parenthesis. An open surrounding condition and
+    # corrupt characters still fail closed.
+    before = "".join(lines[: start - 1])
+    after = "".join(lines[end:])
+    return (
+        start > 1
+        and end < len(lines)
+        and not lines[start - 2].strip()
+        and not lines[end].strip()
+        and item.quote.rstrip().endswith((".", ";", "।", "。"))
+        and all(
+            part.count(left) <= part.count(right)
+            for part in (before, after)
+            for left, right in (("(", ")"), ("\uff08", "\uff09"))
+        )
+        and not damaged_source_text(
+            chunk.content.translate(str.maketrans("", "", "()\uff08\uff09"))
+        )
+    )
 
 
 def numbered_source_lines(content: str) -> str:
@@ -323,12 +382,9 @@ class CoverageVerdict(BaseModel):
         ):
             return False
         sources = {str(c.chunk_id): _quote_tokens(c.content) for c in context}
+        chunks = {str(chunk.chunk_id): chunk for chunk in context}
         damaged = {
-            str(chunk.chunk_id)
-            for chunk in context
-            if chunk.metadata.get("source_text_truncated") is True
-            or chunk.metadata.get("partial_extraction") is True
-            or damaged_source_text(chunk.content)
+            identity for identity, chunk in chunks.items() if damaged_source_text(chunk.content)
         }
         for check in self.checks:
             if (
@@ -341,9 +397,14 @@ class CoverageVerdict(BaseModel):
             for item in check.evidence:
                 if (
                     item.chunk_id not in sources
-                    or (check.fulfillment == "full" and item.chunk_id in damaged)
                     or not item.quote.strip()
                     or not _contains_quote(sources[item.chunk_id], item.quote)
+                    or (
+                        check.fulfillment == "full"
+                        and not _intact_selected_range(
+                            chunks[item.chunk_id], item, damaged=item.chunk_id in damaged
+                        )
+                    )
                 ):
                     return False
         return True

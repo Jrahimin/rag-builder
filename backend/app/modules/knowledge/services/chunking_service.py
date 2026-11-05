@@ -35,7 +35,10 @@ from app.modules.knowledge.services.chunking.models import (
 from app.modules.knowledge.services.chunking.sentence_similarity_service import (
     BaseSentenceSimilarityService,
 )
-from app.modules.knowledge.services.chunking.structural_provenance import annotate_structure
+from app.modules.knowledge.services.chunking.structural_provenance import (
+    annotate_structure,
+    bind_parser_elements,
+)
 from app.modules.knowledge.services.chunking.structure_analyzer_service import (
     StructureAnalyzerService,
 )
@@ -96,6 +99,7 @@ class ChunkingService:
         self, parsed: ParsedDocument
     ) -> tuple[list[TextChunk], ChunkingRunMetadata]:
         started = time.perf_counter()
+        parsed = bind_parser_elements(parsed)
         analysis = self._analyzer.analyze(parsed)
         strategy = self._selector.select(parsed, analysis, self._config)
         context = ChunkingContext(
@@ -133,9 +137,6 @@ class ChunkingService:
                 raise ValueError(msg)
             drafts = strategy_impl.chunk(context)
 
-        annotate_structure(
-            drafts, parsed, max_tokens=self._config.max_tokens, token_counter=self._token_counter
-        )
         validated = self._validator.validate(drafts, self._config)
         annotate_structure(
             validated, parsed, max_tokens=self._config.max_tokens, token_counter=self._token_counter
@@ -175,9 +176,6 @@ class ChunkingService:
             text,
             config=self._config,
             base_metadata={"strategy_used": "recursive_fallback"},
-        )
-        annotate_structure(
-            drafts, parsed, max_tokens=self._config.max_tokens, token_counter=self._token_counter
         )
         validated = self._validator.validate(drafts, self._config)
         annotate_structure(

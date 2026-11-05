@@ -27,6 +27,7 @@ from app.models.source_metadata import (
     SourceRelationshipType,
     SourceRevisionRelationship,
 )
+from app.platform.domain.request_scope import request_scope_hash
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,6 +61,8 @@ class KnowledgeIncomingModifier:
     provision_effect: str = "unknown"
     replacement_scope_verified: bool = False
     supporting_spans: tuple[dict[str, Any], ...] = ()
+    scope_hash: str | None = None
+    applicable: bool | None = None
 
 
 class KnowledgeSourceMetadataReader:
@@ -206,48 +209,6 @@ class KnowledgeSourceMetadataReader:
             {row.modifier_document_id for row in edge_rows if row.modifier_document_id is not None}
         )
         reference_date = (as_of or datetime.now(UTC)).date()
-        activation_revision = aliased(
-            SourceMetadataRevision,
-            name="modifier_activation_revision",
-        )
-        activation_candidates = (
-            select(
-                SourceActivationEvent.document_id,
-                SourceActivationEvent.source_revision_id,
-                func.row_number()
-                .over(
-                    partition_by=SourceActivationEvent.document_id,
-                    order_by=(
-                        SourceActivationEvent.generation.desc(),
-                        SourceActivationEvent.created_at.desc(),
-                        SourceActivationEvent.id.desc(),
-                    ),
-                )
-                .label("position"),
-            )
-            .where(
-                SourceActivationEvent.project_id == project_id,
-                SourceActivationEvent.generation <= generation,
-                SourceActivationEvent.document_id.in_(modifier_document_ids),
-            )
-            .join(
-                activation_revision,
-                and_(
-                    activation_revision.id == SourceActivationEvent.source_revision_id,
-                    activation_revision.project_id == project_id,
-                ),
-            )
-        )
-        activation_rank = activation_candidates.cte("modifier_activation_rank")
-        activation_rows = await self._session.execute(
-            select(
-                activation_rank.c.document_id,
-                activation_rank.c.source_revision_id,
-            ).where(activation_rank.c.position == 1)
-        )
-        active_revision_by_document = {
-            row.document_id: row.source_revision_id for row in activation_rows.all()
-        }
         indexed_rows = await self._session.execute(
             select(ChunkKeywordIndex.document_id)
             .where(
@@ -266,17 +227,21 @@ class KnowledgeSourceMetadataReader:
             historical=as_of is not None,
             request_scope={**(request_scope or {}), "index_build_id": str(index_build_id)},
         )
-        applicable_ids = set(
-            (
-                await self._session.execute(
-                    select(canonical.c.source_revision_id).where(
-                        canonical.c.source_policy_applicable.is_(True)
-                    )
+        canonical_rows = (
+            await self._session.execute(
+                select(
+                    canonical.c.source_document_id,
+                    canonical.c.source_revision_id,
+                    canonical.c.source_policy_applicable,
                 )
             )
-            .scalars()
-            .all()
-        )
+        ).all()
+        active_revision_by_document = {
+            row.source_document_id: row.source_revision_id for row in canonical_rows
+        }
+        applicable_ids = {
+            row.source_revision_id for row in canonical_rows if row.source_policy_applicable
+        }
         records: list[KnowledgeIncomingModifier] = []
         for row in edge_rows:
             selected_revision = active_revision_by_document.get(row.modifier_document_id)
@@ -286,7 +251,7 @@ class KnowledgeSourceMetadataReader:
                 selected_revision=selected_revision,
                 indexed=row.modifier_document_id in indexed_documents,
                 reference_date=reference_date,
-                period_lookup=bool((request_scope or {}).get("requested_periods")),
+                period_lookup=True,  # Eligibility comes from the canonical scope below.
             )
             if outcome == "expanded" and row.modifier_revision_id not in applicable_ids:
                 outcome = "outside_as_of"
@@ -308,6 +273,8 @@ class KnowledgeSourceMetadataReader:
                     provision_effect=row.provision_effect,
                     replacement_scope_verified=row.replacement_scope_verified,
                     supporting_spans=tuple(row.supporting_spans or ()),
+                    scope_hash=request_scope_hash(request_scope or {}),
+                    applicable=row.modifier_revision_id in applicable_ids,
                 )
             )
         return records

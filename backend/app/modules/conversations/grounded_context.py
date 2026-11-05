@@ -464,6 +464,7 @@ def _evidence_unit_from_citation(
     }
     return EvidenceUnit(
         chunk_id=chunk.chunk_id,
+        project_id=chunk.project_id,
         document_id=chunk.document_id,
         chunk_index=chunk.chunk_index,
         content=span_text,

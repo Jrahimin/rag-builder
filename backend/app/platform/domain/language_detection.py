@@ -45,6 +45,7 @@ _AMOUNT = regex.compile(
     regex.IGNORECASE,
 )
 _ABBREVIATION = regex.compile(r"\b[A-Z]{2,}\b")
+_YEAR_RANGE = regex.compile(r"\b[\d\p{Number}]{4}[-\u2013][\d\p{Number}]{2,4}\b")
 _NUMBER = regex.compile(r"[\d\p{Number}]+(?:[.,][\d\p{Number}]+)?")
 _LATIN_WORD = regex.compile(r"\p{Latin}+(?:['\u2019-]\p{Latin}+)*", regex.UNICODE)
 _ROMANIZED_BANGLA_PARTICLES = frozenset(
@@ -220,7 +221,7 @@ def select_translation_target(
     elif profile.is_mixed:
         return None
     elif profile.is_romanized_or_codeswitched:
-        candidates = [language for language in candidates if language == "en"]
+        candidates = [language for language in candidates if language in {"bn", "en"}]
     elif profile.is_latin_ambiguous:
         candidates = [language for language in candidates if language != "en"]
     else:
@@ -233,7 +234,7 @@ def select_translation_target(
 def extract_protected_literals(text: str) -> tuple[str, ...]:
     """Literals that a retrieval translation must preserve exactly."""
     found: list[str] = []
-    for pattern in (_QUOTED, _PERCENT, _DATE, _AMOUNT, _ABBREVIATION, _NUMBER):
+    for pattern in (_QUOTED, _PERCENT, _DATE, _YEAR_RANGE, _AMOUNT, _ABBREVIATION, _NUMBER):
         found.extend(match.group(0) for match in pattern.finditer(text))
     unique: list[str] = []
     seen: set[str] = set()
@@ -246,6 +247,51 @@ def extract_protected_literals(text: str) -> tuple[str, ...]:
     return tuple(unique)
 
 
+_UNIT_ALIASES = {
+    "day": "day",
+    "days": "day",
+    "দিন": "day",
+    "month": "month",
+    "months": "month",
+    "মাস": "month",
+    "year": "year",
+    "years": "year",
+    "বছর": "year",
+    "%": "%",
+    "percent": "%",
+    "শতাংশ": "%",
+    "taka": "BDT",
+    "টাকা": "BDT",
+    "tk": "BDT",
+    "bdt": "BDT",
+    "usd": "USD",
+    "dollar": "USD",
+    "dollars": "USD",
+    "kg": "kg",
+    "kilograms": "kg",
+    "কেজি": "kg",
+}
+_TYPED_VALUE = regex.compile(
+    r"(?P<number>[\d\p{Number}]+(?:[.,][\d\p{Number}]+)*)\s*"
+    r"(?P<unit>days?|months?|years?|percent|শতাংশ|দিন|মাস|বছর|টাকা|taka|BDT|Tk|USD|dollars?|kilograms|kg|কেজি|%)(?!\p{Letter})",
+    regex.IGNORECASE,
+)
+_SECTION_ID = regex.compile(
+    r"(?:sections?|sec\.?|ধারা)\s*(?P<id>[\d\p{Number}]+(?:\([\d\p{Number}A-Za-z]+\))*)",
+    regex.IGNORECASE,
+)
+
+
+def _typed_literals(text: str) -> set[tuple[str, str]]:
+    return {
+        (
+            _canonical_number(_normalize_unicode_digits(m["number"])),
+            _UNIT_ALIASES[m["unit"].casefold()],
+        )
+        for m in _TYPED_VALUE.finditer(text)
+    } | {("section", _normalize_unicode_digits(m["id"])) for m in _SECTION_ID.finditer(text)}
+
+
 def missing_protected_literals(original: str, translated: str) -> tuple[str, ...]:
     """Return protected literals from the original query that the translation dropped."""
     translated_text = translated
@@ -255,7 +301,10 @@ def missing_protected_literals(original: str, translated: str) -> tuple[str, ...
         for pattern in (_QUOTED, _ABBREVIATION)
         for match in pattern.finditer(original)
     }
-    missing: list[str] = []
+    missing: list[str] = [
+        f"{value} {unit}"
+        for value, unit in sorted(_typed_literals(original) - _typed_literals(translated))
+    ]
     for literal in extract_protected_literals(original):
         if literal in translated_text:
             continue
@@ -291,6 +340,13 @@ def _numeric_literal_equivalent(literal: str, normalized_translated: str) -> boo
     translated_numbers = {
         _canonical_number(item) for item in _NUMBER.findall(normalized_translated)
     }
+    # Dates and ranges are ordered identifiers, never a bag of numeric components.
+    if len(numbers) > 1 and not _AMOUNT.fullmatch(normalized_literal):
+        translated_sequences = [
+            tuple(_canonical_number(part) for part in _NUMBER.findall(match.group()))
+            for match in regex.finditer(r"[0-9]+(?:[-/.][0-9]+)+", normalized_translated)
+        ]
+        return tuple(numbers) in translated_sequences
     if not set(numbers).issubset(translated_numbers):
         return False
     if "%" in normalized_literal and "%" not in normalized_translated:

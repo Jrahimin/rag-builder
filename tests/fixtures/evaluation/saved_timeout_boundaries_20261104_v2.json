@@ -1,0 +1,348 @@
+{
+  "cases": [
+    {
+      "case": 1,
+      "capture_sha256": "cd0c2367eb69d0de9ed4074cb1d22071b7bf9aacde289c9597b8855de646bae3",
+      "message_id": "4e53c0f0-8d3d-4467-929a-49b4ceb90e20",
+      "question": "Under Companies Act 1994 section 81(1), list the first-AGM timing and the maximum gap between later AGMs. Include the first-AGM exception and say whether this corpus proves the rule is currently in force.",
+      "project_defaults_sha256": "79acfc0e4237376ab543b32cedcbacbd7981d73c80d2f30b09637c52840af131",
+      "requirements": [
+        {
+          "origin": "explicit_user_request",
+          "required": true,
+          "task_kind": "rule_lookup",
+          "depends_on": [],
+          "deliverable": true,
+          "description": "Determine whether the admitted corpus establishes that section 81(1) is currently in force.",
+          "materiality": "governing_applicability",
+          "requirement_id": "R4",
+          "dependency_purposes": {}
+        },
+        {
+          "origin": "explicit_user_request",
+          "required": true,
+          "task_kind": "rule_lookup",
+          "depends_on": [],
+          "deliverable": true,
+          "description": "Under section 81(1), establish the deadline for holding a company's first AGM.",
+          "materiality": "central_rule",
+          "requirement_id": "R1",
+          "dependency_purposes": {}
+        },
+        {
+          "origin": "explicit_user_request",
+          "required": true,
+          "task_kind": "rule_lookup",
+          "depends_on": [],
+          "deliverable": true,
+          "description": "Under section 81(1), establish the maximum interval between later AGMs.",
+          "materiality": "central_rule",
+          "requirement_id": "R2",
+          "dependency_purposes": {}
+        },
+        {
+          "origin": "explicit_user_request",
+          "required": true,
+          "task_kind": "rule_lookup",
+          "depends_on": [],
+          "deliverable": true,
+          "description": "Establish the first-AGM exception to holding another AGM in the incorporation year or following year.",
+          "materiality": "central_rule",
+          "requirement_id": "R3",
+          "dependency_purposes": {}
+        }
+      ],
+      "initial_assessment": {
+        "coverage_validated": false,
+        "bound_requirement_ids": []
+      },
+      "provider_calls": [
+        {
+          "purpose": "recovery_planning",
+          "status": "completed",
+          "duration_ms": 16769
+        },
+        {
+          "purpose": "coverage_review",
+          "status": "cancelled",
+          "duration_ms": 6313
+        }
+      ],
+      "review_inputs": [
+        {
+          "requirement_ids": [
+            "R4",
+            "R1",
+            "R2",
+            "R3"
+          ],
+          "chunk_count": 16
+        }
+      ],
+      "coverage_checks": [],
+      "recovery_actions": [
+        {
+          "kind": "search",
+          "requirement_ids": [
+            "R4"
+          ],
+          "terminal_result": "completed",
+          "remaining_budget_seconds": 9.593,
+          "validation_reserve_seconds": 6.0
+        },
+        {
+          "kind": "search",
+          "requirement_ids": [
+            "R1",
+            "R2",
+            "R3"
+          ],
+          "terminal_result": "completed",
+          "remaining_budget_seconds": 9.593,
+          "validation_reserve_seconds": 6.0
+        }
+      ],
+      "terminal_outcome": {
+        "version": "answer.outcome.v1",
+        "outcome": "timed_out",
+        "reason_code": "recovery_deadline_exceeded",
+        "failure_stage": "coverage",
+        "requested_scope": {
+          "category": null,
+          "exact_as_of": null,
+          "jurisdiction": null,
+          "temporal_basis": "applicable_rule",
+          "requested_periods": [],
+          "source_restriction": "project_default"
+        },
+        "coverage": "incomplete",
+        "retryable": true,
+        "next_action": "retry",
+        "supported_requirement_ids": [],
+        "unresolved_requirement_ids": [
+          "R1",
+          "R2",
+          "R3",
+          "R4"
+        ]
+      }
+    },
+    {
+      "case": 3,
+      "capture_sha256": "c225fe9f9dc42a7d68036bd04d7bbbb713845e6ba5693a45d87d93f6b43d9757",
+      "message_id": "d00c40b9-581c-4c7f-b830-bc6e7d6addf6",
+      "question": "Compare the indexed evidence for the resident-individual tax-free threshold in AY 2025–26 and AY 2026–27 in a two-row table. Give each year’s source and calculate the difference only if both years are established; do not substitute a later schedule for a missing year.",
+      "project_defaults_sha256": "79acfc0e4237376ab543b32cedcbacbd7981d73c80d2f30b09637c52840af131",
+      "requirements": [
+        {
+          "origin": "necessary_applicability",
+          "required": true,
+          "task_kind": "rule_lookup",
+          "depends_on": [],
+          "deliverable": false,
+          "description": "Establish the resident-individual tax-threshold schedule applicable for AY 2025–26.",
+          "materiality": "governing_applicability",
+          "requirement_id": "P25",
+          "dependency_purposes": {}
+        },
+        {
+          "origin": "necessary_applicability",
+          "required": true,
+          "task_kind": "rule_lookup",
+          "depends_on": [],
+          "deliverable": false,
+          "description": "Establish the resident-individual tax-threshold schedule applicable for AY 2026–27.",
+          "materiality": "governing_applicability",
+          "requirement_id": "P26",
+          "dependency_purposes": {}
+        },
+        {
+          "origin": "explicit_user_request",
+          "required": true,
+          "task_kind": "rule_lookup",
+          "depends_on": [
+            "P25"
+          ],
+          "deliverable": true,
+          "description": "Establish the resident-individual tax-free threshold for AY 2025–26.",
+          "materiality": "central_rule",
+          "requirement_id": "T25",
+          "dependency_purposes": {
+            "P25": "applicability"
+          }
+        },
+        {
+          "origin": "explicit_user_request",
+          "required": true,
+          "task_kind": "rule_lookup",
+          "depends_on": [
+            "P26"
+          ],
+          "deliverable": true,
+          "description": "Establish the resident-individual tax-free threshold for AY 2026–27.",
+          "materiality": "central_rule",
+          "requirement_id": "T26",
+          "dependency_purposes": {
+            "P26": "applicability"
+          }
+        },
+        {
+          "origin": "explicit_user_request",
+          "required": true,
+          "task_kind": "comparison",
+          "depends_on": [
+            "T25",
+            "T26"
+          ],
+          "deliverable": true,
+          "description": "Calculate the difference between the two thresholds if both are established.",
+          "materiality": "central_rule",
+          "requirement_id": "D",
+          "dependency_purposes": {
+            "T25": "calculation_operand",
+            "T26": "calculation_operand"
+          }
+        }
+      ],
+      "initial_assessment": {
+        "coverage_validated": true,
+        "bound_requirement_ids": [
+          "P26",
+          "T26"
+        ]
+      },
+      "provider_calls": [
+        {
+          "purpose": "recovery_planning",
+          "status": "completed",
+          "duration_ms": 11564
+        },
+        {
+          "purpose": "coverage_review",
+          "status": "completed",
+          "duration_ms": 9537
+        }
+      ],
+      "review_inputs": [
+        {
+          "requirement_ids": [
+            "P25",
+            "P26",
+            "T25",
+            "T26",
+            "D"
+          ],
+          "chunk_count": 8
+        }
+      ],
+      "coverage_checks": [
+        {
+          "requirement_id": "P25",
+          "supported": false,
+          "fulfillment": "partial",
+          "needs_adjacent_context": true,
+          "chunk_ids": []
+        },
+        {
+          "requirement_id": "P26",
+          "supported": false,
+          "fulfillment": "partial",
+          "needs_adjacent_context": false,
+          "chunk_ids": [
+            "84830e90-94c6-4873-9140-d22505141b66",
+            "f4a2a7bf-39be-4dcc-b91c-1b34c993bc5f"
+          ]
+        },
+        {
+          "requirement_id": "T25",
+          "supported": false,
+          "fulfillment": "partial",
+          "needs_adjacent_context": true,
+          "chunk_ids": []
+        },
+        {
+          "requirement_id": "T26",
+          "supported": false,
+          "fulfillment": "partial",
+          "needs_adjacent_context": false,
+          "chunk_ids": [
+            "84830e90-94c6-4873-9140-d22505141b66",
+            "f4a2a7bf-39be-4dcc-b91c-1b34c993bc5f"
+          ]
+        },
+        {
+          "requirement_id": "D",
+          "supported": false,
+          "fulfillment": "partial",
+          "needs_adjacent_context": false,
+          "chunk_ids": []
+        }
+      ],
+      "recovery_actions": [
+        {
+          "kind": "search",
+          "requirement_ids": [
+            "T25"
+          ],
+          "terminal_result": "completed",
+          "remaining_budget_seconds": 14.407,
+          "validation_reserve_seconds": 6.0
+        },
+        {
+          "kind": "structure",
+          "requirement_ids": [
+            "P26"
+          ],
+          "terminal_result": "exhausted_budget",
+          "remaining_budget_seconds": 0.808,
+          "validation_reserve_seconds": 6.0
+        },
+        {
+          "kind": "structure",
+          "requirement_ids": [
+            "T26"
+          ],
+          "terminal_result": "exhausted_budget",
+          "remaining_budget_seconds": 0.808,
+          "validation_reserve_seconds": 6.0
+        }
+      ],
+      "terminal_outcome": {
+        "version": "answer.outcome.v1",
+        "outcome": "timed_out",
+        "reason_code": "recovery_deadline_exceeded",
+        "failure_stage": "retrieval",
+        "requested_scope": {
+          "category": null,
+          "exact_as_of": null,
+          "jurisdiction": null,
+          "temporal_basis": "applicable_rule",
+          "requested_periods": [
+            {
+              "kind": "assessment",
+              "end_year": 2026,
+              "start_year": 2025,
+              "source_text": "Compare the indexed evidence for the resident-individual tax-free threshold in AY 2025–26 and AY 2026–27 in a two-row table. Give each year’s source and calculate the difference only if both years are established; do not substitute a later schedule for a missing year."
+            },
+            {
+              "kind": "assessment",
+              "end_year": 2027,
+              "start_year": 2026,
+              "source_text": "Compare the indexed evidence for the resident-individual tax-free threshold in AY 2025–26 and AY 2026–27 in a two-row table. Give each year’s source and calculate the difference only if both years are established; do not substitute a later schedule for a missing year."
+            }
+          ],
+          "source_restriction": "project_default"
+        },
+        "coverage": "incomplete",
+        "retryable": true,
+        "next_action": "retry",
+        "supported_requirement_ids": [],
+        "unresolved_requirement_ids": [
+          "D",
+          "T25",
+          "T26"
+        ]
+      }
+    }
+  ]
+}

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import uuid
+from pathlib import Path
 from types import MappingProxyType
 from unittest.mock import AsyncMock, MagicMock
 
@@ -332,3 +334,62 @@ async def test_legacy_confirmation_locks_ownership_without_changing_id() -> None
     detail = audit.record.call_args.kwargs["detail"]
     assert detail["previous_organization_id"] == str(DEFAULT_ORGANIZATION_ID)
     assert detail["target_organization_id"] == str(DEFAULT_ORGANIZATION_ID)
+
+
+@pytest.mark.parametrize("profile", ["inherit", "economy", "standard", "quality"])
+async def test_profile_switch_carries_independent_policy_unless_explicitly_reset(profile):
+    session, repository, audit = AsyncMock(), AsyncMock(), MagicMock()
+    repository.add = MagicMock()
+    repository.next_revision_number.return_value = 2
+    project = _project(locked=True)
+    active = ProjectAIConfigRevision(
+        id=uuid.uuid4(),
+        project_id=project.id,
+        revision_number=1,
+        schema_version=2,
+        configuration={
+            "execution": {
+                "profile_id": "standard",
+                "execution_policy": "bounded_v2",
+                "bounded_recovery_enabled": False,
+                "focused_recovery_max_queries": 3,
+            }
+        },
+        configuration_hash="a" * 64,
+        reason="Fixture",
+        created_by="fixture",
+    )
+    project.active_ai_config_revision_id = active.id
+    repository.lock_project.return_value = project
+    repository.get_active.return_value = active
+    service = _service(session, repository, audit, project.id)
+    revision = await service.create_revision(
+        ProjectAIConfig.model_validate({"execution": {"profile_id": profile}}),
+        expected_active_revision_id=active.id,
+        reason="Switch retrieval profile",
+    )
+    assert revision.configuration["execution"]["execution_policy"] == "bounded_v2"
+    assert revision.configuration["execution"]["focused_recovery_max_queries"] == 3
+    assert revision.configuration["execution"]["bounded_recovery_enabled"] is False
+    repository.get_active.return_value = revision
+    # This shared contract fixture is also compared with the actual UI save payload.
+    payload = json.loads(
+        (Path(__file__).parents[3] / "fixtures/project_ai_use_global_payload.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    payload["execution"]["profile_id"] = profile
+    reset = await service.create_revision(
+        ProjectAIConfig.model_validate(payload),
+        expected_active_revision_id=revision.id,
+        reason="Inherit default effort",
+    )
+    assert "execution_policy" not in reset.configuration["execution"]
+
+    assert "bounded_recovery_enabled" not in reset.configuration["execution"]
+    repository.get_active.return_value = reset
+    read = await service.effective_config()
+    assert read.configuration.chat.execution_policy == Settings().chat.execution_policy
+    assert (
+        read.configuration.chat.bounded_recovery_enabled == Settings().chat.bounded_recovery_enabled
+    )

@@ -15,6 +15,8 @@ class RecoverySchedule:
     actions: list[dict[str, Any]] = field(default_factory=list)
     fingerprints: set[tuple[str, str]] = field(default_factory=set)
     stop_reason: str | None = None
+    search_estimate_seconds: float = 4.0
+    review_estimate_seconds: float = 2.0
     action_limits: dict[str, int] = field(
         default_factory=lambda: {
             "search": 3,
@@ -26,8 +28,15 @@ class RecoverySchedule:
 
     @property
     def search_deadline(self) -> float:
-        """Discovery cannot spend the last two seconds required for delta validation."""
-        return self.deadline - (2.0 if self.enforce_reserves else 0.0)
+        """Discovery cannot spend the time reserved for coverage validation."""
+        return self.deadline - (self.review_estimate_seconds if self.enforce_reserves else 0.0)
+
+    @property
+    def followup_planning_deadline(self) -> float | None:
+        """Planning must leave enough time to execute and validate its proposed search."""
+        if not self.enforce_reserves:
+            return None
+        return self.search_deadline - self.search_estimate_seconds
 
     def admit(
         self, kind: str, *, requirement_ids: list[str], fingerprint: str, expected_change: str
@@ -36,10 +45,10 @@ class RecoverySchedule:
         remaining = max(0.0, self.deadline - self.clock())
         # Every retrieval action needs a subsequent validated coverage review.
         required_seconds = {
-            "search": 6.0,
-            "structure": 6.0,
-            "delta_review": 2.0,
-            "selector_correction": 2.0,
+            "search": self.search_estimate_seconds + self.review_estimate_seconds,
+            "structure": self.search_estimate_seconds + self.review_estimate_seconds,
+            "delta_review": self.review_estimate_seconds,
+            "selector_correction": self.review_estimate_seconds,
         }[kind]
         terminal = "admitted"
         if remaining <= 0 or (self.enforce_reserves and remaining < required_seconds):

@@ -1,6 +1,7 @@
 """Paired final-round regressions for arithmetic, temporal and structural contracts."""
 
 import hashlib
+import json
 import uuid
 from datetime import UTC, datetime
 from types import SimpleNamespace
@@ -114,7 +115,23 @@ async def test_internal_entailment_uses_configured_openai_parameter_contract():
         )
         assert "temperature" not in body
         return ChatCompletionResult(
-            content='{"verdicts":["supported"]}',
+            content=json.dumps(
+                {
+                    "version": "claim.entailment.v2",
+                    "verdicts": [
+                        {
+                            "assertion_id": item["assertion_id"],
+                            "proof_hashes": item["proof_hashes"],
+                            "scope_hash": item["scope_hash"],
+                            "status": "supported",
+                            "failed_dimensions": [],
+                            "evidence_binding": "controlled source",
+                            "publication_complete": True,
+                        }
+                        for item in json.loads(messages[1].content)
+                    ],
+                }
+            ),
             provider="openai",
             model="gpt-6-luna",
             provider_version="1",
@@ -124,7 +141,14 @@ async def test_internal_entailment_uses_configured_openai_parameter_contract():
 
     provider.generate = generate
     assert await ClaimEntailmentService(provider).verify(
-        [{"assertion": "Tenant", "proof": [{"quote": "Tenant"}]}]
+        [
+            {
+                "assertion_id": "A1",
+                "assertion": "Tenant",
+                "proof": [{"quote": "Tenant"}],
+                "canonical_scope": {},
+            }
+        ]
     ) == ["supported"]
     with pytest.raises(Exception, match="temperature"):
         provider._body([], temperature=0, max_tokens=100, stream=False)

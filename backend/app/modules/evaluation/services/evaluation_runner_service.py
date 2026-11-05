@@ -131,6 +131,10 @@ class EvaluationRunnerService:
                             document_id=case.document_id,
                             metadata_filter=case.metadata_filter,
                             as_of=case.as_of,
+                            source_scope=case.source_scope,
+                            history=[item.model_dump(mode="json") for item in case.history],
+                            prior_citations=case.prior_citations,
+                            prior_metadata=case.prior_metadata,
                         ),
                     )
                     search, answer = execution.search, execution.answer

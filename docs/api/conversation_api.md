@@ -293,6 +293,15 @@ new source revisions and normal indexing rather than mutating historical chunks.
 Latency depends on the project recovery budget and provider timings; recovery timeouts
 are not an end-to-end response SLA.
 
+The first recovery review may also use a delta after a validated initial partial
+assessment, when retained full proof is unchanged and the unresolved review contains
+its own dependencies. Changed evidence, source scope/revision or affecting authority
+requires revalidation. Timeout restoration checks those same identities before
+retaining evidence. Final claim verification, citation binding, current-authority
+restrictions and publication approval still apply; an evidence checkpoint alone is
+not a publishable answer. Message schemas, query/review allowances and phase deadlines
+are unchanged. Offline controlled-delay replay does not establish a live latency SLA.
+
 
 ### Reviewed scope and bounded synthesis
 
@@ -304,6 +313,25 @@ continuations cannot authorize a scope. Missing rules and exclusions remain visi
 A validated partial answer is handed off when less than 12 seconds remain in the
 recovery budget, instead of beginning retrieval plus another review that is unlikely
 to finish. This is a recovery scheduling policy, not a guaranteed request SLA.
+
+For a budget stop before discovery is admitted, `knowledge_repair.phase` identifies
+the last stage entered. Focused planning stops with `knowledge_repair.stop_reason`
+set to `exhausted_budget` if it cannot leave time for both search and review. If a
+planned search or structural action itself is declined, `knowledge_repair.recovery_actions`
+records `exhausted_budget`, the remaining budget and the required reserve. An unfinished
+answer without validated partial proof retains `timed_out` and `recovery_deadline_exceeded`.
+After a completed coverage review, the timeout stage is `coverage` if the next retrieval
+was declined. Legacy authoritative applicability and comparison turns use a 60-second
+recovery cutoff from request start. The downstream cutoffs shift to preserve the later reserves.
+For a comparison follow-up bound to a single requested period, the query retains that period.
+`knowledge_repair.conflicting_focused_periods_skipped` records any conflicting proposed query
+that was discarded before retrieval.
+Coverage review also receives the explicit period of each year-specific requirement. A circular's
+edition year does not establish the period of a rate table. Independent corroborating spans can
+prove the same scope within a single index and source-metadata snapshot without an amendment edge.
+When final verification rejects assertions, `rejected_draft` may include verification methods and
+failed dimensions. A cited statement about an indexed edition's wording is reviewed separately
+from any assertion about current legal force.
 
 `indexed_then_web` falls back when indexed evidence blocks generation; a useful
 validated indexed partial answer does not automatically pay for another web review.
@@ -472,6 +500,8 @@ corpus lacks a relevant source.
 
 Existing v1 envelopes remain unchanged. CitationSnapshot adds optional supporting_spans, structural_context and provenance_precision; AnswerClaim adds requirement_ids. Message metadata adds normalized_scope and answer_draft. supporting_spans carry reviewed requirement IDs and exact quotations. Character locations remain null when reconstructed content lacks a reliable contiguous offset mapping. POST, buffered SSE final and persisted GET use the same verified stored assistant message.
 
+Semantic correction reviews remaining assertions while retaining claims with matching request-owned immutable publication approval. A later timeout preserves that checkpoint's content, claims and citations; private finalization diagnostics also retain subsequent completed or interrupted correction attempts. A supported verdict without matching publication approval cannot become public content through this path. Message request and response schemas are unchanged.
+
 Validated private-build replay: optional preview_index_build_id on message POST/SSE selects only a sealed validated build belonging to this Project. It does not activate the build or change the active/previous pointers. Invalid, cross-Project and unsealed builds are rejected. Recovery pins the same build and generation.
 
 Request scope distinguishes legal assessment/fiscal periods from instrument title years. Known-at dates carry an inclusive flag: “known before” excludes publication on the cutoff date; “available on” includes that date. A deadline terminal retains request-local preview/build/source generation/scope and measured latencies for POST, SSE and persisted GET diagnostics. request_deadline_exceeded identifies the outer work cutoff, recovery_deadline_exceeded identifies the recovery cutoff, and provider_timeout identifies a separate provider timeout. The selected cause also supplies finish_reason, notices and terminal_outcome.failure_stage.
@@ -502,6 +532,32 @@ parts produce the ordinary partial outcome. If no segment is independently prova
 the answer is withheld. A response that ends with a detectable cut-off fragment is
 also withheld rather than marked answered. Public supported claims never include a
 rejected factual draft.
+
+`MessageResponse.notices` carries structured user-facing limitations (`kind`, `text`,
+`language`, optional `source`) independently of answer content. Test Lab displays the
+text for immediate responses and persisted GET messages, deduplicating only identical
+text; diagnostic `source` fields are not displayed as answer prose. Existing response
+schemas, content, citations and terminal outcomes are unchanged. Comparison recovery
+retains each explicit requirement period and exact proof checks; canonical scope is
+shared losslessly inside the coverage request instead of copied per requirement.
+Period-specific amounts must be grounded in the operative schedule. Publication
+labels do not establish a table's period. A comparison uses separately verified
+operands from the same project, index build and source metadata generation.
+Each annual claim can cite its own evidence. A derived difference must cite
+the reviewed evidence for both operands. An explicit subtraction remains a
+required deliverable if the planner returns only the two annual amount
+requirements. Coverage verifies the operands; the calculation graph verifies
+the subtraction.
+For numeric comparisons across assessment years, an indexed preceding page can
+exclude a table continuation from the wrong year. Exact citation proof still
+comes from the admitted source passages.
+
+Authoritative recovery sends the planner original numbered evidence lines. A selector
+retry can use structured line records with the same line numbers. A typed coverage
+review sees the same evidence and exact normalized scope without search instructions
+or query-route lists. Repeated authority records that differ only in retrieval hit
+counts are sent once; every authority fact and the original diagnostics remain
+available to the service. The response schema, proof checks and deadlines are unchanged.
 
 Message metadata.lifecycle uses the same timing/action schema on normal and deadline
 paths. persistence_completed is separate from whether that snapshot includes
@@ -659,7 +715,71 @@ For newly published messages, `[n]`, `claims[].evidence[].citation_index` and
 `citations[n-1]` refer to the same source after compaction. Chunk/document identities,
 indexed hashes and claim proof hashes survive projection; selected context counts
 and published cited counts remain distinct. GET serializes this saved result and
-does not renumber older persisted snapshots. Gap descriptions retain their terminal
+does not renumber older persisted snapshots. Checkpoint capture owns a separate copy of claims and nested evidence before compacting citations, leaving live verification indexes unchanged. Final publication independently retains the cited proof-fulfillment annotations. Gap descriptions retain their terminal
 punctuation; repeated labels or punctuation variants do not duplicate a material gap.
 Provider output receives the same source and completeness checks regardless of its
 provider label; unverified or unfinished output persists `verification_failed`.
+
+## Bounded policy and proof compatibility
+
+Message send request fields are unchanged. Project AI policy selects bounded cutoffs; the
+same schedule controls POST and SSE terminal events. Final persisted content is the verified
+terminal projection. Timeout may preserve an already verified answer with explicit partial
+status and limitations; raw drafts remain ineligible. The checkpoint retains the identical verified claims, citations and evidence summary for regular responses, SSE final events and persisted GET; absent optional notices are valid. `AnswerClaim.fulfilled_proof_requirements`
+records prerequisite IDs fulfilled through the published claim's cited proof closure.
+
+Canonical request scope records explicit/project-calendar period origin and ambiguity.
+Verifier v2 and immutable checkpoint identities are internal versioned contracts. Legacy
+snapshot and persisted-message readers remain supported; selecting new bounded behavior
+requires an explicit Project AI revision and new/refreshed conversation snapshot.
+
+Calculation proof records use concrete duration and currency units. Unsupported conversions fail only their arithmetic component and descendants; a rate multiplied by money retains the money currency in either operand order. Completeness approval separately binds the displayed claim text and its contextual `assertion_text` (or the display when no context is inherited). Unchanged heading, list and table context remains eligible; changing either bound representation requires verification again before publication or checkpoint capture. Partial retention, length termination and timeout checkpoints render the complete verified assertion, retaining category, period, exception and unit qualifiers from its context. Only that assertion and its bound citation markers are retained; unrelated unverified surrounding text is omitted.
+
+Initial assessment keeps validated personal-input obligations separate from source coverage. Each obligation binds a personal-eligibility or calculation requirement and an exact excerpt of the original request. Missing laws, rates and source proof remain evidence gaps; they cannot become assumed user facts. A failed or unavailable coverage review cannot erase the minimum input questions. Regular responses, SSE final events and persisted GET retain those questions, including after timeout, alongside any independently verified general rule. Clarification questions are operational notices, not factual claims or citations; timeout and verification causes retain their existing precedence.
+
+Both internal planner routes describe the contract on their first JSON-mode request:
+`dependency_purposes` is an object keyed by prerequisite IDs, such as
+`{"D":"definition"}`, or `{}` when `depends_on` is empty. Partial proof belongs in
+`coverage.partial_answer`. Invalid shapes and foreign dependencies remain rejected;
+the existing bounded correction and cancellation behavior applies. This changes
+planner instructions; public request and response fields remain the same.
+
+After answer verification, a fully reviewed requested rule that lacks its own
+supported assertion can use the existing single semantic correction. Its candidate
+binds only exact approved requirement/proof slots and must pass the ordinary schema,
+canonical-scope entailment and publication checks. Shared citation chunks do not
+fulfill distinct requirements. Partial or unreviewed proof, unresolved prerequisites,
+personal eligibility and calculations are ineligible. Rejection, verifier failure,
+deadline or cancellation preserves prior verified claims and source-scope notices;
+the omitted requirement remains unresolved. Correction limits and deadlines do not reset.
+
+Publication approval is private and belongs to one request and one verified
+assertion/display/proof/scope identity. Correction retains the earlier immutable
+publication decision: explicit incomplete verdicts stay withheld, and approved
+unpunctuated assertions remain eligible with their verified context. Missing later
+verdicts do not grant approval. Changed text, evidence, source state or request scope
+requires its own valid verification and cannot reuse another request's approval.
+Response fields and correction limits are unchanged.
+
+Calculation period proof is local to each supplied input clause or reviewed source
+clause/table row. Other years in the request or other reviewed quotes cannot assign
+a shared period union to operands. An incompatible or unresolved period blocks its
+calculation component and descendants; independent verified components remain
+eligible for partial publication after final scope verification. These bindings are
+internal; the public Message request and response schemas are unchanged.
+
+Scaled quantities split by whitespace line wraps retain their full value and exact
+source/user span. Other clause boundaries remain separate, so wrapped input cannot
+borrow another clause's assessment year or bypass final verification.
+
+Formula displays may use equivalent exact decimal spellings such as `200` or
+`200.0`. Publication renders the verified graph expression; operator and operand
+order, numeric token boundaries, exact values and final source/scope verification
+remain required. This does not introduce numeric tolerance or additional arithmetic
+syntax.
+
+For typed assertions, quantity, negation and exception guards inspect the same approved proof quotes supplied to source entailment, rather than an unrelated lexical locator. Exact-span approval still avoids redundant embeddings. An unverified source-entailment verdict remains unverified and reports insufficient evidence; `embedding_unavailable` describes an unavailable embedding check, not a deliberately omitted embedding call.
+
+Standalone questions after unrelated history retain validated current-message exact dates and day-before anchors, including normalized Bangla numerals. History-only dates remain excluded. Retrieval and canonical verifier scope use the same effective cutoff; project-calendar periods and known-at semantics remain separate.
+
+Verifier v2 sizes bounded output partitions from assertion/proof/scope identities and a 160-character evidence-binding description. Every partition and its existing single format-only retry share the absolute verification cutoff. Failed or unattempted partitions remain unverified with unknown completeness; completed verdicts keep their original assertion positions and publication bindings. A timeout with no independently supported partition retains the ordinary timeout path. Truncated output is never salvaged, and reordered replies are matched only by exact identities.

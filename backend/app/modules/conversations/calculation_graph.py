@@ -34,6 +34,121 @@ class CalculationGraph(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     nodes: list[CalculationNode] = Field(default_factory=list, max_length=32)
 
+    def component_expressions(
+        self,
+        inputs: dict[str, Decimal],
+        sources: dict[str, Decimal],
+        bindings: dict[str, dict] | None = None,
+        *,
+        comparison_operand_pairs: set[frozenset[str]] | None = None,
+    ) -> tuple[dict[str, str], dict[str, str]]:
+        """Keep independent arithmetic; malformed/foreign identities are fatal.
+
+        A local arithmetic or dimensional failure poisons its descendants only.
+        """
+        values = {
+            **{f"input:{k}": v for k, v in inputs.items()},
+            **{f"source:{k}": v for k, v in sources.items()},
+        }
+        available = set(values)
+        for node in self.nodes:
+            key = f"node:{node.id}"
+            if key in available or any(ref not in available for ref in node.operands):
+                raise ValueError("Duplicate, foreign or forward calculation reference")
+            available.add(key)
+        expressions, failures = {}, {}
+        for node in self.nodes:
+            if any(ref.startswith("node:") and ref[5:] in failures for ref in node.operands):
+                failures[node.id] = "dependency_failed"
+                continue
+            try:
+                scoped = []
+                derived: dict[str, str | None] = {}
+                if bindings is not None:
+                    if any(ref not in bindings for ref in node.operands):
+                        raise ValueError("unestablished_units")
+                    scoped = [bindings[ref] for ref in node.operands]
+                    if any(item.get("period_unresolved") for item in scoped):
+                        raise ValueError("unestablished_period")
+                    for dimension in ("period", "category"):
+                        known = {str(item[dimension]) for item in scoped if item.get(dimension)}
+                        if len(known) > 1:
+                            if (
+                                dimension == "period"
+                                and node.operation == "subtraction"
+                                and len(scoped) == 2
+                                and comparison_operand_pairs
+                                and any(
+                                    frozenset((left, right)) in comparison_operand_pairs
+                                    for left in scoped[0].get("comparison_requirement_ids", ())
+                                    for right in scoped[1].get("comparison_requirement_ids", ())
+                                )
+                            ):
+                                derived[dimension] = "comparison:" + ",".join(sorted(known))
+                                continue
+                            raise ValueError(f"incompatible_{dimension}")
+                        derived[dimension] = next(iter(known), None)
+                    units = [item.get("unit") for item in scoped]
+                    if any(unit in {None, "", "money:unspecified"} for unit in units):
+                        raise ValueError("unestablished_units")
+                    scalar_units = {"scalar", "ratio"}
+                    if node.operation in {"addition", "subtraction", "minimum", "maximum"}:
+                        if len(set(units)) != 1:
+                            raise ValueError("incompatible_units")
+                        unit = units[0]
+                    elif node.operation == "multiplication":
+                        dimensions = [unit for unit in units if unit not in scalar_units]
+                        if len(dimensions) > 1:
+                            raise ValueError("unestablished_derived_units")
+                        unit = (
+                            dimensions[0]
+                            if dimensions
+                            else "ratio"
+                            if "ratio" in units
+                            else "scalar"
+                        )
+                    elif node.operation == "division":
+                        if len(units) != 2:
+                            raise ValueError("division_requires_two_operands")
+                        if units[1] in scalar_units:
+                            unit = units[0]
+                        elif units[0] == units[1]:
+                            unit = "ratio"
+                        else:
+                            raise ValueError("unestablished_derived_units")
+                    else:
+                        if (
+                            len(units) < 3
+                            or len(units) % 2 != 1
+                            or units[0] not in {"BDT", "USD", "EUR", "GBP"}
+                        ):
+                            raise ValueError("incompatible_bracket_units")
+                        if any(value != units[0] for value in units[1::2]) or any(
+                            value != "ratio" for value in units[2::2]
+                        ):
+                            raise ValueError("incompatible_bracket_units")
+                        unit = units[0]
+                    derived["unit"] = unit
+                # Rebind already verified prior-node values as trusted temporary
+                # inputs to the existing strict Decimal verifier.
+                quantities = {f"operand{i}": values[ref] for i, ref in enumerate(node.operands)}
+                rebound = node.model_copy(
+                    update={"operands": [f"input:{key}" for key in quantities]}
+                )
+                one = CalculationGraph(nodes=[rebound])
+                expressions[node.id] = one.expressions(quantities, {})[node.id]
+                values[f"node:{node.id}"] = node.result
+                if bindings is not None and scoped:
+                    bindings[f"node:{node.id}"] = {
+                        **derived,
+                        "value": str(node.result),
+                        "origin": "derived",
+                        "role": node.operation,
+                    }
+            except ValueError as exc:
+                failures[node.id] = str(exc)
+        return expressions, failures
+
     def expressions(
         self, inputs: dict[str, Decimal], sources: dict[str, Decimal]
     ) -> dict[str, str]:

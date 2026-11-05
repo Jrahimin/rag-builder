@@ -43,6 +43,7 @@ async def resolve_multilingual_plan(
     translator: BaseQueryTranslationProvider | None,
     persist_translation_text: bool = False,
     document_id: uuid.UUID | None = None,
+    allow_mixed_rewrite: bool = False,
 ) -> MultilingualRetrievalPlan:
     _ = persist_translation_text
     inventory = language_inventory_from_manifest(manifest)
@@ -81,6 +82,13 @@ async def resolve_multilingual_plan(
             language_routing_status=routing_status,
         )
     target = cross_language_target
+    if target is None and profile.is_mixed and allow_mixed_rewrite:
+        eligible = {
+            language: count
+            for language, count in scoped_inventory.chunk_language_counts.items()
+            if language in translation_config.target_languages and count > 0
+        }
+        target = max(eligible, key=eligible.__getitem__) if eligible else None
     if target is None:
         skipped_reason = (
             "same_language_scope"

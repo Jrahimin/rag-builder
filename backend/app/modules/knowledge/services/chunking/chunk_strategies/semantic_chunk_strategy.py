@@ -40,8 +40,8 @@ class SemanticChunkStrategy(BaseChunkStrategy):
         return self._last_boundary_result
 
     async def chunk_async(self, context: ChunkingContext) -> list[DraftChunk]:
-        text = context.parsed.text.strip()
-        if not text:
+        text = context.parsed.text
+        if not text.strip():
             return []
 
         sentences = split_sentences(text)
@@ -61,8 +61,27 @@ class SemanticChunkStrategy(BaseChunkStrategy):
         boundaries = {0, *boundary_result.boundaries, len(sentences)}
         ordered_boundaries = sorted(boundaries)
         chunks: list[DraftChunk] = []
+        sentence_spans = []
+        cursor = 0
+        for sentence in sentences:
+            position = text.find(sentence, cursor)
+            if position < 0:
+                return self._fallback.split_text(text, config=context.config)
+            sentence_spans.append((position, position + len(sentence)))
+            cursor = position + len(sentence)
         for start_index, end_index in pairwise(ordered_boundaries):
-            segment = " ".join(sentences[start_index:end_index]).strip()
+            start, end = sentence_spans[start_index][0], sentence_spans[end_index - 1][1]
+            segment = text[start:end]
+            provenance = [
+                {
+                    "element_id": f"semantic:{start}:{end}",
+                    "role": "text",
+                    "text": segment,
+                    "char_start": start,
+                    "char_end": end,
+                    "provenance": "exact_source_span",
+                }
+            ]
             if not segment:
                 continue
             if self._token_counter.count(segment) > context.config.max_tokens:
@@ -73,6 +92,7 @@ class SemanticChunkStrategy(BaseChunkStrategy):
                         base_metadata={
                             "strategy_used": "semantic",
                             "semantic_refinement_used": True,
+                            "source_spans": provenance,
                         },
                     )
                 )
@@ -80,9 +100,12 @@ class SemanticChunkStrategy(BaseChunkStrategy):
                 chunks.append(
                     DraftChunk(
                         content=segment,
+                        char_start=start,
+                        char_end=end,
                         metadata={
                             "strategy_used": "semantic",
                             "semantic_refinement_used": True,
+                            "source_spans": provenance,
                         },
                     )
                 )

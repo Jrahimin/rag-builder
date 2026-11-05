@@ -35,7 +35,11 @@ async def test_replaces_beats_old_active_content_and_survives_metadata_correctio
             "effective_from": "2026-01-01",
             "source_group_id": previous["source_group_id"],
             "relationships": [
-                {"relationship_type": "replaces", "target_revision_id": previous["id"]}
+                {
+                    "relationship_type": "replaces",
+                    "target_revision_id": previous["id"],
+                    "review_provenance": {"whole_document_replacement": "declared"},
+                }
             ],
         },
     )
@@ -57,7 +61,11 @@ async def test_replaces_beats_old_active_content_and_survives_metadata_correctio
         {
             "effective_from": "2020-01-01",
             "relationships": [
-                {"relationship_type": "replaces", "target_revision_id": solo_revision["id"]}
+                {
+                    "relationship_type": "replaces",
+                    "target_revision_id": solo_revision["id"],
+                    "review_provenance": {"whole_document_replacement": "declared"},
+                }
             ],
         },
     )
@@ -139,7 +147,11 @@ async def test_multi_target_amendment_edit_replacement_and_cycle_rejection(db_cl
             "source_group_id": corrected["source_group_id"],
             "effective_from": "2026-07-01",
             "relationships": [
-                {"relationship_type": "replaces", "target_revision_id": corrected["id"]},
+                {
+                    "relationship_type": "replaces",
+                    "target_revision_id": corrected["id"],
+                    "review_provenance": {"whole_document_replacement": "declared"},
+                },
                 *edges,
             ],
         },
@@ -173,7 +185,11 @@ async def test_multi_target_amendment_edit_replacement_and_cycle_rejection(db_cl
         replacement,
         {
             "relationships": [
-                {"relationship_type": "replaces", "target_revision_id": corrected["id"]},
+                {
+                    "relationship_type": "replaces",
+                    "target_revision_id": corrected["id"],
+                    "review_provenance": {"whole_document_replacement": "declared"},
+                },
                 edges[1],
             ],
             "effective_from": "2026-07-01",
@@ -366,7 +382,11 @@ async def test_explicit_editions_preserve_corrections_legacy_and_project_binding
             "edition_key": "edition.new",
             "effective_from": "2026-01-01",
             "relationships": [
-                {"relationship_type": "replaces", "target_revision_id": corrected["id"]}
+                {
+                    "relationship_type": "replaces",
+                    "target_revision_id": corrected["id"],
+                    "review_provenance": {"whole_document_replacement": "declared"},
+                }
             ],
         },
     )

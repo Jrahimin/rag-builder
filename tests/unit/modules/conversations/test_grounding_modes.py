@@ -108,7 +108,18 @@ def _candidate(
         char_end=len(content),
         query_variants=(variant,),
         branch_contributions=(_contribution(),),
-        metadata={"rerank_status": "applied", **(extra_metadata or {})},
+        metadata={
+            "rerank_status": "applied",
+            **(
+                {
+                    "passage_source_hash": content_hash(content),
+                    "passage_span_hash": content_hash(content[passage_start:passage_end]),
+                }
+                if passage
+                else {}
+            ),
+            **(extra_metadata or {}),
+        },
     )
 
 

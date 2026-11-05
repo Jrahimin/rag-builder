@@ -2,22 +2,45 @@ import type { SourceRevision, SourceRevisionCreate } from "../../api/operatorApi
 
 export type SourceUploadMode = "independent" | "revision" | "modifies";
 export type SourceCorrectionTreatment = "keep" | SourceUploadMode;
-export type SourceModification = {
-  target_revision_id: string;
+type RelationshipInput = NonNullable<SourceRevisionCreate["relationships"]>[number];
+export type SourceModification = Omit<
+  RelationshipInput,
+  "relationship_type" | "target_provisions"
+> & {
   target_provisions: string[];
 };
+function relationshipInput(
+  edge: NonNullable<SourceRevision["relationships"]>[number],
+): RelationshipInput {
+  return {
+    relationship_type: edge.relationship_type,
+    target_revision_id: edge.target_revision_id,
+    target_provisions: [...(edge.target_provisions ?? [])],
+    ...(edge.provision_effect !== undefined ? { provision_effect: edge.provision_effect } : {}),
+    ...(edge.replacement_scope_verified !== undefined
+      ? { replacement_scope_verified: edge.replacement_scope_verified }
+      : {}),
+    ...(edge.review_provenance !== undefined
+      ? { review_provenance: { ...edge.review_provenance } }
+      : {}),
+    ...(edge.supporting_spans !== undefined
+      ? { supporting_spans: edge.supporting_spans.map((span) => ({ ...span })) }
+      : {}),
+  };
+}
 
 export function sourceModifications(revision?: SourceRevision): SourceModification[] {
   return (revision?.relationships ?? [])
     .filter((edge) => edge.relationship_type === "modifies")
     .map((edge) => ({
-      target_revision_id: edge.target_revision_id,
+      ...relationshipInput(edge),
       target_provisions: [...(edge.target_provisions ?? [])],
     }));
 }
 
 function modificationEdges(items: SourceModification[]) {
   return items.map((item) => ({
+    ...item,
     relationship_type: "modifies" as const,
     target_revision_id: item.target_revision_id,
     target_provisions: [
@@ -129,7 +152,13 @@ export function buildSourceUploadMetadata({
         ? []
         : [
             ...(mode === "revision" && target
-              ? [{ relationship_type: "replaces" as const, target_revision_id: target.id }]
+              ? [
+                  {
+                    relationship_type: "replaces" as const,
+                    target_revision_id: target.id,
+                    review_provenance: { whole_document_replacement: "declared" },
+                  },
+                ]
               : []),
             ...modificationEdges(changes),
           ],
@@ -194,7 +223,11 @@ export function buildSourceMetadataCorrection({
     relationships:
       treatment === "revision" && target
         ? [
-            { relationship_type: "replaces", target_revision_id: target.id },
+            {
+              relationship_type: "replaces",
+              target_revision_id: target.id,
+              review_provenance: { whole_document_replacement: "declared" },
+            },
             ...modificationEdges(changes),
           ]
         : treatment === "modifies"
@@ -203,11 +236,7 @@ export function buildSourceMetadataCorrection({
             ? [
                 ...(current.relationships ?? [])
                   .filter((edge) => edge.relationship_type !== "modifies")
-                  .map((relationship) => ({
-                    relationship_type: relationship.relationship_type,
-                    target_revision_id: relationship.target_revision_id,
-                    target_provisions: [...(relationship.target_provisions ?? [])],
-                  })),
+                  .map(relationshipInput),
                 ...modificationEdges(changes),
               ]
             : [],

@@ -129,3 +129,30 @@ Soft-delete (sets `deleted_at`, `is_active=false`). Idempotent if already delete
 **Response** `200` — `ProjectResponse` with `deleted_at` set
 
 **Errors:** `project_not_found` (404)
+
+## Reliability configuration and source review additions
+
+Project AI `execution.execution_policy` accepts `legacy`, `adaptive_v1`, `bounded_v2`,
+and `bounded_extended_v2`. Send an explicit `execution.profile_id`, including `inherit`.
+Execution/recovery overrides persist with inherited and preset profiles; an explicit null
+clears an independent override. The operator Use Global controls send null for both
+execution policy and bounded recovery; omission during a profile switch preserves them.
+Effective responses and conversation snapshots expose the
+resolved execution policy and immutable configuration identity. Existing Message request
+shape is unchanged.
+
+Optional `behavior.calendar_policy` uses an IANA timezone, period kind, year boundary,
+label year offset/span and `default_for_current`; invalid zones/dates are rejected. These
+fields establish requested period semantics, never governing legal authority.
+
+`GET /api/v1/projects/{project_id}/sources/review-queue?limit=100&offset=0` returns
+`ApiResponse[list[GovernanceReviewProposal]]` from current processing-version chunks.
+These are untrusted proposals; pagination counts chunks, and a chunk may contribute more
+than one proposal. Existing source-revision and candidate scope-review writes remain the
+acceptance boundary. New whole-document replacement declarations carry
+`review_provenance.whole_document_replacement: "declared"`. Unrelated metadata correction
+preserves reviewed edge payloads. Changing supporting chunk identity, quote or offsets
+invalidates the saved review and evidence hash even when the new span is a valid member
+of the same source. Title-only changes with identical proof retain their review.
+Sparse corrections retain the current edition interval; a changed edition does not inherit
+the preceding edition end date.

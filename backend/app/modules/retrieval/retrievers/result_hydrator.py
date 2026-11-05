@@ -64,6 +64,7 @@ class ResultHydrator:
             results.append(
                 RetrievalResult(
                     chunk_id=chunk.id,
+                    project_id=self._project_id,
                     document_id=chunk.document_id,
                     chunk_index=chunk.chunk_index,
                     content=chunk.content,
@@ -100,6 +101,11 @@ class ResultHydrator:
                         "retrieval_source": candidate.source.value,
                         "processing_version": chunk.document_version,
                         "indexed_chunk_hash": content_hash(chunk.content),
+                        "project_id": str(self._project_id),
+                        "index_build_id": str(index_build_id)
+                        if index_build_id is not None
+                        else None,
+                        "source_metadata_generation": source_generation,
                     },
                 )
             )

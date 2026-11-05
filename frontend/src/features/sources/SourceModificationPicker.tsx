@@ -101,7 +101,12 @@ export function SourceModificationPicker({
                   onChange(
                     value.map((candidate) =>
                       candidate === item
-                        ? { ...candidate, target_provisions: event.target.value.split("\n") }
+                        ? {
+                            ...candidate,
+                            target_provisions: event.target.value.split("\n"),
+                            replacement_scope_verified: false,
+                            review_provenance: {},
+                          }
                         : candidate,
                     ),
                   )

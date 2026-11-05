@@ -5,13 +5,17 @@ from __future__ import annotations
 import time
 import uuid
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from datetime import datetime
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.composition.jobs import build_job_service
+from app.composition.message_retrieval import (
+    SearchServiceRetrievalAdapter,
+    clone_search_for_snapshot,
+)
 from app.composition.source_metadata import KnowledgeRetrievalSourceMetadataAdapter
 from app.core.config import (
     QueryTranslationConfig,
@@ -21,7 +25,9 @@ from app.core.config import (
     RetrievalStrategy,
     Settings,
 )
+from app.models.message import Message, MessageRole
 from app.modules.conversations.ports import ContextChunk, ContextRetrievalResult
+from app.modules.conversations.prompt_builder import PromptHistoryMessage
 from app.modules.conversations.prompts.registry import (
     GROUNDED_PROMPT_VERSION,
 )
@@ -30,8 +36,12 @@ from app.modules.conversations.schemas.message import MessageSendRequest
 from app.modules.conversations.services.message_execution_runner_service import (
     MessageExecutionRunner,
     _combine_token_counts,
+    _history_message_from_orm,
 )
 from app.modules.conversations.turn_resolution import (
+    CitationIdentity,
+    HistoryMessage,
+    SourceScope,
     normalize_request_scope,
     requires_complex_execution_budget,
 )
@@ -57,7 +67,6 @@ from app.modules.evaluation.repositories.evaluation_run_repository import Evalua
 from app.modules.evaluation.services.evaluation_runner_service import EvaluationRunnerService
 from app.modules.evaluation.services.evaluation_service import EvaluationService
 from app.modules.retrieval.embedding_identity import EmbeddingIdentity
-from app.modules.retrieval.known_dependency_gap import known_dependency_gap
 from app.modules.retrieval.schemas.search import SearchRequest
 from app.modules.retrieval.services.search_service import SearchService
 from app.platform.config.project_ai import (
@@ -66,6 +75,7 @@ from app.platform.config.project_ai import (
     apply_effective_ai_config,
     resolve_project_ai_config,
 )
+from app.platform.domain.message_proof import CitationSnapshot
 from app.platform.jobs.configuration import build_job_configuration
 from app.platform.jobs.contracts import DurableJobSubmitter, JobQueue
 from app.platform.jobs.implementations.job_queue_factory import create_job_queue
@@ -86,6 +96,7 @@ from app.platform.providers.implementations.query_translation_factory import (
     create_query_translation_provider,
 )
 from app.platform.providers.implementations.reranker_factory import create_reranker_provider
+from app.platform.providers.implementations.web_search_factory import create_web_search_provider
 from app.platform.providers.request_work import ObservedLLM, RequestWork
 
 
@@ -343,7 +354,7 @@ def _quality_search_result(response: Any) -> QualitySearchResult:
     )
 
 
-class _EvaluationMessageRetrieval:
+class _EvaluationMessageRetrieval(SearchServiceRetrievalAdapter):
     """Production search/structural recall for a pinned evaluation profile."""
 
     supports_adjacent_retrieval = True
@@ -357,8 +368,21 @@ class _EvaluationMessageRetrieval:
         provenance: dict[str, Any],
         *,
         top_k: int | None = None,
+        session_factory: async_sessionmaker[AsyncSession] | None = None,
+        redis_dsn: str | None = None,
     ):
+        if search is not None:
+            super().__init__(
+                search,
+                branch_factory=lambda session, snapshot: clone_search_for_snapshot(
+                    search, session, snapshot
+                ),
+                session_factory=session_factory,
+                redis_dsn=redis_dsn,
+            )
         self.search = search
+        if search is None:
+            self.supports_batch_retrieval = False
         self.initial = ContextRetrievalResult(
             chunks=[ContextChunk.from_retrieval_result(hit) for hit in hits],
             diagnostics=dict(provenance),
@@ -366,7 +390,10 @@ class _EvaluationMessageRetrieval:
         self.used_initial = False
         self.top_k = top_k
         self.first_search: QualitySearchResult | None = None
-        self.query_embedder = search.resolved_query_embedder if search else None
+
+    @property
+    def query_embedder(self) -> BaseEmbeddingProvider | None:
+        return self.search.resolved_query_embedder if self.search else None
 
     def set_request_scope(self, scope: dict[str, Any]) -> None:
         if self.search is not None:
@@ -397,28 +424,48 @@ class _EvaluationMessageRetrieval:
                 provider_name="retrieval",
                 context={"reason": "evaluation_recovery_unavailable"},
             )
-        result = await self.search.search(
-            SearchRequest(
-                query=query,
-                top_k=self.top_k if not self.used_initial and self.top_k is not None else top_k,
-                document_id=document_id,
-                metadata_filter=metadata_filter or {},
-                as_of=as_of,
-            ),
+        result = await super().retrieve(
+            query=query,
+            top_k=self.top_k if not self.used_initial and self.top_k is not None else top_k,
+            document_id=document_id,
+            metadata_filter=metadata_filter,
+            as_of=as_of,
             adjacent_to=adjacent_to,
             cited_chunk_ids=cited_chunk_ids,
         )
         if not self.used_initial and not adjacent_to and not cited_chunk_ids:
             self.used_initial = True
-            self.first_search = _quality_search_result(result)
-        diagnostics = result.diagnostics.model_dump(mode="json")
-        diagnostics.update(
-            known_dependency_gap(diagnostics, getattr(self.search, "_project_id", None))
-        )
-        return ContextRetrievalResult(
-            chunks=[ContextChunk.from_retrieval_result(hit) for hit in result.results],
-            diagnostics=diagnostics,
-        )
+            self.first_search = QualitySearchResult(
+                hits=[
+                    QualityHit(
+                        chunk_id=hit.chunk_id,
+                        document_id=hit.document_id,
+                        content=hit.content,
+                        score=hit.score,
+                        semantic_score=hit.semantic_score,
+                        filename=hit.filename,
+                        chunk_index=hit.chunk_index,
+                        metadata=hit.metadata,
+                        rank_score=hit.rank_score,
+                        rerank_relevance_score=hit.rerank_relevance_score,
+                        passage_semantic_score=hit.passage_semantic_score,
+                        passage_char_start=hit.passage_char_start,
+                        passage_char_end=hit.passage_char_end,
+                        passage_score_method=hit.passage_score_method,
+                        page_number=hit.page_number,
+                        char_start=hit.char_start,
+                        char_end=hit.char_end,
+                        evidence_calibration_id=hit.evidence_calibration_id,
+                        query_variants=hit.query_variants,
+                        branch_contributions=hit.branch_contributions,
+                    )
+                    for hit in result.chunks
+                ],
+                latency_ms=result.diagnostics.get("duration_ms", 0),
+                rerank_status=result.diagnostics.get("rerank_status", "not_run"),
+                provenance=result.diagnostics,
+            )
+        return result
 
     async def retrieve_exact(
         self,
@@ -433,17 +480,63 @@ class _EvaluationMessageRetrieval:
             return ContextRetrievalResult(
                 chunks=[], diagnostics={"identity_recall_status": "unavailable"}
             )
-        result = await self.search.recall_indexed_identities(
+        return await super().retrieve_exact(
             chunk_ids=chunk_ids,
             query=query,
             document_id=document_id,
             metadata_filter=metadata_filter,
             as_of=as_of,
         )
-        return ContextRetrievalResult(
-            chunks=[ContextChunk.from_retrieval_result(hit) for hit in result.results],
-            diagnostics=result.diagnostics.model_dump(mode="json"),
+
+
+def _evaluation_history_inputs(
+    history: list[dict[str, Any]],
+    prior_citations: dict[str, list[dict[str, Any]]],
+    project_id: uuid.UUID,
+) -> tuple[list[HistoryMessage], dict[uuid.UUID, list[dict[str, Any]]]]:
+    """Reuse production resolver projection while keeping owned full proof for recall."""
+    rows = [HistoryMessage.model_validate({**item, "citations": []}) for item in history]
+    if len({row.id for row in rows}) != len(rows):
+        raise ValueError("History message identities must be unique")
+    assistants = {str(row.id) for row in rows if row.role == "assistant"}
+    if set(prior_citations) - assistants:
+        raise ValueError("Prior citations must belong to supplied assistant messages")
+
+    def snapshots(items: list[dict[str, Any]], owner: uuid.UUID) -> list[dict[str, Any]]:
+        normalized = []
+        for item in items:
+            if "message_id" in item and uuid.UUID(str(item["message_id"])) != owner:
+                raise ValueError("Citation identity belongs to another history message")
+            snapshot = CitationSnapshot.model_validate(item)
+            if snapshot.project_id is not None and snapshot.project_id != project_id:
+                raise ValueError("Citation snapshot belongs to another Project")
+            normalized.append(snapshot.model_dump(mode="json"))
+        return normalized
+
+    resolver = []
+    evidence: dict[uuid.UUID, list[dict[str, Any]]] = {}
+    for item, row in zip(history, rows, strict=True):
+        supplied = item.get("citations", [])
+        identities_only = bool(supplied) and all(
+            "message_id" in value and not (set(value) - set(CitationIdentity.model_fields))
+            for value in supplied
         )
+        inline = [] if identities_only else snapshots(supplied, row.id)
+        full = snapshots(prior_citations.get(str(row.id), inline), row.id)
+        if inline and full != inline:
+            raise ValueError("Inline and prior citation snapshots disagree")
+        if row.role == "assistant":
+            evidence[row.id] = full
+        if identities_only:
+            projected = HistoryMessage.model_validate(item)
+            if any(citation.message_id != row.id for citation in projected.citations):
+                raise ValueError("Citation identity belongs to another history message")
+        else:
+            projected = _history_message_from_orm(
+                Message(id=row.id, role=MessageRole(row.role), content=row.content, citations=full)
+            )
+        resolver.append(projected)
+    return resolver, evidence
 
 
 class GroundedEvaluationAnswerAdapter(EvaluationAnswerPort):
@@ -460,7 +553,9 @@ class GroundedEvaluationAnswerAdapter(EvaluationAnswerPort):
         retrieval: SearchEvaluationAdapter | None = None,
         project_id: uuid.UUID | None = None,
         session: AsyncSession | None = None,
+        evidence_approach: str = "authoritative",
     ) -> None:
+        self._evidence_approach = evidence_approach
         self._settings = settings
         self._llm = llm
         self._embedder = embedder
@@ -480,9 +575,15 @@ class GroundedEvaluationAnswerAdapter(EvaluationAnswerPort):
         if self._retrieval is None:
             raise ValueError("Production evaluation requires retrieval composition")
         work = RequestWork(self._project_id)
-        work.deadline = min(work.deadline, work.started + 50.0)
         async with self._retrieval.case_search(profile) as (service, session):
-            retrieval = _EvaluationMessageRetrieval(service, [], {}, top_k=case.top_k)
+            retrieval = _EvaluationMessageRetrieval(
+                service,
+                [],
+                {},
+                top_k=case.top_k,
+                session_factory=getattr(self._retrieval, "_session_factory", None),
+                redis_dsn=self._settings.redis.dsn,
+            )
             answer = await self.answer_for_case(
                 profile=profile,
                 request=MessageSendRequest(
@@ -490,12 +591,14 @@ class GroundedEvaluationAnswerAdapter(EvaluationAnswerPort):
                     document_id=case.document_id,
                     metadata_filter=case.metadata_filter,
                     as_of=case.as_of,
+                    source_scope=SourceScope(case.source_scope),
                 ),
                 hits=[],
                 provenance={},
                 execution_retrieval=retrieval,
                 work=work,
                 release_read_transaction=session.rollback,
+                scenario=case,
             )
             search = retrieval.first_search or QualitySearchResult(
                 hits=[],
@@ -520,6 +623,7 @@ class GroundedEvaluationAnswerAdapter(EvaluationAnswerPort):
         execution_retrieval: _EvaluationMessageRetrieval | None = None,
         work: RequestWork | None = None,
         release_read_transaction: Any = None,
+        scenario: EvaluationCaseInput | None = None,
     ) -> QualityAnswer:
         started = work.started if work is not None else time.perf_counter()
         service = self._retrieval._services.get(profile) if self._retrieval else None
@@ -533,6 +637,10 @@ class GroundedEvaluationAnswerAdapter(EvaluationAnswerPort):
         )
         if work.execution_policy == "legacy":
             work.deadline = min(work.deadline, work.started + 50.0)
+        web_search = None
+        if self._settings.chat.response_mode.value != "indexed_only":
+            with suppress(ProviderError):
+                web_search = create_web_search_provider(self._settings)
         runner = MessageExecutionRunner(
             project_id=self._project_id,
             retrieval=retrieval,
@@ -543,7 +651,16 @@ class GroundedEvaluationAnswerAdapter(EvaluationAnswerPort):
             embedder=self._embedder,
             domain_instructions=self._domain_instructions,
             prompt_profile=self._prompt_profile,
+            evidence_approach=self._evidence_approach,
+            translation_enabled=self._settings.query_translation.enabled,
+            web_search=web_search,
+            web_search_config=self._settings.web_search,
             work=work,
+        )
+        resolver_source, citation_chunks = _evaluation_history_inputs(
+            scenario.history if scenario else [],
+            scenario.prior_citations if scenario else {},
+            self._project_id,
         )
         generation_ran = False
         generation_ms = 0
@@ -551,7 +668,9 @@ class GroundedEvaluationAnswerAdapter(EvaluationAnswerPort):
         try:
             with work.attached():
                 async with work.execution_timeout():
-                    if work.execution_policy == "adaptive_v1" and self._session is not None:
+                    if (
+                        work.execution_policy == "adaptive_v1" or work.is_bounded
+                    ) and self._session is not None:
                         identity = provenance.get("configuration_hash")
                         if identity is None and self._retrieval is not None:
                             identity = getattr(self._retrieval, "_configuration_hash", None)
@@ -564,11 +683,25 @@ class GroundedEvaluationAnswerAdapter(EvaluationAnswerPort):
                     prepared = await runner.prepare(
                         request=request,
                         current_message_id=uuid.uuid4(),
-                        generation_history=[],
-                        resolver_source=[],
-                        citation_chunks={},
-                        assistant_metadata_by_id={},
-                        previous_assistant_metadata={},
+                        generation_history=[
+                            PromptHistoryMessage(
+                                role=MessageRole(item["role"]), content=item["content"]
+                            )
+                            for item in (scenario.history if scenario else [])
+                        ],
+                        resolver_source=resolver_source,
+                        citation_chunks=citation_chunks,
+                        assistant_metadata_by_id=scenario.prior_metadata if scenario else {},
+                        previous_assistant_metadata=next(
+                            (
+                                scenario.prior_metadata.get(str(item["id"]), {})
+                                for item in reversed(scenario.history)
+                                if item.get("role") == "assistant"
+                            ),
+                            {},
+                        )
+                        if scenario
+                        else {},
                         llm=ObservedLLM(
                             self._llm, work, capacity=self._settings.llm.context_window_tokens
                         ),
@@ -713,6 +846,7 @@ def build_evaluation_runner(
     config_provenance: dict[str, Any] | None = None,
     domain_instructions: str = "",
     prompt_profile: str = "default",
+    evidence_approach: str = "authoritative",
 ) -> EvaluationRunnerService:
     effective_embedder = embedder or create_embedding_provider(settings)
     retrieval = SearchEvaluationAdapter(
@@ -732,6 +866,7 @@ def build_evaluation_runner(
         embedder=effective_embedder,
         domain_instructions=domain_instructions,
         prompt_profile=prompt_profile,
+        evidence_approach=evidence_approach,
         retrieval=retrieval,
         project_id=project_id,
         session=session,

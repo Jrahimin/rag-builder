@@ -142,8 +142,10 @@ class RequestWork:
         self.promotion_reason: str | None = None
         self._outer_timeout: asyncio.Timeout | None = None
         self._reschedule_deadline: Callable[[float], None] | None = None
+        self._legacy_recovery_extension = 0.0
         self.stage_estimates: dict[str, dict[str, Any]] = {}
         self.completed_stages: set[str] = set()
+        self.output_tokens_per_second: float | None = None
 
     def configure_execution(
         self,
@@ -157,11 +159,15 @@ class RequestWork:
             return
         self.counts["execution_policy_frozen"] += 1
         self.execution_policy = policy
-        if policy != "adaptive_v1":
+        if policy not in {"adaptive_v1", "bounded_v2", "bounded_extended_v2"}:
             return
-        self.budget_class = "complex" if complex_question else "simple"
+        if self.is_bounded:
+            self.budget_class = "extended" if policy == "bounded_extended_v2" else "standard"
+        if not self.is_bounded:
+            self.budget_class = "complex" if complex_question else "simple"
         self.deadline = self.started + (120.0 if complex_question else 45.0) - 2.0
         for name, floor in {
+            "retrieval": 4.0,
             "coverage": 10.0,
             "generation": 8.0,
             "verification": 12.0,
@@ -178,19 +184,45 @@ class RequestWork:
                 "estimate_id": sample.get("estimate_id"),
             }
 
-        self.deadline = self.request_deadline - self.reserve("persistence")
+        self.deadline = self.request_deadline - (
+            2.0 if self.is_bounded else self.reserve("persistence")
+        )
 
     def freeze_measured_stages(self, samples: list[dict[str, Any]]) -> None:
         """Freeze larger p95s from completed spans, never sum overlapping spans."""
-        if self.execution_policy != "adaptive_v1" or self.counts["stage_samples_frozen"]:
+        if (
+            self.execution_policy not in {"adaptive_v1", "bounded_v2", "bounded_extended_v2"}
+            or self.counts["stage_samples_frozen"]
+        ):
             return
         self.counts["stage_samples_frozen"] += 1
         aliases = {
+            "retrieval": "retrieval",
             "coverage": "coverage_review",
             "generation": "answer_generation",
             "verification": "claim_verification",
             "persistence": "persistence",
         }
+        rates = [
+            float(call["output_tokens"]) / (float(call["duration_ms"]) / 1000)
+            for sample in samples
+            if (((sample.get("metadata") or {}).get("lifecycle") or {}).get("deadline") or {}).get(
+                "budget_class"
+            )
+            == self.budget_class
+            for call in (
+                ((sample.get("metadata") or {}).get("lifecycle") or {}).get("provider_calls") or []
+            )
+            if call.get("kind") == "llm"
+            and call.get("purpose") == "answer_generation"
+            and call.get("status") == "completed"
+            and float(call.get("duration_ms") or 0) > 0
+            and float(call.get("output_tokens") or 0) > 0
+        ]
+        if len(rates) >= 20:
+            # A conservative throughput quantile sizes output; it never extends a cutoff.
+            ordered_rates = sorted(rates)
+            self.output_tokens_per_second = ordered_rates[max(0, (len(rates) * 10 + 99) // 100 - 1)]
         for stage, span_name in aliases.items():
             measured: list[tuple[float, str]] = []
             for sample in samples:
@@ -219,7 +251,9 @@ class RequestWork:
                     "samples": len(measured),
                     "estimate_id": provenance,
                 }
-        self.deadline = self.request_deadline - self.reserve("persistence")
+        self.deadline = self.request_deadline - (
+            2.0 if self.is_bounded else self.reserve("persistence")
+        )
         if self._reschedule_deadline is not None:
             self._reschedule_deadline(self.request_deadline)
 
@@ -227,7 +261,11 @@ class RequestWork:
     async def execution_timeout(self) -> AsyncIterator[None]:
         """The actual outer timer is rescheduled when the request is promoted."""
         loop = asyncio.get_running_loop()
-        ceiling = self.request_deadline if self.execution_policy == "adaptive_v1" else self.deadline
+        ceiling = (
+            self.request_deadline
+            if self.execution_policy == "adaptive_v1" or self.is_bounded
+            else self.deadline
+        )
         timer = asyncio.timeout_at(loop.time() + max(0.0, ceiling - time.perf_counter()))
         self._outer_timeout = timer
         self._reschedule_deadline = lambda deadline: timer.reschedule(
@@ -271,6 +309,19 @@ class RequestWork:
             self._reschedule_deadline(self.request_deadline)
         return True
 
+    def extend_guarded_legacy_recovery(self) -> None:
+        """Give guarded recovery up to 60 seconds from the start of the turn."""
+        if self.execution_policy != "legacy" or self._legacy_recovery_extension:
+            return
+        # Move the downstream cutoffs together so drafting, verification and
+        # persistence keep their reserves.
+        extension = max(0.0, self.started + 60.0 - self.recovery_deadline)
+        if extension > 0:
+            self._legacy_recovery_extension = extension
+            self.deadline += extension
+            if self._reschedule_deadline is not None:
+                self._reschedule_deadline(self.deadline)
+
     def reserve(self, stage: str) -> float:
         return (
             0.0
@@ -309,15 +360,25 @@ class RequestWork:
             self.detach(token)
 
     @property
+    def is_bounded(self) -> bool:
+        return self.execution_policy in {"bounded_v2", "bounded_extended_v2"}
+
+    @property
     def request_deadline(self) -> float:
+        if self.is_bounded:
+            return self.started + (
+                120.0 if self.execution_policy == "bounded_extended_v2" else 60.0
+            )
         return self.started + (
             (120.0 if self.budget_class == "complex" else 45.0)
             if self.execution_policy == "adaptive_v1"
-            else 60.0
+            else 60.0 + self._legacy_recovery_extension
         )
 
     @property
     def recovery_deadline(self) -> float:
+        if self.is_bounded:
+            return self.request_deadline - 30.0
         if self.execution_policy == "adaptive_v1":
             return self.request_deadline - sum(
                 self.reserve(stage)
@@ -328,6 +389,14 @@ class RequestWork:
 
     def phase_deadline(self, purpose: str | None = None) -> float:
         purpose = purpose or current_request_purpose() or self._unbound_purpose
+        if self.is_bounded:
+            if purpose == "persistence":
+                return self.request_deadline
+            if purpose in {"claim_verification", "semantic_repair"}:
+                return self.request_deadline - 2.0
+            if purpose in {"answer_generation", "answer_shape_correction"}:
+                return self.request_deadline - 20.0
+            return self.recovery_deadline
         if self.execution_policy == "adaptive_v1":
             if purpose == "persistence":
                 return self.request_deadline
@@ -365,6 +434,16 @@ class RequestWork:
         if purpose in {"claim_verification", "persistence"}:
             return self.deadline
         return min(self.deadline, self.recovery_deadline)
+
+    def output_token_budget(self, configured: int) -> int:
+        if (
+            not self.is_bounded
+            or self.output_tokens_per_second is None
+            or current_request_purpose() != "answer_generation"
+        ):
+            return configured
+        remaining = max(0.0, self.phase_deadline("answer_generation") - time.perf_counter())
+        return min(configured, max(1, int(remaining * self.output_tokens_per_second)))
 
     def phase_timeout_context(self) -> dict[str, str]:
         return {
@@ -518,18 +597,29 @@ class RequestWork:
                 "generation_reserve_seconds": self.reserve("generation")
                 if self.execution_policy == "adaptive_v1"
                 else 10,
-                "verification_reserve_seconds": self.reserve("verification")
+                "verification_reserve_seconds": 18
+                if self.is_bounded
+                else self.reserve("verification")
+                if self.execution_policy == "adaptive_v1" or self.is_bounded
+                else 10,
+                "persistence_reserve_seconds": 2
+                if self.is_bounded
+                else self.reserve("persistence")
                 if self.execution_policy == "adaptive_v1"
                 else 10,
-                "persistence_reserve_seconds": self.reserve("persistence")
-                if self.execution_policy == "adaptive_v1"
-                else 10,
+                "absolute_cutoffs_seconds": {
+                    "evidence": self.recovery_deadline - self.started,
+                    "draft": self.phase_deadline("answer_generation") - self.started,
+                    "verification": self.phase_deadline("claim_verification") - self.started,
+                    "persistence": self.request_deadline - self.started,
+                },
                 "policy": self.execution_policy,
                 "budget_class": self.budget_class,
                 "p95_target_seconds": 90 if self.budget_class == "complex" else 30,
                 "promoted": self.promoted,
                 "promotion_requirement_id": self.promotion_reason,
                 "stage_estimates": {k: dict(v) for k, v in self.stage_estimates.items()},
+                "output_tokens_per_second": self.output_tokens_per_second,
                 "completed_stages": sorted(self.completed_stages),
             },
             "processing_ms": round((time.perf_counter() - self.started) * 1000),
@@ -663,6 +753,7 @@ class ObservedLLM(BaseLLMProvider):
         max_tokens: int,
         output_contract: StructuredOutput | None = None,
     ) -> ChatCompletionResult:
+        max_tokens = self.work.output_token_budget(max_tokens)
         self._check_budget(messages, max_tokens)
         self._require_phase_budget()
         with self._call() as call:
@@ -711,6 +802,7 @@ class ObservedLLM(BaseLLMProvider):
         max_tokens: int,
         output_contract: StructuredOutput | None = None,
     ) -> AsyncGenerator[ChatCompletionChunk, None]:
+        max_tokens = self.work.output_token_budget(max_tokens)
         self._check_budget(messages, max_tokens)
         self._require_phase_budget()
         call, started = self._open_call()

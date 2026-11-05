@@ -52,6 +52,21 @@ export function ConversationSettings({
             <td>{current ? String(currentRevision ?? "Deployment default") : "Unavailable"}</td>
           </tr>
           <tr>
+            <th>Execution policy</th>
+            <td>{label(snapshot.execution_policy)}</td>
+            <td>{label(current?.configuration.chat?.execution_policy)}</td>
+          </tr>
+          <tr>
+            <th>Snapshot identity</th>
+            <td>{label(snapshot.config_snapshot_id)}</td>
+            <td>{label(current?.active_revision_id)}</td>
+          </tr>
+          <tr>
+            <th>Configuration hash</th>
+            <td>{label(snapshot.configuration_hash)}</td>
+            <td>{label(current?.effective_value_hash)}</td>
+          </tr>
+          <tr>
             <th>Evidence approach</th>
             <td>{label(snapshot.evidence_approach)}</td>
             <td>{label(current?.configuration.evidence_approach)}</td>

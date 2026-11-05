@@ -38,6 +38,7 @@ from app.platform.domain.language_detection import (
     build_index_language_snapshot,
     normalize_routing_language,
 )
+from app.platform.domain.text_normalizer import LEXICAL_NORMALIZATION_VERSION
 from app.platform.jobs.contracts import JobProgressCallback
 from app.platform.jobs.errors import JobError, PermanentJobError
 from app.platform.providers.contracts.embedding import (
@@ -309,6 +310,7 @@ class IndexBuildWorkflow:
         build.vector_count = count
         build.keyword_count = count
         build.manifest = {
+            "lexical_normalization_version": LEXICAL_NORMALIZATION_VERSION,
             "artifact_fingerprint_version": build.artifact_fingerprint_version,
             "artifact_fingerprint": build.artifact_fingerprint,
             "index_profile_id": build.index_profile_id or "legacy-unprofiled",

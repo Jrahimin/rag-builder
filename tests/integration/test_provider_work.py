@@ -892,3 +892,48 @@ async def test_selected_preview_rejects_foreign_build_job_and_snapshot(
                 )
             )
             await session.execute(delete(Project).where(Project.id == foreign_project))
+
+
+async def test_persistent_cache_cold_warm_measurement(committed_project):
+    """Measure the existing DB cache with a controlled provider, never a paid call."""
+    import json
+    import statistics
+    import time
+
+    from app.platform.providers.provider_work import (
+        CachedEmbeddingProvider,
+        attached_provider_scope,
+    )
+    from tests.unit.platform.test_provider_work import Embeddings
+
+    database, project = committed_project
+    store = ProviderWorkRepository(database.session_factory)
+    scope = cost_scope(project, store)
+    raw = Embeddings()
+    timings = []
+    with attached_provider_scope(scope):
+        for _ in range(6):
+            started = time.perf_counter()
+            result = await CachedEmbeddingProvider(raw).embed_texts(
+                ["exact recurring input", "second exact input"]
+            )
+            timings.append((time.perf_counter() - started) * 1000)
+    assert len(raw.calls) == 1
+    assert result.billed_input_tokens == 0
+    assert len(result.vectors) == 2
+    assert scope.counts["cache_hits"] == 10
+    print(
+        json.dumps(
+            {
+                "cache_measurement": {
+                    "provider": "controlled fixture; no network",
+                    "cold_ms": round(timings[0], 3),
+                    "warm_median_ms": round(statistics.median(timings[1:]), 3),
+                    "raw_provider_calls": len(raw.calls),
+                    "warm_provider_calls": 0,
+                    "warm_input_tokens": 0,
+                    "cache_hits": scope.counts["cache_hits"],
+                }
+            }
+        )
+    )

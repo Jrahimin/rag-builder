@@ -475,7 +475,12 @@ def proof_field_mutation(field, value):
     }:
         return (value or 0) + 1
     if isinstance(value, list):
-        if field in {"structural_context", "calculation_references", "requirement_ids"}:
+        if field in {
+            "structural_context",
+            "calculation_references",
+            "requirement_ids",
+            "fulfilled_proof_requirements",
+        }:
             return ["changed"]
         return [{"text": "changed"}]
     if field in {"config_provenance", "evidence_scope_metadata_filter"}:

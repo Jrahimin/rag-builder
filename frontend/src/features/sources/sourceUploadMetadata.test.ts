@@ -185,7 +185,11 @@ test("a new edition of an amendment replaces its predecessor and inherits both s
     defaultReason: "Upload",
   });
   expect(result?.relationships).toEqual([
-    { relationship_type: "replaces", target_revision_id: current.id },
+    {
+      relationship_type: "replaces",
+      target_revision_id: current.id,
+      review_provenance: { whole_document_replacement: "declared" },
+    },
     ...modifications.map((item) => ({ ...item, relationship_type: "modifies" })),
   ]);
   expect(sourceModifications(amendment)[0]?.target_provisions).not.toBe(
@@ -237,4 +241,47 @@ test("an empty amendment selection cannot silently become an independent upload"
       defaultReason: "Upload",
     }),
   ).toThrow("at least one");
+});
+
+test("a title correction carries every reviewed relationship field", () => {
+  const edge = {
+    id: "reviewed-edge",
+    created_at: current.created_at,
+    relationship_type: "modifies" as const,
+    target_revision_id: target.id,
+    target_provisions: ["section 78"],
+    provision_effect: "amends" as const,
+    replacement_scope_verified: true,
+    supporting_spans: [
+      {
+        chunk_id: "11111111-1111-1111-1111-111111111111",
+        char_start: 0,
+        char_end: 9,
+        quote: "Rule text",
+      },
+    ],
+    review_provenance: {
+      reviewer: "reviewer",
+      reason: "Original checked",
+      evidence_hash: "a".repeat(64),
+      conditions: "Savings retained",
+    },
+  };
+  const revision = { ...current, relationships: [edge] };
+  const result = buildSourceMetadataCorrection({
+    current: revision,
+    treatment: "keep",
+    draft: { ...sourceMetadataDraftFromRevision(revision), title: "Corrected title" },
+  });
+  const payload = {
+    relationship_type: edge.relationship_type,
+    target_revision_id: edge.target_revision_id,
+    target_provisions: edge.target_provisions,
+    provision_effect: edge.provision_effect,
+    replacement_scope_verified: edge.replacement_scope_verified,
+    supporting_spans: edge.supporting_spans,
+    review_provenance: edge.review_provenance,
+  };
+  expect(result?.relationships).toEqual([payload]);
+  expect(result?.relationships?.[0]?.supporting_spans).not.toBe(edge.supporting_spans);
 });

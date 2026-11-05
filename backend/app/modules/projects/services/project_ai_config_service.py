@@ -32,6 +32,7 @@ from app.platform.audit.contracts import (
 from app.platform.auth.contracts import AuthEventPublisher
 from app.platform.auth.events import OrganizationAuthInvalidated
 from app.platform.config.project_ai import (
+    INDEPENDENT_EXECUTION_FIELDS,
     ConfigRevisionRecord,
     EffectiveConfigResolution,
     ProjectAIConfig,
@@ -164,9 +165,25 @@ class ProjectAdministrationService:
                     provided.pop(field, None)
             execution_payload = {"profile_id": "custom", **base, **provided}
         else:
-            # Preset/inherit revisions contain only the selection. Re-selecting
-            # one therefore clears stale Custom execution values.
-            execution_payload = {} if selection == "inherit" else {"profile_id": selection}
+            # Retrieval presets own tuning, not independently chosen effort/recovery.
+            # A profile switch preserves independent settings unless explicitly cleared.
+            active = await self._repository.get_active()
+            previous = (
+                active.configuration.get("execution", {})
+                if isinstance(active, ProjectAIConfigRevision)
+                else {}
+            )
+            independent = {
+                key: value for key, value in previous.items() if key in INDEPENDENT_EXECUTION_FIELDS
+            }
+            independent.update(
+                {
+                    key: getattr(configuration.execution, key)
+                    for key in configuration.execution.model_fields_set
+                    if key in INDEPENDENT_EXECUTION_FIELDS
+                }
+            )
+            execution_payload = {"profile_id": selection, **independent}
         configuration = configuration.model_copy(
             update={"execution": ProjectExecutionV2.model_validate(execution_payload)}
         )

@@ -167,3 +167,32 @@ def test_failed_execution_cannot_earn_negative_abstention_credit(outcome, reason
     assert completed_abstention(row) is credit
     assert execution_failed(row) is (not credit)
     assert bool(_failed_cases([row])) is (not credit)
+
+
+@pytest.mark.parametrize("corruption", [None, "duplicate", "foreign"])
+def test_scenario_history_rejects_foreign_prior_evidence(corruption):
+    from pydantic import ValidationError
+
+    from app.modules.evaluation.schemas.evaluation import EvaluationCase
+
+    identity = str(uuid.uuid4())
+    scenario = {
+        "key": "history",
+        "kind": "paraphrase",
+        "query": "Explain that historical rule",
+        "expected_no_answer": True,
+        "source_scope": "indexed_only",
+        "history": [{"id": identity, "role": "assistant", "content": "Prior rule"}],
+        "prior_metadata": {identity: {"scope": "historical"}},
+        "prior_citations": {identity: []},
+    }
+    if corruption == "duplicate":
+        scenario["history"] *= 2
+    if corruption == "foreign":
+        scenario["prior_citations"][str(uuid.uuid4())] = []
+    if corruption:
+        with pytest.raises(ValidationError):
+            EvaluationCase.model_validate(scenario)
+    else:
+        case = EvaluationCase.model_validate(scenario)
+        assert case.history[0].content == "Prior rule" and case.source_scope == "indexed_only"

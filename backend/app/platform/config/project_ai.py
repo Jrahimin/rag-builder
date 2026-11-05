@@ -42,6 +42,7 @@ from app.platform.config.profiles import (
     matching_execution_profile,
     profile_hash,
 )
+from app.platform.domain.request_scope import ProjectCalendarPolicy
 from app.platform.providers.capabilities import (
     CAPABILITY_VERSION,
     describe_llm_capability,
@@ -91,6 +92,7 @@ class ProjectRetrievalPolicy(BaseModel):
 
 
 class ProjectChatPolicy(BaseModel):
+    calendar_policy: ProjectCalendarPolicy | None = None
     model_config = ConfigDict(extra="forbid")
 
     response_mode: ResponseMode | None = None
@@ -109,7 +111,9 @@ class ProjectChatPolicy(BaseModel):
     minimum_reranker_evidence_score: float | None = Field(default=None, ge=0.0, le=1.0)
     high_confidence_reranker_evidence_score: float | None = Field(default=None, ge=0.0, le=1.0)
     grounding_mode: GroundingMode | None = None
-    execution_policy: Literal["legacy", "adaptive_v1"] | None = None
+    execution_policy: (
+        Literal["legacy", "adaptive_v1", "bounded_v2", "bounded_extended_v2"] | None
+    ) = None
     bounded_recovery_enabled: bool | None = None
     focused_recovery_timeout_seconds: float | None = Field(default=None, ge=1.0, le=120.0)
     broad_recovery_timeout_seconds: float | None = Field(default=None, ge=1.0, le=300.0)
@@ -161,6 +165,7 @@ class CanonicalRerankMode(StrEnum):
 
 
 class ProjectBehaviorV2(BaseModel):
+    calendar_policy: ProjectCalendarPolicy | None = None
     """Normal Project-owned behavior; provider and safety controls are intentionally absent."""
 
     model_config = ConfigDict(extra="forbid")
@@ -172,6 +177,20 @@ class ProjectBehaviorV2(BaseModel):
     domain_instructions: str | None = Field(default=None, max_length=20_000)
     translation_policy: TranslationPolicy = TranslationPolicy.INHERIT
     generation_model_id: str | None = Field(default=None, min_length=1, max_length=128)
+
+
+INDEPENDENT_EXECUTION_FIELDS = frozenset(
+    {
+        "execution_policy",
+        "bounded_recovery_enabled",
+        "focused_recovery_timeout_seconds",
+        "broad_recovery_timeout_seconds",
+        "focused_recovery_max_queries",
+        "broad_recovery_max_queries",
+        "broad_recovery_followup_max_queries",
+        "broad_recovery_max_followup_rounds",
+    }
+)
 
 
 class ProjectExecutionV2(BaseModel):
@@ -204,7 +223,9 @@ class ProjectExecutionV2(BaseModel):
     max_context_chunks: int | None = Field(default=None, ge=1, le=50)
     context_char_budget: int | None = Field(default=None, ge=500, le=200_000)
     max_history_messages: int | None = Field(default=None, ge=0, le=200)
-    execution_policy: Literal["legacy", "adaptive_v1"] | None = None
+    execution_policy: (
+        Literal["legacy", "adaptive_v1", "bounded_v2", "bounded_extended_v2"] | None
+    ) = None
     bounded_recovery_enabled: bool | None = None
     focused_recovery_timeout_seconds: float | None = Field(default=None, ge=1.0, le=120.0)
     broad_recovery_timeout_seconds: float | None = Field(default=None, ge=1.0, le=300.0)
@@ -219,7 +240,10 @@ class ProjectExecutionV2(BaseModel):
         if not isinstance(value, dict) or "profile_id" in value:
             return value
         if value:
-            return {**value, "profile_id": "custom"}
+            return {
+                **value,
+                "profile_id": "custom" if set(value) - INDEPENDENT_EXECUTION_FIELDS else "inherit",
+            }
         return value
 
     @model_validator(mode="after")
@@ -284,6 +308,7 @@ class EffectiveRetrievalPolicy(BaseModel):
 
 
 class EffectiveChatPolicy(BaseModel):
+    calendar_policy: ProjectCalendarPolicy | None = None
     response_mode: ResponseMode = ResponseMode.INDEXED_ONLY
     max_context_chunks: int
     context_char_budget: int
@@ -302,7 +327,9 @@ class EffectiveChatPolicy(BaseModel):
     grounding_mode: GroundingMode = GroundingMode.STRICT
     # Defaults keep immutable snapshots created before bounded recovery existed
     # behaviorally identical when they are replayed.
-    execution_policy: Literal["legacy", "adaptive_v1"] = "legacy"
+    execution_policy: Literal["legacy", "adaptive_v1", "bounded_v2", "bounded_extended_v2"] = (
+        "legacy"
+    )
     bounded_recovery_enabled: bool = False
     focused_recovery_timeout_seconds: float = 15.0
     broad_recovery_timeout_seconds: float = 30.0
@@ -501,7 +528,15 @@ def _v2_as_legacy_policy(
         # A preset is the exact registry bundle. Stored or ENV tuning cannot
         # silently mutate any profile-owned field.
         execution = ProjectExecutionV2.model_validate(
-            {"profile_id": execution_profile_id, **execution_values(selected_profile)}
+            {
+                "profile_id": execution_profile_id,
+                **execution_values(selected_profile),
+                **{
+                    key: value
+                    for key, value in overrides.items()
+                    if key in INDEPENDENT_EXECUTION_FIELDS
+                },
+            }
         )
     elif project_profile_id == "custom":
         # A Custom revision is a complete materialized bundle.  Do not allow a
@@ -519,7 +554,16 @@ def _v2_as_legacy_policy(
     else:
         # Inherit means the deployment's raw Custom values, never stale values
         # that happen to coexist with an inherit marker.
-        execution = ProjectExecutionV2(profile_id="custom")
+        execution = ProjectExecutionV2.model_validate(
+            {
+                "profile_id": "inherit",
+                **{
+                    key: value
+                    for key, value in overrides.items()
+                    if key in INDEPENDENT_EXECUTION_FIELDS
+                },
+            }
+        )
     translation_enabled = {
         TranslationPolicy.INHERIT: None,
         TranslationPolicy.ENABLED: True,
@@ -555,12 +599,13 @@ def _v2_as_legacy_policy(
                 deduplicate_by_content_hash=execution.deduplicate_by_content_hash,
             ),
             chat=ProjectChatPolicy(
+                calendar_policy=behavior.calendar_policy,
                 response_mode=behavior.response_mode,
                 grounding_mode=behavior.grounding_assurance,
                 max_context_chunks=execution.max_context_chunks,
                 context_char_budget=execution.context_char_budget,
                 max_history_messages=execution.max_history_messages,
-                execution_policy=stored_execution.execution_policy or "legacy",
+                execution_policy=stored_execution.execution_policy,
                 bounded_recovery_enabled=execution.bounded_recovery_enabled,
                 focused_recovery_timeout_seconds=execution.focused_recovery_timeout_seconds,
                 broad_recovery_timeout_seconds=execution.broad_recovery_timeout_seconds,
@@ -572,7 +617,11 @@ def _v2_as_legacy_policy(
             domain_instructions=behavior.domain_instructions,
         ),
         execution_profile_id,
-        overrides if project_profile_id == "custom" else {},
+        overrides
+        if project_profile_id == "custom"
+        else {
+            key: value for key, value in overrides.items() if key in INDEPENDENT_EXECUTION_FIELDS
+        },
     )
 
 
@@ -811,6 +860,7 @@ def resolve_project_ai_config(
             ),
         ),
         chat=EffectiveChatPolicy(
+            calendar_policy=project.chat.calendar_policy or settings.chat.calendar_policy,
             response_mode=inherited(
                 "chat.response_mode",
                 project.chat.response_mode,
@@ -886,7 +936,9 @@ def resolve_project_ai_config(
                 settings.chat.grounding_mode,
             ),
             execution_policy=inherited(
-                "chat.execution_policy", project.chat.execution_policy, "legacy"
+                "chat.execution_policy",
+                project.chat.execution_policy,
+                settings.chat.execution_policy,
             ),
             bounded_recovery_enabled=inherited(
                 "chat.bounded_recovery_enabled",
@@ -1010,7 +1062,7 @@ def resolve_project_ai_config(
             )
         )
         for field, path in profile_origin_paths.items():
-            if execution_profile_id == "custom" and field in execution_overrides:
+            if field in execution_overrides:
                 origins[path] = "project"
             elif execution_profile_id != "custom":
                 origins[path] = profile_layer
@@ -1297,6 +1349,7 @@ def apply_effective_ai_config(
             "chat": ChatConfig.model_validate(
                 {
                     **settings.chat.model_dump(),
+                    "calendar_policy": effective.chat.calendar_policy,
                     "max_context_chunks": effective.chat.max_context_chunks,
                     "context_char_budget": effective.chat.context_char_budget,
                     "max_history_messages": effective.chat.max_history_messages,

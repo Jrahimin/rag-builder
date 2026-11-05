@@ -71,6 +71,20 @@ def terminal_outcome(
         if coverage in {"complete", "partial", "incomplete", "not_assessed"}
         else "not_assessed",
     }
+    if supported_claims and reason in {
+        "request_deadline_exceeded",
+        "recovery_deadline_exceeded",
+        "provider_timeout",
+        "claim_verification_failed",
+    }:
+        common["coverage"] = "partial"
+        return TerminalOutcome(
+            outcome="partial",
+            reason_code="verified_partial_" + reason,
+            retryable=True,
+            next_action="retry",
+            **common,
+        )
     validation = repair.get("validation_failure") or {}
     if draft.get("status") == "failed_verification" and not draft.get("timeout_reason"):
         return TerminalOutcome(
@@ -261,6 +275,22 @@ def terminal_content(result: TerminalOutcome, language: str) -> str | None:
     return None
 
 
+def missing_input_questions(diagnostics: dict[str, Any]) -> list[str]:
+    """Read validated input obligations without classifying source gaps."""
+    repair = diagnostics.get("knowledge_repair") or {}
+    coverage = repair.get("coverage") or {}
+    return list(
+        dict.fromkeys(
+            [
+                *diagnostics.get("missing_user_inputs", []),
+                *repair.get("missing_user_inputs", []),
+                *((repair.get("initial_assessment") or {}).get("missing_user_inputs") or []),
+                *(coverage.get("missing_inputs", []) if coverage.get("quotes_validated") else []),
+            ]
+        )
+    )
+
+
 def terminal_projection(
     result: TerminalOutcome,
     *,
@@ -269,6 +299,7 @@ def terminal_projection(
     finish_reason: str | None,
     legacy_reason: str | None,
     notices: list[dict[str, Any]],
+    missing_inputs: list[str] | None = None,
 ) -> tuple[str, str | None, str | None, list[dict[str, Any]]]:
     """Project a single finalized cause to every public and persisted transport."""
     replacement = terminal_content(result, language)
@@ -313,6 +344,28 @@ def terminal_projection(
                 "language": language,
                 "text": content,
                 "source": {"failure_stage": result.failure_stage, "reason": result.reason_code},
+            }
+        )
+    if missing_inputs:
+        questions = list(dict.fromkeys(missing_inputs))
+        text = (
+            (
+                "ব্যক্তিগত ফল নির্ধারণ করতে এই তথ্যগুলো প্রয়োজন:"
+                if language == "bn"
+                else "To determine your personal result, please supply:"
+            )
+            + "\n"
+            + "\n".join(f"- {question}" for question in questions)
+        )
+        if text not in content:
+            content = (content.rstrip() + "\n\n" + text).lstrip()
+        notices = [notice for notice in notices if notice.get("kind") != "missing_scenario_input"]
+        notices.append(
+            {
+                "kind": "missing_scenario_input",
+                "language": language,
+                "text": text,
+                "source": {"missing_inputs": questions},
             }
         )
     return content, finish_reason, legacy_reason, notices

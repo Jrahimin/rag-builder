@@ -1,0 +1,391 @@
+{
+  "capture_sha256": "2a2008ad2fcd432e6537b06f81cbd74fc521a43d31525732e12fd313ffb973df",
+  "message_id": "6dc0dcec-3dfd-4044-a4c0-7facc60b8370",
+  "candidate_build_id": "64689e64-e241-4ea8-b106-c84921d98e72",
+  "source_metadata_generation": 37,
+  "question": "Compare the indexed evidence for the resident-individual tax-free threshold in AY 2025–26 and AY 2026–27 in a two-row table. Give each year’s source and calculate the difference only if both years are established; do not substitute a later schedule for a missing year.",
+  "outcome": "insufficient_evidence",
+  "requirements": [
+    {
+      "origin": "explicit_user_request",
+      "required": true,
+      "task_kind": "rule_lookup",
+      "depends_on": [],
+      "deliverable": false,
+      "description": "Establish the resident-individual category and applicable assessment year for the 2025–26 threshold.",
+      "materiality": "governing_applicability",
+      "requirement_id": "R1",
+      "dependency_purposes": {}
+    },
+    {
+      "origin": "explicit_user_request",
+      "required": true,
+      "task_kind": "rule_lookup",
+      "depends_on": [],
+      "deliverable": false,
+      "description": "Establish the resident-individual category and applicable assessment year for the 2026–27 threshold.",
+      "materiality": "governing_applicability",
+      "requirement_id": "R3",
+      "dependency_purposes": {}
+    },
+    {
+      "origin": "explicit_user_request",
+      "required": true,
+      "task_kind": "comparison",
+      "depends_on": [
+        "R1"
+      ],
+      "deliverable": true,
+      "description": "Establish the resident-individual tax-free threshold for AY 2025–26 and its source.",
+      "materiality": "central_rule",
+      "requirement_id": "R2",
+      "dependency_purposes": {
+        "R1": "applicability"
+      }
+    },
+    {
+      "origin": "explicit_user_request",
+      "required": true,
+      "task_kind": "comparison",
+      "depends_on": [
+        "R3"
+      ],
+      "deliverable": true,
+      "description": "Establish the resident-individual tax-free threshold for AY 2026–27 and its source.",
+      "materiality": "central_rule",
+      "requirement_id": "R4",
+      "dependency_purposes": {
+        "R3": "applicability"
+      }
+    }
+  ],
+  "checks": [
+    {
+      "chunk_ids": [
+        "64362002-003c-4f4f-ab7e-bdfb2d59557c"
+      ],
+      "supported": true,
+      "description": "Establish the resident-individual category and applicable assessment year for the 2025–26 threshold.",
+      "fulfillment": "full",
+      "query_index": -1,
+      "source_ranges": [
+        {
+          "chunk_id": "64362002-003c-4f4f-ab7e-bdfb2d59557c",
+          "end_line": 5,
+          "start_line": 1
+        }
+      ],
+      "requirement_id": "R1",
+      "answerable_scope": "The 2025–26 source covers natural persons other than non-resident individuals who are not Bangladeshi; this includes resident individuals.",
+      "unresolved_facets": [],
+      "needs_adjacent_context": false
+    },
+    {
+      "chunk_ids": [
+        "84830e90-94c6-4873-9140-d22505141b66",
+        "c5166ffb-6009-4e61-a66a-5d0815a05c00"
+      ],
+      "supported": true,
+      "description": "Establish the resident-individual category and applicable assessment year for the 2026–27 threshold.",
+      "fulfillment": "full",
+      "query_index": -1,
+      "source_ranges": [
+        {
+          "chunk_id": "84830e90-94c6-4873-9140-d22505141b66",
+          "end_line": 61,
+          "start_line": 51
+        },
+        {
+          "chunk_id": "c5166ffb-6009-4e61-a66a-5d0815a05c00",
+          "end_line": 23,
+          "start_line": 21
+        }
+      ],
+      "requirement_id": "R3",
+      "answerable_scope": "The 2026–27 schedule covers individuals, including non-resident Bangladeshis; the accompanying exclusion is for non-residents in Bangladesh other than non-resident Bangladeshis, so resident individuals are covered.",
+      "unresolved_facets": [],
+      "needs_adjacent_context": false
+    },
+    {
+      "chunk_ids": [
+        "64362002-003c-4f4f-ab7e-bdfb2d59557c",
+        "64362002-003c-4f4f-ab7e-bdfb2d59557c"
+      ],
+      "supported": true,
+      "description": "Establish the resident-individual tax-free threshold for AY 2025–26 and its source.",
+      "fulfillment": "full",
+      "query_index": -1,
+      "source_ranges": [
+        {
+          "chunk_id": "64362002-003c-4f4f-ab7e-bdfb2d59557c",
+          "end_line": 10,
+          "start_line": 1
+        },
+        {
+          "chunk_id": "64362002-003c-4f4f-ab7e-bdfb2d59557c",
+          "end_line": 5,
+          "start_line": 1
+        }
+      ],
+      "requirement_id": "R2",
+      "answerable_scope": "The NBR 2025–2026 circular states a zero-rate threshold of Tk 350,000 for 2025–26.",
+      "unresolved_facets": [],
+      "needs_adjacent_context": false
+    },
+    {
+      "chunk_ids": [
+        "84830e90-94c6-4873-9140-d22505141b66",
+        "c5166ffb-6009-4e61-a66a-5d0815a05c00",
+        "84830e90-94c6-4873-9140-d22505141b66"
+      ],
+      "supported": true,
+      "description": "Establish the resident-individual tax-free threshold for AY 2026–27 and its source.",
+      "fulfillment": "full",
+      "query_index": -1,
+      "source_ranges": [
+        {
+          "chunk_id": "84830e90-94c6-4873-9140-d22505141b66",
+          "end_line": 64,
+          "start_line": 51
+        },
+        {
+          "chunk_id": "c5166ffb-6009-4e61-a66a-5d0815a05c00",
+          "end_line": 23,
+          "start_line": 21
+        },
+        {
+          "chunk_id": "84830e90-94c6-4873-9140-d22505141b66",
+          "end_line": 61,
+          "start_line": 51
+        }
+      ],
+      "requirement_id": "R4",
+      "answerable_scope": "The Finance Act 2026 schedule sets a zero-rate threshold of Tk 400,000 for 2026–27 and 2027–28; resident individuals are within its stated individual category.",
+      "unresolved_facets": [],
+      "needs_adjacent_context": false
+    }
+  ],
+  "sources": [
+    {
+      "id": "64362002-003c-4f4f-ab7e-bdfb2d59557c",
+      "content": "অর্থ আইন , ২০২৪ এ বর্ণিত করহারের তফসিল -৩ অনুযায়ী প্রত্যেক স্বাভাবিক ব্যক্তি\n\n( বাংলাদেশী নন এরূপ বাংলাদেশে অনিবাসী স্বাভাবিক ব্যক্তি ব্যতীত ) , হিন্দু অবিভক্ত\n\nপরিবার ও ফার্মের মোট আয়ের উপর ২০২৫-২০২৬ করবর্ষের জন্য আয়করের হার\n\nনিম্নরূপ :\nমোট আয় | হার\n( ক ) প্রথম ৩,৫০,০০০ টাকা পর্যন্ত মোট আয়ের উপর -- | শূন্য\n( খ ) পরবর্তী ১,০০,০০০ টাকা পর্যন্ত মোট আয়ের উপর -- | ৫ %\n( গ ) পরবর্তী ৪,০০,০০০ টাকা পর্যন্ত মোট আয়ের উপর -- | ১০ %\n( ঘ ) পরবর্তী ৫,০০,০০০ টাকা পর্যন্ত মোট আয়ের উপর -- | ১৫ %\n( ঙ ) পরবর্তী ৫,০০,০০০ টাকা পর্যন্ত মোট আয়ের উপর-- | ২০ %\n( চ ) পরবর্তী ২০,০০,০০০ টাকা পর্যন্ত মোট আয়ের উপর-- | ২৫ %\n( ছ ) অবশিষ্ট মোট আয়ের উপর -- | ৩০ %",
+      "chunk_index": 34,
+      "page_number": 15,
+      "filename": "NBR-Circular-2025-2026-official.pdf",
+      "metadata": {
+        "partial_extraction": true,
+        "source_spans": [
+          {
+            "role": "table",
+            "text": "নিম্নরূপ :\nমোট আয় | হার\n( ক ) প্রথম ৩,৫০,০০০ টাকা পর্যন্ত মোট আয়ের উপর -- | শূন্য\n( খ ) পরবর্তী ১,০০,০০০ টাকা পর্যন্ত মোট আয়ের উপর -- | ৫ %\n( গ ) পরবর্তী ৪,০০,০০০ টাকা পর্যন্ত মোট আয়ের উপর -- | ১০ %\n( ঘ ) পরবর্তী ৫,০০,০০০ টাকা পর্যন্ত মোট আয়ের উপর -- | ১৫ %\n( ঙ ) পরবর্তী ৫,০০,০০০ টাকা পর্যন্ত মোট আয়ের উপর-- | ২০ %\n( চ ) পরবর্তী ২০,০০,০০০ টাকা পর্যন্ত মোট আয়ের উপর-- | ২৫ %\n( ছ ) অবশিষ্ট মোট আয়ের উপর -- | ৩০ %",
+            "char_end": 22346,
+            "page_end": 15,
+            "span_hash": "fce995d117c6cbdd91f024c6b1094558dc6f45b6a8300c0dd0e734d3844f29cb",
+            "char_start": 21927,
+            "element_id": "601c76c1ddb666e2a1a8255b37bed5819ab706364aabab2799a4c054a0297557",
+            "page_start": 15,
+            "provenance": "exact_source_span"
+          },
+          {
+            "role": "table",
+            "text": "নিম্নরূপ :",
+            "char_end": 21937,
+            "page_end": 15,
+            "span_hash": "a6430d0513eaca4adbf8ca40c89afa048dfa4bea85f069fffa6e56120eb25ff1",
+            "char_start": 21927,
+            "element_id": "601c76c1ddb666e2a1a8255b37bed5819ab706364aabab2799a4c054a0297557:part:0",
+            "page_start": 15,
+            "provenance": "exact_source_span",
+            "table_element_id": "601c76c1ddb666e2a1a8255b37bed5819ab706364aabab2799a4c054a0297557",
+            "table_body_row_index": null,
+            "table_shared_context": true
+          },
+          {
+            "role": "table",
+            "text": "মোট আয় | হার",
+            "char_end": 21951,
+            "page_end": 15,
+            "span_hash": "b3c4dd5fbdd3fa5cdf15eca0ff884ae8d0c5c81f858ed59ab226fbc04694a5c5",
+            "char_start": 21938,
+            "element_id": "601c76c1ddb666e2a1a8255b37bed5819ab706364aabab2799a4c054a0297557:part:1",
+            "page_start": 15,
+            "provenance": "exact_source_span",
+            "table_element_id": "601c76c1ddb666e2a1a8255b37bed5819ab706364aabab2799a4c054a0297557",
+            "table_body_row_index": null,
+            "table_shared_context": true
+          },
+          {
+            "role": "table",
+            "text": "( ক ) প্রথম ৩,৫০,০০০ টাকা পর্যন্ত মোট আয়ের উপর -- | শূন্য",
+            "char_end": 22010,
+            "page_end": 15,
+            "span_hash": "1497d2c83cebff21d3bd9ab70c1bc6b08c6b0655b8cd684f0b2fe99a129165de",
+            "char_start": 21952,
+            "element_id": "601c76c1ddb666e2a1a8255b37bed5819ab706364aabab2799a4c054a0297557:part:2",
+            "page_start": 15,
+            "provenance": "exact_source_span",
+            "table_element_id": "601c76c1ddb666e2a1a8255b37bed5819ab706364aabab2799a4c054a0297557",
+            "table_body_row_index": 0,
+            "table_shared_context": false
+          },
+          {
+            "role": "table",
+            "text": "( খ ) পরবর্তী ১,০০,০০০ টাকা পর্যন্ত মোট আয়ের উপর -- | ৫ %",
+            "char_end": 22069,
+            "page_end": 15,
+            "span_hash": "1fa4c0ba78eed0b09241c8a0b703b139deb53190f73aad8ab70e293c7683f6c6",
+            "char_start": 22011,
+            "element_id": "601c76c1ddb666e2a1a8255b37bed5819ab706364aabab2799a4c054a0297557:part:3",
+            "page_start": 15,
+            "provenance": "exact_source_span",
+            "table_element_id": "601c76c1ddb666e2a1a8255b37bed5819ab706364aabab2799a4c054a0297557",
+            "table_body_row_index": 1,
+            "table_shared_context": false
+          },
+          {
+            "role": "table",
+            "text": "( গ ) পরবর্তী ৪,০০,০০০ টাকা পর্যন্ত মোট আয়ের উপর -- | ১০ %",
+            "char_end": 22129,
+            "page_end": 15,
+            "span_hash": "26238c5560b2b54577d03a1abf8a8d600f658058d7f27c2de209648837435988",
+            "char_start": 22070,
+            "element_id": "601c76c1ddb666e2a1a8255b37bed5819ab706364aabab2799a4c054a0297557:part:4",
+            "page_start": 15,
+            "provenance": "exact_source_span",
+            "table_element_id": "601c76c1ddb666e2a1a8255b37bed5819ab706364aabab2799a4c054a0297557",
+            "table_body_row_index": 2,
+            "table_shared_context": false
+          },
+          {
+            "role": "table",
+            "text": "( ঘ ) পরবর্তী ৫,০০,০০০ টাকা পর্যন্ত মোট আয়ের উপর -- | ১৫ %",
+            "char_end": 22189,
+            "page_end": 15,
+            "span_hash": "b0530e1c52edf9a940a44a35385871b36763840ac857cb4a67a6469b0fb698bb",
+            "char_start": 22130,
+            "element_id": "601c76c1ddb666e2a1a8255b37bed5819ab706364aabab2799a4c054a0297557:part:5",
+            "page_start": 15,
+            "provenance": "exact_source_span",
+            "table_element_id": "601c76c1ddb666e2a1a8255b37bed5819ab706364aabab2799a4c054a0297557",
+            "table_body_row_index": 3,
+            "table_shared_context": false
+          },
+          {
+            "role": "table",
+            "text": "( ঙ ) পরবর্তী ৫,০০,০০০ টাকা পর্যন্ত মোট আয়ের উপর-- | ২০ %",
+            "char_end": 22248,
+            "page_end": 15,
+            "span_hash": "69643a9703e783daf2c4af7e393318afcd36954b8ea8de2d2af804fda1f1a017",
+            "char_start": 22190,
+            "element_id": "601c76c1ddb666e2a1a8255b37bed5819ab706364aabab2799a4c054a0297557:part:6",
+            "page_start": 15,
+            "provenance": "exact_source_span",
+            "table_element_id": "601c76c1ddb666e2a1a8255b37bed5819ab706364aabab2799a4c054a0297557",
+            "table_body_row_index": 4,
+            "table_shared_context": false
+          },
+          {
+            "role": "table",
+            "text": "( চ ) পরবর্তী ২০,০০,০০০ টাকা পর্যন্ত মোট আয়ের উপর-- | ২৫ %",
+            "char_end": 22308,
+            "page_end": 15,
+            "span_hash": "8f59a98e1b0ff044a3d73c00ad172a82a3041f8504752a1df78448e471f29f44",
+            "char_start": 22249,
+            "element_id": "601c76c1ddb666e2a1a8255b37bed5819ab706364aabab2799a4c054a0297557:part:7",
+            "page_start": 15,
+            "provenance": "exact_source_span",
+            "table_element_id": "601c76c1ddb666e2a1a8255b37bed5819ab706364aabab2799a4c054a0297557",
+            "table_body_row_index": 5,
+            "table_shared_context": false
+          },
+          {
+            "role": "table",
+            "text": "( ছ ) অবশিষ্ট মোট আয়ের উপর -- | ৩০ %",
+            "char_end": 22346,
+            "page_end": 15,
+            "span_hash": "0ba9f431f9f449402eb70792f9264d671d646f3ce9f83e5b6e8d20c7d83aec04",
+            "char_start": 22309,
+            "element_id": "601c76c1ddb666e2a1a8255b37bed5819ab706364aabab2799a4c054a0297557:part:8",
+            "page_start": 15,
+            "provenance": "exact_source_span",
+            "table_element_id": "601c76c1ddb666e2a1a8255b37bed5819ab706364aabab2799a4c054a0297557",
+            "table_body_row_index": 6,
+            "table_shared_context": false
+          },
+          {
+            "role": "paragraph",
+            "text": "অর্থ আইন , ২০২৪ এ বর্ণিত করহারের তফসিল -৩ অনুযায়ী প্রত্যেক স্বাভাবিক ব্যক্তি",
+            "char_end": 21762,
+            "page_end": 15,
+            "span_hash": "a2d73c5e8252a099ddbbb9a42b158f7c7feb5502e758c4f61554ab43d26eef50",
+            "char_start": 21685,
+            "element_id": "e596eee5df89f6ce2839f2f848f39a9182e874b833ea3cdecdc56ec3687cfe27",
+            "page_start": 15,
+            "provenance": "exact_source_span"
+          },
+          {
+            "role": "paragraph",
+            "text": "( বাংলাদেশী নন এরূপ বাংলাদেশে অনিবাসী স্বাভাবিক ব্যক্তি ব্যতীত ) , হিন্দু অবিভক্ত",
+            "char_end": 21845,
+            "page_end": 15,
+            "span_hash": "69ceb5096f213d17eddbcda1248d467490fbbb214ad446a3a1e1ef943d60641f",
+            "char_start": 21764,
+            "element_id": "f97728bdc56bac10ba141bc7b8f62f3d5fc86aa7322a7616337021e180bb6454",
+            "page_start": 15,
+            "provenance": "exact_source_span"
+          },
+          {
+            "role": "paragraph",
+            "text": "পরিবার ও ফার্মের মোট আয়ের উপর ২০২৫-২০২৬ করবর্ষের জন্য আয়করের হার",
+            "char_end": 21913,
+            "page_end": 15,
+            "span_hash": "8cad5eabbda54844aca75157a63954f6d601838f0130c20eea4fd4cbdb56455f",
+            "char_start": 21847,
+            "element_id": "03bda5fa83b6d8ea7a58ad1690828b445b34712e8eb8c7688266543e01c8f857",
+            "page_start": 15,
+            "provenance": "exact_source_span"
+          },
+          {
+            "role": "paragraph",
+            "text": "নিম্নরূপ :",
+            "char_end": 21925,
+            "page_end": 15,
+            "span_hash": "a6430d0513eaca4adbf8ca40c89afa048dfa4bea85f069fffa6e56120eb25ff1",
+            "char_start": 21915,
+            "element_id": "5b6534685cd39ba12e50f7c49c84632dc5b2d85a0155901e75548a85258b1c21",
+            "page_start": 15,
+            "provenance": "exact_source_span"
+          }
+        ]
+      }
+    },
+    {
+      "id": "84830e90-94c6-4873-9140-d22505141b66",
+      "content": "প্রতিস্থাপিত হইবে , যথা : -\n\n- Other , presented in the form of systems\n\n8471.49.10 --- Personal Desktop Computer u 0 % Free\n\n8471.49.90 --- Other u 5 % Free\n\nProcessing units other than those of\n\nsubheading 8471.41 or 8471.49 , whether\n\nor not containing in the same housing one\n\nor two of the following types of unit :\n\nstorage units , input units , output units\n\n8471.50.10 Processing Unit for Personal Desktop = 0 % Free\n\nComputer\n\n8471.50.90 --- Other u 5 % Free\n\nবাংলাদেশ গেজেট , অতিরিক্ত , জুন ৩০ , ২০২৬ ২০৪২৩\n\nপঞ্চম অধ্যায়\n\nতফসিল -১\n\n[ ধারা ১৭৯ দ্রষ্টব্য ]\n\n[ কাস্টমস আইন , ২০২৩ ( ২০২৩ সনের ৫৭ নং আইন ) এর প্রথম তফসিল ]\n\n\" প্রথম তফসিল\n\n[ বাংলাদেশ কাস্টমস ট্যারিফ ]\n\n[ কাস্টমস আইন , ২০২৩ এর ধারা ১৮ ( ১ ) দ্রষ্টব্য ]\n\n( পৃথকভাবে মুদ্রিত ) \"\n\n২০৪২৪ বাংলাদেশ গেজেট , অতিরিক্ত , জুন ৩০ , ২০২৬\n\nতফসিল -২\n\n[ ধারা ১৬০ দ্রষ্টব্য ]\n\nপ্ৰথম অংশ\n\n২০২৬-২০২৭ হইতে ২০৩০-২০৩১ করবর্ষের ( ৫ বৎসরের ) জন্য করহার\n\nঅনুচ্ছেদ - ক\n\n২০২৬-২০২৭ এবং ২০২৭-২০২৮ করবর্ষের জন্য করহার\n\nআয়কর আইন , ২০২৩ ( ২০২৩ সনের ১২ নং আইন ) এর ধারা ২ ( ৬৯ ) এ সংজ্ঞায়িত\n\nব্যক্তিগণের ( persons ) মধ্যে অনিবাসী বাংলাদেশিসহ সকল স্বাভাবিক ব্যক্তি ( individual ) ও হিন্দু\n\nঅবিভক্ত পরিবারের ক্ষেত্রে মোট আয়ের উপর করহার নিম্নরূপ হইবে , যথা : -\nকরধাপ | করহার\n৪,০০,০০০ টাকা পর্যন্ত | শূন্য\nপরবর্তী ৩,০০,০০০ টাকা পর্যন্ত | ১০ %\nপরবর্তী ৪,০০,০০০ টাকা পর্যন্ত | ১৫ %\nপরবর্তী ৫,০০,০০০ টাকা পর্যন্ত | ২০ %\nপরবর্তী ২০,০০,০০০ টাকা পর্যন্ত | 25 %\nঅবশিষ্ট টাকার উপর | ৩০ %",
+      "chunk_index": 245,
+      "page_number": 140,
+      "filename": "Finance Act 2026 Bangla.pdf",
+      "metadata": {
+        "partial_extraction": false
+      }
+    },
+    {
+      "id": "c5166ffb-6009-4e61-a66a-5d0815a05c00",
+      "content": "তবে শর্ত থাকে যে ,\n\n( ক ) মহিলা করদাতা এবং ৬৫ বৎসর বা তদূর্ধ্ব বয়সের করদাতার করমুক্ত আয়ের সীমা হইবে\n\n৪,৫০,০০০ টাকা ;\n\n( খ ) তৃতীয় লিঙ্গের করদাতা এবং প্রতিবন্ধী স্বাভাবিক ব্যক্তি করদাতার করমুক্ত আয়ের সীমা\n\nহইবে ৫,২৫,০০০ টাকা ;\n\n( গ ) ) গেজেটভুক্ত যুদ্ধাহত মুক্তিযোদ্ধা এবং জুলাই গণঅভ্যুত্থান ২০২৪ এ আহত গেজেটভুক্ত জুলাই\n\nযোদ্ধা করদাতার করমুক্ত আয়ের সীমা হইবে ৫,৫০,০০০ টাকা ;\n\n( ঘ ) কোনো প্রতিবন্ধী ব্যক্তির পিতামাতা বা আইনানুগ অভিভাবকের প্রত্যেক সন্তান / পোষ্যের\n\nজন্য করমুক্ত আয়ের সীমা ৫০,০০০ টাকা অধিক হইবে , তবে প্রতিবন্ধী ব্যক্তির পিতা ও\n\nমাতা উভয়েই করদাতা হইলে যেকোনো একজন এই সুবিধা ভোগ করিবেন ;\n\n( ঙ ) বাংলাদেশে অনিবাসী ( অনিবাসী বাংলাদেশি ব্যতীত ) এইরূপ সকল করদাতার জন্য এই\n\nঅনুচ্ছেদ প্রযোজ্য হইবে না ;\n\nবাংলাদেশ গেজেট , অতিরিক্ত , জুন ৩০ , ২০২৬ ২০৪২৫\n\n( চ ) মোট আয় করমুক্ত আয়ের সীমা অতিক্রম করিলে ন্যূনতম করের পরিমাণ হইবে ৫,০০০\n\n( পাঁচ হাজার টাকা ) , তবে , নতুন করদাতাগণের ক্ষেত্রে এইরূপ ন্যূনতম করের পরিমাণ হইবে\n\n১,০০০ ( এক হাজার টাকা ) ।\n\nঅনুচ্ছেদ - খ\n\n২০২৮-২০২৯ এবং ২০২৯-২০৩০ করবর্ষের জন্য করহার\n\nআয়কর আইন , ২০২৩ ( ২০২৩ সনের ১২ নং আইন ) এর ধারা ২ ( ৬৯ ) এ সংজ্ঞায়িত ব্যক্তিগণের\n\n( persons ) মধ্যে অনিবাসী বাংলাদেশিসহ সকল স্বাভাবিক ব্যক্তি ( individual ) ও হিন্দু অবিভক্ত\n\nপরিবারের ক্ষেত্রে মোট আয়ের উপর করহার নিম্নরূপ হইবে , যথা : -",
+      "chunk_index": 246,
+      "page_number": 142,
+      "filename": "Finance Act 2026 Bangla.pdf",
+      "metadata": {
+        "partial_extraction": false
+      }
+    }
+  ],
+  "queries": [
+    {
+      "query": "স্বাভাবিক ব্যক্তি ২০২৫-২০২৬ করবর্ষ প্রথম শূন্য করহার",
+      "requirement_ids": [
+        "R2"
+      ]
+    }
+  ]
+}

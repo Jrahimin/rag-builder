@@ -55,16 +55,22 @@ from app.modules.retrieval.services.duplicate_suppression_service import (
     DuplicateSuppressionService,
 )
 from app.modules.retrieval.source_policy import (
+    ModifierExpansionOutcome,
+    ModifierExpansionRecord,
     SourceMetadataReadPort,
     SourceMetadataScope,
     add_retrieval_provenance,
     apply_source_policy,
 )
 from app.platform.config.project_ai import SourcePolicyMode, cap_source_policy_mode
+from app.platform.domain.content_hash import content_hash
 from app.platform.domain.evidence_contracts import public_query_variant
+from app.platform.domain.language_detection import detect_query_language_profile
+from app.platform.domain.request_scope import RequestScope
 from app.platform.providers.contracts.embedding import BaseEmbeddingProvider
 from app.platform.providers.contracts.query_translation import BaseQueryTranslationProvider
 from app.platform.providers.contracts.reranker import BaseRerankerProvider
+from app.platform.providers.embedding_similarity import score_best_passages
 from app.platform.providers.errors import ProviderError
 from app.platform.providers.request_work import RequestWork, observe_stage
 
@@ -120,6 +126,53 @@ class SearchService:
         self._embeddings = ChunkEmbeddingRepository(session, project_id)
         self._duplicate_suppression = DuplicateSuppressionService(retrieval_config)
         self.resolved_query_embedder: BaseEmbeddingProvider | None = None
+
+    @observe_stage("passage_scoring")
+    async def _score_raw_passages(
+        self, results: list[RetrievalResult], query: str, embedder: BaseEmbeddingProvider
+    ) -> list[RetrievalResult]:
+        """Score immutable final source text; tables remain indivisible proof units."""
+        from app.platform.providers.contracts.embedding import EmbeddingPurpose
+
+        try:
+            vector = await embedder.embed_texts([query], purpose=EmbeddingPurpose.QUERY)
+            best = await score_best_passages(
+                embedder=embedder,
+                query_vector=vector.vectors[0],
+                texts={
+                    row.chunk_id: row.content
+                    for row in results
+                    if row.metadata.get("element_type") != "table"
+                },
+                window_tokens=self._config.passage_window_tokens,
+                overlap_tokens=self._config.passage_overlap_tokens,
+                minimum_tokens=self._config.passage_min_tokens,
+            )
+        except ProviderError:
+            return results
+        output = []
+        for row in results:
+            winner = best.get(row.chunk_id)
+            if winner is None:
+                output.append(row)
+                continue
+            score, passage = winner
+            output.append(
+                row.model_copy(
+                    update={
+                        "passage_semantic_score": score,
+                        "passage_char_start": passage.char_start,
+                        "passage_char_end": passage.char_end,
+                        "passage_score_method": "raw_span_v2",
+                        "metadata": {
+                            **row.metadata,
+                            "passage_source_hash": content_hash(row.content),
+                            "passage_span_hash": content_hash(passage.text),
+                        },
+                    }
+                )
+            )
+        return output
 
     def set_request_scope(self, scope: dict[str, Any]) -> None:
         self._request_scope = dict(scope)
@@ -284,6 +337,14 @@ class SearchService:
         multilingual_plan = None
         translation_started = time.perf_counter()
         if strategy is RetrievalStrategy.HYBRID:
+            mixed_retry = bool(
+                self._work is not None
+                and self._work.counts["ranked_retrieval_calls"] > 1
+                and not self._work.counts["mixed_rewrite_attempts"]
+                and detect_query_language_profile(request.query).is_mixed
+            )
+            if mixed_retry and self._work is not None:
+                self._work.counts["mixed_rewrite_attempts"] += 1
             multilingual_plan = await resolve_multilingual_plan(
                 request.query,
                 manifest=active_build.manifest,
@@ -291,6 +352,7 @@ class SearchService:
                 translator=self._query_translator,
                 persist_translation_text=self._persist_translation_text,
                 document_id=request.document_id,
+                allow_mixed_rewrite=mixed_retry,
             )
         if self._work is not None:
             self._work.timings["translation"] += round(
@@ -321,12 +383,13 @@ class SearchService:
             fts_regconfig=self._config.fts_regconfig,
             min_ocr_confidence=self._config.min_ocr_confidence,
             hnsw_ef_search=self._config.hnsw_ef_search,
-            passage_scoring_enabled=self._config.passage_scoring_enabled,
+            passage_scoring_enabled=False,  # Score only the final policy-selected raw results.
             passage_window_tokens=self._config.passage_window_tokens,
             passage_overlap_tokens=self._config.passage_overlap_tokens,
             passage_min_tokens=self._config.passage_min_tokens,
             metadata={"request_strategy": strategy.value},
             source_scope=source_scope,
+            request_scope=RequestScope.model_validate(self._request_scope),
             multilingual_plan=multilingual_plan,
             persist_translation_text=self._persist_translation_text,
             modifies_expansion_mode=self._config.modifies_expansion_mode,
@@ -372,6 +435,13 @@ class SearchService:
         ]
         suppression = self._duplicate_suppression.select(hydrated_results, limit=top_k)
         results = suppression.results
+        if self._config.passage_scoring_enabled and results:
+            results = await self._score_raw_passages(results, request.query, query_embedder)
+            scored = {result.chunk_id: result for result in results}
+            candidate_trace = [
+                _result_trace(scored.get(result.chunk_id, result), rank=index)
+                for index, result in enumerate(hydrated_results, 1)
+            ]
         post_rerank_removal_reasons = (
             {
                 **policy.observed_exclusion_counts,
@@ -590,7 +660,11 @@ class SearchService:
                         ),
                     )
                 ),
-                modifies_expansion_depth=1,
+                modifies_expansion_depth=int(rerank_metadata.get("modifies_expansion_depth", 0)),
+                relationship_discovery_status=str(
+                    rerank_metadata.get("relationship_discovery_status", "not_assessed")
+                ),
+                unresolved_frontier_ids=list(rerank_metadata.get("unresolved_frontier_ids", [])),
                 modifies_expansion_records=expansion_records,
                 modifies_expansion_exclusion_reasons=_int_dict(
                     rerank_metadata.get("modifies_expansion_exclusion_reasons")
@@ -995,7 +1069,25 @@ class SearchService:
                 "identity_modifies_expansion_read_failed",
                 project_id=str(self._project_id),
             )
-            return [], "unavailable", {}
+            unavailable = [
+                ModifierExpansionRecord(
+                    relationship_id=uuid.uuid5(revision, "discovery_unavailable"),
+                    base_revision_id=revision,
+                    base_document_id=next(
+                        result.document_id
+                        for result in results
+                        if _uuid_value(result.metadata.get("source_revision_id")) == revision
+                    ),
+                    modifier_revision_id=uuid.UUID(int=0),
+                    modifier_document_id=uuid.UUID(int=0),
+                    modifier_effective_from=None,
+                    modifier_published_date=None,
+                    modifier_revision_number=None,
+                    outcome=ModifierExpansionOutcome.DISCOVERY_UNAVAILABLE,
+                ).diagnostic()
+                for revision in base_revision_ids
+            ]
+            return unavailable, "unavailable", {"discovery_unavailable": len(unavailable)}
         exclusions: dict[str, int] = {}
         diagnostics = [item.diagnostic() for item in records]
         for item in records:

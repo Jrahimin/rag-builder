@@ -18,8 +18,10 @@ from app.modules.conversations.ports import ContextChunk, ContextRetrievalResult
 from app.modules.conversations.services.evidence_coverage import CoverageVerdict
 from app.modules.conversations.services.evidence_repair_service import (
     EvidenceRequirement,
+    _bind_focused_comparison_period,
     _discovery_excerpts,
     _mandatory_partial_ids,
+    _review_authority_records,
     _review_evidence_key,
     _search_language_instruction,
     _SearchPlan,
@@ -48,6 +50,32 @@ def _coverage_review_payloads(calls):
         if "Check whether supplied evidence" in str(content):
             payloads.append(json.loads(messages[1].content))
     return payloads
+
+
+def test_focused_comparison_keeps_its_own_assessment_year():
+    requirement = EvidenceRequirement(
+        requirement_id="R25",
+        description="Establish the resident-individual tax-free threshold for AY 2025\u201326.",
+        materiality="central_rule",
+        task_kind="comparison",
+    )
+    periods = {("assessment", 2025, 2026), ("assessment", 2026, 2027)}
+    query = "স্বাভাবিক ব্যক্তির করমুক্ত আয়ের সীমা"
+    assert _bind_focused_comparison_period(query, [requirement], periods) == (
+        f"{query} ২০২৫-২০২৬ করবর্ষ"
+    )
+    assert (
+        _bind_focused_comparison_period(f"{query} ২০২৬-২০২৭ করবর্ষ", [requirement], periods) is None
+    )
+
+
+def test_review_excludes_unrelated_amendment_and_preserves_unknown_effect_on_reviewed_source():
+    source = chunk("Exact statutory rule", source_revision_id="reviewed-act")
+    relevant = {"base_revision_id": "reviewed-act", "provision_effect": "unknown"}
+    unrelated = {"base_revision_id": "other-act", "provision_effect": "unknown"}
+    assert _review_authority_records(
+        [unrelated, relevant], [source], omit_retrieval_counts=True
+    ) == [relevant]
 
 
 def test_review_identity_preserves_text_authority_and_requirements_but_not_rank():
@@ -1224,6 +1252,8 @@ async def run_repair(
     max_followup_rounds=2,
     recovery_profile="legacy",
     allow_admitted_timeout_fallback=False,
+    normalized_scope=None,
+    preceding_pages=None,
 ):
     config = config or ChatConfig()
     queries = (
@@ -1339,6 +1369,9 @@ async def run_repair(
         ),
     ]
     retrieval = AsyncMock()
+    if preceding_pages is not None:
+        retrieval.supports_preceding_scope = True
+        retrieval.preceding_indexed_text.return_value = preceding_pages
     if adjacent or late_adjacent:
         retrieval.supports_adjacent_retrieval = True
     if adjacent:
@@ -1388,6 +1421,7 @@ async def run_repair(
         metadata_filter={"region": "local"},
         as_of=datetime(2026, 7, 1, tzinfo=UTC),
         suppress_web=True,
+        **({"normalized_scope": normalized_scope} if normalized_scope is not None else {}),
     )
     result = await repair_knowledge_evidence(
         inputs=inputs,
@@ -5045,7 +5079,11 @@ def test_focused_numeric_rule_requires_subject_and_governing_period_for_partial(
         ),
     ]
     mandatory = _mandatory_partial_ids("What is the rebate rate?", requirements)
-    assert mandatory == {"individual", "rebate"}
+    assert mandatory == {
+        "individual": set(),
+        "rebate": {"__governing_applicability_required__"},
+        "telecom": {"__governing_applicability_required__"},
+    }
     verdict = CoverageVerdict.model_validate(
         {
             "complete": False,
@@ -5080,7 +5118,7 @@ def test_compound_topics_without_dependencies_cannot_bypass_applicability() -> N
     ]
     assert _mandatory_partial_ids(
         "What are the rebate rate and filing deadline?", requirements
-    ) == {"rebate", "filing", "__governing_applicability_required__"}
+    ) == {"rebate": {"__governing_applicability_required__"}, "filing": set()}
 
 
 def test_compound_partial_requires_each_retained_claim_dependencies() -> None:

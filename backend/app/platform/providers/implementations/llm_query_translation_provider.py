@@ -4,9 +4,15 @@ from __future__ import annotations
 
 import json
 import time
+from contextlib import nullcontext
 
-from app.platform.domain.language_detection import missing_protected_literals
-from app.platform.providers.contracts.llm import BaseLLMProvider, ChatMessage, ChatRole
+from app.platform.domain.language_detection import detect_language, missing_protected_literals
+from app.platform.providers.contracts.llm import (
+    BaseLLMProvider,
+    ChatMessage,
+    ChatRole,
+    StructuredOutput,
+)
 from app.platform.providers.contracts.query_translation import (
     BaseQueryTranslationProvider,
     QueryTranslationRequest,
@@ -18,12 +24,12 @@ from app.platform.providers.prompts.retrieval_translation import (
     PROMPT_VERSION,
     translation_messages,
 )
+from app.platform.providers.request_work import ObservedLLM, current_request_work
 
 # Page-length query + buffer. Rejects rambling, not a book-page translation.
 _MAX_TRANSLATION_CHARS = 24_000
 _DEFAULT_MIN_TRANSLATION_OUTPUT_TOKENS = 1024
 _MAX_TRANSLATION_OUTPUT_TOKENS = 2048
-_SHORT_QUERY_CLEAN_CHARS = 400
 _ABSOLUTE_MIN_TRANSLATION_OUTPUT_TOKENS = 16
 
 
@@ -78,6 +84,16 @@ class LLMQueryTranslationProvider(BaseQueryTranslationProvider):
         return min(ceiling, sized)
 
     async def translate(self, request: QueryTranslationRequest) -> QueryTranslationResponse:
+        work = current_request_work()
+        llm = self._llm
+        if work is not None and not isinstance(llm, ObservedLLM):
+            llm = ObservedLLM(llm, work)
+        with work.purpose("translation") if work is not None else nullcontext():
+            return await self._translate(request, llm)
+
+    async def _translate(
+        self, request: QueryTranslationRequest, llm: BaseLLMProvider
+    ) -> QueryTranslationResponse:
         payload = translation_messages(
             query=request.query,
             target_language=request.target_language,
@@ -101,10 +117,28 @@ class LLMQueryTranslationProvider(BaseQueryTranslationProvider):
         for _ in range(attempts):
             attempt_count += 1
             try:
-                completion = await self._llm.generate(
-                    messages,
-                    temperature=self._temperature,
-                    max_tokens=token_budget,
+                active_protocol = (
+                    request.prompt_version or self._prompt_version
+                ) == "retrieval-translation-v3"
+                completion = await (
+                    llm.generate_structured(
+                        messages,
+                        temperature=self._temperature,
+                        max_tokens=token_budget,
+                        output_contract=StructuredOutput(
+                            "retrieval_translation_v3",
+                            {
+                                "type": "object",
+                                "properties": {"translated_query": {"type": "string"}},
+                                "required": ["translated_query"],
+                                "additionalProperties": False,
+                            },
+                        ),
+                    )
+                    if active_protocol
+                    else llm.generate(
+                        messages, temperature=self._temperature, max_tokens=token_budget
+                    )
                 )
             except ProviderError as exc:
                 context = dict(exc.context) if isinstance(exc.context, dict) else {}
@@ -125,6 +159,24 @@ class LLMQueryTranslationProvider(BaseQueryTranslationProvider):
                 ) from exc
             translated = _clean_translation(completion.content)
             error = _validation_error(request.query, translated)
+            if active_protocol:
+                try:
+                    wire = json.loads(completion.content)
+                    if (
+                        not isinstance(wire, dict)
+                        or set(wire) != {"translated_query"}
+                        or not isinstance(wire["translated_query"], str)
+                    ):
+                        raise ValueError("Invalid translation contract")
+                except (ValueError, TypeError):
+                    error = "invalid_translation_contract"
+            detected = detect_language(translated)
+            if (
+                error is None
+                and detected.languages
+                and detected.languages.get(request.target_language, 0.0) < 0.5
+            ):
+                error = "wrong_target_language"
             if completion.finish_reason == "length":
                 # A nonempty prefix can preserve literals yet omit a material
                 # condition. Never admit an incomplete translation.
@@ -201,7 +253,7 @@ def _clean_translation(text: str) -> str:
 
 
 def _prefer_translation_text(text: str) -> str:
-    """Keep page-length translations; drop a trailing explanation on short queries."""
+    """Preserve all clauses, including short multiline queries."""
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     if not lines:
         return text.strip()
@@ -213,8 +265,6 @@ def _prefer_translation_text(text: str) -> str:
     if not rest:
         return first
     joined = " ".join([first, *rest])
-    if len(joined) <= _SHORT_QUERY_CLEAN_CHARS:
-        return first
     return joined
 
 

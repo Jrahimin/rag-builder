@@ -60,6 +60,7 @@ class Quantity:
     end: int
     role: str | None = None
     explicit_currency: bool = False
+    unit: str | None = None
 
 
 def normalize_quantities(text: str) -> tuple[Quantity, ...]:
@@ -142,6 +143,37 @@ def normalize_quantities(text: str) -> tuple[Quantity, ...]:
                 ),
                 None,
             )
+        unit = None
+        if kind == "money":
+            marker = regex.search(_CURRENCY + r"\s*$", before, regex.I) or regex.match(
+                r"\s*" + _CURRENCY, after, regex.I
+            )
+            currency = marker.group().strip().casefold() if marker else ""
+            unit = {
+                "bdt": "BDT",
+                "tk": "BDT",
+                "taka": "BDT",
+                "৳": "BDT",
+                "টাকা": "BDT",
+                "টাকার": "BDT",
+                "usd": "USD",
+                "$": "USD",
+                "eur": "EUR",
+                "€": "EUR",
+                "gbp": "GBP",
+                "£": "GBP",
+            }.get(currency, "money:unspecified")
+        elif kind == "duration":
+            marker = regex.match(r"\s*(days?|months?|years?|hours?|দিন|মাস|বছর)\b", after, regex.I)
+            assert marker is not None
+            token = marker[1].casefold()
+            unit = {"দিন": "day", "মাস": "month", "বছর": "year"}.get(token, token.rstrip("s"))
+        elif kind == "rate":
+            unit = "ratio"
+        elif kind == "count":
+            unit = "count:person"
+        elif kind == "number":
+            unit = "scalar"
         quantities.append(
             Quantity(
                 kind,
@@ -151,6 +183,7 @@ def normalize_quantities(text: str) -> tuple[Quantity, ...]:
                 match.end(),
                 role,
                 explicit,
+                unit,
             )
         )
     return tuple(quantities)

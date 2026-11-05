@@ -330,6 +330,8 @@ class NearMissRetrieval:
 
 class FailingLLM(EchoLLMProvider):
     async def generate(self, messages, *, temperature, max_tokens):
+        if current_request_purpose() == "claim_verification":
+            return fixture_entailment(messages, getattr(self, "content", ""))
         del messages, temperature, max_tokens
         raise ProviderError("boom", provider_name="echo")
 
@@ -393,13 +395,16 @@ def fixture_entailment(messages, expected_answer, *, translation_source=None):
         )
         verdicts.append(
             {
+                "assertion_id": row["assertion_id"],
+                "proof_hashes": row["proof_hashes"],
+                "scope_hash": row["scope_hash"],
                 "status": "supported" if supported else "unsupported",
                 "failed_dimensions": [] if supported else ["scope"],
-                "evidence_binding": "",
+                "evidence_binding": "controlled source fixture",
             }
         )
     return ChatCompletionResult(
-        content=json.dumps({"verdicts": verdicts}),
+        content=json.dumps({"version": "claim.entailment.v2", "verdicts": verdicts}),
         provider="echo",
         model="test",
         finish_reason="stop",
@@ -585,6 +590,15 @@ def _service(
     chat_config: ChatConfig | None = None,
     store_candidate_trace: bool = True,
 ) -> ChatService:
+    if isinstance(llm, CitedLLM) and isinstance(llm.generate, AsyncMock):
+        scripted_generate = llm.generate
+
+        async def purpose_generate(messages, *, temperature, max_tokens):
+            if current_request_purpose() == "claim_verification":
+                return fixture_entailment(messages, llm.content)
+            return await scripted_generate(messages, temperature=temperature, max_tokens=max_tokens)
+
+        llm.generate = AsyncMock(side_effect=purpose_generate)
     return ChatService(
         session=session,
         project_id=uuid.uuid4(),
@@ -623,6 +637,7 @@ async def test_published_citations_remap_markers_with_source_identity_and_persis
         CitedLLM("Customers can request a refund within 30 days of purchase. [2]"),
     )
     service._retrieval = AsyncMock()
+    service._retrieval.set_request_scope = MagicMock()
     service._retrieval.query_embedder = None
     service._retrieval.retrieve.return_value = ContextRetrievalResult(
         chunks=[first, second], diagnostics={}
@@ -772,6 +787,8 @@ async def test_candidate_wise_canary_sends_only_passing_lower_rank_to_generation
         calls = 0
 
         async def generate(self, messages, *, temperature, max_tokens):
+            if current_request_purpose() == "claim_verification":
+                return fixture_entailment(messages, getattr(self, "content", ""))
             del temperature, max_tokens
             self.calls += 1
             captured_system.append(messages[0].content)
@@ -876,7 +893,11 @@ async def test_candidate_wise_canary_refuses_when_admitted_unit_exceeds_context_
                                 rrf_score=0.01,
                             ),
                         ),
-                        metadata={"rerank_status": "applied"},
+                        metadata={
+                            "rerank_status": "applied",
+                            "passage_source_hash": content_hash(passage),
+                            "passage_span_hash": content_hash(passage),
+                        },
                     )
                 ],
                 diagnostics={"rerank_status": "applied"},
@@ -886,6 +907,8 @@ async def test_candidate_wise_canary_refuses_when_admitted_unit_exceeds_context_
         calls = 0
 
         async def generate(self, messages, *, temperature, max_tokens):
+            if current_request_purpose() == "claim_verification":
+                return fixture_entailment(messages, getattr(self, "content", ""))
             self.calls += 1
             return await super().generate(
                 messages,
@@ -928,6 +951,8 @@ async def test_zero_history_limit_excludes_prior_messages(
 
     class CapturingLLM(EchoLLMProvider):
         async def generate(self, messages, *, temperature, max_tokens):
+            if current_request_purpose() == "claim_verification":
+                return fixture_entailment(messages, getattr(self, "content", ""))
             captured_contents.extend(message.content for message in messages)
             return await super().generate(
                 messages,
@@ -1079,6 +1104,7 @@ async def test_recovery_provider_failure_is_not_a_successful_evidence_refusal(
     initial = await UnresolvedRuleRetrieval().retrieve()
     initial.diagnostics.update(index_build_id=str(uuid.uuid4()), source_metadata_generation=24)
     retrieval = AsyncMock()
+    retrieval.set_request_scope = MagicMock()
     retrieval.query_embedder = None
     retrieval.retrieve.return_value = initial
     service._retrieval = retrieval
@@ -1148,6 +1174,8 @@ async def test_insufficient_evidence_skips_generation_and_persists_refusal(
         calls = 0
 
         async def generate(self, messages, *, temperature, max_tokens):
+            if current_request_purpose() == "claim_verification":
+                return fixture_entailment(messages, getattr(self, "content", ""))
             self.calls += 1
             return await super().generate(
                 messages,
@@ -1247,6 +1275,8 @@ async def test_observe_mode_still_skips_generation_when_retrieval_is_empty(
         calls = 0
 
         async def generate(self, messages, *, temperature, max_tokens):
+            if current_request_purpose() == "claim_verification":
+                return fixture_entailment(messages, getattr(self, "content", ""))
             self.calls += 1
             return await super().generate(
                 messages,
@@ -1288,6 +1318,8 @@ async def test_enforce_mode_still_skips_generation_on_a_cosine_near_miss(
         calls = 0
 
         async def generate(self, messages, *, temperature, max_tokens):
+            if current_request_purpose() == "claim_verification":
+                return fixture_entailment(messages, getattr(self, "content", ""))
             self.calls += 1
             return await super().generate(
                 messages,
@@ -1324,6 +1356,8 @@ async def test_applied_rerank_above_threshold_runs_generation(
         calls = 0
 
         async def generate(self, messages, *, temperature, max_tokens):
+            if current_request_purpose() == "claim_verification":
+                return fixture_entailment(messages, getattr(self, "content", ""))
             self.calls += 1
             return await super().generate(
                 messages,
@@ -1384,6 +1418,8 @@ async def test_send_message_uses_conversation_temperature(
 
     class CapturingLLM(EchoLLMProvider):
         async def generate(self, messages, *, temperature, max_tokens):
+            if current_request_purpose() == "claim_verification":
+                return fixture_entailment(messages, getattr(self, "content", ""))
             captured["temperature"] = temperature
             return await super().generate(
                 messages,
@@ -1562,6 +1598,8 @@ async def test_applied_rerank_without_corroboration_blocks_unrelated_query(
         calls = 0
 
         async def generate(self, messages, *, temperature, max_tokens):
+            if current_request_purpose() == "claim_verification":
+                return fixture_entailment(messages, getattr(self, "content", ""))
             self.calls += 1
             return await super().generate(
                 messages,
@@ -2523,6 +2561,7 @@ async def test_repaired_evidence_reaches_generation_without_old_rule_or_web(
         chunk_hash="current-policy",
     )
     retrieval = AsyncMock()
+    retrieval.set_request_scope = MagicMock()
     retrieval.query_embedder = None
     retrieval.retrieve.side_effect = [
         initial,
@@ -2992,6 +3031,7 @@ async def test_validated_partial_cannot_alter_indexed_web_policy(
         chunk_hash="current-policy",
     )
     retrieval = AsyncMock()
+    retrieval.set_request_scope = MagicMock()
     retrieval.query_embedder = None
     retrieval.retrieve.side_effect = [
         initial,
@@ -3134,6 +3174,7 @@ async def test_authoritative_compliance_deadline_does_not_promote_unreviewed_evi
         metadata={"source_role": "primary", "source_lifecycle_status": "active"},
     )
     retrieval = AsyncMock()
+    retrieval.set_request_scope = MagicMock()
     retrieval.query_embedder = None
     retrieval.retrieve.return_value = ContextRetrievalResult(
         chunks=[source],
@@ -3326,6 +3367,8 @@ async def test_modifies_expansion_survives_combined_rerank_and_skips_web(
         calls = 0
 
         async def generate(self, messages, *, temperature, max_tokens):
+            if current_request_purpose() == "claim_verification":
+                return fixture_entailment(messages, getattr(self, "content", ""))
             del temperature, max_tokens
             self.calls += 1
             captured_system.append(messages[0].content)
@@ -3547,6 +3590,8 @@ async def test_web_no_result_or_failure_refuses_without_llm_guessing(
         calls = 0
 
         async def generate(self, messages, *, temperature, max_tokens):
+            if current_request_purpose() == "claim_verification":
+                return fixture_entailment(messages, getattr(self, "content", ""))
             self.calls += 1
             return await super().generate(
                 messages,
@@ -5279,6 +5324,8 @@ async def test_resolver_timeout_falls_back_without_using_interpretation(
         resolver_calls = 0
 
         async def generate(self, messages, *, temperature, max_tokens):
+            if current_request_purpose() == "claim_verification":
+                return fixture_entailment(messages, getattr(self, "content", ""))
             if any("Return one JSON object" in message.content for message in messages):
                 self.resolver_calls += 1
                 await asyncio.sleep(1)
@@ -5315,6 +5362,8 @@ async def test_resolver_cancellation_does_not_become_fallback(
 
     class CancellingLLM(EchoLLMProvider):
         async def generate(self, messages, *, temperature, max_tokens):
+            if current_request_purpose() == "claim_verification":
+                return fixture_entailment(messages, getattr(self, "content", ""))
             if any("Return one JSON object" in message.content for message in messages):
                 raise asyncio.CancelledError
             return await super().generate(messages, temperature=temperature, max_tokens=max_tokens)
@@ -5852,6 +5901,8 @@ async def test_invalidated_rewrite_revalidates_and_preserves_partial_scope(
         review_payload: dict[str, object] | None = None
 
         async def generate(self, messages, *, temperature, max_tokens):
+            if current_request_purpose() == "claim_verification":
+                return fixture_entailment(messages, getattr(self, "content", ""))
             if self.review_stage == 0:
                 self.review_stage = 1
                 self.generate_calls += 1

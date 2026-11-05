@@ -507,7 +507,10 @@ function LabHeader({
         {projects.length > 0 && (
           <ProjectSelector projects={projects} value={projectId} onChange={onProjectChange} />
         )}
-        <Link className="button button--secondary button--compact" to="/projects">
+        <Link
+          className="button button--secondary button--compact"
+          to={`/projects?project=${encodeURIComponent(projectId)}`}
+        >
           Manage Projects
         </Link>
         <button
@@ -1009,7 +1012,9 @@ function DocumentsTab({
                 }}
               >
                 <option value="independent">Independent account or new source</option>
-                <option value="revision">Newer edition replacing an existing source</option>
+                <option value="revision">
+                  Whole-document replacement (excludes the earlier edition)
+                </option>
                 <option value="modifies">Modifies one or more sources</option>
               </select>
             </label>
@@ -1385,7 +1390,7 @@ function DocumentsTab({
                           <option value="keep">Keep this source's current treatment</option>
                           <option value="independent">Independent account or new source</option>
                           <option value="revision">
-                            Newer edition replacing an existing source
+                            Whole-document replacement (excludes the earlier edition)
                           </option>
                           <option value="modifies">Modifies one or more sources</option>
                         </select>
@@ -2592,6 +2597,12 @@ function MessageCard({
   const verificationFailure = isCoverageVerificationFailure(message);
   const citations = message.citations ?? [];
   const citedIndexes = citedPassageIndexes(message.content, citations.length);
+  const noticeTexts = new Set<string>([message.content]);
+  const notices = (message.notices ?? []).filter((notice) => {
+    if (!notice.text.trim() || noticeTexts.has(notice.text)) return false;
+    noticeTexts.add(notice.text);
+    return true;
+  });
   return (
     <article
       className={`message-card message-card--${message.role}${selected ? " message-card--selected" : ""}`}
@@ -2604,6 +2615,17 @@ function MessageCard({
         <MessageContent content={message.content} citations={citations} onCite={onInspect} />
       ) : (
         <p>{message.content}</p>
+      )}
+      {message.role === "assistant" && notices.length > 0 && (
+        <div className="notice-card" role="status" aria-label="Answer notices">
+          <ul>
+            {notices.map((notice) => (
+              <li key={notice.text} data-notice-kind={notice.kind}>
+                {notice.text}
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
       {message.role === "assistant" && (
         <div className="message-card__meta">

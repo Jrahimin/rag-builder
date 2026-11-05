@@ -110,6 +110,7 @@ def _candidate(
     semantic_score: float | None = 0.1,
     calibration_id: str | None = RERANKER_RELEVANCE_CALIBRATION_ID,
     passage: tuple[float, int, int] | None = None,
+    metadata: dict | None = None,
 ) -> ContextChunk:
     passage_score, passage_start, passage_end = passage or (None, None, None)
     return ContextChunk(
@@ -135,7 +136,7 @@ def _candidate(
         char_end=1000 + len(content),
         query_variants=variants,
         branch_contributions=contributions,
-        metadata={"rerank_status": "applied"},
+        metadata={"rerank_status": "applied", **(metadata or {})},
     )
 
 
@@ -380,6 +381,10 @@ def test_scored_passage_is_preferred_and_offsets_are_stable() -> None:
         contributions=(_contribution("original_dense", original.variant_id),),
         semantic_score=0.1,
         passage=(0.36, start, end),
+        metadata={
+            "passage_source_hash": content_hash(content),
+            "passage_span_hash": content_hash(content[start:end]),
+        },
     )
 
     decision = _service().assess(query, [chunk], rerank_status="applied")

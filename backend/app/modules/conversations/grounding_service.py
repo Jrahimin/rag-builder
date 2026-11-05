@@ -16,6 +16,7 @@ from app.modules.conversations.ports import (
     ContextChunk,
     EvidenceUnit,
 )
+from app.modules.conversations.publication_approval import PublicationApproval, publication_binding
 from app.modules.conversations.quantities import NUMBER_TOKEN, Quantity, normalize_quantities
 from app.modules.conversations.schemas.message import (
     AnswerClaim,
@@ -25,6 +26,7 @@ from app.modules.conversations.schemas.message import (
     ClaimVerificationReason,
     InsufficientEvidenceReason,
 )
+from app.modules.conversations.semantic_guards import evaluate_section_190
 from app.modules.conversations.services.claim_entailment_service import ClaimEntailmentService
 from app.platform.domain.content_hash import content_hash
 from app.platform.domain.evidence_contracts import (
@@ -369,6 +371,9 @@ class GroundingService:
         self._config = config
         self._embedder = embedder
         self.publication_completeness: dict[str, bool | None] = {}
+        self.publication_assertions: dict[str, str] = {}
+        self.publication_displays: dict[str, str] = {}
+        self.publication_approvals: tuple[PublicationApproval, ...] = ()
 
     def assess(
         self,
@@ -815,6 +820,8 @@ class GroundingService:
                     passage_score_method="bounded_token_max_v1",
                     metadata={
                         **chunk.metadata,
+                        "passage_source_hash": content_hash(chunk.content),
+                        "passage_span_hash": content_hash(passage.text),
                         "passage_semantic_score": score,
                         "passage_char_start": passage.char_start,
                         "passage_char_end": passage.char_end,
@@ -925,7 +932,11 @@ class GroundingService:
         user_input: str = "",
         coverage: dict[str, Any] | None = None,
         draft_segments: list[dict[str, Any]] | None = None,
+        canonical_scope: dict[str, Any] | None = None,
+        publication_context: str | None = None,
     ) -> GroundingResult:
+        # A batch never inherits another batch's approval, including interrupted calls.
+        self.publication_approvals = ()
         drafts: list[_ClaimDraft] = []
         semantic_pairs: list[tuple[str, str]] = []
         spans_by_chunk: dict[uuid.UUID, list[_SelectedSpan]] = {}
@@ -1021,7 +1032,9 @@ class GroundingService:
                     else f"A{index}",
                 )
             )
-            if kind_hint != "coverage_scope":
+            # Typed drafts already carry exact reviewed proof spans. Legacy/raw
+            # proof still needs semantic localization, including translated text.
+            if kind_hint != "coverage_scope" and (self._entailment is None or not draft_segments):
                 keys = {claim_text, assertion} - {""}
                 for _, chunk in evidence_chunks:
                     spans_by_chunk.setdefault(chunk.chunk_id, _claim_candidate_spans(chunk))
@@ -1049,13 +1062,26 @@ class GroundingService:
                         {
                             "quote": item["quote"],
                             "chunk_id": str(chunk.chunk_id),
+                            "source_hash": str(
+                                getattr(chunk, "source_chunk_hash", None) or chunk.chunk_hash
+                            ),
+                            "span_hash": content_hash(str(item["quote"])),
                             "requirement_id": item.get("requirement_id"),
                             "supported_scope": item.get("supported_scope", ""),
                         }
                         for item in reviewed
                     ]
                     if "reviewed_proof" in chunk.metadata
-                    else [{"quote": chunk.content, "chunk_id": str(chunk.chunk_id)}]
+                    else [
+                        {
+                            "quote": chunk.content,
+                            "chunk_id": str(chunk.chunk_id),
+                            "source_hash": str(
+                                getattr(chunk, "source_chunk_hash", None) or chunk.chunk_hash
+                            ),
+                            "span_hash": content_hash(chunk.content),
+                        }
+                    ]
                 )
             entailment_inputs.append(
                 {
@@ -1063,6 +1089,7 @@ class GroundingService:
                     "assertion": draft.assertion,
                     "proof": proof,
                     "scenario_input": user_input,
+                    "canonical_scope": canonical_scope or {},
                 }
             )
         entailments = ["unverified"] * len(drafts)
@@ -1085,7 +1112,15 @@ class GroundingService:
             exact = exact or assertion == " ".join(joined_proof.split()).strip()
             if draft.kind_hint == "coverage_scope":
                 continue
-            if exact and assertion:
+            if (
+                exact
+                and assertion
+                and not canonical_scope
+                and not any(
+                    chunk.metadata.get("authority_compound_proof")
+                    for _, chunk in draft.evidence_chunks
+                )
+            ):
                 # Whole-assertion identity is reusable proof; substring/embedding
                 # similarity, a category change or any additional clause is not.
                 entailments[position] = "supported"
@@ -1102,6 +1137,18 @@ class GroundingService:
         verifier_failure = getattr(self._entailment, "last_failure", None)
         structured_verdicts = getattr(self._entailment, "last_verdicts", [])
         verdict_by_position = dict(zip(pending, structured_verdicts, strict=False))
+        self.publication_assertions = {
+            str(draft.assertion_id or f"claim-{draft.index}"): " ".join(
+                _plain_claim_text(draft.assertion).split()
+            )
+            for draft in drafts
+        }
+        self.publication_displays = {
+            str(draft.assertion_id or f"claim-{draft.index}"): " ".join(
+                _plain_claim_text(draft.text).split()
+            )
+            for draft in drafts
+        }
         self.publication_completeness = {
             str(draft.assertion_id or f"claim-{draft.index}"): verdict_by_position.get(
                 position, {}
@@ -1323,7 +1370,14 @@ class GroundingService:
                             ClaimVerificationReason.UNRELATED_OR_INSUFFICIENT_EVIDENCE
                         )
                     entailment_evidence = (
-                        full_evidence
+                        " ".join(
+                            str(item["quote"])
+                            for item in cast(
+                                list[dict[str, object]], entailment_inputs[draft_position]["proof"]
+                            )
+                        )
+                        if draft_segments
+                        else full_evidence
                         if regex.search(
                             r"\bfirst\s+(?:annual\s+general\s+meeting|agm)\b",
                             draft.assertion,
@@ -1346,7 +1400,11 @@ class GroundingService:
                         and score is None
                         and verification_reason is None
                     ):
-                        verification_reason = ClaimVerificationReason.EMBEDDING_UNAVAILABLE
+                        verification_reason = (
+                            ClaimVerificationReason.UNRELATED_OR_INSUFFICIENT_EVIDENCE
+                            if model_entailment
+                            else ClaimVerificationReason.EMBEDDING_UNAVAILABLE
+                        )
                     elif verification is ClaimVerification.UNSUPPORTED:
                         verification_reason = (
                             ClaimVerificationReason.UNRELATED_OR_INSUFFICIENT_EVIDENCE
@@ -1500,7 +1558,7 @@ class GroundingService:
                     ],
                 )
             )
-        return _grounding_result_from_claims(
+        result = _grounding_result_from_claims(
             claims,
             cited_factual=sum(
                 draft.has_valid_citation
@@ -1508,6 +1566,21 @@ class GroundingService:
                 if claim.claim_kind != "coverage_scope"
             ),
         )
+        self.publication_approvals = tuple(
+            PublicationApproval(
+                binding=publication_binding(
+                    claim,
+                    self.publication_displays[str(claim["assertion_id"])],
+                    self.publication_assertions[str(claim["assertion_id"])],
+                ),
+                context=publication_context,
+                supported=claim.get("verification") == "supported"
+                and claim.get("grounded") is True,
+                complete=self.publication_completeness[str(claim["assertion_id"])],
+            )
+            for claim in result.claims
+        )
+        return result
 
     def _lexical_verification(self, text: str, evidence_texts: list[str]) -> ClaimVerification:
         claim_tokens = _significant_tokens(text)
@@ -1686,6 +1759,9 @@ def _select_evidence_span(
         and passage_start is not None
         and passage_end is not None
         and 0 <= passage_start < passage_end <= len(chunk.content)
+        and chunk.metadata.get("passage_source_hash") == content_hash(chunk.content)
+        and chunk.metadata.get("passage_span_hash")
+        == content_hash(chunk.content[passage_start:passage_end])
     ):
         return _SelectedSpan(
             text=chunk.content[passage_start:passage_end],
@@ -1875,6 +1951,7 @@ def _evidence_unit(
     }
     return EvidenceUnit(
         chunk_id=chunk.chunk_id,
+        project_id=chunk.project_id,
         document_id=chunk.document_id,
         chunk_index=chunk.chunk_index,
         content=span.text,
@@ -3614,56 +3691,8 @@ def _suppress_negation_mismatch(claim: str, evidence: str) -> bool:
 
 
 def _section_190_polarity_scope(claim: str, evidence: str) -> tuple[str, str] | None:
-    """Exclude Section 190 fallback conditions from the filing duty's polarity.
-
-    The Bangla filing sentence contains negative *conditions* (no AGM and no
-    listed officer) alongside a positive duty to file.  Compare those conditions
-    only when the English claim actually states the corresponding fallback.
-    """
-    if not (
-        "ব্যালান্স শীট" in evidence
-        and regex.search(r"রেজিষ্ট্রারের\s+নিকট\s+দাখিল", evidence)
-        and "ত্রিশদিন" in evidence
-    ):
-        return claim, evidence
-
-    no_agm = regex.compile(r"বার্ষিক\s+সাধারণ\s+সভা\s+অনুষ্ঠিত\s+হয়\s+নাই")
-    if no_agm.search(evidence):
-        evidence = no_agm.sub("বার্ষিক সাধারণ সভা অনুষ্ঠিত হয়", evidence)
-        claim = regex.sub(
-            r"\bif\s+no\s+(?:annual\s+general\s+meeting|agm)\s+is\s+held\b",
-            "if the AGM is held",
-            claim,
-            flags=regex.IGNORECASE,
-        )
-
-    no_officer = regex.compile(r"যদি\s+কোম্পানীতে\s+এইরূপ\s+পদধারী\s+কেহ\s+না\s+থাকেন")
-    if no_officer.search(evidence):
-        officer_fallback = regex.compile(
-            r"\bif\s+(?:the\s+company\s+has\s+)?"
-            r"(?:none\s+of\s+(?:those|the)|no)\s+officers?\b"
-            r"(?=\s*(?:[,;.]|$))",
-            regex.IGNORECASE,
-        )
-        officer_condition = regex.search(r"\bif\b[^.;,]{0,100}\bofficers?\b[^.;,]{0,100}", claim)
-        if (
-            "director" in claim
-            and officer_condition
-            and (
-                _CLAUSE_NEGATION.search(officer_condition.group())
-                or regex.search(r"\b(?:unwilling|unavailable)\b", officer_condition.group())
-            )
-            and not officer_fallback.search(claim)
-        ):
-            # Absence of office holders is not the same as their unwillingness,
-            # availability, or another qualified condition. Do not let matching
-            # negative words certify a condition this bounded grammar cannot compare.
-            return None
-        # An affirmative officer condition is not the statute's director fallback.
-        if not ("director" in claim and officer_condition and not officer_fallback.search(claim)):
-            evidence = no_officer.sub("যদি কোম্পানীতে এইরূপ পদধারী কেহ থাকেন", evidence)
-            claim = officer_fallback.sub("if the company has officers", claim)
-    return claim, evidence
+    result = evaluate_section_190(claim, evidence, _CLAUSE_NEGATION)
+    return None if result.outcome == "unverifiable" else (result.claim, result.evidence)
 
 
 def _is_bare_sufficient_condition(text: str) -> bool:

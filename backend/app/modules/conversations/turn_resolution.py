@@ -19,6 +19,10 @@ from typing import Any, Literal, cast
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from app.modules.conversations.schemas.message import SourceScope
+from app.platform.domain.request_scope import ProjectCalendarPolicy
+from app.platform.domain.request_scope import RequestedPeriod as RequestedPeriod
+from app.platform.domain.request_scope import RequestScope as RequestScope
+from app.platform.domain.request_scope import StipulatedFact as StipulatedFact
 
 TURN_RESOLUTION_VERSION = "v1"
 RESOLUTION_HISTORY_MESSAGE_CAP = 8
@@ -343,7 +347,7 @@ def _affixed_quantity_tokens(text: str) -> tuple[str, ...]:
     return tuple(tokens)
 
 
-def _year_ranges(text: str) -> set[tuple[int, int]]:
+def extract_year_ranges(text: str) -> set[tuple[int, int]]:
     """Canonicalize abbreviated fiscal/assessment ranges across digit scripts."""
     periods: set[tuple[int, int]] = set()
     for match in _YEAR_RANGE_RE.finditer(_fold_for_extraction(text)):
@@ -374,7 +378,7 @@ def _explicit_period_scope(text: str) -> set[tuple[str, int, int]]:
         else:
             kind = "bare"
         value = match.group("year") or match.group("bn_year")
-        ranges = _year_ranges(value)
+        ranges = extract_year_ranges(value)
         start, end = next(iter(ranges)) if ranges else (int(value), int(value))
         scopes.add((kind, start, end))
     return scopes
@@ -382,8 +386,8 @@ def _explicit_period_scope(text: str) -> set[tuple[str, int, int]]:
 
 def _token_justified_by_texts(token: str, texts: Sequence[str]) -> bool:
     if _YEAR_RANGE_RE.fullmatch(token):
-        attested = set().union(*(_year_ranges(t) for t in texts))
-        return bool(_year_ranges(token) & attested)
+        attested = set().union(*(extract_year_ranges(t) for t in texts))
+        return bool(extract_year_ranges(token) & attested)
     return any(_literal_value_present(token, text) for text in texts if text)
 
 
@@ -399,7 +403,7 @@ def _validate_effective_question_parameters(
         *(binding.active_value for binding in resolution.active_bindings),
     ]
     period_texts = [*allowed_texts, payload.domain_instructions]
-    explicit_periods = _year_ranges(payload.current_message)
+    explicit_periods = extract_year_ranges(payload.current_message)
     explicit_scope = _explicit_period_scope(payload.current_message)
     rewritten_scope = _explicit_period_scope(resolution.effective_question)
     if explicit_scope and rewritten_scope != explicit_scope:
@@ -412,7 +416,7 @@ def _validate_effective_question_parameters(
     rewritten_named_years = _named_years(resolution.effective_question)
     if explicit_named_years:
         if rewritten_named_years != explicit_named_years or (
-            not explicit_periods and _year_ranges(resolution.effective_question)
+            not explicit_periods and extract_year_ranges(resolution.effective_question)
         ):
             raise TurnResolutionError(
                 "Effective question drops or substitutes the user's period.",
@@ -430,7 +434,7 @@ def _validate_effective_question_parameters(
             )
     # Current user scope outranks a configured default or an older binding.
     # Both omission and substitution would change the operative question.
-    if explicit_periods and _year_ranges(resolution.effective_question) != explicit_periods:
+    if explicit_periods and extract_year_ranges(resolution.effective_question) != explicit_periods:
         raise TurnResolutionError(
             "Effective question drops or substitutes the user's period.",
             code="mutated_effective_question",
@@ -440,7 +444,7 @@ def _validate_effective_question_parameters(
         for binding in resolution.active_bindings:
             if binding.kind is not BindingKind.PERIOD_DATE:
                 continue
-            if _year_ranges(binding.active_value) & explicit_periods:
+            if extract_year_ranges(binding.active_value) & explicit_periods:
                 continue
             if _named_years(binding.active_value) & explicit_named_years:
                 continue
@@ -777,55 +781,13 @@ class EffectiveSnapshot(BaseModel):
     clarify_reason: str | None = None
 
 
-class RequestedPeriod(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-    kind: Literal["assessment", "fiscal", "calendar", "bare"]
-    start_year: int
-    end_year: int
-    source_text: str
-
-
-class StipulatedFact(BaseModel):
-    """User scenario stipulation, never evidence of legal membership."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-    field: Literal["category", "condition"]
-    value: str
-    origin: Literal["user"] = "user"
-    source_text: str
-
-
-class RequestScope(BaseModel):
-    """One every-turn scope contract. Periods are not invented snapshot dates."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-    version: str = "request.scope.v1"
-    task_kind: Literal[
-        "lookup", "explanation", "eligibility", "calculation", "comparison", "overview"
-    ] = "lookup"
-    subject: str = ""
-    requested_periods: tuple[RequestedPeriod, ...] = ()
-    exact_as_of: datetime | None = None
-    current_reference_time: datetime | None = None
-    temporal_basis: Literal["applicable_rule", "known_at"] = "applicable_rule"
-    known_at_inclusive: bool = True
-    jurisdiction: str | None = None
-    category: str | None = None
-    named_instruments: tuple[str, ...] = ()
-    source_restriction: str = "project_default"
-    document_id: uuid.UUID | None = None
-    explicit_inputs: tuple[str, ...] = ()
-    stipulated_facts: tuple[StipulatedFact, ...] = ()
-    eligibility_requested: bool = False
-    project_defaults: str = ""
-
-
 def normalize_request_scope(
     question: str,
     *,
     reference_time: datetime | None = None,
     request_filters: RequestFilters | None = None,
     project_defaults: str = "",
+    calendar_policy: ProjectCalendarPolicy | None = None,
 ) -> RequestScope:
     filters = request_filters or RequestFilters()
     folded = _fold_for_extraction(question)
@@ -838,6 +800,30 @@ def normalize_request_scope(
         )
         for kind, start, end in sorted(_explicit_period_scope(question))
     )
+    explicit_periods = bool(periods)
+    current = bool(re.search(r"\b(?:current|now|today|this year)\b|বর্তমান|এখন|চলতি", folded))
+    period_kind = next(
+        (
+            kind
+            for kind, pattern in (
+                ("assessment", r"assessment|করবর্ষ"),
+                ("fiscal", r"fiscal|financial year|অর্থবছর"),
+                ("calendar", r"calendar"),
+            )
+            if re.search(pattern, folded)
+        ),
+        None,
+    )
+    if (
+        not periods
+        and current
+        and calendar_policy is not None
+        and (
+            period_kind == calendar_policy.period_kind
+            or (period_kind is None and calendar_policy.default_for_current)
+        )
+    ):
+        periods = (calendar_policy.current_period(reference_time or utc_reference_datetime()),)
     eligibility_requested = bool(
         re.search(
             r"\b(?:whether\s+(?:i|we|my\s+\w+)|(?:do|does|am|are|is)\s+"
@@ -889,7 +875,7 @@ def normalize_request_scope(
             )
         )
     )
-    known_date = _ISO_DATE_RE.search(question) if known else None
+    known_date = _ISO_DATE_RE.search(folded) if known else None
     jurisdiction = (filters.metadata_filter or {}).get("jurisdiction")
     category = (filters.metadata_filter or {}).get("category")
     named_category = re.search(
@@ -920,6 +906,12 @@ def normalize_request_scope(
         ),
         subject=question,
         requested_periods=periods,
+        period_origin="explicit"
+        if explicit_periods
+        else "project_calendar"
+        if periods
+        else "unspecified",
+        period_ambiguous=bool(current and period_kind and not periods),
         exact_as_of=filters.as_of
         or (datetime.fromisoformat(known_date.group()).replace(tzinfo=UTC) if known_date else None),
         current_reference_time=reference_time,

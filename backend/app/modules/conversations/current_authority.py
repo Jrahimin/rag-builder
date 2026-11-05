@@ -31,6 +31,9 @@ _LIMITED_OUTCOMES = {
     "candidate_cap_exceeded",
     "cycle",
     "missing_provision_scope",
+    "depth_limit",
+    "discovery_unavailable",
+    "relationship_limit",
     "unscoped",
 }
 _RESOLVED_OUTCOMES = _ENFORCEABLE_OUTCOMES | {"duplicate"}
@@ -203,7 +206,15 @@ def cited_authority_summary(
             str(record.get("outcome") or "") in _RESOLVED_OUTCOMES
             and (
                 not record.get("target_provisions")
-                or not _verified_whole_provision_replacement(record)
+                or not (
+                    _verified_whole_provision_replacement(record)
+                    or any(
+                        _compound_unit(record, chunk, chunks)
+                        for chunk in chunks
+                        if str(chunk.metadata.get("source_revision_id"))
+                        == str(record.get("base_revision_id"))
+                    )
+                )
             )
             for record in cited_records
         )
@@ -225,6 +236,57 @@ def cited_authority_summary(
     }
 
 
+def _compound_unit(
+    record: dict[str, object], base: ContextChunk, chunks: list[ContextChunk]
+) -> list[str]:
+    """A reviewed effect is usable only with every exact modifying span present.
+
+    This binds separate original passages. It never constructs consolidated law.
+    The subsequent scope-aware verifier must assess the complete unit.
+    """
+    if (
+        record.get("provision_effect") not in {"adds", "amends", "savings"}
+        or record.get("replacement_scope_verified") is not True
+        or not record.get("target_provisions")
+        or not record.get("scope_hash")
+        or record.get("applicable") is not True
+    ):
+        return []
+    spans = record.get("supporting_spans")
+    if not isinstance(spans, list) or not spans:
+        return []
+    unit = [str(base.chunk_id)]
+    for span in spans:
+        if not isinstance(span, dict):
+            return []
+        modifier = next(
+            (
+                chunk
+                for chunk in chunks
+                if str(chunk.chunk_id) == str(span.get("chunk_id"))
+                and str(chunk.metadata.get("source_revision_id"))
+                == str(record.get("modifier_revision_id"))
+            ),
+            None,
+        )
+        start, end = span.get("char_start"), span.get("char_end")
+        if (
+            modifier is None
+            or type(start) is not int
+            or type(end) is not int
+            or not 0 <= start < end <= len(modifier.content)
+            or modifier.content[start:end] != span.get("quote")
+        ):
+            return []
+        for key in ("index_build_id", "source_metadata_generation"):
+            if base.metadata.get(key) is None or base.metadata.get(key) != modifier.metadata.get(
+                key
+            ):
+                return []
+        unit.append(str(modifier.chunk_id))
+    return sorted(set(unit))
+
+
 def annotate_authority_limitations(
     chunks: list[ContextChunk],
     records: list[dict[str, object]],
@@ -239,6 +301,8 @@ def annotate_authority_limitations(
     """
     present = {str(c.metadata.get("source_revision_id") or "") for c in chunks}
     output: list[ContextChunk] = []
+    compound_units: dict[str, set[str]] = {}
+    compound_records: dict[str, list[dict[str, object]]] = {}
     for chunk in chunks:
         revision = str(chunk.metadata.get("source_revision_id") or "")
         limitations: list[dict[str, object]] = []
@@ -275,6 +339,11 @@ def annotate_authority_limitations(
                 reason = "missing_provision_scope"
             elif str(record.get("modifier_revision_id") or "") not in present:
                 reason = "modifier_absent_from_context"
+            elif unit := _compound_unit(record, chunk, chunks):
+                for identity in unit:
+                    compound_units.setdefault(identity, set()).update(unit)
+                    compound_records.setdefault(identity, []).append(record)
+                continue
             elif not _verified_whole_provision_replacement(record):
                 reason = "amendment_effect_unverified"
             else:
@@ -294,7 +363,19 @@ def annotate_authority_limitations(
             metadata.pop("authority_status", None)
             metadata.pop("authority_limitations", None)
         output.append(replace(chunk, metadata=metadata))
-    return output
+    return [
+        replace(
+            chunk,
+            metadata={
+                **chunk.metadata,
+                "proof_unit_chunk_ids": sorted(compound_units[str(chunk.chunk_id)]),
+                "authority_compound_proof": compound_records[str(chunk.chunk_id)],
+            },
+        )
+        if str(chunk.chunk_id) in compound_units
+        else chunk
+        for chunk in output
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -397,6 +478,10 @@ def record_applies_on(record: dict[str, object], *, reference_date: date | None 
 
     Missing bounds stay unbounded. Unparseable dates do not hide a recalled modifier.
     """
+    if record.get("applicability_version") == "source.applicability.v2" and record.get(
+        "scope_hash"
+    ):
+        return record.get("applicable") is not False
     reference = reference_date or date.today()
     start = parse_record_date(record.get("modifier_effective_from"))
     end = parse_record_date(record.get("modifier_effective_to"))

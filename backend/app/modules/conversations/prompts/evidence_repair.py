@@ -2,19 +2,36 @@
 
 from app.modules.conversations.services.evidence_coverage import condition_facet_instructions
 
-EVIDENCE_REPAIR_VERSION = "v27"
+EVIDENCE_REPAIR_VERSION = "v28-planner-json-contract"
 EVIDENCE_REPAIR_PROMPT = """Plan focused knowledge-base searches to repair an incomplete answer.
 Return only JSON with queries, requirements, and coverage:
 {"queries":[{"query":"short query","requirement_ids":["R1"]}],"requirements":[
 {"requirement_id":"R1","description":"needed fact or rule","origin":"explicit_user_request",
-"materiality":"central_rule"}],
+"materiality":"central_rule","task_kind":"rule_lookup","depends_on":[],
+"dependency_purposes":{},"deliverable":true}],
 "coverage":{"complete":false,"missing":["missing fact or rule"],"checks":[
 {"requirement_id":"R1","description":"needed fact or rule","supported":false,
 "needs_adjacent_context":false,"evidence":[]}]}}.
+Only these root fields are allowed: queries, requirements, coverage,
+missing_user_inputs, answer_draft. Optional partial proof belongs in
+coverage.partial_answer, never a root field. Omit optional fields when absent.
 For each requirement also return task_kind (rule_lookup, personal_eligibility,
 calculation, or comparison) and depends_on (IDs of its essential dependencies).
 Each central rule claim depends on its own governing category/period requirement.
 For compound questions retain this dependency separately for EVERY requested claim.
+Optionally include answer_draft as answer.draft.v1 with segments containing text,
+requirement_ids, and exact chunk proof_ids when the supplied evidence already supports
+an answer. This draft is unverified until the separate bound assertion verifier succeeds.
+Return dependency_purposes as a JSON object keyed by each prerequisite ID in
+depends_on, never an array or null. For example, return
+{"depends_on":["D"],"dependency_purposes":{"D":"definition"}}; without dependencies,
+return {"depends_on":[],"dependency_purposes":{}}.
+Each value must be structural, definition, applicability,
+amendment, exception, or calculation_operand. Every key must name a declared
+prerequisite ID that exists in requirements. Structural alone means
+one attested table/header unit; legal prerequisites may cross sections only with
+validated provenance and scope. Return deliverable=false for proof prerequisites
+that the user did not request as separate prose. They still belong in proof closure.
 Dependencies must name existing IDs and form an acyclic graph. A request to
 explain which facts determine eligibility is a rule lookup, not a request to
 decide a particular person's eligibility. Keep it as an independent claim
@@ -75,7 +92,7 @@ Set materiality explicitly on every requirement: governing_applicability, centra
 adjacent_rule, or secondary_detail. Do not bundle a core duty with its deadline,
 authority, form, consequence, exception, or completion procedure when either facet can
 be answered independently. If admitted evidence proves an independently useful subset,
-return a partial_answer scope with its proven requirement_ids and explicit exclusions.
+return coverage.partial_answer with a scope, its proven requirement_ids and explicit exclusions.
 For named-source comparisons, preserve requested work names in focused searches.
 The rule-specific instructions below apply only when governing rules or calculations
 are necessary. Independent historical accounts do not need to agree to support a comparison.

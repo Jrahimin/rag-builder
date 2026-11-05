@@ -6,6 +6,7 @@ import uuid
 from typing import Any
 
 from sqlalchemy import and_, func, or_, select, tuple_
+from sqlalchemy.orm import aliased
 
 from app.models.chunk_keyword_index import ChunkKeywordIndex
 from app.models.document import Document
@@ -31,6 +32,51 @@ class RetrievalChunkRepository(ProjectScopedRepository[DocumentChunk]):
     """Read document chunks within a Project for retrieval workflows."""
 
     model = DocumentChunk
+
+    async def preceding_indexed_text(
+        self, chunk_ids: list[uuid.UUID], *, index_build_id: uuid.UUID
+    ) -> dict[uuid.UUID, str]:
+        """Read the immediate preceding page from the same indexed extraction."""
+        if not chunk_ids:
+            return {}
+        anchor, previous = aliased(DocumentChunk), aliased(DocumentChunk)
+        anchor_start = func.coalesce(anchor.page_start, anchor.page_number)
+        previous_start = func.coalesce(previous.page_start, previous.page_number)
+        previous_end = func.coalesce(previous.page_end, previous.page_number)
+
+        def indexed(chunk: Any) -> Any:
+            return (
+                select(ChunkKeywordIndex.id)
+                .where(
+                    ChunkKeywordIndex.chunk_id == chunk.id,
+                    ChunkKeywordIndex.project_id == self._project_id,
+                    ChunkKeywordIndex.index_build_id == index_build_id,
+                )
+                .exists()
+            )
+
+        stmt = (
+            select(anchor.id, func.right(previous.content, 2000))
+            .join(
+                previous,
+                and_(
+                    previous.project_id == anchor.project_id,
+                    previous.document_id == anchor.document_id,
+                    previous.document_version == anchor.document_version,
+                    previous.generation_id.is_not_distinct_from(anchor.generation_id),
+                    previous.chunk_index == anchor.chunk_index - 1,
+                    previous_start < anchor_start,
+                    previous_end.between(anchor_start - 1, anchor_start),
+                ),
+            )
+            .where(
+                anchor.project_id == self._project_id,
+                anchor.id.in_(chunk_ids[:24]),
+                indexed(anchor),
+                indexed(previous),
+            )
+        )
+        return dict((await self._session.execute(stmt)).tuples().all())
 
     async def adjacent_ids(
         self, anchor_ids: list[uuid.UUID], *, index_build_id: uuid.UUID

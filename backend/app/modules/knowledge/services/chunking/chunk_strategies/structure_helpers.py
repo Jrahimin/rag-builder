@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-import hashlib
 from dataclasses import replace
 
-from app.modules.knowledge.scope_facts import extract_scope_facts
 from app.modules.knowledge.services.chunking.models import ChunkingContext, DraftChunk
+from app.modules.knowledge.services.chunking.structural_provenance import (
+    span_belongs_to_table_group,
+)
 from app.modules.knowledge.services.chunking.token_counting_service import TokenCountingService
 from app.platform.providers.contracts.document_parser import ParsedElement, ParsedElementType
 
@@ -97,6 +98,11 @@ def pack_elements(
                 table_context
                 and token_counter.count(table_context) <= context.config.max_tokens // 2
             ):
+                draft.metadata["source_spans"] = [
+                    *draft.metadata.get("source_spans", []),
+                    *element.metadata.get("heading_source_spans", []),
+                    *(span for item in preceding for span in item.metadata.get("source_spans", [])),
+                ]
                 draft.metadata["table_context"] = table_context
                 draft.metadata["table_context_status"] = "preserved"
                 draft.content = f"{table_context}\n\n{draft.content}"
@@ -235,6 +241,11 @@ def _split_table_rows(
             "table_row_end": row_offset + len(group) - 1,
             "table_row_group": True,
         }
+        metadata["source_spans"] = [
+            span
+            for span in draft.metadata.get("source_spans", [])
+            if span_belongs_to_table_group(span, metadata)
+        ]
         if token_counter.count(content) > context.config.max_tokens:
             # This row cannot fit with its scope. Preserve the failure marker
             # through fallback splits; those fragments cannot prove applicability.
@@ -289,6 +300,11 @@ def chunk_by_sections(
                 metadata={
                     **element.metadata,
                     "heading_path": [heading.text.strip() for _, heading in heading_path],
+                    "heading_source_spans": [
+                        span
+                        for _, heading in heading_path
+                        for span in heading.metadata.get("source_spans", [])
+                    ],
                     "heading_context_char_start": heading_path[0][1].char_start
                     if heading_path
                     else None,
@@ -327,6 +343,11 @@ def chunk_by_sections(
                         **first.metadata,
                         "strategy_used": strategy_name,
                         "section_chunk": True,
+                        "source_spans": [
+                            span
+                            for element in section
+                            for span in element.metadata.get("source_spans", [])
+                        ],
                     },
                 )
             )
@@ -358,6 +379,10 @@ def chunk_by_sections(
             draft.metadata["heading_context_status"] = "context_exceeds_budget"
             continue
         draft.content = content
+        draft.metadata["source_spans"] = [
+            *draft.metadata.get("source_spans", []),
+            *draft.metadata.get("heading_source_spans", []),
+        ]
         draft.metadata["heading_context_status"] = "preserved"
         for key, attribute in (
             ("heading_context_char_start", "char_start"),
@@ -367,47 +392,6 @@ def chunk_by_sections(
             current = getattr(draft, attribute)
             if isinstance(origin, int):
                 setattr(draft, attribute, min(origin, current) if current is not None else origin)
-    for draft in chunks:
-        spans = []
-        for element in elements:
-            if element.text.strip() and element.text.strip() in draft.content:
-                start, end = element.char_start, element.char_end
-                exact = (
-                    start is not None
-                    and end is not None
-                    and context.parsed.text[start:end].strip() == element.text.strip()
-                )
-                spans.append(
-                    {
-                        "role": element.element_type.value,
-                        "text": element.text.strip(),
-                        "char_start": start if exact else None,
-                        "char_end": end if exact else None,
-                        "provenance": "exact_source_span" if exact else "chunk",
-                    }
-                )
-        draft.metadata["structure_version"] = "structure.v1"
-        draft.metadata["structural_unit_id"] = hashlib.sha256(draft.content.encode()).hexdigest()
-        draft.metadata["source_spans"] = spans
-        scope_facts = extract_scope_facts(spans, unit_id=draft.metadata["structural_unit_id"])
-        draft.metadata["scope_fact_version"] = "scope.v2"
-        draft.metadata["scope_facts"] = scope_facts
-        draft.metadata["provision_references"] = list(
-            dict.fromkeys(fact["value"] for fact in scope_facts if fact["kind"] == "provision")
-        )
-        periods = list(
-            dict.fromkeys(fact["value"] for fact in scope_facts if fact["kind"] == "period")
-        )
-        if len(periods) == 1:
-            draft.metadata["applicable_period_candidate"] = periods[0]
-        # Reassembled table prefixes do not have a contiguous document offset.
-        if (
-            draft.char_start is None
-            or draft.char_end is None
-            or context.parsed.text[draft.char_start : draft.char_end] != draft.content
-        ):
-            draft.char_start = draft.char_end = None
-            draft.metadata["provenance_precision"] = "chunk_with_source_spans"
     return chunks
 
 
@@ -427,5 +411,12 @@ def _merge_drafts(left: DraftChunk, right: DraftChunk) -> DraftChunk:
         page_end=right.page_end or left.page_end,
         section_title=left.section_title or right.section_title,
         heading_level=left.heading_level or right.heading_level,
-        metadata={**left.metadata, **right.metadata},
+        metadata={
+            **left.metadata,
+            **right.metadata,
+            "source_spans": [
+                *left.metadata.get("source_spans", []),
+                *right.metadata.get("source_spans", []),
+            ],
+        },
     )

@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import uuid
+from dataclasses import replace
 from datetime import datetime
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import SourcePolicyDeploymentCap
-from app.modules.knowledge.source_metadata_read import KnowledgeSourceMetadataReader
+from app.modules.knowledge.source_metadata_read import (
+    KnowledgeIncomingModifier,
+    KnowledgeSourceMetadataReader,
+)
 from app.modules.retrieval.source_policy import (
     ModifierExpansionOutcome,
     ModifierExpansionRecord,
@@ -72,14 +76,42 @@ class KnowledgeRetrievalSourceMetadataAdapter:
         index_build_id: uuid.UUID,
         request_scope: dict[str, Any] | None = None,
     ) -> list[ModifierExpansionRecord]:
-        records = await self._reader.incoming_modifiers(
-            project_id=project_id,
-            base_revision_ids=base_revision_ids,
-            generation=generation,
-            as_of=as_of,
-            index_build_id=index_build_id,
-            request_scope=request_scope,
-        )
+        # Probe one additional frontier to retain the identities beyond the two-hop ceiling.
+        records: list[KnowledgeIncomingModifier] = []
+        frontier = base_revision_ids
+        seen = set(base_revision_ids)
+        depths = {}
+        for depth in range(1, 4):
+            if not frontier:
+                break
+            discovered = await self._reader.incoming_modifiers(
+                project_id=project_id,
+                base_revision_ids=frontier,
+                generation=generation,
+                as_of=as_of,
+                index_build_id=index_build_id,
+                request_scope=request_scope,
+            )
+            next_frontier = []
+            for item in discovered:
+                if item.relationship_id in depths:
+                    continue
+                depths[item.relationship_id] = depth
+                outcome = item.outcome
+                if outcome == "expanded":
+                    if item.modifier_revision_id in seen:
+                        outcome = "already_in_recall"
+                    elif depth > 2:
+                        outcome = "depth_limit"
+                    elif len(seen - set(base_revision_ids)) >= 8:
+                        outcome = "source_cap_exceeded"
+                    elif len(records) >= 20:
+                        outcome = "relationship_limit"
+                    else:
+                        seen.add(item.modifier_revision_id)
+                        next_frontier.append(item.modifier_revision_id)
+                records.append(replace(item, outcome=outcome))
+            frontier = tuple(next_frontier)
         return [
             ModifierExpansionRecord(
                 relationship_id=item.relationship_id,
@@ -98,6 +130,9 @@ class KnowledgeRetrievalSourceMetadataAdapter:
                 provision_effect=item.provision_effect,
                 replacement_scope_verified=item.replacement_scope_verified,
                 supporting_spans=item.supporting_spans,
+                scope_hash=item.scope_hash,
+                applicable=item.applicable,
+                depth=depths[item.relationship_id],
             )
             for item in records
         ]

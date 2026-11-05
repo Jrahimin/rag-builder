@@ -1,0 +1,2232 @@
+{
+  "version": "saved.timeout.boundaries.v1",
+  "limitations": [
+    "Saved response diagnostics contain initial assessment and coverage projections, not original provider response bodies; the comparison coverage call was cancelled.",
+    "The cancelled verifier and comparison coverage outputs are absent; all replay verdicts are controlled fixtures.",
+    "Replay delay per review requirement is an explicit scheduling counterfactual, not measured provider throughput.",
+    "Binding quotes are exact saved text; replay chunks assembled from those quotes are reconstructed and do not claim the original full retrieval context.",
+    "The saved comparison has no validated earlier-year threshold or current-authority completion; it cannot certify a difference."
+  ],
+  "input_sha256": {
+    "artifacts\\codex-runs\\rag-reliability-20261010\\extension-11\\fresh-qa\\case-1-api-response.json": "f58fd1c58aaeb525ebe95c46253e1f3c323708be92da714e26d5141713c35eae",
+    "artifacts\\codex-runs\\rag-reliability-20261010\\extension-11\\fresh-qa\\case-1-ui-export.json": "5b55eeab69397d43791441fd391fa79264b78c066d297c8e3661a1a979a02eea",
+    "artifacts\\codex-runs\\rag-reliability-20261010\\extension-11\\fresh-qa\\case-3-api-response.json": "97056b61bb6b3941f150bb3216fe14dc859f37c5aa58347654a2de76c6f126b0",
+    "artifacts\\codex-runs\\rag-reliability-20261010\\extension-11\\fresh-qa\\case-3-ui-export.json": "86c22a75bf8357d345dbf3b7eb24e5f7360619d05e42537fd94096d30808cfbc"
+  },
+  "cases": [
+    {
+      "case": 1,
+      "message_id": "98b858e8-eb87-4d46-a635-a07ed0f87e22",
+      "question": "Under Companies Act 1994 section 81(1), list the first-AGM timing and the maximum gap between later AGMs. Include the first-AGM exception and say whether this corpus proves the rule is currently in force.",
+      "scope": {
+        "subject": "Under Companies Act 1994 section 81(1), list the first-AGM timing and the maximum gap between later AGMs. Include the first-AGM exception and say whether this corpus proves the rule is currently in force.",
+        "version": "request.scope.v1",
+        "category": null,
+        "task_kind": "lookup",
+        "document_id": null,
+        "exact_as_of": null,
+        "jurisdiction": null,
+        "period_origin": "unspecified",
+        "index_build_id": "8eb1595a-8e38-41e9-96c5-0ba419e79bee",
+        "temporal_basis": "applicable_rule",
+        "explicit_inputs": [],
+        "period_ambiguous": false,
+        "project_defaults": "This project covers Bangladesh income tax and business-law sources. For company and business compliance questions, distinguish obligations arising on incorporation from requirements conditional on beginning operations, turnover, employees, location, or registrations already held. Organize a practical answer by authority, required action or record, supported deadline, and supported consequence. State a legal provision or reviewed official guidance for each firm claim. Give supported parts even if other requested areas lack evidence; identify the specific gaps without treating an unverified obligation as settled. Draft or incomplete sources cannot establish a governing rule. Do not infer no income or zero tax solely from no trading.\n\nFor an omitted period, label the assessment year by its starting and ending calendar years: the starting year is the reference calendar year in July-December, or the previous calendar year in January-June; state the resulting assessment-year label; explicit user periods take precedence. Unqualified yearly salary means gross employment income. When residency or employment category is unspecified, a conditional resident ordinary private-sector employee estimate is permitted if its governing rules are evidenced. Treat an amount described as rebateable as an assumed eligible investment. Calculate liability before withholding or other payment credits unless the user supplies them. Explain material category-dependent alternatives. Use enacted law, its amendments and applicable official NBR guidance. Budget proposals and test/sample documents cannot establish governing rules. Do not use worked examples as substitutes for the governing rules. Show the salary-to-taxable transformation, complete applicable bands, rebate limits and minimum-tax comparison with citations; do not invent missing rates or treat missing exemptions as zero. If filing history is unspecified, explain the ordinary and new-taxpayer minimum-tax alternatives evidenced in the documents, including when both leave the final liability unchanged. Do not infer the salary income-year dates from a rule commencement date or the assumed assessment-year label.\nFor an unspecified earning period, the estimate is conditional on the salary belonging to the assumed assessment year; do not invent its earning-date range. When no wealth, assets or other income are supplied, provide the ordinary salary-only income-tax estimate before any wealth or asset-based surcharge, clearly state that limitation, and do not assume or calculate a surcharge from absent asset facts.\n\nPractical calculation scope:\nWhen the user asks to calculate tax but has not supplied every personal detail, provide a useful provisional estimate under clearly stated reasonable scenario assumptions. Do not turn optional refinements into prerequisites for answering. Explicit user facts always override assumptions. Preserve every supplied income and investment component; do not silently omit one.\n\nBy default, an estimate may show income-tax liability before source-tax/payment credits and before asset/wealth-dependent surcharge when those personal details are absent, including scenarios with multiple income sources. Label that scope prominently. Excluding an unprovided adjustment from a subtotal is not an assertion that the adjustment is zero or legally inapplicable. Explain briefly which information would refine the estimate. A request for a fully settled/final filing balance still requires material missing facts.\n\nIf TDS depends on certificate type, investment amount, documentation, gross/net presentation or another personal condition, use a clearly identified ordinary scenario supported by the sources, or show the relevant evidenced alternatives. Do not reject the entire calculation just because the user's TDS rate or amount is unknown. If no applicable TDS rate can be established, calculate the supported liability before TDS and explain that the actual deduction shown on the certificate or bank statement will refine the balance. Do not invent a statutory TDS rate or claim an assumed deduction was actually paid. Keep source-tax credits separate from any rule making source tax final or minimum tax; establish that legal treatment before combining income components.\n\nFor an unqualified interest amount, a clearly labelled gross-interest scenario is permitted; explain that a net receipt would require the actual deducted amount to refine it. Treat an explicitly net amount as net and do not silently reinterpret it as gross. Use the applicable source-supported rule for each scenario, distinguishing uncertain personal facts from uncertain law. If treatment differs under evidenced categories, give labelled alternatives rather than demanding category confirmation first. If a specific rule is genuinely missing, explain that specific limitation and provide any independently supported part without presenting an unsupported overall total.\n\nLead with one consistent estimate and its assumptions, then show the breakdown. Compute the breakdown before writing the headline and make the headline, subtotals and conclusion agree. End with a short optional refinement note, such as: \"Your deduction certificate and whether the interest is gross or net would let me refine the balance.\" Avoid a long questionnaire before giving useful work.",
+        "stipulated_facts": [],
+        "named_instruments": [
+          "Under Companies Act 1994"
+        ],
+        "requested_periods": [],
+        "known_at_inclusive": true,
+        "source_restriction": "project_default",
+        "eligibility_requested": false,
+        "current_reference_time": "2026-11-03T18:50:37.373147Z"
+      },
+      "requirements": [
+        {
+          "origin": "explicit_user_request",
+          "required": true,
+          "task_kind": "rule_lookup",
+          "depends_on": [],
+          "deliverable": true,
+          "description": "Determine whether the corpus establishes that the rule remains currently in force.",
+          "materiality": "governing_applicability",
+          "requirement_id": "R4",
+          "dependency_purposes": {}
+        },
+        {
+          "origin": "explicit_user_request",
+          "required": true,
+          "task_kind": "rule_lookup",
+          "depends_on": [],
+          "deliverable": true,
+          "description": "State the deadline for a company's first annual general meeting.",
+          "materiality": "central_rule",
+          "requirement_id": "R1",
+          "dependency_purposes": {}
+        },
+        {
+          "origin": "explicit_user_request",
+          "required": true,
+          "task_kind": "rule_lookup",
+          "depends_on": [],
+          "deliverable": true,
+          "description": "State the maximum interval between successive annual general meetings.",
+          "materiality": "central_rule",
+          "requirement_id": "R2",
+          "dependency_purposes": {}
+        },
+        {
+          "origin": "explicit_user_request",
+          "required": true,
+          "task_kind": "rule_lookup",
+          "depends_on": [
+            "R1"
+          ],
+          "deliverable": true,
+          "description": "State the statutory exception affecting the first-meeting year.",
+          "materiality": "central_rule",
+          "requirement_id": "R3",
+          "dependency_purposes": {
+            "R1": "exception"
+          }
+        }
+      ],
+      "evidence_bindings": [
+        {
+          "spans": [
+            {
+              "quote": "তবে শর্ত থাকে যে, কোন কোম্পানী নিগমিত হওয়ার তারিখ হইতে অনধিক আঠারো মাস সময়ের মধ্যে উহার প্রথম বার্ষিক সাধারণ সভা অনুষ্ঠান করিতে পারিবে এবং যদি এইরূপ সাধারণ সভা উক্ত সময়ের মধ্যে অনুষ্ঠিত হয় তাহা হইলে নিগমিত হওয়ার বৎসরে বা উহার পরবর্তী বত্সরে উক্ত কোম্পানীর অন্য কোন বার্ষিক সাধারণ সভা অনুষ্ঠান করার প্রয়োজন হইবে না :\n",
+              "chunk_id": "95c75c96-028b-4412-a93c-22d3922e7c5f",
+              "end_line": null,
+              "start_line": null
+            }
+          ],
+          "requirement_id": "R1"
+        },
+        {
+          "spans": [
+            {
+              "quote": "৮১৷ (১) প্রত্যেক কোম্পানী উহার অন্যান্য সভা ছাড়াও প্রতি ইংরেজী পঞ্জিকা-বত্সরে ইহার বার্ষিক সাধারণ সভা হিসাবে একটি সাধারণ সভা অনুষ্ঠান করিবে এবং উক্ত সভা আহ্বানের নোটিশে উহাকে বার্ষিক সাধারণ সভা বলিয়া সুনির্দিষ্টভাবে উল্লেখ করিবে; এবং কোন কোম্পানীর একটি বার্ষিক সাধারণ সভা অনুষ্ঠানের তারিখ এবং উহার পরবর্তী বার্ষিক সাধারণ সভা অনুষ্ঠানের তারিখের ব্যবধান পনের মাসের অধিক হইবে না :\n",
+              "chunk_id": "95c75c96-028b-4412-a93c-22d3922e7c5f",
+              "end_line": null,
+              "start_line": null
+            }
+          ],
+          "requirement_id": "R2"
+        },
+        {
+          "spans": [
+            {
+              "quote": "তবে শর্ত থাকে যে, কোন কোম্পানী নিগমিত হওয়ার তারিখ হইতে অনধিক আঠারো মাস সময়ের মধ্যে উহার প্রথম বার্ষিক সাধারণ সভা অনুষ্ঠান করিতে পারিবে এবং যদি এইরূপ সাধারণ সভা উক্ত সময়ের মধ্যে অনুষ্ঠিত হয় তাহা হইলে নিগমিত হওয়ার বৎসরে বা উহার পরবর্তী বত্সরে উক্ত কোম্পানীর অন্য কোন বার্ষিক সাধারণ সভা অনুষ্ঠান করার প্রয়োজন হইবে না :\n",
+              "chunk_id": "95c75c96-028b-4412-a93c-22d3922e7c5f",
+              "end_line": null,
+              "start_line": null
+            }
+          ],
+          "requirement_id": "R3"
+        }
+      ],
+      "initial_missing": [
+        "The corpus does not conclusively establish current legal force or whether any later change affects section 81(1)."
+      ],
+      "coverage": {
+        "checks": [
+          {
+            "chunk_ids": [
+              "95c75c96-028b-4412-a93c-22d3922e7c5f"
+            ],
+            "supported": false,
+            "description": "Determine whether the corpus establishes that the rule remains currently in force.",
+            "fulfillment": "partial",
+            "query_index": -1,
+            "source_ranges": [
+              {
+                "chunk_id": "95c75c96-028b-4412-a93c-22d3922e7c5f",
+                "end_line": 5,
+                "start_line": 1
+              }
+            ],
+            "requirement_id": "R4",
+            "answerable_scope": "",
+            "unresolved_facets": [
+              "Effect, if any, of the applicable 2026 modifying relationship on section 81(1) and its current applicability."
+            ],
+            "needs_adjacent_context": false
+          },
+          {
+            "chunk_ids": [
+              "95c75c96-028b-4412-a93c-22d3922e7c5f"
+            ],
+            "supported": true,
+            "description": "State the deadline for a company's first annual general meeting.",
+            "fulfillment": "full",
+            "query_index": -1,
+            "source_ranges": [
+              {
+                "chunk_id": "95c75c96-028b-4412-a93c-22d3922e7c5f",
+                "end_line": 7,
+                "start_line": 5
+              }
+            ],
+            "requirement_id": "R1",
+            "answerable_scope": "A company may hold its first annual general meeting within 18 months of incorporation.",
+            "unresolved_facets": [],
+            "needs_adjacent_context": false
+          },
+          {
+            "chunk_ids": [
+              "95c75c96-028b-4412-a93c-22d3922e7c5f"
+            ],
+            "supported": true,
+            "description": "State the maximum interval between successive annual general meetings.",
+            "fulfillment": "full",
+            "query_index": -1,
+            "source_ranges": [
+              {
+                "chunk_id": "95c75c96-028b-4412-a93c-22d3922e7c5f",
+                "end_line": 5,
+                "start_line": 5
+              }
+            ],
+            "requirement_id": "R2",
+            "answerable_scope": "The interval between the dates of successive annual general meetings must not exceed 15 months.",
+            "unresolved_facets": [],
+            "needs_adjacent_context": false
+          },
+          {
+            "chunk_ids": [
+              "95c75c96-028b-4412-a93c-22d3922e7c5f",
+              "95c75c96-028b-4412-a93c-22d3922e7c5f"
+            ],
+            "supported": true,
+            "description": "State the statutory exception affecting the first-meeting year.",
+            "fulfillment": "full",
+            "query_index": -1,
+            "source_ranges": [
+              {
+                "chunk_id": "95c75c96-028b-4412-a93c-22d3922e7c5f",
+                "end_line": 7,
+                "start_line": 7
+              },
+              {
+                "chunk_id": "95c75c96-028b-4412-a93c-22d3922e7c5f",
+                "end_line": 7,
+                "start_line": 5
+              }
+            ],
+            "requirement_id": "R3",
+            "answerable_scope": "If the first annual general meeting is held within 18 months of incorporation, no other annual general meeting is required in the incorporation year or the following year.",
+            "unresolved_facets": [],
+            "needs_adjacent_context": false
+          }
+        ],
+        "missing": [
+          "R4: The corpus does not establish whether section 81(1) remains in force as of 2026-11-03. Although it contains an active official consolidated statute, the supplied authority record identifies an applicable 2026 modifying relationship with unknown provision effect and no verified replacement scope.",
+          "Effect, if any, of the applicable 2026 modifying relationship on section 81(1) and its current applicability."
+        ],
+        "complete": false,
+        "gap_kinds": [
+          "source_rule",
+          "source_rule"
+        ],
+        "missing_inputs": [],
+        "quotes_validated": false,
+        "gap_kinds_defaulted": false,
+        "full_coverage_validated": false,
+        "partial_scope_validated": true,
+        "source_ranges_validated": true
+      },
+      "partial_answer": {
+        "scope": [
+          {
+            "description": "A company may hold its first annual general meeting within 18 months of incorporation.",
+            "requirement_id": "R1"
+          },
+          {
+            "description": "The interval between the dates of successive annual general meetings must not exceed 15 months.",
+            "requirement_id": "R2"
+          },
+          {
+            "description": "If the first annual general meeting is held within 18 months of incorporation, no other annual general meeting is required in the incorporation year or the following year.",
+            "requirement_id": "R3"
+          }
+        ],
+        "pending": [
+          "R4: The corpus does not establish whether section 81(1) remains in force as of 2026-11-03. Although it contains an active official consolidated statute, the supplied authority record identifies an applicable 2026 modifying relationship with unknown provision effect and no verified replacement scope.",
+          "Effect, if any, of the applicable 2026 modifying relationship on section 81(1) and its current applicability."
+        ],
+        "gap_kinds": [
+          "source_rule",
+          "source_rule"
+        ],
+        "exclusions": [
+          "Whether section 81(1) remains currently in force as of 2026-11-03.",
+          "R4: The corpus does not establish whether section 81(1) remains in force as of 2026-11-03. Although it contains an active official consolidated statute, the supplied authority record identifies an applicable 2026 modifying relationship with unknown provision effect and no verified replacement scope.",
+          "Effect, if any, of the applicable 2026 modifying relationship on section 81(1) and its current applicability."
+        ],
+        "requirement_ids": [
+          "R1",
+          "R2",
+          "R3"
+        ],
+        "supported_proof": [
+          {
+            "source_ids": [
+              "95c75c96-028b-4412-a93c-22d3922e7c5f"
+            ],
+            "description": "A company may hold its first annual general meeting within 18 months of incorporation.",
+            "requirement_id": "R1"
+          },
+          {
+            "source_ids": [
+              "95c75c96-028b-4412-a93c-22d3922e7c5f"
+            ],
+            "description": "The interval between the dates of successive annual general meetings must not exceed 15 months.",
+            "requirement_id": "R2"
+          },
+          {
+            "source_ids": [
+              "95c75c96-028b-4412-a93c-22d3922e7c5f",
+              "95c75c96-028b-4412-a93c-22d3922e7c5f"
+            ],
+            "description": "If the first annual general meeting is held within 18 months of incorporation, no other annual general meeting is required in the incorporation year or the following year.",
+            "requirement_id": "R3"
+          }
+        ]
+      },
+      "queries": [
+        "Companies Act 1994 amendments current status"
+      ],
+      "requirement_attempts": [
+        {
+          "query": "Companies Act 1994 amendments current status",
+          "route": "search",
+          "status": "executed",
+          "admitted_ids": [
+            "08bfb24e-ecaf-4933-8b2d-c6fb5241536e",
+            "d6944541-851a-4b57-93fe-32bf5e409f0a",
+            "25513343-697a-48df-86b0-a28378dbacd9",
+            "7f14f15e-92fd-48e3-88c1-9295894b14a4",
+            "27acf0e7-4c08-424d-a2fd-34d0aa79d0ac",
+            "7d5f1117-6705-4c2f-8787-947bc8e5318f",
+            "be944503-9416-4429-a6e3-5b7aee8486ab",
+            "6d273c58-93de-4103-8052-1cd0b9f84238"
+          ],
+          "candidate_ids": [
+            "08bfb24e-ecaf-4933-8b2d-c6fb5241536e",
+            "d6944541-851a-4b57-93fe-32bf5e409f0a",
+            "25513343-697a-48df-86b0-a28378dbacd9",
+            "7f14f15e-92fd-48e3-88c1-9295894b14a4",
+            "5799849c-20ba-4d51-a572-c6564b5d647a",
+            "27acf0e7-4c08-424d-a2fd-34d0aa79d0ac",
+            "7d5f1117-6705-4c2f-8787-947bc8e5318f",
+            "be944503-9416-4429-a6e3-5b7aee8486ab",
+            "645bf626-f22f-49e2-8eb4-dc05b1f18717",
+            "6d273c58-93de-4103-8052-1cd0b9f84238",
+            "50985788-8633-4ecd-9145-a5b2f00b4721",
+            "0b041923-d4cf-4113-a2f7-354967e02f7a"
+          ],
+          "requirement_ids": [
+            "R4"
+          ]
+        }
+      ],
+      "review_inputs": [
+        {
+          "chunk_ids": [
+            "95c75c96-028b-4412-a93c-22d3922e7c5f",
+            "08bfb24e-ecaf-4933-8b2d-c6fb5241536e",
+            "d6944541-851a-4b57-93fe-32bf5e409f0a",
+            "25513343-697a-48df-86b0-a28378dbacd9",
+            "7f14f15e-92fd-48e3-88c1-9295894b14a4",
+            "27acf0e7-4c08-424d-a2fd-34d0aa79d0ac",
+            "7d5f1117-6705-4c2f-8787-947bc8e5318f",
+            "be944503-9416-4429-a6e3-5b7aee8486ab",
+            "6d273c58-93de-4103-8052-1cd0b9f84238"
+          ],
+          "requirement_ids": [
+            "R4",
+            "R1",
+            "R2",
+            "R3"
+          ],
+          "branch_candidates": [
+            {
+              "query": "Companies Act 1994 amendments current status",
+              "selected_ids": [
+                "08bfb24e-ecaf-4933-8b2d-c6fb5241536e",
+                "d6944541-851a-4b57-93fe-32bf5e409f0a",
+                "25513343-697a-48df-86b0-a28378dbacd9",
+                "7f14f15e-92fd-48e3-88c1-9295894b14a4",
+                "27acf0e7-4c08-424d-a2fd-34d0aa79d0ac",
+                "7d5f1117-6705-4c2f-8787-947bc8e5318f",
+                "be944503-9416-4429-a6e3-5b7aee8486ab",
+                "6d273c58-93de-4103-8052-1cd0b9f84238"
+              ],
+              "requirement_ids": [
+                "R4"
+              ],
+              "omitted_candidate_ids": [
+                "5799849c-20ba-4d51-a572-c6564b5d647a",
+                "645bf626-f22f-49e2-8eb4-dc05b1f18717",
+                "50985788-8633-4ecd-9145-a5b2f00b4721",
+                "0b041923-d4cf-4113-a2f7-354967e02f7a"
+              ]
+            }
+          ],
+          "evidence_unit_ids": [
+            "ad02df746e77708ad643a50848024ff53946dc1930e17d2d8aa91d83c71c0cdf",
+            "618673a35ecf965d1e01c320950b02e6dd4b5fba349d2ebb88983825378ed838",
+            "21f9437fb8ff743278d59814fc123b25217d8ff49ed72c3c16219bcf43aac51a",
+            "b151810399cf13052c8addfeb8145ad01312b739de09142a989e7819619d6680",
+            "7553c94abf90b44d22469a794f733ebd3230a8b24f0050a189b03edfccbb1d6d",
+            "5a0aea4a0ef5ef941d71c1b8b0a1eadabbcfcc1c9ec5283cce8d50bd31e1a3af",
+            "42a350b10e8bb030125ee9a3dfe8905bf28b01b1f4bf82385c9943cecaa36f9f",
+            "0daafc78e96c759b5be8b2518d505295ddd1a14ccae5c5a5f4ca6d741e5924ad",
+            "f5a231de1ec01494cbfd1618187a9effc5a5ce78e210203bcc7a8d9a2b316ca0"
+          ],
+          "partition_requirement_ids": []
+        }
+      ],
+      "partial_checkpoint_invalidated": null,
+      "deadline": {
+        "policy": "legacy",
+        "promoted": false,
+        "budget_class": "simple",
+        "request_seconds": 60.0,
+        "stage_estimates": {},
+        "completed_stages": [
+          "coverage",
+          "generation"
+        ],
+        "recovery_seconds": 30.0,
+        "p95_target_seconds": 30,
+        "absolute_cutoffs_seconds": {
+          "draft": 40.0,
+          "evidence": 30.0,
+          "persistence": 60.0,
+          "verification": 50.0
+        },
+        "output_tokens_per_second": null,
+        "promotion_requirement_id": null,
+        "generation_reserve_seconds": 10,
+        "persistence_reserve_seconds": 10,
+        "verification_reserve_seconds": 10
+      },
+      "spans": [
+        {
+          "id": "3b019bafa3e3",
+          "name": "finding_relevant_sources",
+          "outcome": "completed",
+          "purpose": "finding_relevant_sources",
+          "parent_id": null,
+          "elapsed_ms": 4488,
+          "start_offset_ms": 64
+        },
+        {
+          "id": "2c082790a6b5",
+          "name": "retrieval",
+          "outcome": "completed",
+          "purpose": "retrieval",
+          "parent_id": "3b019bafa3e3",
+          "elapsed_ms": 4484,
+          "start_offset_ms": 64,
+          "provider_call_indexes": [
+            0
+          ]
+        },
+        {
+          "id": "0aeae70a2aab",
+          "name": "database_connection_acquisition",
+          "outcome": "completed",
+          "purpose": "database_connection_acquisition",
+          "parent_id": "2c082790a6b5",
+          "elapsed_ms": 4,
+          "start_offset_ms": 64
+        },
+        {
+          "id": "d1014f45892a",
+          "name": "database_keyword_retrieval_and_scoring",
+          "outcome": "completed",
+          "purpose": "database_keyword_retrieval_and_scoring",
+          "parent_id": "2c082790a6b5",
+          "elapsed_ms": 639,
+          "start_offset_ms": 1283
+        },
+        {
+          "id": "15464c58a85f",
+          "name": "relationship_expansion",
+          "outcome": "completed",
+          "purpose": "relationship_expansion",
+          "parent_id": "2c082790a6b5",
+          "elapsed_ms": 149,
+          "start_offset_ms": 1923
+        },
+        {
+          "id": "ca79aecb9953",
+          "name": "database_keyword_retrieval_and_scoring",
+          "outcome": "completed",
+          "purpose": "database_keyword_retrieval_and_scoring",
+          "parent_id": "15464c58a85f",
+          "elapsed_ms": 81,
+          "start_offset_ms": 1988
+        },
+        {
+          "id": "f968dc4d8ded",
+          "name": "reranking",
+          "outcome": "completed",
+          "purpose": "reranking",
+          "parent_id": "2c082790a6b5",
+          "elapsed_ms": 1590,
+          "start_offset_ms": 2080,
+          "provider_call_indexes": [
+            1
+          ]
+        },
+        {
+          "id": "377c948bc139",
+          "name": "content_loading",
+          "outcome": "completed",
+          "purpose": "content_loading",
+          "parent_id": "f968dc4d8ded",
+          "elapsed_ms": 39,
+          "start_offset_ms": 2080
+        },
+        {
+          "id": "0ae472ad02f0",
+          "name": "passage_scoring",
+          "outcome": "completed",
+          "purpose": "passage_scoring",
+          "parent_id": "2c082790a6b5",
+          "elapsed_ms": 843,
+          "start_offset_ms": 3697,
+          "provider_call_indexes": [
+            2
+          ]
+        },
+        {
+          "id": "5830d68786ff",
+          "name": "checking_source_versions",
+          "outcome": "completed",
+          "purpose": "checking_source_versions",
+          "parent_id": null,
+          "elapsed_ms": 22,
+          "start_offset_ms": 4552
+        },
+        {
+          "id": "508aeb8d9847",
+          "name": "checking_source_applicability",
+          "outcome": "completed",
+          "purpose": "checking_source_applicability",
+          "parent_id": null,
+          "elapsed_ms": 22465,
+          "start_offset_ms": 4576,
+          "provider_call_indexes": [
+            4
+          ]
+        },
+        {
+          "id": "398c671f3692",
+          "name": "recovery_planning",
+          "outcome": "completed",
+          "purpose": "recovery_planning",
+          "parent_id": "508aeb8d9847",
+          "elapsed_ms": 12145,
+          "start_offset_ms": 4576,
+          "provider_call_indexes": [
+            3
+          ]
+        },
+        {
+          "id": "84964da9e2b6",
+          "name": "recovery_batch_semaphore",
+          "outcome": "completed",
+          "purpose": "recovery_batch_semaphore",
+          "parent_id": "508aeb8d9847",
+          "elapsed_ms": 0,
+          "start_offset_ms": 17294
+        },
+        {
+          "id": "ad90d739cc51",
+          "name": "process_recovery_semaphore",
+          "outcome": "completed",
+          "purpose": "process_recovery_semaphore",
+          "parent_id": "508aeb8d9847",
+          "elapsed_ms": 0,
+          "start_offset_ms": 17294
+        },
+        {
+          "id": "5118e13fc360",
+          "name": "deployment_recovery_lease",
+          "outcome": "completed",
+          "purpose": "deployment_recovery_lease",
+          "parent_id": "508aeb8d9847",
+          "elapsed_ms": 18,
+          "start_offset_ms": 17294
+        },
+        {
+          "id": "fb746f351c26",
+          "name": "database_connection_acquisition",
+          "outcome": "completed",
+          "purpose": "database_connection_acquisition",
+          "parent_id": "508aeb8d9847",
+          "elapsed_ms": 5,
+          "start_offset_ms": 17313
+        },
+        {
+          "id": "52c94d90335c",
+          "name": "retrieval",
+          "outcome": "completed",
+          "purpose": "retrieval",
+          "parent_id": "508aeb8d9847",
+          "elapsed_ms": 2295,
+          "start_offset_ms": 17318
+        },
+        {
+          "id": "c990ae21b5c5",
+          "name": "database_keyword_retrieval_and_scoring",
+          "outcome": "completed",
+          "purpose": "database_keyword_retrieval_and_scoring",
+          "parent_id": "52c94d90335c",
+          "elapsed_ms": 140,
+          "start_offset_ms": 17424
+        },
+        {
+          "id": "4b9c3231c2d9",
+          "name": "relationship_expansion",
+          "outcome": "completed",
+          "purpose": "relationship_expansion",
+          "parent_id": "52c94d90335c",
+          "elapsed_ms": 69,
+          "start_offset_ms": 17564
+        },
+        {
+          "id": "b51db55acf8e",
+          "name": "database_keyword_retrieval_and_scoring",
+          "outcome": "completed",
+          "purpose": "database_keyword_retrieval_and_scoring",
+          "parent_id": "4b9c3231c2d9",
+          "elapsed_ms": 30,
+          "start_offset_ms": 17603
+        },
+        {
+          "id": "f477f7f9411f",
+          "name": "reranking",
+          "outcome": "completed",
+          "purpose": "reranking",
+          "parent_id": "52c94d90335c",
+          "elapsed_ms": 1272,
+          "start_offset_ms": 17639,
+          "provider_call_indexes": [
+            5
+          ]
+        },
+        {
+          "id": "4a7bd22ef760",
+          "name": "content_loading",
+          "outcome": "completed",
+          "purpose": "content_loading",
+          "parent_id": "f477f7f9411f",
+          "elapsed_ms": 21,
+          "start_offset_ms": 17639
+        },
+        {
+          "id": "46458ebc1a63",
+          "name": "passage_scoring",
+          "outcome": "completed",
+          "purpose": "passage_scoring",
+          "parent_id": "52c94d90335c",
+          "elapsed_ms": 682,
+          "start_offset_ms": 18929,
+          "provider_call_indexes": [
+            6
+          ]
+        },
+        {
+          "id": "f87578e8fa57",
+          "name": "coverage_review",
+          "outcome": "completed",
+          "purpose": "coverage_review",
+          "parent_id": "508aeb8d9847",
+          "elapsed_ms": 7342,
+          "start_offset_ms": 19643,
+          "provider_call_indexes": [
+            7
+          ]
+        },
+        {
+          "id": "e6cef01b3745",
+          "name": "preparing_answer",
+          "outcome": "completed",
+          "purpose": "preparing_answer",
+          "parent_id": null,
+          "elapsed_ms": 43,
+          "start_offset_ms": 27041
+        },
+        {
+          "id": "117c2eb81b9f",
+          "name": "answer_generation",
+          "outcome": "completed",
+          "purpose": "answer_generation",
+          "parent_id": null,
+          "elapsed_ms": 3268,
+          "start_offset_ms": 27085,
+          "provider_call_indexes": [
+            8
+          ]
+        },
+        {
+          "id": "0c80d32940b9",
+          "name": "claim_verification",
+          "outcome": "completed",
+          "purpose": "claim_verification",
+          "parent_id": null,
+          "elapsed_ms": 11298,
+          "start_offset_ms": 30589
+        },
+        {
+          "id": "1e986f429696",
+          "name": "claim_verification",
+          "outcome": "completed",
+          "purpose": "claim_verification",
+          "parent_id": "0c80d32940b9",
+          "elapsed_ms": 11235,
+          "start_offset_ms": 30591,
+          "provider_call_indexes": [
+            9
+          ]
+        },
+        {
+          "id": "1541de682ea2",
+          "name": "semantic_repair",
+          "outcome": "cancelled",
+          "purpose": "semantic_repair",
+          "parent_id": null,
+          "elapsed_ms": 8083,
+          "start_offset_ms": 41927
+        },
+        {
+          "id": "39f12bd2b887",
+          "name": "claim_verification",
+          "outcome": "cancelled",
+          "purpose": "claim_verification",
+          "parent_id": "1541de682ea2",
+          "elapsed_ms": 8081,
+          "start_offset_ms": 41928,
+          "provider_call_indexes": [
+            10
+          ]
+        },
+        {
+          "id": "1c7ec54fe975",
+          "name": "database_connection_acquisition",
+          "outcome": "completed",
+          "purpose": "database_connection_acquisition",
+          "parent_id": null,
+          "elapsed_ms": 4,
+          "start_offset_ms": 50010
+        }
+      ],
+      "provider_calls": [
+        {
+          "kind": "embedding",
+          "model": "embed-v4.0",
+          "texts": 1,
+          "status": "completed",
+          "purpose": "query",
+          "span_id": "2c082790a6b5",
+          "provider": "cohere",
+          "duration_ms": 1039,
+          "input_tokens": 49,
+          "work_purpose": "retrieval",
+          "output_tokens": null,
+          "provider_internal_retries": null
+        },
+        {
+          "kind": "rerank",
+          "model": "rerank-v4.0-pro",
+          "usage": {
+            "search_units": 1
+          },
+          "status": "completed",
+          "purpose": "reranking",
+          "span_id": "f968dc4d8ded",
+          "provider": "cohere",
+          "candidates": 24,
+          "duration_ms": 1551,
+          "provider_internal_retries": null
+        },
+        {
+          "kind": "embedding",
+          "model": "embed-v4.0",
+          "texts": 12,
+          "status": "completed",
+          "purpose": "document",
+          "span_id": "0ae472ad02f0",
+          "provider": "cohere",
+          "duration_ms": 840,
+          "input_tokens": 13157,
+          "work_purpose": "passage_scoring",
+          "output_tokens": null,
+          "provider_internal_retries": null
+        },
+        {
+          "kind": "llm",
+          "model": "gpt-6-luna",
+          "status": "completed",
+          "purpose": "recovery_planning",
+          "span_id": "398c671f3692",
+          "provider": "openai",
+          "reasoning": "low",
+          "duration_ms": 12139,
+          "schema_hash": "e6f920d9e0bb62aada4669b62db9591c6e6405e4a7f5938672153bb56f326e09",
+          "schema_mode": "json_object",
+          "schema_name": "_SearchPlan",
+          "input_tokens": 8633,
+          "endpoint_hash": "772062cee0b6010158740accacfb96b3d174ca06d157a3db0d6d93b4820cee6f",
+          "output_tokens": 1521,
+          "local_validation": "consumer_schema_required",
+          "reasoning_tokens": 363,
+          "capability_source": "portable_baseline",
+          "capability_revision": "2026-08-16.v2",
+          "provider_internal_retries": null
+        },
+        {
+          "kind": "embedding",
+          "model": "embed-v4.0",
+          "texts": 1,
+          "status": "completed",
+          "purpose": "query",
+          "span_id": "508aeb8d9847",
+          "provider": "cohere",
+          "duration_ms": 555,
+          "input_tokens": 10,
+          "work_purpose": "checking_source_applicability",
+          "output_tokens": null,
+          "provider_internal_retries": null
+        },
+        {
+          "kind": "rerank",
+          "model": "rerank-v4.0-pro",
+          "usage": {
+            "search_units": 1
+          },
+          "status": "completed",
+          "purpose": "reranking",
+          "span_id": "f477f7f9411f",
+          "provider": "cohere",
+          "candidates": 24,
+          "duration_ms": 1250,
+          "provider_internal_retries": null
+        },
+        {
+          "kind": "embedding",
+          "model": "embed-v4.0",
+          "texts": 8,
+          "status": "completed",
+          "purpose": "document",
+          "span_id": "46458ebc1a63",
+          "provider": "cohere",
+          "duration_ms": 679,
+          "input_tokens": 4830,
+          "work_purpose": "passage_scoring",
+          "output_tokens": null,
+          "provider_internal_retries": null
+        },
+        {
+          "kind": "llm",
+          "model": "gpt-6-luna",
+          "status": "completed",
+          "purpose": "coverage_review",
+          "span_id": "f87578e8fa57",
+          "provider": "openai",
+          "reasoning": "low",
+          "duration_ms": 7339,
+          "schema_hash": "bb8be87407bd07fcdb93ab418efc56881ebbc5a20ec60a943f8ae6904c0f35be",
+          "schema_mode": "json_object",
+          "schema_name": "CoverageVerdict",
+          "input_tokens": 17336,
+          "endpoint_hash": "772062cee0b6010158740accacfb96b3d174ca06d157a3db0d6d93b4820cee6f",
+          "output_tokens": 739,
+          "local_validation": "consumer_schema_required",
+          "reasoning_tokens": 197,
+          "capability_source": "portable_baseline",
+          "capability_revision": "2026-08-16.v2",
+          "provider_internal_retries": null
+        },
+        {
+          "kind": "llm",
+          "model": "gpt-6-luna",
+          "status": "completed",
+          "purpose": "answer_generation",
+          "span_id": "117c2eb81b9f",
+          "provider": "openai",
+          "reasoning": "low",
+          "duration_ms": 3266,
+          "schema_hash": "752899329aeed1aad224f2a77dd2ecadc906d699d7340b0599a69a1272414284",
+          "schema_mode": "json_object",
+          "schema_name": "answer_draft_v1",
+          "input_tokens": 10568,
+          "endpoint_hash": "772062cee0b6010158740accacfb96b3d174ca06d157a3db0d6d93b4820cee6f",
+          "output_tokens": 301,
+          "local_validation": "consumer_schema_required",
+          "reasoning_tokens": 0,
+          "capability_source": "portable_baseline",
+          "capability_revision": "2026-08-16.v2",
+          "provider_internal_retries": null
+        },
+        {
+          "kind": "llm",
+          "model": "gpt-6-luna",
+          "status": "completed",
+          "purpose": "claim_verification",
+          "span_id": "1e986f429696",
+          "provider": "openai",
+          "reasoning": "low",
+          "duration_ms": 11234,
+          "schema_hash": "0c96295e22f987fb5b23392f0f8bc60742e7a62b11561af441a168118b4db8b7",
+          "schema_mode": "json_object",
+          "schema_name": "BoundEntailmentBatch",
+          "input_tokens": 5854,
+          "endpoint_hash": "772062cee0b6010158740accacfb96b3d174ca06d157a3db0d6d93b4820cee6f",
+          "output_tokens": 908,
+          "local_validation": "consumer_schema_required",
+          "reasoning_tokens": 370,
+          "capability_source": "portable_baseline",
+          "capability_revision": "2026-08-16.v2",
+          "provider_internal_retries": null
+        },
+        {
+          "kind": "llm",
+          "model": "gpt-6-luna",
+          "status": "cancelled",
+          "purpose": "claim_verification",
+          "span_id": "39f12bd2b887",
+          "provider": "openai",
+          "reasoning": "low",
+          "duration_ms": 8080,
+          "schema_hash": "0c96295e22f987fb5b23392f0f8bc60742e7a62b11561af441a168118b4db8b7",
+          "schema_mode": "json_object",
+          "schema_name": "BoundEntailmentBatch",
+          "input_tokens": null,
+          "endpoint_hash": "772062cee0b6010158740accacfb96b3d174ca06d157a3db0d6d93b4820cee6f",
+          "output_tokens": null,
+          "local_validation": "consumer_schema_required",
+          "capability_source": "portable_baseline",
+          "capability_revision": "2026-08-16.v2",
+          "provider_internal_retries": null
+        }
+      ],
+      "terminal": {
+        "version": "answer.outcome.v1",
+        "outcome": "timed_out",
+        "reason_code": "request_deadline_exceeded",
+        "failure_stage": "claim_verification",
+        "requested_scope": {
+          "category": null,
+          "exact_as_of": null,
+          "jurisdiction": null,
+          "temporal_basis": "applicable_rule",
+          "requested_periods": [],
+          "source_restriction": "project_default"
+        },
+        "coverage": "incomplete",
+        "retryable": true,
+        "next_action": "retry",
+        "supported_requirement_ids": [],
+        "unresolved_requirement_ids": [
+          "R1",
+          "R2",
+          "R3",
+          "R4"
+        ]
+      },
+      "authority_records": [
+        {
+          "depth": 1,
+          "outcome": "expanded",
+          "applicable": true,
+          "scope_hash": "5c170f5034eb081b30c1d82b0f2d6018ed03e6a249e4c91b801fdbe03119f8fa",
+          "candidate_count": 146,
+          "relationship_id": "28aa2723-dad7-4fee-b8f4-dd6b96711e0b",
+          "base_document_id": "127450d8-90d3-4b5f-a14b-882c75362256",
+          "base_revision_id": "dc7b95ad-5287-468e-96ee-f536838ae0a0",
+          "provision_effect": "unknown",
+          "supporting_spans": [],
+          "base_effective_to": null,
+          "relationship_type": "modifies",
+          "target_provisions": [],
+          "base_effective_from": "2023-06-22",
+          "modifier_document_id": "9f277455-7fec-4ae5-8789-d0f8def0880b",
+          "modifier_revision_id": "5cbc03f1-e683-4066-917b-4fb27ea15012",
+          "applicability_version": "source.applicability.v2",
+          "modifier_effective_to": null,
+          "modifier_effective_from": "2026-07-01",
+          "modifier_published_date": "2026-06-30",
+          "modifier_revision_number": 4,
+          "retained_candidate_count": 19,
+          "replacement_scope_verified": false
+        },
+        {
+          "depth": 1,
+          "outcome": "already_in_recall",
+          "applicable": true,
+          "scope_hash": "5c170f5034eb081b30c1d82b0f2d6018ed03e6a249e4c91b801fdbe03119f8fa",
+          "candidate_count": 146,
+          "relationship_id": "54268c24-f167-4418-8d35-dbb9fb4ac96c",
+          "base_document_id": "2b0ef71f-4480-4677-b3b5-8b0bad920fae",
+          "base_revision_id": "7401640e-f34d-4b52-ad12-493ae84bfc4a",
+          "provision_effect": "unknown",
+          "supporting_spans": [],
+          "base_effective_to": null,
+          "relationship_type": "modifies",
+          "target_provisions": [],
+          "base_effective_from": "2023-06-22",
+          "modifier_document_id": "9f277455-7fec-4ae5-8789-d0f8def0880b",
+          "modifier_revision_id": "5cbc03f1-e683-4066-917b-4fb27ea15012",
+          "applicability_version": "source.applicability.v2",
+          "modifier_effective_to": null,
+          "modifier_effective_from": "2026-07-01",
+          "modifier_published_date": "2026-06-30",
+          "modifier_revision_number": 4,
+          "retained_candidate_count": 19,
+          "replacement_scope_verified": false
+        },
+        {
+          "depth": 1,
+          "outcome": "stale_or_replaced_revision",
+          "applicable": false,
+          "scope_hash": "5c170f5034eb081b30c1d82b0f2d6018ed03e6a249e4c91b801fdbe03119f8fa",
+          "candidate_count": 146,
+          "relationship_id": "c5b51df7-a8ec-49c4-a006-60a850450532",
+          "base_document_id": "127450d8-90d3-4b5f-a14b-882c75362256",
+          "base_revision_id": "dc7b95ad-5287-468e-96ee-f536838ae0a0",
+          "provision_effect": "unknown",
+          "supporting_spans": [],
+          "base_effective_to": null,
+          "relationship_type": "modifies",
+          "target_provisions": [],
+          "base_effective_from": "2023-06-22",
+          "modifier_document_id": "9f277455-7fec-4ae5-8789-d0f8def0880b",
+          "modifier_revision_id": "a2ac379c-47cf-47e8-83d3-6678b7ed7115",
+          "applicability_version": "source.applicability.v2",
+          "modifier_effective_to": null,
+          "modifier_effective_from": "2026-07-01",
+          "modifier_published_date": "2026-06-30",
+          "modifier_revision_number": 3,
+          "retained_candidate_count": 19,
+          "replacement_scope_verified": false
+        },
+        {
+          "depth": 1,
+          "outcome": "stale_or_replaced_revision",
+          "applicable": false,
+          "scope_hash": "5c170f5034eb081b30c1d82b0f2d6018ed03e6a249e4c91b801fdbe03119f8fa",
+          "candidate_count": 146,
+          "relationship_id": "f3739ae0-6950-4532-8173-64c504217631",
+          "base_document_id": "2b0ef71f-4480-4677-b3b5-8b0bad920fae",
+          "base_revision_id": "7401640e-f34d-4b52-ad12-493ae84bfc4a",
+          "provision_effect": "unknown",
+          "supporting_spans": [],
+          "base_effective_to": null,
+          "relationship_type": "modifies",
+          "target_provisions": [],
+          "base_effective_from": "2023-06-22",
+          "modifier_document_id": "9f277455-7fec-4ae5-8789-d0f8def0880b",
+          "modifier_revision_id": "a2ac379c-47cf-47e8-83d3-6678b7ed7115",
+          "applicability_version": "source.applicability.v2",
+          "modifier_effective_to": null,
+          "modifier_effective_from": "2026-07-01",
+          "modifier_published_date": "2026-06-30",
+          "modifier_revision_number": 3,
+          "retained_candidate_count": 19,
+          "replacement_scope_verified": false
+        },
+        {
+          "depth": 1,
+          "outcome": "stale_or_replaced_revision",
+          "applicable": false,
+          "scope_hash": "5c170f5034eb081b30c1d82b0f2d6018ed03e6a249e4c91b801fdbe03119f8fa",
+          "candidate_count": 146,
+          "relationship_id": "ceaeb8d6-f846-49bf-9400-80cc8a005021",
+          "base_document_id": "127450d8-90d3-4b5f-a14b-882c75362256",
+          "base_revision_id": "dc7b95ad-5287-468e-96ee-f536838ae0a0",
+          "provision_effect": "unknown",
+          "supporting_spans": [],
+          "base_effective_to": null,
+          "relationship_type": "modifies",
+          "target_provisions": [],
+          "base_effective_from": "2023-06-22",
+          "modifier_document_id": "9f277455-7fec-4ae5-8789-d0f8def0880b",
+          "modifier_revision_id": "d85c6ad6-2b31-41d1-a7aa-ee9645cdcd6f",
+          "applicability_version": "source.applicability.v2",
+          "modifier_effective_to": null,
+          "modifier_effective_from": "2026-07-01",
+          "modifier_published_date": "2026-06-30",
+          "modifier_revision_number": 2,
+          "retained_candidate_count": 19,
+          "replacement_scope_verified": false
+        },
+        {
+          "depth": 1,
+          "outcome": "stale_or_replaced_revision",
+          "applicable": false,
+          "scope_hash": "5c170f5034eb081b30c1d82b0f2d6018ed03e6a249e4c91b801fdbe03119f8fa",
+          "candidate_count": 146,
+          "relationship_id": "f97dc31f-9839-47ed-ad38-fa88fb99d057",
+          "base_document_id": "2b0ef71f-4480-4677-b3b5-8b0bad920fae",
+          "base_revision_id": "7401640e-f34d-4b52-ad12-493ae84bfc4a",
+          "provision_effect": "unknown",
+          "supporting_spans": [],
+          "base_effective_to": null,
+          "relationship_type": "modifies",
+          "target_provisions": [],
+          "base_effective_from": "2023-06-22",
+          "modifier_document_id": "9f277455-7fec-4ae5-8789-d0f8def0880b",
+          "modifier_revision_id": "d85c6ad6-2b31-41d1-a7aa-ee9645cdcd6f",
+          "applicability_version": "source.applicability.v2",
+          "modifier_effective_to": null,
+          "modifier_effective_from": "2026-07-01",
+          "modifier_published_date": "2026-06-30",
+          "modifier_revision_number": 2,
+          "retained_candidate_count": 19,
+          "replacement_scope_verified": false
+        },
+        {
+          "depth": 1,
+          "outcome": "expanded",
+          "applicable": true,
+          "scope_hash": "5c170f5034eb081b30c1d82b0f2d6018ed03e6a249e4c91b801fdbe03119f8fa",
+          "candidate_count": 2,
+          "relationship_id": "79344083-e053-4658-b4be-1927086ef387",
+          "base_document_id": "127450d8-90d3-4b5f-a14b-882c75362256",
+          "base_revision_id": "dc7b95ad-5287-468e-96ee-f536838ae0a0",
+          "provision_effect": "unknown",
+          "supporting_spans": [],
+          "base_effective_to": null,
+          "relationship_type": "modifies",
+          "target_provisions": [],
+          "base_effective_from": "2023-06-22",
+          "modifier_document_id": "89d25b56-feb1-4a6d-9a58-e4053293b0a3",
+          "modifier_revision_id": "1a33a154-3a55-434f-b792-e6d0f703516a",
+          "applicability_version": "source.applicability.v2",
+          "modifier_effective_to": null,
+          "modifier_effective_from": "2025-10-06",
+          "modifier_published_date": "2025-10-06",
+          "modifier_revision_number": 1,
+          "retained_candidate_count": 1,
+          "replacement_scope_verified": false
+        },
+        {
+          "depth": 1,
+          "outcome": "already_in_recall",
+          "applicable": true,
+          "scope_hash": "5c170f5034eb081b30c1d82b0f2d6018ed03e6a249e4c91b801fdbe03119f8fa",
+          "candidate_count": 2,
+          "relationship_id": "c65819f0-05ec-420f-b146-b1d4f8db6030",
+          "base_document_id": "2b0ef71f-4480-4677-b3b5-8b0bad920fae",
+          "base_revision_id": "7401640e-f34d-4b52-ad12-493ae84bfc4a",
+          "provision_effect": "unknown",
+          "supporting_spans": [],
+          "base_effective_to": null,
+          "relationship_type": "modifies",
+          "target_provisions": [],
+          "base_effective_from": "2023-06-22",
+          "modifier_document_id": "89d25b56-feb1-4a6d-9a58-e4053293b0a3",
+          "modifier_revision_id": "1a33a154-3a55-434f-b792-e6d0f703516a",
+          "applicability_version": "source.applicability.v2",
+          "modifier_effective_to": null,
+          "modifier_effective_from": "2025-10-06",
+          "modifier_published_date": "2025-10-06",
+          "modifier_revision_number": 1,
+          "retained_candidate_count": 1,
+          "replacement_scope_verified": false
+        },
+        {
+          "depth": 1,
+          "outcome": "ungoverned_or_incomplete_metadata",
+          "applicable": true,
+          "scope_hash": "5c170f5034eb081b30c1d82b0f2d6018ed03e6a249e4c91b801fdbe03119f8fa",
+          "candidate_count": 0,
+          "relationship_id": "5c2372cc-f6a8-4664-9f44-0ae8944bce77",
+          "base_document_id": "127450d8-90d3-4b5f-a14b-882c75362256",
+          "base_revision_id": "dc7b95ad-5287-468e-96ee-f536838ae0a0",
+          "provision_effect": "unknown",
+          "supporting_spans": [],
+          "base_effective_to": null,
+          "relationship_type": "modifies",
+          "target_provisions": [],
+          "base_effective_from": "2023-06-22",
+          "modifier_document_id": "bf560694-f5a5-404d-9719-7cf7ff5d9602",
+          "modifier_revision_id": "442413ab-8e60-4f70-86e1-a630169876a0",
+          "applicability_version": "source.applicability.v2",
+          "modifier_effective_to": null,
+          "modifier_effective_from": null,
+          "modifier_published_date": "2025-11-06",
+          "modifier_revision_number": 1,
+          "retained_candidate_count": 0,
+          "replacement_scope_verified": false
+        },
+        {
+          "depth": 1,
+          "outcome": "ungoverned_or_incomplete_metadata",
+          "applicable": true,
+          "scope_hash": "5c170f5034eb081b30c1d82b0f2d6018ed03e6a249e4c91b801fdbe03119f8fa",
+          "candidate_count": 0,
+          "relationship_id": "9b54c95f-ef39-44a3-8ba0-84040ea27f2a",
+          "base_document_id": "2b0ef71f-4480-4677-b3b5-8b0bad920fae",
+          "base_revision_id": "7401640e-f34d-4b52-ad12-493ae84bfc4a",
+          "provision_effect": "unknown",
+          "supporting_spans": [],
+          "base_effective_to": null,
+          "relationship_type": "modifies",
+          "target_provisions": [],
+          "base_effective_from": "2023-06-22",
+          "modifier_document_id": "bf560694-f5a5-404d-9719-7cf7ff5d9602",
+          "modifier_revision_id": "442413ab-8e60-4f70-86e1-a630169876a0",
+          "applicability_version": "source.applicability.v2",
+          "modifier_effective_to": null,
+          "modifier_effective_from": null,
+          "modifier_published_date": "2025-11-06",
+          "modifier_revision_number": 1,
+          "retained_candidate_count": 0,
+          "replacement_scope_verified": false
+        },
+        {
+          "depth": 1,
+          "outcome": "stale_or_replaced_revision",
+          "applicable": false,
+          "scope_hash": "5c170f5034eb081b30c1d82b0f2d6018ed03e6a249e4c91b801fdbe03119f8fa",
+          "candidate_count": 146,
+          "relationship_id": "c70ceaed-b167-437c-ac1d-da082b451180",
+          "base_document_id": "127450d8-90d3-4b5f-a14b-882c75362256",
+          "base_revision_id": "dc7b95ad-5287-468e-96ee-f536838ae0a0",
+          "provision_effect": "unknown",
+          "supporting_spans": [],
+          "base_effective_to": null,
+          "relationship_type": "modifies",
+          "target_provisions": [],
+          "base_effective_from": "2023-06-22",
+          "modifier_document_id": "9f277455-7fec-4ae5-8789-d0f8def0880b",
+          "modifier_revision_id": "68f5b198-9a06-4859-af92-25ee6fd28421",
+          "applicability_version": "source.applicability.v2",
+          "modifier_effective_to": null,
+          "modifier_effective_from": null,
+          "modifier_published_date": null,
+          "modifier_revision_number": 1,
+          "retained_candidate_count": 19,
+          "replacement_scope_verified": false
+        }
+      ]
+    },
+    {
+      "case": 3,
+      "message_id": "ca9a74bf-ae14-41c0-b3b2-18759fa9d7d7",
+      "question": "Compare the indexed evidence for the resident-individual tax-free threshold in AY 2025–26 and AY 2026–27 in a two-row table. Give each year’s source and calculate the difference only if both years are established; do not substitute a later schedule for a missing year.",
+      "scope": {
+        "subject": "Compare the indexed evidence for the resident-individual tax-free threshold in AY 2025–26 and AY 2026–27 in a two-row table. Give each year’s source and calculate the difference only if both years are established; do not substitute a later schedule for a missing year.",
+        "version": "request.scope.v1",
+        "category": null,
+        "task_kind": "calculation",
+        "document_id": null,
+        "exact_as_of": null,
+        "jurisdiction": null,
+        "period_origin": "explicit",
+        "index_build_id": "8eb1595a-8e38-41e9-96c5-0ba419e79bee",
+        "temporal_basis": "applicable_rule",
+        "explicit_inputs": [
+          "2025–26",
+          "2026–27"
+        ],
+        "period_ambiguous": false,
+        "project_defaults": "This project covers Bangladesh income tax and business-law sources. For company and business compliance questions, distinguish obligations arising on incorporation from requirements conditional on beginning operations, turnover, employees, location, or registrations already held. Organize a practical answer by authority, required action or record, supported deadline, and supported consequence. State a legal provision or reviewed official guidance for each firm claim. Give supported parts even if other requested areas lack evidence; identify the specific gaps without treating an unverified obligation as settled. Draft or incomplete sources cannot establish a governing rule. Do not infer no income or zero tax solely from no trading.\n\nFor an omitted period, label the assessment year by its starting and ending calendar years: the starting year is the reference calendar year in July-December, or the previous calendar year in January-June; state the resulting assessment-year label; explicit user periods take precedence. Unqualified yearly salary means gross employment income. When residency or employment category is unspecified, a conditional resident ordinary private-sector employee estimate is permitted if its governing rules are evidenced. Treat an amount described as rebateable as an assumed eligible investment. Calculate liability before withholding or other payment credits unless the user supplies them. Explain material category-dependent alternatives. Use enacted law, its amendments and applicable official NBR guidance. Budget proposals and test/sample documents cannot establish governing rules. Do not use worked examples as substitutes for the governing rules. Show the salary-to-taxable transformation, complete applicable bands, rebate limits and minimum-tax comparison with citations; do not invent missing rates or treat missing exemptions as zero. If filing history is unspecified, explain the ordinary and new-taxpayer minimum-tax alternatives evidenced in the documents, including when both leave the final liability unchanged. Do not infer the salary income-year dates from a rule commencement date or the assumed assessment-year label.\nFor an unspecified earning period, the estimate is conditional on the salary belonging to the assumed assessment year; do not invent its earning-date range. When no wealth, assets or other income are supplied, provide the ordinary salary-only income-tax estimate before any wealth or asset-based surcharge, clearly state that limitation, and do not assume or calculate a surcharge from absent asset facts.\n\nPractical calculation scope:\nWhen the user asks to calculate tax but has not supplied every personal detail, provide a useful provisional estimate under clearly stated reasonable scenario assumptions. Do not turn optional refinements into prerequisites for answering. Explicit user facts always override assumptions. Preserve every supplied income and investment component; do not silently omit one.\n\nBy default, an estimate may show income-tax liability before source-tax/payment credits and before asset/wealth-dependent surcharge when those personal details are absent, including scenarios with multiple income sources. Label that scope prominently. Excluding an unprovided adjustment from a subtotal is not an assertion that the adjustment is zero or legally inapplicable. Explain briefly which information would refine the estimate. A request for a fully settled/final filing balance still requires material missing facts.\n\nIf TDS depends on certificate type, investment amount, documentation, gross/net presentation or another personal condition, use a clearly identified ordinary scenario supported by the sources, or show the relevant evidenced alternatives. Do not reject the entire calculation just because the user's TDS rate or amount is unknown. If no applicable TDS rate can be established, calculate the supported liability before TDS and explain that the actual deduction shown on the certificate or bank statement will refine the balance. Do not invent a statutory TDS rate or claim an assumed deduction was actually paid. Keep source-tax credits separate from any rule making source tax final or minimum tax; establish that legal treatment before combining income components.\n\nFor an unqualified interest amount, a clearly labelled gross-interest scenario is permitted; explain that a net receipt would require the actual deducted amount to refine it. Treat an explicitly net amount as net and do not silently reinterpret it as gross. Use the applicable source-supported rule for each scenario, distinguishing uncertain personal facts from uncertain law. If treatment differs under evidenced categories, give labelled alternatives rather than demanding category confirmation first. If a specific rule is genuinely missing, explain that specific limitation and provide any independently supported part without presenting an unsupported overall total.\n\nLead with one consistent estimate and its assumptions, then show the breakdown. Compute the breakdown before writing the headline and make the headline, subtotals and conclusion agree. End with a short optional refinement note, such as: \"Your deduction certificate and whether the interest is gross or net would let me refine the balance.\" Avoid a long questionnaire before giving useful work.",
+        "stipulated_facts": [],
+        "named_instruments": [],
+        "requested_periods": [
+          {
+            "kind": "assessment",
+            "end_year": 2026,
+            "start_year": 2025,
+            "source_text": "Compare the indexed evidence for the resident-individual tax-free threshold in AY 2025–26 and AY 2026–27 in a two-row table. Give each year’s source and calculate the difference only if both years are established; do not substitute a later schedule for a missing year."
+          },
+          {
+            "kind": "assessment",
+            "end_year": 2027,
+            "start_year": 2026,
+            "source_text": "Compare the indexed evidence for the resident-individual tax-free threshold in AY 2025–26 and AY 2026–27 in a two-row table. Give each year’s source and calculate the difference only if both years are established; do not substitute a later schedule for a missing year."
+          }
+        ],
+        "known_at_inclusive": true,
+        "source_restriction": "project_default",
+        "eligibility_requested": false,
+        "current_reference_time": "2026-11-03T18:59:03.574051Z"
+      },
+      "requirements": [
+        {
+          "origin": "necessary_applicability",
+          "required": true,
+          "task_kind": "rule_lookup",
+          "depends_on": [],
+          "deliverable": false,
+          "description": "Establish the resident-individual category and applicable assessment year for AY 2025–26.",
+          "materiality": "governing_applicability",
+          "requirement_id": "R1",
+          "dependency_purposes": {}
+        },
+        {
+          "origin": "necessary_applicability",
+          "required": true,
+          "task_kind": "rule_lookup",
+          "depends_on": [],
+          "deliverable": false,
+          "description": "Establish the resident-individual category and applicable assessment year for AY 2026–27.",
+          "materiality": "governing_applicability",
+          "requirement_id": "R3",
+          "dependency_purposes": {}
+        },
+        {
+          "origin": "explicit_user_request",
+          "required": true,
+          "task_kind": "rule_lookup",
+          "depends_on": [
+            "R1"
+          ],
+          "deliverable": true,
+          "description": "Establish the resident ordinary individual tax-free threshold for AY 2025–26.",
+          "materiality": "central_rule",
+          "requirement_id": "R2",
+          "dependency_purposes": {
+            "R1": "applicability"
+          }
+        },
+        {
+          "origin": "explicit_user_request",
+          "required": true,
+          "task_kind": "rule_lookup",
+          "depends_on": [
+            "R3"
+          ],
+          "deliverable": true,
+          "description": "Establish the resident ordinary individual tax-free threshold for AY 2026–27.",
+          "materiality": "central_rule",
+          "requirement_id": "R4",
+          "dependency_purposes": {
+            "R3": "applicability"
+          }
+        },
+        {
+          "origin": "explicit_user_request",
+          "required": true,
+          "task_kind": "comparison",
+          "depends_on": [
+            "R2",
+            "R4"
+          ],
+          "deliverable": true,
+          "description": "Calculate the threshold difference only if both requested years’ thresholds are established.",
+          "materiality": "central_rule",
+          "requirement_id": "R5",
+          "dependency_purposes": {
+            "R2": "calculation_operand",
+            "R4": "calculation_operand"
+          }
+        }
+      ],
+      "evidence_bindings": [
+        {
+          "spans": [
+            {
+              "quote": "২০২৬-২০২৭ এবং ২০২৭-২০২৮ করবর্ষের জন্য করহার\n\nআয়কর আইন , ২০২৩ ( ২০২৩ সনের ১২ নং আইন ) এর ধারা ২ ( ৬৯ ) এ সংজ্ঞায়িত\n\nব্যক্তিগণের ( persons ) মধ্যে অনিবাসী বাংলাদেশিসহ সকল স্বাভাবিক ব্যক্তি ( individual ) ও হিন্দু\n\nঅবিভক্ত পরিবারের ক্ষেত্রে মোট আয়ের উপর করহার নিম্নরূপ হইবে , যথা : -\n",
+              "chunk_id": "84830e90-94c6-4873-9140-d22505141b66",
+              "end_line": null,
+              "start_line": null
+            }
+          ],
+          "requirement_id": "R3"
+        },
+        {
+          "spans": [
+            {
+              "quote": "করধাপ | করহার\n৪,০০,০০০ টাকা পর্যন্ত | শূন্য\nপরবর্তী ৩,০০,০০০ টাকা পর্যন্ত | ১০ %\n",
+              "chunk_id": "84830e90-94c6-4873-9140-d22505141b66",
+              "end_line": null,
+              "start_line": null
+            },
+            {
+              "quote": "২০২৬-২০২৭ এবং ২০২৭-২০২৮ করবর্ষের জন্য করহার\n\nআয়কর আইন , ২০২৩ ( ২০২৩ সনের ১২ নং আইন ) এর ধারা ২ ( ৬৯ ) এ সংজ্ঞায়িত\n\nব্যক্তিগণের ( persons ) মধ্যে অনিবাসী বাংলাদেশিসহ সকল স্বাভাবিক ব্যক্তি ( individual ) ও হিন্দু\n\nঅবিভক্ত পরিবারের ক্ষেত্রে মোট আয়ের উপর করহার নিম্নরূপ হইবে , যথা : -\n",
+              "chunk_id": "84830e90-94c6-4873-9140-d22505141b66",
+              "end_line": null,
+              "start_line": null
+            }
+          ],
+          "requirement_id": "R4"
+        }
+      ],
+      "initial_missing": [
+        "AY 2025–26 resident-individual threshold and its applicable schedule are not established by the supplied evidence.",
+        "The difference cannot be calculated until both years’ thresholds are established."
+      ],
+      "coverage": {
+        "checks": [
+          {
+            "chunk_ids": [],
+            "supported": false,
+            "description": "Establish the resident-individual category and applicable assessment year for AY 2025–26.",
+            "fulfillment": null,
+            "source_ranges": [],
+            "requirement_id": "R1",
+            "answerable_scope": "",
+            "unresolved_facets": []
+          },
+          {
+            "chunk_ids": [
+              "84830e90-94c6-4873-9140-d22505141b66"
+            ],
+            "supported": true,
+            "description": "Establish the resident-individual category and applicable assessment year for AY 2026–27.",
+            "fulfillment": "full",
+            "source_ranges": [
+              {
+                "chunk_id": "84830e90-94c6-4873-9140-d22505141b66",
+                "end_line": 61,
+                "start_line": 55
+              }
+            ],
+            "requirement_id": "R3",
+            "answerable_scope": "The supplied Finance Act 2026 schedule identifies the rates for tax years 2026–27 and 2027–28 and expressly covers individuals, including non-resident Bangladeshis; a resident individual is within the stated category.",
+            "unresolved_facets": []
+          },
+          {
+            "chunk_ids": [],
+            "supported": false,
+            "description": "Establish the resident ordinary individual tax-free threshold for AY 2025–26.",
+            "fulfillment": null,
+            "source_ranges": [],
+            "requirement_id": "R2",
+            "answerable_scope": "",
+            "unresolved_facets": []
+          },
+          {
+            "chunk_ids": [
+              "84830e90-94c6-4873-9140-d22505141b66",
+              "84830e90-94c6-4873-9140-d22505141b66"
+            ],
+            "supported": true,
+            "description": "Establish the resident ordinary individual tax-free threshold for AY 2026–27.",
+            "fulfillment": "full",
+            "source_ranges": [
+              {
+                "chunk_id": "84830e90-94c6-4873-9140-d22505141b66",
+                "end_line": 64,
+                "start_line": 62
+              },
+              {
+                "chunk_id": "84830e90-94c6-4873-9140-d22505141b66",
+                "end_line": 61,
+                "start_line": 55
+              }
+            ],
+            "requirement_id": "R4",
+            "answerable_scope": "For the AY 2026–27 schedule, the first zero-rate band is income up to Tk 400,000. Source: Finance Act 2026, Schedule 2, in the supplied primary-source excerpt.",
+            "unresolved_facets": []
+          },
+          {
+            "chunk_ids": [],
+            "supported": false,
+            "description": "Calculate the threshold difference only if both requested years’ thresholds are established.",
+            "fulfillment": null,
+            "source_ranges": [],
+            "requirement_id": "R5",
+            "answerable_scope": "",
+            "unresolved_facets": []
+          }
+        ],
+        "missing": [
+          "Establish the resident-individual category and applicable assessment year for AY 2025–26.",
+          "Establish the resident ordinary individual tax-free threshold for AY 2025–26.",
+          "Calculate the threshold difference only if both requested years’ thresholds are established.",
+          "AY 2025–26 resident-individual threshold and its applicable schedule are not established by the supplied evidence.",
+          "The difference cannot be calculated until both years’ thresholds are established."
+        ],
+        "complete": false,
+        "gap_kinds": [
+          "source_rule",
+          "source_rule",
+          "source_rule",
+          "source_rule",
+          "source_rule"
+        ],
+        "missing_inputs": [],
+        "quotes_validated": false,
+        "full_coverage_validated": false,
+        "partial_scope_validated": true,
+        "source_ranges_validated": true
+      },
+      "partial_answer": {
+        "scope": [
+          {
+            "description": "The supplied Finance Act 2026 schedule identifies the rates for tax years 2026–27 and 2027–28 and expressly covers individuals, including non-resident Bangladeshis; a resident individual is within the stated category.",
+            "requirement_id": "R3"
+          },
+          {
+            "description": "For the AY 2026–27 schedule, the first zero-rate band is income up to Tk 400,000. Source: Finance Act 2026, Schedule 2, in the supplied primary-source excerpt.",
+            "requirement_id": "R4"
+          }
+        ],
+        "pending": [
+          "Establish the resident-individual category and applicable assessment year for AY 2025–26.",
+          "Establish the resident ordinary individual tax-free threshold for AY 2025–26.",
+          "Calculate the threshold difference only if both requested years’ thresholds are established.",
+          "AY 2025–26 resident-individual threshold and its applicable schedule are not established by the supplied evidence.",
+          "The difference cannot be calculated until both years’ thresholds are established."
+        ],
+        "gap_kinds": [
+          "source_rule",
+          "source_rule",
+          "source_rule",
+          "source_rule",
+          "source_rule"
+        ],
+        "exclusions": [
+          "AY 2025–26 threshold is not established by the supplied evidence.",
+          "No difference is calculated because both years’ thresholds are not established.",
+          "Establish the resident-individual category and applicable assessment year for AY 2025–26.",
+          "Establish the resident ordinary individual tax-free threshold for AY 2025–26.",
+          "Calculate the threshold difference only if both requested years’ thresholds are established.",
+          "AY 2025–26 resident-individual threshold and its applicable schedule are not established by the supplied evidence.",
+          "The difference cannot be calculated until both years’ thresholds are established."
+        ],
+        "requirement_ids": [
+          "R3",
+          "R4"
+        ],
+        "supported_proof": [
+          {
+            "source_ids": [
+              "84830e90-94c6-4873-9140-d22505141b66"
+            ],
+            "description": "The supplied Finance Act 2026 schedule identifies the rates for tax years 2026–27 and 2027–28 and expressly covers individuals, including non-resident Bangladeshis; a resident individual is within the stated category.",
+            "requirement_id": "R3"
+          },
+          {
+            "source_ids": [
+              "84830e90-94c6-4873-9140-d22505141b66",
+              "84830e90-94c6-4873-9140-d22505141b66"
+            ],
+            "description": "For the AY 2026–27 schedule, the first zero-rate band is income up to Tk 400,000. Source: Finance Act 2026, Schedule 2, in the supplied primary-source excerpt.",
+            "requirement_id": "R4"
+          }
+        ]
+      },
+      "queries": [
+        "স্বাভাবিক ব্যক্তি ২০২৫-২০২৬ করবর্ষ প্রথম শূন্য করহার"
+      ],
+      "requirement_attempts": [
+        {
+          "query": "স্বাভাবিক ব্যক্তি ২০২৫-২০২৬ করবর্ষ প্রথম শূন্য করহার",
+          "route": "search",
+          "status": "executed",
+          "admitted_ids": [
+            "84830e90-94c6-4873-9140-d22505141b66",
+            "f4a2a7bf-39be-4dcc-b91c-1b34c993bc5f",
+            "d86b079c-cc86-40fc-a94d-a9302b65f8e0",
+            "56e4c651-b9ad-47f6-8760-17fdaeeeaf8f",
+            "987dc33a-9403-4b23-9e7f-5ffce271c04a",
+            "df92bdce-9543-47f1-93ab-50672f963203",
+            "5155dac9-f6eb-4602-aaaa-655d8df276c1",
+            "de08f746-0c0f-4229-bec7-81cf947c609f"
+          ],
+          "candidate_ids": [
+            "84830e90-94c6-4873-9140-d22505141b66",
+            "f4a2a7bf-39be-4dcc-b91c-1b34c993bc5f",
+            "d86b079c-cc86-40fc-a94d-a9302b65f8e0",
+            "56e4c651-b9ad-47f6-8760-17fdaeeeaf8f",
+            "987dc33a-9403-4b23-9e7f-5ffce271c04a",
+            "df92bdce-9543-47f1-93ab-50672f963203",
+            "5155dac9-f6eb-4602-aaaa-655d8df276c1",
+            "de08f746-0c0f-4229-bec7-81cf947c609f",
+            "563a3e3b-ba99-4131-861b-f72da31e7111",
+            "55d1133e-b257-4c4d-a5bf-73e6b2aa3550",
+            "9f8f86af-9f89-4f84-8fce-9f01b816c194",
+            "48a18de4-743e-404b-95da-107cd431da46"
+          ],
+          "requirement_ids": [
+            "R2"
+          ]
+        }
+      ],
+      "review_inputs": [
+        {
+          "chunk_ids": [
+            "84830e90-94c6-4873-9140-d22505141b66",
+            "f4a2a7bf-39be-4dcc-b91c-1b34c993bc5f",
+            "d86b079c-cc86-40fc-a94d-a9302b65f8e0",
+            "56e4c651-b9ad-47f6-8760-17fdaeeeaf8f",
+            "987dc33a-9403-4b23-9e7f-5ffce271c04a",
+            "df92bdce-9543-47f1-93ab-50672f963203",
+            "5155dac9-f6eb-4602-aaaa-655d8df276c1",
+            "de08f746-0c0f-4229-bec7-81cf947c609f"
+          ],
+          "requirement_ids": [
+            "R1",
+            "R3",
+            "R2",
+            "R4",
+            "R5"
+          ],
+          "branch_candidates": [
+            {
+              "query": "স্বাভাবিক ব্যক্তি ২০২৫-২০২৬ করবর্ষ প্রথম শূন্য করহার",
+              "selected_ids": [
+                "84830e90-94c6-4873-9140-d22505141b66",
+                "f4a2a7bf-39be-4dcc-b91c-1b34c993bc5f",
+                "d86b079c-cc86-40fc-a94d-a9302b65f8e0",
+                "56e4c651-b9ad-47f6-8760-17fdaeeeaf8f",
+                "987dc33a-9403-4b23-9e7f-5ffce271c04a",
+                "df92bdce-9543-47f1-93ab-50672f963203",
+                "5155dac9-f6eb-4602-aaaa-655d8df276c1",
+                "de08f746-0c0f-4229-bec7-81cf947c609f"
+              ],
+              "requirement_ids": [
+                "R2"
+              ],
+              "omitted_candidate_ids": [
+                "563a3e3b-ba99-4131-861b-f72da31e7111",
+                "55d1133e-b257-4c4d-a5bf-73e6b2aa3550",
+                "9f8f86af-9f89-4f84-8fce-9f01b816c194",
+                "48a18de4-743e-404b-95da-107cd431da46"
+              ]
+            }
+          ],
+          "evidence_unit_ids": [
+            "ce286963cf09b80e2620fc46adabcc4f5c94eb125930c24e513dc2517239e232",
+            "2117854160c9c187055f17fbaf33c4f809a87fa05a9f5df876a6cf842d8b51cf",
+            "5f702be8141186dff95fcf088f864e01305e9bcfd104861289b7aab29f7366e1",
+            "038f2bcba9ff2230f01f7a91ca2f4f364f69ab83aab31389dd2343af65a914c1",
+            "4745e147f0ec3450758b6f76f7c0d2a22b8d69b15f12fd7fec2c90d0ecfb404d",
+            "b9a181e75a63a5d66aeb4780752ebad2ffa112357d52ebd6f97b8f5b515f2397",
+            "3ac275031fbf603ce5a9e742407ae8594882e87d47e5feb8758ec51e73e25559",
+            "12bb193b995c425ffd5c00df0899b1e9892cc47c61ae8158df69f92922152a91"
+          ],
+          "partition_requirement_ids": []
+        }
+      ],
+      "partial_checkpoint_invalidated": "proof_content_requirement_or_authority_changed",
+      "deadline": {
+        "request_seconds": 60.0,
+        "recovery_seconds": 30.0,
+        "generation_reserve_seconds": 10,
+        "verification_reserve_seconds": 10,
+        "persistence_reserve_seconds": 10,
+        "absolute_cutoffs_seconds": {
+          "evidence": 30.0,
+          "draft": 40.0,
+          "verification": 50.0,
+          "persistence": 60.0
+        },
+        "policy": "legacy",
+        "budget_class": "simple",
+        "p95_target_seconds": 30,
+        "promoted": false,
+        "promotion_requirement_id": null,
+        "stage_estimates": {},
+        "output_tokens_per_second": null,
+        "completed_stages": [
+          "generation",
+          "persistence"
+        ]
+      },
+      "spans": [
+        {
+          "id": "d1f2764d8855",
+          "parent_id": null,
+          "name": "finding_relevant_sources",
+          "purpose": "finding_relevant_sources",
+          "start_offset_ms": 32,
+          "elapsed_ms": 4115,
+          "outcome": "completed"
+        },
+        {
+          "id": "3d739d58fd7d",
+          "parent_id": "d1f2764d8855",
+          "name": "retrieval",
+          "purpose": "retrieval",
+          "start_offset_ms": 32,
+          "elapsed_ms": 4110,
+          "outcome": "completed",
+          "provider_call_indexes": [
+            0
+          ]
+        },
+        {
+          "id": "306f26942924",
+          "parent_id": "3d739d58fd7d",
+          "name": "database_connection_acquisition",
+          "purpose": "database_connection_acquisition",
+          "start_offset_ms": 32,
+          "elapsed_ms": 4,
+          "outcome": "completed"
+        },
+        {
+          "id": "009774914c74",
+          "parent_id": "3d739d58fd7d",
+          "name": "database_keyword_retrieval_and_scoring",
+          "purpose": "database_keyword_retrieval_and_scoring",
+          "start_offset_ms": 1112,
+          "elapsed_ms": 730,
+          "outcome": "completed"
+        },
+        {
+          "id": "cde5ac867b73",
+          "parent_id": "3d739d58fd7d",
+          "name": "relationship_expansion",
+          "purpose": "relationship_expansion",
+          "start_offset_ms": 1843,
+          "elapsed_ms": 652,
+          "outcome": "completed"
+        },
+        {
+          "id": "42a51e2a3018",
+          "parent_id": "cde5ac867b73",
+          "name": "database_keyword_retrieval_and_scoring",
+          "purpose": "database_keyword_retrieval_and_scoring",
+          "start_offset_ms": 2205,
+          "elapsed_ms": 286,
+          "outcome": "completed"
+        },
+        {
+          "id": "1b57a4edf507",
+          "parent_id": "3d739d58fd7d",
+          "name": "reranking",
+          "purpose": "reranking",
+          "start_offset_ms": 2504,
+          "elapsed_ms": 1001,
+          "outcome": "completed",
+          "provider_call_indexes": [
+            1
+          ]
+        },
+        {
+          "id": "c0e6e9387615",
+          "parent_id": "1b57a4edf507",
+          "name": "content_loading",
+          "purpose": "content_loading",
+          "start_offset_ms": 2504,
+          "elapsed_ms": 21,
+          "outcome": "completed"
+        },
+        {
+          "id": "862deec4a5b6",
+          "parent_id": "3d739d58fd7d",
+          "name": "passage_scoring",
+          "purpose": "passage_scoring",
+          "start_offset_ms": 3523,
+          "elapsed_ms": 618,
+          "outcome": "completed",
+          "provider_call_indexes": [
+            2
+          ]
+        },
+        {
+          "id": "711b8a214d8a",
+          "parent_id": null,
+          "name": "checking_source_versions",
+          "purpose": "checking_source_versions",
+          "start_offset_ms": 4148,
+          "elapsed_ms": 19,
+          "outcome": "completed"
+        },
+        {
+          "id": "ad1d4fe56fe3",
+          "parent_id": null,
+          "name": "checking_source_applicability",
+          "purpose": "checking_source_applicability",
+          "start_offset_ms": 4170,
+          "elapsed_ms": 25847,
+          "outcome": "completed",
+          "provider_call_indexes": [
+            4,
+            7
+          ]
+        },
+        {
+          "id": "1eb48a424098",
+          "parent_id": "ad1d4fe56fe3",
+          "name": "recovery_planning",
+          "purpose": "recovery_planning",
+          "start_offset_ms": 4170,
+          "elapsed_ms": 14216,
+          "outcome": "completed",
+          "provider_call_indexes": [
+            3
+          ]
+        },
+        {
+          "id": "c92b2be476ae",
+          "parent_id": "ad1d4fe56fe3",
+          "name": "recovery_batch_semaphore",
+          "purpose": "recovery_batch_semaphore",
+          "start_offset_ms": 18978,
+          "elapsed_ms": 0,
+          "outcome": "completed"
+        },
+        {
+          "id": "5cd0a20ad5cb",
+          "parent_id": "ad1d4fe56fe3",
+          "name": "process_recovery_semaphore",
+          "purpose": "process_recovery_semaphore",
+          "start_offset_ms": 18978,
+          "elapsed_ms": 0,
+          "outcome": "completed"
+        },
+        {
+          "id": "ce80a505d463",
+          "parent_id": "ad1d4fe56fe3",
+          "name": "deployment_recovery_lease",
+          "purpose": "deployment_recovery_lease",
+          "start_offset_ms": 18978,
+          "elapsed_ms": 12,
+          "outcome": "completed"
+        },
+        {
+          "id": "8c88980ba781",
+          "parent_id": "ad1d4fe56fe3",
+          "name": "database_connection_acquisition",
+          "purpose": "database_connection_acquisition",
+          "start_offset_ms": 18991,
+          "elapsed_ms": 5,
+          "outcome": "completed"
+        },
+        {
+          "id": "7dbe59c30647",
+          "parent_id": "ad1d4fe56fe3",
+          "name": "retrieval",
+          "purpose": "retrieval",
+          "start_offset_ms": 18997,
+          "elapsed_ms": 3717,
+          "outcome": "completed"
+        },
+        {
+          "id": "d00aab67142a",
+          "parent_id": "7dbe59c30647",
+          "name": "database_keyword_retrieval_and_scoring",
+          "purpose": "database_keyword_retrieval_and_scoring",
+          "start_offset_ms": 19477,
+          "elapsed_ms": 386,
+          "outcome": "completed"
+        },
+        {
+          "id": "82fc4c4072c1",
+          "parent_id": "7dbe59c30647",
+          "name": "relationship_expansion",
+          "purpose": "relationship_expansion",
+          "start_offset_ms": 19863,
+          "elapsed_ms": 529,
+          "outcome": "completed"
+        },
+        {
+          "id": "081535031ab8",
+          "parent_id": "82fc4c4072c1",
+          "name": "database_keyword_retrieval_and_scoring",
+          "purpose": "database_keyword_retrieval_and_scoring",
+          "start_offset_ms": 20177,
+          "elapsed_ms": 215,
+          "outcome": "completed"
+        },
+        {
+          "id": "c03d0c6abf14",
+          "parent_id": "7dbe59c30647",
+          "name": "reranking",
+          "purpose": "reranking",
+          "start_offset_ms": 20399,
+          "elapsed_ms": 1587,
+          "outcome": "completed",
+          "provider_call_indexes": [
+            5
+          ]
+        },
+        {
+          "id": "59fd789cf908",
+          "parent_id": "c03d0c6abf14",
+          "name": "content_loading",
+          "purpose": "content_loading",
+          "start_offset_ms": 20399,
+          "elapsed_ms": 32,
+          "outcome": "completed"
+        },
+        {
+          "id": "01f28ead05ed",
+          "parent_id": "7dbe59c30647",
+          "name": "passage_scoring",
+          "purpose": "passage_scoring",
+          "start_offset_ms": 22094,
+          "elapsed_ms": 618,
+          "outcome": "completed",
+          "provider_call_indexes": [
+            6
+          ]
+        },
+        {
+          "id": "cb775712df6f",
+          "parent_id": "ad1d4fe56fe3",
+          "name": "coverage_review",
+          "purpose": "coverage_review",
+          "start_offset_ms": 23325,
+          "elapsed_ms": 6692,
+          "outcome": "cancelled",
+          "provider_call_indexes": [
+            8
+          ]
+        },
+        {
+          "id": "baf8daea5fac",
+          "parent_id": null,
+          "name": "preparing_answer",
+          "purpose": "preparing_answer",
+          "start_offset_ms": 30017,
+          "elapsed_ms": 0,
+          "outcome": "completed"
+        },
+        {
+          "id": "72004fc76064",
+          "parent_id": null,
+          "name": "persistence",
+          "purpose": "persistence",
+          "start_offset_ms": 30018,
+          "elapsed_ms": 58,
+          "outcome": "completed"
+        }
+      ],
+      "provider_calls": [
+        {
+          "kind": "embedding",
+          "provider": "cohere",
+          "model": "embed-v4.0",
+          "purpose": "query",
+          "texts": 1,
+          "input_tokens": 65,
+          "output_tokens": null,
+          "status": "completed",
+          "provider_internal_retries": null,
+          "work_purpose": "retrieval",
+          "span_id": "3d739d58fd7d",
+          "duration_ms": 610
+        },
+        {
+          "kind": "rerank",
+          "provider": "cohere",
+          "model": "rerank-v4.0-pro",
+          "candidates": 24,
+          "status": "completed",
+          "provider_internal_retries": null,
+          "purpose": "reranking",
+          "span_id": "1b57a4edf507",
+          "usage": {
+            "search_units": 1
+          },
+          "duration_ms": 979
+        },
+        {
+          "kind": "embedding",
+          "provider": "cohere",
+          "model": "embed-v4.0",
+          "purpose": "document",
+          "texts": 9,
+          "input_tokens": 4019,
+          "output_tokens": null,
+          "status": "completed",
+          "provider_internal_retries": null,
+          "work_purpose": "passage_scoring",
+          "span_id": "862deec4a5b6",
+          "duration_ms": 616
+        },
+        {
+          "kind": "llm",
+          "provider": "openai",
+          "model": "gpt-6-luna",
+          "status": "completed",
+          "input_tokens": 16553,
+          "output_tokens": 1808,
+          "provider_internal_retries": null,
+          "purpose": "recovery_planning",
+          "span_id": "1eb48a424098",
+          "schema_mode": "json_object",
+          "reasoning": "low",
+          "local_validation": "consumer_schema_required",
+          "endpoint_hash": "772062cee0b6010158740accacfb96b3d174ca06d157a3db0d6d93b4820cee6f",
+          "capability_revision": "2026-08-16.v2",
+          "capability_source": "portable_baseline",
+          "schema_name": "_SearchPlan",
+          "schema_hash": "e6f920d9e0bb62aada4669b62db9591c6e6405e4a7f5938672153bb56f326e09",
+          "reasoning_tokens": 416,
+          "duration_ms": 14215
+        },
+        {
+          "kind": "embedding",
+          "provider": "cohere",
+          "model": "embed-v4.0",
+          "purpose": "query",
+          "texts": 1,
+          "input_tokens": 61,
+          "output_tokens": null,
+          "status": "completed",
+          "provider_internal_retries": null,
+          "work_purpose": "checking_source_applicability",
+          "span_id": "ad1d4fe56fe3",
+          "duration_ms": 567
+        },
+        {
+          "kind": "rerank",
+          "provider": "cohere",
+          "model": "rerank-v4.0-pro",
+          "candidates": 24,
+          "status": "completed",
+          "provider_internal_retries": null,
+          "purpose": "reranking",
+          "span_id": "c03d0c6abf14",
+          "usage": {
+            "search_units": 1
+          },
+          "duration_ms": 1554
+        },
+        {
+          "kind": "embedding",
+          "provider": "cohere",
+          "model": "embed-v4.0",
+          "purpose": "document",
+          "texts": 5,
+          "input_tokens": 5542,
+          "output_tokens": null,
+          "status": "completed",
+          "provider_internal_retries": null,
+          "work_purpose": "passage_scoring",
+          "span_id": "01f28ead05ed",
+          "duration_ms": 617
+        },
+        {
+          "kind": "embedding",
+          "provider": "cohere",
+          "model": "embed-v4.0",
+          "purpose": "document",
+          "texts": 1,
+          "input_tokens": 1355,
+          "output_tokens": null,
+          "status": "completed",
+          "provider_internal_retries": null,
+          "work_purpose": "checking_source_applicability",
+          "span_id": "ad1d4fe56fe3",
+          "duration_ms": 563
+        },
+        {
+          "kind": "llm",
+          "provider": "openai",
+          "model": "gpt-6-luna",
+          "status": "cancelled",
+          "input_tokens": null,
+          "output_tokens": null,
+          "provider_internal_retries": null,
+          "purpose": "coverage_review",
+          "span_id": "cb775712df6f",
+          "schema_mode": "json_object",
+          "reasoning": "low",
+          "local_validation": "consumer_schema_required",
+          "endpoint_hash": "772062cee0b6010158740accacfb96b3d174ca06d157a3db0d6d93b4820cee6f",
+          "capability_revision": "2026-08-16.v2",
+          "capability_source": "portable_baseline",
+          "schema_name": "CoverageVerdict",
+          "schema_hash": "bb8be87407bd07fcdb93ab418efc56881ebbc5a20ec60a943f8ae6904c0f35be",
+          "duration_ms": 6689
+        }
+      ],
+      "terminal": {
+        "version": "answer.outcome.v1",
+        "outcome": "timed_out",
+        "reason_code": "recovery_deadline_exceeded",
+        "failure_stage": "coverage",
+        "requested_scope": {
+          "category": null,
+          "exact_as_of": null,
+          "jurisdiction": null,
+          "temporal_basis": "applicable_rule",
+          "requested_periods": [
+            {
+              "kind": "assessment",
+              "end_year": 2026,
+              "start_year": 2025,
+              "source_text": "Compare the indexed evidence for the resident-individual tax-free threshold in AY 2025–26 and AY 2026–27 in a two-row table. Give each year’s source and calculate the difference only if both years are established; do not substitute a later schedule for a missing year."
+            },
+            {
+              "kind": "assessment",
+              "end_year": 2027,
+              "start_year": 2026,
+              "source_text": "Compare the indexed evidence for the resident-individual tax-free threshold in AY 2025–26 and AY 2026–27 in a two-row table. Give each year’s source and calculate the difference only if both years are established; do not substitute a later schedule for a missing year."
+            }
+          ],
+          "source_restriction": "project_default"
+        },
+        "coverage": "incomplete",
+        "retryable": true,
+        "next_action": "retry",
+        "supported_requirement_ids": [],
+        "unresolved_requirement_ids": [
+          "R2",
+          "R4",
+          "R5"
+        ]
+      },
+      "authority_records": [
+        {
+          "depth": 1,
+          "outcome": "expanded",
+          "applicable": true,
+          "scope_hash": "0e4f917488b872121065f984c6676a471df8f30f2ab71c3c95b8f3f7c520b04c",
+          "candidate_count": 143,
+          "relationship_id": "28aa2723-dad7-4fee-b8f4-dd6b96711e0b",
+          "base_document_id": "127450d8-90d3-4b5f-a14b-882c75362256",
+          "base_revision_id": "dc7b95ad-5287-468e-96ee-f536838ae0a0",
+          "provision_effect": "unknown",
+          "supporting_spans": [],
+          "base_effective_to": null,
+          "relationship_type": "modifies",
+          "target_provisions": [],
+          "base_effective_from": "2023-06-22",
+          "modifier_document_id": "9f277455-7fec-4ae5-8789-d0f8def0880b",
+          "modifier_revision_id": "5cbc03f1-e683-4066-917b-4fb27ea15012",
+          "applicability_version": "source.applicability.v2",
+          "modifier_effective_to": null,
+          "modifier_effective_from": "2026-07-01",
+          "modifier_published_date": "2026-06-30",
+          "modifier_revision_number": 4,
+          "retained_candidate_count": 19,
+          "replacement_scope_verified": false
+        },
+        {
+          "depth": 1,
+          "outcome": "stale_or_replaced_revision",
+          "applicable": false,
+          "scope_hash": "0e4f917488b872121065f984c6676a471df8f30f2ab71c3c95b8f3f7c520b04c",
+          "candidate_count": 143,
+          "relationship_id": "c5b51df7-a8ec-49c4-a006-60a850450532",
+          "base_document_id": "127450d8-90d3-4b5f-a14b-882c75362256",
+          "base_revision_id": "dc7b95ad-5287-468e-96ee-f536838ae0a0",
+          "provision_effect": "unknown",
+          "supporting_spans": [],
+          "base_effective_to": null,
+          "relationship_type": "modifies",
+          "target_provisions": [],
+          "base_effective_from": "2023-06-22",
+          "modifier_document_id": "9f277455-7fec-4ae5-8789-d0f8def0880b",
+          "modifier_revision_id": "a2ac379c-47cf-47e8-83d3-6678b7ed7115",
+          "applicability_version": "source.applicability.v2",
+          "modifier_effective_to": null,
+          "modifier_effective_from": "2026-07-01",
+          "modifier_published_date": "2026-06-30",
+          "modifier_revision_number": 3,
+          "retained_candidate_count": 19,
+          "replacement_scope_verified": false
+        },
+        {
+          "depth": 1,
+          "outcome": "stale_or_replaced_revision",
+          "applicable": false,
+          "scope_hash": "0e4f917488b872121065f984c6676a471df8f30f2ab71c3c95b8f3f7c520b04c",
+          "candidate_count": 143,
+          "relationship_id": "ceaeb8d6-f846-49bf-9400-80cc8a005021",
+          "base_document_id": "127450d8-90d3-4b5f-a14b-882c75362256",
+          "base_revision_id": "dc7b95ad-5287-468e-96ee-f536838ae0a0",
+          "provision_effect": "unknown",
+          "supporting_spans": [],
+          "base_effective_to": null,
+          "relationship_type": "modifies",
+          "target_provisions": [],
+          "base_effective_from": "2023-06-22",
+          "modifier_document_id": "9f277455-7fec-4ae5-8789-d0f8def0880b",
+          "modifier_revision_id": "d85c6ad6-2b31-41d1-a7aa-ee9645cdcd6f",
+          "applicability_version": "source.applicability.v2",
+          "modifier_effective_to": null,
+          "modifier_effective_from": "2026-07-01",
+          "modifier_published_date": "2026-06-30",
+          "modifier_revision_number": 2,
+          "retained_candidate_count": 19,
+          "replacement_scope_verified": false
+        },
+        {
+          "depth": 1,
+          "outcome": "expanded",
+          "applicable": true,
+          "scope_hash": "0e4f917488b872121065f984c6676a471df8f30f2ab71c3c95b8f3f7c520b04c",
+          "candidate_count": 2,
+          "relationship_id": "79344083-e053-4658-b4be-1927086ef387",
+          "base_document_id": "127450d8-90d3-4b5f-a14b-882c75362256",
+          "base_revision_id": "dc7b95ad-5287-468e-96ee-f536838ae0a0",
+          "provision_effect": "unknown",
+          "supporting_spans": [],
+          "base_effective_to": null,
+          "relationship_type": "modifies",
+          "target_provisions": [],
+          "base_effective_from": "2023-06-22",
+          "modifier_document_id": "89d25b56-feb1-4a6d-9a58-e4053293b0a3",
+          "modifier_revision_id": "1a33a154-3a55-434f-b792-e6d0f703516a",
+          "applicability_version": "source.applicability.v2",
+          "modifier_effective_to": null,
+          "modifier_effective_from": "2025-10-06",
+          "modifier_published_date": "2025-10-06",
+          "modifier_revision_number": 1,
+          "retained_candidate_count": 1,
+          "replacement_scope_verified": false
+        },
+        {
+          "depth": 1,
+          "outcome": "ungoverned_or_incomplete_metadata",
+          "applicable": true,
+          "scope_hash": "0e4f917488b872121065f984c6676a471df8f30f2ab71c3c95b8f3f7c520b04c",
+          "candidate_count": 0,
+          "relationship_id": "5c2372cc-f6a8-4664-9f44-0ae8944bce77",
+          "base_document_id": "127450d8-90d3-4b5f-a14b-882c75362256",
+          "base_revision_id": "dc7b95ad-5287-468e-96ee-f536838ae0a0",
+          "provision_effect": "unknown",
+          "supporting_spans": [],
+          "base_effective_to": null,
+          "relationship_type": "modifies",
+          "target_provisions": [],
+          "base_effective_from": "2023-06-22",
+          "modifier_document_id": "bf560694-f5a5-404d-9719-7cf7ff5d9602",
+          "modifier_revision_id": "442413ab-8e60-4f70-86e1-a630169876a0",
+          "applicability_version": "source.applicability.v2",
+          "modifier_effective_to": null,
+          "modifier_effective_from": null,
+          "modifier_published_date": "2025-11-06",
+          "modifier_revision_number": 1,
+          "retained_candidate_count": 0,
+          "replacement_scope_verified": false
+        },
+        {
+          "depth": 1,
+          "outcome": "stale_or_replaced_revision",
+          "applicable": false,
+          "scope_hash": "0e4f917488b872121065f984c6676a471df8f30f2ab71c3c95b8f3f7c520b04c",
+          "candidate_count": 143,
+          "relationship_id": "c70ceaed-b167-437c-ac1d-da082b451180",
+          "base_document_id": "127450d8-90d3-4b5f-a14b-882c75362256",
+          "base_revision_id": "dc7b95ad-5287-468e-96ee-f536838ae0a0",
+          "provision_effect": "unknown",
+          "supporting_spans": [],
+          "base_effective_to": null,
+          "relationship_type": "modifies",
+          "target_provisions": [],
+          "base_effective_from": "2023-06-22",
+          "modifier_document_id": "9f277455-7fec-4ae5-8789-d0f8def0880b",
+          "modifier_revision_id": "68f5b198-9a06-4859-af92-25ee6fd28421",
+          "applicability_version": "source.applicability.v2",
+          "modifier_effective_to": null,
+          "modifier_effective_from": null,
+          "modifier_published_date": null,
+          "modifier_revision_number": 1,
+          "retained_candidate_count": 19,
+          "replacement_scope_verified": false
+        }
+      ]
+    }
+  ]
+}

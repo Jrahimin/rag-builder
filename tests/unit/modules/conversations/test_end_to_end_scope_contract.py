@@ -185,14 +185,39 @@ async def test_semantic_verifier_preserves_translation_and_rejects_scope_changes
     from app.platform.providers.contracts.llm import ChatCompletionResult, ChatUsage
 
     llm = AsyncMock()
-    llm.generate.return_value = ChatCompletionResult(
-        content=json.dumps({"verdicts": ["supported", "unsupported", "unsupported", "unverified"]}),
-        provider="test",
-        model="test",
-        finish_reason="stop",
-        usage=ChatUsage(1, 1),
-        provider_version="1",
-    )
+
+    async def bound_response(messages, **kwargs):
+        assertions = json.loads(messages[1].content)
+        return ChatCompletionResult(
+            content=json.dumps(
+                {
+                    "version": "claim.entailment.v2",
+                    "verdicts": [
+                        {
+                            "assertion_id": item["assertion_id"],
+                            "proof_hashes": item["proof_hashes"],
+                            "scope_hash": item["scope_hash"],
+                            "status": status,
+                            "failed_dimensions": [] if status == "supported" else ["scope"],
+                            "evidence_binding": "controlled source",
+                            "publication_complete": True,
+                        }
+                        for item, status in zip(
+                            assertions,
+                            ["supported", "unsupported", "unsupported", "unverified"],
+                            strict=True,
+                        )
+                    ],
+                }
+            ),
+            provider="test",
+            model="test",
+            finish_reason="stop",
+            usage=ChatUsage(1, 1),
+            provider_version="1",
+        )
+
+    llm.generate.side_effect = bound_response
     inputs = [
         {
             "assertion": "Tenants submit a lease.",
@@ -201,6 +226,9 @@ async def test_semantic_verifier_preserves_translation_and_rejects_scope_changes
         {"assertion": "Owners submit a lease.", "proof": [{"quote": "ভাড়াটিয়ার ক্ষেত্রে ভাড়ার চুক্তিপত্র।"}]},
         {"assertion": "The AY2026 amount is100.", "proof": [{"quote": "AY2025 amount100"}]},
         {"assertion": "The rate is100%.", "proof": [{"quote": "amount100"}]},
+    ]
+    inputs = [
+        {**item, "assertion_id": f"A{i}", "canonical_scope": {}} for i, item in enumerate(inputs)
     ]
     assert await ClaimEntailmentService(llm).verify(inputs) == [
         "supported",
