@@ -374,9 +374,10 @@ async def test_profile_switch_carries_independent_policy_unless_explicitly_reset
     repository.get_active.return_value = revision
     # This shared contract fixture is also compared with the actual UI save payload.
     payload = json.loads(
-        (Path(__file__).parents[3] / "fixtures/project_ai_use_global_payload.json").read_text(
-            encoding="utf-8"
-        )
+        (
+            Path(__file__).parents[4]
+            / "frontend/src/test/fixtures/project_ai_use_global_payload.json"
+        ).read_text(encoding="utf-8")
     )
     payload["execution"]["profile_id"] = profile
     reset = await service.create_revision(

@@ -1,4 +1,4 @@
-import useGlobalPayload from "../../../../tests/fixtures/project_ai_use_global_payload.json";
+import useGlobalPayload from "../../test/fixtures/project_ai_use_global_payload.json";
 import { fireEvent, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, vi } from "vitest";
