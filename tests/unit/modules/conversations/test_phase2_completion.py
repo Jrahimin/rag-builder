@@ -529,12 +529,14 @@ def test_two_initial_recovery_searches_and_separate_structure_credits(complex_qu
 
 
 @pytest.mark.parametrize("case_index,total_ms", [(0, 27986), (1, 28226), (2, 29984), (3, 28011)])
-def test_recorded_q1_q4_budget_replay_preserves_stage_reserves(case_index, total_ms):
+@pytest.mark.parametrize("started", [402.839583442, 1000.0])
+def test_recorded_q1_q4_budget_replay_preserves_stage_reserves(case_index, total_ms, started):
     data = load_captured_fixture("phase2_recorded_q1_q4_timings_v1.json")
     case = data["cases"][case_index]
     recorded_repair_for_case(case)
     assert case["server_total_latency_ms"] == total_ms
     work = RequestWork(uuid.uuid4())
+    work.started = started
     assert requires_complex_execution_budget(normalize_request_scope(case["question"]))
     work.configure_execution(
         "adaptive_v1",
@@ -542,8 +544,8 @@ def test_recorded_q1_q4_budget_replay_preserves_stage_reserves(case_index, total
             normalize_request_scope(case["question"])
         ),
     )
-    assert work.request_deadline - work.started == 120
-    assert work.recovery_deadline - work.started == 88
+    assert work.request_deadline == pytest.approx(work.started + 120, rel=0, abs=1e-9)
+    assert work.recovery_deadline == pytest.approx(work.started + 88, rel=0, abs=1e-9)
     initial = next(span for span in case["timing_spans"] if span["phase"] == "initial")
     planning = next(span for span in case["timing_spans"] if span["name"] == "recovery_planning")
     end = (

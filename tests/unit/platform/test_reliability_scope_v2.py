@@ -109,18 +109,22 @@ def test_romanized_bangla_can_reach_bangla_only_corpus():
     "policy,cutoffs",
     [("bounded_v2", (30, 40, 58, 60)), ("bounded_extended_v2", (90, 100, 118, 120))],
 )
-def test_absolute_deadlines_never_expand_with_measured_latency(policy, cutoffs):
+@pytest.mark.parametrize("started", [402.839583442, 1000.0])
+def test_absolute_deadlines_never_expand_with_measured_latency(policy, cutoffs, started):
     work = RequestWork(uuid.uuid4())
+    work.started = started
     work.configure_execution(policy, estimates={"verification": {"samples": 25, "p95_seconds": 40}})
     actual = tuple(
-        work.phase_deadline(purpose) - work.started
+        work.phase_deadline(purpose)
         for purpose in ("coverage_review", "answer_generation", "claim_verification", "persistence")
     )
-    assert actual == cutoffs
+    assert actual == pytest.approx(
+        tuple(work.started + seconds for seconds in cutoffs), rel=0, abs=1e-9
+    )
     work.complete_stage("coverage")
-    assert work.recovery_deadline - work.started == cutoffs[0]
+    assert work.recovery_deadline == pytest.approx(work.started + cutoffs[0], rel=0, abs=1e-9)
     work.configure_execution("bounded_extended_v2")
-    assert work.request_deadline - work.started == cutoffs[3]
+    assert work.request_deadline == pytest.approx(work.started + cutoffs[3], rel=0, abs=1e-9)
 
 
 def test_frozen_measured_throughput_sizes_output_without_extending_cutoff(monkeypatch):
