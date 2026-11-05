@@ -1,7 +1,7 @@
 # Project Management Module — Implementation Plan
 
-**Status:** Complete — shipped; see `docs/features/project_module.md` for the as-built reference.  
-**Phase:** 1 (first business module)  
+**Status:** Complete — shipped; see `docs/features/project_module.md` for the as-built reference.
+**Phase:** 1 (first business module)
 **Overview:** Implement `modules/projects` with CRUD, `is_active` status toggle, and
 soft-delete (`deleted_at` as source of truth). `ProjectRepository` uses
 `AsyncSession` directly — no generic unscoped platform repository. HTTP wiring

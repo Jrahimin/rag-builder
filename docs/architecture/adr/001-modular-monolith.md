@@ -1,6 +1,6 @@
 # ADR-001: Modular Monolith with Platform Kernel
 
-**Status:** Accepted  
+**Status:** Accepted
 **Date:** 2026-06-28
 
 ## Context

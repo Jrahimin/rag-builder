@@ -1,6 +1,6 @@
 # ADR-014: Persisted Evidence Quality and Deterministic Grounding
 
-**Status:** Accepted  
+**Status:** Accepted
 **Date:** 2026-07-18
 
 ## Decision

@@ -1,6 +1,6 @@
 # ADR-009: Retrieval v2 Hybrid Search
 
-**Status:** Accepted  
+**Status:** Accepted
 **Date:** 2026-07-06
 
 ## Context

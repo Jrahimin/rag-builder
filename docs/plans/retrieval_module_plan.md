@@ -89,7 +89,7 @@ Add `EMBEDDED = "embedded"` in Phase 1 migration (enum already has `embedding`, 
 | any | soft-delete | `deleted_at` set | Knowledge `DocumentService` | — |
 | deleted | vector purge | Qdrant points removed† | `IndexingService` | best-effort |
 
-\*Worker sets `embedding` when job starts; brief `queued` optional if mirroring knowledge pattern.  
+\*Worker sets `embedding` when job starts; brief `queued` optional if mirroring knowledge pattern.
 †See delete policy below.
 
 ---

@@ -66,4 +66,3 @@ Idempotency-Key: <same-event-uuid>
 Verify `HMAC-SHA256(secret, timestamp + "." + event_id + "." + raw_body)` before
 parsing. Reject stale timestamps according to the host application's approved replay
 window, compare signatures in constant time, and persist processed event IDs.
-

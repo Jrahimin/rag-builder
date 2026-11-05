@@ -1,6 +1,6 @@
 # ADR-005: Taskiq for Background Job Processing
 
-**Status:** Accepted (refined)  
+**Status:** Accepted (refined)
 **Date:** 2026-06-28 (updated 2026-06-30)
 
 ## Context

@@ -1,6 +1,6 @@
 # ADR-007: Staged Retrieval Delivery
 
-**Status:** Accepted  
+**Status:** Accepted
 **Date:** 2026-06-30
 
 ## Context

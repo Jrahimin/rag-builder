@@ -761,6 +761,12 @@ verdicts do not grant approval. Changed text, evidence, source state or request 
 requires its own valid verification and cannot reuse another request's approval.
 Response fields and correction limits are unchanged.
 
+A supported but incomplete assertion can enter the existing bounded semantic
+correction using its reviewed source scope; corrected text needs fresh verification.
+If a valid recovery requirement graph has no executable search routes, discovery
+may use unresolved required source-rule descriptions within the same query limit.
+Neither fallback grants source authority or permits an unverified answer.
+
 Calculation period proof is local to each supplied input clause or reviewed source
 clause/table row. Other years in the request or other reviewed quotes cannot assign
 a shared period union to operands. An incompatible or unresolved period blocks its

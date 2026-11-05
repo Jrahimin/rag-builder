@@ -1,9 +1,9 @@
 # PR 25 final review and refinement guide
 
-Review date: 20 September 2026  
-Audience: Cursor or Grok implementing the final remediation  
-Reviewed commit: `9d34554ae8980469559fda567f92bf2c8e8a37d0`  
-PR: https://github.com/Jrahimin/rag-builder/pull/25  
+Review date: 20 September 2026
+Audience: Cursor or Grok implementing the final remediation
+Reviewed commit: `9d34554ae8980469559fda567f92bf2c8e8a37d0`
+PR: https://github.com/Jrahimin/rag-builder/pull/25
 Author: Codex independent review
 
 ## Decision in brief

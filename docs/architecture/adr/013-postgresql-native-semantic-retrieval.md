@@ -1,6 +1,6 @@
 # ADR-013: PostgreSQL-native semantic retrieval with pgvector
 
-**Status:** Accepted  
+**Status:** Accepted
 **Date:** 2026-07-17
 
 ## Context

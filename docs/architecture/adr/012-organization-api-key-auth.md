@@ -1,6 +1,6 @@
 # ADR-012: Organization API Key Authentication
 
-**Status:** Accepted  
+**Status:** Accepted
 **Date:** 2026-07-08
 
 ## Context

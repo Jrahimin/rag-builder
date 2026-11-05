@@ -1,6 +1,6 @@
 # ADR-003: Provider Abstraction Layer
 
-**Status:** Accepted (refined)  
+**Status:** Accepted (refined)
 **Date:** 2026-06-28
 
 ## Context
