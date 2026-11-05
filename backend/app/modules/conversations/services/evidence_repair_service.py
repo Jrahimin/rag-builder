@@ -3614,7 +3614,8 @@ for user facts. Preserve independently supported general rules.
                 unresolved = [
                     r
                     for r in requirements
-                    if r.requirement_id not in proof_map.proven_ids()
+                    if authoritative_compatibility
+                    and r.requirement_id not in proof_map.proven_ids()
                     and r.task_kind == "rule_lookup"
                     and r.required
                     and 0 < len(r.description.strip()) <= 500
