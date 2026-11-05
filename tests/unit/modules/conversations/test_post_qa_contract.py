@@ -1003,6 +1003,8 @@ def test_same_chunk_dependency_requires_governing_selector_boundary(intervening)
 
 
 async def test_late_planner_without_admitted_search_persists_recovery_timeout_not_500(monkeypatch):
+    # Exercise the original 30s recovery cutoff, not the later guarded extension.
+    monkeypatch.setattr(RequestWork, "extend_guarded_legacy_recovery", lambda self: None)
     service, provider, conversation, _, question = journey("threshold")
     original = provider.generate
     from app.modules.conversations.services import evidence_repair_service, recovery_schedule

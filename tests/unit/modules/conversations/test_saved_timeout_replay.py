@@ -40,19 +40,19 @@ pytestmark = pytest.mark.unit
 FIXTURE = (
     Path(__file__).parents[3] / "fixtures/evaluation/saved_timeout_boundaries_20261104_v1.json"
 )
-FIXTURE_HASH = "d1126d08d7fdf6bf5c3eaf9df3e4eb90ac2dbe608208d096efa759226613ee16"
+FIXTURE_HASH = "e7229b03d2cf38371eb905dc9c41e920959bb2c786e1891b42e052732dcb4c6c"
 LATEST_FIXTURE = FIXTURE.with_name("saved_timeout_boundaries_20261104_v2.json")
-LATEST_FIXTURE_HASH = "525850bdfc79b3adf363bea5576ed93220bdb5c56a78c9fd8e73ea7c18d3c275"
+LATEST_FIXTURE_HASH = "e28c3bcb2f6dfd8497bc4baff0d88ef452564e39f4a78489757f2cfce2576f9b"
 
 
 def saved_case(case):
-    raw = FIXTURE.read_bytes()
+    raw = FIXTURE.read_bytes().replace(b"\r\n", b"\n")
     assert hashlib.sha256(raw).hexdigest() == FIXTURE_HASH
     return next(row for row in json.loads(raw)["cases"] if row["case"] == case)
 
 
 def latest_saved_case(case):
-    raw = LATEST_FIXTURE.read_bytes()
+    raw = LATEST_FIXTURE.read_bytes().replace(b"\r\n", b"\n")
     assert hashlib.sha256(raw).hexdigest() == LATEST_FIXTURE_HASH
     return next(row for row in json.loads(raw)["cases"] if row["case"] == case)
 
@@ -586,6 +586,8 @@ async def test_saved_agm_verifier_cutoff_preserves_only_finalized_claims(
 ):
     case = saved_case(1)
     clock = DelayClock(monkeypatch)
+    # Replay the captured 60s policy, without the later live recovery extension.
+    monkeypatch.setattr(RequestWork, "extend_guarded_legacy_recovery", lambda self: None)
     service, provider, conversation, repository, _ = journey()
     _, coverage = reconstruction(case)
     for check in coverage["checks"]:

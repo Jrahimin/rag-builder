@@ -47,7 +47,7 @@ async def test_saved_coverage_cutoff_sends_only_proof_relevant_wire_data(monkeyp
         identity: replace(
             chunk(
                 f"Fixture header {i}\n\n" + "\n".join(f"Fixture line {j}." for j in range(20)),
-                source_revision_id=f"fixture-revision-{i}",
+                source_revision_id=records[i % len(records)]["modifier_revision_id"],
                 source_effective_from="2025-07-01",
             ),
             chunk_id=uuid.UUID(identity),
@@ -179,7 +179,21 @@ async def test_saved_coverage_cutoff_sends_only_proof_relevant_wire_data(monkeyp
     assert json.loads(scope_line.removeprefix("Normalized request scope: ")) == scope.model_dump(
         mode="json"
     )
-    assert coverage["requirements"] == case["requirements"]
+    expected_requirements = deepcopy(case["requirements"])
+    if case_number == 3:
+        # A year-specific requirement carries only its own period; the
+        # subtraction retains the canonical two-year scope above.
+        for row in expected_requirements:
+            if row["requirement_id"] in {"A25", "T25", "A26", "T26"}:
+                start = 2025 if row["requirement_id"].endswith("25") else 2026
+                row["assigned_scope"] = {
+                    "requested_periods": [
+                        period
+                        for period in scope.model_dump(mode="json")["requested_periods"]
+                        if period["start_year"] == start
+                    ]
+                }
+    assert coverage["requirements"] == expected_requirements
     assert "discovery_routes" not in coverage
     expected_authority = [
         {k: v for k, v in r.items() if k not in {"candidate_count", "retained_candidate_count"}}
