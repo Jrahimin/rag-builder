@@ -3608,8 +3608,33 @@ for user facts. Preserve independently supported general rules.
                     )
                     diagnostics["queries"] = []
                     return result
-                diagnostics["status"] = "invalid_plan"
-                return result
+                # A schema-valid requirement graph can outlive rejected optional
+                # coverage or missing/unbound model routes. Discover its unresolved
+                # source rules; this grants no proof or authority approval.
+                unresolved = [
+                    r
+                    for r in requirements
+                    if authoritative_compatibility
+                    and r.requirement_id not in proof_map.proven_ids()
+                    and r.task_kind == "rule_lookup"
+                    and r.required
+                    and 0 < len(r.description.strip()) <= 500
+                ][:max_initial_queries]
+                fallback_routes = [
+                    (_normalize_discovery_query(r.description.strip(), inputs.query)[0], r)
+                    for r in unresolved
+                ]
+                queries = [query for query, _ in fallback_routes if query]
+                query_requirement_ids = {
+                    query: [r.requirement_id for route, r in fallback_routes if route == query]
+                    for query in queries
+                }
+                queries = list(dict.fromkeys(queries))
+                if not queries:
+                    diagnostics["status"] = "invalid_plan"
+                    diagnostics["plan_failure_reason"] = "no_executable_source_requirements"
+                    return result
+                diagnostics["discovery_route_fallback"] = "unresolved_source_requirements"
             diagnostics["queries"] = queries
             diagnostics["branches"] = []
             diagnostics["focused_requirement_ids"] = []

@@ -1,6 +1,6 @@
 # ADR-002: Project as Central Aggregate
 
-**Status:** Accepted  
+**Status:** Accepted
 **Date:** 2026-06-28
 
 ## Context

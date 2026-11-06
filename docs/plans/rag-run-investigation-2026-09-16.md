@@ -1,7 +1,7 @@
 # Remaining RAG issues: investigation and implementation guide
 
-Date: 16 September 2026  
-Status: investigation only; no fixes implemented  
+Date: 16 September 2026
+Status: investigation only; no fixes implemented
 Inspected checkout: `d72d13614c78e2d4a928cbf6bdc70a73bc39ba9e`
 
 ## 1. Executive findings

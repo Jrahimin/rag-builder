@@ -179,6 +179,13 @@ The implementation owner reports final focused outcomes and source freeze to the
 
 Semantic correction excludes independently retained assertions only when their immutable publication approval still matches the request, display text, assertion, scope and exact proof. It merges those original approved claims with accepted corrections instead of verifying the retained claims again. A supported label without matching approval remains diagnostic evidence and cannot enter a checkpoint. Changed identities and incomplete approvals cannot be retained through this shortcut.
 
+Supported assertions that fail publication completeness remain eligible for the existing
+single semantic correction. A complete reviewed scope is a correction candidate only;
+it must receive fresh source entailment and publication approval. Missing planner
+search routes can fall back to required unresolved source-rule descriptions from a
+validated requirement graph, within the existing initial-query allowance. This grants
+no authority or coverage support and cannot bypass invalid dependencies or proof checks.
+
 On a later deadline, checkpoint text, verified assertions and citations remain immutable. Private finalization diagnostics include completed and interrupted attempts after capture, including the exact assertion IDs and correction statuses; they do not promote those later attempts into the published answer.
 
 ## Extension 03 boundary repair

@@ -1,6 +1,6 @@
 # ADR-019: Grounded chat response modes and web-search boundary
 
-**Status:** Accepted  
+**Status:** Accepted
 **Date:** 2026-08-25
 
 ## Context

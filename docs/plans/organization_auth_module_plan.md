@@ -1,6 +1,6 @@
 # Organization API Key Authentication — Implementation Plan
 
-**Status:** Complete — Phase 1  
+**Status:** Complete — Phase 1
 **Overview:** Machine-to-machine authentication for the public REST API using
 **Organization-scoped API keys**. Not user/session auth. Preserves **Project** as
 the data isolation boundary; Organization is the tenant/auth boundary.

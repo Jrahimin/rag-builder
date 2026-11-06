@@ -1,6 +1,6 @@
 # ADR-006: API and Worker Process Separation
 
-**Status:** Accepted  
+**Status:** Accepted
 **Date:** 2026-06-28
 
 ## Context

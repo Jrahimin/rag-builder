@@ -2142,10 +2142,16 @@ class MessageExecutionRunner:
                         ),
                         None,
                     )
-                    if claim and claim.get("verification") == "supported":
-                        if _publication_claim_complete(claim, prepared):
-                            repaired_rows.append(row)
+                    if (
+                        claim
+                        and claim.get("verification") == "supported"
+                        and _publication_claim_complete(claim, prepared)
+                    ):
+                        repaired_rows.append(row)
                         continue
+                    # Entailment support is not publication approval. An
+                    # incomplete supported row still needs the same bounded
+                    # correction as a rejected row, followed by fresh review.
                     quotes = [
                         item.get("quote")
                         for bundle in prepared.bundles
@@ -2155,6 +2161,45 @@ class MessageExecutionRunner:
                         and item.get("quote")
                         and str(item["quote"]) in bundle.text
                     ]
+                    if claim and claim.get("verification") == "supported":
+                        approval = prepared.publication_approvals.get(
+                            publication_binding(
+                                claim,
+                                " ".join(_plain_claim_text(str(claim.get("text") or "")).split()),
+                                " ".join(
+                                    _plain_claim_text(
+                                        str(claim.get("assertion_text") or claim.get("text") or "")
+                                    ).split()
+                                ),
+                            )
+                        )
+                        if approval is None or approval.context != _publication_context(prepared):
+                            continue
+                        scopes = [
+                            str(item["supported_scope"])
+                            for bundle in prepared.bundles
+                            if str(bundle.chunk_id) in row["proof_ids"]
+                            for item in bundle.applicability_proof
+                            if item.get("requirement_id") in row["requirement_ids"]
+                            and item.get("fulfillment") == "full"
+                            and item.get("supported_scope")
+                            and item.get("quote")
+                            and str(item["quote"]) in bundle.text
+                        ]
+                        for scope in dict.fromkeys(scopes):
+                            for atom in _answer_segments(scope):
+                                text = str(atom).strip()
+                                if text.rstrip(".") == row["text"].strip().rstrip("."):
+                                    continue
+                                repaired_rows.append(
+                                    {
+                                        **row,
+                                        "assertion_id": "C"
+                                        + content_hash(row["assertion_id"] + text)[:20],
+                                        "text": text,
+                                    }
+                                )
+                        continue
                     if quotes:
                         repaired_rows.append(
                             {**row, "text": " ".join(dict.fromkeys(str(q) for q in quotes))}

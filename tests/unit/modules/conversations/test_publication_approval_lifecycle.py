@@ -21,6 +21,43 @@ pytestmark = pytest.mark.unit
 TRANSPORTS = ["regular", "sse", "get", "evaluation"]
 
 
+@pytest.mark.parametrize("transport", ["regular", "sse"])
+async def test_supported_incomplete_draft_can_correct_to_fresh_reviewed_scope(transport):
+    service, provider, conversation, repository, question, requests = omitted_journey()
+    original_answer = provider.answer
+    original_generate = provider.generate
+
+    def answer():
+        payload = json.loads(original_answer())
+        payload["segments"][0]["text"] += " and"
+        return json.dumps(payload)
+
+    provider.answer = answer
+
+    async def generate(messages, **kwargs):
+        result = await original_generate(messages, **kwargs)
+        if current_request_purpose() == "claim_verification":
+            assertions = json.loads(messages[1].content)
+            payload = json.loads(result.content)
+            for item, verdict in zip(assertions, payload["verdicts"], strict=True):
+                if item["assertion"].endswith(" and"):
+                    verdict.update(
+                        status="supported", failed_dimensions=[], publication_complete=False
+                    )
+                else:
+                    verdict["publication_complete"] = True
+            result = replace(result, content=json.dumps(payload))
+        return result
+
+    provider.generate = generate
+    answer = await execute_contract(
+        service, provider, conversation, repository, question, transport
+    )
+    assert "18 months" in answer["content"]
+    assert any("R1" in claim["requirement_ids"] for claim in answer["claims"])
+    assert len(requests) == 2
+
+
 def approval_journey(complete, failure=None):
     values = omitted_journey(failure=failure)
     provider = values[1]

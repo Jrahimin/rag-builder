@@ -1,6 +1,6 @@
 # ADR-008: Chat on Semantic Retrieval Baseline
 
-**Status:** Accepted  
+**Status:** Accepted
 **Date:** 2026-07-05
 
 ## Context

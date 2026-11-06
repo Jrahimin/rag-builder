@@ -1,6 +1,6 @@
 # ADR-016: Transactional outcome webhooks and one dedicated hosted profile
 
-**Status:** Accepted  
+**Status:** Accepted
 **Date:** 2026-07-19
 
 ## Context

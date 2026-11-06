@@ -9,4 +9,3 @@ and customer exit/export obligations.
 Implemented visibility is limited to safe technical facts: token usage, corpus/storage
 counts, latency, job/webhook status, dependency health, versions, and audit history.
 These measurements are not invoices, contractual limits, or guarantees.
-

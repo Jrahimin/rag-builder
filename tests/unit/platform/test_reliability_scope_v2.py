@@ -130,6 +130,7 @@ def test_absolute_deadlines_never_expand_with_measured_latency(policy, cutoffs, 
 def test_frozen_measured_throughput_sizes_output_without_extending_cutoff(monkeypatch):
     import app.platform.providers.request_work as module
 
+    monkeypatch.setattr(module.time, "perf_counter", lambda: 10000.0)
     work = RequestWork(uuid.uuid4())
     work.configure_execution("bounded_v2")
     samples = [

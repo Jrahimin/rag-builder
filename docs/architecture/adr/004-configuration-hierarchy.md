@@ -1,6 +1,6 @@
 # ADR-004: Three-Tier Configuration Model
 
-**Status:** Accepted (refined)  
+**Status:** Accepted (refined)
 **Date:** 2026-06-28
 
 ## Context

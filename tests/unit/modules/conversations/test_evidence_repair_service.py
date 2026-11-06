@@ -1707,6 +1707,29 @@ async def test_invalid_plans_never_search_or_authorize_generation(queries):
     retrieval.retrieve.assert_not_called()
 
 
+@pytest.mark.parametrize("queries", [[], [{"query": "unbound", "requirement_ids": []}]])
+async def test_missing_routes_discover_valid_requirements_without_granting_authority(queries):
+    source = chunk("This passage does not establish the applicable tax threshold.")
+    result, retrieval, _ = await run_repair(
+        [([source], {})],
+        queries=queries,
+        requirements=[
+            {
+                "requirement_id": "R25",
+                "description": "Resident-individual threshold for AY 2025-26",
+                "task_kind": "rule_lookup",
+            }
+        ],
+        coverage={"complete": False, "missing": ["Applicable tax threshold"], "checks": []},
+        max_followup_queries=0,
+        max_followup_rounds=0,
+    )
+    assert result.diagnostics["discovery_route_fallback"] == "unresolved_source_requirements"
+    assert result.diagnostics["queries"] == ["Resident-individual threshold for AY 2025-26"]
+    assert retrieval.retrieve.await_count == 1
+    assert result.decision is None
+
+
 async def test_non_tax_policy_recovery_uses_the_same_path():
     result, _, _ = await run_repair(
         [([chunk("Enterprise renewal charges are waived for eligible customers.")], {})],
