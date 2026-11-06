@@ -81,6 +81,7 @@ from app.platform.domain.language_detection import (
     DEFAULT_SUPPORTED_TARGET_LANGUAGES,
     detect_language,
 )
+from app.platform.domain.publication_integrity import damaged_source_text
 from app.platform.providers.contracts.llm import (
     BaseLLMProvider,
     ChatCompletionResult,
@@ -3132,6 +3133,18 @@ for user facts. Preserve independently supported general rules.
     checked_predecessors: dict[uuid.UUID, set[tuple[int, int]]] = {}
 
     async def scope_passages(chunks: list[ContextChunk]) -> list[ContextChunk]:
+        # Prefer intact proof before review, rather than letting an unrelated
+        # corrupt passage poison a clean independently answerable rule. If every
+        # source is damaged, preserve the existing exact-range recovery path.
+        clean = [c for c in chunks if not damaged_source_text(c.content)]
+        if clean and len(clean) < len(chunks):
+            diagnostics["damaged_review_chunks_excluded"] = sorted(
+                {
+                    *diagnostics.get("damaged_review_chunks_excluded", []),
+                    *(str(c.chunk_id) for c in chunks if c not in clean),
+                }
+            )
+            chunks = clean
         if (
             len(comparison_periods) < 2
             or not _numeric_rule_question(inputs.query)

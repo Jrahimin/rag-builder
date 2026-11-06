@@ -5309,3 +5309,28 @@ async def test_parallel_overview_deadline_cancels_both_provider_calls():
     with pytest.raises(asyncio.CancelledError):
         await task
     assert len(stopped) == 2
+
+
+async def test_clean_rule_is_not_bundled_with_damaged_ancillary_source():
+    good = chunk("A company must hold an annual general meeting.")
+    bad = chunk("Special company provisions))")
+    result, _, _ = await run_repair(
+        [([good, bad], {})],
+        queries=["company meeting"],
+        user_query="What is the company meeting duty?",
+        coverage={
+            "complete": True,
+            "missing": [],
+            "checks": [
+                {
+                    "query_index": 0,
+                    "supported": True,
+                    "fulfillment": "full",
+                    "evidence": [{"chunk_id": str(good.chunk_id), "quote": good.content}],
+                }
+            ],
+        },
+    )
+    assert result.decision is not None and result.decision.sufficient
+    assert result.diagnostics["damaged_review_chunks_excluded"] == [str(bad.chunk_id)]
+    assert all(c.chunk_id != bad.chunk_id for c in result.selected)
