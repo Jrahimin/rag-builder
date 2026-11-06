@@ -1046,6 +1046,17 @@ class GroundingService:
         for draft in drafts:
             proof: list[dict[str, object]] = []
             for _, chunk in draft.evidence_chunks:
+                # Generation can attribute a quote to its indexed edition. Keep
+                # that same source identity in the verifier's hash-bound proof;
+                # a label is not evidence of the rule's period or legal force.
+                source_identity = {
+                    "document_id": str(chunk.document_id),
+                    "filename": chunk.filename,
+                    "page_number": chunk.page_number,
+                    "source_revision_id": str(chunk.metadata["source_revision_id"])
+                    if chunk.metadata.get("source_revision_id") is not None
+                    else None,
+                }
                 reviewed = [
                     item
                     for item in chunk.metadata.get("reviewed_proof", [])
@@ -1066,6 +1077,7 @@ class GroundingService:
                                 getattr(chunk, "source_chunk_hash", None) or chunk.chunk_hash
                             ),
                             "span_hash": content_hash(str(item["quote"])),
+                            "source_identity": source_identity,
                             "requirement_id": item.get("requirement_id"),
                             "supported_scope": item.get("supported_scope", ""),
                         }
@@ -1080,6 +1092,7 @@ class GroundingService:
                                 getattr(chunk, "source_chunk_hash", None) or chunk.chunk_hash
                             ),
                             "span_hash": content_hash(chunk.content),
+                            "source_identity": source_identity,
                         }
                     ]
                 )

@@ -209,3 +209,9 @@ filtering, not certification: selected ranges still require the existing full
 coverage and claim verification checks. Damaged chunks remain eligible for the
 existing isolated intact-range recovery; a clean passage elsewhere must not hide
 a requested rule available only in that range.
+
+Claim verification receives the indexed filename, document/revision identity and
+page alongside each exact quote. These labels participate in immutable proof
+hashes and support source attribution only. They cannot establish legal force,
+authority, taxpayer category or the applicable assessment year; those still
+require operative quoted evidence and fresh source entailment.

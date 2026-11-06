@@ -700,6 +700,10 @@ Before full-coverage review, passages lacking the required extraction provenance
 are excluded. Private `knowledge_repair.uncertifiable_review_chunks_excluded`
 diagnostics list their chunk IDs. An incomplete document's corroborating passage
 does not become full proof merely because another document supports the same fact.
+Internal verifier proof also binds the indexed source label and locator so an
+edition-attributed answer can be checked against the same identity generation
+received. This does not change the public Message schema or allow filenames to
+prove substantive legal applicability.
 
 Unexpected HTTP failures carry the same `X-Request-ID` header and
 `error.request_id` body value for correlation. A captured generic 500 body does
