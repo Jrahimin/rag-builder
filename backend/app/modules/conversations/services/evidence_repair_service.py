@@ -3133,18 +3133,40 @@ for user facts. Preserve independently supported general rules.
     checked_predecessors: dict[uuid.UUID, set[tuple[int, int]]] = {}
 
     async def scope_passages(chunks: list[ContextChunk]) -> list[ContextChunk]:
-        # Prefer intact proof before review, rather than letting an unrelated
-        # corrupt passage poison a clean independently answerable rule. If every
-        # source is damaged, preserve the existing exact-range recovery path.
-        clean = [c for c in chunks if not damaged_source_text(c.content)]
-        if clean and len(clean) < len(chunks):
-            diagnostics["damaged_review_chunks_excluded"] = sorted(
+        # A partially extracted document needs exact page spans before any range
+        # can certify full coverage. Do not offer uncertifiable corroboration to
+        # the reviewer alongside an independently usable source. Damaged chunks
+        # remain available: an isolated intact range can still be valid proof.
+        eligible = [
+            c
+            for c in chunks
+            if c.metadata.get("source_text_truncated") is not True
+            and (
+                c.metadata.get("partial_extraction") is not True
+                or (
+                    not damaged_source_text(c.content)
+                    and any(
+                        isinstance(span, dict)
+                        and span.get("provenance") == "exact_source_span"
+                        and span.get("element_id")
+                        and isinstance(span.get("text"), str)
+                        and c.page_number is not None
+                        and span.get("page_start") == span.get("page_end") == c.page_number
+                        and content_hash(span["text"]) == span.get("span_hash")
+                        and not damaged_source_text(span["text"])
+                        for span in (c.metadata.get("source_spans") or [])
+                    )
+                )
+            )
+        ]
+        if len(eligible) < len(chunks):
+            diagnostics["uncertifiable_review_chunks_excluded"] = sorted(
                 {
-                    *diagnostics.get("damaged_review_chunks_excluded", []),
-                    *(str(c.chunk_id) for c in chunks if c not in clean),
+                    *diagnostics.get("uncertifiable_review_chunks_excluded", []),
+                    *(str(c.chunk_id) for c in chunks if c not in eligible),
                 }
             )
-            chunks = clean
+        chunks = eligible
         if (
             len(comparison_periods) < 2
             or not _numeric_rule_question(inputs.query)

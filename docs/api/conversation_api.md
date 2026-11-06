@@ -696,6 +696,10 @@ notices; operator diagnostics retain the full requirement inventory.
 A provider token limit or visibly incomplete trailing clause cannot publish as
 `answered/complete`. Complete coverage rejects damaged source conditions; it
 cannot certify source applicability without proof.
+Before full-coverage review, passages lacking the required extraction provenance
+are excluded. Private `knowledge_repair.uncertifiable_review_chunks_excluded`
+diagnostics list their chunk IDs. An incomplete document's corroborating passage
+does not become full proof merely because another document supports the same fact.
 
 Unexpected HTTP failures carry the same `X-Request-ID` header and
 `error.request_id` body value for correlation. A captured generic 500 body does

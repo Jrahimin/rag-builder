@@ -5311,9 +5311,12 @@ async def test_parallel_overview_deadline_cancels_both_provider_calls():
     assert len(stopped) == 2
 
 
-async def test_clean_rule_is_not_bundled_with_damaged_ancillary_source():
+async def test_clean_rule_is_not_bundled_with_uncertifiable_partial_source():
     good = chunk("A company must hold an annual general meeting.")
-    bad = chunk("Special company provisions))")
+    bad = replace(
+        chunk(good.content + " Additional circular guidance."),
+        metadata={"partial_extraction": True},
+    )
     result, _, _ = await run_repair(
         [([good, bad], {})],
         queries=["company meeting"],
@@ -5332,5 +5335,5 @@ async def test_clean_rule_is_not_bundled_with_damaged_ancillary_source():
         },
     )
     assert result.decision is not None and result.decision.sufficient
-    assert result.diagnostics["damaged_review_chunks_excluded"] == [str(bad.chunk_id)]
+    assert result.diagnostics["uncertifiable_review_chunks_excluded"] == [str(bad.chunk_id)]
     assert all(c.chunk_id != bad.chunk_id for c in result.selected)

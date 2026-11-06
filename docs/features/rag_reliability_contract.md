@@ -201,3 +201,11 @@ These local repairs and offline regressions do not certify current-corpus builds
 An explicit Project calendar may opt into `default_for_omitted` for assessment-year tax questions. Explicit user years take precedence; unrelated company-law questions retain their own scope. Verifier binding errors before any supported assertion may consume the existing single malformed-response correction credit to repeat the same immutable input under the unchanged deadline. Failed replies are never relabelled or published; sanitized protocol categories appear in validation-retry diagnostics.
 
 Production maintenance may set `APE_JOBS__DISPATCHER_PAUSED=true` while keeping the durable dispatcher configured. The dispatcher loop is not started in this mode; API reads and grounded messages remain available. Resume explicitly by clearing the pause.
+
+Full-coverage review excludes truncated passages and partially extracted passages
+without intact, hash-verified exact page spans. Such corroboration cannot invalidate
+an independently usable source by being bundled into its proof. This is admission
+filtering, not certification: selected ranges still require the existing full
+coverage and claim verification checks. Damaged chunks remain eligible for the
+existing isolated intact-range recovery; a clean passage elsewhere must not hide
+a requested rule available only in that range.
