@@ -67,8 +67,10 @@ from app.modules.conversations.services.evidence_coverage import (
     PartialAnswerScope,
     _Check,
     _contains_quote,
+    _intact_selected_range,
     _quote_tokens,
     numbered_source_lines,
+    resolve_source_ranges,
 )
 from app.modules.conversations.services.recovery_schedule import RecoverySchedule
 from app.modules.conversations.turn_resolution import (
@@ -2181,6 +2183,45 @@ def _selector_failure_diagnostics(failures: list[dict[str, Any]]) -> list[dict[s
     return items
 
 
+def _full_support_integrity_failures(
+    parsed: BaseModel,
+    context: list[ContextChunk] | None,
+    source_ids: dict[str, str] | None = None,
+) -> list[dict[str, Any]]:
+    """Catch unusable full-proof selectors while a bounded re-review can run.
+
+    Resolve copies so the returned wire selectors retain their original form.
+    This is the same integrity guard used at the final proof handoff.
+    """
+    if context is None:
+        return []
+    chunks = {str(chunk.chunk_id): chunk for chunk in context}
+    labels = {identity: label for label, identity in (source_ids or {}).items()}
+    failures = []
+    for original in _proof_checks(parsed):
+        if not original.supported or original.fulfillment != "full":
+            continue
+        check = original.model_copy(deep=True)
+        if not resolve_source_ranges([check], context):
+            continue  # The separate selector validator handles invalid bounds.
+        for index, item in enumerate(check.evidence):
+            chunk = chunks.get(item.chunk_id)
+            if chunk is not None and not _intact_selected_range(
+                chunk, item, damaged=damaged_source_text(chunk.content)
+            ):
+                failures.append(
+                    {
+                        "requirement_id": check.requirement_id,
+                        "query_index": check.query_index,
+                        "evidence_index": index,
+                        **item.source_range(),
+                        "source_id": labels.get(item.chunk_id, item.chunk_id),
+                        "reason": "source_integrity_unverified",
+                    }
+                )
+    return failures
+
+
 def _selector_repair_messages(
     parsed: BaseModel,
     failures: list[dict[str, Any]],
@@ -2542,6 +2583,7 @@ async def _validated_completion(
             and lines[-1].strip() == "```"
         ):
             content = "\n".join(lines[1:-1])
+        integrity_failures: list[dict[str, Any]] = []
         try:
             parsed = schema.model_validate_json(content)
             changed = _canonicalize_known_selectors(parsed, source_ids, proof_context)
@@ -2572,6 +2614,34 @@ async def _validated_completion(
                         {
                             "type": "value_error",
                             "loc": ("coverage",),
+                            "input": None,
+                            "ctx": {"error": issue},
+                        }
+                    ],
+                )
+            if schema in (CoverageVerdict, CoverageDelta, _SearchPlan):
+                integrity_failures = _full_support_integrity_failures(
+                    parsed, proof_context, source_ids
+                )
+            if integrity_failures and schema is _SearchPlan:
+                plan = cast(_SearchPlan, parsed).model_copy(update={"coverage": None})
+                return replace(completion, content=plan.model_dump_json(), usage=usage)
+            if integrity_failures:
+                issue = ValueError(
+                    "Full coverage cites source ranges that fail extraction integrity. "
+                    "Re-review the complete supplied evidence. Every range used for full "
+                    "support must be intact and preserve the requested scope and conditions. "
+                    "Omit irrelevant corroboration only when the remaining proof independently "
+                    "establishes the entire requirement; otherwise mark the check partial or "
+                    "unsupported and report the missing evidence. Invalid ranges: "
+                    + json.dumps(integrity_failures[:16])
+                )
+                raise ValidationError.from_exception_data(
+                    schema.__name__,
+                    [
+                        {
+                            "type": "value_error",
+                            "loc": ("evidence_integrity",),
                             "input": None,
                             "ctx": {"error": issue},
                         }
@@ -2678,6 +2748,10 @@ async def _validated_completion(
                         ],
                     }
                 )
+                if integrity_failures:
+                    work.validation_retries[-1]["source_integrity_failures"] = integrity_failures[
+                        :16
+                    ]
             parsed_for_repair = None
             repair_failures: list[dict[str, Any]] = []
             try:

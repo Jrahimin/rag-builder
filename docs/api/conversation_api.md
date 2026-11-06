@@ -704,6 +704,9 @@ Internal verifier proof also binds the indexed source label and locator so an
 edition-attributed answer can be checked against the same identity generation
 received. This does not change the public Message schema or allow filenames to
 prove substantive legal applicability.
+Full-coverage ranges with valid line numbers but failed extraction integrity now
+enter the existing bounded full-review correction. Sanitized validation-retry
+diagnostics identify the failed ranges; source text is not added to public traces.
 
 Unexpected HTTP failures carry the same `X-Request-ID` header and
 `error.request_id` body value for correlation. A captured generic 500 body does

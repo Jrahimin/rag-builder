@@ -704,13 +704,15 @@ async def test_real_coverage_prompt_and_body_use_canonical_condition_array():
         },
     ]
     coverage = {
-        "complete": True,
-        "missing": [],
+        # This captured source has damaged conditions. Exercise the facet wire
+        # schema without falsely certifying its entire text as complete proof.
+        "complete": False,
+        "missing": ["Damaged source conditions need independently intact proof."],
         "checks": [
             {
                 "requirement_id": "R1",
                 "supported": True,
-                "fulfillment": "full",
+                "fulfillment": "partial",
                 "description": "Conditional tenant/factory checklist",
                 "condition_facets": facets,
                 "evidence": [{"chunk_id": str(source.chunk_id), "quote": source.content}],

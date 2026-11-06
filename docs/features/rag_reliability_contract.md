@@ -215,3 +215,10 @@ page alongside each exact quote. These labels participate in immutable proof
 hashes and support source attribution only. They cannot establish legal force,
 authority, taxpayer category or the applicable assessment year; those still
 require operative quoted evidence and fresh source entailment.
+
+Integrity-invalid full-coverage selectors are rejected during structured review,
+before the final handoff. The existing single malformed-response correction may
+re-review the complete evidence with the failing range identities. It cannot
+silently trim a proof or relabel a failed range as supported. A repeated integrity
+failure remains closed, and the existing absolute deadline and correction credit
+are unchanged.
