@@ -323,3 +323,11 @@ def test_capability_profile_is_authoritative_over_legacy_runtime_alias() -> None
     )
 
     validate_runtime_config(settings)
+
+
+def test_production_dispatcher_can_pause_without_disabling_durability():
+    settings = _production_settings(
+        jobs=JobsConfig(dispatcher_enabled=True, dispatcher_paused=True)
+    )
+    validate_runtime_config(settings)
+    assert settings.jobs.dispatcher_paused is True

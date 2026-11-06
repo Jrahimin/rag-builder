@@ -88,7 +88,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             _refresh_provider_preflight(app, preflight_service),
             name="provider-capability-preflight",
         )
-        if settings.jobs.dispatcher_enabled:
+        if settings.jobs.dispatcher_enabled and not settings.jobs.dispatcher_paused:
             dispatcher = DurableJobDispatcher(
                 session_factory=app.state.db.session_factory,
                 settings=settings,

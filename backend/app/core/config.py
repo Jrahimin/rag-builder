@@ -284,6 +284,7 @@ class JobsConfig(BaseModel):
 
     backend: JobQueueBackend = JobQueueBackend.TASKIQ
     dispatcher_enabled: bool = True
+    dispatcher_paused: bool = False
     dispatcher_poll_seconds: float = Field(default=1.0, ge=0.1, le=60.0)
     dispatcher_batch_size: int = Field(default=50, ge=1, le=500)
     lease_seconds: int = Field(default=300, ge=10, le=3600)

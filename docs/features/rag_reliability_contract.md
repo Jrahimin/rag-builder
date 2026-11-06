@@ -199,3 +199,5 @@ R15 (D4/D6): parser serialization binds each caption/header/body occurrence once
 These local repairs and offline regressions do not certify current-corpus builds, paid providers, live POST/SSE/GET acceptance, performance targets, or deployment. Repository gates still require final frozen-source verification.
 
 An explicit Project calendar may opt into `default_for_omitted` for assessment-year tax questions. Explicit user years take precedence; unrelated company-law questions retain their own scope. Verifier binding errors before any supported assertion may consume the existing single malformed-response correction credit to repeat the same immutable input under the unchanged deadline. Failed replies are never relabelled or published; sanitized protocol categories appear in validation-retry diagnostics.
+
+Production maintenance may set `APE_JOBS__DISPATCHER_PAUSED=true` while keeping the durable dispatcher configured. The dispatcher loop is not started in this mode; API reads and grounded messages remain available. Resume explicitly by clearing the pause.
