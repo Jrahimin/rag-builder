@@ -816,11 +816,23 @@ def normalize_request_scope(
     )
     if (
         not periods
-        and current
+        and (
+            current
+            or (
+                calendar_policy is not None
+                and calendar_policy.default_for_omitted
+                and bool(re.search(r"\btax\b|কর", folded))
+                and calendar_policy.period_kind == "assessment"
+                and filters.as_of is None
+            )
+        )
         and calendar_policy is not None
         and (
             period_kind == calendar_policy.period_kind
-            or (period_kind is None and calendar_policy.default_for_current)
+            or (
+                period_kind is None
+                and (calendar_policy.default_for_current or calendar_policy.default_for_omitted)
+            )
         )
     ):
         periods = (calendar_policy.current_period(reference_time or utc_reference_datetime()),)

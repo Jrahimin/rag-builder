@@ -293,3 +293,28 @@ async def test_reordered_proof_hashes_remain_bound_to_the_same_assertion():
     assert [row["assertion_id"] for row in service.last_verdicts] == [
         row["assertion_id"] for row in rows
     ]
+
+
+async def test_bound_identity_failure_retries_same_proof_once_under_request_budget():
+    from dataclasses import replace
+
+    llm, calls = provider()
+    original = llm.generate.side_effect
+    bodies = []
+
+    async def generate(messages, **kwargs):
+        bodies.append(messages[1].content)
+        response = await original(messages, **kwargs)
+        if len(bodies) == 1:
+            payload = json.loads(response.content)
+            payload["verdicts"][0]["scope_hash"] = "f" * 64
+            return replace(response, content=json.dumps(payload))
+        return response
+
+    llm.generate.side_effect = generate
+    with RequestWork(uuid.uuid4()).attached() as work:
+        service = ClaimEntailmentService(llm)
+        assert await service.verify(assertions(1, 1)) == ["supported"]
+        assert bodies[0] == bodies[1]
+        assert len(calls) == 2
+        assert work.validation_retries[0]["reason"] == "verifier_protocol_failure"

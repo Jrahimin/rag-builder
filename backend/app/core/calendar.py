@@ -18,6 +18,7 @@ class ProjectCalendarPolicy(BaseModel):
     label_start_offset: int = Field(default=0, ge=-2, le=2)
     label_year_span: int = Field(default=1, ge=0, le=1)
     default_for_current: bool = False
+    default_for_omitted: bool = False
 
     @model_validator(mode="after")
     def valid_calendar(self) -> ProjectCalendarPolicy:

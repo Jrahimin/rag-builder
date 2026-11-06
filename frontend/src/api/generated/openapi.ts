@@ -5321,6 +5321,11 @@ export interface components {
              */
             default_for_current?: boolean;
             /**
+             * Default For Omitted
+             * @default false
+             */
+            default_for_omitted?: boolean;
+            /**
              * Label Start Offset
              * @default 0
              */

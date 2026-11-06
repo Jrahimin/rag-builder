@@ -210,6 +210,8 @@ contradiction is unsupported. Do not consult outside knowledge."""
             for item in bound_assertions
         }
         work = current_request_work()
+        retried_bindings: set[tuple[str, ...]] = set()
+        completed_bindings: set[str] = set()
         for partition in partitions:
             remaining = (
                 max(0.0, work.phase_deadline("claim_verification") - time.perf_counter())
@@ -273,6 +275,7 @@ contradiction is unsupported. Do not consult outside knowledge."""
                     ):
                         raise ValueError("Foreign proof or scope binding")
                 verdicts.update(bound)
+                completed_bindings.update(bound)
             except (ProviderTimeoutError, TimeoutError) as exc:
                 self.last_failure = {
                     "reason": "verifier_unavailable",
@@ -296,12 +299,49 @@ contradiction is unsupported. Do not consult outside knowledge."""
                     "reason": "verifier_unavailable",
                     "stage": "claim_verification",
                 }
-            except (ValueError, TypeError, AttributeError):
+            except (ValueError, TypeError, AttributeError) as exc:
+                category = (
+                    str(exc)
+                    if str(exc)
+                    in {
+                        "Incomplete verifier response",
+                        "Missing, duplicate or unexpected assertion binding",
+                        "Foreign proof or scope binding",
+                    }
+                    else type(exc).__name__
+                )
                 self.last_failure = {
                     "reason": "verifier_schema_invalid",
                     "stage": "claim_verification",
+                    "failure_category": category,
                 }
+                identities = tuple(expected_partition)
+                if work is not None:
+                    work.validation_retries.append(
+                        {
+                            "schema": "BoundEntailmentBatch",
+                            "reason": "verifier_protocol_failure",
+                            "category": category,
+                        }
+                    )
+                if (
+                    work is not None
+                    and category
+                    in {
+                        "Missing, duplicate or unexpected assertion binding",
+                        "Foreign proof or scope binding",
+                    }
+                    and not any(row.status == "supported" for row in verdicts.values())
+                    and identities not in retried_bindings
+                    and work.claim_correction("malformed")
+                ):
+                    retried_bindings.add(identities)
+                    # Same immutable inputs, same absolute cutoff. Never repair
+                    # a foreign identity by assigning it to a local assertion.
+                    partitions.append(partition)
         ordered = [verdicts[str(item["assertion_id"])] for item in bound_assertions]
+        if completed_bindings == set(expected):
+            self.last_failure = None
         self.last_verdicts = [row.model_dump() for row in ordered]
         return [row.status for row in ordered]
 

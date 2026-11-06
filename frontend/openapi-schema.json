@@ -10632,6 +10632,11 @@
             "title": "Default For Current",
             "type": "boolean"
           },
+          "default_for_omitted": {
+            "default": false,
+            "title": "Default For Omitted",
+            "type": "boolean"
+          },
           "label_start_offset": {
             "default": 0,
             "maximum": 2.0,
